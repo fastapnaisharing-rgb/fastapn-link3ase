@@ -472,7 +472,11 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
   const totalW = Math.max(minW, screenWidth - sidebarW - paddingW);
   const extraW = totalW - minW;
-  const COLUMNS_SCALED = cfg.columns.map(c => c.key === 'Description' || c.key === 'Account_Name' || c.key === 'Name' ? { ...c, w: c.w + Math.min(extraW, 150) } : c);
+  const COLUMNS_SCALED = cfg.columns.map(c =>
+  c.key === 'Description' || c.key === 'Account_Name' || c.key === 'Name' || c.key === 'Remark'
+    ? { ...c, w: c.w + Math.min(extraW / 2, 120) }
+    : c
+);
 
   const S = {
     container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box' },

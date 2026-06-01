@@ -1,11 +1,34 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { supabase } from '../supabase';
 
 const DataCacheContext = createContext(null);
 
 const STORAGE_KEY = 'fastapn_cache';
 const STORAGE_TIME_KEY = 'fastapn_cache_time';
+
+// Map ชื่อ Collection (Firebase) → ชื่อ Table (Supabase)
+const TABLE_MAP = {
+  AccountList:    'account_list',
+  BranchList:     'branch_list',
+  CompanyList:    'company_list',
+  ItemcodeList:   'itemcode_list',
+  SupplierList:   'supplier_list',
+  VendorCategory: 'vendor_category',
+  NoticeList:     'notice_list',
+  SubAccList:     'sub_acc_list',
+  CpcList:        'cpc_list',
+  User:           'users',
+  // ถ้าเรียกด้วยชื่อ Table โดยตรงก็ใช้ได้เลย
+  account_list:    'account_list',
+  branch_list:     'branch_list',
+  company_list:    'company_list',
+  itemcode_list:   'itemcode_list',
+  supplier_list:   'supplier_list',
+  vendor_category: 'vendor_category',
+  notice_list:     'notice_list',
+  sub_acc_list:    'sub_acc_list',
+  cpc_list:        'cpc_list',
+};
 
 const loadFromStorage = () => {
   try {
@@ -33,7 +56,6 @@ export function DataCacheProvider({ children }) {
 
   const CACHE_TTL = 15 * 60 * 1000; // 15 นาที
 
-  // บันทึกลง sessionStorage ทุกครั้งที่ Cache เปลี่ยน
   useEffect(() => {
     saveToStorage(cache, lastFetch);
   }, [cache, lastFetch]);
@@ -49,13 +71,33 @@ export function DataCacheProvider({ children }) {
       return cache[collectionName];
     }
     if (loading[collectionName]) return cache[collectionName] || [];
+
     setLoading(prev => ({ ...prev, [collectionName]: true }));
     try {
-      const snap = await getDocs(collection(db, collectionName));
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setCache(prev => ({ ...prev, [collectionName]: data }));
+      const tableName = TABLE_MAP[collectionName] || collectionName;
+      
+      // ดึงข้อมูลทั้งหมด (รองรับ > 1000 rows ด้วย range)
+      let allData = [];
+      let from = 0;
+      const pageSize = 1000;
+
+      while (true) {
+        const { data, error } = await supabase
+          .from(tableName)
+          .select('*')
+          .range(from, from + pageSize - 1);
+
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+
+        allData = [...allData, ...data];
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+
+      setCache(prev => ({ ...prev, [collectionName]: allData }));
       setLastFetch(prev => ({ ...prev, [collectionName]: Date.now() }));
-      return data;
+      return allData;
     } catch (err) {
       console.error(`Cache fetch error [${collectionName}]:`, err);
       return cache[collectionName] || [];
