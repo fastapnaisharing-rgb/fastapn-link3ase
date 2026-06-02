@@ -53,7 +53,6 @@ function Login() {
     if (username.trim() === '') { setError('กรุณากรอก Username ครับ'); return; }
     setLoading(true);
     try {
-      // เช็ค username ซ้ำ
       const { data: existing } = await supabase
         .from('user_roles')
         .select('id')
@@ -61,14 +60,12 @@ function Login() {
         .single();
       if (existing) { setError('Username นี้ถูกใช้งานแล้วครับ'); setLoading(false); return; }
 
-      // สร้าง user ใน Supabase Auth
       const { error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
       });
       if (authError) throw authError;
 
-      // เพิ่มใน user_roles
       const { error: roleError } = await supabase.from('user_roles').insert([{
         email: email.trim(),
         username: username.trim().toLowerCase(),
@@ -129,15 +126,30 @@ function Login() {
   );
 
   const S = {
-    page: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f4f8' },
-    card: { background: 'white', borderRadius: '12px', padding: '40px', width: '380px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' },
+    page: {
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#f7f8fc'
+    },
+    card: {
+      background: 'white',
+      borderRadius: '16px',
+      padding: '40px',
+      width: '380px',
+      boxShadow: 'none',
+      border: '0.5px solid #e8eaf0',
+      position: 'relative',
+      overflow: 'hidden'
+    },
     logo: { textAlign: 'center', marginBottom: '24px' },
     logoText: { fontSize: '24px', fontWeight: 'bold', color: '#1a3a5c' },
     logoSub: { fontSize: '12px', color: '#888', marginTop: '4px' },
-    tabs: { display: 'flex', background: '#f0f4f8', borderRadius: '8px', padding: '4px', marginBottom: '24px' },
+    tabs: { display: 'flex', background: '#f7f8fc', borderRadius: '8px', padding: '4px', marginBottom: '24px' },
     tab: (active) => ({ flex: 1, padding: '8px', textAlign: 'center', borderRadius: '6px', fontSize: '13px', fontWeight: '500', cursor: 'pointer', border: 'none', background: active ? '#1a3a5c' : 'transparent', color: active ? 'white' : '#666' }),
     label: { display: 'block', fontSize: '13px', color: '#555', marginBottom: '6px', fontWeight: '500' },
-    input: { width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '14px', marginBottom: '16px', outline: 'none', boxSizing: 'border-box' },
+    input: { width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e8eaf0', fontSize: '14px', marginBottom: '16px', outline: 'none', boxSizing: 'border-box', background: '#fafbfc' },
     btn: { width: '100%', padding: '12px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', marginTop: '4px' },
     error: { background: '#FCEBEB', color: '#791F1F', padding: '10px 12px', borderRadius: '8px', fontSize: '13px', marginBottom: '16px' },
     success: { background: '#EAF3DE', color: '#27500A', padding: '10px 12px', borderRadius: '8px', fontSize: '13px', marginBottom: '16px' },
@@ -148,6 +160,13 @@ function Login() {
   return (
     <div style={S.page}>
       <div style={S.card}>
+        {/* Accent Bar */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0,
+          height: '3px',
+          background: 'linear-gradient(90deg, #1a3a5c, #5DCAA5)'
+        }} />
+
         <div style={S.logo}>
           <div style={S.logoText}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
           <div style={S.logoSub}>Link3ase · System</div>
@@ -183,7 +202,7 @@ function Login() {
             </div>
             <div style={{ textAlign: 'right', marginBottom: '16px' }}>
               <span onClick={() => { setShowForgot(true); setError(''); setForgotInput(''); }}
-                style={{ fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', textDecoration: 'underline' }}>
+                style={{ fontSize: '12px', color: '#5DCAA5', cursor: 'pointer', textDecoration: 'underline' }}>
                 ลืม Password?
               </span>
             </div>
