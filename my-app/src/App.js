@@ -22,6 +22,16 @@ function useWindowWidth() {
   return width;
 }
 
+function useWindowHeight() {
+  const [height, setHeight] = useState(window.innerHeight);
+  useEffect(() => {
+    const h = () => setHeight(window.innerHeight);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return height;
+}
+
 function PlaceholderPage({ title, icon }) {
   return (
     <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
@@ -57,6 +67,7 @@ function MainApp() {
   const { currentUser, userRole, userName, logout } = useAuth();
   const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
+  const screenHeight = useWindowHeight();
 
   if (!currentUser) return <Login />;
 
@@ -64,6 +75,11 @@ function MainApp() {
   const isLargeScreen = screenWidth >= 1200;
   const expanded = isLargeScreen ? true : hovered;
   const sidebarW = expanded ? 200 : 56;
+
+  // คำนวณ padding ตามความสูงหน้าจอ
+  const menuCount = 15;
+  const availableHeight = screenHeight - 120;
+  const itemPadding = Math.max(3, Math.floor(availableHeight / menuCount / 2));
 
   const handleProfileIconClick = () => {
     if (isAdmin) setActivePage('users');
@@ -111,7 +127,7 @@ function MainApp() {
   const navItem = (id, icon, label, indent = 16) => (
     <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
       style={{
-        padding: expanded ? `7px 16px 7px ${indent}px` : '8px 0',
+        padding: expanded ? `${itemPadding}px 16px ${itemPadding}px ${indent}px` : `${itemPadding}px 0`,
         cursor: 'pointer', fontSize: '13px',
         background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -129,7 +145,7 @@ function MainApp() {
   const subNavItem = (id, icon, label) => (
     <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
       style={{
-        padding: expanded ? '6px 16px 6px 44px' : '7px 0',
+        padding: expanded ? `${Math.max(2, itemPadding - 1)}px 16px ${Math.max(2, itemPadding - 1)}px 44px` : `${Math.max(2, itemPadding - 1)}px 0`,
         cursor: 'pointer', fontSize: '12px',
         background: activePage === id ? 'rgba(93,202,165,0.08)' : 'transparent',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -147,7 +163,7 @@ function MainApp() {
   const groupItem = (isActive, isOpen, onClick, icon, label) => (
     <div onClick={onClick} title={!expanded ? label : ''}
       style={{
-        padding: expanded ? '7px 16px 7px 28px' : '8px 0',
+        padding: expanded ? `${itemPadding}px 16px ${itemPadding}px 28px` : `${itemPadding}px 0`,
         cursor: 'pointer', fontSize: '13px',
         background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderLeft: isActive ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -196,27 +212,27 @@ function MainApp() {
         {/* Nav */}
         <nav style={{
           flex: 1,
-          padding: '8px 0',
-          overflowY: 'scroll',
+          padding: '4px 0',
+          overflowY: 'auto',
           overflowX: 'hidden',
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',
         }}>
 
           {expanded && (
-            <div style={{ padding: '8px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+            <div style={{ padding: `${itemPadding}px 16px`, fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
               Functions
             </div>
           )}
-          {!expanded && <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />}
+          {!expanded && <div style={{ margin: '3px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />}
 
           {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
 
-          <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+          <div style={{ margin: '3px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
 
           {/* Master Data */}
           <div onClick={() => setMasterOpen(o => !o)} title={!expanded ? 'Master Data' : ''}
-            style={{ padding: expanded ? '8px 16px' : '8px 0', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'space-between' : 'center', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+            style={{ padding: expanded ? `${itemPadding}px 16px` : `${itemPadding}px 0`, cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'space-between' : 'center', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden' }}>
             {expanded
               ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>{masterOpen ? '▲' : '▼'}</span></>
               : <span style={{ fontSize: '18px' }}>📦</span>
@@ -238,7 +254,7 @@ function MainApp() {
             </>
           )}
 
-          <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+          <div style={{ margin: '3px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
           {navItem('upload', '📤', 'Upload & Gen')}
         </nav>
 
