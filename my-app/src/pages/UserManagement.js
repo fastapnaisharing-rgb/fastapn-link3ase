@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import { supabase, supabaseAdmin } from '../supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 
@@ -77,12 +77,13 @@ function UserManagement() {
     try {
       const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
 
-      // 1. สร้าง user ผ่าน Edge Function (ไม่ auto-login)
-      const { data: fnData, error: authError } = await supabase.functions.invoke('create-user', {
-        body: { email: form.email, password: form.password },
+      // 1. สร้าง user ใน Supabase Auth ผ่าน supabaseAdmin
+      const { data: fnData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: form.email,
+        password: form.password,
+        email_confirm: true,
       });
       if (authError) throw authError;
-      if (fnData?.error) throw new Error(fnData.error);
 
       // 2. เพิ่มใน user_roles
       const { error: roleError } = await supabase.from('user_roles').insert([{
@@ -106,12 +107,13 @@ function UserManagement() {
   // ลบทั้ง Supabase Auth และ user_roles พร้อมกัน
   const handleDelete = async () => {
     try {
-      // 1. ลบจาก Supabase Auth ผ่าน Edge Function
-      const { data: fnData, error: fnError } = await supabase.functions.invoke('delete-user', {
-        body: { email: deleteTarget.email },
-      });
-      if (fnError) throw fnError;
-      if (fnData?.error) throw new Error(fnData.error);
+      // 1. หา user id จาก Auth แล้วลบ
+      const { data: userData } = await supabaseAdmin.auth.admin.listUsers();
+      const target = userData.users.find(u => u.email === deleteTarget.email);
+      if (target) {
+        const { error: delError } = await supabaseAdmin.auth.admin.deleteUser(target.id);
+        if (delError) throw delError;
+      }
 
       // 2. ลบจาก user_roles
       const { error: roleError } = await supabase.from('user_roles').delete().eq('id', deleteTarget.id);
@@ -185,7 +187,6 @@ function UserManagement() {
                     {canChangeRole ? (
                       <select value={u.role || 'Editor'} onChange={e => handleRoleChange(u.id, e.target.value)}
                         style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', color: roleColor[u.role] || '#333', fontWeight: '500', background: roleBg[u.role] || 'white' }}>
-                        <option>Owner</option>
                         <option>Admin</option>
                         <option>Editor</option>
                         <option>Viewer</option>
@@ -237,7 +238,6 @@ function UserManagement() {
             <div>
               <label style={{ fontSize: '12px', color: '#666' }}>Role</label>
               <select style={S.input} value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
-                <option>Owner</option>
                 <option>Admin</option>
                 <option>Editor</option>
                 <option>Viewer</option>

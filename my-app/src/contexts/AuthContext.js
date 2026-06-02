@@ -11,7 +11,7 @@ export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [userName, setUserName] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
 
   const login = async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -25,56 +25,68 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
   };
 
+  // cache email เพื่อกัน fetchUserRole ยิงซ้ำ
+  let lastEmail = null;
+
   const fetchUserRole = async (email) => {
-    if (!email) { setUserRole(null); setUserName(null); return; }
+    if (!email || email === lastEmail) return;
+    lastEmail = email;
     try {
       const { data } = await supabase
         .from('user_roles')
         .select('role, username')
         .eq('email', email)
-        .single();
+        .maybeSingle();
       setUserRole(data?.role || null);
       setUserName(data?.username || null);
-    } catch {
+    } catch (err) {
+      console.error('fetchUserRole error:', err);
       setUserRole(null);
       setUserName(null);
     }
   };
 
   useEffect(() => {
-    // ล้าง token เก่า Firebase ที่อาจค้างอยู่
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('firebase:') || key.includes('firebaseLocalStorage')) {
-        localStorage.removeItem(key);
+    // ล้าง localStorage เก่าถ้า version เปลี่ยน
+    const APP_VERSION = '1.0.1';
+    const storedVersion = localStorage.getItem('fastapn_version');
+    if (storedVersion !== APP_VERSION) {
+      // ล้างทุกอย่างยกเว้น fastapn-auth
+      const authData = localStorage.getItem('fastapn-auth');
+      localStorage.clear();
+      if (authData) localStorage.setItem('fastapn-auth', authData);
+      localStorage.setItem('fastapn_version', APP_VERSION);
+    }
+
+    let isMounted = true;
+
+    const init = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!isMounted) return;
+        const user = session?.user || null;
+        setCurrentUser(user);
+        if (user?.email) fetchUserRole(user.email);
+      } catch (err) {
+        console.error('INIT ERROR:', err);
+        if (isMounted) setCurrentUser(null);
+      } finally {
+        if (isMounted) setAuthReady(true);
       }
-    });
+    };
 
-    let mounted = true;
-
-    // Timeout 3 วิ ถ้า loading ยังค้างอยู่
-    const timeout = setTimeout(() => {
-      if (mounted) setLoading(false);
-    }, 3000);
-
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!mounted) return;
-      const user = session?.user || null;
-      setCurrentUser(user);
-      await fetchUserRole(user?.email);
-      clearTimeout(timeout);
-      setLoading(false);
-    }).catch(() => {
-      if (!mounted) return;
-      clearTimeout(timeout);
-      setCurrentUser(null);
-      setLoading(false);
-    });
+    init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
+      if (!isMounted) return;
       const user = session?.user || null;
       setCurrentUser(user);
-      await fetchUserRole(user?.email);
+      if (user?.email) fetchUserRole(user.email);
+      else {
+        lastEmail = null;
+        setUserRole(null);
+        setUserName(null);
+      }
       if (event === 'SIGNED_OUT') {
         sessionStorage.removeItem('fastapn_cache');
         sessionStorage.removeItem('fastapn_cache_time');
@@ -82,17 +94,16 @@ export function AuthProvider({ children }) {
     });
 
     return () => {
-      mounted = false;
-      clearTimeout(timeout);
+      isMounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
-  const value = { currentUser, userRole, userName, login, logout };
+  const value = { currentUser, userRole, userName, login, logout, authReady };
 
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }
