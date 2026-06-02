@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import { useAuth } from './AuthContext';
 
 export function useUserRole() {
@@ -10,9 +9,12 @@ export function useUserRole() {
 
   useEffect(() => {
     if (!currentUser?.email) { setRole('viewer'); setLoading(false); return; }
-    getDocs(query(collection(db, 'User'), where('email', '==', currentUser.email)))
-      .then(snap => {
-        const data = snap.docs[0]?.data();
+    supabase
+      .from('user_roles')
+      .select('role')
+      .eq('email', currentUser.email)
+      .single()
+      .then(({ data }) => {
         setRole((data?.role || 'Viewer').toLowerCase());
       })
       .catch(() => setRole('viewer'))
