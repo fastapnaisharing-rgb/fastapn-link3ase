@@ -1,9 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc } from 'firebase/firestore';
-import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
-import { initializeApp, deleteApp } from 'firebase/app';
-import { firebaseConfig } from '../firebase';
+import { supabase, supabaseAdmin } from '../supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 
@@ -26,51 +22,50 @@ const IconTrash = () => (
 );
 
 function UserManagement() {
-  const [localUsers, setLocalUsers] = useState([]);
+  const [users, setUsers] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Editor' });
   const [error, setError] = useState('');
   const [savedId, setSavedId] = useState(null);
   const { currentUser } = useAuth();
-  const { isOwner, isAdmin, isEditor } = useUserRole();
-  const auth = getAuth();
+  const { isOwner } = useUserRole();
 
   const fetchUsers = async () => {
-    const snap = await getDocs(collection(db, 'User'));
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    setLocalUsers(JSON.parse(JSON.stringify(data)));
+    const ROLE_ORDER = { Owner: 1, Admin: 2, Editor: 3, Viewer: 4 };
+    const { data } = await supabase.from('user_roles').select('*');
+    const sorted = (data || []).sort((a, b) => (ROLE_ORDER[a.role] || 5) - (ROLE_ORDER[b.role] || 5));
+    setUsers(sorted);
   };
 
   useEffect(() => { fetchUsers(); }, []);
 
-
-  // เฉพาะ Owner เท่านั้นเข้าได้
   if (!isOwner) {
     return <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>⛔ คุณไม่มีสิทธิ์เข้าถึงหน้านี้ครับ</div>;
   }
 
   const saveUser = async (user) => {
-    try {
-      await updateDoc(doc(db, 'User', user.id), { role: user.role, permissions: user.permissions });
-      setSavedId(user.id);
-      setTimeout(() => setSavedId(null), 2000);
-    } catch (err) {
-      setError('เกิดข้อผิดพลาด: ' + err.message);
-    }
+    const { error } = await supabase.from('user_roles').update({
+      role: user.role,
+      permissions: user.permissions,
+      updated_by: currentUser?.email,
+    }).eq('id', user.id);
+    if (error) { setError('บันทึกไม่สำเร็จ: ' + error.message); return; }
+    setSavedId(user.id);
+    setTimeout(() => setSavedId(null), 2000);
   };
 
-  const handleLocalRoleChange = (id, newRole) => {
+  const handleRoleChange = (id, newRole) => {
     const perms = DEFAULT_PERMISSIONS[newRole] || DEFAULT_PERMISSIONS.Editor;
-    setLocalUsers(prev => {
+    setUsers(prev => {
       const updated = prev.map(u => u.id === id ? { ...u, role: newRole, permissions: perms } : u);
       saveUser(updated.find(u => u.id === id));
       return updated;
     });
   };
 
-  const handleLocalPermissionChange = (id, perm, value) => {
-    setLocalUsers(prev => {
+  const handlePermissionChange = (id, perm, value) => {
+    setUsers(prev => {
       const updated = prev.map(u => u.id !== id ? u : { ...u, permissions: { ...(u.permissions || {}), [perm]: value } });
       saveUser(updated.find(u => u.id === id));
       return updated;
@@ -79,33 +74,53 @@ function UserManagement() {
 
   const handleAdd = async () => {
     setError('');
-    let secondaryApp = null;
     try {
       const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
-      // ใช้ secondary app เพื่อไม่ให้ auto login แทน current user
-      secondaryApp = initializeApp(firebaseConfig, 'secondary-' + Date.now());
-      const secondaryAuth = getAuth(secondaryApp);
-      const result = await createUserWithEmailAndPassword(secondaryAuth, form.email, form.password);
-      await addDoc(collection(db, 'User'), {
-        uid: result.user.uid, email: form.email, name: form.username,
-        usernameLower: form.username.trim().toLowerCase(),
-        pass: form.password, role: form.role, permissions: perms
+
+      // 1. สร้าง user ใน Supabase Auth (ไม่ auto-login เพราะใช้ admin endpoint)
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: form.email,
+        password: form.password,
+        email_confirm: true,
       });
+      if (authError) throw authError;
+
+      // 2. เพิ่มใน user_roles
+      const { error: roleError } = await supabase.from('user_roles').insert([{
+        email: form.email,
+        username: form.username.trim().toLowerCase(),
+        role: form.role,
+        permissions: perms,
+        updated_by: currentUser?.email,
+        updated_at: new Date().toISOString(),
+      }]);
+      if (roleError) throw roleError;
+
       setShowForm(false);
       setForm({ email: '', password: '', username: '', role: 'Editor' });
       fetchUsers();
     } catch (err) {
       setError('เกิดข้อผิดพลาด: ' + err.message);
-    } finally {
-      // ลบ secondary app หลังใช้งาน
-      if (secondaryApp) await deleteApp(secondaryApp);
     }
   };
 
-  // ลบแค่ Firestore — Firebase Auth ต้องลบเองใน Console
+  // ลบทั้ง Supabase Auth และ user_roles พร้อมกัน
   const handleDelete = async () => {
     try {
-      await deleteDoc(doc(db, 'User', deleteTarget.id));
+      // 1. หา auth user id จาก email
+      const { data: authList } = await supabaseAdmin.auth.admin.listUsers();
+      const authUser = authList?.users?.find(u => u.email === deleteTarget.email);
+
+      // 2. ลบจาก user_roles ก่อน
+      const { error: roleError } = await supabase.from('user_roles').delete().eq('id', deleteTarget.id);
+      if (roleError) throw roleError;
+
+      // 3. ลบจาก Supabase Auth
+      if (authUser) {
+        const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(authUser.id);
+        if (authError) throw authError;
+      }
+
       setDeleteTarget(null);
       fetchUsers();
     } catch (err) {
@@ -141,6 +156,8 @@ function UserManagement() {
         <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setShowForm(true); setError(''); }}>+ Add User</button>
       </div>
 
+      {error && <div style={{ background: '#FCEBEB', color: '#791F1F', padding: '10px 12px', borderRadius: '8px', fontSize: '12px', marginBottom: '12px' }}>{error}</div>}
+
       <div style={S.wrap}>
         <table style={S.table}>
           <thead>
@@ -153,7 +170,7 @@ function UserManagement() {
             </tr>
           </thead>
           <tbody>
-            {localUsers.map(u => {
+            {users.map(u => {
               const isMe = u.email === currentUser?.email;
               const isTargetOwner = u.role === 'Owner';
               const canChangeRole = !isMe && !isTargetOwner;
@@ -163,14 +180,14 @@ function UserManagement() {
                 <tr key={u.id} style={{ background: isMe ? '#f8fbff' : 'white' }}>
                   <td style={S.tdLeft}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      {u.name || u.usernameLower || '-'}
+                      {u.username || '-'}
                       {isMe && <span style={{ fontSize: '10px', background: '#e8f0fb', color: '#1a3a5c', padding: '1px 6px', borderRadius: '20px' }}>คุณ</span>}
                     </div>
                   </td>
                   <td style={S.tdLeft}>{u.email}</td>
                   <td style={S.td}>
                     {canChangeRole ? (
-                      <select value={u.role || 'Editor'} onChange={e => handleLocalRoleChange(u.id, e.target.value)}
+                      <select value={u.role || 'Editor'} onChange={e => handleRoleChange(u.id, e.target.value)}
                         style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', color: roleColor[u.role] || '#333', fontWeight: '500', background: roleBg[u.role] || 'white' }}>
                         <option>Owner</option>
                         <option>Admin</option>
@@ -187,7 +204,7 @@ function UserManagement() {
                     const val = u.permissions?.[p] ?? false;
                     return (
                       <td key={p} style={S.td}>
-                        <button style={val ? S.yes : S.no} onClick={() => handleLocalPermissionChange(u.id, p, !val)}>
+                        <button style={val ? S.yes : S.no} onClick={() => handlePermissionChange(u.id, p, !val)}>
                           {val ? 'Yes' : 'No'}
                         </button>
                       </td>
@@ -210,7 +227,6 @@ function UserManagement() {
         </table>
       </div>
 
-      {/* Add User Modal */}
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -249,28 +265,19 @@ function UserManagement() {
         </div>
       )}
 
-      {/* Delete Confirm Modal */}
       {deleteTarget && (
         <div style={S.overlay}>
           <div style={{ ...S.modal, width: '380px' }}>
             <h3 style={{ marginBottom: '12px', fontSize: '15px' }}>🗑️ ยืนยันการลบ</h3>
-            <p style={{ fontSize: '13px', color: '#555', marginBottom: '12px' }}>
-              ต้องการลบ <strong>{deleteTarget.name || deleteTarget.usernameLower}</strong> ({deleteTarget.email}) ออกจากระบบใช่ไหมครับ?
+            <p style={{ fontSize: '13px', color: '#555', marginBottom: '16px' }}>
+              ต้องการลบ <strong>{deleteTarget.username}</strong> ({deleteTarget.email}) ออกจากระบบใช่ไหมครับ?
             </p>
-            {/* แจ้งเตือนให้ไปลบ Firebase Auth เองด้วย */}
-            <div style={{ background: '#FFF3CD', border: '0.5px solid #FAC775', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#633806' }}>
-              ⚠️ การลบนี้จะลบออกจากระบบเท่านั้น<br/>
-              กรุณาไปลบ <strong>{deleteTarget.email}</strong> ออกจาก <strong>Firebase Console → Authentication</strong> ด้วยครับ
-              <div style={{ marginTop: '6px' }}>
-                <a href="https://console.firebase.google.com" target="_blank" rel="noreferrer"
-                  style={{ fontSize: '11px', color: '#1a3a5c', textDecoration: 'underline' }}>
-                  เปิด Firebase Console →
-                </a>
-              </div>
+            <div style={{ background: '#EAF3DE', border: '0.5px solid #97C459', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#27500A' }}>
+              ✅ ระบบจะลบออกจากทั้ง Supabase Auth และระบบพร้อมกันเลยครับ
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button style={{ ...S.btn, background: '#f0f0f0' }} onClick={() => setDeleteTarget(null)}>Cancel</button>
-              <button style={{ ...S.btn, background: '#c0392b', color: 'white' }} onClick={handleDelete}>ลบออกจากระบบ</button>
+              <button style={{ ...S.btn, background: '#c0392b', color: 'white' }} onClick={handleDelete}>ลบ</button>
             </div>
           </div>
         </div>
