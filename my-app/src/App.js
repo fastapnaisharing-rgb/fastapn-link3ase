@@ -62,7 +62,8 @@ function MainApp() {
   if (!currentUser) return <Login />;
 
   const isAdmin = isOwner;
-  const expanded = hovered; // ขยายเมื่อ hover เท่านั้น
+  const isLargeScreen = screenWidth >= 1200;
+  const expanded = isLargeScreen ? true : hovered; // ขยายเมื่อ hover เท่านั้น
   const sidebarW = expanded ? 200 : 56;
 
   const handleProfileIconClick = () => {
@@ -113,7 +114,7 @@ function MainApp() {
   const navItem = (id, icon, label, indent = 16) => (
     <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
       style={{
-        padding: expanded ? `9px 16px 9px ${indent}px` : '10px 0',
+        padding: expanded ? `7px 16px 7px ${indent}px` : '8px 0',
         cursor: 'pointer', fontSize: '13px',
         background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -131,7 +132,7 @@ function MainApp() {
   const subNavItem = (id, icon, label) => (
     <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
       style={{
-        padding: expanded ? '7px 16px 7px 44px' : '8px 0',
+        padding: expanded ? '6px 16px 6px 44px' : '7px 0',
         cursor: 'pointer', fontSize: '12px',
         background: activePage === id ? 'rgba(93,202,165,0.08)' : 'transparent',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -149,7 +150,7 @@ function MainApp() {
   const groupItem = (isActive, isOpen, onClick, icon, label) => (
     <div onClick={onClick} title={!expanded ? label : ''}
       style={{
-        padding: expanded ? '9px 16px 9px 28px' : '10px 0',
+        padding: expanded ? '7px 16px 7px 28px' : '8px 0',
         cursor: 'pointer', fontSize: '13px',
         background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderLeft: isActive ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -170,8 +171,8 @@ function MainApp() {
 
       {/* Sidebar — hover to expand */}
       <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseEnter={() => !isLargeScreen && setHovered(true)}
+        onMouseLeave={() => !isLargeScreen && setHovered(false)}
         style={{
           width: `${sidebarW}px`, minWidth: `${sidebarW}px`,
           background: '#1a3a5c', color: 'white',
@@ -209,7 +210,7 @@ function MainApp() {
 
           {/* Master Data */}
           <div onClick={() => setMasterOpen(o => !o)} title={!expanded ? 'Master Data' : ''}
-            style={{ padding: expanded ? '10px 16px' : '10px 0', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'space-between' : 'center', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+            style={{ padding: expanded ? '8px 16px' : '8px 0', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'space-between' : 'center', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden' }}>
             {expanded
               ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>{masterOpen ? '▲' : '▼'}</span></>
               : <span style={{ fontSize: '18px' }}>📦</span>

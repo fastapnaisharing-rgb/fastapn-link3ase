@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, supabaseAdmin } from '../supabase';
+import { supabase } from '../supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 
@@ -77,13 +77,12 @@ function UserManagement() {
     try {
       const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
 
-      // 1. สร้าง user ใน Supabase Auth (ไม่ auto-login เพราะใช้ admin endpoint)
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email: form.email,
-        password: form.password,
-        email_confirm: true,
+      // 1. สร้าง user ผ่าน Edge Function (ไม่ auto-login)
+      const { data: fnData, error: authError } = await supabase.functions.invoke('create-user', {
+        body: { email: form.email, password: form.password },
       });
       if (authError) throw authError;
+      if (fnData?.error) throw new Error(fnData.error);
 
       // 2. เพิ่มใน user_roles
       const { error: roleError } = await supabase.from('user_roles').insert([{
@@ -107,19 +106,16 @@ function UserManagement() {
   // ลบทั้ง Supabase Auth และ user_roles พร้อมกัน
   const handleDelete = async () => {
     try {
-      // 1. หา auth user id จาก email
-      const { data: authList } = await supabaseAdmin.auth.admin.listUsers();
-      const authUser = authList?.users?.find(u => u.email === deleteTarget.email);
+      // 1. ลบจาก Supabase Auth ผ่าน Edge Function
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('delete-user', {
+        body: { email: deleteTarget.email },
+      });
+      if (fnError) throw fnError;
+      if (fnData?.error) throw new Error(fnData.error);
 
-      // 2. ลบจาก user_roles ก่อน
+      // 2. ลบจาก user_roles
       const { error: roleError } = await supabase.from('user_roles').delete().eq('id', deleteTarget.id);
       if (roleError) throw roleError;
-
-      // 3. ลบจาก Supabase Auth
-      if (authUser) {
-        const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(authUser.id);
-        if (authError) throw authError;
-      }
 
       setDeleteTarget(null);
       fetchUsers();
