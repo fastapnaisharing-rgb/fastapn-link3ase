@@ -32,7 +32,6 @@ function PlaceholderPage({ title, icon }) {
   );
 }
 
-// Logout icon SVG
 const LogoutIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
@@ -63,7 +62,7 @@ function MainApp() {
 
   const isAdmin = isOwner;
   const isLargeScreen = screenWidth >= 1200;
-  const expanded = isLargeScreen ? true : hovered; // ขยายเมื่อ hover เท่านั้น
+  const expanded = isLargeScreen ? true : hovered;
   const sidebarW = expanded ? 200 : 56;
 
   const handleProfileIconClick = () => {
@@ -80,7 +79,6 @@ function MainApp() {
   ];
 
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-code','vendor-category'];
-  const FUNCTION_PAGES = FUNCTION_MENUS.map(m => m.id);
   const isMasterActive = MASTER_PAGES.includes(activePage);
   const isBuActive = ['bu-info','bu-branch'].includes(activePage);
   const isCoaActive = ['coa-costcenter','coa-account','coa-subaccount'].includes(activePage);
@@ -110,7 +108,6 @@ function MainApp() {
     }
   };
 
-  // Nav item — icon + label (label ซ่อนเมื่อ collapse)
   const navItem = (id, icon, label, indent = 16) => (
     <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
       style={{
@@ -169,7 +166,7 @@ function MainApp() {
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
 
-      {/* Sidebar — hover to expand */}
+      {/* Sidebar */}
       <div
         onMouseEnter={() => !isLargeScreen && setHovered(true)}
         onMouseLeave={() => !isLargeScreen && setHovered(false)}
@@ -179,6 +176,8 @@ function MainApp() {
           display: 'flex', flexDirection: 'column',
           transition: 'width 0.2s ease, min-width 0.2s ease',
           overflow: 'hidden', position: 'relative', zIndex: 10,
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
         }}>
 
         {/* Logo */}
@@ -195,14 +194,14 @@ function MainApp() {
         </div>
 
         {/* Nav */}
-       <nav style={{ 
-            flex: 1, 
-            padding: '8px 0', 
-            overflowY: 'auto', 
-            overflowX: 'hidden', 
-            scrollbarWidth: 'none', 
-            msOverflowStyle: 'none' 
-          }}>
+        <nav style={{
+          flex: 1,
+          padding: '8px 0',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+        }}>
 
           {expanded && (
             <div style={{ padding: '8px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
@@ -243,7 +242,7 @@ function MainApp() {
           {navItem('upload', '📤', 'Upload & Gen')}
         </nav>
 
-        {/* Bottom — user info + logout */}
+        {/* Bottom */}
         <div style={{ padding: expanded ? '12px 16px' : '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: expanded ? 'stretch' : 'center', gap: '8px' }}>
           {expanded ? (
             <>
