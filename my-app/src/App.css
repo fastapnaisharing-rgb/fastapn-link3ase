@@ -29,12 +29,8 @@
 }
 
 @keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 * {
@@ -44,4 +40,14 @@
 
 *::-webkit-scrollbar {
   display: none;
+}
+
+nav {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+nav::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
 }
