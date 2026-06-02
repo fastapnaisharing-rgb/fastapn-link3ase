@@ -78,7 +78,7 @@ function UserManagement() {
       const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
 
       // 1. สร้าง user ใน Supabase Auth ผ่าน supabaseAdmin
-      const { data: fnData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      const { error: authError } = await supabaseAdmin.auth.admin.createUser({
         email: form.email,
         password: form.password,
         email_confirm: true,
@@ -104,7 +104,6 @@ function UserManagement() {
     }
   };
 
-  // ลบทั้ง Supabase Auth และ user_roles พร้อมกัน
   const handleDelete = async () => {
     try {
       // 1. หา user id จาก Auth แล้วลบ
