@@ -42,11 +42,32 @@ export function AuthProvider({ children }) {
   };
 
   useEffect(() => {
+    // ล้าง token เก่าทุกประเภทที่อาจค้างอยู่
+    Object.keys(localStorage).forEach(key => {
+      if (
+        key.startsWith('firebase:') ||
+        key.includes('firebaseLocalStorage') ||
+        (key.includes('supabase') && key !== 'fastapn-auth')
+      ) {
+        localStorage.removeItem(key);
+      }
+    });
+
     // ดึง session ปัจจุบัน
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        // session เสียหาย — ล้างแล้ว logout
+        supabase.auth.signOut();
+        setCurrentUser(null);
+        setLoading(false);
+        return;
+      }
       const user = session?.user || null;
       setCurrentUser(user);
       fetchUserRole(user?.email).finally(() => setLoading(false));
+    }).catch(() => {
+      setCurrentUser(null);
+      setLoading(false);
     });
 
     // Subscribe session changes

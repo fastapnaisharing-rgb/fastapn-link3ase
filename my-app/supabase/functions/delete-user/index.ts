@@ -24,11 +24,12 @@ Deno.serve(async (req) => {
     if (listError) throw listError
 
     const user = users.find(u => u.email === email)
-    if (!user) throw new Error('User not found in Auth')
 
-    // ลบจาก Auth
-    const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(user.id)
-    if (deleteError) throw deleteError
+    // ลบจาก Auth ถ้าเจอ (ถ้าไม่เจอก็ไม่เป็นไร)
+    if (user) {
+      const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(user.id)
+      if (deleteError) throw deleteError
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
