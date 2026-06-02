@@ -8,18 +8,25 @@ export function useUserRole() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!currentUser?.email) { setRole('viewer'); setLoading(false); return; }
+    if (!currentUser?.email) {
+      setRole('viewer');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
     supabase
       .from('user_roles')
       .select('role')
       .eq('email', currentUser.email)
       .single()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) { setRole('viewer'); return; }
         setRole((data?.role || 'Viewer').toLowerCase());
       })
       .catch(() => setRole('viewer'))
       .finally(() => setLoading(false));
-  }, [currentUser]);
+  }, [currentUser?.email]); // ← track email โดยตรง ไม่ใช่ object
 
   const isOwner  = role === 'owner';
   const isAdmin  = role === 'admin'  || isOwner;
