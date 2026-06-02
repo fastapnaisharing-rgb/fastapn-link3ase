@@ -6,7 +6,6 @@ const DataCacheContext = createContext(null);
 const STORAGE_KEY = 'fastapn_cache';
 const STORAGE_TIME_KEY = 'fastapn_cache_time';
 
-// Map ชื่อ Collection (Firebase) → ชื่อ Table (Supabase)
 const TABLE_MAP = {
   AccountList:    'account_list',
   BranchList:     'branch_list',
@@ -18,7 +17,6 @@ const TABLE_MAP = {
   SubAccList:     'sub_acc_list',
   CpcList:        'cpc_list',
   User:           'users',
-  // ถ้าเรียกด้วยชื่อ Table โดยตรงก็ใช้ได้เลย
   account_list:    'account_list',
   branch_list:     'branch_list',
   company_list:    'company_list',
@@ -54,7 +52,7 @@ export function DataCacheProvider({ children }) {
   const [loading, setLoading] = useState({});
   const [lastFetch, setLastFetch] = useState(initial.lastFetch);
 
-  const CACHE_TTL = 15 * 60 * 1000; // 15 นาที
+  const CACHE_TTL = 15 * 60 * 1000;
 
   useEffect(() => {
     saveToStorage(cache, lastFetch);
@@ -75,26 +73,20 @@ export function DataCacheProvider({ children }) {
     setLoading(prev => ({ ...prev, [collectionName]: true }));
     try {
       const tableName = TABLE_MAP[collectionName] || collectionName;
-      
-      // ดึงข้อมูลทั้งหมด (รองรับ > 1000 rows ด้วย range)
       let allData = [];
       let from = 0;
       const pageSize = 1000;
-
       while (true) {
         const { data, error } = await supabase
           .from(tableName)
           .select('*')
           .range(from, from + pageSize - 1);
-
         if (error) throw error;
         if (!data || data.length === 0) break;
-
         allData = [...allData, ...data];
         if (data.length < pageSize) break;
         from += pageSize;
       }
-
       setCache(prev => ({ ...prev, [collectionName]: allData }));
       setLastFetch(prev => ({ ...prev, [collectionName]: Date.now() }));
       return allData;
@@ -106,7 +98,13 @@ export function DataCacheProvider({ children }) {
     }
   }, [cache, loading, isStale]);
 
+  // ล้าง cache ทั้งหมดของ collection นั้น (ใช้กรณี bulk import)
   const invalidate = useCallback((collectionName) => {
+    setCache(prev => {
+      const next = { ...prev };
+      delete next[collectionName];
+      return next;
+    });
     setLastFetch(prev => ({ ...prev, [collectionName]: null }));
   }, []);
 
@@ -114,6 +112,7 @@ export function DataCacheProvider({ children }) {
     return await fetchCollection(collectionName, true);
   }, [fetchCollection]);
 
+  // อัปเดต row เดียวใน cache (ไม่ต้อง API call เพิ่ม)
   const appendToCache = useCallback((collectionName, newItem) => {
     setCache(prev => ({
       ...prev,

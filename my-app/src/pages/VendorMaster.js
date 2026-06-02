@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useDataCache } from '../contexts/DataCacheContext';
@@ -77,7 +76,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
     const m = map[s] || { label: s, bg: '#eee', color: '#333' };
     return <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: '500', background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>{m.label}</span>;
   };
-  const displayFields = allFields.filter(f => !['username','last_update'].includes(f)).slice(0, 5);
+  const displayFields = allFields.filter(f => !['username', 'last_update'].includes(f)).slice(0, 5);
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
       <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
@@ -89,7 +88,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
           ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ Username และ Last Update จะถูก Auto ใส่ให้
         </div>
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          {[['new','➕ New','#EAF3DE','#27500A'],['update','🔄 Update','#e8f0fb','#1a3a5c'],['nochange','✅ No Change','#f5f5f5','#666'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404']].map(([key,label,bg,color]) => (
+          {[['new', '➕ New', '#EAF3DE', '#27500A'], ['update', '🔄 Update', '#e8f0fb', '#1a3a5c'], ['nochange', '✅ No Change', '#f5f5f5', '#666'], ['duplicate', '⚠️ Duplicate', '#FFF3CD', '#856404']].map(([key, label, bg, color]) => (
             summary[key] ? <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: bg, color }}>{label} <strong>{summary[key]}</strong></span> : null
           ))}
         </div>
@@ -123,7 +122,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                         </div>
                       ) : row._status === 'new' ? <span style={{ fontSize: '10px', color: '#888' }}>เพิ่มใหม่</span>
                         : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์ — ข้ามแถวนี้</span>
-                        : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
+                          : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
                     </td>
                   </tr>
                 );
@@ -145,12 +144,18 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
   );
 }
 
+// ─── Supabase table mapping ────────────────────────────────────────────────────
+// Firebase collection  →  Supabase table
+// SupplierList         →  supplier_list
+// VendorCategory       →  vendor_category
+// ──────────────────────────────────────────────────────────────────────────────
+
 const TAB_CONFIG = {
   code: {
-    label: 'Code', icon: '🏭', collection: 'SupplierList', key: 'Supplier Code',
-    fields: ['Supplier Code','Name','Tax ID','Branch','Site','BU','Notice','Sub Acc','Status','username','last_update'],
-    combo: ['Site','BU','Notice','Status'],
-    edit: [['Supplier Code','Supplier Code'],['Name','Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Site','Site'],['BU','BU'],['Notice','Notice'],['Sub Acc','Sub Acc'],['Status','Status']],
+    label: 'Code', icon: '🏭', table: 'supplier_list', key: 'Supplier Code',
+    fields: ['Supplier Code', 'Name', 'Tax ID', 'Branch', 'Site', 'BU', 'Notice', 'Sub Acc', 'Status', 'username', 'last_update'],
+    combo: ['Site', 'BU', 'Notice', 'Status'],
+    edit: [['Supplier Code', 'Supplier Code'], ['Name', 'Name'], ['Tax ID', 'Tax ID'], ['Branch', 'Branch'], ['Site', 'Site'], ['BU', 'BU'], ['Notice', 'Notice'], ['Sub Acc', 'Sub Acc'], ['Status', 'Status']],
     columns: [
       { key: 'Supplier Code', label: 'Supplier Code', sortable: true, w: 120 },
       { key: 'Name', label: 'Name', w: 220 },
@@ -166,10 +171,10 @@ const TAB_CONFIG = {
     ],
   },
   category: {
-    label: 'Category', icon: '🗂️', collection: 'VendorCategory', key: 'Category Code',
-    fields: ['Category Code','Description','Type','Status','username','last_update'],
-    combo: ['Type','Status'],
-    edit: [['Category Code','Category Code'],['Description','Description'],['Type','Type'],['Status','Status']],
+    label: 'Category', icon: '🗂️', table: 'vendor_category', key: 'Category Code',
+    fields: ['Category Code', 'Description', 'Type', 'Status', 'username', 'last_update'],
+    combo: ['Type', 'Status'],
+    edit: [['Category Code', 'Category Code'], ['Description', 'Description'], ['Type', 'Type'], ['Status', 'Status']],
     columns: [
       { key: 'Category Code', label: 'Category Code', sortable: true, w: 130 },
       { key: 'Description', label: 'Description', w: 300 },
@@ -217,15 +222,44 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const selected = selectedMap[tab] || [];
   const sort = sortMap[tab] || { field: cfg.key, dir: 'asc' };
 
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  const getTimestamp = () => {
+    const now = new Date();
+    return `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+  };
+
+  const getFileTimestamp = () => {
+    const now = new Date();
+    return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+  };
+
+  const formatLastUpdate = (val) => {
+    if (!val || val === '-') return '-';
+    if (!isNaN(val) && Number(val) > 40000) {
+      const d = new Date(Math.round((Number(val) - 25569) * 86400 * 1000));
+      return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`;
+    }
+    try {
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+    } catch { }
+    return val;
+  };
+
+  // ─── Fetch (via DataCache) ───────────────────────────────────────────────────
+  // fetchCollection ใน DataCacheContext ต้อง accept ชื่อ Supabase table
+  // และ return array of objects (with id field)
+
   const fetchTab = useCallback(async (t) => {
-    const data = await fetchCollection(TAB_CONFIG[t].collection);
+    const data = await fetchCollection(TAB_CONFIG[t].table);
     setDataMap(prev => ({ ...prev, [t]: data }));
   }, [fetchCollection]);
 
   useEffect(() => {
     fetchTab('code');
     fetchTab('category');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -234,28 +268,12 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
 
-  const getTimestamp = () => {
-    const now = new Date();
-    return `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-  };
-  const getFileTimestamp = () => {
-    const now = new Date();
-    return `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
-  };
-  const formatLastUpdate = (val) => {
-    if (!val || val === '-') return '-';
-    if (!isNaN(val) && Number(val) > 40000) {
-      const d = new Date(Math.round((Number(val) - 25569) * 86400 * 1000));
-      return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
-    }
-    try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`; } catch { }
-    return val;
-  };
-
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
 
+  // ─── Build Preview Rows ──────────────────────────────────────────────────────
+
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
-    const dataFields = allFields.filter(f => !['username','last_update'].includes(f));
+    const dataFields = allFields.filter(f => !['username', 'last_update'].includes(f));
     const existingMap = {};
     existingItems.forEach(item => { if (item[keyField]) existingMap[String(item[keyField]).trim()] = item; });
     const seenKeys = new Set();
@@ -276,6 +294,8 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     });
   };
 
+  // ─── Export ──────────────────────────────────────────────────────────────────
+
   const exportToExcel = (data, fields, sheetName, filePrefix) => {
     const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; });
     const ws = XLSX.utils.json_to_sheet(rows, { header: fields });
@@ -284,15 +304,17 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     XLSX.writeFile(wb, `${filePrefix}_${getFileTimestamp()}.xlsx`);
   };
 
-  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
-  const handleExportAll = () => exportToExcel(filtered, cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
+  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['username', 'last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g, ''));
+  const handleExportAll = () => exportToExcel(filtered, cfg.fields.filter(f => !['username', 'last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g, ''));
 
   const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['username','last_update'].includes(f))]);
+    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['username', 'last_update'].includes(f))]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, cfg.label);
-    XLSX.writeFile(wb, `${cfg.label.replace(/ /g,'')}_Template.xlsx`);
+    XLSX.writeFile(wb, `${cfg.label.replace(/ /g, '')}_Template.xlsx`);
   };
+
+  // ─── Import ───────────────────────────────────────────────────────────────────
 
   const handleFileChange = (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -312,85 +334,125 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
       const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
       const newRows = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
-      for (let i = 0; i < newRows.length; i += 500) {
-        const batch = writeBatch(db);
-        newRows.slice(i,i+500).forEach(row => {
-          const d = doc(collection(db, cfg.collection)); const data = {};
-          cfg.fields.forEach(k => { if(k==='username') data[k]=userName||currentUser?.email||''; else if(k==='last_update') data[k]=getTimestamp(); else data[k]=String(row[k]??''); });
-          batch.set(d, data);
-        });
-        await batch.commit();
-      }
-      for (let i = 0; i < updateRows.length; i += 500) {
-        const batch = writeBatch(db);
-        updateRows.slice(i,i+500).forEach(row => {
+      const ts = getTimestamp();
+      const currentUsername = userName || currentUser?.email || '';
+
+      // INSERT new rows (bulk upsert via Supabase)
+      if (newRows.length > 0) {
+        const insertPayload = newRows.map(row => {
           const data = {};
-          cfg.fields.forEach(k => { if(k==='username') data[k]=userName||currentUser?.email||''; else if(k==='last_update') data[k]=getTimestamp(); else data[k]=String(row[k]??''); });
-          batch.update(doc(db, cfg.collection, row._existingId), data);
+          cfg.fields.forEach(k => {
+            if (k === 'username') data[k] = currentUsername;
+            else if (k === 'last_update') data[k] = ts;
+            else data[k] = String(row[k] ?? '');
+          });
+          return data;
         });
-        await batch.commit();
+        // Batch in chunks of 500
+        for (let i = 0; i < insertPayload.length; i += 500) {
+          const { error } = await supabase.from(cfg.table).insert(insertPayload.slice(i, i + 500));
+          if (error) throw new Error(error.message);
+        }
       }
+
+      // UPDATE existing rows one by one (or upsert by key)
+      if (updateRows.length > 0) {
+        for (let i = 0; i < updateRows.length; i += 500) {
+          const chunk = updateRows.slice(i, i + 500);
+          const upsertPayload = chunk.map(row => {
+            const data = { id: row._existingId };
+            cfg.fields.forEach(k => {
+              if (k === 'username') data[k] = currentUsername;
+              else if (k === 'last_update') data[k] = ts;
+              else data[k] = String(row[k] ?? '');
+            });
+            return data;
+          });
+          const { error } = await supabase.from(cfg.table).upsert(upsertPayload, { onConflict: 'id' });
+          if (error) throw new Error(error.message);
+        }
+      }
+
       setShowPreview(false); setPreviewRows([]);
-      invalidate(cfg.collection);
+      invalidate(cfg.table);
       await fetchTab(tab);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setImporting(false);
   };
 
+  // ─── CRUD ─────────────────────────────────────────────────────────────────────
+
   const handleNewSave = async () => {
-    const data = { ...form, username: userName||currentUser?.email||'', last_update: getTimestamp() };
-    if (editId) await updateDoc(doc(db, cfg.collection, editId), data);
-    else await addDoc(collection(db, cfg.collection), data);
+    const data = { ...form, username: userName || currentUser?.email || '', last_update: getTimestamp() };
+    if (editId) {
+      const { error } = await supabase.from(cfg.table).update(data).eq('id', editId);
+      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from(cfg.table).insert([data]);
+      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
+    }
     setShowForm(false); setEditId(null); setForm({});
-    invalidate(cfg.collection);
+    invalidate(cfg.table);
     await fetchTab(tab);
   };
 
   const handleDelete = async (id) => {
     if (window.confirm('ต้องการลบรายการนี้?')) {
-      await deleteDoc(doc(db, cfg.collection, id));
+      const { error } = await supabase.from(cfg.table).delete().eq('id', id);
+      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
       setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
-      invalidate(cfg.collection);
+      invalidate(cfg.table);
       await fetchTab(tab);
     }
   };
 
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-    const batch = writeBatch(db);
-    selected.forEach(id => batch.delete(doc(db, cfg.collection, id)));
-    await batch.commit();
+    const { error } = await supabase.from(cfg.table).delete().in('id', selected);
+    if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
     setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-    invalidate(cfg.collection);
+    invalidate(cfg.table);
     await fetchTab(tab);
   };
 
-  const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
+  const handleOpenDetail = (item) => {
+    setDetailItem(item);
+    setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || ''])));
+    setDetailEditMode(false);
+    setShowDetailModal(true);
+  };
 
   const handleDetailSave = async () => {
-    await updateDoc(doc(db, cfg.collection, detailItem.id), {
-      ...detailForm, username: userName||currentUser?.email||'', last_update: getTimestamp()
-    });
+    const data = { ...detailForm, username: userName || currentUser?.email || '', last_update: getTimestamp() };
+    const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
+    if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
     setShowDetailModal(false);
-    invalidate(cfg.collection);
+    invalidate(cfg.table);
     await fetchTab(tab);
   };
+
+  // ─── Filtered / Sorted ───────────────────────────────────────────────────────
 
   const filtered = useMemo(() => items
     .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
-    .sort((a, b) => { const ca = a[sort.field] || '', cb = b[sort.field] || ''; return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); }),
+    .sort((a, b) => {
+      const ca = a[sort.field] || '', cb = b[sort.field] || '';
+      return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca);
+    }),
     [items, search, sort, cfg.fields]);
 
+  // ─── Render helpers ──────────────────────────────────────────────────────────
+
   const statusBadge = (val) => {
-    const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] };
-    const [bg, color] = map[val] || ['#e8e8e8','#555'];
+    const map = { Active: ['#EAF3DE', '#27500A'], Inactive: ['#FCEBEB', '#791F1F'] };
+    const [bg, color] = map[val] || ['#e8e8e8', '#555'];
     return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '20px', fontSize: '10px' }}>{val || '-'}</span>;
   };
 
   const noticeBadge = (val) => {
-    const map = { 'ITC': ['#e8f0fb','#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE','#27500A'], 'EFT': ['#f0f7ff','#0F6E56'], 'C/O': ['#FFF3CD','#856404'], 'C/P': ['#FFF3CD','#856404'], 'TC': ['#f5f5f5','#555'], 'N': ['#f5f5f5','#888'] };
-    const [bg, color] = map[val] || ['#f5f5f5','#555'];
+    const map = { 'ITC': ['#e8f0fb', '#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE', '#27500A'], 'EFT': ['#f0f7ff', '#0F6E56'], 'C/O': ['#FFF3CD', '#856404'], 'C/P': ['#FFF3CD', '#856404'], 'TC': ['#f5f5f5', '#555'], 'N': ['#f5f5f5', '#888'] };
+    const [bg, color] = map[val] || ['#f5f5f5', '#555'];
     return val ? <span style={{ background: bg, color, padding: '2px 7px', borderRadius: '20px', fontSize: '10px' }}>{val}</span> : '-';
   };
 
@@ -401,10 +463,12 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     return item[c.key] || '-';
   };
 
+  // ─── Layout math ────────────────────────────────────────────────────────────
+
   const sidebarW = isMobile ? 0 : 200;
   const paddingW = isMobile ? 24 : 40;
   const actionW = isAdmin ? 70 : 50;
-  const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
+  const minW = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
   const totalW = Math.max(minW, screenWidth - sidebarW - paddingW);
   const extraW = totalW - minW;
   const COLUMNS_SCALED = cfg.columns.map(c => c.key === 'Name' || c.key === 'Description' ? { ...c, w: c.w + Math.min(extraW, 200) } : c);
@@ -431,13 +495,13 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     inputReadonly: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #f0f0f0', fontSize: '12px', width: '100%', marginBottom: '6px', boxSizing: 'border-box', background: '#fafafa', color: '#333' },
     overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
     modal: { background: 'white', borderRadius: '10px', width: isMobile ? '95vw' : '500px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' },
-    iconBtn: (color, bg, border) => ({ background: bg||'none', border: `0.5px solid ${border||color}`, borderRadius: '4px', cursor: 'pointer', padding: '3px 6px', color, fontSize: '12px', lineHeight: 1 }),
+    iconBtn: (color, bg, border) => ({ background: bg || 'none', border: `0.5px solid ${border || color}`, borderRadius: '4px', cursor: 'pointer', padding: '3px 6px', color, fontSize: '12px', lineHeight: 1 }),
   };
 
   const renderColGroup = (columns) => (
     <colgroup>
       <col style={{ width: '36px', minWidth: '36px' }} />
-      {columns.map((c,i) => <col key={i} style={{ width: `${c.w}px`, minWidth: `${c.w}px` }} />)}
+      {columns.map((c, i) => <col key={i} style={{ width: `${c.w}px`, minWidth: `${c.w}px` }} />)}
       <col style={{ width: `${actionW}px`, minWidth: `${actionW}px` }} />
     </colgroup>
   );
@@ -461,6 +525,8 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     </div>
   );
 
+  // ─── Render ───────────────────────────────────────────────────────────────────
+
   return (
     <div style={S.container}>
       <div style={S.topbar}>
@@ -474,7 +540,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
             <button style={{ ...S.btn, background: '#0F6E56', color: 'white' }} onClick={handleDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
             <button style={{ ...S.btn, background: '#5DCAA5', color: '#1a3a5c' }} onClick={() => fileRef.current.click()}>📂{!isMobile && ' Import'}</button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />
-            <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setForm(Object.fromEntries(cfg.edit.map(([k]) => [k,'']))); setEditId(null); setShowForm(true); }}>+ New</button>
+            <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setForm(Object.fromEntries(cfg.edit.map(([k]) => [k, '']))); setEditId(null); setShowForm(true); }}>+ New</button>
           </div>
         )}
       </div>
@@ -531,7 +597,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
                   <td style={S.tdCenter}>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                       <button onClick={() => handleOpenDetail(item)} title="View / Edit" style={S.iconBtn('#1a3a5c')}>🔍</button>
-                      {isAdmin && <button onClick={() => handleDelete(item.id)} style={S.iconBtn('#791F1F','#FCEBEB','#f7c1c1')}>🗑️</button>}
+                      {isAdmin && <button onClick={() => handleDelete(item.id)} style={S.iconBtn('#791F1F', '#FCEBEB', '#f7c1c1')}>🗑️</button>}
                     </div>
                   </td>
                 </tr>
@@ -541,6 +607,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         </div>
       </div>
 
+      {/* New / Edit Modal */}
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -562,6 +629,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         </div>
       )}
 
+      {/* Detail Modal */}
       {showDetailModal && detailItem && (
         <div style={S.overlay}>
           <div style={S.modal}>

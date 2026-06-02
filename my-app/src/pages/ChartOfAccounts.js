@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useDataCache } from '../contexts/DataCacheContext';
@@ -77,7 +76,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
     const m = map[s] || { label: s, bg: '#eee', color: '#333' };
     return <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: '500', background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>{m.label}</span>;
   };
-  const displayFields = allFields.filter(f => !['username','last_update'].includes(f)).slice(0, 5);
+  const displayFields = allFields.filter(f => !['updated_by','updated_at'].includes(f)).slice(0, 5);
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
       <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
@@ -86,7 +85,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
           <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{previewRows.length} รายการในไฟล์</span>
         </div>
         <div style={{ background: '#f8f9fa', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', color: '#666', marginBottom: '12px' }}>
-          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ Username และ Last Update จะถูก Auto ใส่ให้
+          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ
         </div>
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
           {[['new','➕ New','#EAF3DE','#27500A'],['update','🔄 Update','#e8f0fb','#1a3a5c'],['nochange','✅ No Change','#f5f5f5','#666'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404']].map(([key,label,bg,color]) => (
@@ -145,10 +144,16 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
   );
 }
 
+const SUPABASE_TABLE = {
+  CpcList:    'cpc_list',
+  AccountList:'account_list',
+  SubAccList: 'sub_acc_list',
+};
+
 const TAB_CONFIG = {
   costcenter: {
     label: 'Cost Center', icon: '🏷️', collection: 'CpcList', key: 'CPC Code',
-    fields: ['CPC Code','Description','Type','BU','username','last_update'],
+    fields: ['CPC Code','Description','Type','BU','updated_by','updated_at'],
     combo: ['Type','BU'],
     edit: [['CPC Code','CPC Code'],['Description','Description'],['Type','Type'],['BU','BU']],
     columns: [
@@ -156,39 +161,38 @@ const TAB_CONFIG = {
       { key: 'Description', label: 'Description', w: 280 },
       { key: 'Type', label: 'Type', w: 120 },
       { key: 'BU', label: 'BU', sortable: true, w: 120 },
-      { key: 'username', label: 'Username', w: 110 },
-      { key: 'last_update', label: 'Last Update', w: 140 },
+      { key: 'updated_by', label: 'Updated By', w: 110 },
+      { key: 'updated_at', label: 'Updated At', w: 140 },
     ],
-    hasBuFilter: false,
   },
   account: {
     label: 'Account', icon: '📒', collection: 'AccountList', key: 'Acccount',
-fields: ['BU','GL Code','Name','Acccount','Account_Name','Remark','Account Type','username','last_update'],
-combo: ['BU','Account Type'],
-edit: [['BU','BU'],['GL Code','GL Code'],['Name','Name'],['Acccount','Account'],['Account_Name','Account Name'],['Remark','Remark'],['Account Type','Account Type']],
-columns: [
-  { key: 'Acccount', label: 'Account', sortable: true, w: 110 },
-  { key: 'GL Code', label: 'GL Code', sortable: true, w: 100 },
-  { key: 'Name', label: 'Name', w: 240 },
-  { key: 'Account_Name', label: 'Account Name', w: 260 },
-  { key: 'Remark', label: 'Remark', w: 180 },
-],
-    hasBuFilter: true,
+    fields: ['bu','GL Code','Name','Acccount','Account_Name','Remark','Account Type','updated_by','updated_at'],
+    combo: ['bu','Account Type'],
+    edit: [['bu','BU'],['GL Code','GL Code'],['Name','Name'],['Acccount','Account'],['Account_Name','Account Name'],['Remark','Remark'],['Account Type','Account Type']],
+    columns: [
+      { key: 'Acccount', label: 'Account', sortable: true, w: 110 },
+      { key: 'GL Code', label: 'GL Code', sortable: true, w: 100 },
+      { key: 'Account_Name', label: 'Account Name', w: 300, flex: true },
+      { key: 'Remark', label: 'Remark', w: 200, flex: true },
+    ],
   },
   subaccount: {
     label: 'Sub Account', icon: '🔖', collection: 'SubAccList', key: 'Sub Acc Code',
-fields: ['Sub Acc Code','Description','username','last_update'],
-combo: [],
-edit: [['Sub Acc Code','Sub Acc Code'],['Description','Description']],
-columns: [
-  { key: 'Sub Acc Code', label: 'Sub Acc Code', sortable: true, w: 120 },
-  { key: 'Description', label: 'Description', w: 300 },
-  { key: 'username', label: 'Username', w: 110 },
-  { key: 'last_update', label: 'Last Update', w: 140 },
-],
-    hasBuFilter: false,
+    fields: ['Sub Acc Code','Description','updated_by','updated_at'],
+    combo: [],
+    edit: [['Sub Acc Code','Sub Acc Code'],['Description','Description']],
+    columns: [
+      { key: 'Sub Acc Code', label: 'Sub Acc Code', sortable: true, w: 120 },
+      { key: 'Description', label: 'Description', w: 300 },
+      { key: 'updated_by', label: 'Updated By', w: 110 },
+      { key: 'updated_at', label: 'Updated At', w: 140 },
+    ],
   },
 };
+
+// REV = Account ที่มี bu = 'REV'
+const isRevAccount = (item) => item['bu'] === 'REV';
 
 function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'costcenter');
@@ -209,7 +213,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     account: { field: 'Acccount', dir: 'asc' },
     subaccount: { field: 'Sub Acc Code', dir: 'asc' }
   });
-  const [accountBuFilter, setAccountBuFilter] = useState('ALL');
+  // filter bar: 'ALL' | 'REV' | BU value
+  const [accountFilter, setAccountFilter] = useState('ALL');
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({});
@@ -217,7 +222,6 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
   const [detailItem, setDetailItem] = useState(null);
   const [detailEditMode, setDetailEditMode] = useState(false);
   const [detailForm, setDetailForm] = useState({});
-  const [detailError, setDetailError] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [previewRows, setPreviewRows] = useState([]);
   const [importing, setImporting] = useState(false);
@@ -231,8 +235,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
   const search = searchMap[tab] || '';
   const selected = selectedMap[tab] || [];
   const sort = sortMap[tab] || { field: cfg.key, dir: 'asc' };
+  const tableName = (t) => SUPABASE_TABLE[TAB_CONFIG[t].collection];
 
-  // ---- CACHE-BASED FETCH ----
   const fetchTab = useCallback(async (t) => {
     const data = await fetchCollection(TAB_CONFIG[t].collection);
     setDataMap(prev => ({ ...prev, [t]: data }));
@@ -242,42 +246,43 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     fetchTab('costcenter');
     fetchTab('account');
     fetchTab('subaccount');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
-  useEffect(() => { if (tab === 'account') setAccountBuFilter('ALL'); }, [tab]);
+  useEffect(() => { setAccountFilter('ALL'); }, [tab]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
 
+  // BU list สำหรับ account tab — กัน 'ALL' และ 'REV' ออก
   const buList = useMemo(() => {
     if (tab !== 'account') return [];
-    const allBUs = [...new Set(items.map(i => i['BU']).filter(Boolean))];
-    return allBUs.sort((a, b) => { if (a === 'ALL') return -1; if (b === 'ALL') return 1; return a.localeCompare(b); });
+    return [...new Set(items.map(i => i['bu']).filter(v => v && v !== 'ALL' && v !== 'REV'))].sort();
   }, [items, tab]);
 
-  const getTimestamp = () => {
-    const now = new Date();
-    return `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-  };
+  // นับจำนวนแต่ละ filter
+  const filterCounts = useMemo(() => {
+    if (tab !== 'account') return {};
+    const counts = {};
+    items.forEach(i => { const bu = i['bu'] || 'ALL'; counts[bu] = (counts[bu] || 0) + 1; });
+    return counts;
+  }, [items, tab]);
+
   const getFileTimestamp = () => {
     const now = new Date();
     return `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
   };
+
   const formatLastUpdate = (val) => {
     if (!val || val === '-') return '-';
-    if (!isNaN(val) && Number(val) > 40000) {
-      const d = new Date(Math.round((Number(val) - 25569) * 86400 * 1000));
-      return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
-    }
-    try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`; } catch { }
+    try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch { }
     return val;
   };
 
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
 
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
-    const dataFields = allFields.filter(f => !['username','last_update'].includes(f));
+    const dataFields = allFields.filter(f => !['updated_by','updated_at'].includes(f));
     const existingMap = {};
     existingItems.forEach(item => { if (item[keyField]) existingMap[String(item[keyField]).trim()] = item; });
     const seenKeys = new Set();
@@ -306,11 +311,11 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     XLSX.writeFile(wb, `${filePrefix}_${getFileTimestamp()}.xlsx`);
   };
 
-  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
-  const handleExportAll = () => exportToExcel(filtered, cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
+  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['updated_by','updated_at'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
+  const handleExportAll = () => exportToExcel(filtered, cfg.fields.filter(f => !['updated_by','updated_at'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
 
   const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['username','last_update'].includes(f))]);
+    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['updated_by','updated_at'].includes(f))]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, cfg.label);
     XLSX.writeFile(wb, `${cfg.label.replace(/ /g,'')}_Template.xlsx`);
@@ -332,80 +337,71 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     reader.readAsBinaryString(file); e.target.value = '';
   };
 
+  const buildRowData = (row, fields) => {
+    const data = {};
+    fields.forEach(k => {
+      if (k === 'updated_by') data[k] = userName || currentUser?.email || '';
+      else if (k === 'updated_at') data[k] = new Date().toISOString();
+      else data[k] = String(row[k] ?? '');
+    });
+    return data;
+  };
+
   const handleConfirmImport = async () => {
     setImporting(true);
     try {
+      const tbl = tableName(tab);
       if (tab === 'account') {
-        for (let i = 0; i < previewRows.length; i += 500) {
-          const batch = writeBatch(db);
-          previewRows.slice(i,i+500).forEach(row => {
-            const d = doc(collection(db, cfg.collection));
-            const data = {};
-            cfg.fields.forEach(k => {
-              if (k==='username') data[k] = userName||currentUser?.email||'';
-              else if (k==='last_update') data[k] = getTimestamp();
-              else data[k] = String(row[k]??'');
-            });
-            batch.set(d, data);
-          });
-          await batch.commit();
+        const insertData = previewRows.map(row => buildRowData(row, cfg.fields));
+        for (let i = 0; i < insertData.length; i += 500) {
+          const { error } = await supabase.from(tbl).insert(insertData.slice(i, i + 500));
+          if (error) throw error;
         }
-        setShowPreview(false); setPreviewRows([]);
-        invalidate(cfg.collection);
-        await fetchTab(tab);
         alert(`✅ Import สำเร็จ ${previewRows.length} รายการ`);
       } else {
         const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
         const newRows = toProcess.filter(r => r._status === 'new');
         const updateRows = toProcess.filter(r => r._status === 'update');
-        for (let i = 0; i < newRows.length; i += 500) {
-          const batch = writeBatch(db);
-          newRows.slice(i,i+500).forEach(row => {
-            const d = doc(collection(db, cfg.collection));
-            const data = {};
-            cfg.fields.forEach(k => {
-              if(k==='username') data[k]=userName||currentUser?.email||'';
-              else if(k==='last_update') data[k]=getTimestamp();
-              else data[k]=String(row[k]??'');
-            });
-            batch.set(d, data);
-          });
-          await batch.commit();
+        if (newRows.length > 0) {
+          for (let i = 0; i < newRows.length; i += 500) {
+            const { error } = await supabase.from(tbl).insert(newRows.slice(i, i + 500).map(row => buildRowData(row, cfg.fields)));
+            if (error) throw error;
+          }
         }
-        for (let i = 0; i < updateRows.length; i += 500) {
-          const batch = writeBatch(db);
-          updateRows.slice(i,i+500).forEach(row => {
-            const data = {};
-            cfg.fields.forEach(k => {
-              if(k==='username') data[k]=userName||currentUser?.email||'';
-              else if(k==='last_update') data[k]=getTimestamp();
-              else data[k]=String(row[k]??'');
-            });
-            batch.update(doc(db, cfg.collection, row._existingId), data);
-          });
-          await batch.commit();
+        for (const row of updateRows) {
+          const { error } = await supabase.from(tbl).update(buildRowData(row, cfg.fields)).eq('id', row._existingId);
+          if (error) throw error;
         }
-        setShowPreview(false); setPreviewRows([]);
-        invalidate(cfg.collection);
-        await fetchTab(tab);
         alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
       }
+      setShowPreview(false); setPreviewRows([]);
+      invalidate(cfg.collection);
+      await fetchTab(tab);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setImporting(false);
   };
 
   const handleNewSave = async () => {
-    const data = { ...form, username: userName||currentUser?.email||'', last_update: getTimestamp() };
-    if (editId) await updateDoc(doc(db, cfg.collection, editId), data);
-    else await addDoc(collection(db, cfg.collection), data);
-    setShowForm(false); setEditId(null); setForm({});
-    invalidate(cfg.collection);
-    await fetchTab(tab);
+    try {
+      const tbl = tableName(tab);
+      const data = buildRowData(form, cfg.fields);
+      if (editId) {
+        const { error } = await supabase.from(tbl).update(data).eq('id', editId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from(tbl).insert([data]);
+        if (error) throw error;
+      }
+      setShowForm(false); setEditId(null); setForm({});
+      invalidate(cfg.collection);
+      await fetchTab(tab);
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
   const handleDelete = async (id) => {
     if (window.confirm('ต้องการลบรายการนี้?')) {
-      await deleteDoc(doc(db, cfg.collection, id));
+      const { error } = await supabase.from(tableName(tab)).delete().eq('id', id);
+      if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
       setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
       invalidate(cfg.collection);
       await fetchTab(tab);
@@ -414,77 +410,70 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
 
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-    const batch = writeBatch(db);
-    selected.forEach(id => batch.delete(doc(db, cfg.collection, id)));
-    await batch.commit();
+    const { error } = await supabase.from(tableName(tab)).delete().in('id', selected);
+    if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
     setSelectedMap(prev => ({ ...prev, [tab]: [] }));
     invalidate(cfg.collection);
     await fetchTab(tab);
   };
 
-  const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setDetailError(''); setShowDetailModal(true); };
+  const handleOpenDetail = (item) => {
+    setDetailItem(item);
+    setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || ''])));
+    setDetailEditMode(false);
+    setShowDetailModal(true);
+  };
 
   const handleDetailSave = async () => {
-    const data = { ...detailForm, username: userName||currentUser?.email||'', last_update: getTimestamp() };
-    await updateDoc(doc(db, cfg.collection, detailItem.id), data);
-    setShowDetailModal(false);
-    invalidate(cfg.collection);
-    await fetchTab(tab);
+    try {
+      const { error } = await supabase.from(tableName(tab)).update(buildRowData(detailForm, cfg.fields)).eq('id', detailItem.id);
+      if (error) throw error;
+      setShowDetailModal(false);
+      invalidate(cfg.collection);
+      await fetchTab(tab);
+    } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
   };
 
   const filtered = useMemo(() => {
     let result = items;
-    if (tab === 'account' && accountBuFilter) {
-      result = result.filter(i => i['BU'] === accountBuFilter);
+    if (tab === 'account') {
+      if (accountFilter === 'REV') result = result.filter(isRevAccount);
+      else if (accountFilter === 'ALL') result = result.filter(i => i['bu'] === 'ALL');
+      else result = result.filter(i => i['bu'] === accountFilter);
     }
     return result
       .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
       .sort((a, b) => { const ca = a[sort.field] || '', cb = b[sort.field] || ''; return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); });
-  }, [items, search, sort, tab, accountBuFilter, cfg.fields]);
+  }, [items, search, sort, tab, accountFilter, cfg.fields]);
 
-  const buCount = useMemo(() => {
-    const map = {};
-    items.forEach(i => { const bu = i['BU']; if (bu) map[bu] = (map[bu] || 0) + 1; });
-    return map;
-  }, [items]);
-
-  const statusBadge = (val) => {
-    const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] };
-    const [bg, color] = map[val] || ['#e8e8e8','#555'];
-    return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '20px', fontSize: '10px' }}>{val || '-'}</span>;
-  };
   const typeBadge = (val) => {
     const map = { 'Cost Center': ['#FFF3CD','#856404'], 'Expense': ['#e8f0fb','#1a3a5c'], 'Asset': ['#FCEBEB','#791F1F'] };
     const [bg, color] = map[val] || ['#e8e8e8','#555'];
     return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '20px', fontSize: '10px' }}>{val || '-'}</span>;
   };
+
   const renderCell = (c, item) => {
-    if (c.key === 'last_update') return formatLastUpdate(item[c.key]);
-    if (c.key === 'Status') return statusBadge(item[c.key]);
+    if (c.key === 'updated_at') return formatLastUpdate(item[c.key]);
     if (c.key === 'Type') return typeBadge(item[c.key]);
     return item[c.key] || '-';
   };
 
-  const isAllBU = tab === 'account' && accountBuFilter === 'ALL';
   const sidebarW = isMobile ? 0 : 200;
   const paddingW = isMobile ? 24 : 40;
-  const actionW = isAdmin ? 70 : 50;
+  const actionW = isAdmin ? 100 : 80;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
   const totalW = Math.max(minW, screenWidth - sidebarW - paddingW);
   const extraW = totalW - minW;
-  const COLUMNS_SCALED = cfg.columns.map(c =>
-  c.key === 'Description' || c.key === 'Account_Name' || c.key === 'Name' || c.key === 'Remark'
-    ? { ...c, w: c.w + Math.min(extraW / 2, 120) }
-    : c
-);
-
+  const COLUMNS_SCALED = cfg.columns.map(c => {
+    if (c.key === 'Description') return { ...c, w: c.w + Math.min(extraW * 0.6, 200) };
+    if (c.key === 'Account_Name') return { ...c, w: c.w + Math.floor(extraW * 0.6) };
+    if (c.key === 'Remark') return { ...c, w: c.w + Math.floor(extraW * 0.4) };
+    return c;
+  });
   const S = {
     container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box' },
     topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, flexWrap: isMobile ? 'wrap' : 'nowrap', gap: '8px' },
     btn: { padding: isMobile ? '6px 10px' : '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: isMobile ? '12px' : '13px', marginLeft: isMobile ? '4px' : '8px' },
-    tabBar: { display: 'flex', alignItems: 'flex-end', padding: '10px 0 0', flexShrink: 0, borderBottom: '2px solid #e8e8e8' },
-    tab: (active) => ({ padding: isMobile ? '6px 12px' : '8px 18px', fontSize: isMobile ? '12px' : '13px', cursor: 'pointer', color: active ? '#1a3a5c' : '#888', borderBottom: active ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px', borderRadius: '6px 6px 0 0', background: active ? 'white' : 'transparent', fontWeight: active ? '500' : '400', display: 'flex', alignItems: 'center', gap: '4px' }),
-    tabBadge: (active) => ({ background: active ? '#1a3a5c' : '#e8e8e8', color: active ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }),
     outer: { background: 'white', borderRadius: '8px', border: '0.5px solid #e8e8e8', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1 },
     theadWrap: { overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' },
     tbodyWrap: { overflowY: 'auto', overflowX: 'auto', flex: 1 },
@@ -522,7 +511,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
               : <input style={S.input} value={formData[key] || ''} onChange={e => setFormData({ ...formData, [key]: e.target.value })} />
           ) : (
             <div style={S.inputReadonly}>
-              {key === 'Status' ? statusBadge(formData[key]) : key === 'Type' ? typeBadge(formData[key]) : (formData[key] || '-')}
+              {key === 'Type' ? typeBadge(formData[key]) : (formData[key] || '-')}
             </div>
           )}
         </div>
@@ -532,18 +521,20 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
 
   const renderInfoText = () => {
     if (isMobile) return `${filtered.length} รายการ`;
-    const base = tab === 'account' && accountBuFilter ? `BU: ${accountBuFilter} — ${items.filter(i => i['BU'] === accountBuFilter).length} รายการ` : `ทั้งหมด ${items.length} รายการ`;
-    return `${base}${search ? ` | ผลการค้นหา ${filtered.length} รายการ` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`;
+    return `ทั้งหมด ${filtered.length} รายการ${search ? ` | ค้นหา "${search}"` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`;
   };
+
+  // filter tabs สำหรับ account เท่านั้น: ALL | REV | BU...
+  const filterTabs = tab === 'account' ? ['ALL', 'REV', ...buList] : [];
 
   return (
     <div style={S.container}>
       <div style={S.topbar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <h2 style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '600', margin: 0 }}>
-  💰 Chart of Accounts
-  <span style={{ color: '#888', fontWeight: '400', fontSize: isMobile ? '12px' : '14px' }}> — {cfg.label}</span>
-</h2>
+            💰 Chart of Accounts
+            <span style={{ color: '#888', fontWeight: '400', fontSize: isMobile ? '12px' : '14px' }}> — {cfg.label}</span>
+          </h2>
           {isAdmin && selected.length > 0 && <button style={{ ...S.btn, background: '#c0392b', color: 'white', marginLeft: 0 }} onClick={handleBulkDelete}>🗑️{!isMobile && ` ลบ ${selected.length}`}</button>}
           {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
         </div>
@@ -557,41 +548,29 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
         )}
       </div>
 
+      {/* Filter bar: ALL | REV | BU... — เฉพาะ account tab เท่านั้น */}
+      {filterTabs.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'flex-end', padding: '10px 0 0', flexShrink: 0, borderBottom: '2px solid #e8e8e8', overflowX: 'auto' }}>
+          {filterTabs.map(f => (
+            <div key={f} onClick={() => setAccountFilter(f)}
+              style={{ padding: isMobile ? '6px 10px' : '8px 14px', fontSize: isMobile ? '11px' : '12px', cursor: 'pointer', color: accountFilter === f ? '#1a3a5c' : '#888', borderBottom: accountFilter === f ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px', background: accountFilter === f ? 'white' : 'transparent', fontWeight: accountFilter === f ? '500' : '400', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {f}
+              <span style={{ background: accountFilter === f ? '#1a3a5c' : '#e8e8e8', color: accountFilter === f ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>
+                {filterCounts[f] ?? 0}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
-
-{tab === 'account' && buList.length > 0 && (
-  <div style={{ display: 'flex', alignItems: 'flex-end', borderBottom: '2px solid #e8e8e8', flexShrink: 0, flexWrap: 'wrap' }}>
-    {buList.map(bu => (
-      <div key={bu} onClick={() => setAccountBuFilter(bu)}
-        style={{
-          padding: isMobile ? '6px 12px' : '8px 16px',
-          fontSize: isMobile ? '11px' : '12px',
-          cursor: 'pointer',
-          color: accountBuFilter === bu ? '#1a3a5c' : '#888',
-          borderBottom: accountBuFilter === bu ? '2px solid #1a3a5c' : '2px solid transparent',
-          marginBottom: '-2px',
-          borderRadius: '6px 6px 0 0',
-          background: accountBuFilter === bu ? 'white' : 'transparent',
-          fontWeight: accountBuFilter === bu ? '500' : '400',
-          display: 'flex', alignItems: 'center', gap: '4px',
-          whiteSpace: 'nowrap',
-        }}>
-        {bu}
-        <span style={{
-          background: accountBuFilter === bu ? '#1a3a5c' : '#e8e8e8',
-          color: accountBuFilter === bu ? 'white' : '#888',
-          fontSize: '10px', padding: '1px 5px', borderRadius: '20px',
-        }}>
-          {buCount[bu] || 0}
-        </span>
-      </div>
-    ))}
-  </div>
-)}
-
-      <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0', margin: '4px 0', flexShrink: 0, gap: '8px' }}>
-        <input placeholder={isMobile ? 'Search...' : `Search ${cfg.label}...`} value={search} onChange={e => setSearchMap(prev => ({ ...prev, [tab]: e.target.value }))}
-          style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '100%' : isTablet ? '180px' : '240px' }} />
+      {/* Search bar */}
+      <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0', margin: '4px 0', flexShrink: 0, gap: '8px' }}>
+        <input
+          placeholder={isMobile ? 'Search...' : `Search ${cfg.label}...`}
+          value={search}
+          onChange={e => setSearchMap(prev => ({ ...prev, [tab]: e.target.value }))}
+          style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '100%' : isTablet ? '160px' : '220px' }}
+        />
         {!isMobile && <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>{renderInfoText()}</span>}
       </div>
 
@@ -621,7 +600,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
               {filtered.map(item => (
-                <tr key={item.id} style={{ background: selected.includes(item.id) ? '#f0f7ff' : isAllBU ? '#fafafa' : 'white' }}>
+                <tr key={item.id} style={{ background: selected.includes(item.id) ? '#f0f7ff' : 'white' }}>
                   <td style={S.tdCenter}>
                     <input type="checkbox" checked={selected.includes(item.id)}
                       onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].includes(item.id) ? prev[tab].filter(s => s !== item.id) : [...prev[tab], item.id] }))} />
@@ -654,10 +633,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
             </div>
             {renderFormFields(form, setForm, true)}
             <div style={{ padding: '0 20px 16px' }}>
-              <label style={{ fontSize: '11px', color: '#888' }}>Username</label>
+              <label style={{ fontSize: '11px', color: '#888' }}>Updated By</label>
               <input style={S.inputDisabled} value={userName || currentUser?.email || ''} disabled />
-              <label style={{ fontSize: '11px', color: '#888' }}>Last Update</label>
-              <input style={S.inputDisabled} value={getTimestamp()} disabled />
             </div>
           </div>
         </div>
@@ -674,7 +651,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
               <div style={{ display: 'flex', gap: '8px' }}>
                 {detailEditMode ? (
                   <>
-                    <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => { setDetailEditMode(false); setDetailError(''); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || '']))); }}>Cancel</button>
+                    <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => { setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || '']))); }}>Cancel</button>
                     <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleDetailSave}>Save</button>
                   </>
                 ) : <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowDetailModal(false)}>Close</button>}
@@ -684,8 +661,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
             {!detailEditMode && (
               <div style={{ padding: '0 20px 16px', borderTop: '0.5px solid #f0f0f0' }}>
                 <div style={{ display: 'flex', gap: '16px', paddingTop: '12px' }}>
-                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Username</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{detailItem['username'] || '-'}</div></div>
-                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Last Update</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{formatLastUpdate(detailItem['last_update'])}</div></div>
+                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Updated By</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{detailItem['updated_by'] || '-'}</div></div>
+                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Updated At</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{formatLastUpdate(detailItem['updated_at'])}</div></div>
                 </div>
               </div>
             )}
