@@ -31,6 +31,21 @@ function PlaceholderPage({ title, icon }) {
   );
 }
 
+// Logout icon SVG
+const LogoutIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+    <polyline points="16 17 21 12 16 7"/>
+    <line x1="21" y1="12" x2="9" y2="12"/>
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+  </svg>
+);
+
 function MainApp() {
   const [activePage, setActivePage] = useState('ap-controller');
   const [showProfile, setShowProfile] = useState(false);
@@ -38,20 +53,15 @@ function MainApp() {
   const [buOpen, setBuOpen] = useState(false);
   const [coaOpen, setCoaOpen] = useState(false);
   const [vendorOpen, setVendorOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const { currentUser, userRole, userName, logout } = useAuth();
   const screenWidth = useWindowWidth();
-
-  // Auto-collapse sidebar บนจอเล็กกว่า 1400px
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(screenWidth < 1400);
-
-  useEffect(() => {
-    setSidebarCollapsed(screenWidth < 1400);
-  }, [screenWidth]);
 
   if (!currentUser) return <Login />;
 
   const isAdmin = currentUser?.email === 'lekarn@central.co.th';
-  const sidebarW = sidebarCollapsed ? 56 : 200;
+  const expanded = hovered; // ขยายเมื่อ hover เท่านั้น
+  const sidebarW = expanded ? 200 : 56;
 
   const handleProfileIconClick = () => {
     if (isAdmin) setActivePage('users');
@@ -68,9 +78,7 @@ function MainApp() {
 
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-code','vendor-category'];
   const FUNCTION_PAGES = FUNCTION_MENUS.map(m => m.id);
-
   const isMasterActive = MASTER_PAGES.includes(activePage);
-  const isFunctionActive = FUNCTION_PAGES.includes(activePage);
   const isBuActive = ['bu-info','bu-branch'].includes(activePage);
   const isCoaActive = ['coa-costcenter','coa-account','coa-subaccount'].includes(activePage);
   const isVendorActive = ['vendor-code','vendor-category'].includes(activePage);
@@ -99,32 +107,58 @@ function MainApp() {
     }
   };
 
+  // Nav item — icon + label (label ซ่อนเมื่อ collapse)
   const navItem = (id, icon, label, indent = 16) => (
-    <div key={id} onClick={() => setActivePage(id)} title={sidebarCollapsed ? label : ''}
-      style={{ padding: sidebarCollapsed ? '10px 0' : `9px 16px 9px ${indent}px`, cursor: 'pointer', fontSize: '13px', background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', color: activePage === id ? 'white' : 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: sidebarCollapsed ? 'center' : 'flex-start', gap: sidebarCollapsed ? 0 : '8px' }}>
-      <span style={{ fontSize: sidebarCollapsed ? '18px' : '14px' }}>{icon}</span>
-      {!sidebarCollapsed && label}
+    <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
+      style={{
+        padding: expanded ? `9px 16px 9px ${indent}px` : '10px 0',
+        cursor: 'pointer', fontSize: '13px',
+        background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent',
+        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
+        color: activePage === id ? 'white' : 'rgba(255,255,255,0.7)',
+        display: 'flex', alignItems: 'center',
+        justifyContent: expanded ? 'flex-start' : 'center',
+        gap: expanded ? '8px' : 0,
+        whiteSpace: 'nowrap', overflow: 'hidden',
+      }}>
+      <span style={{ fontSize: expanded ? '14px' : '18px', flexShrink: 0 }}>{icon}</span>
+      {expanded && <span>{label}</span>}
     </div>
   );
 
-  const subNavItem = (id, icon, label) => sidebarCollapsed ? (
-    <div key={id} onClick={() => setActivePage(id)} title={label}
-      style={{ padding: '8px 0', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', background: activePage === id ? 'rgba(93,202,165,0.08)' : 'transparent', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent' }}>
-      <span style={{ fontSize: '16px' }}>{icon}</span>
-    </div>
-  ) : (
-    <div key={id} onClick={() => setActivePage(id)}
-      style={{ padding: '7px 16px 7px 44px', cursor: 'pointer', fontSize: '12px', background: activePage === id ? 'rgba(93,202,165,0.08)' : 'transparent', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', color: activePage === id ? '#5DCAA5' : 'rgba(255,255,255,0.55)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-      {icon} {label}
+  const subNavItem = (id, icon, label) => (
+    <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
+      style={{
+        padding: expanded ? '7px 16px 7px 44px' : '8px 0',
+        cursor: 'pointer', fontSize: '12px',
+        background: activePage === id ? 'rgba(93,202,165,0.08)' : 'transparent',
+        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
+        color: activePage === id ? '#5DCAA5' : 'rgba(255,255,255,0.55)',
+        display: 'flex', alignItems: 'center',
+        justifyContent: expanded ? 'flex-start' : 'center',
+        gap: expanded ? '6px' : 0,
+        whiteSpace: 'nowrap', overflow: 'hidden',
+      }}>
+      <span style={{ fontSize: expanded ? '12px' : '16px', flexShrink: 0 }}>{icon}</span>
+      {expanded && <span>{label}</span>}
     </div>
   );
 
   const groupItem = (isActive, isOpen, onClick, icon, label) => (
-    <div onClick={onClick} title={sidebarCollapsed ? label : ''}
-      style={{ padding: sidebarCollapsed ? '10px 0' : '9px 16px 9px 28px', cursor: 'pointer', fontSize: '13px', background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent', borderLeft: isActive ? '3px solid #5DCAA5' : '3px solid transparent', color: isActive ? 'white' : 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: sidebarCollapsed ? 'center' : 'space-between' }}>
-      {sidebarCollapsed
-        ? <span style={{ fontSize: '18px' }}>{icon}</span>
-        : <><span>{icon} {label}</span><span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>{isOpen ? '▾' : '▸'}</span></>
+    <div onClick={onClick} title={!expanded ? label : ''}
+      style={{
+        padding: expanded ? '9px 16px 9px 28px' : '10px 0',
+        cursor: 'pointer', fontSize: '13px',
+        background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
+        borderLeft: isActive ? '3px solid #5DCAA5' : '3px solid transparent',
+        color: isActive ? 'white' : 'rgba(255,255,255,0.7)',
+        display: 'flex', alignItems: 'center',
+        justifyContent: expanded ? 'space-between' : 'center',
+        whiteSpace: 'nowrap', overflow: 'hidden',
+      }}>
+      {expanded
+        ? <><span>{icon} {label}</span><span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>{isOpen ? '▾' : '▸'}</span></>
+        : <span style={{ fontSize: '18px' }}>{icon}</span>
       }
     </div>
   );
@@ -132,114 +166,101 @@ function MainApp() {
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
 
-      {/* Sidebar */}
-      <div style={{ width: `${sidebarW}px`, minWidth: `${sidebarW}px`, background: '#1a3a5c', color: 'white', display: 'flex', flexDirection: 'column', transition: 'width 0.2s ease', overflow: 'hidden' }}>
+      {/* Sidebar — hover to expand */}
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width: `${sidebarW}px`, minWidth: `${sidebarW}px`,
+          background: '#1a3a5c', color: 'white',
+          display: 'flex', flexDirection: 'column',
+          transition: 'width 0.2s ease, min-width 0.2s ease',
+          overflow: 'hidden', position: 'relative', zIndex: 10,
+        }}>
 
-        {/* Logo + Toggle */}
-        <div style={{ padding: sidebarCollapsed ? '12px 0' : '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: sidebarCollapsed ? 'center' : 'space-between' }}>
-          {!sidebarCollapsed && (
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
-              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>Link3ase · System</div>
+        {/* Logo */}
+        <div style={{ padding: expanded ? '16px' : '12px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'flex-start' : 'center', gap: '10px', overflow: 'hidden' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c', flexShrink: 0 }}>
+            {initial}
+          </div>
+          {expanded && (
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: '15px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
+              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Link3ase · System</div>
             </div>
           )}
-          {/* Toggle button */}
-          <button onClick={() => setSidebarCollapsed(c => !c)}
-            title={sidebarCollapsed ? 'ขยาย Sidebar' : 'ย่อ Sidebar'}
-            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', width: '28px', height: '28px', cursor: 'pointer', color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '12px' }}>
-            {sidebarCollapsed ? '▶' : '◀'}
-          </button>
         </div>
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden' }}>
 
-          {!sidebarCollapsed && (
-            <div style={{ padding: '10px 16px', fontSize: '11px', fontWeight: '600', color: isFunctionActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+          {expanded && (
+            <div style={{ padding: '8px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
               Functions
             </div>
           )}
-          {sidebarCollapsed && <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.08)' }} />}
+          {!expanded && <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />}
 
           {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
 
-          <div style={{ margin: '6px 16px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+          <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
 
-          {/* Master Data toggle */}
-          <div onClick={() => setMasterOpen(o => !o)} title={sidebarCollapsed ? 'Master Data' : ''}
-            style={{ padding: sidebarCollapsed ? '10px 0' : '10px 16px', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: sidebarCollapsed ? 'center' : 'space-between', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-            {sidebarCollapsed ? <span style={{ fontSize: '18px' }}>📦</span> : <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>{masterOpen ? '▲' : '▼'}</span></>}
+          {/* Master Data */}
+          <div onClick={() => setMasterOpen(o => !o)} title={!expanded ? 'Master Data' : ''}
+            style={{ padding: expanded ? '10px 16px' : '10px 0', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'space-between' : 'center', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+            {expanded
+              ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>{masterOpen ? '▲' : '▼'}</span></>
+              : <span style={{ fontSize: '18px' }}>📦</span>
+            }
           </div>
 
           {masterOpen && (
             <>
               {groupItem(isBuActive, buOpen, () => { setBuOpen(o => !o); if (!isBuActive) setActivePage('bu-info'); }, '🏢', 'Business Unit')}
-              {buOpen && (
-                <>
-                  {subNavItem('bu-info', '📋', 'Info')}
-                  {subNavItem('bu-branch', '🏪', 'Branch')}
-                </>
-              )}
+              {buOpen && (<>{subNavItem('bu-info', '📋', 'Info')}{subNavItem('bu-branch', '🏪', 'Branch')}</>)}
 
               {groupItem(isCoaActive, coaOpen, () => { setCoaOpen(o => !o); if (!isCoaActive) setActivePage('coa-costcenter'); }, '💰', 'Chart of Accounts')}
-              {coaOpen && (
-                <>
-                  {subNavItem('coa-costcenter', '🏷️', 'Cost Center')}
-                  {subNavItem('coa-account', '📒', 'Account')}
-                  {subNavItem('coa-subaccount', '🔖', 'Sub Account')}
-                </>
-              )}
+              {coaOpen && (<>{subNavItem('coa-costcenter', '🏷️', 'Cost Center')}{subNavItem('coa-account', '📒', 'Account')}{subNavItem('coa-subaccount', '🔖', 'Sub Account')}</>)}
 
               {groupItem(isVendorActive, vendorOpen, () => { setVendorOpen(o => !o); if (!isVendorActive) setActivePage('vendor-code'); }, '👥', 'Vendor Master')}
-              {vendorOpen && (
-                <>
-                  {subNavItem('vendor-code', '🏭', 'Code')}
-                  {subNavItem('vendor-category', '🗂️', 'Category')}
-                </>
-              )}
+              {vendorOpen && (<>{subNavItem('vendor-code', '🏭', 'Code')}{subNavItem('vendor-category', '🗂️', 'Category')}</>)}
 
               {navItem('itemcode', '🔖', 'Item Code', 28)}
             </>
           )}
 
-          <div style={{ margin: '6px 16px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+          <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
           {navItem('upload', '📤', 'Upload & Gen')}
-
         </nav>
 
-        {/* Bottom */}
-        <div style={{ padding: sidebarCollapsed ? '12px 0' : '12px 16px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-          {sidebarCollapsed ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c' }}>{initial}</div>
-              <button onClick={handleProfileIconClick} title={isAdmin ? 'User Management' : 'Profile'}
-                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
-                </svg>
-              </button>
-              <button onClick={logout} title="Logout"
-                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>
-                ⏏
-              </button>
-            </div>
-          ) : (
+        {/* Bottom — user info + logout */}
+        <div style={{ padding: expanded ? '12px 16px' : '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: expanded ? 'stretch' : 'center', gap: '8px' }}>
+          {expanded ? (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c', flexShrink: 0 }}>{initial}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
-                  <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500', marginTop: '1px' }}>{userRole}</div>
+                  <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
                 </div>
                 <button onClick={handleProfileIconClick} title={isAdmin ? 'User Management' : 'Profile'}
-                  style={{ background: activePage === 'users' && isAdmin ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' && isAdmin ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' && isAdmin ? '#5DCAA5' : 'rgba(255,255,255,0.8)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
-                  </svg>
+                  style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <UserIcon />
                 </button>
               </div>
-              <button onClick={logout} style={{ width: '100%', padding: '7px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: 'rgba(255,255,255,0.7)', fontSize: '12px', cursor: 'pointer' }}>
-                Logout
+              <button onClick={logout}
+                style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <LogoutIcon /> Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={handleProfileIconClick} title={isAdmin ? 'User Management' : 'Profile'}
+                style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <UserIcon />
+              </button>
+              <button onClick={logout} title="Logout"
+                style={{ background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: '#e74c3c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <LogoutIcon />
               </button>
             </>
           )}
