@@ -2,11 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { firebaseConfig } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useUserRole } from '../contexts/useUserRole';
 
 const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'];
 
 const DEFAULT_PERMISSIONS = {
+  Owner:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true },
   Admin:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true },
   Editor: { VAT: true, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: true },
   Viewer: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false }
@@ -29,6 +33,7 @@ function UserManagement() {
   const [error, setError] = useState('');
   const [savedId, setSavedId] = useState(null);
   const { currentUser } = useAuth();
+  const { isOwner, isAdmin, isEditor } = useUserRole();
   const auth = getAuth();
 
   const fetchUsers = async () => {
@@ -38,6 +43,12 @@ function UserManagement() {
   };
 
   useEffect(() => { fetchUsers(); }, []);
+
+
+  // เฉพาะ Owner เท่านั้นเข้าได้
+  if (!isOwner) {
+    return <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>⛔ คุณไม่มีสิทธิ์เข้าถึงหน้านี้ครับ</div>;
+  }
 
   const saveUser = async (user) => {
     try {
@@ -68,9 +79,13 @@ function UserManagement() {
 
   const handleAdd = async () => {
     setError('');
+    let secondaryApp = null;
     try {
       const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
-      const result = await createUserWithEmailAndPassword(auth, form.email, form.password);
+      // ใช้ secondary app เพื่อไม่ให้ auto login แทน current user
+      secondaryApp = initializeApp(firebaseConfig, 'secondary-' + Date.now());
+      const secondaryAuth = getAuth(secondaryApp);
+      const result = await createUserWithEmailAndPassword(secondaryAuth, form.email, form.password);
       await addDoc(collection(db, 'User'), {
         uid: result.user.uid, email: form.email, name: form.username,
         usernameLower: form.username.trim().toLowerCase(),
@@ -81,9 +96,13 @@ function UserManagement() {
       fetchUsers();
     } catch (err) {
       setError('เกิดข้อผิดพลาด: ' + err.message);
+    } finally {
+      // ลบ secondary app หลังใช้งาน
+      if (secondaryApp) await deleteApp(secondaryApp);
     }
   };
 
+  // ลบแค่ Firestore — Firebase Auth ต้องลบเองใน Console
   const handleDelete = async () => {
     try {
       await deleteDoc(doc(db, 'User', deleteTarget.id));
@@ -94,18 +113,15 @@ function UserManagement() {
     }
   };
 
-  if (currentUser?.email !== 'lekarn@central.co.th') {
-    return <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>⛔ คุณไม่มีสิทธิ์เข้าถึงหน้านี้ครับ</div>;
-  }
-
-  const roleColor = { Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888' };
+  const roleColor = { Owner: '#27500A', Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888' };
+  const roleBg = { Owner: '#EAF3DE', Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5' };
 
   const S = {
     container: { padding: '20px' },
     topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
     btn: { padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', marginLeft: '8px' },
     wrap: { background: 'white', borderRadius: '8px', overflow: 'auto' },
-    table: { width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '860px' },
+    table: { width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '900px' },
     th: { background: '#1a3a5c', color: 'white', padding: '10px 12px', textAlign: 'center', fontWeight: '500', whiteSpace: 'nowrap' },
     thLeft: { background: '#1a3a5c', color: 'white', padding: '10px 12px', textAlign: 'left', fontWeight: '500' },
     td: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center', verticalAlign: 'middle' },
@@ -137,40 +153,59 @@ function UserManagement() {
             </tr>
           </thead>
           <tbody>
-            {localUsers.map(u => (
-              <tr key={u.id} style={{ background: u.email === currentUser?.email ? '#f8fbff' : 'white' }}>
-                <td style={S.tdLeft}>{u.name || u.usernameLower || '-'}</td>
-                <td style={S.tdLeft}>{u.email}</td>
-                <td style={S.td}>
-                  <select value={u.role || 'Editor'} onChange={e => handleLocalRoleChange(u.id, e.target.value)}
-                    style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', color: roleColor[u.role] || '#333', fontWeight: '500' }}>
-                    <option>Admin</option>
-                    <option>Editor</option>
-                    <option>Viewer</option>
-                  </select>
-                </td>
-                {PERMISSIONS.map(p => {
-                  const val = u.permissions?.[p] ?? false;
-                  return (
-                    <td key={p} style={S.td}>
-                      <button style={val ? S.yes : S.no} onClick={() => handleLocalPermissionChange(u.id, p, !val)}>
-                        {val ? 'Yes' : 'No'}
-                      </button>
-                    </td>
-                  );
-                })}
-                <td style={S.td}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                    {savedId === u.id && <span style={{ fontSize: '11px', color: '#0F6E56' }}>✅</span>}
-                    {u.email !== currentUser?.email && (
-                      <button style={S.iconBtn('#c0392b')} title="ลบ" onClick={() => setDeleteTarget(u)}>
-                        <IconTrash />
-                      </button>
+            {localUsers.map(u => {
+              const isMe = u.email === currentUser?.email;
+              const isTargetOwner = u.role === 'Owner';
+              const canChangeRole = !isMe && !isTargetOwner;
+              const canDelete = !isMe && !isTargetOwner;
+
+              return (
+                <tr key={u.id} style={{ background: isMe ? '#f8fbff' : 'white' }}>
+                  <td style={S.tdLeft}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {u.name || u.usernameLower || '-'}
+                      {isMe && <span style={{ fontSize: '10px', background: '#e8f0fb', color: '#1a3a5c', padding: '1px 6px', borderRadius: '20px' }}>คุณ</span>}
+                    </div>
+                  </td>
+                  <td style={S.tdLeft}>{u.email}</td>
+                  <td style={S.td}>
+                    {canChangeRole ? (
+                      <select value={u.role || 'Editor'} onChange={e => handleLocalRoleChange(u.id, e.target.value)}
+                        style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', color: roleColor[u.role] || '#333', fontWeight: '500', background: roleBg[u.role] || 'white' }}>
+                        <option>Owner</option>
+                        <option>Admin</option>
+                        <option>Editor</option>
+                        <option>Viewer</option>
+                      </select>
+                    ) : (
+                      <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '20px', background: roleBg[u.role] || '#eee', color: roleColor[u.role] || '#333', fontWeight: '500' }}>
+                        {u.role || 'Editor'}
+                      </span>
                     )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  {PERMISSIONS.map(p => {
+                    const val = u.permissions?.[p] ?? false;
+                    return (
+                      <td key={p} style={S.td}>
+                        <button style={val ? S.yes : S.no} onClick={() => handleLocalPermissionChange(u.id, p, !val)}>
+                          {val ? 'Yes' : 'No'}
+                        </button>
+                      </td>
+                    );
+                  })}
+                  <td style={S.td}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                      {savedId === u.id && <span style={{ fontSize: '11px', color: '#0F6E56' }}>✅</span>}
+                      {canDelete && (
+                        <button style={S.iconBtn('#c0392b')} title="ลบ" onClick={() => setDeleteTarget(u)}>
+                          <IconTrash />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -190,6 +225,7 @@ function UserManagement() {
             <div>
               <label style={{ fontSize: '12px', color: '#666' }}>Role</label>
               <select style={S.input} value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
+                <option>Owner</option>
                 <option>Admin</option>
                 <option>Editor</option>
                 <option>Viewer</option>
@@ -216,14 +252,25 @@ function UserManagement() {
       {/* Delete Confirm Modal */}
       {deleteTarget && (
         <div style={S.overlay}>
-          <div style={{ ...S.modal, width: '360px' }}>
+          <div style={{ ...S.modal, width: '380px' }}>
             <h3 style={{ marginBottom: '12px', fontSize: '15px' }}>🗑️ ยืนยันการลบ</h3>
-            <p style={{ fontSize: '13px', color: '#555', marginBottom: '20px' }}>
+            <p style={{ fontSize: '13px', color: '#555', marginBottom: '12px' }}>
               ต้องการลบ <strong>{deleteTarget.name || deleteTarget.usernameLower}</strong> ({deleteTarget.email}) ออกจากระบบใช่ไหมครับ?
             </p>
+            {/* แจ้งเตือนให้ไปลบ Firebase Auth เองด้วย */}
+            <div style={{ background: '#FFF3CD', border: '0.5px solid #FAC775', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#633806' }}>
+              ⚠️ การลบนี้จะลบออกจากระบบเท่านั้น<br/>
+              กรุณาไปลบ <strong>{deleteTarget.email}</strong> ออกจาก <strong>Firebase Console → Authentication</strong> ด้วยครับ
+              <div style={{ marginTop: '6px' }}>
+                <a href="https://console.firebase.google.com" target="_blank" rel="noreferrer"
+                  style={{ fontSize: '11px', color: '#1a3a5c', textDecoration: 'underline' }}>
+                  เปิด Firebase Console →
+                </a>
+              </div>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button style={{ ...S.btn, background: '#f0f0f0' }} onClick={() => setDeleteTarget(null)}>Cancel</button>
-              <button style={{ ...S.btn, background: '#c0392b', color: 'white' }} onClick={handleDelete}>ลบ</button>
+              <button style={{ ...S.btn, background: '#c0392b', color: 'white' }} onClick={handleDelete}>ลบออกจากระบบ</button>
             </div>
           </div>
         </div>
