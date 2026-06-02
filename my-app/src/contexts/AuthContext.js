@@ -19,70 +19,73 @@ export function AuthProvider({ children }) {
     return data;
   };
 
-  const clearCache = () => {
+  const logout = async () => {
     sessionStorage.removeItem('fastapn_cache');
     sessionStorage.removeItem('fastapn_cache_time');
-  };
-
-  const logout = async () => {
-    clearCache();
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    await supabase.auth.signOut();
   };
 
   const fetchUserRole = async (email) => {
     if (!email) { setUserRole(null); setUserName(null); return; }
-    const { data } = await supabase
-      .from('user_roles')
-      .select('role, username')
-      .eq('email', email)
-      .single();
-    setUserRole(data?.role || null);
-    setUserName(data?.username || null);
+    try {
+      const { data } = await supabase
+        .from('user_roles')
+        .select('role, username')
+        .eq('email', email)
+        .single();
+      setUserRole(data?.role || null);
+      setUserName(data?.username || null);
+    } catch {
+      setUserRole(null);
+      setUserName(null);
+    }
   };
 
   useEffect(() => {
-    // ล้าง token เก่าทุกประเภทที่อาจค้างอยู่
+    // ล้าง token เก่า Firebase ที่อาจค้างอยู่
     Object.keys(localStorage).forEach(key => {
-      if (
-        key.startsWith('firebase:') ||
-        key.includes('firebaseLocalStorage') ||
-        (key.includes('supabase') && key !== 'fastapn-auth')
-      ) {
+      if (key.startsWith('firebase:') || key.includes('firebaseLocalStorage')) {
         localStorage.removeItem(key);
       }
     });
 
-    // ดึง session ปัจจุบัน
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) {
-        // session เสียหาย — ล้างแล้ว logout
-        supabase.auth.signOut();
-        setCurrentUser(null);
-        setLoading(false);
-        return;
-      }
+    let mounted = true;
+
+    // Timeout 3 วิ ถ้า loading ยังค้างอยู่
+    const timeout = setTimeout(() => {
+      if (mounted) setLoading(false);
+    }, 3000);
+
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!mounted) return;
       const user = session?.user || null;
       setCurrentUser(user);
-      fetchUserRole(user?.email).finally(() => setLoading(false));
+      await fetchUserRole(user?.email);
+      clearTimeout(timeout);
+      setLoading(false);
     }).catch(() => {
+      if (!mounted) return;
+      clearTimeout(timeout);
       setCurrentUser(null);
       setLoading(false);
     });
 
-    // Subscribe session changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
       const user = session?.user || null;
       setCurrentUser(user);
       await fetchUserRole(user?.email);
-      // clear cache เมื่อ logout หรือ token หมดอายุ
-      if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+      if (event === 'SIGNED_OUT') {
         sessionStorage.removeItem('fastapn_cache');
         sessionStorage.removeItem('fastapn_cache_time');
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const value = { currentUser, userRole, userName, login, logout };
