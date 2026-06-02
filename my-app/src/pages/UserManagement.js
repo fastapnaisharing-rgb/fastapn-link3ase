@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, supabaseAdmin } from '../supabase';
+import { supabase } from '../supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 
@@ -77,13 +77,12 @@ function UserManagement() {
     try {
       const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
 
-      // 1. สร้าง user ใน Supabase Auth ผ่าน supabaseAdmin
-      const { error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email: form.email,
-        password: form.password,
-        email_confirm: true,
+      // 1. สร้าง user ผ่าน Edge Function
+      const { data: fnData, error: authError } = await supabase.functions.invoke('create-user', {
+        body: { email: form.email, password: form.password },
       });
       if (authError) throw authError;
+      if (fnData?.error) throw new Error(fnData.error);
 
       // 2. เพิ่มใน user_roles
       const { error: roleError } = await supabase.from('user_roles').insert([{
@@ -106,13 +105,12 @@ function UserManagement() {
 
   const handleDelete = async () => {
     try {
-      // 1. หา user id จาก Auth แล้วลบ
-      const { data: userData } = await supabaseAdmin.auth.admin.listUsers();
-      const target = userData.users.find(u => u.email === deleteTarget.email);
-      if (target) {
-        const { error: delError } = await supabaseAdmin.auth.admin.deleteUser(target.id);
-        if (delError) throw delError;
-      }
+      // 1. ลบจาก Auth ผ่าน Edge Function
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('delete-user', {
+        body: { email: deleteTarget.email },
+      });
+      if (fnError) throw fnError;
+      if (fnData?.error) throw new Error(fnData.error);
 
       // 2. ลบจาก user_roles
       const { error: roleError } = await supabase.from('user_roles').delete().eq('id', deleteTarget.id);
