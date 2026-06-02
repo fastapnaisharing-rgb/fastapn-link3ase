@@ -1,10 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 
 const AuthContext = createContext();
-const auth = getAuth();
 
 export function useAuth() {
   return useContext(AuthContext);
@@ -16,35 +13,55 @@ export function AuthProvider({ children }) {
   const [userName, setUserName] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const login = (email, password) => {
-    return signInWithEmailAndPassword(auth, email, password);
+  const login = async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    return data;
   };
 
-  const logout = () => {
-    return signOut(auth);
+  const clearCache = () => {
+    sessionStorage.removeItem('fastapn_cache');
+    sessionStorage.removeItem('fastapn_cache_time');
+  };
+
+  const logout = async () => {
+    clearCache();
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+  };
+
+  const fetchUserRole = async (email) => {
+    if (!email) { setUserRole(null); setUserName(null); return; }
+    const { data } = await supabase
+      .from('user_roles')
+      .select('role, username')
+      .eq('email', email)
+      .single();
+    setUserRole(data?.role || null);
+    setUserName(data?.username || null);
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    // ดึง session ปัจจุบัน
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const user = session?.user || null;
       setCurrentUser(user);
-      if (user) {
-        const q = query(collection(db, 'User'), where('uid', '==', user.uid));
-        const querySnap = await getDocs(q);
-        if (!querySnap.empty) {
-          const data = querySnap.docs[0].data();
-          setUserRole(data.role);
-          setUserName(data.name || data.usernameLower || null);
-        } else {
-          setUserRole(null);
-          setUserName(null);
-        }
-      } else {
-        setUserRole(null);
-        setUserName(null);
-      }
-      setLoading(false);
+      fetchUserRole(user?.email).finally(() => setLoading(false));
     });
-    return unsubscribe;
+
+    // Subscribe session changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const user = session?.user || null;
+      setCurrentUser(user);
+      await fetchUserRole(user?.email);
+      // clear cache เมื่อ logout หรือ token หมดอายุ
+      if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+        sessionStorage.removeItem('fastapn_cache');
+        sessionStorage.removeItem('fastapn_cache_time');
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const value = { currentUser, userRole, userName, login, logout };

@@ -5,12 +5,14 @@ const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || 'sb_publish
 const SUPABASE_SERVICE_KEY = process.env.REACT_APP_SUPABASE_SERVICE_KEY || '';
 
 // Public client — ใช้ทั่วทั้งแอป
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { storageKey: 'fastapn-auth' }
+});
 
 // Admin client — ใช้เฉพาะ UserManagement (create/delete auth user)
-// ถ้าไม่มี SERVICE_KEY จะ fallback ใช้ anon key (admin functions จะ fail แต่ build ผ่าน)
+// storageKey แยกกันเพื่อไม่ให้ conflict กับ public client
 export const supabaseAdmin = createClient(
   SUPABASE_URL,
   SUPABASE_SERVICE_KEY || SUPABASE_ANON_KEY,
-  { auth: { autoRefreshToken: false, persistSession: false } }
+  { auth: { autoRefreshToken: false, persistSession: false, storageKey: 'fastapn-admin' } }
 );

@@ -10,6 +10,7 @@ import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
 import Profile from './pages/Profile';
 import './App.css';
+import { useUserRole } from './contexts/useUserRole';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -55,11 +56,12 @@ function MainApp() {
   const [vendorOpen, setVendorOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const { currentUser, userRole, userName, logout } = useAuth();
+  const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
 
   if (!currentUser) return <Login />;
 
-  const isAdmin = currentUser?.email === 'lekarn@central.co.th';
+  const isAdmin = isOwner;
   const expanded = hovered; // ขยายเมื่อ hover เท่านั้น
   const sidebarW = expanded ? 200 : 56;
 

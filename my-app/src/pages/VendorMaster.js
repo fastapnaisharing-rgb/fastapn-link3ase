@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
+import { useUserRole } from '../contexts/useUserRole';
 import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
@@ -190,7 +191,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'code');
   const { currentUser, userName } = useAuth();
   const { fetchCollection, invalidate } = useDataCache();
-  const isAdmin = currentUser?.email === 'lekarn@central.co.th';
+  const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;

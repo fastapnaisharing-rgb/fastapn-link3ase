@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
+import { useUserRole } from '../contexts/useUserRole';
 import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
@@ -198,7 +199,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'costcenter');
   const { currentUser, userName } = useAuth();
   const { fetchCollection, invalidate } = useDataCache();
-  const isAdmin = currentUser?.email === 'lekarn@central.co.th';
+  const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -584,7 +585,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
           />
           {!isMobile && <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>{renderInfoText()}</span>}
         </div>
-        {filtered.length > 0 && (
+        {tab === 'account' && filtered.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#888', marginRight: '4px' }}>
               <select value={pageSize} onChange={e => { setPageSize(e.target.value === 'ทั้งหมด' ? 'ทั้งหมด' : Number(e.target.value)); setPageMap(prev => ({ ...prev, [tab]: 1 })); }}

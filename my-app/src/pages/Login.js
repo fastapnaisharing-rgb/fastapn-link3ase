@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
-import { addDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { supabase } from '../supabase';
 
 function Login() {
   const [mode, setMode] = useState('login');
@@ -20,27 +18,29 @@ function Login() {
   const [forgotInput, setForgotInput] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
   const { login } = useAuth();
-  const auth = getAuth();
+
+  const resolveEmail = async (input) => {
+    const val = input.trim().toLowerCase();
+    if (val.includes('@')) return val;
+    const { data } = await supabase
+      .from('user_roles')
+      .select('email')
+      .eq('username', val)
+      .single();
+    if (!data) throw new Error('ไม่พบ Username นี้ในระบบครับ');
+    return data.email;
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setError('');
-    setLoading(true);
+    setError(''); setLoading(true);
     try {
-      let loginEmail = emailOrUsername.trim().toLowerCase();
-      if (!loginEmail.includes('@')) {
-        const q = query(collection(db, 'User'), where('usernameLower', '==', loginEmail));
-        const snap = await getDocs(q);
-        if (snap.empty) {
-          setError('ไม่พบ Username นี้ในระบบครับ');
-          setLoading(false);
-          return;
-        }
-        loginEmail = snap.docs[0].data().email;
-      }
-      await login(loginEmail, password);
-    } catch {
-      setError('Email/Username หรือ Password ไม่ถูกต้องครับ');
+      const email = await resolveEmail(emailOrUsername);
+      await login(email, password);
+    } catch (err) {
+      setError(err.message === 'ไม่พบ Username นี้ในระบบครับ'
+        ? err.message
+        : 'Email/Username หรือ Password ไม่ถูกต้องครับ');
     }
     setLoading(false);
   };
@@ -53,14 +53,32 @@ function Login() {
     if (username.trim() === '') { setError('กรุณากรอก Username ครับ'); return; }
     setLoading(true);
     try {
-      const dupQ = query(collection(db, 'User'), where('usernameLower', '==', username.trim().toLowerCase()));
-      const dupSnap = await getDocs(dupQ);
-      if (!dupSnap.empty) { setError('Username นี้ถูกใช้งานแล้วครับ'); setLoading(false); return; }
-      const result = await createUserWithEmailAndPassword(auth, email, password);
-      await addDoc(collection(db, 'User'), {
-        uid: result.user.uid, email, name: username.trim(),
-        usernameLower: username.trim().toLowerCase(), pass: password, role: 'Editor'
+      // เช็ค username ซ้ำ
+      const { data: existing } = await supabase
+        .from('user_roles')
+        .select('id')
+        .eq('username', username.trim().toLowerCase())
+        .single();
+      if (existing) { setError('Username นี้ถูกใช้งานแล้วครับ'); setLoading(false); return; }
+
+      // สร้าง user ใน Supabase Auth
+      const { error: authError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
       });
+      if (authError) throw authError;
+
+      // เพิ่มใน user_roles
+      const { error: roleError } = await supabase.from('user_roles').insert([{
+        email: email.trim(),
+        username: username.trim().toLowerCase(),
+        role: 'Viewer',
+        permissions: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false },
+        updated_by: 'signup',
+        updated_at: new Date().toISOString(),
+      }]);
+      if (roleError) throw roleError;
+
       setSuccess('สมัครสมาชิกสำเร็จแล้วครับ! กรุณา Login');
       setMode('login');
       setEmailOrUsername(''); setEmail(''); setPassword(''); setConfirmPassword(''); setUsername('');
@@ -75,19 +93,15 @@ function Login() {
     if (!forgotInput.trim()) { setError('กรุณากรอก Email หรือ Username ครับ'); return; }
     setForgotLoading(true);
     try {
-      let resetEmail = forgotInput.trim().toLowerCase();
-      if (!resetEmail.includes('@')) {
-        const q = query(collection(db, 'User'), where('usernameLower', '==', resetEmail));
-        const snap = await getDocs(q);
-        if (snap.empty) { setError('ไม่พบ Username นี้ในระบบครับ'); setForgotLoading(false); return; }
-        resetEmail = snap.docs[0].data().email;
-      }
-      await sendPasswordResetEmail(auth, resetEmail);
-      setSuccess(`ส่งลิงก์รีเซ็ต Password ไปที่ Email แล้วครับ กรุณาตรวจสอบ Inbox`);
-      setShowForgot(false);
-      setForgotInput('');
+      const resetEmail = await resolveEmail(forgotInput);
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: window.location.origin,
+      });
+      if (error) throw error;
+      setSuccess('ส่งลิงก์รีเซ็ต Password ไปที่ Email แล้วครับ กรุณาตรวจสอบ Inbox');
+      setShowForgot(false); setForgotInput('');
     } catch (err) {
-      setError('ไม่พบ Email นี้ในระบบครับ');
+      setError(err.message === 'ไม่พบ Username นี้ในระบบครับ' ? err.message : 'ไม่พบ Email นี้ในระบบครับ');
     }
     setForgotLoading(false);
   };
@@ -167,7 +181,6 @@ function Login() {
                 {showPassword ? <EyeOpen /> : <EyeClosed />}
               </button>
             </div>
-            {/* ลืม Password */}
             <div style={{ textAlign: 'right', marginBottom: '16px' }}>
               <span onClick={() => { setShowForgot(true); setError(''); setForgotInput(''); }}
                 style={{ fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', textDecoration: 'underline' }}>
@@ -217,7 +230,6 @@ function Login() {
         )}
       </div>
 
-      {/* Forgot Password Modal */}
       {showForgot && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -233,13 +245,9 @@ function Login() {
               placeholder="email@example.com หรือ username"
             />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
-              <button
-                style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#f0f0f0' }}
-                onClick={() => { setShowForgot(false); setError(''); }}>
-                Cancel
-              </button>
-              <button
-                style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#1a3a5c', color: 'white' }}
+              <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#f0f0f0' }}
+                onClick={() => { setShowForgot(false); setError(''); }}>Cancel</button>
+              <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#1a3a5c', color: 'white' }}
                 onClick={handleForgotPassword} disabled={forgotLoading}>
                 {forgotLoading ? 'กำลังส่ง...' : 'ส่ง Email'}
               </button>
