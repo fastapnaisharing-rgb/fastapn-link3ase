@@ -195,7 +195,14 @@ function MainApp() {
         </div>
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden' }}>
+       <nav style={{ 
+            flex: 1, 
+            padding: '8px 0', 
+            overflowY: 'auto', 
+            overflowX: 'hidden', 
+            scrollbarWidth: 'none', 
+            msOverflowStyle: 'none' 
+          }}>
 
           {expanded && (
             <div style={{ padding: '8px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
