@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataCacheProvider } from './contexts/DataCacheContext';
 import Login from './pages/Login';
@@ -20,16 +20,6 @@ function useWindowWidth() {
     return () => window.removeEventListener('resize', h);
   }, []);
   return width;
-}
-
-function useWindowHeight() {
-  const [height, setHeight] = useState(window.innerHeight);
-  useEffect(() => {
-    const h = () => setHeight(window.innerHeight);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
-  return height;
 }
 
 function PlaceholderPage({ title, icon }) {
@@ -64,10 +54,11 @@ function MainApp() {
   const [coaOpen, setCoaOpen] = useState(false);
   const [vendorOpen, setVendorOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [openMenu, setOpenMenu] = useState(null);
+  const sidebarRef = useRef(null);
   const { currentUser, userRole, userName, logout } = useAuth();
   const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
-  const screenHeight = useWindowHeight();
 
   if (!currentUser) return <Login />;
 
@@ -76,15 +67,25 @@ function MainApp() {
   const expanded = isLargeScreen ? true : hovered;
   const sidebarW = expanded ? 200 : 56;
 
-  // คำนวณ padding ตามความสูงหน้าจอ
-  const menuCount = 15;
-  const availableHeight = screenHeight - 120;
-  const itemPadding = Math.max(3, Math.floor(availableHeight / menuCount / 2));
+  const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
+  const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
   const handleProfileIconClick = () => {
     if (isAdmin) setActivePage('users');
     else setShowProfile(true);
   };
+
+  // ปิด Flyout เมื่อคลิกนอก
+  useEffect(() => {
+    if (isLargeScreen) return;
+    const handler = (e) => {
+      if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
+        setOpenMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isLargeScreen]);
 
   const FUNCTION_MENUS = [
     { id: 'ap-controller',   icon: '🧾', label: 'AP Controller' },
@@ -99,9 +100,6 @@ function MainApp() {
   const isBuActive = ['bu-info','bu-branch'].includes(activePage);
   const isCoaActive = ['coa-costcenter','coa-account','coa-subaccount'].includes(activePage);
   const isVendorActive = ['vendor-code','vendor-category'].includes(activePage);
-
-  const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
-  const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
   const renderPage = () => {
     switch (activePage) {
@@ -124,10 +122,11 @@ function MainApp() {
     }
   };
 
+  // ==================== LARGE SCREEN — แบบเดิม ====================
   const navItem = (id, icon, label, indent = 16) => (
     <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
       style={{
-        padding: expanded ? `${itemPadding}px 16px ${itemPadding}px ${indent}px` : `${itemPadding}px 0`,
+        padding: expanded ? `7px 16px 7px ${indent}px` : '8px 0',
         cursor: 'pointer', fontSize: '13px',
         background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -143,153 +142,235 @@ function MainApp() {
   );
 
   const subNavItem = (id, icon, label) => (
-    <div key={id} onClick={() => setActivePage(id)} title={!expanded ? label : ''}
+    <div key={id} onClick={() => setActivePage(id)}
       style={{
-        padding: expanded ? `${Math.max(2, itemPadding - 1)}px 16px ${Math.max(2, itemPadding - 1)}px 44px` : `${Math.max(2, itemPadding - 1)}px 0`,
+        padding: '6px 16px 6px 44px',
         cursor: 'pointer', fontSize: '12px',
         background: activePage === id ? 'rgba(93,202,165,0.08)' : 'transparent',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
         color: activePage === id ? '#5DCAA5' : 'rgba(255,255,255,0.55)',
-        display: 'flex', alignItems: 'center',
-        justifyContent: expanded ? 'flex-start' : 'center',
-        gap: expanded ? '6px' : 0,
+        display: 'flex', alignItems: 'center', gap: '6px',
         whiteSpace: 'nowrap', overflow: 'hidden',
       }}>
-      <span style={{ fontSize: expanded ? '12px' : '16px', flexShrink: 0 }}>{icon}</span>
-      {expanded && <span>{label}</span>}
+      <span style={{ fontSize: '12px', flexShrink: 0 }}>{icon}</span>
+      <span>{label}</span>
     </div>
   );
 
   const groupItem = (isActive, isOpen, onClick, icon, label) => (
-    <div onClick={onClick} title={!expanded ? label : ''}
+    <div onClick={onClick}
       style={{
-        padding: expanded ? `${itemPadding}px 16px ${itemPadding}px 28px` : `${itemPadding}px 0`,
+        padding: '7px 16px 7px 28px',
         cursor: 'pointer', fontSize: '13px',
         background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderLeft: isActive ? '3px solid #5DCAA5' : '3px solid transparent',
         color: isActive ? 'white' : 'rgba(255,255,255,0.7)',
-        display: 'flex', alignItems: 'center',
-        justifyContent: expanded ? 'space-between' : 'center',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         whiteSpace: 'nowrap', overflow: 'hidden',
       }}>
-      {expanded
-        ? <><span>{icon} {label}</span><span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>{isOpen ? '▾' : '▸'}</span></>
-        : <span style={{ fontSize: '18px' }}>{icon}</span>
-      }
+      <span>{icon} {label}</span>
+      <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>{isOpen ? '▾' : '▸'}</span>
     </div>
   );
 
-  return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
+  // ==================== SMALL SCREEN — Flyout ====================
+  const flyoutNavItem = (id, icon, label) => (
+    <div key={id} onClick={() => { setActivePage(id); setOpenMenu(null); }}
+      style={{
+        width: '100%', height: '40px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '18px', cursor: 'pointer',
+        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
+        background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent',
+      }} title={label}>
+      {icon}
+    </div>
+  );
 
-      {/* Sidebar */}
-      <div
-        onMouseEnter={() => !isLargeScreen && setHovered(true)}
-        onMouseLeave={() => !isLargeScreen && setHovered(false)}
-        style={{
-          width: `${sidebarW}px`, minWidth: `${sidebarW}px`,
-          background: '#1a3a5c', color: 'white',
-          display: 'flex', flexDirection: 'column',
-          transition: 'width 0.2s ease, min-width 0.2s ease',
-          overflow: 'hidden', position: 'relative', zIndex: 10,
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-        }}>
-
-        {/* Logo */}
-        <div style={{ padding: expanded ? '16px' : '12px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'flex-start' : 'center', gap: '10px', overflow: 'hidden' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c', flexShrink: 0 }}>
-            {initial}
+  const FlyoutPanel = ({ menuId, title, icon, children }) => (
+    openMenu === menuId ? (
+      <div style={{
+        position: 'absolute', left: '56px', top: 0, bottom: 0,
+        width: '200px', background: 'white',
+        borderRight: '0.5px solid #e8eaf0',
+        zIndex: 20, display: 'flex', flexDirection: 'column',
+        boxShadow: '4px 0 12px rgba(0,0,0,0.08)',
+      }}>
+        <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>{icon}</span> {title}
           </div>
-          {expanded && (
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontSize: '15px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
-              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Link3ase · System</div>
-            </div>
-          )}
         </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+          {children}
+        </div>
+      </div>
+    ) : null
+  );
 
-        {/* Nav */}
-        <nav style={{
-          flex: 1,
-          padding: '4px 0',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-        }}>
+  const fpItem = (id, icon, label) => (
+    <div key={id} onClick={() => { setActivePage(id); setOpenMenu(null); }}
+      style={{
+        padding: '8px 16px', fontSize: '13px', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: '10px',
+        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
+        background: activePage === id ? '#f0faf6' : 'transparent',
+        color: activePage === id ? '#0F6E56' : '#333',
+        fontWeight: activePage === id ? '500' : '400',
+      }}>
+      <span>{icon}</span> {label}
+    </div>
+  );
 
-          {expanded && (
-            <div style={{ padding: `${itemPadding}px 16px`, fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-              Functions
-            </div>
-          )}
-          {!expanded && <div style={{ margin: '3px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />}
+  const fpSub = (id, icon, label) => (
+    <div key={id} onClick={() => { setActivePage(id); setOpenMenu(null); }}
+      style={{
+        padding: '7px 16px 7px 40px', fontSize: '12px', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: '8px',
+        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
+        background: activePage === id ? '#f0faf6' : 'transparent',
+        color: activePage === id ? '#0F6E56' : '#666',
+      }}>
+      <span>{icon}</span> {label}
+    </div>
+  );
 
-          {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
+  const fpGroupHeader = (icon, label) => (
+    <div style={{ padding: '6px 16px', fontSize: '11px', fontWeight: '500', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <span>{icon}</span> {label}
+    </div>
+  );
 
-          <div style={{ margin: '3px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+  const fpDivider = () => (
+    <div style={{ height: '0.5px', background: '#e8eaf0', margin: '6px 16px' }} />
+  );
 
-          {/* Master Data */}
-          <div onClick={() => setMasterOpen(o => !o)} title={!expanded ? 'Master Data' : ''}
-            style={{ padding: expanded ? `${itemPadding}px 16px` : `${itemPadding}px 0`, cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: expanded ? 'space-between' : 'center', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-            {expanded
-              ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>{masterOpen ? '▲' : '▼'}</span></>
-              : <span style={{ fontSize: '18px' }}>📦</span>
-            }
-          </div>
-
-          {masterOpen && (
-            <>
-              {groupItem(isBuActive, buOpen, () => { setBuOpen(o => !o); if (!isBuActive) setActivePage('bu-info'); }, '🏢', 'Business Unit')}
-              {buOpen && (<>{subNavItem('bu-info', '📋', 'Info')}{subNavItem('bu-branch', '🏪', 'Branch')}</>)}
-
-              {groupItem(isCoaActive, coaOpen, () => { setCoaOpen(o => !o); if (!isCoaActive) setActivePage('coa-costcenter'); }, '💰', 'Chart of Accounts')}
-              {coaOpen && (<>{subNavItem('coa-costcenter', '🏷️', 'Cost Center')}{subNavItem('coa-account', '📒', 'Account')}{subNavItem('coa-subaccount', '🔖', 'Sub Account')}</>)}
-
-              {groupItem(isVendorActive, vendorOpen, () => { setVendorOpen(o => !o); if (!isVendorActive) setActivePage('vendor-code'); }, '👥', 'Vendor Master')}
-              {vendorOpen && (<>{subNavItem('vendor-code', '🏭', 'Code')}{subNavItem('vendor-category', '🗂️', 'Category')}</>)}
-
-              {navItem('itemcode', '🔖', 'Item Code', 28)}
-            </>
-          )}
-
-          <div style={{ margin: '3px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-          {navItem('upload', '📤', 'Upload & Gen')}
-        </nav>
-
-        {/* Bottom */}
-        <div style={{ padding: expanded ? '12px 16px' : '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: expanded ? 'stretch' : 'center', gap: '8px' }}>
-          {expanded ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
-                  <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
-                </div>
-                <button onClick={handleProfileIconClick} title={isAdmin ? 'User Management' : 'Profile'}
-                  style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <UserIcon />
-                </button>
+  // ==================== RENDER ====================
+  if (isLargeScreen) {
+    // แบบเดิม — จอใหญ่
+    return (
+      <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
+        <div
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          style={{
+            width: `${sidebarW}px`, minWidth: `${sidebarW}px`,
+            background: '#1a3a5c', color: 'white',
+            display: 'flex', flexDirection: 'column',
+            transition: 'width 0.2s ease, min-width 0.2s ease',
+            overflow: 'hidden', position: 'relative', zIndex: 10,
+            scrollbarWidth: 'none', msOverflowStyle: 'none',
+          }}>
+          <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '10px', overflow: 'hidden' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c', flexShrink: 0 }}>{initial}</div>
+            {expanded && (
+              <div style={{ overflow: 'hidden' }}>
+                <div style={{ fontSize: '15px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
+                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Link3ase · System</div>
               </div>
-              <button onClick={logout}
-                style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                <LogoutIcon /> Logout
-              </button>
-            </>
-          ) : (
-            <>
+            )}
+          </div>
+          <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            {expanded && <div style={{ padding: '8px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Functions</div>}
+            {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
+            <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+            <div onClick={() => setMasterOpen(o => !o)}
+              style={{ padding: '8px 16px', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none', letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+              <span>📦 Master Data</span><span style={{ fontSize: '10px' }}>{masterOpen ? '▲' : '▼'}</span>
+            </div>
+            {masterOpen && (
+              <>
+                {groupItem(isBuActive, buOpen, () => { setBuOpen(o => !o); if (!isBuActive) setActivePage('bu-info'); }, '🏢', 'Business Unit')}
+                {buOpen && (<>{subNavItem('bu-info', '📋', 'Info')}{subNavItem('bu-branch', '🏪', 'Branch')}</>)}
+                {groupItem(isCoaActive, coaOpen, () => { setCoaOpen(o => !o); if (!isCoaActive) setActivePage('coa-costcenter'); }, '💰', 'Chart of Accounts')}
+                {coaOpen && (<>{subNavItem('coa-costcenter', '🏷️', 'Cost Center')}{subNavItem('coa-account', '📒', 'Account')}{subNavItem('coa-subaccount', '🔖', 'Sub Account')}</>)}
+                {groupItem(isVendorActive, vendorOpen, () => { setVendorOpen(o => !o); if (!isVendorActive) setActivePage('vendor-code'); }, '👥', 'Vendor Master')}
+                {vendorOpen && (<>{subNavItem('vendor-code', '🏭', 'Code')}{subNavItem('vendor-category', '🗂️', 'Category')}</>)}
+                {navItem('itemcode', '🔖', 'Item Code', 28)}
+              </>
+            )}
+            <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+            {navItem('upload', '📤', 'Upload & Gen')}
+          </nav>
+          <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
+                <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
+              </div>
               <button onClick={handleProfileIconClick} title={isAdmin ? 'User Management' : 'Profile'}
-                style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <UserIcon />
               </button>
-              <button onClick={logout} title="Logout"
-                style={{ background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: '#e74c3c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <LogoutIcon />
-              </button>
-            </>
-          )}
+            </div>
+            <button onClick={logout}
+              style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <LogoutIcon /> Logout
+            </button>
+          </div>
         </div>
+        <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0 }}>{renderPage()}</div>
+        {showProfile && <Profile onClose={() => setShowProfile(false)} />}
+      </div>
+    );
+  }
+
+  // แบบใหม่ — จอเล็ก Flyout
+  return (
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
+      <div ref={sidebarRef} style={{ position: 'relative', zIndex: 30, display: 'flex' }}>
+
+        {/* Icon Sidebar */}
+        <div style={{
+          width: '56px', minWidth: '56px', background: '#1a3a5c', color: 'white',
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          scrollbarWidth: 'none', msOverflowStyle: 'none',
+        }}>
+          <div style={{ width: '100%', padding: '14px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'center' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c' }}>{initial}</div>
+          </div>
+
+          <div style={{ flex: 1, width: '100%', padding: '8px 0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.3)', letterSpacing: '0.5px', padding: '6px 0 2px' }}>FN</div>
+            {FUNCTION_MENUS.map(m => flyoutNavItem(m.id, m.icon, m.label))}
+            <div style={{ width: '32px', height: '0.5px', background: 'rgba(255,255,255,0.1)', margin: '4px 0' }} />
+            <div onClick={() => setOpenMenu(prev => prev === 'master' ? null : 'master')}
+              style={{ width: '100%', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', cursor: 'pointer', borderLeft: openMenu === 'master' || isMasterActive ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.15)' : isMasterActive ? 'rgba(255,255,255,0.1)' : 'transparent' }}
+              title="Master Data">📦</div>
+            <div style={{ width: '32px', height: '0.5px', background: 'rgba(255,255,255,0.1)', margin: '4px 0' }} />
+            {flyoutNavItem('upload', '📤', 'Upload & Gen')}
+          </div>
+
+          <div style={{ width: '100%', padding: '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <button onClick={handleProfileIconClick} title={isAdmin ? 'User Management' : 'Profile'}
+              style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <UserIcon />
+            </button>
+            <button onClick={logout} title="Logout"
+              style={{ background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: '#e74c3c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <LogoutIcon />
+            </button>
+          </div>
+        </div>
+
+        {/* Flyout Panel — Master Data */}
+        <FlyoutPanel menuId="master" title="Master Data" icon="📦">
+          {fpGroupHeader('🏢', 'Business Unit')}
+          {fpSub('bu-info', '📋', 'Info')}
+          {fpSub('bu-branch', '🏪', 'Branch')}
+          {fpDivider()}
+          {fpGroupHeader('💰', 'Chart of Accounts')}
+          {fpSub('coa-costcenter', '🏷️', 'Cost Center')}
+          {fpSub('coa-account', '📒', 'Account')}
+          {fpSub('coa-subaccount', '🔖', 'Sub Account')}
+          {fpDivider()}
+          {fpGroupHeader('👥', 'Vendor Master')}
+          {fpSub('vendor-code', '🏭', 'Code')}
+          {fpSub('vendor-category', '🗂️', 'Category')}
+          {fpDivider()}
+          {fpItem('itemcode', '🔖', 'Item Code')}
+        </FlyoutPanel>
+
       </div>
 
       {/* Main Content */}
