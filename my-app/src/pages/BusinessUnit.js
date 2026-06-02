@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
+import { useUserRole } from '../contexts/useUserRole';
 import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
@@ -145,8 +146,8 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
 function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'info');
   const { currentUser, userName } = useAuth();
+  const { isOwner, isAdmin, isEditor } = useUserRole();
   const { fetchCollection, invalidate, appendToCache, updateInCache, removeFromCache } = useDataCache();
-  const isAdmin = currentUser?.email === 'lekarn@central.co.th';
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -306,13 +307,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const metaFields = { updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() };
 
-  // ---- CompanyList CRUD (cache-optimized) ----
   const doInfoSave = async (form) => {
     const data = { ...form, ...metaFields };
     if (infoEditId) {
       const { data: updated, error } = await supabase.from('company_list').update(data).eq('id', infoEditId).select().single();
       if (error) throw error;
-      updateInCache('CompanyList', infoEditId, updated); // ← อัปเดต cache ตรงๆ ไม่ re-fetch
+      updateInCache('CompanyList', infoEditId, updated);
       setInfoItems(prev => prev.map(i => i.id === infoEditId ? { ...i, ...updated } : i));
     } else {
       const { data: inserted, error } = await supabase.from('company_list').insert([data]).select().single();
@@ -343,7 +343,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         const chunk = ids.slice(i, i + 500);
         const { error } = await supabase.from('branch_list').update({ '%': rateConfirmData.newRate, ...metaFields }).in('id', chunk);
         if (error) throw error;
-        // อัปเดต cache branch ทีละ id
         chunk.forEach(id => updateInCache('BranchList', id, { '%': rateConfirmData.newRate }));
         setBranches(prev => prev.map(b => chunk.includes(b.id) ? { ...b, '%': rateConfirmData.newRate } : b));
       }
@@ -409,7 +408,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     setInfoImporting(false);
   };
 
-  // ---- BranchList CRUD (cache-optimized) ----
   const handleOpenDetail = (item) => { setBranchDetailItem(item); setBranchDetailForm(Object.fromEntries(BRANCH_EDIT.map(([k]) => [k, item[k] || '']))); setBranchDetailEditMode(false); setBranchDetailError(''); setShowBranchDetail(true); };
 
   const validateBranchForm = (form) => {
@@ -567,7 +565,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   const renderInfoText = () => {
-    if(tab==='info'){if(isMobile)return`${filteredInfo.length} รายการ`;return`ทั้งหมด ${infoItems.length} รายการ${infoSearch?` | ผลการค้นหา ${filteredInfo.length} รายการ`:''}${infoSelected.length>0?` | เลือกอยู่ ${infoSelected.length} รายการ`:''}}`;}
+    if(tab==='info'){if(isMobile)return`${filteredInfo.length} รายการ`;return`ทั้งหมด ${infoItems.length} รายการ${infoSearch?` | ผลการค้นหา ${filteredInfo.length} รายการ`:''}${infoSelected.length>0?` | เลือกอยู่ ${infoSelected.length} รายการ`:''}`;}
     if(isMobile)return`${filteredBranch.length} รายการ`;
     if(isTablet)return`${branches.length} รายการ${branchTaxFilter?' | Filter Tax ID':''}`;
     return`ทั้งหมด ${branches.length} รายการ${branchTaxFilter?` | Filter Tax ID: ${branchTaxFilter} (${filteredBranch.length} รายการ)`:branchSearch?` | ผลการค้นหา ${filteredBranch.length} รายการ`:''}${branchSelected.length>0?` | เลือกอยู่ ${branchSelected.length} รายการ`:''}`;
@@ -605,7 +603,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           {tab==='info'&&infoSelected.length>0&&<ExportDropdown onExportSelected={handleInfoExportSelected} onExportAll={handleInfoExportAll} selectedCount={infoSelected.length} isMobile={isMobile}/>}
           {tab==='branch'&&branchSelected.length>0&&<ExportDropdown onExportSelected={handleBranchExportSelected} onExportAll={handleBranchExportAll} selectedCount={branchSelected.length} isMobile={isMobile}/>}
         </div>
-        {isAdmin&&(
+        {isEditor&&(
           <div style={{ display:'flex', alignItems:'center', gap:isMobile?'4px':'0' }}>
             {tab==='info'?<>
               <button style={{...S.btn,background:'#0F6E56',color:'white'}} onClick={handleInfoDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
@@ -683,7 +681,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                     <td style={S.tdCenter}>
                       <div style={{ display:'inline-flex', alignItems:'center', gap:'4px' }}>
                         {branchTaxIds.has(item['TAX ID'])&&<button onClick={()=>handleFilterByTaxId(item['TAX ID'])} title="Filter Branch" style={S.iconBtn('#1a3a5c')}>🔍</button>}
-                        {isAdmin&&<><button onClick={()=>handleInfoEdit(item)} style={S.iconBtn('#555','#f5f5f5','#ddd')}>✏️</button><button onClick={()=>handleInfoDelete(item.id)} style={S.iconBtn('#791F1F','#FCEBEB','#f7c1c1')}>🗑️</button></>}
+                        {isEditor&&<button onClick={()=>handleInfoEdit(item)} style={S.iconBtn('#555','#f5f5f5','#ddd')}>✏️</button>}
+                        {isAdmin&&<button onClick={()=>handleInfoDelete(item.id)} style={S.iconBtn('#791F1F','#FCEBEB','#f7c1c1')}>🗑️</button>}
                       </div>
                     </td>
                   </tr>
@@ -734,7 +733,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         </div>
       )}
 
-      {/* Info Modal */}
       {showInfoForm&&(
         <div style={S.overlay}><div style={S.modal}>
           <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
@@ -758,13 +756,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         </div></div>
       )}
 
-      {/* Branch Detail Modal */}
       {showBranchDetail&&branchDetailItem&&(
         <div style={S.overlay}><div style={S.modal}>
           <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
             <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
               <span style={{ fontSize:'14px', fontWeight:'500' }}>{branchDetailEditMode?'✏️ Edit Branch':`🔍 ${branchDetailItem['Branch Code']||'Branch Detail'}`}</span>
-              {!branchDetailEditMode&&<button onClick={()=>setBranchDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
+              {!branchDetailEditMode&&isEditor&&<button onClick={()=>setBranchDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
             </div>
             <div style={{ display:'flex', gap:'8px' }}>
               {branchDetailEditMode?(
@@ -785,7 +782,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         </div></div>
       )}
 
-      {/* Branch New Modal */}
       {showBranchNew&&(
         <div style={S.overlay}><div style={S.modal}>
           <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
@@ -799,10 +795,9 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         </div></div>
       )}
 
-      {/* Rate Confirm Modal */}
       {showRateConfirm&&rateConfirmData&&(
         <div style={{...S.overlay,zIndex:1000}}>
-          <div style={{ background:'white', borderRadius:'12px', width:isMobile?'90vw':'420px', padding:'24px', boxShadow:'0 8px 32px rgba(0,0,0,0.15)' }}>
+          <div style={{ background:'white', borderRadius:'12px', width:isMobile?'90vw':'420px', padding:'24px' }}>
             <div style={{ fontSize:'24px', textAlign:'center', marginBottom:'8px' }}>⚠️</div>
             <h3 style={{ fontSize:'15px', fontWeight:'600', textAlign:'center', marginBottom:'16px' }}>ยืนยันการเปลี่ยน VAT Rate</h3>
             <div style={{ background:'#f8f9fa', borderRadius:'8px', padding:'16px', marginBottom:'16px' }}>

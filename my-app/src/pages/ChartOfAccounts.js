@@ -225,6 +225,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
   const [showPreview, setShowPreview] = useState(false);
   const [previewRows, setPreviewRows] = useState([]);
   const [importing, setImporting] = useState(false);
+  const [pageSize, setPageSize] = useState(50);
+  const [pageMap, setPageMap] = useState({ costcenter: 1, account: 1, subaccount: 1 });
 
   const fileRef = useRef(null);
   const theadRef = useRef(null);
@@ -235,6 +237,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
   const search = searchMap[tab] || '';
   const selected = selectedMap[tab] || [];
   const sort = sortMap[tab] || { field: cfg.key, dir: 'asc' };
+  const page = pageMap[tab] || 1;
   const tableName = (t) => SUPABASE_TABLE[TAB_CONFIG[t].collection];
 
   const fetchTab = useCallback(async (t) => {
@@ -251,6 +254,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
 
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
   useEffect(() => { setAccountFilter('ALL'); }, [tab]);
+  useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, accountFilter, search]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
 
@@ -446,6 +450,10 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
       .sort((a, b) => { const ca = a[sort.field] || '', cb = b[sort.field] || ''; return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); });
   }, [items, search, sort, tab, accountFilter, cfg.fields]);
 
+  const effectivePageSize = pageSize === 'ทั้งหมด' || pageSize >= filtered.length ? filtered.length || 1 : pageSize;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
+  const paginated = filtered.slice((page - 1) * effectivePageSize, page * effectivePageSize);
+
   const typeBadge = (val) => {
     const map = { 'Cost Center': ['#FFF3CD','#856404'], 'Expense': ['#e8f0fb','#1a3a5c'], 'Asset': ['#FCEBEB','#791F1F'] };
     const [bg, color] = map[val] || ['#e8e8e8','#555'];
@@ -460,14 +468,14 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
 
   const sidebarW = isMobile ? 0 : 200;
   const paddingW = isMobile ? 24 : 40;
-  const actionW = isAdmin ? 100 : 80;
+  const actionW = isAdmin ? 120 : 90;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
   const totalW = Math.max(minW, screenWidth - sidebarW - paddingW);
   const extraW = totalW - minW;
   const COLUMNS_SCALED = cfg.columns.map(c => {
     if (c.key === 'Description') return { ...c, w: c.w + Math.min(extraW * 0.6, 200) };
-    if (c.key === 'Account_Name') return { ...c, w: c.w + Math.floor(extraW * 0.6) };
-    if (c.key === 'Remark') return { ...c, w: c.w + Math.floor(extraW * 0.4) };
+    if (c.key === 'Account_Name') return { ...c, w: c.w + Math.min(Math.floor(extraW * 0.55), 400) };
+    if (c.key === 'Remark') return { ...c, w: c.w + Math.min(Math.floor(extraW * 0.35), 300) };
     return c;
   });
   const S = {
@@ -521,7 +529,9 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
 
   const renderInfoText = () => {
     if (isMobile) return `${filtered.length} รายการ`;
-    return `ทั้งหมด ${filtered.length} รายการ${search ? ` | ค้นหา "${search}"` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`;
+    const start = (page - 1) * effectivePageSize + 1;
+    const end = Math.min(page * effectivePageSize, filtered.length);
+    return `แสดง ${start}-${end} จาก ${filtered.length} รายการ${search ? ` | ค้นหา "${search}"` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`;
   };
 
   // filter tabs สำหรับ account เท่านั้น: ALL | REV | BU...
@@ -563,15 +573,48 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
         </div>
       )}
 
-      {/* Search bar */}
-      <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0', margin: '4px 0', flexShrink: 0, gap: '8px' }}>
-        <input
-          placeholder={isMobile ? 'Search...' : `Search ${cfg.label}...`}
-          value={search}
-          onChange={e => setSearchMap(prev => ({ ...prev, [tab]: e.target.value }))}
-          style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '100%' : isTablet ? '160px' : '220px' }}
-        />
-        {!isMobile && <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>{renderInfoText()}</span>}
+      {/* Search bar + Pagination */}
+      <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0', margin: '4px 0', flexShrink: 0, gap: '8px', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <input
+            placeholder={isMobile ? 'Search...' : `Search ${cfg.label}...`}
+            value={search}
+            onChange={e => setSearchMap(prev => ({ ...prev, [tab]: e.target.value }))}
+            style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '120px' : isTablet ? '160px' : '220px' }}
+          />
+          {!isMobile && <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>{renderInfoText()}</span>}
+        </div>
+        {filtered.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#888', marginRight: '4px' }}>
+              <select value={pageSize} onChange={e => { setPageSize(e.target.value === 'ทั้งหมด' ? 'ทั้งหมด' : Number(e.target.value)); setPageMap(prev => ({ ...prev, [tab]: 1 })); }}
+                style={{ padding: '3px 6px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white', cursor: 'pointer' }}>
+                {[10,25,50,100,'ทั้งหมด'].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {!isMobile && <span>รายการ/หน้า</span>}
+            </div>
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: 1 }))} disabled={page === 1}
+              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === 1 ? '#f5f5f5' : 'white', cursor: page === 1 ? 'default' : 'pointer', fontSize: '12px', color: page === 1 ? '#ccc' : '#555' }}>«</button>
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: prev[tab] - 1 }))} disabled={page === 1}
+              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === 1 ? '#f5f5f5' : 'white', cursor: page === 1 ? 'default' : 'pointer', fontSize: '12px', color: page === 1 ? '#ccc' : '#555' }}>‹</button>
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              let p;
+              if (totalPages <= 5) p = i + 1;
+              else if (page <= 3) p = i + 1;
+              else if (page >= totalPages - 2) p = totalPages - 4 + i;
+              else p = page - 2 + i;
+              return (
+                <button key={p} onClick={() => setPageMap(prev => ({ ...prev, [tab]: p }))}
+                  style={{ padding: '3px 9px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === p ? '#1a3a5c' : 'white', color: page === p ? 'white' : '#555', cursor: 'pointer', fontSize: '12px', fontWeight: page === p ? '500' : '400' }}>{p}</button>
+              );
+            })}
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: prev[tab] + 1 }))} disabled={page === totalPages}
+              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === totalPages ? '#f5f5f5' : 'white', cursor: page === totalPages ? 'default' : 'pointer', fontSize: '12px', color: page === totalPages ? '#ccc' : '#555' }}>›</button>
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: totalPages }))} disabled={page === totalPages}
+              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === totalPages ? '#f5f5f5' : 'white', cursor: page === totalPages ? 'default' : 'pointer', fontSize: '12px', color: page === totalPages ? '#ccc' : '#555' }}>»</button>
+            <span style={{ fontSize: '12px', color: '#888', marginLeft: '2px', whiteSpace: 'nowrap' }}>{page} / {totalPages}</span>
+          </div>
+        )}
       </div>
 
       <div style={S.outer}>
@@ -599,7 +642,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
           <table style={{ ...S.table, width: `${totalW}px` }}>
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
-              {filtered.map(item => (
+              {paginated.map(item => (
                 <tr key={item.id} style={{ background: selected.includes(item.id) ? '#f0f7ff' : 'white' }}>
                   <td style={S.tdCenter}>
                     <input type="checkbox" checked={selected.includes(item.id)}
