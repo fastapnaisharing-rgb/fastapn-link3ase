@@ -197,7 +197,7 @@ function MainApp() {
         <nav style={{
           flex: 1,
           padding: '8px 0',
-          overflowY: 'auto',
+          overflowY: 'scroll',
           overflowX: 'hidden',
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',
