@@ -70,7 +70,7 @@ function MainApp() {
   if (!currentUser) return <Login />;
 
   const isAdmin = isOwner;
-  const isLargeScreen = screenWidth >= 1200;
+  const isLargeScreen = true;;
 
   const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
   const initial = (userName || currentUser.email || '?')[0].toUpperCase();
