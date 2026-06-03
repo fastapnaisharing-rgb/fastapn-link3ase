@@ -244,6 +244,8 @@ function RecycleBinTab({ currentUser, userName }) {
 function UserManagement() {
   const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [filterRole, setFilterRole] = useState('');
   const [binCount, setBinCount] = useState(0);
   const [showForm, setShowForm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -252,6 +254,15 @@ function UserManagement() {
   const [savedId, setSavedId] = useState(null);
   const { currentUser, userName } = useAuth();
   const { isOwner } = useUserRole();
+
+  const filteredUsers = users.filter(u => {
+    const matchSearch = !userSearch || (
+      u.username?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      u.email?.toLowerCase().includes(userSearch.toLowerCase())
+    );
+    const matchRole = !filterRole || u.role === filterRole;
+    return matchSearch && matchRole;
+  });
 
   const fetchUsers = async () => {
     const ROLE_ORDER = { Owner: 1, Admin: 2, Editor: 3, Viewer: 4 };
@@ -382,6 +393,30 @@ function UserManagement() {
 
       {/* Users tab */}
       {tab === 'users' && (
+        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 6px', flexWrap: 'wrap' }}>
+          <input
+            placeholder="Search username, email..."
+            value={userSearch}
+            onChange={e => setUserSearch(e.target.value)}
+            style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: '220px' }}
+          />
+          <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
+            style={{ padding: '5px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white', cursor: 'pointer' }}>
+            <option value=''>Role ทั้งหมด</option>
+            <option value='Owner'>Owner</option>
+            <option value='Admin'>Admin</option>
+            <option value='Editor'>Editor</option>
+            <option value='Viewer'>Viewer</option>
+          </select>
+          {(userSearch || filterRole) && (
+            <button onClick={() => { setUserSearch(''); setFilterRole(''); }}
+              style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>
+              ✕ ล้าง
+            </button>
+          )}
+          <span style={{ fontSize: '12px', color: '#888' }}>{filteredUsers.length} / {users.length} คน</span>
+        </div>
         <div style={{ background: 'white', borderRadius: '0 0 8px 8px', overflow: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '900px' }}>
             <thead>
@@ -394,7 +429,7 @@ function UserManagement() {
               </tr>
             </thead>
             <tbody>
-              {users.map(u => {
+              {filteredUsers.map(u => {
                 const isMe = u.email === currentUser?.email;
                 const isTargetOwner = u.role === 'Owner';
                 const canChangeRole = !isMe && !isTargetOwner;
@@ -447,6 +482,7 @@ function UserManagement() {
               })}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 
