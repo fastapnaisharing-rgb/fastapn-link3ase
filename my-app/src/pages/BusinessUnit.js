@@ -192,7 +192,20 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const theadRef = useRef(null);
   const tbodyRef = useRef(null);
+  const containerRef = useRef(null);
+  const [containerW, setContainerW] = useState(0);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
+
+  // ✅ FIX: ResizeObserver เพื่อ measure container width จริงๆ
+  useEffect(() => {
+    if (!containerRef.current) return;
+    setContainerW(containerRef.current.getBoundingClientRect().width);
+    const observer = new ResizeObserver(entries => {
+      setContainerW(entries[0].contentRect.width);
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const INFO_FIELDS = ['bu','THAI COMPANY NAME','ENGLISH COMPANY NAME','TAX ID','PREPARE BY','DEPARTMENT','COMPANY CODE','VAT %','Last Rate (%)','BOOK','SEGMENT3','AP GRT Control','updated_by','updated_at'];
   const INFO_KEY = 'TAX ID';
@@ -519,49 +532,58 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const getInfoOptions = (field) => [...new Set(infoItems.map(i => i[field]||'').filter(v=>v))];
   const getBranchOptions = (field) => [...new Set(branches.map(i => i[field]||'').filter(v=>v))];
 
-  const renderColGroup = (columns, hasCheck, actionW) => (<colgroup>{hasCheck && <col style={{ width:'36px',minWidth:'36px' }}/>}{columns.map((c,i)=><col key={i} style={{ width:`${c.w}px`,minWidth:`${c.w}px` }}/>)}<col style={{ width:`${actionW}px`,minWidth:`${actionW}px` }}/></colgroup>);
+  // ✅ FIX: renderColGroup ใช้ containerW แทน screenWidth
+  const renderColGroup = (columns, hasCheck, actionW) => (
+    <colgroup>
+      {hasCheck && <col style={{ width:'36px', minWidth:'36px' }}/>}
+      {columns.map((c,i) => <col key={i} style={{ width:`${c.w}px`, minWidth:`${c.w}px` }}/>)}
+      <col style={{ width:`${actionW}px`, minWidth:`${actionW}px` }}/>
+    </colgroup>
+  );
 
   const statusBadge = (val) => {
     const map = { Active:['#EAF3DE','#27500A'], Closed:['#FCEBEB','#791F1F'], Relocate:['#FFF3CD','#856404'] };
     const [bg,color] = map[val]||['#e8e8e8','#555'];
-    return <span style={{ background:bg,color,padding:'2px 8px',borderRadius:'20px',fontSize:'10px' }}>{val||'-'}</span>;
+    return <span style={{ background:bg, color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>{val||'-'}</span>;
   };
 
-  const sidebarW = isMobile?0:200, paddingW = isMobile?24:40;
-  const branchActionW = isAdmin?70:50;
-  const minBranchW = 36+BRANCH_COLUMNS.reduce((s,c)=>s+c.w,0)+branchActionW;
-  const branchTotalW = Math.max(minBranchW, screenWidth-sidebarW-paddingW);
-  const branchExtraW = branchTotalW-minBranchW;
-  const BRANCH_COLUMNS_SCALED = BRANCH_COLUMNS.map(c=>c.key==='Company for Show in Report Display'?{...c,w:c.w+Math.min(branchExtraW,150)}:c);
-  const infoBaseActionW = 110;
-  const minInfoW = 36+INFO_COLUMNS.reduce((s,c)=>s+c.w,0)+infoBaseActionW;
-  const infoTotalW = Math.max(minInfoW, screenWidth-sidebarW-paddingW);
-  const infoActionW = infoBaseActionW+(infoTotalW-minInfoW);
+  // ✅ FIX: คำนวณ width จาก containerW แทน screenWidth - sidebarW - paddingW
+  const branchActionW = isAdmin ? (56 * 2) + 20 : 56 + 20;
+  const minBranchW = 36 + BRANCH_COLUMNS.reduce((s,c) => s+c.w, 0) + branchActionW;
+  const branchTotalW = containerW > 0 ? Math.max(minBranchW, containerW) : minBranchW;
+
+  // ✅ FIX: Info action ตามจำนวนปุ่ม — branchTaxIds ปุ่ม + edit + delete
+  const infoActionW = isAdmin ? (56 * 3) + 20 : isEditor ? (56 * 2) + 20 : 56 + 20;
+  const minInfoW = 36 + INFO_COLUMNS.reduce((s,c) => s+c.w, 0) + infoActionW;
+  const infoTotalW = containerW > 0 ? Math.max(minInfoW, containerW) : minInfoW;
 
   const S = {
-    container:{ padding:isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box' },
-    topbar:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0', flexShrink:0, flexWrap:isMobile?'wrap':'nowrap', gap:'8px' },
-    btn:{ padding:isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize:isMobile?'12px':'13px', marginLeft:isMobile?'4px':'8px' },
-    tabBar:{ display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
-    tab:(active)=>({ padding:isMobile?'6px 12px':'8px 20px', fontSize:isMobile?'12px':'13px', cursor:'pointer', color:active?'#1a3a5c':'#888', borderBottom:active?'2px solid #1a3a5c':'2px solid transparent', marginBottom:'-2px', borderRadius:'6px 6px 0 0', background:active?'white':'transparent', fontWeight:active?'500':'400', display:'flex', alignItems:'center', gap:'4px' }),
-    tabBadge:(active)=>({ background:active?'#1a3a5c':'#e8e8e8', color:active?'white':'#888', fontSize:'10px', padding:'1px 5px', borderRadius:'20px' }),
-    outer:{ background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1 },
-    theadWrap:{ overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
-    tbodyWrap:{ overflowY:'auto', overflowX:'auto', flex:1 },
-    table:{ borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
-    th:{ background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
-    thSort:{ background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', cursor:'pointer', userSelect:'none', overflow:'hidden', textOverflow:'ellipsis' },
-    thCheck:{ background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', width:'36px' },
-    thAction:{ background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', fontWeight:'500' },
-    td:{ padding:'7px 10px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
-    tdCenter:{ padding:'6px 8px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', textAlign:'center' },
-    input:{ padding:'7px 10px', borderRadius:'6px', border:'1px solid #ddd', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box' },
-    inputDisabled:{ padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
-    inputReadonly:{ padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
-    overlay:{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-    modal:{ background:'white', borderRadius:'10px', width:isMobile?'95vw':'520px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
-    pageBtn:(active,disabled)=>({ padding:'3px 7px', borderRadius:'5px', border:'0.5px solid #ddd', fontSize:'11px', cursor:disabled?'default':'pointer', background:active?'#1a3a5c':'white', color:disabled?'#ccc':active?'white':'#555', minWidth:'26px', textAlign:'center' }),
-    iconBtn:(color,bg,border)=>({ background:bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
+    // ✅ FIX: minWidth:0 + overflow:hidden
+    container: { padding:isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth: 0, overflow: 'hidden' },
+    topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0', flexShrink:0, flexWrap:isMobile?'wrap':'nowrap', gap:'8px' },
+    btn: { padding:isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize:isMobile?'12px':'13px', marginLeft:isMobile?'4px':'8px' },
+    tabBar: { display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
+    tab: (active) => ({ padding:isMobile?'6px 12px':'8px 20px', fontSize:isMobile?'12px':'13px', cursor:'pointer', color:active?'#1a3a5c':'#888', borderBottom:active?'2px solid #1a3a5c':'2px solid transparent', marginBottom:'-2px', borderRadius:'6px 6px 0 0', background:active?'white':'transparent', fontWeight:active?'500':'400', display:'flex', alignItems:'center', gap:'4px' }),
+    tabBadge: (active) => ({ background:active?'#1a3a5c':'#e8e8e8', color:active?'white':'#888', fontSize:'10px', padding:'1px 5px', borderRadius:'20px' }),
+    // ✅ FIX: minWidth:0
+    outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1, minWidth: 0 },
+    theadWrap: { overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
+    // ✅ FIX: minWidth:0
+    tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1, minWidth: 0 },
+    table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
+    th: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
+    thSort: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', cursor:'pointer', userSelect:'none', overflow:'hidden', textOverflow:'ellipsis' },
+    thCheck: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', width:'36px' },
+    thAction: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', fontWeight:'500' },
+    td: { padding:'7px 10px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'0' },
+    tdCenter: { padding:'6px 8px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', textAlign:'center' },
+    input: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #ddd', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box' },
+    inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
+    inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
+    overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
+    modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'520px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
+    pageBtn: (active,disabled) => ({ padding:'3px 7px', borderRadius:'5px', border:'0.5px solid #ddd', fontSize:'11px', cursor:disabled?'default':'pointer', background:active?'#1a3a5c':'white', color:disabled?'#ccc':active?'white':'#555', minWidth:'26px', textAlign:'center' }),
+    iconBtn: (color,bg,border) => ({ background:bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
   };
 
   const renderInfoText = () => {
@@ -655,10 +677,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       </div>
 
       {tab==='info'?(
-        <div style={S.outer}>
-          <div ref={theadRef} style={{...S.theadWrap,msOverflowStyle:'none'}}>
-            <table style={{...S.table,width:`${infoTotalW}px`}}>
-              {renderColGroup(INFO_COLUMNS,true,infoActionW)}
+        <div ref={containerRef} style={S.outer}>
+          <div ref={theadRef} style={{...S.theadWrap, msOverflowStyle:'none'}}>
+            <table style={{...S.table, width:`${infoTotalW}px`}}>
+              {renderColGroup(INFO_COLUMNS, true, infoActionW)}
               <thead><tr>
                 <th style={S.thCheck}><input type="checkbox" checked={filteredInfo.length>0&&infoSelected.length===filteredInfo.length} onChange={()=>setInfoSelected(infoSelected.length===filteredInfo.length?[]:filteredInfo.map(i=>i.id))}/></th>
                 {INFO_COLUMNS.map(c=>(
@@ -670,9 +692,9 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               </tr></thead>
             </table>
           </div>
-          <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
-            <table style={{...S.table,width:`${infoTotalW}px`}}>
-              {renderColGroup(INFO_COLUMNS,true,infoActionW)}
+          <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
+            <table style={{...S.table, width:`${infoTotalW}px`}}>
+              {renderColGroup(INFO_COLUMNS, true, infoActionW)}
               <tbody>
                 {filteredInfo.map(item=>(
                   <tr key={item.id} style={{ background:infoSelected.includes(item.id)?'#f0f7ff':'white' }}>
@@ -692,13 +714,13 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           </div>
         </div>
       ):(
-        <div style={S.outer}>
-          <div ref={theadRef} style={{...S.theadWrap,msOverflowStyle:'none'}}>
-            <table style={{...S.table,width:`${branchTotalW}px`}}>
-              {renderColGroup(BRANCH_COLUMNS_SCALED,true,branchActionW)}
+        <div ref={containerRef} style={S.outer}>
+          <div ref={theadRef} style={{...S.theadWrap, msOverflowStyle:'none'}}>
+            <table style={{...S.table, width:`${branchTotalW}px`}}>
+              {renderColGroup(BRANCH_COLUMNS, true, branchActionW)}
               <thead><tr>
                 <th style={S.thCheck}><input type="checkbox" checked={pagedBranch.length>0&&pagedBranch.every(i=>branchSelected.includes(i.id))} onChange={()=>{const ids=pagedBranch.map(i=>i.id);const all=ids.every(id=>branchSelected.includes(id));setBranchSelected(all?branchSelected.filter(id=>!ids.includes(id)):[...new Set([...branchSelected,...ids])]);}} /></th>
-                {BRANCH_COLUMNS_SCALED.map(c=>(
+                {BRANCH_COLUMNS.map(c=>(
                   <th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>{if(branchSortField===c.key)setBranchSortDir(d=>d==='asc'?'desc':'asc');else{setBranchSortField(c.key);setBranchSortDir('asc');}}:undefined}>
                     {c.label}{c.sortable?(branchSortField===c.key?(branchSortDir==='asc'?' ▲':' ▼'):' ↕'):''}
                   </th>
@@ -707,14 +729,14 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               </tr></thead>
             </table>
           </div>
-          <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
-            <table style={{...S.table,width:`${branchTotalW}px`}}>
-              {renderColGroup(BRANCH_COLUMNS_SCALED,true,branchActionW)}
+          <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
+            <table style={{...S.table, width:`${branchTotalW}px`}}>
+              {renderColGroup(BRANCH_COLUMNS, true, branchActionW)}
               <tbody>
                 {pagedBranch.map(item=>(
                   <tr key={item.id} style={{ background:branchSelected.includes(item.id)?'#f0f7ff':'white' }}>
                     <td style={S.tdCenter}><input type="checkbox" checked={branchSelected.includes(item.id)} onChange={()=>setBranchSelected(prev=>prev.includes(item.id)?prev.filter(s=>s!==item.id):[...prev,item.id])}/></td>
-                    {BRANCH_COLUMNS_SCALED.map(c=>(
+                    {BRANCH_COLUMNS.map(c=>(
                       <td key={c.key} style={S.td} title={item[c.key]||''}>
                         {c.key==='status'?statusBadge(item[c.key]):(item[c.key]||'-')}
                       </td>
