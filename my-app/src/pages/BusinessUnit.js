@@ -266,12 +266,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const fetchInfo = useCallback(async () => {
     const data = await fetchCollection('CompanyList');
-    setInfoItems(data);
+    setInfoItems((data || []).filter(i => !i.deleted));
   }, [fetchCollection]);
 
   const fetchBranch = useCallback(async () => {
     const data = await fetchCollection('BranchList');
-    setBranches(data);
+    setBranches((data || []).filter(b => !b.deleted));
   }, [fetchCollection]);
 
   useEffect(() => { fetchInfo(); fetchBranch(); }, []); // eslint-disable-line
@@ -366,22 +366,41 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleInfoEdit = (item) => { const f = {}; INFO_EDIT.forEach(([k]) => { f[k] = item[k] || ''; }); setInfoForm(f); setInfoEditId(item.id); setShowInfoForm(true); };
 
   const handleInfoDelete = async (id) => {
-    if (window.confirm('ต้องการลบรายการนี้?')) {
-      const { error } = await supabase.from('company_list').delete().eq('id', id);
-      if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
+    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    try {
+      const item = infoItems.find(i => i.id === id);
+      await supabase.from('recycle_bin').insert([{
+        source_table: 'company_list',
+        source_id: id,
+        source_key: item?.['TAX ID'] || id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: new Date().toISOString(),
+      }]);
+      const { error } = await supabase.from('company_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
       removeFromCache('CompanyList', id);
       setInfoItems(prev => prev.filter(i => i.id !== id));
       setInfoSelected(p => p.filter(s => s !== id));
-    }
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleInfoBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${infoSelected.length} รายการ?`)) return;
-    const { error } = await supabase.from('company_list').delete().in('id', infoSelected);
-    if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
-    infoSelected.forEach(id => removeFromCache('CompanyList', id));
-    setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
-    setInfoSelected([]);
+    try {
+      const now = new Date().toISOString();
+      const bins = infoItems.filter(i => infoSelected.includes(i.id)).map(item => ({
+        source_table: 'company_list', source_id: item.id,
+        source_key: item['TAX ID'] || item.id, data: item,
+        deleted_by: userName || currentUser?.email || '', deleted_at: now,
+      }));
+      if (bins.length) await supabase.from('recycle_bin').insert(bins);
+      const { error } = await supabase.from('company_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', infoSelected);
+      if (error) throw error;
+      infoSelected.forEach(id => removeFromCache('CompanyList', id));
+      setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
+      setInfoSelected([]);
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleInfoDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([INFO_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'CompanyList'); XLSX.writeFile(wb, 'CompanyList_Template.xlsx'); };
@@ -451,22 +470,41 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   const handleBranchDelete = async (id) => {
-    if (window.confirm('ต้องการลบรายการนี้?')) {
-      const { error } = await supabase.from('branch_list').delete().eq('id', id);
-      if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
+    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    try {
+      const item = branches.find(b => b.id === id);
+      await supabase.from('recycle_bin').insert([{
+        source_table: 'branch_list',
+        source_id: id,
+        source_key: item?.['Branch Code'] || id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: new Date().toISOString(),
+      }]);
+      const { error } = await supabase.from('branch_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
       removeFromCache('BranchList', id);
       setBranches(prev => prev.filter(b => b.id !== id));
       setBranchSelected(p => p.filter(s => s !== id));
-    }
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleBranchBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${branchSelected.length} รายการ?`)) return;
-    const { error } = await supabase.from('branch_list').delete().in('id', branchSelected);
-    if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
-    branchSelected.forEach(id => removeFromCache('BranchList', id));
-    setBranches(prev => prev.filter(b => !branchSelected.includes(b.id)));
-    setBranchSelected([]);
+    try {
+      const now = new Date().toISOString();
+      const bins = branches.filter(b => branchSelected.includes(b.id)).map(item => ({
+        source_table: 'branch_list', source_id: item.id,
+        source_key: item['Branch Code'] || item.id, data: item,
+        deleted_by: userName || currentUser?.email || '', deleted_at: now,
+      }));
+      if (bins.length) await supabase.from('recycle_bin').insert(bins);
+      const { error } = await supabase.from('branch_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', branchSelected);
+      if (error) throw error;
+      branchSelected.forEach(id => removeFromCache('BranchList', id));
+      setBranches(prev => prev.filter(b => !branchSelected.includes(b.id)));
+      setBranchSelected([]);
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleBranchDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([BRANCH_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'BranchList'); XLSX.writeFile(wb, 'BranchList_Template.xlsx'); };
