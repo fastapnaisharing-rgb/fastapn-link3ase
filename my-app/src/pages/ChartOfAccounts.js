@@ -478,7 +478,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const actionW = isAdmin ? 120 : 90;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
-  const totalW = containerW > 0 ? Math.max(minW, containerW) : minW;
+  const maxScaleW = minW + 600;
+  const totalW = containerW > 0 ? Math.min(Math.max(minW, containerW), maxScaleW) : minW;
   const extraW = totalW - minW;
   const COLUMNS_SCALED = cfg.columns.map(c => {
     if (c.key === 'Description') return { ...c, w: c.w + Math.min(extraW * 0.6, 200) };
