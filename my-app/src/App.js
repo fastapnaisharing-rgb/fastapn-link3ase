@@ -149,9 +149,9 @@ function MainApp() {
       case 'i-pro-interface': return <PlaceholderPage title="I-Pro Interface" icon="🔗" />;
       case 'bu-info':         return <BusinessUnit activeSubTab="info" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
       case 'bu-branch':       return <BusinessUnit activeSubTab="branch" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
-      case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter" onSubTabChange={sub => setActivePage(`coa-${sub}`)} />;
-      case 'coa-account':     return <ChartOfAccounts activeSubTab="account" onSubTabChange={sub => setActivePage(`coa-${sub}`)} />;
-      case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount" onSubTabChange={sub => setActivePage(`coa-${sub}`)} />;
+      case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'coa-account':     return <ChartOfAccounts activeSubTab="account" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'vendor-code':     return <VendorMaster activeSubTab="code" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} />;
       case 'vendor-category': return <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} />;
       case 'itemcode':        return <ItemCodeList />;
@@ -323,7 +323,7 @@ function MainApp() {
             onMouseLeave={handleMouseLeave}
             style={{
               position: 'absolute', left: '56px', top: 0, bottom: 0,
-              width: '200px', background: 'white',
+              width: '180px', background: 'white',
               borderRight: '0.5px solid #e8eaf0',
               zIndex: 20, display: 'flex', flexDirection: 'column',
               boxShadow: '4px 0 12px rgba(0,0,0,0.08)',
@@ -352,14 +352,7 @@ function MainApp() {
       </div>
 
       {/* Main Content */}
-      <div style={{ 
-          flex: 1, 
-          overflow: 'auto', 
-          background: '#f5f5f5', 
-          minWidth: 0,
-          marginLeft: openMenu === 'master' ? '200px' : '0',
-          transition: 'margin-left 0.2s ease'
-        }}>
+      <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: openMenu === 'master' ? '180px' : '0', transition: 'margin-left 0.2s ease' }}>
         {renderPage()}
       </div>
 

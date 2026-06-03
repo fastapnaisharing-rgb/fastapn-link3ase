@@ -194,7 +194,7 @@ const TAB_CONFIG = {
 
 const isRevAccount = (item) => item['bu'] === 'REV';
 
-function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
+function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [tab, setTab] = useState(activeSubTab || 'costcenter');
   const { currentUser, userName } = useAuth();
   const { fetchCollection, invalidate } = useDataCache();
@@ -463,8 +463,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     return item[c.key] || '-';
   };
 
-  // แก้ sidebarW ให้ถูกต้องตามขนาดจอ
-  const sidebarW = screenWidth >= 1200 ? 200 : 56;
+  // แก้ sidebarW ให้ถูกต้องตามขนาดจอ + Flyout
+  const sidebarW = (screenWidth >= 1200 ? 200 : 56) + (flyoutOpen ? 180 : 0);
   const paddingW = isMobile ? 24 : 40;
   const actionW = isAdmin ? 120 : 90;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
