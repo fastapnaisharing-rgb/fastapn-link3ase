@@ -476,7 +476,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     return item[c.key] || '-';
   };
 
-  const actionW = isAdmin ? 120 : 90;
+  const actionW = isAdmin ? (56 * 2) + 20 : 56 + 20;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
   const totalW = containerW > 0 ? Math.max(minW, containerW) : minW;
   const COLUMNS_SCALED = cfg.columns.map(c => c);
