@@ -33,11 +33,11 @@
   to { transform: rotate(360deg); }
 }
 
+/* ซ่อน scrollbar ทั่วทั้ง app */
 * {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-
 *::-webkit-scrollbar {
   display: none;
 }
@@ -46,8 +46,28 @@ nav {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
 }
-
 nav::-webkit-scrollbar {
   display: none !important;
   width: 0 !important;
+}
+
+/* ✅ Custom scrollbar เล็กๆ สำหรับ table body */
+.table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #c5ccd6 transparent;
+}
+.table-scroll::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+  display: block;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: #c5ccd6;
+  border-radius: 3px;
+}
+.table-scroll::-webkit-scrollbar-thumb:hover {
+  background: #8896a8;
 }
