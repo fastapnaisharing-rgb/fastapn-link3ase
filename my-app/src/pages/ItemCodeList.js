@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -59,40 +58,35 @@ function ItemCodeList() {
   const { currentUser, userName } = useAuth();
 
   const [form, setForm] = useState({
-    '2Itemcode': '', 'bu': '', 'description': '',
-    'cpc': '', 'account': '', 'sub': '', 'dis_g': '', 'I & G': '',
-    'value': '', 'oth': '', 'SPI-1': '', 'spec_tx': '', 'keyword': ''
+    itemcode2: '', bu: '', description: '',
+    cpc: '', account: '', sub: '', dis_g: '', i_and_g: '',
+    value: '', oth: '', spi1: '', spec_tx: '', keyword: ''
   });
 
-  const FIELDS = [
-    'Code', '2Itemcode', 'bu', 'description', 'cpc', 'account',
-    'sub', 'dis_g', 'I & G', 'value', 'oth', 'SPI-1',
-    'spec_tx', 'keyword', 'username', 'last_update'
-  ];
-
-  const COMBO_FIELDS = ['bu', 'sub', 'dis_g', 'I & G', 'value', 'oth', 'SPI-1', 'spec_tx'];
-  const DASH_FIELDS = ['dis_g', 'I & G', 'value', 'oth', 'SPI-1', 'spec_tx'];
+  const FIELDS = ['code', 'itemcode2', 'bu', 'description', 'cpc', 'account', 'sub', 'dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx', 'keyword', 'username', 'last_update'];
+  const COMBO_FIELDS = ['bu', 'sub', 'dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
+  const DASH_FIELDS = ['dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
 
   const EDIT_FIELDS = [
-    ['2Itemcode', '2Itemcode'], ['bu', 'BU'], ['description', 'Description'],
+    ['itemcode2', '2Itemcode'], ['bu', 'BU'], ['description', 'Description'],
     ['cpc', 'CPC'], ['account', 'Account'], ['sub', 'SUB'], ['dis_g', 'Dis-G'],
-    ['I & G', 'I&G'], ['value', 'VALUE'], ['oth', 'OTH'], ['SPI-1', 'SPI-1'],
+    ['i_and_g', 'I&G'], ['value', 'VALUE'], ['oth', 'OTH'], ['spi1', 'SPI-1'],
     ['spec_tx', 'SPEC-TX'], ['keyword', 'Keyword'],
   ];
 
   const COLUMNS = [
-    { key: 'Code', label: 'Code', sortable: true },
-    { key: '2Itemcode', label: '2Itemcode' },
+    { key: 'code', label: 'Code', sortable: true },
+    { key: 'itemcode2', label: '2Itemcode' },
     { key: 'bu', label: 'BU' },
     { key: 'description', label: 'Description' },
     { key: 'cpc', label: 'CPC' },
     { key: 'account', label: 'Account' },
     { key: 'sub', label: 'SUB' },
     { key: 'dis_g', label: 'Dis-G' },
-    { key: 'I & G', label: 'I&G' },
+    { key: 'i_and_g', label: 'I&G' },
     { key: 'value', label: 'VALUE' },
     { key: 'oth', label: 'OTH' },
-    { key: 'SPI-1', label: 'SPI-1' },
+    { key: 'spi1', label: 'SPI-1' },
     { key: 'spec_tx', label: 'SPEC-TX' },
     { key: 'keyword', label: 'Keyword' },
     { key: 'username', label: 'Username' },
@@ -100,15 +94,15 @@ function ItemCodeList() {
   ];
 
   const fetchData = async () => {
-    const snap = await getDocs(collection(db, 'ItemcodeList'));
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    setItems(data);
-    computeNextCode(data);
+    const { data } = await supabase.from('itemcode_list').select('*').order('code');
+    const result = data || [];
+    setItems(result);
+    computeNextCode(result);
   };
 
   const computeNextCode = (data) => {
     const nums = data
-      .map(d => d['Code'] || '')
+      .map(d => d.code || '')
       .filter(c => /^C\d{7}$/.test(c))
       .map(c => parseInt(c.replace('C', ''), 10))
       .sort((a, b) => a - b);
@@ -121,7 +115,7 @@ function ItemCodeList() {
 
   const getCodePool = (data) => {
     const nums = data
-      .map(d => d['Code'] || '')
+      .map(d => d.code || '')
       .filter(c => /^C\d{7}$/.test(c))
       .map(c => parseInt(c.replace('C', ''), 10))
       .sort((a, b) => a - b);
@@ -142,9 +136,9 @@ function ItemCodeList() {
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v && v !== '-'))];
 
   const resetForm = () => setForm({
-    '2Itemcode': '', 'bu': '', 'description': '',
-    'cpc': '', 'account': '', 'sub': '', 'dis_g': '', 'I & G': '',
-    'value': '', 'oth': '', 'SPI-1': '', 'spec_tx': '', 'keyword': ''
+    itemcode2: '', bu: '', description: '',
+    cpc: '', account: '', sub: '', dis_g: '', i_and_g: '',
+    value: '', oth: '', spi1: '', spec_tx: '', keyword: ''
   });
 
   const getTimestamp = () => {
@@ -155,9 +149,9 @@ function ItemCodeList() {
   const handleSave = async () => {
     const updatedForm = { ...form, username: userName || currentUser?.email || '', last_update: getTimestamp() };
     if (editId) {
-      await updateDoc(doc(db, 'ItemcodeList', editId), updatedForm);
+      await supabase.from('itemcode_list').update(updatedForm).eq('id', editId);
     } else {
-      await addDoc(collection(db, 'ItemcodeList'), { ...updatedForm, 'Code': nextCode });
+      await supabase.from('itemcode_list').insert([{ ...updatedForm, code: nextCode }]);
     }
     setShowForm(false);
     setEditId(null);
@@ -167,13 +161,13 @@ function ItemCodeList() {
 
   const handleEdit = (item) => {
     setForm({
-      '2Itemcode': item['2Itemcode'] || '', 'bu': item['bu'] || '',
-      'description': item['description'] || '', 'cpc': item['cpc'] || '',
-      'account': item['account'] || '', 'sub': item['sub'] || '',
-      'dis_g': item['dis_g'] || '', 'I & G': item['I & G'] || '',
-      'value': item['value'] || '', 'oth': item['oth'] || '',
-      'SPI-1': item['SPI-1'] || '', 'spec_tx': item['spec_tx'] || '',
-      'keyword': item['keyword'] || ''
+      itemcode2: item.itemcode2 || '', bu: item.bu || '',
+      description: item.description || '', cpc: item.cpc || '',
+      account: item.account || '', sub: item.sub || '',
+      dis_g: item.dis_g || '', i_and_g: item.i_and_g || '',
+      value: item.value || '', oth: item.oth || '',
+      spi1: item.spi1 || '', spec_tx: item.spec_tx || '',
+      keyword: item.keyword || ''
     });
     setEditId(item.id);
     setShowForm(true);
@@ -181,7 +175,7 @@ function ItemCodeList() {
 
   const handleDelete = async (id) => {
     if (window.confirm('ต้องการลบรายการนี้?')) {
-      await deleteDoc(doc(db, 'ItemcodeList', id));
+      await supabase.from('itemcode_list').delete().eq('id', id);
       setSelected(prev => prev.filter(s => s !== id));
       fetchData();
     }
@@ -189,9 +183,7 @@ function ItemCodeList() {
 
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการที่เลือก?`)) return;
-    const batch = writeBatch(db);
-    selected.forEach(id => batch.delete(doc(db, 'ItemcodeList', id)));
-    await batch.commit();
+    await supabase.from('itemcode_list').delete().in('id', selected);
     setSelected([]);
     fetchData();
   };
@@ -199,21 +191,8 @@ function ItemCodeList() {
   const toggleSelect = (id) => setSelected(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
   const toggleSelectAll = () => setSelected(selected.length === filtered.length ? [] : filtered.map(i => i.id));
 
-  const formatLastUpdate = (val) => {
-    if (!val || val === '-') return '-';
-    if (!isNaN(val) && Number(val) > 40000) {
-      const d = new Date(Math.round((Number(val) - 25569) * 86400 * 1000));
-      return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
-    }
-    try {
-      const d = new Date(val);
-      if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
-    } catch { }
-    return val;
-  };
-
   const handleDownloadTemplate = () => {
-    const templateFields = FIELDS.filter(f => !['Code', 'username', 'last_update'].includes(f));
+    const templateFields = ['itemcode2', 'bu', 'description', 'cpc', 'account', 'sub', 'dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx', 'keyword'];
     const ws = XLSX.utils.aoa_to_sheet([templateFields]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'ItemcodeList');
@@ -240,27 +219,25 @@ function ItemCodeList() {
       const getNextCode = getCodePool(items);
       const BATCH_SIZE = 500;
       for (let i = 0; i < previewData.length; i += BATCH_SIZE) {
-        const batch = writeBatch(db);
-        previewData.slice(i, i + BATCH_SIZE).forEach(row => {
-          const newDoc = doc(collection(db, 'ItemcodeList'));
-          const data = {};
-          FIELDS.forEach(k => {
-            if (k === 'Code') {
-              data[k] = getNextCode();
-            } else if (k === 'username') {
-              data[k] = userName || currentUser?.email || '';
-            } else if (k === 'last_update') {
-              data[k] = getTimestamp();
-            } else if (DASH_FIELDS.includes(k)) {
-              const val = String(row[k] ?? '').trim();
-              data[k] = val === '' ? '-' : val;
-            } else {
-              data[k] = String(row[k] ?? '');
-            }
-          });
-          batch.set(newDoc, data);
-        });
-        await batch.commit();
+        const batch = previewData.slice(i, i + BATCH_SIZE).map(row => ({
+          code: getNextCode(),
+          itemcode2: String(row['itemcode2'] ?? row['2Itemcode'] ?? ''),
+          bu: String(row['bu'] ?? ''),
+          description: String(row['description'] ?? ''),
+          cpc: String(row['cpc'] ?? ''),
+          account: String(row['account'] ?? ''),
+          sub: String(row['sub'] ?? ''),
+          dis_g: String(row['dis_g'] ?? '').trim() || '-',
+          i_and_g: String(row['i_and_g'] ?? row['I & G'] ?? '').trim() || '-',
+          value: String(row['value'] ?? '').trim() || '-',
+          oth: String(row['oth'] ?? '').trim() || '-',
+          spi1: String(row['spi1'] ?? row['SPI-1'] ?? '').trim() || '-',
+          spec_tx: String(row['spec_tx'] ?? '').trim() || '-',
+          keyword: String(row['keyword'] ?? ''),
+          username: userName || currentUser?.email || '',
+          last_update: getTimestamp(),
+        }));
+        await supabase.from('itemcode_list').insert(batch);
       }
       setShowPreview(false);
       setPreviewData([]);
@@ -274,15 +251,15 @@ function ItemCodeList() {
 
   const filtered = items
     .filter(i =>
-      i['Code']?.toLowerCase().includes(search.toLowerCase()) ||
-      i['description']?.toLowerCase().includes(search.toLowerCase()) ||
-      i['bu']?.toLowerCase().includes(search.toLowerCase()) ||
-      i['account']?.includes(search) ||
-      i['cpc']?.includes(search) ||
-      i['keyword']?.toLowerCase().includes(search.toLowerCase())
+      i.code?.toLowerCase().includes(search.toLowerCase()) ||
+      i.description?.toLowerCase().includes(search.toLowerCase()) ||
+      i.bu?.toLowerCase().includes(search.toLowerCase()) ||
+      i.account?.includes(search) ||
+      i.cpc?.includes(search) ||
+      i.keyword?.toLowerCase().includes(search.toLowerCase())
     )
     .sort((a, b) => {
-      const ca = a['Code'] || '', cb = b['Code'] || '';
+      const ca = a.code || '', cb = b.code || '';
       return sortDir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca);
     });
 
@@ -355,7 +332,7 @@ function ItemCodeList() {
                 </td>
                 {COLUMNS.map(c => (
                   <td key={c.key} style={S.td} title={item[c.key] || ''}>
-                    {c.key === 'last_update' ? formatLastUpdate(item[c.key]) : (item[c.key] || '-')}
+                    {item[c.key] || '-'}
                   </td>
                 ))}
                 <td style={S.tdCenter}>
@@ -368,7 +345,6 @@ function ItemCodeList() {
         </table>
       </div>
 
-      {/* New / Edit Modal */}
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -381,7 +357,7 @@ function ItemCodeList() {
             </div>
             <div style={{ padding: '16px 24px', overflowY: 'auto', flex: 1 }}>
               <label style={{ fontSize: '12px', color: '#666' }}>Code</label>
-              <input style={S.inputDisabled} value={editId ? (items.find(i => i.id === editId)?.['Code'] || '') : nextCode} disabled />
+              <input style={S.inputDisabled} value={editId ? (items.find(i => i.id === editId)?.code || '') : nextCode} disabled />
               {EDIT_FIELDS.map(([key, label]) => (
                 <div key={key}>
                   <label style={{ fontSize: '12px', color: '#666' }}>{label}</label>
@@ -401,7 +377,6 @@ function ItemCodeList() {
         </div>
       )}
 
-      {/* Preview Import Modal */}
       {showPreview && (
         <div style={S.overlay}>
           <div style={S.previewModal}>
@@ -415,15 +390,13 @@ function ItemCodeList() {
             <div style={{ overflow: 'auto', flex: 1, marginBottom: '16px' }}>
               <table style={{ ...S.table, minWidth: '1200px' }}>
                 <thead>
-                  <tr>{FIELDS.filter(f => !['Code', 'username', 'last_update'].includes(f)).map(f => <th key={f} style={S.th}>{f}</th>)}</tr>
+                  <tr>{['itemcode2','bu','description','cpc','account','sub','dis_g','i_and_g','value','oth','spi1','spec_tx','keyword'].map(f => <th key={f} style={S.th}>{f}</th>)}</tr>
                 </thead>
                 <tbody>
                   {previewData.slice(0, 50).map((row, i) => (
                     <tr key={i}>
-                      {FIELDS.filter(f => !['Code', 'username', 'last_update'].includes(f)).map(f => (
-                        <td key={f} style={S.td} title={String(row[f] ?? '')}>
-                          {String(row[f] ?? '') || '-'}
-                        </td>
+                      {['itemcode2','bu','description','cpc','account','sub','dis_g','i_and_g','value','oth','spi1','spec_tx','keyword'].map(f => (
+                        <td key={f} style={S.td}>{String(row[f] ?? row[f.replace('_','& ')] ?? '') || '-'}</td>
                       ))}
                     </tr>
                   ))}

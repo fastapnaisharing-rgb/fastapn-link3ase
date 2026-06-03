@@ -1,8 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
-import { getAuth, updatePassword, updateEmail, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
+import { supabase } from '../supabase';
 
 function Profile({ onClose }) {
   const { currentUser } = useAuth();
@@ -17,19 +15,18 @@ function Profile({ onClose }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const [userDocId, setUserDocId] = useState(null);
   const [currentUsername, setCurrentUsername] = useState('');
 
   React.useEffect(() => {
     const fetchUser = async () => {
-      const q = query(collection(db, 'User'), where('uid', '==', currentUser.uid));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const data = snap.docs[0].data();
-        setCurrentUsername(data.name || data.usernameLower || '');
-        setUsername(data.name || data.usernameLower || '');
-        setUserDocId(snap.docs[0].id);
-        if (data.avatar) setAvatarPreview(data.avatar);
+      const { data } = await supabase
+        .from('user_roles')
+        .select('username')
+        .eq('email', currentUser?.email)
+        .single();
+      if (data) {
+        setCurrentUsername(data.username || '');
+        setUsername(data.username || '');
       }
     };
     fetchUser();
@@ -55,27 +52,27 @@ function Profile({ onClose }) {
       setError('Password ต้องมีอย่างน้อย 6 ตัวอักษรครับ');
       return;
     }
-    if ((newPassword || email !== currentUser.email) && !currentPassword) {
-      setError('กรุณากรอก Password ปัจจุบันเพื่อยืนยันครับ');
-      return;
-    }
     setLoading(true);
     try {
-      if (currentPassword) {
-        const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
-        await reauthenticateWithCredential(currentUser, credential);
+      // เปลี่ยน Password
+      if (newPassword) {
+        const { error: pwError } = await supabase.auth.updateUser({ password: newPassword });
+        if (pwError) throw pwError;
       }
-      if (newPassword) await updatePassword(currentUser, newPassword);
-      if (email !== currentUser.email) await updateEmail(currentUser, email);
-      if (userDocId) {
-        await updateDoc(doc(db, 'User', userDocId), {
-          name: username,
-          usernameLower: username.trim().toLowerCase(),
-          email,
-          ...(newPassword && { pass: newPassword }),
-          ...(avatarPreview && { avatar: avatarPreview })
-        });
+
+      // เปลี่ยน Email
+      if (email !== currentUser?.email) {
+        const { error: emailError } = await supabase.auth.updateUser({ email });
+        if (emailError) throw emailError;
       }
+
+      // อัปเดต Username ใน user_roles
+      const { error: roleError } = await supabase
+        .from('user_roles')
+        .update({ username: username.trim().toLowerCase() })
+        .eq('email', currentUser?.email);
+      if (roleError) throw roleError;
+
       setSuccess('บันทึกข้อมูลสำเร็จแล้วครับ!');
       setCurrentPassword('');
       setNewPassword('');
@@ -130,8 +127,6 @@ function Profile({ onClose }) {
 
         <div style={S.section}>
           <div style={S.sectionTitle}>เปลี่ยน Password</div>
-          <label style={S.label}>Password ปัจจุบัน</label>
-          <input style={S.input} type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} placeholder="ต้องกรอกเมื่อเปลี่ยน Email หรือ Password" />
           <label style={S.label}>Password ใหม่</label>
           <input style={S.input} type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" />
           <label style={S.label}>ยืนยัน Password ใหม่</label>
