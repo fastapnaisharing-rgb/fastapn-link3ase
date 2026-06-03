@@ -55,7 +55,8 @@ const getBuildVersion = () => {
 function MainApp() {
   const [activePage, setActivePage] = useState('ap-controller');
   const [showProfile, setShowProfile] = useState(false);
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  // Step 1 & 5: Default = true (200px), Step 3: false (56px เมื่อ Flyout เปิด)
+  const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
   const sidebarRef = useRef(null);
@@ -66,7 +67,7 @@ function MainApp() {
   useEffect(() => {
     const handler = (e) => {
       if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
-        setSidebarExpanded(false);
+        setSidebarExpanded(true); // กลับ Default = 200px
         setOpenMenu(null);
       }
     };
@@ -92,34 +93,39 @@ function MainApp() {
   const startCloseTimer = () => {
     clearCloseTimer();
     closeTimerRef.current = setTimeout(() => {
-      setSidebarExpanded(false);
+      setSidebarExpanded(true); // กลับ Default = 200px
       setOpenMenu(null);
     }, 300);
   };
 
+  // Step 2 & 4: Hover Sidebar → ขยาย 200px + ปิด Flyout
   const handleSidebarEnter = () => {
     clearCloseTimer();
     setSidebarExpanded(true);
     setOpenMenu(null);
   };
 
+  // Step 3: Hover Master Data → พับ 56px + เปิด Flyout
   const handleMasterEnter = () => {
     clearCloseTimer();
     setSidebarExpanded(false);
     setOpenMenu('master');
   };
 
+  // Flyout Hover → ยกเลิกการปิด
   const handleFlyoutEnter = () => {
     clearCloseTimer();
   };
 
+  // Hover ออก → รอ 300ms แล้วกลับ Default
   const handleMouseLeave = () => {
     startCloseTimer();
   };
 
+  // Step 5: คลิกเลือก → กลับ Default 200px + ปิด Flyout
   const selectPage = (id) => {
     setActivePage(id);
-    setSidebarExpanded(false);
+    setSidebarExpanded(true);
     setOpenMenu(null);
   };
 
