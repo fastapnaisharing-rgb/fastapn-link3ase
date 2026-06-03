@@ -161,7 +161,7 @@ function MainApp() {
     }
   };
 
-  const sidebarW = sidebarExpanded ? 200 : 56;
+  const sidebarW = sidebarExpanded ? 220 : 56;
 
   const navItem = (id, icon, label) => (
     <div key={id}
@@ -323,7 +323,7 @@ function MainApp() {
             onMouseLeave={handleMouseLeave}
             style={{
               position: 'absolute', left: '56px', top: 0, bottom: 0,
-              width: '180px', background: 'white',
+              width: '164px', background: 'white',
               borderRight: '0.5px solid #e8eaf0',
               zIndex: 20, display: 'flex', flexDirection: 'column',
               boxShadow: '4px 0 12px rgba(0,0,0,0.08)',
@@ -352,7 +352,7 @@ function MainApp() {
       </div>
 
       {/* Main Content */}
-      <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: openMenu === 'master' ? '180px' : '0', transition: 'margin-left 0.2s ease' }}>
+      <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: openMenu === 'master' ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
         {renderPage()}
       </div>
 

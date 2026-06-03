@@ -464,7 +464,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
   // แก้ sidebarW ให้ถูกต้องตามขนาดจอ + Flyout
-  const sidebarW = (screenWidth >= 1200 ? 200 : 56) + (flyoutOpen ? 180 : 0);
+  const sidebarW = (screenWidth >= 1200 ? 220 : 56) + (flyoutOpen ? 164 : 0);
   const paddingW = isMobile ? 24 : 40;
   const actionW = isAdmin ? 120 : 90;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
