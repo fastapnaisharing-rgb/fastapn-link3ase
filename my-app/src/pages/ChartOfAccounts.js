@@ -192,7 +192,6 @@ const TAB_CONFIG = {
   },
 };
 
-// REV = Account ที่มี bu = 'REV'
 const isRevAccount = (item) => item['bu'] === 'REV';
 
 function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
@@ -214,7 +213,6 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     account: { field: 'Acccount', dir: 'asc' },
     subaccount: { field: 'Sub Acc Code', dir: 'asc' }
   });
-  // filter bar: 'ALL' | 'REV' | BU value
   const [accountFilter, setAccountFilter] = useState('ALL');
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -259,13 +257,11 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
 
-  // BU list สำหรับ account tab — กัน 'ALL' และ 'REV' ออก
   const buList = useMemo(() => {
     if (tab !== 'account') return [];
     return [...new Set(items.map(i => i['bu']).filter(v => v && v !== 'ALL' && v !== 'REV'))].sort();
   }, [items, tab]);
 
-  // นับจำนวนแต่ละ filter
   const filterCounts = useMemo(() => {
     if (tab !== 'account') return {};
     const counts = {};
@@ -467,7 +463,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     return item[c.key] || '-';
   };
 
-  const sidebarW = isMobile ? 0 : 200;
+  // แก้ sidebarW ให้ถูกต้องตามขนาดจอ
+  const sidebarW = screenWidth >= 1200 ? 200 : 56;
   const paddingW = isMobile ? 24 : 40;
   const actionW = isAdmin ? 120 : 90;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
@@ -479,6 +476,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     if (c.key === 'Remark') return { ...c, w: c.w + Math.min(Math.floor(extraW * 0.35), 300) };
     return c;
   });
+
   const S = {
     container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box' },
     topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, flexWrap: isMobile ? 'wrap' : 'nowrap', gap: '8px' },
@@ -535,7 +533,6 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
     return `แสดง ${start}-${end} จาก ${filtered.length} รายการ${search ? ` | ค้นหา "${search}"` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`;
   };
 
-  // filter tabs สำหรับ account เท่านั้น: ALL | REV | BU...
   const filterTabs = tab === 'account' ? ['ALL', 'REV', ...buList] : [];
 
   return (
@@ -559,7 +556,6 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
         )}
       </div>
 
-      {/* Filter bar: ALL | REV | BU... — เฉพาะ account tab เท่านั้น */}
       {filterTabs.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'flex-end', padding: '10px 0 0', flexShrink: 0, borderBottom: '2px solid #e8e8e8', overflowX: 'auto' }}>
           {filterTabs.map(f => (
@@ -574,7 +570,6 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange }) {
         </div>
       )}
 
-      {/* Search bar + Pagination */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0', margin: '4px 0', flexShrink: 0, gap: '8px', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <input
