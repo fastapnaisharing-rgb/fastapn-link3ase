@@ -279,7 +279,7 @@ function MainApp() {
             </div>
 
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-            {navItem('upload', '📤', 'Upload & Gen')}
+            {navItem('upload', '📁', 'Document Center')}
           </nav>
 
           {/* Bottom */}

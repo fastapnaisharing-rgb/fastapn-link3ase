@@ -63,7 +63,7 @@ function UploadGen() {
 
   return (
     <div style={S.container}>
-      <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>📤 Upload & Gen Excel</h2>
+      <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>📁 Document Center</h2>
 
       <div style={S.card}>
         <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px', color: '#1a3a5c' }}>Drop Image / รูปเอกสาร</div>
