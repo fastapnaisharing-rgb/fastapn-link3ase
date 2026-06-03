@@ -49,9 +49,10 @@ function AccountList() {
     container: { padding: '20px' },
     topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
     btn: { padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', marginLeft: '8px' },
-    table: { width: '100%', borderCollapse: 'collapse', background: 'white', borderRadius: '8px', overflow: 'hidden' },
-    th: { background: '#f0f0f0', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600' },
-    td: { padding: '9px 10px', fontSize: '12px', borderBottom: '1px solid #f0f0f0' },
+    wrap: { background: 'white', borderRadius: '8px', overflow: 'auto' },
+    table: { width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: '500px' },
+    th: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '500', whiteSpace: 'nowrap' },
+    td: { padding: '9px 10px', fontSize: '12px', borderBottom: '1px solid #f0f0f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
     input: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', marginBottom: '8px' },
     overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
     modal: { background: 'white', borderRadius: '10px', padding: '24px', width: '420px' }
@@ -67,7 +68,16 @@ function AccountList() {
         </div>
       </div>
 
+      <div style={S.wrap}>
       <table style={S.table}>
+        <colgroup>
+          <col style={{ width: "15%" }} />
+          <col style={{ width: "35%" }} />
+          <col style={{ width: "15%" }} />
+          <col style={{ width: "10%" }} />
+          <col style={{ width: "12%" }} />
+          <col style={{ width: "13%" }} />
+        </colgroup>
         <thead>
           <tr>
             {['Account Code', 'Account Name', 'Type', 'Level', 'Status', 'Action'].map(h => <th key={h} style={S.th}>{h}</th>)}
@@ -93,6 +103,7 @@ function AccountList() {
           ))}
         </tbody>
       </table>
+      </div>
 
       {showForm && (
         <div style={S.overlay}>
