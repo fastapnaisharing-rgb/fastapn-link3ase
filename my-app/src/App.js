@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataCacheProvider } from './contexts/DataCacheContext';
 import Login from './pages/Login';
@@ -46,9 +46,16 @@ const UserIcon = () => (
   </svg>
 );
 
+const getBuildVersion = () => {
+  const d = new Date(Number(process.env.REACT_APP_BUILD_TIME));
+  if (isNaN(d.getTime())) return 'Link3ase · System';
+  return `Link3ase · v${String(d.getFullYear()).slice(2)}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+};
+
 function MainApp() {
   const [activePage, setActivePage] = useState('ap-controller');
   const [showProfile, setShowProfile] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
   const sidebarRef = useRef(null);
@@ -56,10 +63,10 @@ function MainApp() {
   const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
 
-  // ย้าย useEffect มาก่อน if (!currentUser)
   useEffect(() => {
     const handler = (e) => {
       if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
+        setSidebarExpanded(false);
         setOpenMenu(null);
       }
     };
@@ -70,33 +77,49 @@ function MainApp() {
   if (!currentUser) return <Login />;
 
   const isAdmin = isOwner;
-  const isLargeScreen = true;;
-
   const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
   const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
   const handleProfileIconClick = () => {
-    if (isAdmin) setActivePage('users');
+    if (isAdmin) selectPage('users');
     else setShowProfile(true);
   };
 
-  const handleMouseEnter = (menuId) => {
+  const clearCloseTimer = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-    setOpenMenu(menuId);
   };
 
-  const handleMouseLeave = () => {
+  const startCloseTimer = () => {
+    clearCloseTimer();
     closeTimerRef.current = setTimeout(() => {
+      setSidebarExpanded(false);
       setOpenMenu(null);
     }, 300);
   };
 
+  const handleSidebarEnter = () => {
+    clearCloseTimer();
+    setSidebarExpanded(true);
+    setOpenMenu(null);
+  };
+
+  const handleMasterEnter = () => {
+    clearCloseTimer();
+    setSidebarExpanded(false);
+    setOpenMenu('master');
+  };
+
   const handleFlyoutEnter = () => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    clearCloseTimer();
+  };
+
+  const handleMouseLeave = () => {
+    startCloseTimer();
   };
 
   const selectPage = (id) => {
     setActivePage(id);
+    setSidebarExpanded(false);
     setOpenMenu(null);
   };
 
@@ -132,28 +155,31 @@ function MainApp() {
     }
   };
 
-  const sideIcon = (id, icon, label) => (
+  const sidebarW = sidebarExpanded ? 200 : 56;
+
+  const navItem = (id, icon, label) => (
     <div key={id}
       onClick={() => selectPage(id)}
-      onMouseEnter={() => handleMouseEnter(id)}
-      onMouseLeave={handleMouseLeave}
-      title={label}
+      title={!sidebarExpanded ? label : ''}
       style={{
-        width: '56px', height: '40px',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '18px', cursor: 'pointer',
+        height: '38px', display: 'flex', alignItems: 'center',
+        justifyContent: sidebarExpanded ? 'flex-start' : 'center',
+        padding: sidebarExpanded ? '0 16px' : '0',
+        gap: '8px', cursor: 'pointer', fontSize: '13px',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
         background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent',
-        transition: 'background 0.15s',
+        color: activePage === id ? 'white' : 'rgba(255,255,255,0.7)',
+        whiteSpace: 'nowrap', overflow: 'hidden',
       }}>
-      {icon}
+      <span style={{ fontSize: '16px', flexShrink: 0 }}>{icon}</span>
+      {sidebarExpanded && <span>{label}</span>}
     </div>
   );
 
   const fpSub = (id, icon, label) => (
     <div key={id} onClick={() => selectPage(id)}
       style={{
-        padding: '7px 16px 7px 38px', fontSize: '12px', cursor: 'pointer',
+        padding: '7px 16px 7px 36px', fontSize: '12px', cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: '8px',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
         background: activePage === id ? '#f0faf6' : 'transparent',
@@ -178,153 +204,152 @@ function MainApp() {
     </div>
   );
 
-  const fpGroupHeader = (icon, label) => (
-    <div style={{ padding: '8px 16px 4px', fontSize: '11px', fontWeight: '500', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+  const fpGroup = (icon, label) => (
+    <div style={{ padding: '8px 16px 3px', fontSize: '10px', fontWeight: '500', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
       {icon} {label}
     </div>
   );
 
-  const fpDivider = () => (
-    <div style={{ height: '0.5px', background: '#e8eaf0', margin: '4px 16px' }} />
-  );
-
-  const FlyoutPanel = ({ menuId, title, icon, children }) => {
-    if (openMenu !== menuId) return null;
-    return (
-      <div
-        onMouseEnter={handleFlyoutEnter}
-        onMouseLeave={handleMouseLeave}
-        style={{
-          position: 'absolute', left: isLargeScreen ? '200px' : '56px', top: 0, bottom: 0,
-          width: '200px', background: 'white',
-          borderRight: '0.5px solid #e8eaf0',
-          zIndex: 20, display: 'flex', flexDirection: 'column',
-          boxShadow: '4px 0 12px rgba(0,0,0,0.08)',
-        }}>
-        <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
-          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>{icon}</span> {title}
-          </div>
-        </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
-          {children}
-        </div>
-      </div>
-    );
-  };
-
-  const sidebarContent = isLargeScreen ? (
-    <div style={{
-      width: '200px', minWidth: '200px', background: '#1a3a5c', color: 'white',
-      display: 'flex', flexDirection: 'column',
-      scrollbarWidth: 'none', msOverflowStyle: 'none',
-    }}>
-      <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c', flexShrink: 0 }}>{initial}</div>
-        <div>
-          <div style={{ fontSize: '15px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
-          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)' }}>Link3ase · System</div>
-        </div>
-      </div>
-      <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-        <div style={{ padding: '8px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Functions</div>
-        {FUNCTION_MENUS.map(m => (
-          <div key={m.id} onClick={() => selectPage(m.id)}
-            style={{ padding: '7px 16px', cursor: 'pointer', fontSize: '13px', background: activePage === m.id ? 'rgba(255,255,255,0.1)' : 'transparent', borderLeft: activePage === m.id ? '3px solid #5DCAA5' : '3px solid transparent', color: activePage === m.id ? 'white' : 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>{m.icon}</span> {m.label}
-          </div>
-        ))}
-        <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-        <div
-          onMouseEnter={() => handleMouseEnter('master')}
-          onMouseLeave={handleMouseLeave}
-          style={{ padding: '8px 16px', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: isMasterActive || openMenu === 'master' ? '#5DCAA5' : 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', letterSpacing: '0.5px', textTransform: 'uppercase', background: openMenu === 'master' ? 'rgba(93,202,165,0.1)' : 'transparent' }}>
-          <span>📦 Master Data</span>
-          <span style={{ fontSize: '10px' }}>▸</span>
-        </div>
-        <div style={{ margin: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-        <div onClick={() => selectPage('upload')}
-          style={{ padding: '7px 16px', cursor: 'pointer', fontSize: '13px', background: activePage === 'upload' ? 'rgba(255,255,255,0.1)' : 'transparent', borderLeft: activePage === 'upload' ? '3px solid #5DCAA5' : '3px solid transparent', color: activePage === 'upload' ? 'white' : 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span>📤</span> Upload & Gen
-        </div>
-      </nav>
-      <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
-            <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
-          </div>
-          <button onClick={handleProfileIconClick}
-            style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <UserIcon />
-          </button>
-        </div>
-        <button onClick={logout}
-          style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-          <LogoutIcon /> Logout
-        </button>
-      </div>
-    </div>
-  ) : (
-    <div style={{
-      width: '56px', minWidth: '56px', background: '#1a3a5c', color: 'white',
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      scrollbarWidth: 'none', msOverflowStyle: 'none',
-    }}>
-      <div style={{ width: '100%', padding: '14px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'center' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c' }}>{initial}</div>
-      </div>
-      <div style={{ flex: 1, width: '100%', padding: '8px 0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.3)', padding: '4px 0' }}>FN</div>
-        {FUNCTION_MENUS.map(m => sideIcon(m.id, m.icon, m.label))}
-        <div style={{ width: '32px', height: '0.5px', background: 'rgba(255,255,255,0.1)', margin: '4px 0' }} />
-        <div
-          onMouseEnter={() => handleMouseEnter('master')}
-          onMouseLeave={handleMouseLeave}
-          title="Master Data"
-          style={{ width: '56px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', cursor: 'pointer', borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.15)' : isMasterActive ? 'rgba(255,255,255,0.1)' : 'transparent' }}>
-          📦
-        </div>
-        <div style={{ width: '32px', height: '0.5px', background: 'rgba(255,255,255,0.1)', margin: '4px 0' }} />
-        {sideIcon('upload', '📤', 'Upload & Gen')}
-      </div>
-      <div style={{ width: '100%', padding: '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-        <button onClick={handleProfileIconClick}
-          style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <UserIcon />
-        </button>
-        <button onClick={logout}
-          style={{ background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: '#e74c3c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <LogoutIcon />
-        </button>
-      </div>
-    </div>
-  );
+  const fpDiv = () => <div style={{ height: '0.5px', background: '#e8eaf0', margin: '4px 16px' }} />;
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
-      <div ref={sidebarRef} style={{ position: 'relative', zIndex: 30, display: 'flex', flexShrink: 0 }}>
-        {sidebarContent}
-        <FlyoutPanel menuId="master" title="Master Data" icon="📦">
-          {fpGroupHeader('🏢', 'Business Unit')}
-          {fpSub('bu-info', '📋', 'Info')}
-          {fpSub('bu-branch', '🏪', 'Branch')}
-          {fpDivider()}
-          {fpGroupHeader('💰', 'Chart of Accounts')}
-          {fpSub('coa-costcenter', '🏷️', 'Cost Center')}
-          {fpSub('coa-account', '📒', 'Account')}
-          {fpSub('coa-subaccount', '🔖', 'Sub Account')}
-          {fpDivider()}
-          {fpGroupHeader('👥', 'Vendor Master')}
-          {fpSub('vendor-code', '🏭', 'Code')}
-          {fpSub('vendor-category', '🗂️', 'Category')}
-          {fpDivider()}
-          {fpItem('itemcode', '🔖', 'Item Code')}
-        </FlyoutPanel>
+
+      <div ref={sidebarRef}
+        style={{ position: 'relative', zIndex: 30, display: 'flex', flexShrink: 0 }}
+        onMouseLeave={handleMouseLeave}>
+
+        {/* Sidebar */}
+        <div
+          onMouseEnter={handleSidebarEnter}
+          style={{
+            width: `${sidebarW}px`, minWidth: `${sidebarW}px`,
+            background: '#1a3a5c', color: 'white',
+            display: 'flex', flexDirection: 'column',
+            transition: 'width 0.2s ease, min-width 0.2s ease',
+            overflow: 'hidden',
+            scrollbarWidth: 'none', msOverflowStyle: 'none',
+          }}>
+
+          {/* Logo */}
+          <div style={{ padding: sidebarExpanded ? '12px 16px' : '12px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'flex-start' : 'center', gap: '10px', overflow: 'hidden', flexShrink: 0 }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c', flexShrink: 0 }}>{initial}</div>
+            {sidebarExpanded && (
+              <div style={{ overflow: 'hidden' }}>
+                <div style={{ fontSize: '15px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
+                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>{getBuildVersion()}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Nav */}
+          <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            {sidebarExpanded && (
+              <div style={{ padding: '6px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Functions</div>
+            )}
+            {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
+
+            <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+
+            {/* Master Data */}
+            <div
+              onMouseEnter={handleMasterEnter}
+              title={!sidebarExpanded ? 'Master Data' : ''}
+              style={{
+                height: '38px', display: 'flex', alignItems: 'center',
+                justifyContent: sidebarExpanded ? 'space-between' : 'center',
+                padding: sidebarExpanded ? '0 16px' : '0',
+                cursor: 'pointer', fontSize: sidebarExpanded ? '11px' : '16px',
+                fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase',
+                borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent',
+                background: openMenu === 'master' ? 'rgba(93,202,165,0.12)' : isMasterActive ? 'rgba(255,255,255,0.08)' : 'transparent',
+                color: isMasterActive || openMenu === 'master' ? '#5DCAA5' : 'rgba(255,255,255,0.4)',
+                whiteSpace: 'nowrap', overflow: 'hidden',
+              }}>
+              {sidebarExpanded
+                ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>▸</span></>
+                : <span>📦</span>
+              }
+            </div>
+
+            <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+            {navItem('upload', '📤', 'Upload & Gen')}
+          </nav>
+
+          {/* Bottom */}
+          <div style={{ padding: sidebarExpanded ? '12px 16px' : '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: sidebarExpanded ? 'stretch' : 'center', gap: '8px', flexShrink: 0 }}>
+            {sidebarExpanded ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
+                    <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
+                  </div>
+                  <button onClick={handleProfileIconClick}
+                    style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <UserIcon />
+                  </button>
+                </div>
+                <button onClick={logout}
+                  style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                  <LogoutIcon /> Logout
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={handleProfileIconClick}
+                  style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <UserIcon />
+                </button>
+                <button onClick={logout}
+                  style={{ background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: '#e74c3c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <LogoutIcon />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Flyout Panel */}
+        {openMenu === 'master' && (
+          <div
+            onMouseEnter={handleFlyoutEnter}
+            onMouseLeave={handleMouseLeave}
+            style={{
+              position: 'absolute', left: '56px', top: 0, bottom: 0,
+              width: '200px', background: 'white',
+              borderRight: '0.5px solid #e8eaf0',
+              zIndex: 20, display: 'flex', flexDirection: 'column',
+              boxShadow: '4px 0 12px rgba(0,0,0,0.08)',
+            }}>
+            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+              <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📦 Master Data</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+              {fpGroup('🏢', 'Business Unit')}
+              {fpSub('bu-info', '📋', 'Info')}
+              {fpSub('bu-branch', '🏪', 'Branch')}
+              {fpDiv()}
+              {fpGroup('💰', 'Chart of Accounts')}
+              {fpSub('coa-costcenter', '🏷️', 'Cost Center')}
+              {fpSub('coa-account', '📒', 'Account')}
+              {fpSub('coa-subaccount', '🔖', 'Sub Account')}
+              {fpDiv()}
+              {fpGroup('👥', 'Vendor Master')}
+              {fpSub('vendor-code', '🏭', 'Code')}
+              {fpSub('vendor-category', '🗂️', 'Category')}
+              {fpDiv()}
+              {fpItem('itemcode', '🔖', 'Item Code')}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Main Content */}
       <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0 }}>
         {renderPage()}
       </div>
+
       {showProfile && <Profile onClose={() => setShowProfile(false)} />}
     </div>
   );
