@@ -252,9 +252,10 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   // fetchCollection ใน DataCacheContext ต้อง accept ชื่อ Supabase table
   // และ return array of objects (with id field)
 
+  // ✅ SOFT DELETE: filter deleted items
   const fetchTab = useCallback(async (t) => {
     const data = await fetchCollection(TAB_CONFIG[t].table);
-    setDataMap(prev => ({ ...prev, [t]: data }));
+    setDataMap(prev => ({ ...prev, [t]: (data || []).filter(i => !i.deleted) }));
   }, [fetchCollection]);
 
   useEffect(() => {
@@ -398,23 +399,51 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     await fetchTab(tab);
   };
 
+  // ✅ SOFT DELETE: handleDelete
   const handleDelete = async (id) => {
-    if (window.confirm('ต้องการลบรายการนี้?')) {
-      const { error } = await supabase.from(cfg.table).delete().eq('id', id);
-      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
+    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    try {
+      const item = items.find(i => i.id === id);
+      await supabase.from('recycle_bin').insert([{
+        source_table: cfg.table,
+        source_id: id,
+        source_key: item?.[cfg.key] || id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: new Date().toISOString(),
+      }]);
+      const { error } = await supabase.from(cfg.table)
+        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
       setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
       invalidate(cfg.table);
       await fetchTab(tab);
-    }
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
+  // ✅ SOFT DELETE: handleBulkDelete
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-    const { error } = await supabase.from(cfg.table).delete().in('id', selected);
-    if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-    setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-    invalidate(cfg.table);
-    await fetchTab(tab);
+    try {
+      const now = new Date().toISOString();
+      const bins = items.filter(i => selected.includes(i.id)).map(item => ({
+        source_table: cfg.table,
+        source_id: item.id,
+        source_key: item[cfg.key] || item.id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: now,
+      }));
+      if (bins.length) await supabase.from('recycle_bin').insert(bins);
+      const { error } = await supabase.from(cfg.table)
+        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
+        .in('id', selected);
+      if (error) throw error;
+      setSelectedMap(prev => ({ ...prev, [tab]: [] }));
+      invalidate(cfg.table);
+      await fetchTab(tab);
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleOpenDetail = (item) => {

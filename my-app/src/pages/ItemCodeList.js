@@ -86,7 +86,7 @@ function ItemCodeList() {
   const containerRef = useRef(null);
   const [containerW, setContainerW] = useState(0);
   const { currentUser, userName } = useAuth();
-  const { isAdmin } = useUserRole();
+  const { isAdmin, isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -109,13 +109,15 @@ function ItemCodeList() {
   const fetchData = async () => {
     const { data, error } = await supabase.from('itemcode_list').select('*');
     if (error) { console.error('fetchData error:', error); return; }
-    const result = (data || []).map(item => ({
-      ...item,
-      code:      item.code      || item.Code      || '',
-      itemcode2: item.itemcode2 || item['2Itemcode'] || '',
-      i_and_g:   item.i_and_g   || item['I & G']  || '',
-      spi1:      item.spi1      || item['SPI-1']   || '',
-    }));
+    const result = (data || [])
+      .filter(item => !item.deleted)
+      .map(item => ({
+        ...item,
+        code:      item.code      || item.Code      || '',
+        itemcode2: item.itemcode2 || item['2Itemcode'] || '',
+        i_and_g:   item.i_and_g   || item['I & G']  || '',
+        spi1:      item.spi1      || item['SPI-1']   || '',
+      }));
     setItems(result);
     computeNextCode(result);
   };
@@ -157,14 +159,44 @@ function ItemCodeList() {
 
   const handleDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
-    await supabase.from('itemcode_list').delete().eq('id',id);
-    setSelected(prev=>prev.filter(s=>s!==id)); fetchData();
+    try {
+      const item = items.find(i => i.id === id);
+      await supabase.from('recycle_bin').insert([{
+        source_table: 'itemcode_list',
+        source_id: id,
+        source_key: item?.code || id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: new Date().toISOString(),
+      }]);
+      const { error } = await supabase.from('itemcode_list')
+        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      setSelected(prev => prev.filter(s => s !== id));
+      fetchData();
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-    await supabase.from('itemcode_list').delete().in('id',selected);
-    setSelected([]); fetchData();
+    try {
+      const now = new Date().toISOString();
+      const bins = items.filter(i => selected.includes(i.id)).map(item => ({
+        source_table: 'itemcode_list',
+        source_id: item.id,
+        source_key: item.code || item.id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: now,
+      }));
+      if (bins.length) await supabase.from('recycle_bin').insert(bins);
+      const { error } = await supabase.from('itemcode_list')
+        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
+        .in('id', selected);
+      if (error) throw error;
+      setSelected([]); fetchData();
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleDownloadTemplate = () => {
@@ -287,7 +319,7 @@ function ItemCodeList() {
       <div style={S.topbar}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
           <h2 style={{ fontSize:isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>🔖 Item Code List</h2>
-          {selected.length>0 && <button style={{...S.btn,background:'#c0392b',color:'white',marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
+          {isAdmin && selected.length>0 && <button style={{...S.btn,background:'#c0392b',color:'white',marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
           <button style={{...S.btn,background:'#0F6E56',color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
