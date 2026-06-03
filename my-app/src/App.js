@@ -144,7 +144,7 @@ function MainApp() {
       onMouseLeave={handleMouseLeave}
       title={label}
       style={{
-        width: '100%', height: '40px',
+        width: '56px', height: '40px',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: '18px', cursor: 'pointer',
         borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
@@ -293,7 +293,7 @@ function MainApp() {
           onMouseEnter={() => handleMouseEnter('master')}
           onMouseLeave={handleMouseLeave}
           title="Master Data"
-          style={{ width: '100%', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', cursor: 'pointer', borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.15)' : isMasterActive ? 'rgba(255,255,255,0.1)' : 'transparent' }}>
+          style={{ width: '56px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', cursor: 'pointer', borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.15)' : isMasterActive ? 'rgba(255,255,255,0.1)' : 'transparent' }}>
           📦
         </div>
         <div style={{ width: '32px', height: '0.5px', background: 'rgba(255,255,255,0.1)', margin: '4px 0' }} />
