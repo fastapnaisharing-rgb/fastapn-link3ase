@@ -55,7 +55,6 @@ const getBuildVersion = () => {
 function MainApp() {
   const [activePage, setActivePage] = useState('ap-controller');
   const [showProfile, setShowProfile] = useState(false);
-  // Step 1 & 5: Default = true (200px), Step 3: false (56px เมื่อ Flyout เปิด)
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
@@ -64,10 +63,11 @@ function MainApp() {
   const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
 
+  // ✅ useEffect ต้องอยู่ก่อน early return เสมอ
   useEffect(() => {
     const handler = (e) => {
       if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
-        setSidebarExpanded(true); // กลับ Default = 200px
+        setSidebarExpanded(true);
         setOpenMenu(null);
       }
     };
@@ -75,6 +75,7 @@ function MainApp() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // ✅ early return หลัง hooks ทั้งหมด
   if (!currentUser) return <Login />;
 
   const isAdmin = isOwner;
@@ -93,36 +94,31 @@ function MainApp() {
   const startCloseTimer = () => {
     clearCloseTimer();
     closeTimerRef.current = setTimeout(() => {
-      setSidebarExpanded(true); // กลับ Default = 200px
+      setSidebarExpanded(true);
       setOpenMenu(null);
     }, 300);
   };
 
-  // Step 2 & 4: Hover Sidebar → ขยาย 200px + ปิด Flyout
   const handleSidebarEnter = () => {
     clearCloseTimer();
     setSidebarExpanded(true);
     setOpenMenu(null);
   };
 
-  // Step 3: Hover Master Data → พับ 56px + เปิด Flyout
   const handleMasterEnter = () => {
     clearCloseTimer();
     setSidebarExpanded(false);
     setOpenMenu('master');
   };
 
-  // Flyout Hover → ยกเลิกการปิด
   const handleFlyoutEnter = () => {
     clearCloseTimer();
   };
 
-  // Hover ออก → รอ 300ms แล้วกลับ Default
   const handleMouseLeave = () => {
     startCloseTimer();
   };
 
-  // Step 5: คลิกเลือก → กลับ Default 200px + ปิด Flyout
   const selectPage = (id) => {
     setActivePage(id);
     setSidebarExpanded(true);
