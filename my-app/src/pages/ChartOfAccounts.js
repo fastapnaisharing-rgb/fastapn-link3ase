@@ -230,6 +230,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const fileRef = useRef(null);
   const theadRef = useRef(null);
   const tbodyRef = useRef(null);
+  const containerRef = useRef(null);
+  const [containerW, setContainerW] = useState(0);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
   const items = dataMap[tab] || [];
@@ -254,6 +256,15 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
   useEffect(() => { setAccountFilter('ALL'); }, [tab]);
   useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, accountFilter, search]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(entries => {
+      setContainerW(entries[0].contentRect.width);
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
 
@@ -463,12 +474,9 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     return item[c.key] || '-';
   };
 
-  // แก้ sidebarW ให้ถูกต้องตามขนาดจอ + Flyout
-  const sidebarW = (screenWidth >= 1200 ? 220 : 56) + (flyoutOpen ? 164 : 0);
-  const paddingW = isMobile ? 24 : 40;
   const actionW = isAdmin ? 120 : 90;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
-  const totalW = Math.max(minW, screenWidth - sidebarW - paddingW);
+  const totalW = containerW > 0 ? Math.max(minW, containerW) : minW;
   const extraW = totalW - minW;
   const COLUMNS_SCALED = cfg.columns.map(c => {
     if (c.key === 'Description') return { ...c, w: c.w + Math.min(extraW * 0.6, 200) };
@@ -613,7 +621,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         )}
       </div>
 
-      <div style={S.outer}>
+      <div ref={containerRef} style={S.outer}>
         <div ref={theadRef} style={{ ...S.theadWrap, msOverflowStyle: 'none' }}>
           <table style={{ ...S.table, width: `${totalW}px` }}>
             {renderColGroup(COLUMNS_SCALED)}
