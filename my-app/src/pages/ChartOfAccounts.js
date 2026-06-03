@@ -257,14 +257,16 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   useEffect(() => { setAccountFilter('ALL'); }, [tab]);
   useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, accountFilter, search]);
 
+  // ✅ FIX 1: เพิ่ม flyoutOpen ใน deps → re-measure ทันทีที่ sidebar พับ/ขยาย
   useEffect(() => {
     if (!containerRef.current) return;
+    setContainerW(containerRef.current.getBoundingClientRect().width);
     const observer = new ResizeObserver(entries => {
       setContainerW(entries[0].contentRect.width);
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [flyoutOpen]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
 
@@ -486,12 +488,14 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   });
 
   const S = {
-    container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box' },
+    // ✅ FIX 2: minWidth:0 + overflow:hidden → flex child shrink ได้ถูกต้อง
+    container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box', minWidth: 0, overflow: 'hidden' },
     topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, flexWrap: isMobile ? 'wrap' : 'nowrap', gap: '8px' },
     btn: { padding: isMobile ? '6px 10px' : '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: isMobile ? '12px' : '13px', marginLeft: isMobile ? '4px' : '8px' },
-    outer: { background: 'white', borderRadius: '8px', border: '0.5px solid #e8e8e8', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1 },
+    // ✅ FIX 3: minWidth:0 → scrollbar แสดงถูกต้องเมื่อ sidebar พับ
+    outer: { background: 'white', borderRadius: '8px', border: '0.5px solid #e8e8e8', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 },
     theadWrap: { overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' },
-    tbodyWrap: { overflowY: 'auto', overflowX: 'auto', flex: 1 },
+    tbodyWrap: { overflowY: 'auto', overflowX: 'auto', flex: 1, minWidth: 0 },
     table: { borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' },
     th: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
     thSort: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis' },
