@@ -478,15 +478,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const actionW = isAdmin ? 120 : 90;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
-  const maxScaleW = minW + 600;
-  const totalW = containerW > 0 ? Math.min(Math.max(minW, containerW), maxScaleW) : minW;
-  const extraW = totalW - minW;
-  const COLUMNS_SCALED = cfg.columns.map(c => {
-    if (c.key === 'Description') return { ...c, w: c.w + Math.min(extraW * 0.6, 200) };
-    if (c.key === 'Account_Name') return { ...c, w: c.w + Math.min(Math.floor(extraW * 0.55), 400) };
-    if (c.key === 'Remark') return { ...c, w: c.w + Math.min(Math.floor(extraW * 0.35), 300) };
-    return c;
-  });
+  const totalW = containerW > 0 ? Math.max(minW, containerW) : minW;
+  const COLUMNS_SCALED = cfg.columns.map(c => c);
 
   const S = {
     // ✅ FIX 2: minWidth:0 + overflow:hidden → flex child shrink ได้ถูกต้อง
@@ -502,7 +495,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     thSort: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis' },
     thCheck: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'center', fontSize: '11px', width: '36px' },
     thAction: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'center', fontSize: '11px', fontWeight: '500' },
-    td: { padding: '7px 10px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+    td: { padding: '7px 10px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '0' },
+    tdRemark: { padding: '7px 10px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '0' },
     tdCenter: { padding: '6px 8px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center' },
     input: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', marginBottom: '8px', boxSizing: 'border-box' },
     inputDisabled: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #eee', fontSize: '13px', width: '100%', marginBottom: '8px', boxSizing: 'border-box', background: '#f5f5f5', color: '#999' },
@@ -515,7 +509,10 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const renderColGroup = (columns) => (
     <colgroup>
       <col style={{ width: '36px', minWidth: '36px' }} />
-      {columns.map((c,i) => <col key={i} style={{ width: `${c.w}px`, minWidth: `${c.w}px` }} />)}
+      {columns.map((c,i) => c.key === 'Remark'
+        ? <col key={i} />
+        : <col key={i} style={{ width: `${c.w}px`, minWidth: `${c.w}px` }} />
+      )}
       <col style={{ width: `${actionW}px`, minWidth: `${actionW}px` }} />
     </colgroup>
   );
@@ -658,7 +655,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
                       onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].includes(item.id) ? prev[tab].filter(s => s !== item.id) : [...prev[tab], item.id] }))} />
                   </td>
                   {COLUMNS_SCALED.map(c => (
-                    <td key={c.key} style={S.td} title={item[c.key] || ''}>{renderCell(c, item)}</td>
+                    <td key={c.key} style={c.key === 'Remark' ? S.tdRemark : S.td} title={item[c.key] || ''}>{renderCell(c, item)}</td>
                   ))}
                   <td style={S.tdCenter}>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
