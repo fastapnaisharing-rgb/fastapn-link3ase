@@ -56,6 +56,17 @@ function MainApp() {
   const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
 
+  // ย้าย useEffect มาก่อน if (!currentUser)
+  useEffect(() => {
+    const handler = (e) => {
+      if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
+        setOpenMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   if (!currentUser) return <Login />;
 
   const isAdmin = isOwner;
@@ -69,40 +80,25 @@ function MainApp() {
     else setShowProfile(true);
   };
 
-  // Hover เข้า → เปิดทันที
   const handleMouseEnter = (menuId) => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     setOpenMenu(menuId);
   };
 
-  // Hover ออก → รอ 300ms แล้วค่อยปิด
   const handleMouseLeave = () => {
     closeTimerRef.current = setTimeout(() => {
       setOpenMenu(null);
     }, 300);
   };
 
-  // Flyout เอง Hover เข้า → ยกเลิกการปิด
   const handleFlyoutEnter = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
   };
 
-  // คลิกเลือก → ปิดทันที
   const selectPage = (id) => {
     setActivePage(id);
     setOpenMenu(null);
   };
-
-  // คลิกนอก → ปิดทันที
-  useEffect(() => {
-    const handler = (e) => {
-      if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
-        setOpenMenu(null);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
 
   const FUNCTION_MENUS = [
     { id: 'ap-controller',   icon: '🧾', label: 'AP Controller' },
@@ -136,7 +132,6 @@ function MainApp() {
     }
   };
 
-  // Sidebar Icon Item
   const sideIcon = (id, icon, label) => (
     <div key={id}
       onClick={() => selectPage(id)}
@@ -155,7 +150,6 @@ function MainApp() {
     </div>
   );
 
-  // Flyout Sub Item
   const fpSub = (id, icon, label) => (
     <div key={id} onClick={() => selectPage(id)}
       style={{
@@ -194,7 +188,6 @@ function MainApp() {
     <div style={{ height: '0.5px', background: '#e8eaf0', margin: '4px 16px' }} />
   );
 
-  // Flyout Panel Component
   const FlyoutPanel = ({ menuId, title, icon, children }) => {
     if (openMenu !== menuId) return null;
     return (
@@ -202,7 +195,7 @@ function MainApp() {
         onMouseEnter={handleFlyoutEnter}
         onMouseLeave={handleMouseLeave}
         style={{
-          position: 'absolute', left: '56px', top: 0, bottom: 0,
+          position: 'absolute', left: isLargeScreen ? '200px' : '56px', top: 0, bottom: 0,
           width: '200px', background: 'white',
           borderRight: '0.5px solid #e8eaf0',
           zIndex: 20, display: 'flex', flexDirection: 'column',
@@ -220,10 +213,7 @@ function MainApp() {
     );
   };
 
-  // Large Screen — Flyout แบบขยาย (Sidebar กว้าง + Flyout สำหรับ Master)
-  // Small Screen — Icon เล็ก + Flyout ทุก Menu
   const sidebarContent = isLargeScreen ? (
-    // จอใหญ่ — Sidebar ขยาย + Flyout เฉพาะ Master Data
     <div style={{
       width: '200px', minWidth: '200px', background: '#1a3a5c', color: 'white',
       display: 'flex', flexDirection: 'column',
@@ -276,7 +266,6 @@ function MainApp() {
       </div>
     </div>
   ) : (
-    // จอเล็ก — Icon เล็ก
     <div style={{
       width: '56px', minWidth: '56px', background: '#1a3a5c', color: 'white',
       display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -316,8 +305,6 @@ function MainApp() {
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
       <div ref={sidebarRef} style={{ position: 'relative', zIndex: 30, display: 'flex', flexShrink: 0 }}>
         {sidebarContent}
-
-        {/* Flyout Panel — Master Data (ใช้ทั้ง 2 แบบ) */}
         <FlyoutPanel menuId="master" title="Master Data" icon="📦">
           {fpGroupHeader('🏢', 'Business Unit')}
           {fpSub('bu-info', '📋', 'Info')}
@@ -335,11 +322,9 @@ function MainApp() {
           {fpItem('itemcode', '🔖', 'Item Code')}
         </FlyoutPanel>
       </div>
-
       <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0 }}>
         {renderPage()}
       </div>
-
       {showProfile && <Profile onClose={() => setShowProfile(false)} />}
     </div>
   );
