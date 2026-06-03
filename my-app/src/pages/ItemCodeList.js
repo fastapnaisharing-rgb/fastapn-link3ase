@@ -47,7 +47,7 @@ const COLUMNS = [
   { key: 'code',        label: 'Code',        w: 100, sortable: true },
   { key: 'itemcode2',   label: '2Itemcode',   w: 100 },
   { key: 'bu',          label: 'BU',          w: 70 },
-  { key: 'description', label: 'Description', w: null }, // auto
+  { key: 'description', label: 'Description', w: null },
   { key: 'cpc',         label: 'CPC',         w: 80 },
   { key: 'account',     label: 'Account',     w: 100 },
   { key: 'sub',         label: 'SUB',         w: 70 },
@@ -66,7 +66,6 @@ const EDIT_FIELDS = [
   ['spec_tx','SPEC-TX'],['keyword','Keyword'],
 ];
 const COMBO_FIELDS = ['bu','sub','dis_g','i_and_g','value','oth','spi1','spec_tx'];
-const ALL_FIELDS = ['code','itemcode2','bu','description','cpc','account','sub','dis_g','i_and_g','value','oth','spi1','spec_tx','keyword','username','last_update'];
 
 function ItemCodeList() {
   const [items, setItems] = useState([]);
@@ -79,22 +78,24 @@ function ItemCodeList() {
   const [sortDir, setSortDir] = useState('asc');
   const [nextCode, setNextCode] = useState('');
   const [selected, setSelected] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const fileInputRef = useRef(null);
   const theadRef = useRef(null);
   const tbodyRef = useRef(null);
   const containerRef = useRef(null);
   const [containerW, setContainerW] = useState(0);
   const { currentUser, userName } = useAuth();
-  const { isAdmin, isEditor } = useUserRole();
+  const { isAdmin } = useUserRole();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
+  const isTablet = screenWidth >= 768 && screenWidth < 1200;
 
   const [form, setForm] = useState({
     itemcode2:'', bu:'', description:'', cpc:'', account:'', sub:'',
     dis_g:'', i_and_g:'', value:'', oth:'', spi1:'', spec_tx:'', keyword:''
   });
 
-  // ✅ ResizeObserver
   useEffect(() => {
     if (!containerRef.current) return;
     setContainerW(containerRef.current.getBoundingClientRect().width);
@@ -105,25 +106,24 @@ function ItemCodeList() {
 
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
-  // ✅ fetchData ไม่ใช้ .order() เพื่อหลีกเลี่ยง 400 error
   const fetchData = async () => {
     const { data, error } = await supabase.from('itemcode_list').select('*');
     if (error) { console.error('fetchData error:', error); return; }
     const result = (data || []).map(item => ({
       ...item,
-      code:     item.code     || item.Code     || '',
-      itemcode2:item.itemcode2|| item['2Itemcode'] || '',
-      i_and_g:  item.i_and_g  || item['I & G'] || '',
-      spi1:     item.spi1     || item['SPI-1'] || '',
+      code:      item.code      || item.Code      || '',
+      itemcode2: item.itemcode2 || item['2Itemcode'] || '',
+      i_and_g:   item.i_and_g   || item['I & G']  || '',
+      spi1:      item.spi1      || item['SPI-1']   || '',
     }));
     setItems(result);
     computeNextCode(result);
   };
 
   const computeNextCode = (data) => {
-    const nums = data.map(d => d.code||'').filter(c => /^C\d{7}$/.test(c)).map(c => parseInt(c.replace('C',''),10)).sort((a,b)=>a-b);
+    const nums = data.map(d=>d.code||'').filter(c=>/^C\d{7}$/.test(c)).map(c=>parseInt(c.replace('C',''),10)).sort((a,b)=>a-b);
     if (!nums.length) { setNextCode('C0000001'); return; }
-    for (let i = 0; i < nums.length-1; i++) { if (nums[i+1]-nums[i]>1) { setNextCode(`C${String(nums[i]+1).padStart(7,'0')}`); return; } }
+    for (let i=0;i<nums.length-1;i++) { if (nums[i+1]-nums[i]>1) { setNextCode(`C${String(nums[i]+1).padStart(7,'0')}`); return; } }
     setNextCode(`C${String(nums[nums.length-1]+1).padStart(7,'0')}`);
   };
 
@@ -137,10 +137,10 @@ function ItemCodeList() {
   };
 
   useEffect(() => { fetchData(); }, []);
+  useEffect(() => { setPage(1); }, [search]);
 
-  const getOptions = (field) => [...new Set(items.map(i=>i[field]||'').filter(v=>v&&v!=='-'))];
+  const getOptions = (field) => [...new Set(items.map(i=>i[field]||'').filter(v=>v&&v!=='-'))].sort();
   const resetForm = () => setForm({ itemcode2:'',bu:'',description:'',cpc:'',account:'',sub:'',dis_g:'',i_and_g:'',value:'',oth:'',spi1:'',spec_tx:'',keyword:'' });
-
   const getTimestamp = () => { const n=new Date(); return `${String(n.getDate()).padStart(2,'0')}/${String(n.getMonth()+1).padStart(2,'0')}/${n.getFullYear()} ${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`; };
 
   const handleSave = async () => {
@@ -187,10 +187,10 @@ function ItemCodeList() {
       for (let i=0;i<previewData.length;i+=500) {
         const batch = previewData.slice(i,i+500).map(row => ({
           code: getNextCode(),
-          itemcode2: String(row['itemcode2']??row['2Itemcode']??''),
-          bu: String(row['bu']??''), description: String(row['description']??''),
-          cpc: String(row['cpc']??''), account: String(row['account']??''),
-          sub: String(row['sub']??''),
+          itemcode2:String(row['itemcode2']??row['2Itemcode']??''),
+          bu:String(row['bu']??''), description:String(row['description']??''),
+          cpc:String(row['cpc']??''), account:String(row['account']??''),
+          sub:String(row['sub']??''),
           dis_g:  String(row['dis_g']??'').trim()||'-',
           i_and_g:String(row['i_and_g']??row['I & G']??'').trim()||'-',
           value:  String(row['value']??'').trim()||'-',
@@ -198,8 +198,8 @@ function ItemCodeList() {
           spi1:   String(row['spi1']??row['SPI-1']??'').trim()||'-',
           spec_tx:String(row['spec_tx']??'').trim()||'-',
           keyword:String(row['keyword']??''),
-          username: userName||currentUser?.email||'',
-          last_update: getTimestamp(),
+          username:userName||currentUser?.email||'',
+          last_update:getTimestamp(),
         }));
         await supabase.from('itemcode_list').insert(batch);
       }
@@ -210,27 +210,44 @@ function ItemCodeList() {
   };
 
   const filtered = useMemo(() => items
-    .filter(i =>
+    .filter(i => !search || (
       i.code?.toLowerCase().includes(search.toLowerCase()) ||
-      i.description?.toLowerCase().includes(search.toLowerCase()) ||
+      i.itemcode2?.toLowerCase().includes(search.toLowerCase()) ||
       i.bu?.toLowerCase().includes(search.toLowerCase()) ||
+      i.description?.toLowerCase().includes(search.toLowerCase()) ||
+      i.cpc?.toLowerCase().includes(search.toLowerCase()) ||
       i.account?.includes(search) ||
-      i.cpc?.includes(search) ||
+      i.sub?.toLowerCase().includes(search.toLowerCase()) ||
+      i.dis_g?.toLowerCase().includes(search.toLowerCase()) ||
+      i.i_and_g?.toLowerCase().includes(search.toLowerCase()) ||
+      i.spi1?.toLowerCase().includes(search.toLowerCase()) ||
+      i.spec_tx?.toLowerCase().includes(search.toLowerCase()) ||
       i.keyword?.toLowerCase().includes(search.toLowerCase())
-    )
+    ))
     .sort((a,b) => { const ca=a.code||'',cb=b.code||''; return sortDir==='asc'?ca.localeCompare(cb):cb.localeCompare(ca); }),
     [items, search, sortDir]
   );
 
-  // ✅ Layout math — Description เป็น auto
+  const effectivePageSize = pageSize === 0 ? filtered.length || 1 : pageSize;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
+  const paginated = pageSize === 0 ? filtered : filtered.slice((page-1)*effectivePageSize, page*effectivePageSize);
+
+  const getPageWindow = () => {
+    const size = isMobile ? 3 : 5;
+    let start = Math.max(1, page - Math.floor(size/2));
+    let end = Math.min(totalPages, start + size - 1);
+    if (end - start < size - 1) start = Math.max(1, end - size + 1);
+    const pages = []; for (let i=start;i<=end;i++) pages.push(i); return pages;
+  };
+
   const actionW = isAdmin ? (56*2)+20 : 56+20;
   const fixedW = 36 + COLUMNS.filter(c=>c.w).reduce((s,c)=>s+c.w,0) + actionW;
   const totalW = containerW > 0 ? Math.max(fixedW + 100, containerW) : fixedW + 200;
 
   const S = {
-    container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth:0, overflow:'hidden' },
-    topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px', flexShrink:0, flexWrap:'wrap', gap:'8px' },
-    btn: { padding: isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize:'13px', marginLeft:'8px' },
+    container: { padding:isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth:0, overflow:'hidden' },
+    topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px', flexShrink:0, flexWrap:'wrap', gap:'8px' },
+    btn: { padding:isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize:'13px', marginLeft:'8px' },
     outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1, minWidth:0 },
     theadWrap: { overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
     tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1, minWidth:0 },
@@ -246,29 +263,33 @@ function ItemCodeList() {
     overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
     modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'500px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
     iconBtn: (color,bg,border) => ({ background:bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
+    pageBtn: (active,disabled) => ({ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', cursor:disabled?'default':'pointer', background:active?'#1a3a5c':'white', color:disabled?'#ccc':active?'white':'#555', minWidth:'28px', textAlign:'center' }),
   };
 
   const renderColGroup = () => (
     <colgroup>
       <col style={{ width:'36px', minWidth:'36px' }} />
-      {COLUMNS.map((c,i) => c.w
-        ? <col key={i} style={{ width:`${c.w}px`, minWidth:`${c.w}px` }} />
-        : <col key={i} /> // Description = auto
-      )}
+      {COLUMNS.map((c,i) => c.w ? <col key={i} style={{ width:`${c.w}px`, minWidth:`${c.w}px` }} /> : <col key={i} />)}
       <col style={{ width:`${actionW}px`, minWidth:`${actionW}px` }} />
     </colgroup>
   );
 
+  const renderInfoText = () => {
+    if (isMobile) return `${filtered.length} รายการ`;
+    const start = (page-1)*effectivePageSize+1;
+    const end = Math.min(page*effectivePageSize, filtered.length);
+    return `แสดง ${start}-${end} จาก ${filtered.length} รายการ${search?` | ค้นหา "${search}"`:''}${selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}`;
+  };
+
   return (
     <div style={S.container}>
+      {/* Top bar */}
       <div style={S.topbar}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
           <h2 style={{ fontSize:isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>🔖 Item Code List</h2>
-          {selected.length>0 && <button style={{...S.btn,background:'#c0392b',color:'white',marginLeft:0}} onClick={handleBulkDelete}>🗑️ ลบ {selected.length}</button>}
+          {selected.length>0 && <button style={{...S.btn,background:'#c0392b',color:'white',marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap' }}>
-          <input placeholder="Search Code, Description, BU, Account, Keyword..." value={search} onChange={e=>setSearch(e.target.value)}
-            style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'160px':'240px' }} />
+        <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
           <button style={{...S.btn,background:'#0F6E56',color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
           <button style={{...S.btn,background:'#5DCAA5',color:'#1a3a5c'}} onClick={()=>fileInputRef.current.click()}>📂{!isMobile&&' Import'}</button>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
@@ -276,13 +297,35 @@ function ItemCodeList() {
         </div>
       </div>
 
-      <div style={{ fontSize:'12px', color:'#888', marginBottom:'6px', flexShrink:0 }}>
-        ทั้งหมด {items.length} รายการ
-        {search && ` | ผลการค้นหา ${filtered.length} รายการ`}
-        {selected.length>0 && ` | เลือกอยู่ ${selected.length} รายการ`}
-        {nextCode && <span style={{ marginLeft:'12px', color:'#1a3a5c', fontWeight:'500' }}>Next Code: {nextCode}</span>}
+      {/* Search + info + pagination — แบบ ChartOfAccounts */}
+      <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px', justifyContent:'space-between' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+          <input
+            placeholder={isMobile?'Search...':'Search Code, Description, BU, Account...'}
+            value={search} onChange={e=>setSearch(e.target.value)}
+            style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'140px':isTablet?'180px':'240px' }}
+          />
+          {!isMobile && <span style={{ fontSize:'12px', color:'#888', whiteSpace:'nowrap' }}>{renderInfoText()}</span>}
+          {nextCode && !isMobile && <span style={{ fontSize:'12px', color:'#1a3a5c', fontWeight:'500', whiteSpace:'nowrap' }}>Next Code: {nextCode}</span>}
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:'4px', flexShrink:0 }}>
+          <select value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setPage(1);}}
+            style={{ padding:'3px 6px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', background:'white', cursor:'pointer' }}>
+            {[25,50,100,200,0].map(s=><option key={s} value={s}>{s===0?'ทั้งหมด':s}</option>)}
+          </select>
+          {!isMobile && <span style={{ fontSize:'12px', color:'#888' }}>รายการ/หน้า</span>}
+          <button style={S.pageBtn(false,page===1)} disabled={page===1} onClick={()=>setPage(1)}>«</button>
+          <button style={S.pageBtn(false,page===1)} disabled={page===1} onClick={()=>setPage(p=>p-1)}>‹</button>
+          {getPageWindow().map(p=>(
+            <button key={p} style={S.pageBtn(p===page,false)} onClick={()=>setPage(p)}>{p}</button>
+          ))}
+          <button style={S.pageBtn(false,page>=totalPages)} disabled={page>=totalPages} onClick={()=>setPage(p=>p+1)}>›</button>
+          <button style={S.pageBtn(false,page>=totalPages)} disabled={page>=totalPages} onClick={()=>setPage(totalPages)}>»</button>
+          <span style={{ fontSize:'12px', color:'#888', marginLeft:'2px', whiteSpace:'nowrap' }}>{page} / {totalPages}</span>
+        </div>
       </div>
 
+      {/* Table */}
       <div ref={containerRef} style={S.outer}>
         <div ref={theadRef} style={{...S.theadWrap, msOverflowStyle:'none'}}>
           <table style={{...S.table, width:`${totalW}px`}}>
@@ -290,7 +333,9 @@ function ItemCodeList() {
             <thead>
               <tr>
                 <th style={S.thCheck}>
-                  <input type="checkbox" checked={filtered.length>0&&selected.length===filtered.length} onChange={()=>setSelected(selected.length===filtered.length?[]:filtered.map(i=>i.id))} />
+                  <input type="checkbox"
+                    checked={paginated.length>0&&paginated.every(i=>selected.includes(i.id))}
+                    onChange={()=>{ const ids=paginated.map(i=>i.id); const all=ids.every(id=>selected.includes(id)); setSelected(all?selected.filter(id=>!ids.includes(id)):[...new Set([...selected,...ids])]); }} />
                 </th>
                 {COLUMNS.map(c => (
                   <th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>setSortDir(d=>d==='asc'?'desc':'asc'):undefined}>
@@ -306,7 +351,7 @@ function ItemCodeList() {
           <table style={{...S.table, width:`${totalW}px`}}>
             {renderColGroup()}
             <tbody>
-              {filtered.map(item => (
+              {paginated.map(item => (
                 <tr key={item.id} style={{ background:selected.includes(item.id)?'#f0f7ff':'white' }}>
                   <td style={S.tdCenter}>
                     <input type="checkbox" checked={selected.includes(item.id)} onChange={()=>setSelected(prev=>prev.includes(item.id)?prev.filter(s=>s!==item.id):[...prev,item.id])} />
@@ -327,6 +372,7 @@ function ItemCodeList() {
         </div>
       </div>
 
+      {/* Form Modal */}
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -356,6 +402,7 @@ function ItemCodeList() {
         </div>
       )}
 
+      {/* Preview Modal */}
       {showPreview && (
         <div style={S.overlay}>
           <div style={{ background:'white', borderRadius:'10px', padding:'20px', width:'90vw', maxWidth:'1000px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
