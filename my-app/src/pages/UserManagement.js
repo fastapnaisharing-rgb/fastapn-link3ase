@@ -563,6 +563,155 @@ function RecycleBinTab({ currentUser, userName }) {
   );
 }
 
+// ─── Activity Log Tab ────────────────────────────────────────────────────────
+// Permission mapping: folder key → permission key
+const FOLDER_PERM_MAP = { ap: 'VAT', vat: 'VAT', ie: 'IE', gl: 'GL', ipro: 'I-Pro' };
+
+function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterAction, setFilterAction] = useState('');
+  const [filterUser, setFilterUser] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const isOwner = currentUserRole === 'Owner';
+
+  const ACTION_LABELS = {
+    login: { label: 'Login', bg: '#EAF3DE', color: '#27500A', icon: '🔑' },
+    logout: { label: 'Logout', bg: '#f5f5f5', color: '#555', icon: '🚪' },
+    open_file: { label: 'เปิดไฟล์', bg: '#E6F1FB', color: '#0C447C', icon: '🔗' },
+    download_file: { label: 'Download', bg: '#e8f0fb', color: '#1a3a5c', icon: '⬇️' },
+    add_file: { label: 'เพิ่มไฟล์', bg: '#EAF3DE', color: '#27500A', icon: '➕' },
+    delete_file: { label: 'ลบไฟล์', bg: '#FCEBEB', color: '#791F1F', icon: '🗑️' },
+    maintenance_on: { label: 'เปิด Maintenance', bg: '#FCEBEB', color: '#791F1F', icon: '🔧' },
+    maintenance_off: { label: 'ปิด Maintenance', bg: '#EAF3DE', color: '#27500A', icon: '✅' },
+  };
+
+  const canSeeLog = (log) => {
+    if (isOwner) return true;
+    // Admin เห็น login/logout ทุกคน
+    if (['login', 'logout', 'maintenance_on', 'maintenance_off'].includes(log.action)) return true;
+    // action ที่เกี่ยวกับ folder → check permission
+    const folderKey = log.detail?.folder;
+    if (folderKey) {
+      const permKey = FOLDER_PERM_MAP[folderKey];
+      return permKey ? (currentUserPermissions?.[permKey] === true) : false;
+    }
+    return true;
+  };
+
+  const fetchLogs = async () => {
+    setLoading(true);
+    try {
+      let query = supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(500);
+      const { data } = await query;
+      setLogs(data || []);
+    } catch (err) { console.error(err); }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchLogs(); }, []);
+
+  const userOptions = [...new Set(logs.map(l => l.username).filter(Boolean))];
+
+  const filtered = logs.filter(log => {
+    if (!canSeeLog(log)) return false;
+    if (filterAction && log.action !== filterAction) return false;
+    if (filterUser && log.username !== filterUser) return false;
+    if (fromDate && new Date(log.created_at) < new Date(fromDate)) return false;
+    if (toDate && new Date(log.created_at) > new Date(toDate + 'T23:59:59')) return false;
+    return true;
+  });
+
+  const formatDate = (val) => {
+    if (!val) return '-';
+    const d = new Date(val);
+    return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  };
+
+  const S = {
+    th: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap' },
+    td: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' },
+    filterSelect: { padding: '5px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white' },
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 8px', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0', marginBottom: '0' }}>
+        <span style={{ fontSize: '12px', color: '#888' }}>{filtered.length} รายการ</span>
+        <select value={filterAction} onChange={e => setFilterAction(e.target.value)} style={S.filterSelect}>
+          <option value="">Action ทั้งหมด</option>
+          {Object.entries(ACTION_LABELS).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+        </select>
+        <select value={filterUser} onChange={e => setFilterUser(e.target.value)} style={S.filterSelect}>
+          <option value="">User ทั้งหมด</option>
+          {userOptions.map(v => <option key={v} value={v}>{v}</option>)}
+        </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ fontSize: '12px', color: '#888' }}>จาก</span>
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ ...S.filterSelect, width: '140px' }} />
+          <span style={{ fontSize: '12px', color: '#888' }}>ถึง</span>
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ ...S.filterSelect, width: '140px' }} />
+        </div>
+        {(filterAction || filterUser || fromDate || toDate) && (
+          <button onClick={() => { setFilterAction(''); setFilterUser(''); setFromDate(''); setToDate(''); }}
+            style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>✕ ล้าง</button>
+        )}
+        <button onClick={fetchLogs} style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: 'white', color: '#555', marginLeft: 'auto' }}>🔄 Refresh</button>
+        {!isOwner && (
+          <span style={{ fontSize: '11px', color: '#888', background: '#f8f9fa', padding: '3px 8px', borderRadius: '20px' }}>
+            📋 แสดงเฉพาะ Log ที่คุณมีสิทธิ์
+          </span>
+        )}
+      </div>
+
+      <div style={{ overflowX: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '700px' }}>
+          <thead>
+            <tr>
+              <th style={{ ...S.th, width: '140px' }}>เวลา</th>
+              <th style={{ ...S.th, width: '100px' }}>User</th>
+              <th style={{ ...S.th, width: '120px' }}>Action</th>
+              <th style={S.th}>รายละเอียด</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: '#aaa' }}>กำลังโหลด...</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ยังไม่มี Activity Log ครับ</td></tr>}
+            {!loading && filtered.map(log => {
+              const actionInfo = ACTION_LABELS[log.action] || { label: log.action, bg: '#f5f5f5', color: '#555', icon: '📝' };
+              return (
+                <tr key={log.id} style={{ background: 'white' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f8fbff'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'white'}>
+                  <td style={{ ...S.td, color: '#888', fontSize: '11px' }}>{formatDate(log.created_at)}</td>
+                  <td style={S.td}>
+                    <div style={{ fontWeight: '500', color: '#1a3a5c' }}>{log.username || '—'}</div>
+                    <div style={{ fontSize: '10px', color: '#aaa' }}>{log.user_email || ''}</div>
+                  </td>
+                  <td style={S.td}>
+                    <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: actionInfo.bg, color: actionInfo.color, fontWeight: '500', whiteSpace: 'nowrap' }}>
+                      {actionInfo.icon} {actionInfo.label}
+                    </span>
+                  </td>
+                  <td style={{ ...S.td, color: '#555' }}>
+                    <span>{log.target || '—'}</span>
+                    {log.detail && Object.keys(log.detail).length > 0 && (
+                      <span style={{ marginLeft: '8px', fontSize: '11px', color: '#aaa' }}>
+                        {log.detail.folder ? `📁 ${log.detail.folder}` : ''}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main UserManagement ──────────────────────────────────────────────────────
 function UserManagement() {
   const [tab, setTab] = useState('users');
@@ -575,8 +724,9 @@ function UserManagement() {
   const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Editor' });
   const [error, setError] = useState('');
   const [savedId, setSavedId] = useState(null);
-  const { currentUser, userName } = useAuth();
+  const { currentUser, userName, userPermissions } = useAuth();
   const { isOwner } = useUserRole();
+  const { userRole } = useAuth();
 
   const filteredUsers = users.filter(u => {
     const matchSearch = !userSearch || (u.username?.toLowerCase().includes(userSearch.toLowerCase()) || u.email?.toLowerCase().includes(userSearch.toLowerCase()));
@@ -682,6 +832,9 @@ function UserManagement() {
           🗑️ Recycle Bin
           {binCount > 0 && <span style={{ background: tab==='recycle'?'#1a3a5c':'#FCEBEB', color: tab==='recycle'?'white':'#791F1F', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{binCount}</span>}
         </button>
+        <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>
+          📋 Activity Log
+        </button>
       </div>
 
       {/* Users tab */}
@@ -761,6 +914,9 @@ function UserManagement() {
 
       {/* Access Control tab */}
       {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} />}
+
+      {/* Activity Log tab — Owner เห็นทั้งหมด, Admin เห็นเฉพาะที่มี permission */}
+      {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
 
       {/* Recycle Bin tab */}
       {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} />}

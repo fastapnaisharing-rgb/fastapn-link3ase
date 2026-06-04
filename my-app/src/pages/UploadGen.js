@@ -142,6 +142,19 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const PAGE_SIZE = 20;
 
+  const logActivity = async (action, target, detail = {}) => {
+    try {
+      await supabase.from('activity_log').insert([{
+        user_email: currentUser?.email || '',
+        username: userName || currentUser?.email || '',
+        action,
+        target,
+        detail,
+        created_at: new Date().toISOString(),
+      }]);
+    } catch (err) { console.error('log error:', err); }
+  };
+
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     try {
@@ -160,20 +173,22 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   const handleDelete = async (file) => {
     try {
       await supabase.from('doc_files').delete().eq('id', file.id);
+      await logActivity('delete_file', file.file_name, { folder: folder.key });
       setConfirmDelete(null);
       fetchFiles();
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  const handleOpen = (url) => {
+  const handleOpen = (url, fileName) => {
     if (!url) { alert('ยังไม่มี SharePoint URL ครับ'); return; }
+    logActivity('open_file', fileName || url, { folder: folder.key });
     window.open(url, '_blank');
   };
 
   const handleDownload = (url, fileName) => {
     if (!url) { alert('ยังไม่มี SharePoint URL ครับ\n(รอเชื่อม API บริษัทก่อนครับ)'); return; }
+    logActivity('download_file', fileName || url, { folder: folder.key });
     // TODO: เชื่อม Windows Server API เพื่อ download จริง
-    // ตอนนี้ redirect ไป SharePoint URL ก่อน
     window.open(url, '_blank');
   };
 
@@ -295,7 +310,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
                     <td style={{ ...S.td, color:'#888' }}>{formatDate(file.uploaded_at)}</td>
                     <td style={{ ...S.td, textAlign:'center' }}>
                       <div style={{ display:'inline-flex', gap:'4px' }}>
-                        <button onClick={() => handleOpen(file.sharepoint_url)} style={S.actionBtn} title="เปิดใน SharePoint">🔗</button>
+                        <button onClick={() => handleOpen(file.sharepoint_url, file.file_name)} style={S.actionBtn} title="เปิดใน SharePoint">🔗</button>
                         <button onClick={() => handleDownload(file.sharepoint_url, file.file_name)} style={S.actionBtn} title="Download">⬇️</button>
                         {canDelete && <button onClick={() => setConfirmDelete(file)} style={{ ...S.actionBtn, borderColor:'#f7c1c1' }} title="ลบ">🗑️</button>}
                       </div>
@@ -328,7 +343,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
       )}
 
       {/* Add File Modal */}
-      {showAdd && <AddFileModal folder={folder} onClose={() => setShowAdd(false)} onSave={fetchFiles} userName={userName} currentUser={currentUser} />}
+      {showAdd && <AddFileModal folder={folder} onClose={() => setShowAdd(false)} onSave={async (fileName) => { await logActivity('add_file', fileName || '', { folder: folder.key }); fetchFiles(); }} userName={userName} currentUser={currentUser} />}
 
       {/* Confirm Delete Modal */}
       {confirmDelete && (
