@@ -12,36 +12,36 @@ const DOC_FOLDERS = [
 ];
 
 function DocumentCenter() {
-  const { currentUser } = useAuth();
+  const { currentUser, userName } = useAuth();
   const { isOwner, isAdmin } = useUserRole();
-  const [userRole, setUserRole] = useState(null);
+  const [userRoleData, setUserRoleData] = useState(null);
   const [overrides, setOverrides] = useState([]);
   const [fileCounts, setFileCounts] = useState({});
+  const [requests, setRequests] = useState([]); // access_requests ของ user นี้
   const [loading, setLoading] = useState(true);
+  const [requesting, setRequesting] = useState({}); // { folderKey: true/false }
+  const [toast, setToast] = useState(null);
 
   const fetchData = useCallback(async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
-      // 1. fetch user role + permissions
       const { data: roleData } = await supabase
         .from('user_roles')
         .select('*')
         .eq('email', currentUser.email)
         .single();
-      setUserRole(roleData);
+      setUserRoleData(roleData);
 
-      // 2. fetch overrides for this user
       if (roleData?.id) {
-        const { data: ovData } = await supabase
-          .from('doc_access_override')
-          .select('*')
-          .eq('user_id', roleData.id);
+        const [{ data: ovData }, { data: reqData }] = await Promise.all([
+          supabase.from('doc_access_override').select('*').eq('user_id', roleData.id),
+          supabase.from('access_requests').select('*').eq('requester_id', roleData.id),
+        ]);
         setOverrides(ovData || []);
+        setRequests(reqData || []);
       }
 
-      // 3. fetch file counts per folder (future: from doc storage table)
-      // placeholder — will be real when doc storage is implemented
       setFileCounts({ ap: 0, vat: 0, ie: 0, gl: 0, ipro: 0 });
     } catch (err) {
       console.error('fetchData error:', err);
@@ -52,15 +52,45 @@ function DocumentCenter() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const canAccess = (folder) => {
-    // Owner และ Admin เข้าได้เสมอ
     if (isOwner || isAdmin) return true;
-
-    // Check override ก่อน
     const override = overrides.find(o => o.folder_key === folder.key);
     if (override) return override.allowed;
+    return userRoleData?.permissions?.[folder.permKey] ?? false;
+  };
 
-    // fallback ใช้ permission ปกติ
-    return userRole?.permissions?.[folder.permKey] ?? false;
+  const getRequestStatus = (folderKey) => {
+    const req = requests.find(r => r.folder_key === folderKey && r.status === 'pending');
+    return req ? 'pending' : null;
+  };
+
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleRequestAccess = async (folder) => {
+    if (!userRoleData?.id) return;
+    setRequesting(prev => ({ ...prev, [folder.key]: true }));
+    try {
+      // check ว่า pending อยู่แล้วไหม
+      const existing = requests.find(r => r.folder_key === folder.key && r.status === 'pending');
+      if (existing) { showToast('ส่ง request ไปแล้วครับ รออนุมัติอยู่', 'info'); return; }
+
+      const { error } = await supabase.from('access_requests').insert([{
+        requester_id: userRoleData.id,
+        requester_name: userName || currentUser?.email || '',
+        folder_key: folder.key,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+      }]);
+      if (error) throw error;
+
+      setRequests(prev => [...prev, { folder_key: folder.key, status: 'pending' }]);
+      showToast(`ส่งคำขอ "${folder.label}" แล้วครับ รออนุมัติจาก Owner/Admin`);
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
+    }
+    setRequesting(prev => ({ ...prev, [folder.key]: false }));
   };
 
   if (loading) {
@@ -72,13 +102,27 @@ function DocumentCenter() {
     );
   }
 
+  const accessibleCount = DOC_FOLDERS.filter(f => canAccess(f)).length;
+
   return (
     <div style={{ padding: '20px' }}>
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: 'fixed', top: '20px', right: '20px', zIndex: 9999,
+          padding: '10px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '500',
+          background: toast.type === 'error' ? '#FCEBEB' : toast.type === 'info' ? '#e8f0fb' : '#EAF3DE',
+          color: toast.type === 'error' ? '#791F1F' : toast.type === 'info' ? '#1a3a5c' : '#27500A',
+          border: `0.5px solid ${toast.type === 'error' ? '#f7c1c1' : toast.type === 'info' ? '#b5d4f4' : '#97C459'}`,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+        }}>{toast.msg}</div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
         <div>
           <h2 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 4px' }}>📁 Document Center</h2>
           <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>
-            {DOC_FOLDERS.filter(f => canAccess(f)).length} โฟลเดอร์ที่เข้าถึงได้
+            {accessibleCount} โฟลเดอร์ที่เข้าถึงได้ จากทั้งหมด {DOC_FOLDERS.length} โฟลเดอร์
           </p>
         </div>
       </div>
@@ -87,6 +131,8 @@ function DocumentCenter() {
         {DOC_FOLDERS.map(folder => {
           const accessible = canAccess(folder);
           const count = fileCounts[folder.key] ?? 0;
+          const reqStatus = getRequestStatus(folder.key);
+          const isRequesting = requesting[folder.key];
 
           return (
             <div key={folder.key}
@@ -98,12 +144,12 @@ function DocumentCenter() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '14px',
-                cursor: accessible ? 'pointer' : 'not-allowed',
-                opacity: accessible ? 1 : 0.45,
+                cursor: accessible ? 'pointer' : 'default',
+                opacity: accessible ? 1 : 0.6,
                 transition: 'border-color 0.15s',
               }}
               onMouseEnter={e => { if (accessible) e.currentTarget.style.borderColor = '#1a3a5c'; }}
-              onMouseLeave={e => { if (accessible) e.currentTarget.style.borderColor = '#e8e8e8'; }}
+              onMouseLeave={e => { if (accessible) e.currentTarget.style.borderColor = accessible ? '#e8e8e8' : '#f0f0f0'; }}
             >
               {/* Icon */}
               <div style={{
@@ -117,11 +163,11 @@ function DocumentCenter() {
 
               {/* Info */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '14px', fontWeight: '500', color: accessible ? '#1a3a5c' : '#999', marginBottom: '2px' }}>
+                <div style={{ fontSize: '14px', fontWeight: '500', color: accessible ? '#1a3a5c' : '#999', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {folder.label}
-                  {!accessible && (
-                    <span style={{ marginLeft: '8px', fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#f5f5f5', color: '#999', fontWeight: '400' }}>
-                      ไม่มีสิทธิ์
+                  {!accessible && reqStatus === 'pending' && (
+                    <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', background: '#FFF3CD', color: '#856404', fontWeight: '500' }}>
+                      ⏳ รออนุมัติ
                     </span>
                   )}
                 </div>
@@ -139,38 +185,52 @@ function DocumentCenter() {
                 📄 {count} ไฟล์
               </span>
 
-              {/* Last update */}
-              <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0, minWidth: '80px', textAlign: 'right' }}>
-                {accessible ? '—' : '—'}
-              </span>
+              {/* Last update placeholder */}
+              <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0, minWidth: '80px', textAlign: 'right' }}>—</span>
 
-              {/* Upload btn */}
-              <button
-                onClick={e => { e.stopPropagation(); }}
-                disabled={!accessible}
-                style={{
-                  fontSize: '11px', padding: '5px 12px', borderRadius: '6px',
-                  border: `0.5px solid ${accessible ? '#ddd' : '#f0f0f0'}`,
-                  background: accessible ? 'white' : '#f9f9f9',
-                  color: accessible ? '#555' : '#ccc',
-                  cursor: accessible ? 'pointer' : 'not-allowed',
-                  display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
-                }}>
-                ⬆ Upload
-              </button>
-
-              {/* Arrow or Lock */}
-              <span style={{ fontSize: '16px', color: accessible ? '#aaa' : '#ddd', flexShrink: 0 }}>
-                {accessible ? '›' : '🔒'}
-              </span>
+              {accessible ? (
+                <>
+                  <button
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      fontSize: '11px', padding: '5px 12px', borderRadius: '6px',
+                      border: '0.5px solid #ddd', background: 'white', color: '#555',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
+                    }}>
+                    ⬆ Upload
+                  </button>
+                  <span style={{ fontSize: '16px', color: '#aaa', flexShrink: 0 }}>›</span>
+                </>
+              ) : (
+                <>
+                  {/* Request Access button */}
+                  {reqStatus === 'pending' ? (
+                    <button disabled style={{
+                      fontSize: '11px', padding: '5px 12px', borderRadius: '6px',
+                      border: '0.5px solid #FFF3CD', background: '#FFF9E6', color: '#856404',
+                      cursor: 'default', flexShrink: 0,
+                    }}>
+                      ⏳ รออนุมัติ
+                    </button>
+                  ) : (
+                    <button
+                      onClick={e => { e.stopPropagation(); handleRequestAccess(folder); }}
+                      disabled={isRequesting}
+                      style={{
+                        fontSize: '11px', padding: '5px 12px', borderRadius: '6px',
+                        border: '0.5px solid #b5d4f4', background: '#E6F1FB', color: '#0C447C',
+                        cursor: 'pointer', flexShrink: 0, fontWeight: '500',
+                        opacity: isRequesting ? 0.6 : 1,
+                      }}>
+                      {isRequesting ? 'กำลังส่ง...' : '🔑 ขอสิทธิ์'}
+                    </button>
+                  )}
+                  <span style={{ fontSize: '16px', color: '#ddd', flexShrink: 0 }}>🔒</span>
+                </>
+              )}
             </div>
           );
         })}
-      </div>
-
-      {/* Info note */}
-      <div style={{ marginTop: '16px', padding: '10px 14px', background: '#f8f9fa', borderRadius: '8px', fontSize: '11px', color: '#888' }}>
-        💡 หากต้องการเข้าถึงโฟลเดอร์ที่ถูกล็อก กรุณาติดต่อ Owner เพื่อขอสิทธิ์เพิ่มเติมครับ
       </div>
     </div>
   );

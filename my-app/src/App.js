@@ -11,6 +11,7 @@ import UserManagement from './pages/UserManagement';
 import Profile from './pages/Profile';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
+import { supabase } from './supabase';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -56,6 +57,73 @@ const UserIcon = () => (
   </svg>
 );
 
+const BellIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+    <path d="M13.73 21a2 2 0 01-3.46 0"/>
+  </svg>
+);
+
+const DOC_FOLDER_LABELS = { ap: 'AP Manual', vat: 'VAT Control', ie: 'I-Expense', gl: 'GL Report', ipro: 'I-Pro Interface' };
+
+function BellDropdown({ requests, isOwner, onApprove, onReject, onClose, onGoAccess }) {
+  const pendingCount = requests.filter(r => r.status === 'pending').length;
+  const visibleRequests = isOwner ? requests : requests.filter(r => ['pending','approved','rejected'].includes(r.status));
+
+  return (
+    <div style={{ position: 'absolute', bottom: '38px', left: 0, width: '300px', background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 999, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>
+          🔔 แจ้งเตือน
+          {pendingCount > 0 && <span style={{ marginLeft: '6px', fontSize: '10px', background: '#FCEBEB', color: '#791F1F', padding: '1px 6px', borderRadius: '20px' }}>{pendingCount} รออนุมัติ</span>}
+        </span>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>×</button>
+      </div>
+      <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+        {visibleRequests.length === 0 && (
+          <div style={{ padding: '24px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีการแจ้งเตือน</div>
+        )}
+        {visibleRequests.map(req => {
+          const folderLabel = DOC_FOLDER_LABELS[req.folder_key] || req.folder_key;
+          const isPending = req.status === 'pending';
+          const isApproved = req.status === 'approved';
+          const initial = (req.requester_name || '?')[0].toUpperCase();
+          return (
+            <div key={req.id} style={{ padding: '10px 14px', borderBottom: '0.5px solid #f0f0f0', background: isPending ? '#f8fbff' : 'white' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: isPending ? '#e8f0fb' : '#f5f5f5', color: isPending ? '#1a3a5c' : '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#333' }}>
+                    {isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอ ${folderLabel}`}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
+                    {isPending && <span style={{ color: '#856404' }}>⏳ รออนุมัติ</span>}
+                    {isApproved && <span style={{ color: '#27500A' }}>✅ อนุมัติโดย {req.handled_by}</span>}
+                    {req.status === 'rejected' && <span style={{ color: '#791F1F' }}>❌ ปฏิเสธโดย {req.handled_by}</span>}
+                  </div>
+                  {isOwner && isPending && (
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                      <button onClick={() => onApprove(req)} style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '5px', border: 'none', background: '#EAF3DE', color: '#27500A', cursor: 'pointer', fontWeight: '500' }}>อนุมัติ</button>
+                      <button onClick={() => onReject(req)} style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', color: '#555', cursor: 'pointer' }}>ปฏิเสธ</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {isOwner && (
+        <div style={{ padding: '8px 14px', borderTop: '0.5px solid #f0f0f0', textAlign: 'center' }}>
+          <button onClick={onGoAccess} style={{ fontSize: '11px', color: '#1a3a5c', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '500' }}>
+            ดูทั้งหมดใน Access Control →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const getBuildVersion = () => {
   const d = new Date(Number(process.env.REACT_APP_BUILD_TIME));
   if (isNaN(d.getTime())) return 'Link3ase · System';
@@ -65,6 +133,9 @@ const getBuildVersion = () => {
 function MainApp() {
   const [activePage, setActivePage] = useState('ap-controller');
   const [showProfile, setShowProfile] = useState(false);
+  const [showBell, setShowBell] = useState(false);
+  const [requests, setRequests] = useState([]);
+  const bellRef = React.useRef(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
@@ -84,6 +155,54 @@ function MainApp() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    fetchRequests();
+    const interval = setInterval(fetchRequests, 30000);
+    return () => clearInterval(interval);
+  }, [currentUser]);
+
+  const fetchRequests = async () => {
+    try {
+      const { data } = await supabase
+        .from('access_requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+      setRequests(data || []);
+    } catch (err) { console.error('fetchRequests error:', err); }
+  };
+
+  const handleApprove = async (req) => {
+    try {
+      // upsert doc_access_override → allowed = true
+      await supabase.from('doc_access_override').upsert({
+        user_id: req.requester_id,
+        folder_key: req.folder_key,
+        allowed: true,
+        updated_by: userName || currentUser?.email || '',
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,folder_key' });
+      // update access_requests status
+      await supabase.from('access_requests').update({
+        status: 'approved',
+        handled_by: userName || currentUser?.email || '',
+        handled_at: new Date().toISOString(),
+      }).eq('id', req.id);
+      fetchRequests();
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+  };
+
+  const handleReject = async (req) => {
+    try {
+      await supabase.from('access_requests').update({
+        status: 'rejected',
+        handled_by: userName || currentUser?.email || '',
+        handled_at: new Date().toISOString(),
+      }).eq('id', req.id);
+      fetchRequests();
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+  };
 
   // ✅ early return หลัง hooks ทั้งหมด
   if (!currentUser) return <Login />;
@@ -301,10 +420,29 @@ function MainApp() {
                     <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
                     <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
                   </div>
-                  <button onClick={handleProfileIconClick}
-                    style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <UserIcon />
-                  </button>
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    {/* Bell */}
+                    <div ref={bellRef} style={{ position: 'relative' }}>
+                      <button onClick={() => setShowBell(v => !v)}
+                        style={{ background: showBell ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${showBell ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: showBell ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                        <BellIcon />
+                        {isOwner && requests.filter(r => r.status === 'pending').length > 0 && (
+                          <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '16px', height: '16px', background: '#e74c3c', borderRadius: '50%', fontSize: '9px', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '500', border: '1.5px solid #1a3a5c' }}>
+                            {requests.filter(r => r.status === 'pending').length}
+                          </span>
+                        )}
+                        {!isOwner && requests.filter(r => r.status === 'pending').length > 0 && (
+                          <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
+                        )}
+                      </button>
+                      {showBell && <BellDropdown requests={requests} isOwner={isOwner} onApprove={handleApprove} onReject={handleReject} onClose={() => setShowBell(false)} onGoAccess={() => { selectPage('users'); setShowBell(false); }} />}
+                    </div>
+                    {/* User icon */}
+                    <button onClick={handleProfileIconClick}
+                      style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <UserIcon />
+                    </button>
+                  </div>
                 </div>
                 <button onClick={logout}
                   style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
@@ -313,6 +451,16 @@ function MainApp() {
               </>
             ) : (
               <>
+                <div style={{ position: 'relative' }}>
+                  <button onClick={() => setShowBell(v => !v)}
+                    style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                    <BellIcon />
+                    {requests.filter(r => r.status === 'pending').length > 0 && (
+                      <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
+                    )}
+                  </button>
+                  {showBell && <BellDropdown requests={requests} isOwner={isOwner} onApprove={handleApprove} onReject={handleReject} onClose={() => setShowBell(false)} onGoAccess={() => { selectPage('users'); setShowBell(false); }} />}
+                </div>
                 <button onClick={handleProfileIconClick}
                   style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <UserIcon />
