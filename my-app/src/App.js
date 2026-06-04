@@ -304,6 +304,29 @@ function MainApp() {
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
+  // ✅ Auto Logout เมื่อ Idle 1 ชั่วโมง
+  useEffect(() => {
+    if (!currentUser) return;
+    const IDLE_TIMEOUT = 60 * 60 * 1000; // 1 ชั่วโมง
+    let timer = null;
+
+    const resetTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        await logout();
+      }, IDLE_TIMEOUT);
+    };
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    events.forEach(e => window.addEventListener(e, resetTimer));
+    resetTimer(); // เริ่ม timer ทันที
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      events.forEach(e => window.removeEventListener(e, resetTimer));
+    };
+  }, [currentUser]);
+
   // ✅ early return หลัง hooks ทั้งหมด
   if (!currentUser) return <Login />;
 
