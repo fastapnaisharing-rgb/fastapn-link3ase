@@ -65,7 +65,7 @@ function Toggle({ value, onChange, disabled, override }) {
 function MaintenanceSection({ currentUser, userName }) {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [maintenanceMsg, setMaintenanceMsg] = useState('ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่');
-  const [onlineUsers, setOnlineUsers] = useState([]);
+
   const [saving, setSaving] = useState(false);
   const [confirmOn, setConfirmOn] = useState(false);
 
@@ -79,12 +79,7 @@ function MaintenanceSection({ currentUser, userName }) {
     }
   };
 
-  const fetchOnlineUsers = async () => {
-    const { data } = await supabase.from('user_roles').select('id, username, email, role').neq('role', 'Owner');
-    setOnlineUsers(data || []);
-  };
-
-  useEffect(() => { fetchSettings(); fetchOnlineUsers(); }, []);
+  useEffect(() => { fetchSettings(); }, []);
 
   const saveSettings = async (newMode) => {
     setSaving(true);
@@ -103,9 +98,6 @@ function MaintenanceSection({ currentUser, userName }) {
     if (!maintenanceMode) setConfirmOn(true);
     else saveSettings(false);
   };
-
-  const roleColor = { Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888' };
-  const roleBg = { Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5' };
 
   return (
     <div style={{ marginBottom: '16px' }}>
@@ -141,27 +133,7 @@ function MaintenanceSection({ currentUser, userName }) {
         )}
       </div>
 
-      {/* Online users list */}
-      <div style={{ background: 'white', border: '0.5px solid #e8e8e8', borderRadius: '8px', padding: '12px 16px' }}>
-        <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', marginBottom: '10px' }}>
-          👥 ผู้ใช้ในระบบ ({onlineUsers.length} คน ยกเว้น Owner)
-          {maintenanceMode && (
-            <span style={{ marginLeft: '8px', fontSize: '10px', background: '#FCEBEB', color: '#791F1F', padding: '1px 6px', borderRadius: '10px' }}>
-              ถูก Logout แล้วเมื่อเปิด Maintenance
-            </span>
-          )}
-        </div>
-        {onlineUsers.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มีผู้ใช้อื่น</div>}
-        {onlineUsers.map(u => (
-          <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', borderBottom: '0.5px solid #f5f5f5' }}>
-            <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: roleBg[u.role] || '#f5f5f5', color: roleColor[u.role] || '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '500', flexShrink: 0 }}>
-              {(u.username || u.email || '?')[0].toUpperCase()}
-            </div>
-            <span style={{ flex: 1, fontSize: '12px', color: '#333' }}>{u.username || u.email}</span>
-            <span style={{ fontSize: '10px', padding: '1px 7px', borderRadius: '20px', background: roleBg[u.role] || '#f5f5f5', color: roleColor[u.role] || '#888' }}>{u.role}</span>
-          </div>
-        ))}
-      </div>
+
 
       {/* Confirm Modal */}
       {confirmOn && (
