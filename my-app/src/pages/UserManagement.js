@@ -62,95 +62,157 @@ function Toggle({ value, onChange, disabled, override }) {
 }
 
 // ─── Maintenance Mode Section ────────────────────────────────────────────────
-function MaintenanceSection({ currentUser, userName }) {
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
-  const [maintenanceMsg, setMaintenanceMsg] = useState('ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่');
+const FUNCTION_MENU_LIST = [
+  { id: 'ap-controller',   icon: '🧾', label: 'AP Controller',   color: '#E6F1FB' },
+  { id: 'vat-controller',  icon: '💹', label: 'VAT Controller',  color: '#EAF3DE' },
+  { id: 'i-expense',       icon: '💸', label: 'I-Expense',       color: '#FAEEDA' },
+  { id: 'gl-functional',   icon: '📊', label: 'GL Functional',   color: '#EEEDFE' },
+  { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface', color: '#FAECE7' },
+];
 
-  const [saving, setSaving] = useState(false);
-  const [confirmOn, setConfirmOn] = useState(false);
+function MaintenanceSection({ currentUser, userName }) {
+  const [fullMaintenance, setFullMaintenance] = useState(false);
+  const [maintenanceMsg, setMaintenanceMsg] = useState('ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่');
+  const [selectiveMaintenance, setSelectiveMaintenance] = useState(false);
+  const [maintenanceMenus, setMaintenanceMenus] = useState([]);
+  const [confirmFull, setConfirmFull] = useState(false);
+  const [savingMsg, setSavingMsg] = useState(false);
 
   const fetchSettings = async () => {
     const { data } = await supabase.from('system_settings').select('*');
     if (data) {
-      const mode = data.find(d => d.key === 'maintenance_mode');
+      const full = data.find(d => d.key === 'maintenance_mode');
       const msg = data.find(d => d.key === 'maintenance_message');
-      if (mode) setMaintenanceMode(mode.value === 'true');
+      const menus = data.find(d => d.key === 'maintenance_menus');
+      if (full) setFullMaintenance(full.value === 'true');
       if (msg) setMaintenanceMsg(msg.value || '');
+      if (menus) {
+        try {
+          const parsed = JSON.parse(menus.value || '[]');
+          setMaintenanceMenus(parsed);
+          setSelectiveMaintenance(parsed.length > 0);
+        } catch { setMaintenanceMenus([]); }
+      }
     }
   };
 
   useEffect(() => { fetchSettings(); }, []);
 
-  const saveSettings = async (newMode) => {
-    setSaving(true);
-    try {
-      await supabase.from('system_settings').upsert([
-        { key: 'maintenance_mode', value: String(newMode), updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() },
-        { key: 'maintenance_message', value: maintenanceMsg, updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() },
-      ], { onConflict: 'key' });
-      setMaintenanceMode(newMode);
-      setConfirmOn(false);
-    } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
-    setSaving(false);
+  const saveSetting = async (key, value) => {
+    await supabase.from('system_settings').upsert(
+      [{ key, value: String(value), updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() }],
+      { onConflict: 'key' }
+    );
   };
 
-  const handleToggle = () => {
-    if (!maintenanceMode) setConfirmOn(true);
-    else saveSettings(false);
+  const handleFullToggle = () => {
+    if (!fullMaintenance) setConfirmFull(true);
+    else { saveSetting('maintenance_mode', 'false'); setFullMaintenance(false); }
   };
+
+  const handleSelectiveToggle = async (newVal) => {
+    setSelectiveMaintenance(newVal);
+    if (!newVal) { setMaintenanceMenus([]); await saveSetting('maintenance_menus', '[]'); }
+  };
+
+  const handleMenuToggle = async (menuId) => {
+    const newMenus = maintenanceMenus.includes(menuId)
+      ? maintenanceMenus.filter(m => m !== menuId)
+      : [...maintenanceMenus, menuId];
+    setMaintenanceMenus(newMenus);
+    await saveSetting('maintenance_menus', JSON.stringify(newMenus));
+  };
+
+  const handleConfirmFull = async () => {
+    await saveSetting('maintenance_mode', 'true');
+    setFullMaintenance(true); setConfirmFull(false);
+  };
+
+  const ToggleSwitch = ({ value, onChange, color }) => (
+    <div onClick={() => onChange(!value)}
+      style={{ width: '44px', height: '24px', borderRadius: '12px', background: value ? (color || '#0F6E56') : '#ccc', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}>
+      <div style={{ width: '18px', height: '18px', background: 'white', borderRadius: '50%', position: 'absolute', top: '3px', left: value ? '23px' : '3px', transition: 'left 0.2s' }} />
+    </div>
+  );
 
   return (
     <div style={{ marginBottom: '16px' }}>
-      {/* Maintenance toggle card */}
-      <div style={{ background: maintenanceMode ? '#FCEBEB' : 'white', border: `0.5px solid ${maintenanceMode ? '#f7c1c1' : '#e8e8e8'}`, borderRadius: '8px', padding: '14px 16px', marginBottom: '8px' }}>
+      <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', marginBottom: '8px' }}>🔧 System Maintenance</div>
+
+      {/* Full Maintenance */}
+      <div style={{ background: fullMaintenance ? '#FCEBEB' : 'white', border: `0.5px solid ${fullMaintenance ? '#f7c1c1' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '14px', fontWeight: '500', color: maintenanceMode ? '#791F1F' : '#1a3a5c', marginBottom: '2px' }}>
-              🔧 Maintenance Mode
-            </div>
-            <div style={{ fontSize: '11px', color: maintenanceMode ? '#e74c3c' : '#888' }}>
-              {maintenanceMode ? '⚠️ ระบบปิดอยู่ — เฉพาะ Owner เข้าได้' : 'ปกติ — ทุกคนเข้าระบบได้'}
+            <div style={{ fontSize: '13px', fontWeight: '500', color: fullMaintenance ? '#791F1F' : '#1a3a5c', marginBottom: '2px' }}>🔒 Full Maintenance</div>
+            <div style={{ fontSize: '11px', color: fullMaintenance ? '#e74c3c' : '#888' }}>
+              {fullMaintenance ? '⚠️ ระบบปิดอยู่ — เฉพาะ Owner เข้าได้' : 'ปิดทั้งระบบ — ทุกคนถูก Logout ยกเว้น Owner'}
             </div>
           </div>
-          <div onClick={handleToggle}
-            style={{ width: '44px', height: '24px', borderRadius: '12px', background: maintenanceMode ? '#e74c3c' : '#ccc', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}>
-            <div style={{ width: '18px', height: '18px', background: 'white', borderRadius: '50%', position: 'absolute', top: '3px', left: maintenanceMode ? '23px' : '3px', transition: 'left 0.2s' }} />
+          <ToggleSwitch value={fullMaintenance} onChange={handleFullToggle} color="#e74c3c" />
+        </div>
+        {fullMaintenance && (
+          <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '0.5px solid #f7c1c1', display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input value={maintenanceMsg} onChange={e => setMaintenanceMsg(e.target.value)}
+              onBlur={async () => { setSavingMsg(true); await saveSetting('maintenance_message', maintenanceMsg); setSavingMsg(false); }}
+              placeholder="ข้อความแสดงให้ User เห็น"
+              style={{ flex: 1, padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #f7c1c1', fontSize: '12px', background: 'white' }} />
+            {savingMsg && <span style={{ fontSize: '11px', color: '#0F6E56' }}>✅</span>}
           </div>
+        )}
+      </div>
+
+      {/* Selective Maintenance */}
+      <div style={{ background: 'white', border: `0.5px solid ${selectiveMaintenance ? '#ffc107' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: selectiveMaintenance ? '12px' : '0' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', marginBottom: '2px' }}>⚙️ Selective Maintenance</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>
+              {selectiveMaintenance ? `ปิด ${maintenanceMenus.length} Function — คนอื่นยังใช้งานส่วนอื่นได้` : 'ปิดเฉพาะบาง Function — ไม่ต้อง Logout ใคร'}
+            </div>
+          </div>
+          <ToggleSwitch value={selectiveMaintenance} onChange={handleSelectiveToggle} color="#856404" />
         </div>
 
-        {maintenanceMode && (
-          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid #f7c1c1' }}>
-            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>ข้อความแสดงให้ User เห็น</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input value={maintenanceMsg} onChange={e => setMaintenanceMsg(e.target.value)}
-                style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: '0.5px solid #f7c1c1', fontSize: '12px', background: 'white' }} />
-              <button onClick={() => saveSettings(true)} disabled={saving}
-                style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#791F1F', color: 'white', fontSize: '12px', cursor: 'pointer' }}>
-                {saving ? '...' : 'บันทึก'}
-              </button>
+        {selectiveMaintenance && (
+          <div style={{ borderTop: '0.5px solid #f5f5f5', paddingTop: '10px' }}>
+            <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Tick เพื่อปิดชั่วคราว — save อัตโนมัติ:</div>
+            {FUNCTION_MENU_LIST.map(menu => {
+              const isOff = maintenanceMenus.includes(menu.id);
+              return (
+                <div key={menu.id} onClick={() => handleMenuToggle(menu.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 8px', borderRadius: '6px', cursor: 'pointer', background: isOff ? '#fffdf0' : 'transparent', marginBottom: '2px' }}
+                  onMouseEnter={e => { if (!isOff) e.currentTarget.style.background = '#f8f9fa'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = isOff ? '#fffdf0' : 'transparent'; }}>
+                  <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: `1.5px solid ${isOff ? '#e74c3c' : '#ddd'}`, background: isOff ? '#e74c3c' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {isOff && <span style={{ color: 'white', fontSize: '11px', lineHeight: 1 }}>✓</span>}
+                  </div>
+                  <div style={{ width: '26px', height: '26px', borderRadius: '6px', background: isOff ? '#f5f5f5' : menu.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', flexShrink: 0 }}>{menu.icon}</div>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: '12px', color: isOff ? '#888' : '#333', textDecoration: isOff ? 'line-through' : 'none' }}>{menu.label}</span>
+                    {isOff && <span style={{ marginLeft: '8px', fontSize: '10px', padding: '1px 6px', borderRadius: '20px', background: '#FFF3CD', color: '#856404' }}>🔧 Maintain</span>}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '6px', paddingTop: '6px', borderTop: '0.5px solid #f5f5f5' }}>
+              💡 Menu ที่ปิดจะซ่อนใน Sidebar ทันที — ไม่ต้อง Logout ใคร
             </div>
           </div>
         )}
       </div>
 
-
-
-      {/* Confirm Modal */}
-      {confirmOn && (
+      {/* Confirm Full Modal */}
+      {confirmFull && (
         <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
           <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
-            <h3 style={{ fontSize:'15px', marginBottom:'12px', color:'#791F1F' }}>⚠️ เปิด Maintenance Mode</h3>
-            <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>
-              ระบบจะ <strong>ปิดการเข้าถึง</strong> สำหรับทุกคน ยกเว้น Owner — ผู้ใช้ที่ login อยู่จะถูก Logout อัตโนมัติภายใน 30 วินาที
-            </p>
+            <h3 style={{ fontSize:'15px', marginBottom:'12px', color:'#791F1F' }}>⚠️ เปิด Full Maintenance</h3>
+            <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>ระบบจะ <strong>ปิดการเข้าถึง</strong> ทุกคน ยกเว้น Owner — ผู้ใช้ที่ login อยู่จะถูก Logout อัตโนมัติภายใน 30 วินาที</p>
             <div style={{ background:'#FFF3CD', border:'0.5px solid #ffc107', borderRadius:'6px', padding:'10px 12px', marginBottom:'16px', fontSize:'12px', color:'#856404' }}>
               💡 ตรวจสอบให้แน่ใจว่าไม่มีใครกำลังทำงานสำคัญอยู่ก่อน
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px' }}>
-              <button onClick={() => setConfirmOn(false)} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>ยกเลิก</button>
-              <button onClick={() => saveSettings(true)} disabled={saving} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>
-                {saving ? 'กำลังเปิด...' : '🔧 เปิด Maintenance'}
-              </button>
+              <button onClick={() => setConfirmFull(false)} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>ยกเลิก</button>
+              <button onClick={handleConfirmFull} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>🔒 เปิด Full Maintenance</button>
             </div>
           </div>
         </div>

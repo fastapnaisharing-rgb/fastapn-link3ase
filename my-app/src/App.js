@@ -212,6 +212,7 @@ function MainApp() {
   const [showProfile, setShowProfile] = useState(false);
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
+  const [maintenanceMenus, setMaintenanceMenus] = useState([]);
   const bellRef = React.useRef(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [openMenu, setOpenMenu] = useState(null);
@@ -257,11 +258,13 @@ function MainApp() {
       try {
         const { data } = await supabase
           .from('system_settings')
-          .select('value')
-          .eq('key', 'maintenance_mode')
-          .single();
-        if (data?.value === 'true' && !isOwner) {
-          await logout();
+          .select('key, value')
+          .in('key', ['maintenance_mode', 'maintenance_menus']);
+        if (data) {
+          const fullMode = data.find(d => d.key === 'maintenance_mode');
+          const menusRow = data.find(d => d.key === 'maintenance_menus');
+          if (fullMode?.value === 'true' && !isOwner) { await logout(); return; }
+          try { setMaintenanceMenus(JSON.parse(menusRow?.value || '[]')); } catch { setMaintenanceMenus([]); }
         }
       } catch (err) { console.error('maintenance check error:', err); }
     };
@@ -359,9 +362,10 @@ function MainApp() {
     { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface',permKey: 'I-Pro' },
   ];
   // เฉพาะ Owner เท่านั้นที่เห็นทุก menu — คนอื่นทุก role filter ตาม permission
+  // และซ่อน menu ที่อยู่ใน maintenanceMenus (Selective Maintenance)
   const FUNCTION_MENUS = isOwner
-    ? ALL_FUNCTION_MENUS
-    : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true);
+    ? ALL_FUNCTION_MENUS.filter(m => !maintenanceMenus.includes(m.id))
+    : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(m.id));
 
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-code','vendor-category'];
   const isMasterActive = MASTER_PAGES.includes(activePage);
