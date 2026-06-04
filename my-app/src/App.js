@@ -250,6 +250,26 @@ function MainApp() {
     } catch (err) { console.error('fetchRequests error:', err); }
   };
 
+  // ✅ Maintenance mode polling — check ทุก 30 วิ
+  useEffect(() => {
+    if (!currentUser) return;
+    const checkMaintenance = async () => {
+      try {
+        const { data } = await supabase
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'maintenance_mode')
+          .single();
+        if (data?.value === 'true' && !isOwner) {
+          await logout();
+        }
+      } catch (err) { console.error('maintenance check error:', err); }
+    };
+    checkMaintenance();
+    const interval = setInterval(checkMaintenance, 30000);
+    return () => clearInterval(interval);
+  }, [currentUser, isOwner]);
+
   const handleApprove = async (req) => {
     try {
       // upsert doc_access_override → allowed = true

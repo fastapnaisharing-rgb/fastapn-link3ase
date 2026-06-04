@@ -61,6 +61,132 @@ function Toggle({ value, onChange, disabled, override }) {
   );
 }
 
+// ─── Maintenance Mode Section ────────────────────────────────────────────────
+function MaintenanceSection({ currentUser, userName }) {
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceMsg, setMaintenanceMsg] = useState('ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่');
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [confirmOn, setConfirmOn] = useState(false);
+
+  const fetchSettings = async () => {
+    const { data } = await supabase.from('system_settings').select('*');
+    if (data) {
+      const mode = data.find(d => d.key === 'maintenance_mode');
+      const msg = data.find(d => d.key === 'maintenance_message');
+      if (mode) setMaintenanceMode(mode.value === 'true');
+      if (msg) setMaintenanceMsg(msg.value || '');
+    }
+  };
+
+  const fetchOnlineUsers = async () => {
+    const { data } = await supabase.from('user_roles').select('id, username, email, role').neq('role', 'Owner');
+    setOnlineUsers(data || []);
+  };
+
+  useEffect(() => { fetchSettings(); fetchOnlineUsers(); }, []);
+
+  const saveSettings = async (newMode) => {
+    setSaving(true);
+    try {
+      await supabase.from('system_settings').upsert([
+        { key: 'maintenance_mode', value: String(newMode), updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() },
+        { key: 'maintenance_message', value: maintenanceMsg, updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() },
+      ], { onConflict: 'key' });
+      setMaintenanceMode(newMode);
+      setConfirmOn(false);
+    } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
+    setSaving(false);
+  };
+
+  const handleToggle = () => {
+    if (!maintenanceMode) setConfirmOn(true);
+    else saveSettings(false);
+  };
+
+  const roleColor = { Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888' };
+  const roleBg = { Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5' };
+
+  return (
+    <div style={{ marginBottom: '16px' }}>
+      {/* Maintenance toggle card */}
+      <div style={{ background: maintenanceMode ? '#FCEBEB' : 'white', border: `0.5px solid ${maintenanceMode ? '#f7c1c1' : '#e8e8e8'}`, borderRadius: '8px', padding: '14px 16px', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '14px', fontWeight: '500', color: maintenanceMode ? '#791F1F' : '#1a3a5c', marginBottom: '2px' }}>
+              🔧 Maintenance Mode
+            </div>
+            <div style={{ fontSize: '11px', color: maintenanceMode ? '#e74c3c' : '#888' }}>
+              {maintenanceMode ? '⚠️ ระบบปิดอยู่ — เฉพาะ Owner เข้าได้' : 'ปกติ — ทุกคนเข้าระบบได้'}
+            </div>
+          </div>
+          <div onClick={handleToggle}
+            style={{ width: '44px', height: '24px', borderRadius: '12px', background: maintenanceMode ? '#e74c3c' : '#ccc', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}>
+            <div style={{ width: '18px', height: '18px', background: 'white', borderRadius: '50%', position: 'absolute', top: '3px', left: maintenanceMode ? '23px' : '3px', transition: 'left 0.2s' }} />
+          </div>
+        </div>
+
+        {maintenanceMode && (
+          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid #f7c1c1' }}>
+            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>ข้อความแสดงให้ User เห็น</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input value={maintenanceMsg} onChange={e => setMaintenanceMsg(e.target.value)}
+                style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: '0.5px solid #f7c1c1', fontSize: '12px', background: 'white' }} />
+              <button onClick={() => saveSettings(true)} disabled={saving}
+                style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#791F1F', color: 'white', fontSize: '12px', cursor: 'pointer' }}>
+                {saving ? '...' : 'บันทึก'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Online users list */}
+      <div style={{ background: 'white', border: '0.5px solid #e8e8e8', borderRadius: '8px', padding: '12px 16px' }}>
+        <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', marginBottom: '10px' }}>
+          👥 ผู้ใช้ในระบบ ({onlineUsers.length} คน ยกเว้น Owner)
+          {maintenanceMode && (
+            <span style={{ marginLeft: '8px', fontSize: '10px', background: '#FCEBEB', color: '#791F1F', padding: '1px 6px', borderRadius: '10px' }}>
+              ถูก Logout แล้วเมื่อเปิด Maintenance
+            </span>
+          )}
+        </div>
+        {onlineUsers.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มีผู้ใช้อื่น</div>}
+        {onlineUsers.map(u => (
+          <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', borderBottom: '0.5px solid #f5f5f5' }}>
+            <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: roleBg[u.role] || '#f5f5f5', color: roleColor[u.role] || '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '500', flexShrink: 0 }}>
+              {(u.username || u.email || '?')[0].toUpperCase()}
+            </div>
+            <span style={{ flex: 1, fontSize: '12px', color: '#333' }}>{u.username || u.email}</span>
+            <span style={{ fontSize: '10px', padding: '1px 7px', borderRadius: '20px', background: roleBg[u.role] || '#f5f5f5', color: roleColor[u.role] || '#888' }}>{u.role}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Confirm Modal */}
+      {confirmOn && (
+        <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
+          <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
+            <h3 style={{ fontSize:'15px', marginBottom:'12px', color:'#791F1F' }}>⚠️ เปิด Maintenance Mode</h3>
+            <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>
+              ระบบจะ <strong>ปิดการเข้าถึง</strong> สำหรับทุกคน ยกเว้น Owner — ผู้ใช้ที่ login อยู่จะถูก Logout อัตโนมัติภายใน 30 วินาที
+            </p>
+            <div style={{ background:'#FFF3CD', border:'0.5px solid #ffc107', borderRadius:'6px', padding:'10px 12px', marginBottom:'16px', fontSize:'12px', color:'#856404' }}>
+              💡 ตรวจสอบให้แน่ใจว่าไม่มีใครกำลังทำงานสำคัญอยู่ก่อน
+            </div>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px' }}>
+              <button onClick={() => setConfirmOn(false)} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>ยกเลิก</button>
+              <button onClick={() => saveSettings(true)} disabled={saving} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>
+                {saving ? 'กำลังเปิด...' : '🔧 เปิด Maintenance'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Access Control Tab ──────────────────────────────────────────────────────
 function AccessControlTab({ users, currentUser, userName }) {
   const [overrides, setOverrides] = useState([]); // { user_id, folder_key, allowed }
@@ -130,8 +256,10 @@ function AccessControlTab({ users, currentUser, userName }) {
 
   return (
     <div style={{ paddingTop: '8px' }}>
+      <MaintenanceSection currentUser={currentUser} userName={userName} />
+      <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', margin: '12px 0 8px' }}>🔐 Document Center Access</div>
       <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
-        🔐 Owner สามารถ override สิทธิ์เข้าถึงแต่ละโฟลเดอร์ได้ — กด ⚙️ เพื่อตั้งค่าแต่ละโฟลเดอร์
+        Override สิทธิ์เข้าถึงแต่ละโฟลเดอร์ได้ — กด ⚙️ เพื่อตั้งค่า
       </div>
 
       {DOC_FOLDERS.map(folder => {

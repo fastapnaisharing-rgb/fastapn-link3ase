@@ -35,6 +35,32 @@ function Login() {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
+      // ✅ check maintenance mode ก่อน login
+      const { data: maintData } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'maintenance_mode')
+        .single();
+
+      if (maintData?.value === 'true') {
+        const resolvedEmail = await resolveEmail(emailOrUsername);
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('email', resolvedEmail)
+          .single();
+        if (roleData?.role !== 'Owner') {
+          const { data: msgData } = await supabase
+            .from('system_settings')
+            .select('value')
+            .eq('key', 'maintenance_message')
+            .single();
+          setError('🔧 ' + (msgData?.value || 'ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่'));
+          setLoading(false);
+          return;
+        }
+      }
+
       const email = await resolveEmail(emailOrUsername);
       await login(email, password);
     } catch (err) {
@@ -126,23 +152,8 @@ function Login() {
   );
 
   const S = {
-    page: {
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: '#f7f8fc'
-    },
-    card: {
-      background: 'white',
-      borderRadius: '16px',
-      padding: '40px',
-      width: '380px',
-      boxShadow: 'none',
-      border: '0.5px solid #e8eaf0',
-      position: 'relative',
-      overflow: 'hidden'
-    },
+    page: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f7f8fc' },
+    card: { background: 'white', borderRadius: '16px', padding: '40px', width: '380px', boxShadow: 'none', border: '0.5px solid #e8eaf0', position: 'relative', overflow: 'hidden' },
     logo: { textAlign: 'center', marginBottom: '24px' },
     logoText: { fontSize: '24px', fontWeight: 'bold', color: '#1a3a5c' },
     logoSub: { fontSize: '12px', color: '#888', marginTop: '4px' },
@@ -160,13 +171,7 @@ function Login() {
   return (
     <div style={S.page}>
       <div style={S.card}>
-        {/* Accent Bar */}
-        <div style={{
-          position: 'absolute', top: 0, left: 0, right: 0,
-          height: '3px',
-          background: 'linear-gradient(90deg, #1a3a5c, #5DCAA5)'
-        }} />
-
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: 'linear-gradient(90deg, #1a3a5c, #5DCAA5)' }} />
         <div style={S.logo}>
           <div style={S.logoText}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
           <div style={S.logoSub}>Link3ase · System</div>
@@ -183,68 +188,40 @@ function Login() {
         {mode === 'login' ? (
           <form onSubmit={handleLogin}>
             <label style={S.label}>Email หรือ Username</label>
-            <input
-              style={S.input} type="text" value={emailOrUsername}
-              onChange={e => setEmailOrUsername(e.target.value)}
-              placeholder="email@example.com หรือ username" required
-            />
+            <input style={S.input} type="text" value={emailOrUsername} onChange={e => setEmailOrUsername(e.target.value)} placeholder="email@example.com หรือ username" required />
             <label style={S.label}>Password</label>
             <div style={{ position: 'relative', marginBottom: '8px' }}>
-              <input
-                style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }}
-                type={showPassword ? 'text' : 'password'} value={password}
-                onChange={e => setPassword(e.target.value)} placeholder="••••••••" required
-              />
-              <button type="button" onClick={() => setShowPassword(p => !p)}
-                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
+              <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+              <button type="button" onClick={() => setShowPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
                 {showPassword ? <EyeOpen /> : <EyeClosed />}
               </button>
             </div>
             <div style={{ textAlign: 'right', marginBottom: '16px' }}>
-              <span onClick={() => { setShowForgot(true); setError(''); setForgotInput(''); }}
-                style={{ fontSize: '12px', color: '#5DCAA5', cursor: 'pointer', textDecoration: 'underline' }}>
-                ลืม Password?
-              </span>
+              <span onClick={() => { setShowForgot(true); setError(''); setForgotInput(''); }} style={{ fontSize: '12px', color: '#5DCAA5', cursor: 'pointer', textDecoration: 'underline' }}>ลืม Password?</span>
             </div>
-            <button style={S.btn} type="submit" disabled={loading}>
-              {loading ? 'กำลัง Login...' : 'Login'}
-            </button>
+            <button style={S.btn} type="submit" disabled={loading}>{loading ? 'กำลัง Login...' : 'Login'}</button>
           </form>
         ) : (
           <form onSubmit={handleSignup}>
             <label style={S.label}>Username</label>
-            <input style={S.input} type="text" value={username}
-              onChange={e => setUsername(e.target.value)} placeholder="ตัวอักษร ตัวเลข ไม่มีช่องว่าง" required />
+            <input style={S.input} type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="ตัวอักษร ตัวเลข ไม่มีช่องว่าง" required />
             <label style={S.label}>Email</label>
-            <input style={S.input} type="email" value={email}
-              onChange={e => setEmail(e.target.value)} placeholder="email@example.com" required />
+            <input style={S.input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" required />
             <label style={S.label}>Password</label>
             <div style={{ position: 'relative', marginBottom: '16px' }}>
-              <input
-                style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }}
-                type={showPassword ? 'text' : 'password'} value={password}
-                onChange={e => setPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" required
-              />
-              <button type="button" onClick={() => setShowPassword(p => !p)}
-                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
+              <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" required />
+              <button type="button" onClick={() => setShowPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
                 {showPassword ? <EyeOpen /> : <EyeClosed />}
               </button>
             </div>
             <label style={S.label}>Confirm Password</label>
             <div style={{ position: 'relative', marginBottom: '16px' }}>
-              <input
-                style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }}
-                type={showConfirmPassword ? 'text' : 'password'} value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password อีกครั้ง" required
-              />
-              <button type="button" onClick={() => setShowConfirmPassword(p => !p)}
-                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
+              <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showConfirmPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password อีกครั้ง" required />
+              <button type="button" onClick={() => setShowConfirmPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
                 {showConfirmPassword ? <EyeOpen /> : <EyeClosed />}
               </button>
             </div>
-            <button style={S.btn} type="submit" disabled={loading}>
-              {loading ? 'กำลังสมัคร...' : 'Sign up'}
-            </button>
+            <button style={S.btn} type="submit" disabled={loading}>{loading ? 'กำลังสมัคร...' : 'Sign up'}</button>
           </form>
         )}
       </div>
@@ -253,21 +230,13 @@ function Login() {
         <div style={S.overlay}>
           <div style={S.modal}>
             <h3 style={{ marginBottom: '8px', fontSize: '15px' }}>🔑 ลืม Password</h3>
-            <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>
-              กรอก Email หรือ Username แล้วระบบจะส่งลิงก์รีเซ็ต Password ไปให้ครับ
-            </p>
+            <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>กรอก Email หรือ Username แล้วระบบจะส่งลิงก์รีเซ็ต Password ไปให้ครับ</p>
             {error && <div style={S.error}>{error}</div>}
             <label style={{ fontSize: '12px', color: '#666', display: 'block', marginBottom: '6px' }}>Email หรือ Username</label>
-            <input
-              style={S.input} type="text" value={forgotInput}
-              onChange={e => setForgotInput(e.target.value)}
-              placeholder="email@example.com หรือ username"
-            />
+            <input style={S.input} type="text" value={forgotInput} onChange={e => setForgotInput(e.target.value)} placeholder="email@example.com หรือ username" />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
-              <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#f0f0f0' }}
-                onClick={() => { setShowForgot(false); setError(''); }}>Cancel</button>
-              <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#1a3a5c', color: 'white' }}
-                onClick={handleForgotPassword} disabled={forgotLoading}>
+              <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#f0f0f0' }} onClick={() => { setShowForgot(false); setError(''); }}>Cancel</button>
+              <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#1a3a5c', color: 'white' }} onClick={handleForgotPassword} disabled={forgotLoading}>
                 {forgotLoading ? 'กำลังส่ง...' : 'ส่ง Email'}
               </button>
             </div>
