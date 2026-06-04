@@ -11,6 +11,7 @@ export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [userName, setUserName] = useState(null);
+  const [userPermissions, setUserPermissions] = useState(null); // ✅ เพิ่ม
   const [authReady, setAuthReady] = useState(false);
 
   const login = async (email, password) => {
@@ -34,15 +35,17 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await supabase
         .from('user_roles')
-        .select('role, username')
+        .select('role, username, permissions') // ✅ เพิ่ม permissions
         .eq('email', email)
         .maybeSingle();
       setUserRole(data?.role || null);
       setUserName(data?.username || null);
+      setUserPermissions(data?.permissions || null); // ✅ set permissions
     } catch (err) {
       console.error('fetchUserRole error:', err);
       setUserRole(null);
       setUserName(null);
+      setUserPermissions(null);
     }
   };
 
@@ -51,7 +54,6 @@ export function AuthProvider({ children }) {
     const APP_VERSION = '1.0.1';
     const storedVersion = localStorage.getItem('fastapn_version');
     if (storedVersion !== APP_VERSION) {
-      // ล้างทุกอย่างยกเว้น fastapn-auth
       const authData = localStorage.getItem('fastapn-auth');
       localStorage.clear();
       if (authData) localStorage.setItem('fastapn-auth', authData);
@@ -86,6 +88,7 @@ export function AuthProvider({ children }) {
         lastEmail = null;
         setUserRole(null);
         setUserName(null);
+        setUserPermissions(null); // ✅ clear permissions ตอน logout
       }
       if (event === 'SIGNED_OUT') {
         sessionStorage.removeItem('fastapn_cache');
@@ -99,7 +102,8 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const value = { currentUser, userRole, userName, login, logout, authReady };
+  // ✅ เพิ่ม userPermissions ใน value
+  const value = { currentUser, userRole, userName, userPermissions, login, logout, authReady };
 
   return (
     <AuthContext.Provider value={value}>

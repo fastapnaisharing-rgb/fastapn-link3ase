@@ -22,6 +22,16 @@ function useWindowWidth() {
   return width;
 }
 
+function NoAccessPage() {
+  return (
+    <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
+      <div style={{ fontSize: '48px', marginBottom: '16px' }}>⛔</div>
+      <div style={{ fontSize: '18px', fontWeight: '500', color: '#1a3a5c', marginBottom: '8px' }}>ไม่มีสิทธิ์เข้าถึงหน้านี้ครับ</div>
+      <div style={{ fontSize: '13px', color: '#aaa' }}>กรุณาติดต่อ Owner เพื่อขอสิทธิ์เพิ่มเติม</div>
+    </div>
+  );
+}
+
 function PlaceholderPage({ title, icon }) {
   return (
     <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
@@ -59,7 +69,7 @@ function MainApp() {
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
   const sidebarRef = useRef(null);
-  const { currentUser, userRole, userName, logout } = useAuth();
+  const { currentUser, userRole, userName, logout, userPermissions } = useAuth();
   const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
 
@@ -125,24 +135,28 @@ function MainApp() {
     setOpenMenu(null);
   };
 
-  const FUNCTION_MENUS = [
-    { id: 'ap-controller',   icon: '🧾', label: 'AP Controller' },
-    { id: 'vat-controller',  icon: '💹', label: 'VAT Controller' },
-    { id: 'i-expense',       icon: '💸', label: 'I-Expense' },
-    { id: 'gl-functional',   icon: '📊', label: 'GL Functional' },
-    { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface' },
+  const ALL_FUNCTION_MENUS = [
+    { id: 'ap-controller',   icon: '🧾', label: 'AP Controller',  permKey: 'VAT'   },
+    { id: 'vat-controller',  icon: '💹', label: 'VAT Controller', permKey: 'VAT'   },
+    { id: 'i-expense',       icon: '💸', label: 'I-Expense',      permKey: 'IE'    },
+    { id: 'gl-functional',   icon: '📊', label: 'GL Functional',  permKey: 'GL'    },
+    { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface',permKey: 'I-Pro' },
   ];
+  // เฉพาะ Owner เท่านั้นที่เห็นทุก menu — คนอื่นทุก role filter ตาม permission
+  const FUNCTION_MENUS = isOwner
+    ? ALL_FUNCTION_MENUS
+    : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true);
 
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-code','vendor-category'];
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   const renderPage = () => {
     switch (activePage) {
-      case 'ap-controller':   return <PlaceholderPage title="AP Controller" icon="🧾" />;
-      case 'vat-controller':  return <PlaceholderPage title="VAT Controller" icon="💹" />;
-      case 'i-expense':       return <PlaceholderPage title="I-Expense" icon="💸" />;
-      case 'gl-functional':   return <PlaceholderPage title="GL Functional" icon="📊" />;
-      case 'i-pro-interface': return <PlaceholderPage title="I-Pro Interface" icon="🔗" />;
+      case 'ap-controller':   return (isOwner || userPermissions?.['VAT'])   ? <PlaceholderPage title="AP Controller" icon="🧾" />   : <NoAccessPage />;
+      case 'vat-controller':  return (isOwner || userPermissions?.['VAT'])   ? <PlaceholderPage title="VAT Controller" icon="💹" />  : <NoAccessPage />;
+      case 'i-expense':       return (isOwner || userPermissions?.['IE'])    ? <PlaceholderPage title="I-Expense" icon="💸" />       : <NoAccessPage />;
+      case 'gl-functional':   return (isOwner || userPermissions?.['GL'])    ? <PlaceholderPage title="GL Functional" icon="📊" />   : <NoAccessPage />;
+      case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
       case 'bu-info':         return <BusinessUnit activeSubTab="info" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
       case 'bu-branch':       return <BusinessUnit activeSubTab="branch" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
       case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
