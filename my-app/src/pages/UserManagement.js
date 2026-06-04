@@ -425,19 +425,20 @@ function RecycleBinTab({ currentUser, userName }) {
     return true;
   }), [bins, filterTable, filterBy, fromDate, toDate]);
 
-  const handleRestore = async (item) => {
-    setLoading(true);
-    try {
-      const restoreData = { ...item.data, deleted: false, deleted_by: null, deleted_at: null };
-      const { error } = await supabase.from(item.source_table).update(restoreData).eq('id', item.source_id);
-      if (error) throw error;
-      await supabase.from('recycle_bin').delete().eq('id', item.id);
-      fetchBins();
-      alert('✅ Restore สำเร็จแล้วครับ');
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-    setLoading(false);
-  };
-
+const handleRestore = async (item) => {
+  setLoading(true);
+  try {
+    const { error } = await supabase
+      .from(item.source_table)
+      .update({ deleted: false, deleted_by: null, deleted_at: null })
+      .eq('id', item.source_id);
+    if (error) throw error;
+    await supabase.from('recycle_bin').delete().eq('id', item.id);
+    fetchBins();
+    alert('✅ Restore สำเร็จแล้วครับ');
+  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+  setLoading(false);
+};
   const handleDeletePermanent = async (item) => {
     setLoading(true);
     try {
