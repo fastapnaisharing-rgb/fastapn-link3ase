@@ -1,122 +1,179 @@
-import React, { useState } from 'react';
-import * as XLSX from 'xlsx';
+import React, { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { useUserRole } from '../contexts/useUserRole';
 
-function UploadGen() {
-  const [images, setImages] = useState([]);
-  const [invoiceData, setInvoiceData] = useState({
-    invoiceNo: '', supplierCode: '', supplierSite: '', receiveDate: '',
-    dueDate: '', totalAmt: '', vatAmt: '', description: '', account: '', branch: ''
-  });
-  const [saved, setSaved] = useState(false);
+const DOC_FOLDERS = [
+  { key: 'ap',   label: 'AP Manual',       icon: '🧾', permKey: 'VAT',   color: '#E6F1FB', textColor: '#0C447C', desc: 'ใบวางบิล, ใบเสร็จ, หนังสือยืนยัน' },
+  { key: 'vat',  label: 'VAT Control',     icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A', desc: 'ใบกำกับภาษี, รายงาน PP30' },
+  { key: 'ie',   label: 'I-Expense',       icon: '💸', permKey: 'IE',    color: '#FAEEDA', textColor: '#633806', desc: 'ใบเบิกค่าใช้จ่าย, ค่าเดินทาง, ค่าที่พัก' },
+  { key: 'gl',   label: 'GL Report',       icon: '📊', permKey: 'GL',    color: '#EEEDFE', textColor: '#3C3489', desc: 'รายงาน GL บัญชีแยกประเภท' },
+  { key: 'ipro', label: 'I-Pro Interface', icon: '🔗', permKey: 'I-Pro', color: '#FAECE7', textColor: '#712B13', desc: 'เอกสาร interface ระบบ · spec, mapping' },
+];
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-    const urls = files.map(f => URL.createObjectURL(f));
-    setImages(prev => [...prev, ...urls]);
+function DocumentCenter() {
+  const { currentUser } = useAuth();
+  const { isOwner, isAdmin } = useUserRole();
+  const [userRole, setUserRole] = useState(null);
+  const [overrides, setOverrides] = useState([]);
+  const [fileCounts, setFileCounts] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    if (!currentUser) return;
+    setLoading(true);
+    try {
+      // 1. fetch user role + permissions
+      const { data: roleData } = await supabase
+        .from('user_roles')
+        .select('*')
+        .eq('email', currentUser.email)
+        .single();
+      setUserRole(roleData);
+
+      // 2. fetch overrides for this user
+      if (roleData?.id) {
+        const { data: ovData } = await supabase
+          .from('doc_access_override')
+          .select('*')
+          .eq('user_id', roleData.id);
+        setOverrides(ovData || []);
+      }
+
+      // 3. fetch file counts per folder (future: from doc storage table)
+      // placeholder — will be real when doc storage is implemented
+      setFileCounts({ ap: 0, vat: 0, ie: 0, gl: 0, ipro: 0 });
+    } catch (err) {
+      console.error('fetchData error:', err);
+    }
+    setLoading(false);
+  }, [currentUser]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const canAccess = (folder) => {
+    // Owner และ Admin เข้าได้เสมอ
+    if (isOwner || isAdmin) return true;
+
+    // Check override ก่อน
+    const override = overrides.find(o => o.folder_key === folder.key);
+    if (override) return override.allowed;
+
+    // fallback ใช้ permission ปกติ
+    return userRole?.permissions?.[folder.permKey] ?? false;
   };
 
-  const handleBrowse = (e) => {
-    const files = Array.from(e.target.files);
-    const urls = files.map(f => URL.createObjectURL(f));
-    setImages(prev => [...prev, ...urls]);
-  };
-
-  const handleRemove = (idx) => {
-    setImages(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const exportExcel = () => {
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const dateStr = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
-    const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}`;
-    const filename = `UL${dateStr}-${timeStr}LKS.xls`;
-
-    const wsData = [
-      ['CRG BOOK'],
-      [],
-      ['H', 'APN', invoiceData.supplierCode, invoiceData.supplierSite,
-       invoiceData.receiveDate, invoiceData.invoiceNo, invoiceData.totalAmt,
-       '', invoiceData.branch, invoiceData.description, 'Yes', '', '', '', invoiceData.dueDate],
-      ['L', invoiceData.description, invoiceData.vatAmt ? (parseFloat(invoiceData.totalAmt) - parseFloat(invoiceData.vatAmt)).toFixed(2) : invoiceData.totalAmt,
-       '', '', '', invoiceData.account, '']
-    ];
-
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-    XLSX.writeFile(wb, filename);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-  };
-
-  const S = {
-    container: { padding: '20px' },
-    card: { background: 'white', borderRadius: '10px', padding: '20px', marginBottom: '16px' },
-    dropzone: { border: '2px dashed #ccc', borderRadius: '10px', padding: '32px', textAlign: 'center', background: '#fafafa', cursor: 'pointer' },
-    input: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', marginBottom: '8px' },
-    label: { fontSize: '12px', color: '#666', display: 'block', marginBottom: '3px' },
-    btn: { padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px' },
-    grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }
-  };
+  if (loading) {
+    return (
+      <div style={{ padding: '20px' }}>
+        <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>📁 Document Center</h2>
+        <div style={{ color: '#888', fontSize: '13px' }}>กำลังโหลด...</div>
+      </div>
+    );
+  }
 
   return (
-    <div style={S.container}>
-      <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>📁 Document Center</h2>
-
-      <div style={S.card}>
-        <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px', color: '#1a3a5c' }}>Drop Image / รูปเอกสาร</div>
-        <div style={S.dropzone} onDrop={handleDrop} onDragOver={e => e.preventDefault()}>
-          <div style={{ fontSize: '32px', marginBottom: '8px' }}>📎</div>
-          <div style={{ fontSize: '13px', color: '#666', marginBottom: '12px' }}>ลากรูปมาวางที่นี่ หรือ</div>
-          <label style={{ ...S.btn, background: '#1a3a5c', color: 'white', display: 'inline-block' }}>
-            Browse File
-            <input type="file" accept="image/*" multiple onChange={handleBrowse} style={{ display: 'none' }} />
-          </label>
-          <div style={{ fontSize: '11px', color: '#999', marginTop: '8px' }}>รองรับ JPG, PNG</div>
+    <div style={{ padding: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+        <div>
+          <h2 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 4px' }}>📁 Document Center</h2>
+          <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>
+            {DOC_FOLDERS.filter(f => canAccess(f)).length} โฟลเดอร์ที่เข้าถึงได้
+          </p>
         </div>
+      </div>
 
-        {images.length > 0 && (
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
-            {images.map((url, idx) => (
-              <div key={idx} style={{ position: 'relative' }}>
-                <img src={url} alt="" style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #ddd' }} />
-                <button onClick={() => handleRemove(idx)} style={{ position: 'absolute', top: '-6px', right: '-6px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '10px', cursor: 'pointer' }}>×</button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {DOC_FOLDERS.map(folder => {
+          const accessible = canAccess(folder);
+          const count = fileCounts[folder.key] ?? 0;
+
+          return (
+            <div key={folder.key}
+              style={{
+                background: 'white',
+                border: `0.5px solid ${accessible ? '#e8e8e8' : '#f0f0f0'}`,
+                borderRadius: '8px',
+                padding: '12px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '14px',
+                cursor: accessible ? 'pointer' : 'not-allowed',
+                opacity: accessible ? 1 : 0.45,
+                transition: 'border-color 0.15s',
+              }}
+              onMouseEnter={e => { if (accessible) e.currentTarget.style.borderColor = '#1a3a5c'; }}
+              onMouseLeave={e => { if (accessible) e.currentTarget.style.borderColor = '#e8e8e8'; }}
+            >
+              {/* Icon */}
+              <div style={{
+                width: '42px', height: '42px', borderRadius: '8px',
+                background: accessible ? folder.color : '#f5f5f5',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '22px', flexShrink: 0,
+              }}>
+                {accessible ? folder.icon : '🔒'}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      <div style={S.card}>
-        <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px', color: '#1a3a5c' }}>ข้อมูล Invoice</div>
-        <div style={S.grid}>
-          {[['invoiceNo','Invoice No.'],['supplierCode','Supplier Code'],['supplierSite','Supplier Site'],['branch','Branch (Buyer)'],['receiveDate','Receive Date (DDMMYY)'],['dueDate','Due Date (DDMMYY)'],['totalAmt','Total (รวม VAT)'],['vatAmt','VAT Amount']].map(([key, label]) => (
-            <div key={key}>
-              <label style={S.label}>{label}</label>
-              <input style={S.input} value={invoiceData[key]} onChange={e => setInvoiceData({...invoiceData, [key]: e.target.value})} />
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '14px', fontWeight: '500', color: accessible ? '#1a3a5c' : '#999', marginBottom: '2px' }}>
+                  {folder.label}
+                  {!accessible && (
+                    <span style={{ marginLeft: '8px', fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#f5f5f5', color: '#999', fontWeight: '400' }}>
+                      ไม่มีสิทธิ์
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: '11px', color: '#888' }}>{folder.desc}</div>
+              </div>
+
+              {/* File count */}
+              <span style={{
+                fontSize: '11px', padding: '3px 10px', borderRadius: '20px',
+                background: accessible ? folder.color : '#f5f5f5',
+                color: accessible ? folder.textColor : '#aaa',
+                display: 'flex', alignItems: 'center', gap: '4px',
+                flexShrink: 0, whiteSpace: 'nowrap',
+              }}>
+                📄 {count} ไฟล์
+              </span>
+
+              {/* Last update */}
+              <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0, minWidth: '80px', textAlign: 'right' }}>
+                {accessible ? '—' : '—'}
+              </span>
+
+              {/* Upload btn */}
+              <button
+                onClick={e => { e.stopPropagation(); }}
+                disabled={!accessible}
+                style={{
+                  fontSize: '11px', padding: '5px 12px', borderRadius: '6px',
+                  border: `0.5px solid ${accessible ? '#ddd' : '#f0f0f0'}`,
+                  background: accessible ? 'white' : '#f9f9f9',
+                  color: accessible ? '#555' : '#ccc',
+                  cursor: accessible ? 'pointer' : 'not-allowed',
+                  display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
+                }}>
+                ⬆ Upload
+              </button>
+
+              {/* Arrow or Lock */}
+              <span style={{ fontSize: '16px', color: accessible ? '#aaa' : '#ddd', flexShrink: 0 }}>
+                {accessible ? '›' : '🔒'}
+              </span>
             </div>
-          ))}
-        </div>
-        <div>
-          <label style={S.label}>Description</label>
-          <input style={S.input} value={invoiceData.description} onChange={e => setInvoiceData({...invoiceData, description: e.target.value})} />
-        </div>
-        <div>
-          <label style={S.label}>Account</label>
-          <input style={S.input} value={invoiceData.account} onChange={e => setInvoiceData({...invoiceData, account: e.target.value})} />
-        </div>
+          );
+        })}
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-        {saved && <span style={{ color: '#0F6E56', fontSize: '13px', alignSelf: 'center' }}>✅ Export สำเร็จแล้วครับ!</span>}
-        <button style={{ ...S.btn, background: '#0F6E56', color: 'white', fontSize: '14px', padding: '10px 24px' }} onClick={exportExcel}>
-          📥 Export Excel (.xls)
-        </button>
+      {/* Info note */}
+      <div style={{ marginTop: '16px', padding: '10px 14px', background: '#f8f9fa', borderRadius: '8px', fontSize: '11px', color: '#888' }}>
+        💡 หากต้องการเข้าถึงโฟลเดอร์ที่ถูกล็อก กรุณาติดต่อ Owner เพื่อขอสิทธิ์เพิ่มเติมครับ
       </div>
     </div>
   );
 }
 
-export default UploadGen;
+export default DocumentCenter;
