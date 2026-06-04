@@ -8,7 +8,6 @@ import ChartOfAccounts from './pages/ChartOfAccounts';
 import VendorMaster from './pages/VendorMaster';
 import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
-import Profile from './pages/Profile';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { supabase } from './supabase';
@@ -209,7 +208,6 @@ const getBuildVersion = () => {
 
 function MainApp() {
   const [activePage, setActivePage] = useState('ap-controller');
-  const [showProfile, setShowProfile] = useState(false);
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
@@ -335,8 +333,7 @@ function MainApp() {
   const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
   const handleProfileIconClick = () => {
-    if (isAdmin) selectPage('users');
-    else setShowProfile(true);
+    selectPage('users');
   };
 
   const clearCloseTimer = () => {
@@ -629,7 +626,6 @@ function MainApp() {
         {renderPage()}
       </div>
 
-      {showProfile && <Profile onClose={() => setShowProfile(false)} />}
       {showBell && <BellModal requests={requests} isOwner={isOwner} onApprove={handleApprove} onReject={handleReject} onClose={() => setShowBell(false)} onGoAccess={() => { selectPage('users'); setShowBell(false); }} />}
     </div>
   );
