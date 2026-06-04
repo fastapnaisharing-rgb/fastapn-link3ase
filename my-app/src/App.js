@@ -66,60 +66,137 @@ const BellIcon = () => (
 
 const DOC_FOLDER_LABELS = { ap: 'AP Manual', vat: 'VAT Control', ie: 'I-Expense', gl: 'GL Report', ipro: 'I-Pro Interface' };
 
-function BellDropdown({ requests, isOwner, onApprove, onReject, onClose, onGoAccess }) {
+function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess }) {
   const pendingCount = requests.filter(r => r.status === 'pending').length;
-  const visibleRequests = isOwner ? requests : requests.filter(r => ['pending','approved','rejected'].includes(r.status));
+  const pendingReqs = requests.filter(r => r.status === 'pending');
+  const handledReqs = requests.filter(r => r.status !== 'pending');
+
+  const formatTime = (ts) => {
+    if (!ts) return '';
+    const diff = Math.floor((Date.now() - new Date(ts)) / 1000 / 60);
+    if (diff < 60) return `${diff} นาทีที่แล้ว`;
+    if (diff < 1440) return `${Math.floor(diff/60)} ชั่วโมงที่แล้ว`;
+    return 'เมื่อวาน';
+  };
+
+  const hoursLeft = (ts) => {
+    if (!ts) return '';
+    const left = Math.ceil((new Date(ts).getTime() + 24*60*60*1000 - Date.now()) / (1000*60*60));
+    return left > 0 ? `หายใน ${left} ชม.` : 'กำลังจะหาย';
+  };
+
+  const visibleRequests = isOwner ? requests : requests;
 
   return (
-    <div style={{ position: 'absolute', bottom: '38px', left: 0, width: '300px', background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 999, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>
-          🔔 แจ้งเตือน
-          {pendingCount > 0 && <span style={{ marginLeft: '6px', fontSize: '10px', background: '#FCEBEB', color: '#791F1F', padding: '1px 6px', borderRadius: '20px' }}>{pendingCount} รออนุมัติ</span>}
-        </span>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>×</button>
-      </div>
-      <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
-        {visibleRequests.length === 0 && (
-          <div style={{ padding: '24px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีการแจ้งเตือน</div>
-        )}
-        {visibleRequests.map(req => {
-          const folderLabel = DOC_FOLDER_LABELS[req.folder_key] || req.folder_key;
-          const isPending = req.status === 'pending';
-          const isApproved = req.status === 'approved';
-          const initial = (req.requester_name || '?')[0].toUpperCase();
-          return (
-            <div key={req.id} style={{ padding: '10px 14px', borderBottom: '0.5px solid #f0f0f0', background: isPending ? '#f8fbff' : 'white' }}>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: isPending ? '#e8f0fb' : '#f5f5f5', color: isPending ? '#1a3a5c' : '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#333' }}>
-                    {isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอ ${folderLabel}`}
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
-                    {isPending && <span style={{ color: '#856404' }}>⏳ รออนุมัติ</span>}
-                    {isApproved && <span style={{ color: '#27500A' }}>✅ อนุมัติโดย {req.handled_by}</span>}
-                    {req.status === 'rejected' && <span style={{ color: '#791F1F' }}>❌ ปฏิเสธโดย {req.handled_by}</span>}
-                  </div>
-                  {isOwner && isPending && (
-                    <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
-                      <button onClick={() => onApprove(req)} style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '5px', border: 'none', background: '#EAF3DE', color: '#27500A', cursor: 'pointer', fontWeight: '500' }}>อนุมัติ</button>
-                      <button onClick={() => onReject(req)} style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', color: '#555', cursor: 'pointer' }}>ปฏิเสธ</button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {isOwner && (
-        <div style={{ padding: '8px 14px', borderTop: '0.5px solid #f0f0f0', textAlign: 'center' }}>
-          <button onClick={onGoAccess} style={{ fontSize: '11px', color: '#1a3a5c', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '500' }}>
-            ดูทั้งหมดใน Access Control →
-          </button>
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+      <div style={{ background: 'white', borderRadius: '12px', width: '460px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+        {/* Header */}
+        <div style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '15px', fontWeight: '500', color: '#1a3a5c' }}>🔔 การแจ้งเตือน</span>
+            {pendingCount > 0 && (
+              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: '#FCEBEB', color: '#791F1F', fontWeight: '500' }}>
+                {pendingCount} รออนุมัติ
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '20px', lineHeight: 1 }}>×</button>
         </div>
-      )}
+
+        {/* Body */}
+        <div style={{ overflowY: 'auto', flex: 1 }}>
+          {visibleRequests.length === 0 && (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔔</div>
+              ไม่มีการแจ้งเตือน
+            </div>
+          )}
+
+          {/* Pending section */}
+          {pendingReqs.length > 0 && (
+            <>
+              <div style={{ padding: '6px 18px', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
+                <span style={{ fontSize: '11px', fontWeight: '500', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>รออนุมัติ</span>
+              </div>
+              {pendingReqs.map(req => {
+                const folderLabel = DOC_FOLDER_LABELS[req.folder_key] || req.folder_key;
+                const initial = (req.requester_name || '?')[0].toUpperCase();
+                return (
+                  <div key={req.id} style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', background: '#f8fbff' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                      <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#e8f0fb', color: '#0C447C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', marginBottom: '2px' }}>
+                          {isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#888', marginBottom: isOwner ? '10px' : '0' }}>
+                          {req.requester_name} · {formatTime(req.created_at)}
+                        </div>
+                        {isOwner && (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => onApprove(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: 'none', background: '#EAF3DE', color: '#27500A', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              ✅ อนุมัติ
+                            </button>
+                            <button onClick={() => onReject(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              ❌ ปฏิเสธ
+                            </button>
+                          </div>
+                        )}
+                        {!isOwner && (
+                          <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: '#FFF3CD', color: '#856404' }}>⏳ รออนุมัติ</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* Handled section */}
+          {handledReqs.length > 0 && (
+            <>
+              <div style={{ padding: '6px 18px', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
+                <span style={{ fontSize: '11px', fontWeight: '500', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>จัดการแล้ว</span>
+              </div>
+              {handledReqs.map(req => {
+                const folderLabel = DOC_FOLDER_LABELS[req.folder_key] || req.folder_key;
+                const initial = (req.requester_name || '?')[0].toUpperCase();
+                const isApproved = req.status === 'approved';
+                return (
+                  <div key={req.id} style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                      <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#f5f5f5', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '13px', color: '#555', marginBottom: '4px' }}>
+                          {isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: isApproved ? '#EAF3DE' : '#FCEBEB', color: isApproved ? '#27500A' : '#791F1F' }}>
+                            {isApproved ? `✅ อนุมัติโดย ${req.handled_by}` : `❌ ปฏิเสธโดย ${req.handled_by}`}
+                          </span>
+                          <span style={{ fontSize: '11px', color: '#aaa' }}>{hoursLeft(req.handled_at)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '12px 18px', borderTop: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <span style={{ fontSize: '11px', color: '#aaa' }}>จัดการแล้วจะหายอัตโนมัติใน 24 ชม.</span>
+          {isOwner && (
+            <button onClick={onGoAccess} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: '0.5px solid #1a3a5c', background: 'white', color: '#1a3a5c', cursor: 'pointer', fontWeight: '500' }}>
+              ไป Access Control →
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -422,21 +499,15 @@ function MainApp() {
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                     {/* Bell */}
-                    <div ref={bellRef} style={{ position: 'relative' }}>
-                      <button onClick={() => setShowBell(v => !v)}
-                        style={{ background: showBell ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${showBell ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: showBell ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                        <BellIcon />
-                        {isOwner && requests.filter(r => r.status === 'pending').length > 0 && (
-                          <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '16px', height: '16px', background: '#e74c3c', borderRadius: '50%', fontSize: '9px', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '500', border: '1.5px solid #1a3a5c' }}>
-                            {requests.filter(r => r.status === 'pending').length}
-                          </span>
-                        )}
-                        {!isOwner && requests.filter(r => r.status === 'pending').length > 0 && (
-                          <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
-                        )}
-                      </button>
-                      {showBell && <BellDropdown requests={requests} isOwner={isOwner} onApprove={handleApprove} onReject={handleReject} onClose={() => setShowBell(false)} onGoAccess={() => { selectPage('users'); setShowBell(false); }} />}
-                    </div>
+                    <button onClick={() => setShowBell(v => !v)}
+                      style={{ background: showBell ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${showBell ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: showBell ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                      <BellIcon />
+                      {requests.filter(r => r.status === 'pending').length > 0 && (
+                        <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '16px', height: '16px', background: '#e74c3c', borderRadius: '50%', fontSize: '9px', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '500', border: '1.5px solid #1a3a5c' }}>
+                          {Math.min(requests.filter(r => r.status === 'pending').length, 9)}
+                        </span>
+                      )}
+                    </button>
                     {/* User icon */}
                     <button onClick={handleProfileIconClick}
                       style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -451,16 +522,13 @@ function MainApp() {
               </>
             ) : (
               <>
-                <div style={{ position: 'relative' }}>
-                  <button onClick={() => setShowBell(v => !v)}
-                    style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                    <BellIcon />
-                    {requests.filter(r => r.status === 'pending').length > 0 && (
-                      <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
-                    )}
-                  </button>
-                  {showBell && <BellDropdown requests={requests} isOwner={isOwner} onApprove={handleApprove} onReject={handleReject} onClose={() => setShowBell(false)} onGoAccess={() => { selectPage('users'); setShowBell(false); }} />}
-                </div>
+                <button onClick={() => setShowBell(v => !v)}
+                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                  <BellIcon />
+                  {requests.filter(r => r.status === 'pending').length > 0 && (
+                    <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
+                  )}
+                </button>
                 <button onClick={handleProfileIconClick}
                   style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <UserIcon />
@@ -515,6 +583,7 @@ function MainApp() {
       </div>
 
       {showProfile && <Profile onClose={() => setShowProfile(false)} />}
+      {showBell && <BellModal requests={requests} isOwner={isOwner} onApprove={handleApprove} onReject={handleReject} onClose={() => setShowBell(false)} onGoAccess={() => { selectPage('users'); setShowBell(false); }} />}
     </div>
   );
 }
