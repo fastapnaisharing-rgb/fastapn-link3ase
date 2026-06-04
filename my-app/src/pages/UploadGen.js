@@ -512,10 +512,6 @@ function DocumentCenter() {
 
               {accessible ? (
                 <>
-                  <button onClick={e => { e.stopPropagation(); setActiveFolder(folder); }}
-                    style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px', flexShrink:0 }}>
-                    ⬆ Upload
-                  </button>
                   <span style={{ fontSize:'16px', color:'#aaa', flexShrink:0 }}>›</span>
                 </>
               ) : (

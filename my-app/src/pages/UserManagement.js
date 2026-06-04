@@ -712,6 +712,132 @@ function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
   );
 }
 
+// ─── Profile Inline (สำหรับ Admin ใน UserManagement) ────────────────────────
+function ProfileInline({ currentUser, userName }) {
+  const [username, setUsername] = React.useState('');
+  const [email, setEmail] = React.useState(currentUser?.email || '');
+  const [newPassword, setNewPassword] = React.useState('');
+  const [confirmPassword, setConfirmPassword] = React.useState('');
+  const [error, setError] = React.useState('');
+  const [success, setSuccess] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const fileRef = React.useRef();
+  const [avatarPreview, setAvatarPreview] = React.useState(null);
+  const [currentUsername, setCurrentUsername] = React.useState('');
+
+  React.useEffect(() => {
+    const fetchUser = async () => {
+      const { data } = await supabase.from('user_roles').select('username').eq('email', currentUser?.email).single();
+      if (data) { setCurrentUsername(data.username || ''); setUsername(data.username || ''); }
+    };
+    fetchUser();
+  }, []);
+
+  const handleAvatarChange = (e) => {
+    const file = e.target.files[0];
+    if (file) { const reader = new FileReader(); reader.onloadend = () => setAvatarPreview(reader.result); reader.readAsDataURL(file); }
+  };
+
+  const handleSave = async () => {
+    setError(''); setSuccess('');
+    if (newPassword && newPassword !== confirmPassword) { setError('Password ใหม่ไม่ตรงกันครับ'); return; }
+    if (newPassword && newPassword.length < 6) { setError('Password ต้องมีอย่างน้อย 6 ตัวอักษรครับ'); return; }
+    setLoading(true);
+    try {
+      if (newPassword) {
+        const { error: pwError } = await supabase.auth.updateUser({ password: newPassword });
+        if (pwError) throw pwError;
+      }
+      if (email !== currentUser?.email) {
+        const { error: emailError } = await supabase.auth.updateUser({ email });
+        if (emailError) throw emailError;
+      }
+      const { error: roleError } = await supabase.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('email', currentUser?.email);
+      if (roleError) throw roleError;
+      setSuccess('บันทึกข้อมูลสำเร็จแล้วครับ!');
+      setNewPassword(''); setConfirmPassword('');
+    } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
+    setLoading(false);
+  };
+
+  const initials = (currentUsername || currentUser?.email || '?')[0].toUpperCase();
+  const S = {
+    label: { display: 'block', fontSize: '12px', color: '#666', marginBottom: '5px', fontWeight: '500' },
+    input: { width: '100%', padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' },
+  };
+
+  return (
+    <div style={{ maxWidth: '480px' }}>
+      {error && <div style={{ background: '#FCEBEB', color: '#791F1F', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{error}</div>}
+      {success && <div style={{ background: '#EAF3DE', color: '#27500A', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{success}</div>}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', padding: '14px 16px', background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8' }}>
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          {avatarPreview
+            ? <img src={avatarPreview} alt="avatar" style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #e0e0e0' }} />
+            : <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', fontWeight: '600', color: 'white' }}>{initials}</div>
+          }
+          <button onClick={() => fileRef.current.click()}
+            style={{ position: 'absolute', bottom: 0, right: 0, width: '22px', height: '22px', borderRadius: '50%', background: '#5DCAA5', border: 'none', cursor: 'pointer', fontSize: '12px', color: 'white', lineHeight: 1 }}>+</button>
+        </div>
+        <input type="file" accept="image/*" ref={fileRef} onChange={handleAvatarChange} style={{ display: 'none' }} />
+        <div>
+          <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{currentUsername || currentUser?.email}</div>
+          <div style={{ fontSize: '12px', color: '#888' }}>Admin</div>
+          <div style={{ fontSize: '11px', color: '#aaa' }}>{currentUser?.email}</div>
+        </div>
+      </div>
+
+      <div style={{ background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', padding: '16px 20px', marginBottom: '12px' }}>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c', marginBottom: '12px' }}>ข้อมูลทั่วไป</div>
+        <label style={S.label}>Username</label>
+        <input style={S.input} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" />
+        <label style={S.label}>Email</label>
+        <input style={S.input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" />
+      </div>
+
+      <div style={{ background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', padding: '16px 20px', marginBottom: '16px' }}>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c', marginBottom: '12px' }}>เปลี่ยน Password</div>
+        <label style={S.label}>Password ใหม่</label>
+        <input style={S.input} type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" />
+        <label style={S.label}>ยืนยัน Password ใหม่</label>
+        <input style={{ ...S.input, marginBottom: 0 }} type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password ใหม่อีกครั้ง" />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button onClick={handleSave} disabled={loading}
+          style={{ padding: '8px 20px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
+          {loading ? 'กำลังบันทึก...' : '💾 บันทึก'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Admin View (Profile + Activity Log) ─────────────────────────────────────
+function AdminView({ currentUser, userName, userRole, userPermissions, S }) {
+  const [tab, setTab] = React.useState('profile');
+  return (
+    <div style={S.container}>
+      <div style={S.topbar}>
+        <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>👤 User Management</h2>
+      </div>
+      <div style={{ borderBottom: '2px solid #e8e8e8', display: 'flex', marginBottom: '0' }}>
+        <button style={S.tabBtn(tab === 'profile')} onClick={() => setTab('profile')}>
+          👤 Profile
+        </button>
+        <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>
+          📋 Activity Log
+        </button>
+      </div>
+      <div style={{ paddingTop: '16px' }}>
+        {tab === 'profile' && <ProfileInline currentUser={currentUser} userName={userName} />}
+        {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main UserManagement ──────────────────────────────────────────────────────
 function UserManagement() {
   const [tab, setTab] = useState('users');
@@ -748,7 +874,24 @@ function UserManagement() {
 
   useEffect(() => { fetchUsers(); fetchBinCount(); }, []);
 
-  if (!isOwner) return <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>⛔ คุณไม่มีสิทธิ์เข้าถึงหน้านี้ครับ</div>;
+  const isAdmin = !isOwner && userRole === 'Admin';
+
+  // Editor/Viewer เห็นแค่ Profile tab
+  if (!isOwner && !isAdmin) {
+    return (
+      <div style={S.container}>
+        <div style={S.topbar}>
+          <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>👤 Profile</h2>
+        </div>
+        <ProfileInline currentUser={currentUser} userName={userName} />
+      </div>
+    );
+  }
+
+  // Admin เห็น 2 tabs: Profile + Activity Log
+  if (isAdmin) {
+    return <AdminView currentUser={currentUser} userName={userName} userRole={userRole} userPermissions={userPermissions} S={S} />;
+  }
 
   const saveUser = async (user) => {
     const { error } = await supabase.from('user_roles').update({ role: user.role, permissions: user.permissions, updated_by: currentUser?.email }).eq('id', user.id);
