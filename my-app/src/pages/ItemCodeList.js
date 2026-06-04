@@ -106,18 +106,20 @@ function ItemCodeList() {
 
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
+  // ✅ แก้ไข: filter ที่ DB เลย ไม่ดึง deleted มาด้วย
   const fetchData = async () => {
-    const { data, error } = await supabase.from('itemcode_list').select('*');
+    const { data, error } = await supabase
+      .from('itemcode_list')
+      .select('*')
+      .or('deleted.is.null,deleted.eq.false');
     if (error) { console.error('fetchData error:', error); return; }
-    const result = (data || [])
-      .filter(item => !item.deleted)
-      .map(item => ({
-        ...item,
-        code:      item.code      || item.Code      || '',
-        itemcode2: item.itemcode2 || item['2Itemcode'] || '',
-        i_and_g:   item.i_and_g   || item['I & G']  || '',
-        spi1:      item.spi1      || item['SPI-1']   || '',
-      }));
+    const result = (data || []).map(item => ({
+      ...item,
+      code:      item.code      || '',
+      itemcode2: item.itemcode2 || item['2Itemcode'] || '',
+      i_and_g:   item.i_and_g   || item['I & G']  || '',
+      spi1:      item.spi1      || item['SPI-1']   || '',
+    }));
     setItems(result);
     computeNextCode(result);
   };
@@ -329,7 +331,6 @@ function ItemCodeList() {
         </div>
       </div>
 
-      {/* Search + info + pagination — แบบ ChartOfAccounts */}
       <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px', justifyContent:'space-between' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
           <input
