@@ -106,14 +106,23 @@ function ItemCodeList() {
 
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
-  // ✅ แก้ไข: filter ที่ DB เลย ไม่ดึง deleted มาด้วย
+  // ✅ ดึงข้อมูล active ทั้งหมด (loop ข้าม 1000-row limit)
   const fetchData = async () => {
-    const { data, error } = await supabase
-      .from('itemcode_list')
-      .select('*')
-      .or('deleted.is.null,deleted.eq.false');
-    if (error) { console.error('fetchData error:', error); return; }
-    const result = (data || []).map(item => ({
+    let allData = [];
+    let from = 0;
+    const batchSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('itemcode_list')
+        .select('*')
+        .or('deleted.is.null,deleted.eq.false')
+        .range(from, from + batchSize - 1);
+      if (error) { console.error('fetchData error:', error); break; }
+      allData = [...allData, ...(data || [])];
+      if (!data || data.length < batchSize) break;
+      from += batchSize;
+    }
+    const result = allData.map(item => ({
       ...item,
       code:      item.code      || '',
       itemcode2: item.itemcode2 || item['2Itemcode'] || '',
@@ -121,14 +130,31 @@ function ItemCodeList() {
       spi1:      item.spi1      || item['SPI-1']   || '',
     }));
     setItems(result);
-    computeNextCode(result);
   };
 
-  const computeNextCode = (data) => {
-    const nums = data.map(d=>d.code||'').filter(c=>/^C\d{7}$/.test(c)).map(c=>parseInt(c.replace('C',''),10)).sort((a,b)=>a-b);
+  // ✅ คำนวณ Next Code จากทุก code รวม deleted เพื่อไม่ให้ซ้ำ
+  const computeNextCode = async () => {
+    let allCodes = [];
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from('itemcode_list')
+        .select('code')
+        .range(from, from + 999);
+      if (!data || data.length === 0) break;
+      allCodes = [...allCodes, ...data.map(d => d.code || '')];
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+    const nums = allCodes
+      .filter(c => /^C\d{7}$/.test(c))
+      .map(c => parseInt(c.replace('C', ''), 10))
+      .sort((a, b) => a - b);
     if (!nums.length) { setNextCode('C0000001'); return; }
-    for (let i=0;i<nums.length-1;i++) { if (nums[i+1]-nums[i]>1) { setNextCode(`C${String(nums[i]+1).padStart(7,'0')}`); return; } }
-    setNextCode(`C${String(nums[nums.length-1]+1).padStart(7,'0')}`);
+    for (let i = 0; i < nums.length - 1; i++) {
+      if (nums[i + 1] - nums[i] > 1) { setNextCode(`C${String(nums[i] + 1).padStart(7, '0')}`); return; }
+    }
+    setNextCode(`C${String(nums[nums.length - 1] + 1).padStart(7, '0')}`);
   };
 
   const getCodePool = (data) => {
@@ -140,7 +166,7 @@ function ItemCodeList() {
     return () => idx<gaps.length?`C${String(gaps[idx++]).padStart(7,'0')}`:`C${String(max+(idx++-gaps.length+1)).padStart(7,'0')}`;
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); computeNextCode(); }, []);
   useEffect(() => { setPage(1); }, [search]);
 
   const getOptions = (field) => [...new Set(items.map(i=>i[field]||'').filter(v=>v&&v!=='-'))].sort();
@@ -151,7 +177,8 @@ function ItemCodeList() {
     const data = { ...form, username: userName||currentUser?.email||'', last_update: getTimestamp() };
     if (editId) { await supabase.from('itemcode_list').update(data).eq('id',editId); }
     else { await supabase.from('itemcode_list').insert([{ ...data, code: nextCode }]); }
-    setShowForm(false); setEditId(null); resetForm(); fetchData();
+    setShowForm(false); setEditId(null); resetForm();
+    fetchData(); computeNextCode();
   };
 
   const handleEdit = (item) => {
@@ -217,7 +244,17 @@ function ItemCodeList() {
   const handleConfirmImport = async () => {
     setImporting(true);
     try {
-      const getNextCode = getCodePool(items);
+      // ดึง all codes รวม deleted เพื่อ pool ที่ถูกต้อง
+      let allCodesData = [];
+      let from = 0;
+      while (true) {
+        const { data } = await supabase.from('itemcode_list').select('code').range(from, from + 999);
+        if (!data || data.length === 0) break;
+        allCodesData = [...allCodesData, ...data];
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+      const getNextCode = getCodePool(allCodesData);
       for (let i=0;i<previewData.length;i+=500) {
         const batch = previewData.slice(i,i+500).map(row => ({
           code: getNextCode(),
@@ -237,7 +274,8 @@ function ItemCodeList() {
         }));
         await supabase.from('itemcode_list').insert(batch);
       }
-      setShowPreview(false); setPreviewData([]); fetchData();
+      setShowPreview(false); setPreviewData([]);
+      fetchData(); computeNextCode();
       alert(`✅ Import สำเร็จ ${previewData.length} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: '+err.message); }
     setImporting(false);
@@ -317,7 +355,6 @@ function ItemCodeList() {
 
   return (
     <div style={S.container}>
-      {/* Top bar */}
       <div style={S.topbar}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
           <h2 style={{ fontSize:isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>🔖 Item Code List</h2>
@@ -358,7 +395,6 @@ function ItemCodeList() {
         </div>
       </div>
 
-      {/* Table */}
       <div ref={containerRef} style={S.outer}>
         <div ref={theadRef} style={{...S.theadWrap, msOverflowStyle:'none'}}>
           <table style={{...S.table, width:`${totalW}px`}}>
@@ -405,7 +441,6 @@ function ItemCodeList() {
         </div>
       </div>
 
-      {/* Form Modal */}
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -435,7 +470,6 @@ function ItemCodeList() {
         </div>
       )}
 
-      {/* Preview Modal */}
       {showPreview && (
         <div style={S.overlay}>
           <div style={{ background:'white', borderRadius:'10px', padding:'20px', width:'90vw', maxWidth:'1000px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
