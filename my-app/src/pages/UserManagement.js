@@ -18,7 +18,6 @@ const TABLE_LABELS = {
   branch_list: 'Branch', company_list: 'Company',
 };
 
-// Document Center folders config
 const DOC_FOLDERS = [
   { key: 'ap',   label: 'AP Manual',      icon: '🧾', permKey: 'VAT',   color: '#E6F1FB', textColor: '#0C447C' },
   { key: 'vat',  label: 'VAT Control',    icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A' },
@@ -50,7 +49,6 @@ function DaysLeftBadge({ deletedAt }) {
   return <span style={{ background: bg, color, fontSize: '10px', padding: '1px 6px', borderRadius: '20px', marginLeft: '4px', fontWeight: '500' }}>{days <= 0 ? 'หมดอายุ' : `${days} วัน`}</span>;
 }
 
-// ─── Toggle Component ────────────────────────────────────────────────────────
 function Toggle({ value, onChange, disabled, override }) {
   const bg = disabled ? '#e0e0e0' : override === 'block' ? '#e74c3c' : value ? '#0F6E56' : '#ccc';
   return (
@@ -61,7 +59,6 @@ function Toggle({ value, onChange, disabled, override }) {
   );
 }
 
-// ─── Maintenance Mode Section ────────────────────────────────────────────────
 const FUNCTION_MENU_LIST = [
   { id: 'ap-controller',   icon: '🧾', label: 'AP Controller',   color: '#E6F1FB' },
   { id: 'vat-controller',  icon: '💹', label: 'VAT Controller',  color: '#EAF3DE' },
@@ -138,8 +135,6 @@ function MaintenanceSection({ currentUser, userName }) {
   return (
     <div style={{ marginBottom: '16px' }}>
       <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', marginBottom: '8px' }}>🔧 System Maintenance</div>
-
-      {/* Full Maintenance */}
       <div style={{ background: fullMaintenance ? '#FCEBEB' : 'white', border: `0.5px solid ${fullMaintenance ? '#f7c1c1' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ flex: 1 }}>
@@ -160,8 +155,6 @@ function MaintenanceSection({ currentUser, userName }) {
           </div>
         )}
       </div>
-
-      {/* Selective Maintenance */}
       <div style={{ background: 'white', border: `0.5px solid ${selectiveMaintenance ? '#ffc107' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: selectiveMaintenance ? '12px' : '0' }}>
           <div style={{ flex: 1 }}>
@@ -172,7 +165,6 @@ function MaintenanceSection({ currentUser, userName }) {
           </div>
           <ToggleSwitch value={selectiveMaintenance} onChange={handleSelectiveToggle} color="#856404" />
         </div>
-
         {selectiveMaintenance && (
           <div style={{ borderTop: '0.5px solid #f5f5f5', paddingTop: '10px' }}>
             <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Tick เพื่อปิดชั่วคราว — save อัตโนมัติ:</div>
@@ -200,8 +192,6 @@ function MaintenanceSection({ currentUser, userName }) {
           </div>
         )}
       </div>
-
-      {/* Confirm Full Modal */}
       {confirmFull && (
         <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
           <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
@@ -221,12 +211,11 @@ function MaintenanceSection({ currentUser, userName }) {
   );
 }
 
-// ─── Access Control Tab ──────────────────────────────────────────────────────
 function AccessControlTab({ users, currentUser, userName }) {
-  const [overrides, setOverrides] = useState([]); // { user_id, folder_key, allowed }
+  const [overrides, setOverrides] = useState([]);
   const [openFolder, setOpenFolder] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [pendingChanges, setPendingChanges] = useState({}); // { `${userId}_${folderKey}`: bool }
+  const [pendingChanges, setPendingChanges] = useState({});
 
   const fetchOverrides = async () => {
     const { data } = await supabase.from('doc_access_override').select('*');
@@ -235,7 +224,6 @@ function AccessControlTab({ users, currentUser, userName }) {
 
   useEffect(() => { fetchOverrides(); }, []);
 
-  // Get effective access: base = permission, override = doc_access_override
   const getEffective = (user, folderKey) => {
     const folder = DOC_FOLDERS.find(f => f.key === folderKey);
     const baseAccess = user.role === 'Owner' || user.role === 'Admin' ? true : (user.permissions?.[folder?.permKey] ?? false);
@@ -263,7 +251,6 @@ function AccessControlTab({ users, currentUser, userName }) {
       const folderChanges = Object.entries(pendingChanges)
         .filter(([k]) => k.endsWith(`_${folderKey}`))
         .map(([k, v]) => ({ userId: k.replace(`_${folderKey}`, ''), allowed: v }));
-
       for (const { userId, allowed } of folderChanges) {
         const { error } = await supabase.from('doc_access_override').upsert({
           user_id: userId, folder_key: folderKey, allowed,
@@ -272,7 +259,6 @@ function AccessControlTab({ users, currentUser, userName }) {
         }, { onConflict: 'user_id,folder_key' });
         if (error) throw error;
       }
-      // Clear pending for this folder
       setPendingChanges(prev => {
         const next = { ...prev };
         Object.keys(next).forEach(k => { if (k.endsWith(`_${folderKey}`)) delete next[k]; });
@@ -285,7 +271,6 @@ function AccessControlTab({ users, currentUser, userName }) {
   };
 
   const hasPendingForFolder = (folderKey) => Object.keys(pendingChanges).some(k => k.endsWith(`_${folderKey}`));
-
   const nonOwnerUsers = users.filter(u => u.role !== 'Owner');
 
   return (
@@ -295,16 +280,13 @@ function AccessControlTab({ users, currentUser, userName }) {
       <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
         Override สิทธิ์เข้าถึงแต่ละโฟลเดอร์ได้ — กด ⚙️ เพื่อตั้งค่า
       </div>
-
       {DOC_FOLDERS.map(folder => {
         const isOpen = openFolder === folder.key;
         const canAccess = nonOwnerUsers.filter(u => getPendingValue(u.id, folder.key));
         const noAccess = nonOwnerUsers.filter(u => !getPendingValue(u.id, folder.key));
         const hasPending = hasPendingForFolder(folder.key);
-
         return (
           <div key={folder.key} style={{ marginBottom: '8px' }}>
-            {/* Folder row */}
             <div style={{ background: 'white', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#e8e8e8'}`, borderRadius: isOpen ? '8px 8px 0 0' : '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ width: '38px', height: '38px', borderRadius: '8px', background: folder.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{folder.icon}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -319,12 +301,9 @@ function AccessControlTab({ users, currentUser, userName }) {
                 ⚙️ {isOpen ? 'ปิด' : 'ตั้งค่า'}
               </button>
             </div>
-
-            {/* Expand panel */}
             {isOpen && (
               <div style={{ background: 'white', border: '0.5px solid #1a3a5c', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '14px 16px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '12px' }}>
-                  {/* Can access */}
                   <div>
                     <div style={{ fontSize: '11px', fontWeight: '500', color: '#27500A', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '8px' }}>✅ เข้าถึงได้</div>
                     {canAccess.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มี</div>}
@@ -348,8 +327,6 @@ function AccessControlTab({ users, currentUser, userName }) {
                       );
                     })}
                   </div>
-
-                  {/* No access */}
                   <div>
                     <div style={{ fontSize: '11px', fontWeight: '500', color: '#791F1F', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '8px' }}>🚫 ไม่มีสิทธิ์</div>
                     {noAccess.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มี</div>}
@@ -374,11 +351,8 @@ function AccessControlTab({ users, currentUser, userName }) {
                     })}
                   </div>
                 </div>
-
                 <div style={{ borderTop: '0.5px solid #f0f0f0', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '11px', color: '#888' }}>
-                    💡 Toggle เปิด/ปิด แล้วกด บันทึก — Owner/Admin เข้าได้เสมอ
-                  </span>
+                  <span style={{ fontSize: '11px', color: '#888' }}>💡 Toggle เปิด/ปิด แล้วกด บันทึก — Owner/Admin เข้าได้เสมอ</span>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button onClick={() => { setOpenFolder(null); setPendingChanges(prev => { const next = { ...prev }; Object.keys(next).forEach(k => { if (k.endsWith(`_${folder.key}`)) delete next[k]; }); return next; }); }}
                       style={{ padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
@@ -397,15 +371,17 @@ function AccessControlTab({ users, currentUser, userName }) {
   );
 }
 
-// ─── Recycle Bin Tab ─────────────────────────────────────────────────────────
+// ─── Recycle Bin Tab (with bulk select) ──────────────────────────────────────
 function RecycleBinTab({ currentUser, userName }) {
   const [bins, setBins] = useState([]);
+  const [selected, setSelected] = useState([]);
   const [filterTable, setFilterTable] = useState('');
   const [filterBy, setFilterBy] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [viewItem, setViewItem] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const fetchBins = async () => {
@@ -425,26 +401,71 @@ function RecycleBinTab({ currentUser, userName }) {
     return true;
   }), [bins, filterTable, filterBy, fromDate, toDate]);
 
-const handleRestore = async (item) => {
-  setLoading(true);
-  try {
-    const { error } = await supabase
-      .from(item.source_table)
-      .update({ deleted: false, deleted_by: null, deleted_at: null })
-      .eq('id', item.source_id);
-    if (error) throw error;
-    await supabase.from('recycle_bin').delete().eq('id', item.id);
-    fetchBins();
-    alert('✅ Restore สำเร็จแล้วครับ');
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-  setLoading(false);
-};
+  const allSelected = filtered.length > 0 && filtered.every(i => selected.includes(i.id));
+
+  const toggleSelectAll = () => {
+    const ids = filtered.map(i => i.id);
+    if (allSelected) setSelected(prev => prev.filter(id => !ids.includes(id)));
+    else setSelected(prev => [...new Set([...prev, ...ids])]);
+  };
+
+  const toggleOne = (id) => setSelected(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
+
+  const handleRestore = async (item) => {
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from(item.source_table)
+        .update({ deleted: false, deleted_by: null, deleted_at: null })
+        .eq('id', item.source_id);
+      if (error) throw error;
+      await supabase.from('recycle_bin').delete().eq('id', item.id);
+      setSelected(prev => prev.filter(s => s !== item.id));
+      fetchBins();
+      alert('✅ Restore สำเร็จแล้วครับ');
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    setLoading(false);
+  };
+
+  const handleBulkRestore = async () => {
+    setLoading(true);
+    try {
+      const targets = bins.filter(b => selected.includes(b.id));
+      for (const item of targets) {
+        await supabase.from(item.source_table)
+          .update({ deleted: false, deleted_by: null, deleted_at: null })
+          .eq('id', item.source_id);
+      }
+      await supabase.from('recycle_bin').delete().in('id', selected);
+      setSelected([]);
+      fetchBins();
+      alert(`✅ Restore สำเร็จ ${targets.length} รายการ`);
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    setLoading(false);
+  };
+
   const handleDeletePermanent = async (item) => {
     setLoading(true);
     try {
       await supabase.from(item.source_table).delete().eq('id', item.source_id);
       await supabase.from('recycle_bin').delete().eq('id', item.id);
       setConfirmDelete(null);
+      setSelected(prev => prev.filter(s => s !== item.id));
+      fetchBins();
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    setLoading(false);
+  };
+
+  const handleBulkDeletePermanent = async () => {
+    setLoading(true);
+    try {
+      const targets = bins.filter(b => selected.includes(b.id));
+      for (const item of targets) {
+        await supabase.from(item.source_table).delete().eq('id', item.source_id);
+      }
+      await supabase.from('recycle_bin').delete().in('id', selected);
+      setSelected([]);
+      setConfirmBulkDelete(false);
       fetchBins();
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setLoading(false);
@@ -458,15 +479,37 @@ const handleRestore = async (item) => {
 
   const S = {
     th: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap' },
+    thCenter: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'center', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap' },
     td: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' },
+    tdCenter: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle', textAlign: 'center' },
     btn: (bg, color, border) => ({ padding: '3px 10px', borderRadius: '5px', border: `0.5px solid ${border||bg}`, fontSize: '11px', cursor: 'pointer', background: bg, color, fontWeight: '500' }),
     filterSelect: { padding: '5px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white' },
   };
 
   return (
     <div>
+      {/* Filter bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0' }}>
         <span style={{ fontSize: '12px', color: '#888' }}>{filtered.length} รายการ</span>
+
+        {/* Bulk action buttons */}
+        {selected.length > 0 && (
+          <>
+            <button onClick={handleBulkRestore} disabled={loading}
+              style={{ padding: '4px 12px', borderRadius: '6px', border: '0.5px solid #97C459', fontSize: '12px', cursor: 'pointer', background: '#EAF3DE', color: '#27500A', fontWeight: '500' }}>
+              ↩ Restore {selected.length} รายการ
+            </button>
+            <button onClick={() => setConfirmBulkDelete(true)}
+              style={{ padding: '4px 12px', borderRadius: '6px', border: '0.5px solid #f7c1c1', fontSize: '12px', cursor: 'pointer', background: '#FCEBEB', color: '#791F1F', fontWeight: '500' }}>
+              🗑️ ลบถาวร {selected.length} รายการ
+            </button>
+            <button onClick={() => setSelected([])}
+              style={{ padding: '4px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>
+              ✕ ยกเลิก
+            </button>
+          </>
+        )}
+
         <select value={filterTable} onChange={e => setFilterTable(e.target.value)} style={S.filterSelect}>
           <option value="">Table ทั้งหมด</option>
           {Object.entries(TABLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -486,25 +529,34 @@ const handleRestore = async (item) => {
             style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>✕ ล้าง</button>
         )}
       </div>
+
+      {/* Table */}
       <div style={{ overflowX: 'auto', borderRadius: '0 0 8px 8px', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '800px' }}>
           <thead>
             <tr>
+              <th style={{ ...S.thCenter, width: '36px' }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+              </th>
               <th style={{ ...S.th, width: '110px' }}>Table</th>
               <th style={{ ...S.th, width: '130px' }}>Key</th>
               <th style={S.th}>ข้อมูลหลัก</th>
               <th style={{ ...S.th, width: '100px' }}>ลบโดย</th>
               <th style={{ ...S.th, width: '150px' }}>ลบเมื่อ</th>
-              <th style={{ ...S.th, width: '160px', textAlign: 'center' }}>Action</th>
+              <th style={{ ...S.thCenter, width: '160px' }}>Action</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && <tr><td colSpan={6} style={{ padding: '40px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีรายการใน Recycle Bin</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีรายการใน Recycle Bin</td></tr>}
             {filtered.map(item => {
               const label = TABLE_LABELS[item.source_table] || item.source_table;
               const daysLeft = getDaysLeft(item.deleted_at);
+              const isSelected = selected.includes(item.id);
               return (
-                <tr key={item.id} style={{ background: daysLeft <= 7 ? '#fffdf5' : 'white' }}>
+                <tr key={item.id} style={{ background: isSelected ? '#f0f7ff' : daysLeft <= 7 ? '#fffdf5' : 'white' }}>
+                  <td style={S.tdCenter}>
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleOne(item.id)} />
+                  </td>
                   <td style={S.td}><span style={{ background: '#f0f0f0', color: '#555', fontSize: '10px', padding: '2px 8px', borderRadius: '20px' }}>{label}</span></td>
                   <td style={{ ...S.td, fontFamily: 'monospace', fontSize: '11px' }}>{item.source_key || '-'}</td>
                   <td style={{ ...S.td, color: '#666', fontSize: '11px', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -512,10 +564,10 @@ const handleRestore = async (item) => {
                   </td>
                   <td style={{ ...S.td, fontSize: '11px' }}>{item.deleted_by || '-'}</td>
                   <td style={{ ...S.td, fontSize: '11px' }}>{formatDate(item.deleted_at)}<DaysLeftBadge deletedAt={item.deleted_at} /></td>
-                  <td style={{ ...S.td, textAlign: 'center' }}>
+                  <td style={S.tdCenter}>
                     <div style={{ display: 'inline-flex', gap: '4px' }}>
                       <button onClick={() => setViewItem(item)} style={S.btn('#f5f5f5','#555','#ddd')}>🔍 ดู</button>
-                      <button onClick={() => handleRestore(item)} disabled={loading} style={S.btn('#EAF3DE','#27500A','#97C459')}>↩ Restore</button>
+                      <button onClick={() => handleRestore(item)} disabled={loading} style={S.btn('#EAF3DE','#27500A','#97C459')}>↩</button>
                       <button onClick={() => setConfirmDelete(item)} style={S.btn('#FCEBEB','#791F1F','#f7c1c1')}>🗑️</button>
                     </div>
                   </td>
@@ -525,6 +577,8 @@ const handleRestore = async (item) => {
           </tbody>
         </table>
       </div>
+
+      {/* View Modal */}
       {viewItem && (
         <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
           <div style={{ background:'white', borderRadius:'10px', padding:'20px', width:'480px', maxHeight:'80vh', display:'flex', flexDirection:'column' }}>
@@ -547,6 +601,8 @@ const handleRestore = async (item) => {
           </div>
         </div>
       )}
+
+      {/* Confirm single delete */}
       {confirmDelete && (
         <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
           <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
@@ -560,12 +616,25 @@ const handleRestore = async (item) => {
           </div>
         </div>
       )}
+
+      {/* Confirm bulk delete */}
+      {confirmBulkDelete && (
+        <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
+          <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
+            <h3 style={{ fontSize:'15px', marginBottom:'12px' }}>🗑️ ลบถาวร {selected.length} รายการ</h3>
+            <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>ต้องการลบ <strong>{selected.length} รายการ</strong> ถาวรหรือไม่?</p>
+            <div style={{ background:'#FCEBEB', border:'0.5px solid #f7c1c1', borderRadius:'6px', padding:'10px 12px', marginBottom:'16px', fontSize:'12px', color:'#791F1F' }}>⚠️ ไม่สามารถกู้คืนได้ทั้งหมด</div>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px' }}>
+              <button onClick={() => setConfirmBulkDelete(false)} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>Cancel</button>
+              <button onClick={handleBulkDeletePermanent} disabled={loading} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>ลบถาวรทั้งหมด</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── Activity Log Tab ────────────────────────────────────────────────────────
-// Permission mapping: folder key → permission key
 const FOLDER_PERM_MAP = { ap: 'VAT', vat: 'VAT', ie: 'IE', gl: 'GL', ipro: 'I-Pro' };
 
 function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
@@ -590,9 +659,7 @@ function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
 
   const canSeeLog = (log) => {
     if (isOwner) return true;
-    // Admin เห็น login/logout ทุกคน
     if (['login', 'logout', 'maintenance_on', 'maintenance_off'].includes(log.action)) return true;
-    // action ที่เกี่ยวกับ folder → check permission
     const folderKey = log.detail?.folder;
     if (folderKey) {
       const permKey = FOLDER_PERM_MAP[folderKey];
@@ -604,8 +671,7 @@ function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      let query = supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(500);
-      const { data } = await query;
+      const { data } = await supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(500);
       setLogs(data || []);
     } catch (err) { console.error(err); }
     setLoading(false);
@@ -614,7 +680,6 @@ function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
   useEffect(() => { fetchLogs(); }, []);
 
   const userOptions = [...new Set(logs.map(l => l.username).filter(Boolean))];
-
   const filtered = logs.filter(log => {
     if (!canSeeLog(log)) return false;
     if (filterAction && log.action !== filterAction) return false;
@@ -659,13 +724,8 @@ function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
             style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>✕ ล้าง</button>
         )}
         <button onClick={fetchLogs} style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: 'white', color: '#555', marginLeft: 'auto' }}>🔄 Refresh</button>
-        {!isOwner && (
-          <span style={{ fontSize: '11px', color: '#888', background: '#f8f9fa', padding: '3px 8px', borderRadius: '20px' }}>
-            📋 แสดงเฉพาะ Log ที่คุณมีสิทธิ์
-          </span>
-        )}
+        {!isOwner && <span style={{ fontSize: '11px', color: '#888', background: '#f8f9fa', padding: '3px 8px', borderRadius: '20px' }}>📋 แสดงเฉพาะ Log ที่คุณมีสิทธิ์</span>}
       </div>
-
       <div style={{ overflowX: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '700px' }}>
           <thead>
@@ -713,7 +773,6 @@ function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
   );
 }
 
-// ─── Profile Inline (สำหรับ Admin ใน UserManagement) ────────────────────────
 function ProfileInline({ currentUser, userName }) {
   const [username, setUsername] = React.useState('');
   const [email, setEmail] = React.useState(currentUser?.email || '');
@@ -771,7 +830,6 @@ function ProfileInline({ currentUser, userName }) {
     <div style={{ maxWidth: '480px' }}>
       {error && <div style={{ background: '#FCEBEB', color: '#791F1F', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{error}</div>}
       {success && <div style={{ background: '#EAF3DE', color: '#27500A', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{success}</div>}
-
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', padding: '14px 16px', background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8' }}>
         <div style={{ position: 'relative', flexShrink: 0 }}>
           {avatarPreview
@@ -788,7 +846,6 @@ function ProfileInline({ currentUser, userName }) {
           <div style={{ fontSize: '11px', color: '#aaa' }}>{currentUser?.email}</div>
         </div>
       </div>
-
       <div style={{ background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', padding: '16px 20px', marginBottom: '12px' }}>
         <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c', marginBottom: '12px' }}>ข้อมูลทั่วไป</div>
         <label style={S.label}>Username</label>
@@ -796,7 +853,6 @@ function ProfileInline({ currentUser, userName }) {
         <label style={S.label}>Email</label>
         <input style={S.input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" />
       </div>
-
       <div style={{ background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', padding: '16px 20px', marginBottom: '16px' }}>
         <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c', marginBottom: '12px' }}>เปลี่ยน Password</div>
         <label style={S.label}>Password ใหม่</label>
@@ -804,7 +860,6 @@ function ProfileInline({ currentUser, userName }) {
         <label style={S.label}>ยืนยัน Password ใหม่</label>
         <input style={{ ...S.input, marginBottom: 0 }} type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password ใหม่อีกครั้ง" />
       </div>
-
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button onClick={handleSave} disabled={loading}
           style={{ padding: '8px 20px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
@@ -815,21 +870,16 @@ function ProfileInline({ currentUser, userName }) {
   );
 }
 
-// ─── Admin View (Profile + Activity Log) ─────────────────────────────────────
 function AdminView({ currentUser, userName, userRole, userPermissions, S }) {
   const [tab, setTab] = React.useState('profile');
   return (
     <div style={S.container}>
       <div style={S.topbar}>
-        <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>👤 User Management</h2>
+        <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>⚙️ System Console</h2>
       </div>
       <div style={{ borderBottom: '2px solid #e8e8e8', display: 'flex', marginBottom: '0' }}>
-        <button style={S.tabBtn(tab === 'profile')} onClick={() => setTab('profile')}>
-          👤 Profile
-        </button>
-        <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>
-          📋 Activity Log
-        </button>
+        <button style={S.tabBtn(tab === 'profile')} onClick={() => setTab('profile')}>👤 Profile</button>
+        <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>📋 Activity Log</button>
       </div>
       <div style={{ paddingTop: '16px' }}>
         {tab === 'profile' && <ProfileInline currentUser={currentUser} userName={userName} />}
@@ -839,7 +889,7 @@ function AdminView({ currentUser, userName, userRole, userPermissions, S }) {
   );
 }
 
-// ─── Main UserManagement ──────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 function UserManagement() {
   const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
@@ -894,7 +944,6 @@ function UserManagement() {
 
   const isAdmin = !isOwner && userRole === 'Admin';
 
-  // Editor/Viewer เห็นแค่ Profile tab
   if (!isOwner && !isAdmin) {
     return (
       <div style={S.container}>
@@ -906,7 +955,6 @@ function UserManagement() {
     );
   }
 
-  // Admin เห็น 2 tabs: Profile + Activity Log
   if (isAdmin) {
     return <AdminView currentUser={currentUser} userName={userName} userRole={userRole} userPermissions={userPermissions} S={S} />;
   }
@@ -954,36 +1002,29 @@ function UserManagement() {
   const roleColor = { Owner: '#27500A', Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888' };
   const roleBg = { Owner: '#EAF3DE', Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5' };
 
-
-
   return (
     <div style={S.container}>
       <div style={S.topbar}>
-        <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>👤 User Management</h2>
+        {/* ✅ เปลี่ยนชื่อเป็น System Console */}
+        <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>⚙️ System Console</h2>
         {tab === 'users' && <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setShowForm(true); setError(''); }}>+ Add User</button>}
       </div>
 
       {error && <div style={{ background: '#FCEBEB', color: '#791F1F', padding: '10px 12px', borderRadius: '8px', fontSize: '12px', marginBottom: '12px' }}>{error}</div>}
 
-      {/* Tab bar */}
       <div style={{ borderBottom: '2px solid #e8e8e8', display: 'flex', marginBottom: '0' }}>
         <button style={S.tabBtn(tab === 'users')} onClick={() => setTab('users')}>
           👥 Users
           <span style={{ background: tab==='users'?'#1a3a5c':'#e8e8e8', color: tab==='users'?'white':'#888', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{users.length}</span>
         </button>
-        <button style={S.tabBtn(tab === 'access')} onClick={() => setTab('access')}>
-          🔐 Access Control
-        </button>
+        <button style={S.tabBtn(tab === 'access')} onClick={() => setTab('access')}>🔐 Access Control</button>
         <button style={S.tabBtn(tab === 'recycle')} onClick={() => setTab('recycle')}>
           🗑️ Recycle Bin
           {binCount > 0 && <span style={{ background: tab==='recycle'?'#1a3a5c':'#FCEBEB', color: tab==='recycle'?'white':'#791F1F', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{binCount}</span>}
         </button>
-        <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>
-          📋 Activity Log
-        </button>
+        <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>📋 Activity Log</button>
       </div>
 
-      {/* Users tab */}
       {tab === 'users' && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 6px', flexWrap: 'wrap' }}>
@@ -1058,16 +1099,10 @@ function UserManagement() {
         </div>
       )}
 
-      {/* Access Control tab */}
       {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} />}
-
-      {/* Activity Log tab — Owner เห็นทั้งหมด, Admin เห็นเฉพาะที่มี permission */}
       {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
-
-      {/* Recycle Bin tab */}
       {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} />}
 
-      {/* Add User Modal */}
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -1093,7 +1128,6 @@ function UserManagement() {
         </div>
       )}
 
-      {/* Delete User Modal */}
       {deleteTarget && (
         <div style={S.overlay}>
           <div style={{ ...S.modal, width: '380px' }}>
