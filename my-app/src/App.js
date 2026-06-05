@@ -622,7 +622,7 @@ function MainApp() {
       </div>
 
       {/* Main Content */}
-      <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: openMenu === 'master' ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
+      <div style={{ flex: 1, overflow: 'hidden', background: '#f5f5f5', minWidth: 0, marginLeft: openMenu === 'master' ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
         {renderPage()}
       </div>
 

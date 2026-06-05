@@ -255,6 +255,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [searchMap, setSearchMap]     = useState({ code: '', category: '' });
   const [selectedMap, setSelectedMap] = useState({ code: [], category: [] });
   const [sortMap, setSortMap]         = useState({ code: { field: 'Supplier Code', dir: 'asc' }, category: { field: 'Code', dir: 'asc' } });
+  const [pageSize, setPageSize]       = useState(50);
+  const [pageMap, setPageMap]         = useState({ code: 1, category: 1 });
   const [showForm, setShowForm]       = useState(false);
   const [editId, setEditId]           = useState(null);
   const [form, setForm]               = useState({});
@@ -304,6 +306,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
+
+  useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
 
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
     const dataFields = allFields.filter(f => !['username', 'last_update'].includes(f));
@@ -443,6 +447,11 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     [items, search, sort, cfg.fields]
   );
 
+  const page = pageMap[tab] || 1;
+  const effectivePageSize = pageSize === 'ทั้งหมด' || pageSize >= filtered.length ? filtered.length || 1 : pageSize;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
+  const paginated  = filtered.slice((page - 1) * effectivePageSize, page * effectivePageSize);
+
   const statusBadge = (val) => { const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] }; const [bg, color] = map[val]||['#e8e8e8','#555']; return <span style={{ background: bg, color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>{val||'-'}</span>; };
   const noticeBadge = (val) => { const map = { ITC: ['#e8f0fb','#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE','#27500A'], EFT: ['#f0f7ff','#0F6E56'], CPN: ['#f5f5f5','#555'], MER: ['#FFF3CD','#856404'] }; const [bg, color] = map[val]||['#f5f5f5','#555']; return val ? <span style={{ background: bg, color, padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{val}</span> : '-'; };
   const renderCell = (c, item) => {
@@ -540,11 +549,40 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         ))}
       </div>
 
-      <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px' }}>
-        <input placeholder={isMobile?'Search...':`Search ${cfg.label}...`} value={search}
-          onChange={e=>setSearchMap(prev=>({...prev,[tab]:e.target.value}))}
-          style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width: isMobile?'100%':isTablet?'180px':'240px' }} />
-        {!isMobile && <span style={{ fontSize:'12px', color:'#888' }}>ทั้งหมด {items.length} รายการ{search?` | ผลการค้นหา ${filtered.length} รายการ`:''}{selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}</span>}
+      <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px', justifyContent:'space-between' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+          <input placeholder={isMobile?'Search...':`Search ${cfg.label}...`} value={search}
+            onChange={e=>setSearchMap(prev=>({...prev,[tab]:e.target.value}))}
+            style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width: isMobile?'120px':isTablet?'160px':'220px' }} />
+          {!isMobile && <span style={{ fontSize:'12px', color:'#888', whiteSpace:'nowrap' }}>
+            {filtered.length > 0 ? `แสดง ${(page-1)*effectivePageSize+1}-${Math.min(page*effectivePageSize, filtered.length)} จาก ${filtered.length} รายการ` : `0 รายการ`}
+            {selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}
+          </span>}
+        </div>
+        {filtered.length > 0 && (
+          <div style={{ display:'flex', alignItems:'center', gap:'4px', flexShrink:0 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'12px', color:'#888', marginRight:'4px' }}>
+              <select value={pageSize} onChange={e => { setPageSize(e.target.value === 'ทั้งหมด' ? 'ทั้งหมด' : Number(e.target.value)); setPageMap(prev=>({...prev,[tab]:1})); }}
+                style={{ padding:'3px 6px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', background:'white', cursor:'pointer' }}>
+                {[25,50,100,'ทั้งหมด'].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {!isMobile && <span>รายการ/หน้า</span>}
+            </div>
+            <button onClick={()=>setPageMap(prev=>({...prev,[tab]:1}))} disabled={page===1} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===1?'#f5f5f5':'white', cursor:page===1?'default':'pointer', fontSize:'12px', color:page===1?'#ccc':'#555' }}>«</button>
+            <button onClick={()=>setPageMap(prev=>({...prev,[tab]:prev[tab]-1}))} disabled={page===1} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===1?'#f5f5f5':'white', cursor:page===1?'default':'pointer', fontSize:'12px', color:page===1?'#ccc':'#555' }}>‹</button>
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              let p;
+              if (totalPages<=5) p=i+1;
+              else if (page<=3) p=i+1;
+              else if (page>=totalPages-2) p=totalPages-4+i;
+              else p=page-2+i;
+              return <button key={p} onClick={()=>setPageMap(prev=>({...prev,[tab]:p}))} style={{ padding:'3px 9px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===p?'#1a3a5c':'white', color:page===p?'white':'#555', cursor:'pointer', fontSize:'12px', fontWeight:page===p?'500':'400' }}>{p}</button>;
+            })}
+            <button onClick={()=>setPageMap(prev=>({...prev,[tab]:prev[tab]+1}))} disabled={page===totalPages} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===totalPages?'#f5f5f5':'white', cursor:page===totalPages?'default':'pointer', fontSize:'12px', color:page===totalPages?'#ccc':'#555' }}>›</button>
+            <button onClick={()=>setPageMap(prev=>({...prev,[tab]:totalPages}))} disabled={page===totalPages} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===totalPages?'#f5f5f5':'white', cursor:page===totalPages?'default':'pointer', fontSize:'12px', color:page===totalPages?'#ccc':'#555' }}>»</button>
+            <span style={{ fontSize:'12px', color:'#888', marginLeft:'2px', whiteSpace:'nowrap' }}>{page} / {totalPages}</span>
+          </div>
+        )}
       </div>
 
       <div ref={containerRef} style={S.outer}>
@@ -572,7 +610,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
           <table style={{...S.table, width:`${totalW}px`}}>
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
-              {filtered.map(item => (
+              {paginated.map(item => (
                 <tr key={item.id} style={{ background: selected.includes(item.id)?'#f0f7ff':'white' }}>
                   <td style={S.tdCenter}>
                     <input type="checkbox" checked={selected.includes(item.id)}
