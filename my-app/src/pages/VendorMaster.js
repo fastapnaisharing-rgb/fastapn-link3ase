@@ -3,7 +3,6 @@ import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
-import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -239,7 +238,6 @@ const TAB_CONFIG = {
 function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [tab, setTab] = useState(activeSubTab || 'apcode');
   const { currentUser, userName } = useAuth();
-  const { fetchCollection, invalidate } = useDataCache();
   const { isAdmin } = useUserRole();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
@@ -295,9 +293,12 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
   const fetchTab = useCallback(async (t) => {
-    const data = await fetchCollection(TAB_CONFIG[t].table);
-    setDataMap(prev => ({ ...prev, [t]: (data || []).filter(i => !i.deleted) }));
-  }, [fetchCollection]);
+    const { data, error } = await supabase
+      .from(TAB_CONFIG[t].table)
+      .select('*')
+      .or('deleted.is.null,deleted.eq.false');
+    if (!error) setDataMap(prev => ({ ...prev, [t]: data || [] }));
+  }, []);
 
   useEffect(() => { fetchTab('apcode'); fetchTab('smcode'); fetchTab('category'); }, []);
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
@@ -363,7 +364,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
       if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const payload = newRows.slice(i,i+500).map(row => { const d = {}; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).insert(payload); if (error) throw new Error(error.message); } }
       if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i,i+500).map(row => { const d = { id: row._existingId }; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
-      setShowPreview(false); setPreviewRows([]); invalidate(cfg.table); await fetchTab(tab);
+      setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setImporting(false);
@@ -373,7 +374,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const data = { ...form, username: userName || currentUser?.email || '', last_update: getTimestamp() };
     if (editId) { const { error } = await supabase.from(cfg.table).update(data).eq('id', editId); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
     else { const { error } = await supabase.from(cfg.table).insert([data]); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
-    setShowForm(false); setEditId(null); setForm({}); invalidate(cfg.table); await fetchTab(tab);
+    setShowForm(false); setEditId(null); setForm({}); await fetchTab(tab);
   };
 
   const handleDelete = async (id) => {
@@ -383,7 +384,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       await supabase.from('recycle_bin').insert([{ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key]||id, data: item, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }]);
       const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) })); invalidate(cfg.table); await fetchTab(tab);
+      setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) })); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -395,7 +396,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       if (bins.length) await supabase.from('recycle_bin').insert(bins);
       const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: now }).in('id', selected);
       if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: [] })); invalidate(cfg.table); await fetchTab(tab);
+      setSelectedMap(prev => ({ ...prev, [tab]: [] })); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -407,7 +408,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const data = { ...detailForm, username: userName||currentUser?.email||'', last_update: getTimestamp() };
     const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
     if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-    setShowDetailModal(false); invalidate(cfg.table); await fetchTab(tab);
+    setShowDetailModal(false); await fetchTab(tab);
   };
 
   const handleOpenRecycleBin = async () => {
@@ -436,7 +437,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       await supabase.from('recycle_bin').delete().eq('id', binItem.id);
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
       const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => c.table === binItem.source_table)?.[0];
-      if (tabKey) { invalidate(binItem.source_table); await fetchTab(tabKey); }
+      if (tabKey) { await fetchTab(tabKey); }
       alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
     } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
   };
