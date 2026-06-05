@@ -166,8 +166,6 @@ const TAB_CONFIG = {
       { key: 'Notice',        label: 'Notice',         w: 100 },
       { key: 'Sub Acc',       label: 'Sub Acc',        w: 90  },
       { key: 'Status',        label: 'Status',         w: 90  },
-      { key: 'username',      label: 'Username',       w: 120 },
-      { key: 'last_update',   label: 'Last Update',    w: 140 },
     ],
   },
   category: {
@@ -193,8 +191,6 @@ const TAB_CONFIG = {
       { key: 'TYPE',          label: 'TYPE',          w: 100 },
       { key: 'SUB TYPE',      label: 'SUB TYPE',      w: 100 },
       { key: 'REMARK',        label: 'REMARK',        w: 120 },
-      { key: 'username',      label: 'Username',      w: 120 },
-      { key: 'last_update',   label: 'Last Update',   w: 140 },
     ],
   },
 };
@@ -228,9 +224,18 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const [previewRows,     setPreviewRows]     = useState([]);
   const [importing,       setImporting]       = useState(false);
 
-  const fileRef  = useRef(null);
-  const theadRef = useRef(null);
-  const tbodyRef = useRef(null);
+  const fileRef      = useRef(null);
+  const theadRef     = useRef(null);
+  const tbodyRef     = useRef(null);
+  const containerRef = useRef(null);
+  const [containerW, setContainerW] = useState(0);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    setContainerW(containerRef.current.getBoundingClientRect().width);
+    const obs = new ResizeObserver(e => setContainerW(e[0].contentRect.width));
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
   const items    = dataMap[tab]    || [];
@@ -481,14 +486,12 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   };
 
   // ─── Layout ───────────────────────────────────────────────────────────────────
-  const sidebarW = isMobile ? 0 : 200;
-  const paddingW = isMobile ? 24 : 40;
   const actionW  = isAdmin ? 70 : 50;
   const minW = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
-  const totalW = Math.max(minW, screenWidth - sidebarW - paddingW);
-  const extraW = totalW - minW;
+  const totalW = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
+  const extraW = Math.max(0, totalW - minW);
   const COLUMNS_SCALED = cfg.columns.map(c =>
-    (c.key === 'Name' || c.key === 'Supplier Name') ? { ...c, w: c.w + Math.min(extraW, 200) } : c
+    (c.key === 'Name' || c.key === 'Supplier Name') ? { ...c, w: c.w + Math.min(extraW, 300) } : c
   );
 
   const S = {
@@ -578,7 +581,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         {!isMobile && <span style={{ fontSize:'12px', color:'#888' }}>ทั้งหมด {items.length} รายการ{search?` | ผลการค้นหา ${filtered.length} รายการ`:''}{selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}</span>}
       </div>
 
-      <div style={S.outer}>
+      <div ref={containerRef} style={S.outer}>
         <div ref={theadRef} style={{...S.theadWrap, msOverflowStyle:'none'}}>
           <table style={{...S.table, width:`${totalW}px`}}>
             {renderColGroup(COLUMNS_SCALED)}
