@@ -771,7 +771,15 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           </div>
         </div>
         <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
-          {INFO_EDIT.map(([key,label])=>(<div key={key}><label style={{ fontSize:'12px', color:'#666' }}>{label}</label>{INFO_COMBO.includes(key)?<ComboBox value={infoForm[key]} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>:<input style={S.input} value={infoForm[key]} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/></div>))}
+          {INFO_EDIT.map(([key,label])=>(
+            <div key={key}>
+              <label style={{ fontSize:'12px', color:'#666' }}>{label}</label>
+              {INFO_COMBO.includes(key)
+                ? <ComboBox value={infoForm[key]} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
+                : <input style={S.input} value={infoForm[key]} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
+              }
+            </div>
+          ))}
           <label style={{ fontSize:'12px', color:'#666' }}>Updated By</label>
           <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
         </div>
