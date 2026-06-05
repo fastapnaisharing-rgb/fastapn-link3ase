@@ -3,7 +3,6 @@ import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
-import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -95,13 +94,11 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
         </div>
         <div style={{ overflow: 'auto', flex: 1, borderRadius: '6px', border: '0.5px solid #e8e8e8', marginBottom: '14px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-            <thead>
-              <tr>
-                <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, width: '100px' }}>สถานะ</th>
-                {displayFields.map(f => <th key={f} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>{f}</th>)}
-                <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, minWidth: '200px' }}>การเปลี่ยนแปลง</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, width: '100px' }}>สถานะ</th>
+              {displayFields.map(f => <th key={f} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>{f}</th>)}
+              <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, minWidth: '200px' }}>การเปลี่ยนแปลง</th>
+            </tr></thead>
             <tbody>
               {previewRows.map((row, i) => {
                 const rowBg = { new: '#f9fffe', update: '#f5f8ff', nochange: 'white', duplicate: '#fffdf0' }[row._status] || 'white';
@@ -145,11 +142,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
   );
 }
 
-const SUPABASE_TABLE = {
-  CpcList:    'cpc_list',
-  AccountList:'account_list',
-  SubAccList: 'sub_acc_list',
-};
+const SUPABASE_TABLE = { CpcList: 'cpc_list', AccountList: 'account_list', SubAccList: 'sub_acc_list' };
 
 const TAB_CONFIG = {
   costcenter: {
@@ -197,22 +190,16 @@ const isRevAccount = (item) => item['bu'] === 'REV';
 function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [tab, setTab] = useState(activeSubTab || 'costcenter');
   const { currentUser, userName } = useAuth();
-  const { fetchCollection, invalidate } = useDataCache();
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
-
   const cfg = TAB_CONFIG[tab];
 
   const [dataMap, setDataMap] = useState({ costcenter: [], account: [], subaccount: [] });
   const [searchMap, setSearchMap] = useState({ costcenter: '', account: '', subaccount: '' });
   const [selectedMap, setSelectedMap] = useState({ costcenter: [], account: [], subaccount: [] });
-  const [sortMap, setSortMap] = useState({
-    costcenter: { field: 'CPC Code', dir: 'asc' },
-    account: { field: 'Acccount', dir: 'asc' },
-    subaccount: { field: 'Sub Acc Code', dir: 'asc' }
-  });
+  const [sortMap, setSortMap] = useState({ costcenter: { field: 'CPC Code', dir: 'asc' }, account: { field: 'Acccount', dir: 'asc' }, subaccount: { field: 'Sub Acc Code', dir: 'asc' } });
   const [accountFilter, setAccountFilter] = useState('ALL');
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -241,29 +228,35 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const page = pageMap[tab] || 1;
   const tableName = (t) => SUPABASE_TABLE[TAB_CONFIG[t].collection];
 
+  // ✅ Chunked Loading — render ทันทีทุก chunk ไม่รอทั้งหมด
   const fetchTab = useCallback(async (t) => {
-    const data = await fetchCollection(TAB_CONFIG[t].collection);
-    setDataMap(prev => ({ ...prev, [t]: (data || []).filter(i => !i.deleted) }));
-  }, [fetchCollection]);
-
-  useEffect(() => {
-    fetchTab('costcenter');
-    fetchTab('account');
-    fetchTab('subaccount');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const tbl = SUPABASE_TABLE[TAB_CONFIG[t].collection];
+    let from = 0;
+    const batchSize = 1000;
+    let isFirst = true;
+    while (true) {
+      const { data, error } = await supabase
+        .from(tbl)
+        .select('*')
+        .or('deleted.is.null,deleted.eq.false')
+        .range(from, from + batchSize - 1);
+      if (error) { console.error('fetchTab error:', error); break; }
+      if (isFirst) { setDataMap(prev => ({ ...prev, [t]: data || [] })); isFirst = false; }
+      else { setDataMap(prev => ({ ...prev, [t]: [...(prev[t] || []), ...(data || [])] })); }
+      if (!data || data.length < batchSize) break;
+      from += batchSize;
+    }
   }, []);
 
+  useEffect(() => { fetchTab('costcenter'); fetchTab('account'); fetchTab('subaccount'); }, []);
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
   useEffect(() => { setAccountFilter('ALL'); }, [tab]);
   useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, accountFilter, search]);
 
-  // ✅ FIX 1: เพิ่ม flyoutOpen ใน deps → re-measure ทันทีที่ sidebar พับ/ขยาย
   useEffect(() => {
     if (!containerRef.current) return;
     setContainerW(containerRef.current.getBoundingClientRect().width);
-    const observer = new ResizeObserver(entries => {
-      setContainerW(entries[0].contentRect.width);
-    });
+    const observer = new ResizeObserver(entries => setContainerW(entries[0].contentRect.width));
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, [flyoutOpen]);
@@ -282,17 +275,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     return counts;
   }, [items, tab]);
 
-  const getFileTimestamp = () => {
-    const now = new Date();
-    return `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
-  };
-
-  const formatLastUpdate = (val) => {
-    if (!val || val === '-') return '-';
-    try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch { }
-    return val;
-  };
-
+  const getFileTimestamp = () => { const now = new Date(); return `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`; };
+  const formatLastUpdate = (val) => { if (!val || val === '-') return '-'; try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch {} return val; };
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
 
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
@@ -308,32 +292,15 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       const existing = existingMap[keyVal];
       if (!existing) return { ...row, _status: 'new', _changes: [] };
       const changes = [];
-      dataFields.forEach(f => {
-        const newVal = String(row[f] ?? '').trim();
-        const oldVal = String(existing[f] ?? '').trim();
-        if (newVal !== oldVal) changes.push({ field: f, old: oldVal, new: newVal });
-      });
+      dataFields.forEach(f => { const nv = String(row[f] ?? '').trim(), ov = String(existing[f] ?? '').trim(); if (nv !== ov) changes.push({ field: f, old: ov, new: nv }); });
       return { ...row, _status: changes.length > 0 ? 'update' : 'nochange', _changes: changes, _existingId: existing.id };
     });
   };
 
-  const exportToExcel = (data, fields, sheetName, filePrefix) => {
-    const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; });
-    const ws = XLSX.utils.json_to_sheet(rows, { header: fields });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    XLSX.writeFile(wb, `${filePrefix}_${getFileTimestamp()}.xlsx`);
-  };
-
+  const exportToExcel = (data, fields, sheetName, filePrefix) => { const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; }); const ws = XLSX.utils.json_to_sheet(rows, { header: fields }); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheetName); XLSX.writeFile(wb, `${filePrefix}_${getFileTimestamp()}.xlsx`); };
   const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['updated_by','updated_at'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
   const handleExportAll = () => exportToExcel(filtered, cfg.fields.filter(f => !['updated_by','updated_at'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
-
-  const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['updated_by','updated_at'].includes(f))]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, cfg.label);
-    XLSX.writeFile(wb, `${cfg.label.replace(/ /g,'')}_Template.xlsx`);
-  };
+  const handleDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, cfg.label); XLSX.writeFile(wb, `${cfg.label.replace(/ /g,'')}_Template.xlsx`); };
 
   const handleFileChange = (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -341,25 +308,14 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     reader.onload = (evt) => {
       const wb = XLSX.read(evt.target.result, { type: 'binary' });
       const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-      if (tab === 'account') {
-        setPreviewRows(rawRows.map(row => ({ ...row, _status: 'new', _changes: [] })));
-      } else {
-        setPreviewRows(buildPreviewRows(rawRows, items, cfg.key, cfg.fields));
-      }
+      if (tab === 'account') setPreviewRows(rawRows.map(row => ({ ...row, _status: 'new', _changes: [] })));
+      else setPreviewRows(buildPreviewRows(rawRows, items, cfg.key, cfg.fields));
       setShowPreview(true);
     };
     reader.readAsBinaryString(file); e.target.value = '';
   };
 
-  const buildRowData = (row, fields) => {
-    const data = {};
-    fields.forEach(k => {
-      if (k === 'updated_by') data[k] = userName || currentUser?.email || '';
-      else if (k === 'updated_at') data[k] = new Date().toISOString();
-      else data[k] = String(row[k] ?? '');
-    });
-    return data;
-  };
+  const buildRowData = (row, fields) => { const data = {}; fields.forEach(k => { if (k === 'updated_by') data[k] = userName || currentUser?.email || ''; else if (k === 'updated_at') data[k] = new Date().toISOString(); else data[k] = String(row[k] ?? ''); }); return data; };
 
   const handleConfirmImport = async () => {
     setImporting(true);
@@ -367,30 +323,17 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       const tbl = tableName(tab);
       if (tab === 'account') {
         const insertData = previewRows.map(row => buildRowData(row, cfg.fields));
-        for (let i = 0; i < insertData.length; i += 500) {
-          const { error } = await supabase.from(tbl).insert(insertData.slice(i, i + 500));
-          if (error) throw error;
-        }
+        for (let i = 0; i < insertData.length; i += 500) { const { error } = await supabase.from(tbl).insert(insertData.slice(i, i + 500)); if (error) throw error; }
         alert(`✅ Import สำเร็จ ${previewRows.length} รายการ`);
       } else {
         const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
         const newRows = toProcess.filter(r => r._status === 'new');
         const updateRows = toProcess.filter(r => r._status === 'update');
-        if (newRows.length > 0) {
-          for (let i = 0; i < newRows.length; i += 500) {
-            const { error } = await supabase.from(tbl).insert(newRows.slice(i, i + 500).map(row => buildRowData(row, cfg.fields)));
-            if (error) throw error;
-          }
-        }
-        for (const row of updateRows) {
-          const { error } = await supabase.from(tbl).update(buildRowData(row, cfg.fields)).eq('id', row._existingId);
-          if (error) throw error;
-        }
+        if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const { error } = await supabase.from(tbl).insert(newRows.slice(i, i + 500).map(row => buildRowData(row, cfg.fields))); if (error) throw error; } }
+        for (const row of updateRows) { const { error } = await supabase.from(tbl).update(buildRowData(row, cfg.fields)).eq('id', row._existingId); if (error) throw error; }
         alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
       }
-      setShowPreview(false); setPreviewRows([]);
-      invalidate(cfg.collection);
-      await fetchTab(tab);
+      setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setImporting(false);
   };
@@ -399,16 +342,9 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     try {
       const tbl = tableName(tab);
       const data = buildRowData(form, cfg.fields);
-      if (editId) {
-        const { error } = await supabase.from(tbl).update(data).eq('id', editId);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from(tbl).insert([data]);
-        if (error) throw error;
-      }
-      setShowForm(false); setEditId(null); setForm({});
-      invalidate(cfg.collection);
-      await fetchTab(tab);
+      if (editId) { const { error } = await supabase.from(tbl).update(data).eq('id', editId); if (error) throw error; }
+      else { const { error } = await supabase.from(tbl).insert([data]); if (error) throw error; }
+      setShowForm(false); setEditId(null); setForm({}); await fetchTab(tab);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
@@ -416,20 +352,10 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = items.find(i => i.id === id);
-      await supabase.from('recycle_bin').insert([{
-        source_table: tableName(tab),
-        source_id: id,
-        source_key: item?.[cfg.key] || id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: new Date().toISOString(),
-      }]);
-      const { error } = await supabase.from(tableName(tab))
-        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() })
-        .eq('id', id);
+      await supabase.from('recycle_bin').insert([{ source_table: tableName(tab), source_id: id, source_key: item?.[cfg.key] || id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }]);
+      const { error } = await supabase.from(tableName(tab)).update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
       setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
-      invalidate(cfg.collection);
       await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
@@ -437,41 +363,22 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
     try {
-      const now = new Date().toISOString();
-      const tbl = tableName(tab);
-      const bins = items.filter(i => selected.includes(i.id)).map(item => ({
-        source_table: tbl,
-        source_id: item.id,
-        source_key: item[cfg.key] || item.id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: now,
-      }));
+      const now = new Date().toISOString(); const tbl = tableName(tab);
+      const bins = items.filter(i => selected.includes(i.id)).map(item => ({ source_table: tbl, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now }));
       if (bins.length) await supabase.from('recycle_bin').insert(bins);
-      const { error } = await supabase.from(tbl)
-        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
-        .in('id', selected);
+      const { error } = await supabase.from(tbl).update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', selected);
       if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-      invalidate(cfg.collection);
-      await fetchTab(tab);
+      setSelectedMap(prev => ({ ...prev, [tab]: [] })); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  const handleOpenDetail = (item) => {
-    setDetailItem(item);
-    setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || ''])));
-    setDetailEditMode(false);
-    setShowDetailModal(true);
-  };
+  const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
 
   const handleDetailSave = async () => {
     try {
       const { error } = await supabase.from(tableName(tab)).update(buildRowData(detailForm, cfg.fields)).eq('id', detailItem.id);
       if (error) throw error;
-      setShowDetailModal(false);
-      invalidate(cfg.collection);
-      await fetchTab(tab);
+      setShowDetailModal(false); await fetchTab(tab);
     } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
   };
 
@@ -482,26 +389,15 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       else if (accountFilter === 'ALL') result = result.filter(i => i['bu'] === 'ALL');
       else result = result.filter(i => i['bu'] === accountFilter);
     }
-    return result
-      .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
-      .sort((a, b) => { const ca = a[sort.field] || '', cb = b[sort.field] || ''; return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); });
+    return result.filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase()))).sort((a, b) => { const ca = a[sort.field] || '', cb = b[sort.field] || ''; return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); });
   }, [items, search, sort, tab, accountFilter, cfg.fields]);
 
   const effectivePageSize = pageSize === 'ทั้งหมด' || pageSize >= filtered.length ? filtered.length || 1 : pageSize;
   const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
   const paginated = filtered.slice((page - 1) * effectivePageSize, page * effectivePageSize);
 
-  const typeBadge = (val) => {
-    const map = { 'Cost Center': ['#FFF3CD','#856404'], 'Expense': ['#e8f0fb','#1a3a5c'], 'Asset': ['#FCEBEB','#791F1F'] };
-    const [bg, color] = map[val] || ['#e8e8e8','#555'];
-    return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '20px', fontSize: '10px' }}>{val || '-'}</span>;
-  };
-
-  const renderCell = (c, item) => {
-    if (c.key === 'updated_at') return formatLastUpdate(item[c.key]);
-    if (c.key === 'Type') return typeBadge(item[c.key]);
-    return item[c.key] || '-';
-  };
+  const typeBadge = (val) => { const map = { 'Cost Center': ['#FFF3CD','#856404'], 'Expense': ['#e8f0fb','#1a3a5c'], 'Asset': ['#FCEBEB','#791F1F'] }; const [bg, color] = map[val] || ['#e8e8e8','#555']; return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '20px', fontSize: '10px' }}>{val || '-'}</span>; };
+  const renderCell = (c, item) => { if (c.key === 'updated_at') return formatLastUpdate(item[c.key]); if (c.key === 'Type') return typeBadge(item[c.key]); return item[c.key] || '-'; };
 
   const actionW = isAdmin ? (56 * 2) + 20 : 56 + 20;
   const minW = 36 + cfg.columns.reduce((s,c) => s+c.w, 0) + actionW;
@@ -509,11 +405,9 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const COLUMNS_SCALED = cfg.columns.map(c => c);
 
   const S = {
-    // ✅ FIX 2: minWidth:0 + overflow:hidden → flex child shrink ได้ถูกต้อง
     container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box', minWidth: 0, overflow: 'hidden' },
     topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, flexWrap: isMobile ? 'wrap' : 'nowrap', gap: '8px' },
     btn: { padding: isMobile ? '6px 10px' : '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: isMobile ? '12px' : '13px', marginLeft: isMobile ? '4px' : '8px' },
-    // ✅ FIX 3: minWidth:0 → scrollbar แสดงถูกต้องเมื่อ sidebar พับ
     outer: { background: 'white', borderRadius: '8px', border: '0.5px solid #e8e8e8', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 },
     theadWrap: { overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' },
     tbodyWrap: { overflowY: 'auto', overflowX: 'auto', flex: 1, minWidth: 0 },
@@ -536,11 +430,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const renderColGroup = (columns) => (
     <colgroup>
       <col style={{ width: '36px', minWidth: '36px' }} />
-      {columns.map((c,i) => {
-        if (c.key === 'Remark') return <col key={i} />;
-        if (c.key === 'Account_Name') return <col key={i} style={{ width: '300px', minWidth: '300px' }} />;
-        return <col key={i} style={{ width: `${c.w}px`, minWidth: `${c.w}px` }} />;
-      })}
+      {columns.map((c,i) => { if (c.key === 'Remark') return <col key={i} />; if (c.key === 'Account_Name') return <col key={i} style={{ width: '300px', minWidth: '300px' }} />; return <col key={i} style={{ width: `${c.w}px`, minWidth: `${c.w}px` }} />; })}
       <col style={{ width: `${actionW}px`, minWidth: `${actionW}px` }} />
     </colgroup>
   );
@@ -550,37 +440,21 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       {cfg.edit.map(([key, label]) => (
         <div key={key} style={{ marginBottom: '4px' }}>
           <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '2px' }}>{label}</label>
-          {editMode ? (
-            cfg.combo.includes(key)
-              ? <ComboBox value={formData[key] || ''} onChange={val => setFormData({ ...formData, [key]: val })} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
-              : <input style={S.input} value={formData[key] || ''} onChange={e => setFormData({ ...formData, [key]: e.target.value })} />
-          ) : (
-            <div style={S.inputReadonly}>
-              {key === 'Type' ? typeBadge(formData[key]) : (formData[key] || '-')}
-            </div>
-          )}
+          {editMode ? (cfg.combo.includes(key) ? <ComboBox value={formData[key] || ''} onChange={val => setFormData({ ...formData, [key]: val })} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : <input style={S.input} value={formData[key] || ''} onChange={e => setFormData({ ...formData, [key]: e.target.value })} />)
+          : <div style={S.inputReadonly}>{key === 'Type' ? typeBadge(formData[key]) : (formData[key] || '-')}</div>}
         </div>
       ))}
     </div>
   );
 
-  const renderInfoText = () => {
-    if (isMobile) return `${filtered.length} รายการ`;
-    const start = (page - 1) * effectivePageSize + 1;
-    const end = Math.min(page * effectivePageSize, filtered.length);
-    return `แสดง ${start}-${end} จาก ${filtered.length} รายการ${search ? ` | ค้นหา "${search}"` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`;
-  };
-
+  const renderInfoText = () => { if (isMobile) return `${filtered.length} รายการ`; const start = (page - 1) * effectivePageSize + 1; const end = Math.min(page * effectivePageSize, filtered.length); return `แสดง ${start}-${end} จาก ${filtered.length} รายการ${search ? ` | ค้นหา "${search}"` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`; };
   const filterTabs = tab === 'account' ? ['ALL', 'REV', ...buList] : [];
 
   return (
     <div style={S.container}>
       <div style={S.topbar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '600', margin: 0 }}>
-            💰 Chart of Accounts
-            <span style={{ color: '#888', fontWeight: '400', fontSize: isMobile ? '12px' : '14px' }}> — {cfg.label}</span>
-          </h2>
+          <h2 style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '600', margin: 0 }}>💰 Chart of Accounts<span style={{ color: '#888', fontWeight: '400', fontSize: isMobile ? '12px' : '14px' }}> — {cfg.label}</span></h2>
           {isAdmin && selected.length > 0 && <button style={{ ...S.btn, background: '#c0392b', color: 'white', marginLeft: 0 }} onClick={handleBulkDelete}>🗑️{!isMobile && ` ลบ ${selected.length}`}</button>}
           {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
         </div>
@@ -599,10 +473,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
           {filterTabs.map(f => (
             <div key={f} onClick={() => setAccountFilter(f)}
               style={{ padding: isMobile ? '6px 10px' : '8px 14px', fontSize: isMobile ? '11px' : '12px', cursor: 'pointer', color: accountFilter === f ? '#1a3a5c' : '#888', borderBottom: accountFilter === f ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px', background: accountFilter === f ? 'white' : 'transparent', fontWeight: accountFilter === f ? '500' : '400', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {f}
-              <span style={{ background: accountFilter === f ? '#1a3a5c' : '#e8e8e8', color: accountFilter === f ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>
-                {filterCounts[f] ?? 0}
-              </span>
+              {f}<span style={{ background: accountFilter === f ? '#1a3a5c' : '#e8e8e8', color: accountFilter === f ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{filterCounts[f] ?? 0}</span>
             </div>
           ))}
         </div>
@@ -610,42 +481,22 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
       <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0', margin: '4px 0', flexShrink: 0, gap: '8px', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <input
-            placeholder={isMobile ? 'Search...' : `Search ${cfg.label}...`}
-            value={search}
-            onChange={e => setSearchMap(prev => ({ ...prev, [tab]: e.target.value }))}
-            style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '120px' : isTablet ? '160px' : '220px' }}
-          />
+          <input placeholder={isMobile ? 'Search...' : `Search ${cfg.label}...`} value={search} onChange={e => setSearchMap(prev => ({ ...prev, [tab]: e.target.value }))} style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '120px' : isTablet ? '160px' : '220px' }} />
           {!isMobile && <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>{renderInfoText()}</span>}
         </div>
         {tab === 'account' && filtered.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#888', marginRight: '4px' }}>
-              <select value={pageSize} onChange={e => { setPageSize(e.target.value === 'ทั้งหมด' ? 'ทั้งหมด' : Number(e.target.value)); setPageMap(prev => ({ ...prev, [tab]: 1 })); }}
-                style={{ padding: '3px 6px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white', cursor: 'pointer' }}>
+              <select value={pageSize} onChange={e => { setPageSize(e.target.value === 'ทั้งหมด' ? 'ทั้งหมด' : Number(e.target.value)); setPageMap(prev => ({ ...prev, [tab]: 1 })); }} style={{ padding: '3px 6px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white', cursor: 'pointer' }}>
                 {[10,25,50,100,'ทั้งหมด'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               {!isMobile && <span>รายการ/หน้า</span>}
             </div>
-            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: 1 }))} disabled={page === 1}
-              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === 1 ? '#f5f5f5' : 'white', cursor: page === 1 ? 'default' : 'pointer', fontSize: '12px', color: page === 1 ? '#ccc' : '#555' }}>«</button>
-            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: prev[tab] - 1 }))} disabled={page === 1}
-              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === 1 ? '#f5f5f5' : 'white', cursor: page === 1 ? 'default' : 'pointer', fontSize: '12px', color: page === 1 ? '#ccc' : '#555' }}>‹</button>
-            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-              let p;
-              if (totalPages <= 5) p = i + 1;
-              else if (page <= 3) p = i + 1;
-              else if (page >= totalPages - 2) p = totalPages - 4 + i;
-              else p = page - 2 + i;
-              return (
-                <button key={p} onClick={() => setPageMap(prev => ({ ...prev, [tab]: p }))}
-                  style={{ padding: '3px 9px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === p ? '#1a3a5c' : 'white', color: page === p ? 'white' : '#555', cursor: 'pointer', fontSize: '12px', fontWeight: page === p ? '500' : '400' }}>{p}</button>
-              );
-            })}
-            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: prev[tab] + 1 }))} disabled={page === totalPages}
-              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === totalPages ? '#f5f5f5' : 'white', cursor: page === totalPages ? 'default' : 'pointer', fontSize: '12px', color: page === totalPages ? '#ccc' : '#555' }}>›</button>
-            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: totalPages }))} disabled={page === totalPages}
-              style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === totalPages ? '#f5f5f5' : 'white', cursor: page === totalPages ? 'default' : 'pointer', fontSize: '12px', color: page === totalPages ? '#ccc' : '#555' }}>»</button>
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: 1 }))} disabled={page === 1} style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === 1 ? '#f5f5f5' : 'white', cursor: page === 1 ? 'default' : 'pointer', fontSize: '12px', color: page === 1 ? '#ccc' : '#555' }}>«</button>
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: prev[tab] - 1 }))} disabled={page === 1} style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === 1 ? '#f5f5f5' : 'white', cursor: page === 1 ? 'default' : 'pointer', fontSize: '12px', color: page === 1 ? '#ccc' : '#555' }}>‹</button>
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => { let p; if (totalPages <= 5) p = i + 1; else if (page <= 3) p = i + 1; else if (page >= totalPages - 2) p = totalPages - 4 + i; else p = page - 2 + i; return <button key={p} onClick={() => setPageMap(prev => ({ ...prev, [tab]: p }))} style={{ padding: '3px 9px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === p ? '#1a3a5c' : 'white', color: page === p ? 'white' : '#555', cursor: 'pointer', fontSize: '12px', fontWeight: page === p ? '500' : '400' }}>{p}</button>; })}
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: prev[tab] + 1 }))} disabled={page === totalPages} style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === totalPages ? '#f5f5f5' : 'white', cursor: page === totalPages ? 'default' : 'pointer', fontSize: '12px', color: page === totalPages ? '#ccc' : '#555' }}>›</button>
+            <button onClick={() => setPageMap(prev => ({ ...prev, [tab]: totalPages }))} disabled={page === totalPages} style={{ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: page === totalPages ? '#f5f5f5' : 'white', cursor: page === totalPages ? 'default' : 'pointer', fontSize: '12px', color: page === totalPages ? '#ccc' : '#555' }}>»</button>
             <span style={{ fontSize: '12px', color: '#888', marginLeft: '2px', whiteSpace: 'nowrap' }}>{page} / {totalPages}</span>
           </div>
         )}
@@ -655,39 +506,24 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         <div ref={theadRef} style={{ ...S.theadWrap, msOverflowStyle: 'none' }}>
           <table style={{ ...S.table, width: `${totalW}px` }}>
             {renderColGroup(COLUMNS_SCALED)}
-            <thead>
-              <tr>
-                <th style={S.thCheck}>
-                  <input type="checkbox" checked={filtered.length > 0 && selected.length === filtered.length}
-                    onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].length === filtered.length ? [] : filtered.map(i => i.id) }))} />
-                </th>
-                {COLUMNS_SCALED.map(c => (
-                  <th key={c.key} style={c.sortable ? S.thSort : S.th}
-                    onClick={c.sortable ? () => setSortMap(prev => ({ ...prev, [tab]: { field: c.key, dir: prev[tab].field === c.key && prev[tab].dir === 'asc' ? 'desc' : 'asc' } })) : undefined}>
-                    {c.label}{c.sortable ? (sort.field === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
-                  </th>
-                ))}
-                <th style={S.thAction}>Action</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th style={S.thCheck}><input type="checkbox" checked={filtered.length > 0 && selected.length === filtered.length} onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].length === filtered.length ? [] : filtered.map(i => i.id) }))} /></th>
+              {COLUMNS_SCALED.map(c => (<th key={c.key} style={c.sortable ? S.thSort : S.th} onClick={c.sortable ? () => setSortMap(prev => ({ ...prev, [tab]: { field: c.key, dir: prev[tab].field === c.key && prev[tab].dir === 'asc' ? 'desc' : 'asc' } })) : undefined}>{c.label}{c.sortable ? (sort.field === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕') : ''}</th>))}
+              <th style={S.thAction}>Action</th>
+            </tr></thead>
           </table>
         </div>
-        <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
+        <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
           <table style={{ ...S.table, width: `${totalW}px` }}>
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
               {paginated.map(item => (
                 <tr key={item.id} style={{ background: selected.includes(item.id) ? '#f0f7ff' : 'white' }}>
-                  <td style={S.tdCenter}>
-                    <input type="checkbox" checked={selected.includes(item.id)}
-                      onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].includes(item.id) ? prev[tab].filter(s => s !== item.id) : [...prev[tab], item.id] }))} />
-                  </td>
-                  {COLUMNS_SCALED.map(c => (
-                    <td key={c.key} style={c.key === 'Remark' ? S.tdRemark : S.td} title={item[c.key] || ''}>{renderCell(c, item)}</td>
-                  ))}
+                  <td style={S.tdCenter}><input type="checkbox" checked={selected.includes(item.id)} onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].includes(item.id) ? prev[tab].filter(s => s !== item.id) : [...prev[tab], item.id] }))} /></td>
+                  {COLUMNS_SCALED.map(c => (<td key={c.key} style={c.key === 'Remark' ? S.tdRemark : S.td} title={item[c.key] || ''}>{renderCell(c, item)}</td>))}
                   <td style={S.tdCenter}>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <button onClick={() => handleOpenDetail(item)} title="View / Edit" style={S.iconBtn('#1a3a5c')}>🔍</button>
+                      <button onClick={() => handleOpenDetail(item)} style={S.iconBtn('#1a3a5c')}>🔍</button>
                       {isAdmin && <button onClick={() => handleDelete(item.id)} style={S.iconBtn('#791F1F','#FCEBEB','#f7c1c1')}>🗑️</button>}
                     </div>
                   </td>
@@ -698,65 +534,34 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         </div>
       </div>
 
-      {showForm && (
-        <div style={S.overlay}>
-          <div style={S.modal}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <h3 style={{ fontSize: '15px', margin: 0 }}>{editId ? `✏️ Edit ${cfg.label}` : `+ New ${cfg.label}`}</h3>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowForm(false)}>Cancel</button>
-                <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleNewSave}>Save</button>
-              </div>
-            </div>
-            {renderFormFields(form, setForm, true)}
-            <div style={{ padding: '0 20px 16px' }}>
-              <label style={{ fontSize: '11px', color: '#888' }}>Updated By</label>
-              <input style={S.inputDisabled} value={userName || currentUser?.email || ''} disabled />
-            </div>
+      {showForm && (<div style={S.overlay}><div style={S.modal}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <h3 style={{ fontSize: '15px', margin: 0 }}>{editId ? `✏️ Edit ${cfg.label}` : `+ New ${cfg.label}`}</h3>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowForm(false)}>Cancel</button>
+            <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleNewSave}>Save</button>
           </div>
         </div>
-      )}
+        {renderFormFields(form, setForm, true)}
+        <div style={{ padding: '0 20px 16px' }}><label style={{ fontSize: '11px', color: '#888' }}>Updated By</label><input style={S.inputDisabled} value={userName || currentUser?.email || ''} disabled /></div>
+      </div></div>)}
 
-      {showDetailModal && detailItem && (
-        <div style={S.overlay}>
-          <div style={S.modal}>
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '14px', fontWeight: '500' }}>{detailEditMode ? `✏️ Edit ${cfg.label}` : `🔍 ${detailItem[cfg.key] || 'Detail'}`}</span>
-                {!detailEditMode && <button onClick={() => setDetailEditMode(true)} style={{ padding: '3px 10px', borderRadius: '5px', border: '1px solid #1a3a5c', background: 'white', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer' }}>✏️ Edit</button>}
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {detailEditMode ? (
-                  <>
-                    <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => { setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || '']))); }}>Cancel</button>
-                    <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleDetailSave}>Save</button>
-                  </>
-                ) : <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowDetailModal(false)}>Close</button>}
-              </div>
-            </div>
-            {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || ''])), setDetailForm, detailEditMode)}
-            {!detailEditMode && (
-              <div style={{ padding: '0 20px 16px', borderTop: '0.5px solid #f0f0f0' }}>
-                <div style={{ display: 'flex', gap: '16px', paddingTop: '12px' }}>
-                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Updated By</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{detailItem['updated_by'] || '-'}</div></div>
-                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Updated At</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{formatLastUpdate(detailItem['updated_at'])}</div></div>
-                </div>
-              </div>
-            )}
+      {showDetailModal && detailItem && (<div style={S.overlay}><div style={S.modal}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '14px', fontWeight: '500' }}>{detailEditMode ? `✏️ Edit ${cfg.label}` : `🔍 ${detailItem[cfg.key] || 'Detail'}`}</span>
+            {!detailEditMode && <button onClick={() => setDetailEditMode(true)} style={{ padding: '3px 10px', borderRadius: '5px', border: '1px solid #1a3a5c', background: 'white', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer' }}>✏️ Edit</button>}
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {detailEditMode ? (<><button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => { setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || '']))); }}>Cancel</button><button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleDetailSave}>Save</button></>)
+            : <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowDetailModal(false)}>Close</button>}
           </div>
         </div>
-      )}
+        {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || ''])), setDetailForm, detailEditMode)}
+        {!detailEditMode && (<div style={{ padding: '0 20px 16px', borderTop: '0.5px solid #f0f0f0' }}><div style={{ display: 'flex', gap: '16px', paddingTop: '12px' }}><div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Updated By</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{detailItem['updated_by'] || '-'}</div></div><div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Updated At</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{formatLastUpdate(detailItem['updated_at'])}</div></div></div></div>)}
+      </div></div>)}
 
-      <ImportPreviewModal
-        show={showPreview}
-        onClose={() => { setShowPreview(false); setPreviewRows([]); }}
-        onConfirm={handleConfirmImport}
-        importing={importing}
-        previewRows={previewRows}
-        keyField={cfg.key}
-        allFields={cfg.fields}
-        isMobile={isMobile}
-      />
+      <ImportPreviewModal show={showPreview} onClose={() => { setShowPreview(false); setPreviewRows([]); }} onConfirm={handleConfirmImport} importing={importing} previewRows={previewRows} keyField={cfg.key} allFields={cfg.fields} isMobile={isMobile} />
     </div>
   );
 }
