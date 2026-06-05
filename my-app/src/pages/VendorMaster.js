@@ -68,23 +68,10 @@ function ExportDropdown({ onExportSelected, onExportAll, selectedCount, isMobile
   );
 }
 
-// ─── Tax ID / No. helpers ─────────────────────────────────────────────────────
-const normalizeTaxId = (val) => {
-  let str = String(val ?? '').trim().replace(/[^0-9]/g, '');
-  if (str.length === 12) str = '0' + str;
-  return str;
-};
-const normalizeNo = (val) => {
-  const str = String(val ?? '').trim().replace(/[^0-9]/g, '');
-  return str ? str.padStart(5, '0') : '';
-};
-const getEntityType = (taxId) => {
-  const str = String(taxId || '').replace(/[^0-9]/g, '');
-  if (str.length !== 13) return null;
-  if (str[0] === '0') return 'นิติบุคคล';
-  if (str[0] === '9') return 'องค์กรพิเศษ';
-  return 'บุคคลธรรมดา';
-};
+// ─── Tax ID helpers ───────────────────────────────────────────────────────────
+const normalizeTaxId = (val) => { let str = String(val ?? '').trim().replace(/[^0-9]/g, ''); if (str.length === 12) str = '0' + str; return str; };
+const normalizeNo = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(5, '0') : ''; };
+const getEntityType = (taxId) => { const str = String(taxId || '').replace(/[^0-9]/g, ''); if (str.length !== 13) return null; if (str[0] === '0') return 'นิติบุคคล'; if (str[0] === '9') return 'องค์กรพิเศษ'; return 'บุคคลธรรมดา'; };
 const entityBadge = (taxId) => {
   const type = getEntityType(taxId);
   if (!type) return <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>ตรวจสอบด้วยตนเอง</span>;
@@ -100,20 +87,13 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
   const confirmCount = (previewRows || []).filter(r => r._status === 'new' || r._status === 'update').length;
   const displayRows = filterStatus ? (previewRows || []).filter(r => r._status === filterStatus) : (previewRows || []);
   if (!show) return null;
-
   const statusTag = (s) => {
     const map = { new: { label: '➕ New', bg: '#EAF3DE', color: '#27500A' }, update: { label: '🔄 Update', bg: '#e8f0fb', color: '#1a3a5c' }, nochange: { label: '✅ No Change', bg: '#f5f5f5', color: '#666' }, duplicate: { label: '⚠️ Duplicate', bg: '#FFF3CD', color: '#856404' } };
     const m = map[s] || { label: s, bg: '#eee', color: '#333' };
     return <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: '500', background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>{m.label}</span>;
   };
   const displayFields = allFields.filter(f => !['username', 'last_update'].includes(f)).slice(0, 5);
-  const BADGE_CONFIG = [
-    ['new',       '➕ New',       '#EAF3DE', '#27500A', '#c0dda0'],
-    ['update',    '🔄 Update',    '#e8f0fb', '#1a3a5c', '#aac4e8'],
-    ['nochange',  '✅ No Change', '#f5f5f5', '#666',    '#ccc'   ],
-    ['duplicate', '⚠️ Duplicate','#FFF3CD', '#856404', '#f5d87a'],
-  ];
-
+  const BADGE_CONFIG = [['new','➕ New','#EAF3DE','#27500A','#c0dda0'],['update','🔄 Update','#e8f0fb','#1a3a5c','#aac4e8'],['nochange','✅ No Change','#f5f5f5','#666','#ccc'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404','#f5d87a']];
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
       <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
@@ -122,20 +102,16 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
           <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{(previewRows||[]).length} รายการในไฟล์</span>
         </div>
         <div style={{ background: '#f8f9fa', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', color: '#666', marginBottom: '12px' }}>
-          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ{isCategory && ' · TAX ID และ No. จะถูก normalize อัตโนมัติ'} Username และ Last Update จะถูก Auto ใส่ให้
+          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong>{isCategory && ' · TAX ID และ No. จะถูก normalize อัตโนมัติ'} Username และ Last Update จะถูก Auto ใส่ให้
         </div>
-        {/* Clickable filter badges */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
           {BADGE_CONFIG.map(([key, label, bg, color, border]) => {
             if (!summary[key]) return null;
             const isActive = filterStatus === key;
-            return (
-              <span key={key} onClick={() => setFilterStatus(isActive ? null : key)}
-                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: isActive ? bg : '#f5f5f5', color: isActive ? color : '#888', border: `1.5px solid ${isActive ? border : '#ddd'}`, cursor: 'pointer', userSelect: 'none' }}>
-                {label} <strong>{summary[key]}</strong>
-                {isActive && <span style={{ fontSize: '10px', marginLeft: '2px', opacity: 0.7 }}>✕</span>}
-              </span>
-            );
+            return <span key={key} onClick={() => setFilterStatus(isActive ? null : key)} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: isActive ? bg : '#f5f5f5', color: isActive ? color : '#888', border: `1.5px solid ${isActive ? border : '#ddd'}`, cursor: 'pointer', userSelect: 'none' }}>
+              {label} <strong>{summary[key]}</strong>
+              {isActive && <span style={{ fontSize: '10px', marginLeft: '2px', opacity: 0.7 }}>✕</span>}
+            </span>;
           })}
           {filterStatus && <span style={{ fontSize: '11px', color: '#888' }}>แสดง {displayRows.length} รายการ</span>}
         </div>
@@ -170,15 +146,13 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                           ))}
                         </div>
                       ) : row._status === 'new' ? <span style={{ fontSize: '10px', color: '#888' }}>เพิ่มใหม่</span>
-                        : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์ — ข้ามแถวนี้</span>
+                        : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์</span>
                           : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
                     </td>
                   </tr>
                 );
               })}
-              {displayRows.length === 0 && (
-                <tr><td colSpan={displayFields.length + (isCategory ? 3 : 2)} style={{ padding: '30px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีรายการ</td></tr>
-              )}
+              {displayRows.length === 0 && <tr><td colSpan={displayFields.length + (isCategory ? 3 : 2)} style={{ padding: '30px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีรายการ</td></tr>}
             </tbody>
           </table>
         </div>
@@ -198,15 +172,11 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
 
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 const TAB_CONFIG = {
-  code: {
-    label: 'Code', icon: '🏭', table: 'supplier_list', key: 'Supplier Code',
+  apcode: {
+    label: 'AP-Code', icon: '🏭', table: 'supplier_list', key: 'Supplier Code',
     fields: ['Supplier Code', 'Name', 'Tax ID', 'Branch', 'Site', 'BU', 'Notice', 'Sub Acc', 'Status', 'username', 'last_update'],
     combo: ['Site', 'BU', 'Notice', 'Status'],
-    edit: [
-      ['Supplier Code','Supplier Code'],['Name','Name'],['Tax ID','Tax ID'],
-      ['Branch','Branch'],['Site','Site'],['BU','BU'],
-      ['Notice','Notice'],['Sub Acc','Sub Acc'],['Status','Status'],
-    ],
+    edit: [['Supplier Code','Supplier Code'],['Name','Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Site','Site'],['BU','BU'],['Notice','Notice'],['Sub Acc','Sub Acc'],['Status','Status']],
     columns: [
       { key: 'Supplier Code', label: 'Supplier Code', sortable: true, w: 130 },
       { key: 'Name',          label: 'Name',           w: 220 },
@@ -219,14 +189,39 @@ const TAB_CONFIG = {
       { key: 'Status',        label: 'Status',         w: 90  },
     ],
   },
+  smcode: {
+    label: 'SM-Code', icon: '🔖', table: 'sm_code_list', key: 'SM-Code',
+    fields: ['SM-Code', 'Company Name', 'Tax ID', 'Branch', 'Short Name', 'CPC_Dr', 'Account_Dr', 'Sub Acc_Dr', 'Expense Type', 'First Part', 'Mid Part', 'Last Part', 'Special Rule1', 'Special Rule2', 'Simple Rule3', 'Special Rule4', 'Special Rule5', 'Digit', 'CPC_Cr', 'Account_Dr2', 'Sub Acc_Cr', 'BU', 'Ofin Code', 'Simple Brand Code', 'Short Branch', 'Remark', 'Supplier Code', 'username', 'last_update'],
+    combo: ['BU', 'Short Name'],
+    edit: [
+      ['SM-Code','SM-Code'],['Company Name','Company Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Short Name','AT-Match (Short Name)'],
+      ['CPC_Dr','CPC Dr'],['Account_Dr','Account Dr'],['Sub Acc_Dr','Sub Acc Dr'],
+      ['CPC_Cr','CPC Cr'],['Account_Dr2','Account Cr'],['Sub Acc_Cr','Sub Acc Cr'],
+      ['Expense Type','Expense Type'],['First Part','First Part'],['Mid Part','Mid Part'],['Last Part','Last Part'],
+      ['Special Rule1','Rule1'],['Special Rule2','Rule2'],['Simple Rule3','Rule3'],['Special Rule4','Rule4'],['Special Rule5','Rule5'],
+      ['Digit','Digit'],['BU','BU'],['Ofin Code','Ofin Code'],['Simple Brand Code','Brand Code'],['Short Branch','Short Branch'],['Remark','Remark'],['Supplier Code','Supplier Code'],
+    ],
+    columns: [
+      { key: 'SM-Code',        label: 'SM-Code',        sortable: true, w: 110 },
+      { key: 'Company Name',   label: 'Company Name',   w: 200 },
+      { key: 'Tax ID',         label: 'Tax ID',         w: 120 },
+      { key: 'Branch',         label: 'Branch',         w: 65  },
+      { key: '_debitAccount',  label: 'Debit Account',  w: 150 },
+      { key: '_creditAccount', label: 'Credit Account', w: 150 },
+      { key: 'Short Name',     label: 'AT-Match',       w: 90  },
+      { key: 'Special Rule1',  label: 'Rule1',          w: 60  },
+      { key: 'Special Rule2',  label: 'Rule2',          w: 60  },
+      { key: 'Simple Rule3',   label: 'Rule3',          w: 60  },
+      { key: 'Special Rule4',  label: 'Rule4',          w: 60  },
+      { key: 'Special Rule5',  label: 'Rule5',          w: 60  },
+      { key: 'BU',             label: 'BU', sortable: true, w: 80 },
+    ],
+  },
   category: {
     label: 'Category', icon: '🗂️', table: 'vendor_category', key: 'Code',
     fields: ['Code', 'Supplier Name', 'TAX ID', 'No.', 'BU', 'TYPE', 'SUB TYPE', 'REMARK', 'username', 'last_update'],
     combo: ['BU', 'TYPE', 'SUB TYPE'],
-    edit: [
-      ['Code','Code'],['Supplier Name','Supplier Name'],['TAX ID','TAX ID'],
-      ['No.','No.'],['BU','BU'],['TYPE','TYPE'],['SUB TYPE','SUB TYPE'],['REMARK','REMARK'],
-    ],
+    edit: [['Code','Code'],['Supplier Name','Supplier Name'],['TAX ID','TAX ID'],['No.','No.'],['BU','BU'],['TYPE','TYPE'],['SUB TYPE','SUB TYPE'],['REMARK','REMARK']],
     columns: [
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
       { key: 'Supplier Name', label: 'Supplier Name', w: 320 },
@@ -242,7 +237,7 @@ const TAB_CONFIG = {
 };
 
 function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
-  const [tab, setTab] = useState(activeSubTab || 'code');
+  const [tab, setTab] = useState(activeSubTab || 'apcode');
   const { currentUser, userName } = useAuth();
   const { fetchCollection, invalidate } = useDataCache();
   const { isAdmin } = useUserRole();
@@ -251,12 +246,12 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
   const cfg = TAB_CONFIG[tab];
 
-  const [dataMap, setDataMap]         = useState({ code: [], category: [] });
-  const [searchMap, setSearchMap]     = useState({ code: '', category: '' });
-  const [selectedMap, setSelectedMap] = useState({ code: [], category: [] });
-  const [sortMap, setSortMap]         = useState({ code: { field: 'Supplier Code', dir: 'asc' }, category: { field: 'Code', dir: 'asc' } });
+  const [dataMap, setDataMap]         = useState({ apcode: [], smcode: [], category: [] });
+  const [searchMap, setSearchMap]     = useState({ apcode: '', smcode: '', category: '' });
+  const [selectedMap, setSelectedMap] = useState({ apcode: [], smcode: [], category: [] });
+  const [sortMap, setSortMap]         = useState({ apcode: { field: 'Supplier Code', dir: 'asc' }, smcode: { field: 'SM-Code', dir: 'asc' }, category: { field: 'Code', dir: 'asc' } });
   const [pageSize, setPageSize]       = useState(50);
-  const [pageMap, setPageMap]         = useState({ code: 1, category: 1 });
+  const [pageMap, setPageMap]         = useState({ apcode: 1, smcode: 1, category: 1 });
   const [showForm, setShowForm]       = useState(false);
   const [editId, setEditId]           = useState(null);
   const [form, setForm]               = useState({});
@@ -301,13 +296,12 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     setDataMap(prev => ({ ...prev, [t]: (data || []).filter(i => !i.deleted) }));
   }, [fetchCollection]);
 
-  useEffect(() => { fetchTab('code'); fetchTab('category'); }, []);
+  useEffect(() => { fetchTab('apcode'); fetchTab('smcode'); fetchTab('category'); }, []);
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
+  useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
-
-  useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
 
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
     const dataFields = allFields.filter(f => !['username', 'last_update'].includes(f));
@@ -316,10 +310,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const seenKeys = new Set();
     return rawRows.map(row => {
       const normalizedRow = { ...row };
-      if (tab === 'category') {
-        normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']);
-        normalizedRow['No.']    = normalizeNo(row['No.']);
-      }
+      if (tab === 'category') { normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']); normalizedRow['No.'] = normalizeNo(row['No.']); }
       const keyVal = String(normalizedRow[keyField] ?? '').trim();
       if (!keyVal) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
       if (seenKeys.has(keyVal)) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
@@ -327,11 +318,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       const existing = existingMap[keyVal];
       if (!existing) return { ...normalizedRow, _status: 'new', _changes: [] };
       const changes = [];
-      dataFields.forEach(f => {
-        const newVal = String(normalizedRow[f] ?? '').trim();
-        const oldVal = String(existing[f] ?? '').trim();
-        if (newVal !== oldVal) changes.push({ field: f, old: oldVal, new: newVal });
-      });
+      dataFields.forEach(f => { const nv = String(normalizedRow[f] ?? '').trim(); const ov = String(existing[f] ?? '').trim(); if (nv !== ov) changes.push({ field: f, old: ov, new: nv }); });
       return { ...normalizedRow, _status: changes.length > 0 ? 'update' : 'nochange', _changes: changes, _existingId: existing.id };
     });
   };
@@ -367,27 +354,13 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const handleConfirmImport = async () => {
     setImporting(true);
     try {
-      const toProcess  = previewRows.filter(r => r._status === 'new' || r._status === 'update');
-      const newRows    = toProcess.filter(r => r._status === 'new');
+      const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
+      const newRows = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
-      const ts = getTimestamp();
-      const currentUsername = userName || currentUser?.email || '';
-      if (newRows.length > 0) {
-        for (let i = 0; i < newRows.length; i += 500) {
-          const payload = newRows.slice(i,i+500).map(row => { const d = {}; cfg.fields.forEach(k => { if (k==='username') d[k]=currentUsername; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; });
-          const { error } = await supabase.from(cfg.table).insert(payload);
-          if (error) throw new Error(error.message);
-        }
-      }
-      if (updateRows.length > 0) {
-        for (let i = 0; i < updateRows.length; i += 500) {
-          const payload = updateRows.slice(i,i+500).map(row => { const d = { id: row._existingId }; cfg.fields.forEach(k => { if (k==='username') d[k]=currentUsername; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; });
-          const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' });
-          if (error) throw new Error(error.message);
-        }
-      }
-      setShowPreview(false); setPreviewRows([]);
-      invalidate(cfg.table); await fetchTab(tab);
+      const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
+      if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const payload = newRows.slice(i,i+500).map(row => { const d = {}; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).insert(payload); if (error) throw new Error(error.message); } }
+      if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i,i+500).map(row => { const d = { id: row._existingId }; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
+      setShowPreview(false); setPreviewRows([]); invalidate(cfg.table); await fetchTab(tab);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setImporting(false);
@@ -397,8 +370,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const data = { ...form, username: userName || currentUser?.email || '', last_update: getTimestamp() };
     if (editId) { const { error } = await supabase.from(cfg.table).update(data).eq('id', editId); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
     else { const { error } = await supabase.from(cfg.table).insert([data]); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
-    setShowForm(false); setEditId(null); setForm({});
-    invalidate(cfg.table); await fetchTab(tab);
+    setShowForm(false); setEditId(null); setForm({}); invalidate(cfg.table); await fetchTab(tab);
   };
 
   const handleDelete = async (id) => {
@@ -408,8 +380,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       await supabase.from('recycle_bin').insert([{ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key]||id, data: item, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }]);
       const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
-      invalidate(cfg.table); await fetchTab(tab);
+      setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) })); invalidate(cfg.table); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -421,24 +392,19 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       if (bins.length) await supabase.from('recycle_bin').insert(bins);
       const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: now }).in('id', selected);
       if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-      invalidate(cfg.table); await fetchTab(tab);
+      setSelectedMap(prev => ({ ...prev, [tab]: [] })); invalidate(cfg.table); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
   const handleOpenDetail = (item) => {
-    setDetailItem(item);
-    setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || ''])));
-    setDetailEditMode(false);
-    setShowDetailModal(true);
+    setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true);
   };
 
   const handleDetailSave = async () => {
     const data = { ...detailForm, username: userName||currentUser?.email||'', last_update: getTimestamp() };
     const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
     if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-    setShowDetailModal(false);
-    invalidate(cfg.table); await fetchTab(tab);
+    setShowDetailModal(false); invalidate(cfg.table); await fetchTab(tab);
   };
 
   const filtered = useMemo(() => items
@@ -446,7 +412,6 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     .sort((a, b) => { const ca = a[sort.field]||'', cb = b[sort.field]||''; return sort.dir==='asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); }),
     [items, search, sort, cfg.fields]
   );
-
   const page = pageMap[tab] || 1;
   const effectivePageSize = pageSize === 'ทั้งหมด' || pageSize >= filtered.length ? filtered.length || 1 : pageSize;
   const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
@@ -454,12 +419,18 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const statusBadge = (val) => { const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] }; const [bg, color] = map[val]||['#e8e8e8','#555']; return <span style={{ background: bg, color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>{val||'-'}</span>; };
   const noticeBadge = (val) => { const map = { ITC: ['#e8f0fb','#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE','#27500A'], EFT: ['#f0f7ff','#0F6E56'], CPN: ['#f5f5f5','#555'], MER: ['#FFF3CD','#856404'] }; const [bg, color] = map[val]||['#f5f5f5','#555']; return val ? <span style={{ background: bg, color, padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{val}</span> : '-'; };
+  const ruleBadge = (val) => { if (!val || val === '-' || val === '') return <span style={{ color: '#ccc' }}>-</span>; const colors = ['#e8f0fb','#1a3a5c']; return <span style={{ background: colors[0], color: colors[1], padding:'2px 6px', borderRadius:'20px', fontSize:'10px' }}>{val}</span>; };
+
   const renderCell = (c, item) => {
-    if (c.key === 'last_update')  return formatLastUpdate(item[c.key]);
-    if (c.key === 'Status')       return statusBadge(item[c.key]);
-    if (c.key === 'Notice')       return noticeBadge(item[c.key]);
+    if (c.key === 'last_update')     return formatLastUpdate(item[c.key]);
+    if (c.key === 'Status')          return statusBadge(item[c.key]);
+    if (c.key === 'Notice')          return noticeBadge(item[c.key]);
     if (c.key === 'TYPE' || c.key === 'SUB TYPE') return noticeBadge(item[c.key]);
-    if (c.key === '_entityType')  return entityBadge(item['TAX ID']);
+    if (c.key === '_entityType')     return entityBadge(item['TAX ID']);
+    if (c.key === '_debitAccount')   return <span style={{ fontSize:'10px', color:'#555' }}>{[item['CPC_Dr'], item['Account_Dr'], item['Sub Acc_Dr']].filter(Boolean).join(' · ') || '-'}</span>;
+    if (c.key === '_creditAccount')  return <span style={{ fontSize:'10px', color:'#555' }}>{[item['CPC_Cr'], item['Account_Dr2'], item['Sub Acc_Cr']].filter(Boolean).join(' · ') || '-'}</span>;
+    if (['Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5'].includes(c.key)) return ruleBadge(item[c.key]);
+    if (c.key === 'Short Name')      return item[c.key] ? <span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{item[c.key]}</span> : '-';
     return item[c.key] || '-';
   };
 
@@ -467,7 +438,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const minW    = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
   const totalW  = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
   const extraW  = Math.max(0, totalW - minW);
-  const stretchKey = tab === 'category' ? 'REMARK' : 'Name';
+  const stretchMap = { apcode: 'Name', smcode: 'Company Name', category: 'REMARK' };
+  const stretchKey = stretchMap[tab] || 'Name';
   const COLUMNS_SCALED = cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c);
 
   const S = {
@@ -491,7 +463,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
     inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
     overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-    modal: { background:'white', borderRadius:'10px', width: isMobile?'95vw':'500px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
+    modal: { background:'white', borderRadius:'10px', width: isMobile?'95vw': tab==='smcode'?'700px':'500px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
     iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
   };
 
@@ -503,24 +475,59 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     </colgroup>
   );
 
-  const renderFormFields = (formData, setFormData, editMode = true) => (
-    <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
-      {cfg.edit.map(([key, label]) => (
-        <div key={key} style={{ marginBottom:'4px' }}>
-          <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
-          {editMode ? (
-            cfg.combo.includes(key)
-              ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
-              : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
-          ) : (
-            <div style={S.inputReadonly}>
-              {key==='Status' ? statusBadge(formData[key]) : key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}
+  const renderFormFields = (formData, setFormData, editMode = true) => {
+    if (tab === 'smcode') {
+      const sections = [
+        { label: 'ข้อมูลทั่วไป', keys: ['SM-Code','Company Name','Tax ID','Branch','Short Name','BU','Supplier Code','Remark'] },
+        { label: 'Debit', keys: ['CPC_Dr','Account_Dr','Sub Acc_Dr'] },
+        { label: 'Credit', keys: ['CPC_Cr','Account_Dr2','Sub Acc_Cr'] },
+        { label: 'Rules & Config', keys: ['Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','Ofin Code','Simple Brand Code','Short Branch'] },
+      ];
+      return (
+        <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
+          {sections.map(sec => (
+            <div key={sec.label} style={{ marginBottom:'16px' }}>
+              <div style={{ fontSize:'10px', fontWeight:'600', color:'#888', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:'8px', borderBottom:'0.5px solid #f0f0f0', paddingBottom:'4px' }}>{sec.label}</div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
+                {sec.keys.map(key => {
+                  const label = cfg.edit.find(([k]) => k === key)?.[1] || key;
+                  return (
+                    <div key={key} style={{ marginBottom:'4px' }}>
+                      <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
+                      {editMode
+                        ? cfg.combo.includes(key)
+                          ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
+                          : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
+                        : <div style={S.inputReadonly}>{formData[key]||'-'}</div>
+                      }
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          )}
+          ))}
         </div>
-      ))}
-    </div>
-  );
+      );
+    }
+    return (
+      <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
+        {cfg.edit.map(([key, label]) => (
+          <div key={key} style={{ marginBottom:'4px' }}>
+            <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
+            {editMode ? (
+              cfg.combo.includes(key)
+                ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
+                : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
+            ) : (
+              <div style={S.inputReadonly}>
+                {key==='Status' ? statusBadge(formData[key]) : key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div style={S.container}>
@@ -555,7 +562,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
             onChange={e=>setSearchMap(prev=>({...prev,[tab]:e.target.value}))}
             style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width: isMobile?'120px':isTablet?'160px':'220px' }} />
           {!isMobile && <span style={{ fontSize:'12px', color:'#888', whiteSpace:'nowrap' }}>
-            {filtered.length > 0 ? `แสดง ${(page-1)*effectivePageSize+1}-${Math.min(page*effectivePageSize, filtered.length)} จาก ${filtered.length} รายการ` : `0 รายการ`}
+            {filtered.length > 0 ? `แสดง ${(page-1)*effectivePageSize+1}-${Math.min(page*effectivePageSize, filtered.length)} จาก ${filtered.length} รายการ` : '0 รายการ'}
             {selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}
           </span>}
         </div>
@@ -570,14 +577,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
             </div>
             <button onClick={()=>setPageMap(prev=>({...prev,[tab]:1}))} disabled={page===1} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===1?'#f5f5f5':'white', cursor:page===1?'default':'pointer', fontSize:'12px', color:page===1?'#ccc':'#555' }}>«</button>
             <button onClick={()=>setPageMap(prev=>({...prev,[tab]:prev[tab]-1}))} disabled={page===1} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===1?'#f5f5f5':'white', cursor:page===1?'default':'pointer', fontSize:'12px', color:page===1?'#ccc':'#555' }}>‹</button>
-            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-              let p;
-              if (totalPages<=5) p=i+1;
-              else if (page<=3) p=i+1;
-              else if (page>=totalPages-2) p=totalPages-4+i;
-              else p=page-2+i;
-              return <button key={p} onClick={()=>setPageMap(prev=>({...prev,[tab]:p}))} style={{ padding:'3px 9px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===p?'#1a3a5c':'white', color:page===p?'white':'#555', cursor:'pointer', fontSize:'12px', fontWeight:page===p?'500':'400' }}>{p}</button>;
-            })}
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => { let p; if (totalPages<=5) p=i+1; else if (page<=3) p=i+1; else if (page>=totalPages-2) p=totalPages-4+i; else p=page-2+i; return <button key={p} onClick={()=>setPageMap(prev=>({...prev,[tab]:p}))} style={{ padding:'3px 9px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===p?'#1a3a5c':'white', color:page===p?'white':'#555', cursor:'pointer', fontSize:'12px', fontWeight:page===p?'500':'400' }}>{p}</button>; })}
             <button onClick={()=>setPageMap(prev=>({...prev,[tab]:prev[tab]+1}))} disabled={page===totalPages} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===totalPages?'#f5f5f5':'white', cursor:page===totalPages?'default':'pointer', fontSize:'12px', color:page===totalPages?'#ccc':'#555' }}>›</button>
             <button onClick={()=>setPageMap(prev=>({...prev,[tab]:totalPages}))} disabled={page===totalPages} style={{ padding:'3px 8px', borderRadius:'6px', border:'0.5px solid #ddd', background:page===totalPages?'#f5f5f5':'white', cursor:page===totalPages?'default':'pointer', fontSize:'12px', color:page===totalPages?'#ccc':'#555' }}>»</button>
             <span style={{ fontSize:'12px', color:'#888', marginLeft:'2px', whiteSpace:'nowrap' }}>{page} / {totalPages}</span>
@@ -591,13 +591,9 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
             {renderColGroup(COLUMNS_SCALED)}
             <thead>
               <tr>
-                <th style={S.thCheck}>
-                  <input type="checkbox" checked={filtered.length>0 && selected.length===filtered.length}
-                    onChange={()=>setSelectedMap(prev=>({...prev,[tab]: prev[tab].length===filtered.length?[]:filtered.map(i=>i.id)}))} />
-                </th>
+                <th style={S.thCheck}><input type="checkbox" checked={filtered.length>0 && selected.length===filtered.length} onChange={()=>setSelectedMap(prev=>({...prev,[tab]: prev[tab].length===filtered.length?[]:filtered.map(i=>i.id)}))} /></th>
                 {COLUMNS_SCALED.map(c => (
-                  <th key={c.key} style={c.sortable?S.thSort:S.th}
-                    onClick={c.sortable?()=>setSortMap(prev=>({...prev,[tab]:{field:c.key,dir:prev[tab].field===c.key&&prev[tab].dir==='asc'?'desc':'asc'}})):undefined}>
+                  <th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>setSortMap(prev=>({...prev,[tab]:{field:c.key,dir:prev[tab].field===c.key&&prev[tab].dir==='asc'?'desc':'asc'}})):undefined}>
                     {c.label}{c.sortable?(sort.field===c.key?(sort.dir==='asc'?' ▲':' ▼'):' ↕'):''}
                   </th>
                 ))}
@@ -612,13 +608,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
             <tbody>
               {paginated.map(item => (
                 <tr key={item.id} style={{ background: selected.includes(item.id)?'#f0f7ff':'white' }}>
-                  <td style={S.tdCenter}>
-                    <input type="checkbox" checked={selected.includes(item.id)}
-                      onChange={()=>setSelectedMap(prev=>({...prev,[tab]:prev[tab].includes(item.id)?prev[tab].filter(s=>s!==item.id):[...prev[tab],item.id]}))} />
-                  </td>
-                  {COLUMNS_SCALED.map(c => (
-                    <td key={c.key} style={S.td} title={String(item[c.key]||'')}>{renderCell(c, item)}</td>
-                  ))}
+                  <td style={S.tdCenter}><input type="checkbox" checked={selected.includes(item.id)} onChange={()=>setSelectedMap(prev=>({...prev,[tab]:prev[tab].includes(item.id)?prev[tab].filter(s=>s!==item.id):[...prev[tab],item.id]}))} /></td>
+                  {COLUMNS_SCALED.map(c => (<td key={c.key} style={S.td} title={String(item[c.key]||'')}>{renderCell(c, item)}</td>))}
                   <td style={S.tdCenter}>
                     <div style={{ display:'inline-flex', alignItems:'center', gap:'4px' }}>
                       <button onClick={()=>handleOpenDetail(item)} style={S.iconBtn('#1a3a5c')}>🔍</button>
@@ -683,17 +674,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         </div>
       )}
 
-      <ImportPreviewModal
-        show={showPreview}
-        onClose={()=>{setShowPreview(false); setPreviewRows([]);}}
-        onConfirm={handleConfirmImport}
-        importing={importing}
-        previewRows={previewRows}
-        keyField={cfg.key}
-        allFields={cfg.fields}
-        isMobile={isMobile}
-        isCategory={tab === 'category'}
-      />
+      <ImportPreviewModal show={showPreview} onClose={()=>{setShowPreview(false); setPreviewRows([]);}} onConfirm={handleConfirmImport} importing={importing} previewRows={previewRows} keyField={cfg.key} allFields={cfg.fields} isMobile={isMobile} isCategory={tab === 'category'} />
     </div>
   );
 }
