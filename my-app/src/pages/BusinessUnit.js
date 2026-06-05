@@ -688,10 +688,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 0', margin:'4px 0', flexShrink:0, flexWrap:isMobile?'wrap':'nowrap', gap:isMobile?'6px':'0' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flex:isMobile?'1 1 100%':'1', minWidth:0 }}>
           {tab==='info'?(
-            <input placeholder={isMobile?'Search...':'Search BU, Company Name, Tax ID...'} value={infoSearch} onChange={e=>setInfoSearch(e.target.value)} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+            <input placeholder={isMobile?'Search...':'Search...'} value={infoSearch} onChange={e=>setInfoSearch(e.target.value)} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
           ):(
             <>
-              <input placeholder={isMobile?'Search...':'Search Branch Code, Company, Address...'} value={branchSearch} onChange={e=>{setBranchSearch(e.target.value);setBranchTaxFilter('');}} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+              <input placeholder={isMobile?'Search...':'Search...'} value={branchSearch} onChange={e=>{setBranchSearch(e.target.value);setBranchTaxFilter('');}} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
               {branchTaxFilter&&!isMobile&&(<span style={{ fontSize:'11px', background:'#e8f0fb', color:'#1a3a5c', padding:'3px 10px', borderRadius:'20px', display:'flex', alignItems:'center', gap:'4px', whiteSpace:'nowrap' }}>Tax ID: {isTablet?'...':branchTaxFilter}<span style={{ cursor:'pointer', fontWeight:'bold' }} onClick={()=>setBranchTaxFilter('')}>×</span></span>)}
             </>
           )}
