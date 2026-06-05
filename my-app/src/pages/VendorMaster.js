@@ -241,7 +241,7 @@ const TAB_CONFIG = {
   },
 };
 
-function VendorMaster({ activeSubTab, onSubTabChange }) {
+function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [tab, setTab] = useState(activeSubTab || 'code');
   const { currentUser, userName } = useAuth();
   const { fetchCollection, invalidate } = useDataCache();
@@ -277,7 +277,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     const obs = new ResizeObserver(e => setContainerW(e[0].contentRect.width));
     obs.observe(containerRef.current);
     return () => obs.disconnect();
-  }, []);
+  }, [flyoutOpen]);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
   const items    = dataMap[tab]     || [];
@@ -462,15 +462,15 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const COLUMNS_SCALED = cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c);
 
   const S = {
-    container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box' },
+    container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth:0, overflow:'hidden' },
     topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0, flexWrap: isMobile?'wrap':'nowrap', gap:'8px' },
     btn: { padding: isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize: isMobile?'12px':'13px', marginLeft: isMobile?'4px':'8px' },
     tabBar: { display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
     tab: (active) => ({ padding: isMobile?'6px 12px':'8px 18px', fontSize: isMobile?'12px':'13px', cursor:'pointer', color: active?'#1a3a5c':'#888', borderBottom: active?'2px solid #1a3a5c':'2px solid transparent', marginBottom:'-2px', borderRadius:'6px 6px 0 0', background: active?'white':'transparent', fontWeight: active?'500':'400', display:'flex', alignItems:'center', gap:'4px' }),
     tabBadge: (active) => ({ background: active?'#1a3a5c':'#e8e8e8', color: active?'white':'#888', fontSize:'10px', padding:'1px 5px', borderRadius:'20px' }),
-    outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1 },
+    outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1, minWidth:0 },
     theadWrap: { overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
-    tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1 },
+    tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1, minWidth:0 },
     table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
     th: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
     thSort: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', cursor:'pointer', userSelect:'none', overflow:'hidden', textOverflow:'ellipsis' },
