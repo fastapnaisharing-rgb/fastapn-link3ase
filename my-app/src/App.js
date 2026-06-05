@@ -477,8 +477,8 @@ function MainApp() {
               {fpSub('coa-subaccount', '🔖', 'Sub Account')}
               {fpDiv()}
               {fpGroup('👥', 'Vendor Master')}
-              {fpSub('vendor-apcode', '🏭', 'AP-Code')}   // เปลี่ยนจาก vendor-code
-              {fpSub('vendor-smcode', '🔖', 'SM-Code')}   // เพิ่มใหม่
+              {fpSub('vendor-apcode', '🏭', 'AP-Code')}   
+              {fpSub('vendor-smcode', '🔖', 'SM-Code')} 
               {fpSub('vendor-category', '🗂️', 'Category')}
               {fpDiv()}
               {fpItem('itemcode', '🔖', 'Item Code')}
