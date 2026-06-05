@@ -293,11 +293,26 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
   const fetchTab = useCallback(async (t) => {
-    const { data, error } = await supabase
-      .from(TAB_CONFIG[t].table)
-      .select('*')
-      .or('deleted.is.null,deleted.eq.false');
-    if (!error) setDataMap(prev => ({ ...prev, [t]: data || [] }));
+    let from = 0;
+    const batchSize = 1000;
+    let isFirst = true;
+    while (true) {
+      const { data, error } = await supabase
+        .from(TAB_CONFIG[t].table)
+        .select('*')
+        .or('deleted.is.null,deleted.eq.false')
+        .range(from, from + batchSize - 1);
+      if (error) { console.error('fetchTab error:', error); break; }
+      // ✅ Chunked Loading — render ทันทีทุก chunk ไม่รอทั้งหมด
+      if (isFirst) {
+        setDataMap(prev => ({ ...prev, [t]: data || [] }));
+        isFirst = false;
+      } else {
+        setDataMap(prev => ({ ...prev, [t]: [...(prev[t] || []), ...(data || [])] }));
+      }
+      if (!data || data.length < batchSize) break;
+      from += batchSize;
+    }
   }, []);
 
   useEffect(() => { fetchTab('apcode'); fetchTab('smcode'); fetchTab('category'); }, []);

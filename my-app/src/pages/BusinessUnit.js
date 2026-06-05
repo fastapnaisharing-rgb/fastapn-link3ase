@@ -3,7 +3,6 @@ import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
-import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -25,7 +24,7 @@ function ComboBox({ value, onChange, options, placeholder }) {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
-  const filtered = [...new Set(options.filter(o => o && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
+  const filtered = [...new Set(options.filter(o => o && o !== '-' && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
   return (
     <div ref={ref} style={{ position: 'relative', marginBottom: '8px' }}>
       <input value={input} onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder={placeholder || ''}
@@ -147,7 +146,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'info');
   const { currentUser, userName } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
-  const { fetchCollection, invalidate, appendToCache, updateInCache, removeFromCache } = useDataCache();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -196,13 +194,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [containerW, setContainerW] = useState(0);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
-  // ✅ FIX: ResizeObserver เพื่อ measure container width จริงๆ
   useEffect(() => {
     if (!containerRef.current) return;
     setContainerW(containerRef.current.getBoundingClientRect().width);
-    const observer = new ResizeObserver(entries => {
-      setContainerW(entries[0].contentRect.width);
-    });
+    const observer = new ResizeObserver(entries => setContainerW(entries[0].contentRect.width));
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
@@ -264,18 +259,45 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const branchTaxIds = useMemo(() => new Set(branches.map(b => b['BU-TaxID']).filter(Boolean)), [branches]);
 
+  // ✅ Chunked Loading — render ทันทีทุก chunk ไม่รอทั้งหมด
   const fetchInfo = useCallback(async () => {
-    const data = await fetchCollection('CompanyList');
-    setInfoItems((data || []).filter(i => !i.deleted));
-  }, [fetchCollection]);
+    let from = 0;
+    const batchSize = 1000;
+    let isFirst = true;
+    while (true) {
+      const { data, error } = await supabase
+        .from('company_list')
+        .select('*')
+        .or('deleted.is.null,deleted.eq.false')
+        .range(from, from + batchSize - 1);
+      if (error) { console.error('fetchInfo error:', error); break; }
+      if (isFirst) { setInfoItems(data || []); isFirst = false; }
+      else { setInfoItems(prev => [...prev, ...(data || [])]); }
+      if (!data || data.length < batchSize) break;
+      from += batchSize;
+    }
+  }, []);
 
+  // ✅ Chunked Loading — render ทันทีทุก chunk ไม่รอทั้งหมด
   const fetchBranch = useCallback(async () => {
-    const data = await fetchCollection('BranchList');
-    setBranches((data || []).filter(b => !b.deleted));
-  }, [fetchCollection]);
+    let from = 0;
+    const batchSize = 1000;
+    let isFirst = true;
+    while (true) {
+      const { data, error } = await supabase
+        .from('branch_list')
+        .select('*')
+        .or('deleted.is.null,deleted.eq.false')
+        .range(from, from + batchSize - 1);
+      if (error) { console.error('fetchBranch error:', error); break; }
+      if (isFirst) { setBranches(data || []); isFirst = false; }
+      else { setBranches(prev => [...prev, ...(data || [])]); }
+      if (!data || data.length < batchSize) break;
+      from += batchSize;
+    }
+  }, []);
 
-  useEffect(() => { fetchInfo(); fetchBranch(); }, []); // eslint-disable-line
-
+  useEffect(() => { fetchInfo(); fetchBranch(); }, []);
   useEffect(() => { if (activeSubTab) setTab(activeSubTab); }, [activeSubTab]);
   useEffect(() => { setBranchPage(1); }, [branchSearch, branchSortField, branchSortDir, branchTaxFilter]);
 
@@ -285,7 +307,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const getFileTimestamp = () => { const now = new Date(); return `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`; };
   const formatLastUpdate = (val) => {
     if (!val || val === '-') return '-';
-    try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch { }
+    try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch {}
     return val;
   };
 
@@ -325,12 +347,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (infoEditId) {
       const { data: updated, error } = await supabase.from('company_list').update(data).eq('id', infoEditId).select().single();
       if (error) throw error;
-      updateInCache('CompanyList', infoEditId, updated);
       setInfoItems(prev => prev.map(i => i.id === infoEditId ? { ...i, ...updated } : i));
     } else {
       const { data: inserted, error } = await supabase.from('company_list').insert([data]).select().single();
       if (error) throw error;
-      appendToCache('CompanyList', inserted);
       setInfoItems(prev => [...prev, inserted]);
     }
     setShowInfoForm(false); setInfoEditId(null); setInfoForm(emptyInfoForm());
@@ -356,7 +376,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         const chunk = ids.slice(i, i + 500);
         const { error } = await supabase.from('branch_list').update({ '%': rateConfirmData.newRate, ...metaFields }).in('id', chunk);
         if (error) throw error;
-        chunk.forEach(id => updateInCache('BranchList', id, { '%': rateConfirmData.newRate }));
         setBranches(prev => prev.map(b => chunk.includes(b.id) ? { ...b, '%': rateConfirmData.newRate } : b));
       }
       setShowRateConfirm(false); setRateConfirmData(null);
@@ -369,17 +388,9 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = infoItems.find(i => i.id === id);
-      await supabase.from('recycle_bin').insert([{
-        source_table: 'company_list',
-        source_id: id,
-        source_key: item?.['TAX ID'] || id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: new Date().toISOString(),
-      }]);
+      await supabase.from('recycle_bin').insert([{ source_table: 'company_list', source_id: id, source_key: item?.['TAX ID'] || id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }]);
       const { error } = await supabase.from('company_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
-      removeFromCache('CompanyList', id);
       setInfoItems(prev => prev.filter(i => i.id !== id));
       setInfoSelected(p => p.filter(s => s !== id));
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
@@ -389,15 +400,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm(`ต้องการลบ ${infoSelected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = infoItems.filter(i => infoSelected.includes(i.id)).map(item => ({
-        source_table: 'company_list', source_id: item.id,
-        source_key: item['TAX ID'] || item.id, data: item,
-        deleted_by: userName || currentUser?.email || '', deleted_at: now,
-      }));
+      const bins = infoItems.filter(i => infoSelected.includes(i.id)).map(item => ({ source_table: 'company_list', source_id: item.id, source_key: item['TAX ID'] || item.id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now }));
       if (bins.length) await supabase.from('recycle_bin').insert(bins);
       const { error } = await supabase.from('company_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', infoSelected);
       if (error) throw error;
-      infoSelected.forEach(id => removeFromCache('CompanyList', id));
       setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
       setInfoSelected([]);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
@@ -419,19 +425,17 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       const newRows = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
       if (newRows.length > 0) {
-        const insertData = newRows.map(row => { const d = {}; INFO_FIELDS.forEach(k => { d[k] = k==='updated_by' ? (userName||currentUser?.email||'') : k==='updated_at' ? new Date().toISOString() : String(row[k]??''); }); return d; });
+        const insertData = newRows.map(row => { const d = {}; INFO_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); }); return d; });
         for (let i = 0; i < insertData.length; i += 500) {
           const { data: ins, error } = await supabase.from('company_list').insert(insertData.slice(i,i+500)).select();
           if (error) throw error;
-          ins.forEach(r => appendToCache('CompanyList', r));
           setInfoItems(prev => [...prev, ...ins]);
         }
       }
       for (const row of updateRows) {
-        const d = {}; INFO_FIELDS.forEach(k => { d[k] = k==='updated_by' ? (userName||currentUser?.email||'') : k==='updated_at' ? new Date().toISOString() : String(row[k]??''); });
+        const d = {}; INFO_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); });
         const { data: upd, error } = await supabase.from('company_list').update(d).eq('id', row._existingId).select().single();
         if (error) throw error;
-        updateInCache('CompanyList', row._existingId, upd);
         setInfoItems(prev => prev.map(i => i.id === row._existingId ? { ...i, ...upd } : i));
       }
       setShowInfoPreview(false); setInfoPreviewRows([]);
@@ -454,7 +458,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     const data = { ...branchDetailForm, ...metaFields };
     const { data: updated, error } = await supabase.from('branch_list').update(data).eq('id', branchDetailItem.id).select().single();
     if (error) { setBranchDetailError('บันทึกไม่สำเร็จ: ' + error.message); return; }
-    updateInCache('BranchList', branchDetailItem.id, updated);
     setBranches(prev => prev.map(b => b.id === branchDetailItem.id ? { ...b, ...updated } : b));
     setShowBranchDetail(false);
   };
@@ -464,7 +467,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (err) { setBranchNewError(err); return; }
     const { data: inserted, error } = await supabase.from('branch_list').insert([{ ...branchNewForm, ...metaFields }]).select().single();
     if (error) { setBranchNewError('บันทึกไม่สำเร็จ: ' + error.message); return; }
-    appendToCache('BranchList', inserted);
     setBranches(prev => [...prev, inserted]);
     setShowBranchNew(false); setBranchNewForm({});
   };
@@ -473,17 +475,9 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = branches.find(b => b.id === id);
-      await supabase.from('recycle_bin').insert([{
-        source_table: 'branch_list',
-        source_id: id,
-        source_key: item?.['Branch Code'] || id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: new Date().toISOString(),
-      }]);
+      await supabase.from('recycle_bin').insert([{ source_table: 'branch_list', source_id: id, source_key: item?.['Branch Code'] || id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }]);
       const { error } = await supabase.from('branch_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
-      removeFromCache('BranchList', id);
       setBranches(prev => prev.filter(b => b.id !== id));
       setBranchSelected(p => p.filter(s => s !== id));
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
@@ -493,15 +487,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm(`ต้องการลบ ${branchSelected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = branches.filter(b => branchSelected.includes(b.id)).map(item => ({
-        source_table: 'branch_list', source_id: item.id,
-        source_key: item['Branch Code'] || item.id, data: item,
-        deleted_by: userName || currentUser?.email || '', deleted_at: now,
-      }));
+      const bins = branches.filter(b => branchSelected.includes(b.id)).map(item => ({ source_table: 'branch_list', source_id: item.id, source_key: item['Branch Code'] || item.id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now }));
       if (bins.length) await supabase.from('recycle_bin').insert(bins);
       const { error } = await supabase.from('branch_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', branchSelected);
       if (error) throw error;
-      branchSelected.forEach(id => removeFromCache('BranchList', id));
       setBranches(prev => prev.filter(b => !branchSelected.includes(b.id)));
       setBranchSelected([]);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
@@ -523,19 +512,17 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       const newRows = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
       if (newRows.length > 0) {
-        const insertData = newRows.map(row => { const d = {}; BRANCH_FIELDS.forEach(k => { d[k] = k==='updated_by' ? (userName||currentUser?.email||'') : k==='updated_at' ? new Date().toISOString() : String(row[k]??''); }); return d; });
+        const insertData = newRows.map(row => { const d = {}; BRANCH_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); }); return d; });
         for (let i = 0; i < insertData.length; i += 500) {
           const { data: ins, error } = await supabase.from('branch_list').insert(insertData.slice(i,i+500)).select();
           if (error) throw error;
-          ins.forEach(r => appendToCache('BranchList', r));
           setBranches(prev => [...prev, ...ins]);
         }
       }
       for (const row of updateRows) {
-        const d = {}; BRANCH_FIELDS.forEach(k => { d[k] = k==='updated_by' ? (userName||currentUser?.email||'') : k==='updated_at' ? new Date().toISOString() : String(row[k]??''); });
+        const d = {}; BRANCH_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); });
         const { data: upd, error } = await supabase.from('branch_list').update(d).eq('id', row._existingId).select().single();
         if (error) throw error;
-        updateInCache('BranchList', row._existingId, upd);
         setBranches(prev => prev.map(b => b.id === row._existingId ? { ...b, ...upd } : b));
       }
       setShowBranchPreview(false); setBranchPreviewRows([]);
@@ -570,7 +557,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const getInfoOptions = (field) => [...new Set(infoItems.map(i => i[field]||'').filter(v=>v))];
   const getBranchOptions = (field) => [...new Set(branches.map(i => i[field]||'').filter(v=>v))];
 
-  // ✅ FIX: renderColGroup ใช้ containerW แทน screenWidth
   const renderColGroup = (columns, hasCheck, actionW) => (
     <colgroup>
       {hasCheck && <col style={{ width:'36px', minWidth:'36px' }}/>}
@@ -585,28 +571,23 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     return <span style={{ background:bg, color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>{val||'-'}</span>;
   };
 
-  // ✅ FIX: คำนวณ width จาก containerW แทน screenWidth - sidebarW - paddingW
   const branchActionW = isAdmin ? (56 * 2) + 20 : 56 + 20;
   const minBranchW = 36 + BRANCH_COLUMNS.reduce((s,c) => s+c.w, 0) + branchActionW;
   const branchTotalW = containerW > 0 ? Math.max(minBranchW, containerW) : minBranchW;
 
-  // ✅ FIX: Info action ตามจำนวนปุ่ม — branchTaxIds ปุ่ม + edit + delete
   const infoActionW = isAdmin ? (56 * 3) + 20 : isEditor ? (56 * 2) + 20 : 56 + 20;
   const minInfoW = 36 + INFO_COLUMNS.reduce((s,c) => s+c.w, 0) + infoActionW;
   const infoTotalW = containerW > 0 ? Math.max(minInfoW, containerW) : minInfoW;
 
   const S = {
-    // ✅ FIX: minWidth:0 + overflow:hidden
     container: { padding:isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth: 0, overflow: 'hidden' },
     topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0', flexShrink:0, flexWrap:isMobile?'wrap':'nowrap', gap:'8px' },
     btn: { padding:isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize:isMobile?'12px':'13px', marginLeft:isMobile?'4px':'8px' },
     tabBar: { display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
     tab: (active) => ({ padding:isMobile?'6px 12px':'8px 20px', fontSize:isMobile?'12px':'13px', cursor:'pointer', color:active?'#1a3a5c':'#888', borderBottom:active?'2px solid #1a3a5c':'2px solid transparent', marginBottom:'-2px', borderRadius:'6px 6px 0 0', background:active?'white':'transparent', fontWeight:active?'500':'400', display:'flex', alignItems:'center', gap:'4px' }),
     tabBadge: (active) => ({ background:active?'#1a3a5c':'#e8e8e8', color:active?'white':'#888', fontSize:'10px', padding:'1px 5px', borderRadius:'20px' }),
-    // ✅ FIX: minWidth:0
     outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1, minWidth: 0 },
     theadWrap: { overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
-    // ✅ FIX: minWidth:0
     tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1, minWidth: 0 },
     table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
     th: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
@@ -625,7 +606,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   const renderInfoText = () => {
-    if(tab==='info'){if(isMobile)return`${filteredInfo.length} รายการ`;return`ทั้งหมด ${infoItems.length} รายการ${infoSearch?` | ผลการค้นหา ${filteredInfo.length} รายการ`:''}${infoSelected.length>0?` | เลือกอยู่ ${infoSelected.length} รายการ`:''}`;}
+    if(tab==='info'){if(isMobile)return`${filteredInfo.length} รายการ`;return`ทั้งหมด ${infoItems.length} รายการ${infoSearch?` | ผลการค้นหา ${filteredInfo.length} รายการ`:''}${infoSelected.length>0?` | เลือกอยู่ ${infoSelected.length} รายการ`:''}` }
     if(isMobile)return`${filteredBranch.length} รายการ`;
     if(isTablet)return`${branches.length} รายการ${branchTaxFilter?' | Filter Tax ID':''}`;
     return`ทั้งหมด ${branches.length} รายการ${branchTaxFilter?` | Filter Tax ID: ${branchTaxFilter} (${filteredBranch.length} รายการ)`:branchSearch?` | ผลการค้นหา ${filteredBranch.length} รายการ`:''}${branchSelected.length>0?` | เลือกอยู่ ${branchSelected.length} รายการ`:''}`;
@@ -721,16 +702,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               {renderColGroup(INFO_COLUMNS, true, infoActionW)}
               <thead><tr>
                 <th style={S.thCheck}><input type="checkbox" checked={filteredInfo.length>0&&infoSelected.length===filteredInfo.length} onChange={()=>setInfoSelected(infoSelected.length===filteredInfo.length?[]:filteredInfo.map(i=>i.id))}/></th>
-                {INFO_COLUMNS.map(c=>(
-                  <th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>{if(infoSortField===c.key)setInfoSortDir(d=>d==='asc'?'desc':'asc');else{setInfoSortField(c.key);setInfoSortDir('asc');}}:undefined}>
-                    {c.label}{c.sortable?(infoSortField===c.key?(infoSortDir==='asc'?' ▲':' ▼'):' ↕'):''}
-                  </th>
-                ))}
+                {INFO_COLUMNS.map(c=>(<th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>{if(infoSortField===c.key)setInfoSortDir(d=>d==='asc'?'desc':'asc');else{setInfoSortField(c.key);setInfoSortDir('asc');}}:undefined}>{c.label}{c.sortable?(infoSortField===c.key?(infoSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
                 <th style={S.thAction}>Action</th>
               </tr></thead>
             </table>
           </div>
-          <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
+          <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
             <table style={{...S.table, width:`${infoTotalW}px`}}>
               {renderColGroup(INFO_COLUMNS, true, infoActionW)}
               <tbody>
@@ -758,27 +735,19 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               {renderColGroup(BRANCH_COLUMNS, true, branchActionW)}
               <thead><tr>
                 <th style={S.thCheck}><input type="checkbox" checked={pagedBranch.length>0&&pagedBranch.every(i=>branchSelected.includes(i.id))} onChange={()=>{const ids=pagedBranch.map(i=>i.id);const all=ids.every(id=>branchSelected.includes(id));setBranchSelected(all?branchSelected.filter(id=>!ids.includes(id)):[...new Set([...branchSelected,...ids])]);}} /></th>
-                {BRANCH_COLUMNS.map(c=>(
-                  <th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>{if(branchSortField===c.key)setBranchSortDir(d=>d==='asc'?'desc':'asc');else{setBranchSortField(c.key);setBranchSortDir('asc');}}:undefined}>
-                    {c.label}{c.sortable?(branchSortField===c.key?(branchSortDir==='asc'?' ▲':' ▼'):' ↕'):''}
-                  </th>
-                ))}
+                {BRANCH_COLUMNS.map(c=>(<th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>{if(branchSortField===c.key)setBranchSortDir(d=>d==='asc'?'desc':'asc');else{setBranchSortField(c.key);setBranchSortDir('asc');}}:undefined}>{c.label}{c.sortable?(branchSortField===c.key?(branchSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
                 <th style={S.thAction}>Action</th>
               </tr></thead>
             </table>
           </div>
-          <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
+          <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
             <table style={{...S.table, width:`${branchTotalW}px`}}>
               {renderColGroup(BRANCH_COLUMNS, true, branchActionW)}
               <tbody>
                 {pagedBranch.map(item=>(
                   <tr key={item.id} style={{ background:branchSelected.includes(item.id)?'#f0f7ff':'white' }}>
                     <td style={S.tdCenter}><input type="checkbox" checked={branchSelected.includes(item.id)} onChange={()=>setBranchSelected(prev=>prev.includes(item.id)?prev.filter(s=>s!==item.id):[...prev,item.id])}/></td>
-                    {BRANCH_COLUMNS.map(c=>(
-                      <td key={c.key} style={S.td} title={item[c.key]||''}>
-                        {c.key==='status'?statusBadge(item[c.key]):(item[c.key]||'-')}
-                      </td>
-                    ))}
+                    {BRANCH_COLUMNS.map(c=>(<td key={c.key} style={S.td} title={item[c.key]||''}>{c.key==='status'?statusBadge(item[c.key]):(item[c.key]||'-')}</td>))}
                     <td style={S.tdCenter}>
                       <div style={{ display:'inline-flex', alignItems:'center', gap:'4px' }}>
                         <button onClick={()=>handleOpenDetail(item)} title="View / Edit" style={S.iconBtn('#1a3a5c')}>🔍</button>
@@ -793,88 +762,65 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         </div>
       )}
 
-      {showInfoForm&&(
-        <div style={S.overlay}><div style={S.modal}>
-          <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-            <h3 style={{ fontSize:'15px', margin:0 }}>{infoEditId?'✏️ Edit Info':'+ New Info'}</h3>
-            <div style={{ display:'flex', gap:'8px' }}>
-              <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowInfoForm(false)}>Cancel</button>
-              <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleInfoSave}>Save</button>
-            </div>
-          </div>
-          <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
-            {INFO_EDIT.map(([key,label])=>(
-              <div key={key}>
-                <label style={{ fontSize:'12px', color:'#666' }}>{label}</label>
-                {INFO_COMBO.includes(key)?<ComboBox value={infoForm[key]} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
-                  :<input style={S.input} value={infoForm[key]} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>}
-              </div>
-            ))}
-            <label style={{ fontSize:'12px', color:'#666' }}>Updated By</label>
-            <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
-          </div>
-        </div></div>
-      )}
-
-      {showBranchDetail&&branchDetailItem&&(
-        <div style={S.overlay}><div style={S.modal}>
-          <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-            <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-              <span style={{ fontSize:'14px', fontWeight:'500' }}>{branchDetailEditMode?'✏️ Edit Branch':`🔍 ${branchDetailItem['Branch Code']||'Branch Detail'}`}</span>
-              {!branchDetailEditMode&&isEditor&&<button onClick={()=>setBranchDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
-            </div>
-            <div style={{ display:'flex', gap:'8px' }}>
-              {branchDetailEditMode?(
-                <><button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setBranchDetailEditMode(false);setBranchDetailError('');setBranchDetailForm(Object.fromEntries(BRANCH_EDIT.map(([k])=>[k,branchDetailItem[k]||''])));}}>Cancel</button>
-                <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchDetailSave}>Save</button></>
-              ):<button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowBranchDetail(false)}>Close</button>}
-            </div>
-          </div>
-          {renderBranchFormFields(branchDetailForm,setBranchDetailForm,branchDetailError,setBranchDetailError,branchDetailEditMode)}
-          {!branchDetailEditMode&&(
-            <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0', marginTop:'4px' }}>
-              <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
-                <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated By</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{branchDetailItem['updated_by']||'-'}</div></div>
-                <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated At</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(branchDetailItem['updated_at'])}</div></div>
-              </div>
-            </div>
-          )}
-        </div></div>
-      )}
-
-      {showBranchNew&&(
-        <div style={S.overlay}><div style={S.modal}>
-          <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-            <h3 style={{ fontSize:'15px', margin:0 }}>+ New Branch</h3>
-            <div style={{ display:'flex', gap:'8px' }}>
-              <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setShowBranchNew(false);setBranchNewForm({});setBranchNewError('');}}>Cancel</button>
-              <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchNewSave}>Save</button>
-            </div>
-          </div>
-          {renderBranchFormFields(branchNewForm,setBranchNewForm,branchNewError,setBranchNewError,true)}
-        </div></div>
-      )}
-
-      {showRateConfirm&&rateConfirmData&&(
-        <div style={{...S.overlay,zIndex:1000}}>
-          <div style={{ background:'white', borderRadius:'12px', width:isMobile?'90vw':'420px', padding:'24px' }}>
-            <div style={{ fontSize:'24px', textAlign:'center', marginBottom:'8px' }}>⚠️</div>
-            <h3 style={{ fontSize:'15px', fontWeight:'600', textAlign:'center', marginBottom:'16px' }}>ยืนยันการเปลี่ยน VAT Rate</h3>
-            <div style={{ background:'#f8f9fa', borderRadius:'8px', padding:'16px', marginBottom:'16px' }}>
-              <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:'20px', marginBottom:'12px' }}>
-                <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate เดิม → Last Rate (%)</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#791F1F' }}>{rateConfirmData.oldRate}%</div></div>
-                <div style={{ fontSize:'22px', color:'#888' }}>→</div>
-                <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate ใหม่ → VAT %</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#27500A' }}>{rateConfirmData.newRate}%</div></div>
-              </div>
-              <div style={{ textAlign:'center', fontSize:'12px', color:'#555', borderTop:'0.5px solid #e8e8e8', paddingTop:'12px' }}>จะอัปเดต <strong style={{ color:'#1a3a5c' }}>{rateConfirmData.branchCount} สาขา</strong> ที่มี Tax ID: {rateConfirmData.taxId}</div>
-            </div>
-            <div style={{ display:'flex', gap:'8px' }}>
-              <button onClick={()=>{setShowRateConfirm(false);setRateConfirmData(null);}} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'1px solid #ddd', background:'white', fontSize:'13px', cursor:'pointer', color:'#555' }}>Cancel</button>
-              <button onClick={handleRateConfirm} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'none', background:'#1a3a5c', color:'white', fontSize:'13px', cursor:'pointer', fontWeight:'500' }}>✅ ยืนยัน อัปเดต {rateConfirmData.branchCount} สาขา</button>
-            </div>
+      {showInfoForm&&(<div style={S.overlay}><div style={S.modal}>
+        <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          <h3 style={{ fontSize:'15px', margin:0 }}>{infoEditId?'✏️ Edit Info':'+ New Info'}</h3>
+          <div style={{ display:'flex', gap:'8px' }}>
+            <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowInfoForm(false)}>Cancel</button>
+            <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleInfoSave}>Save</button>
           </div>
         </div>
-      )}
+        <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
+          {INFO_EDIT.map(([key,label])=>(<div key={key}><label style={{ fontSize:'12px', color:'#666' }}>{label}</label>{INFO_COMBO.includes(key)?<ComboBox value={infoForm[key]} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>:<input style={S.input} value={infoForm[key]} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/></div>))}
+          <label style={{ fontSize:'12px', color:'#666' }}>Updated By</label>
+          <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
+        </div>
+      </div></div>)}
+
+      {showBranchDetail&&branchDetailItem&&(<div style={S.overlay}><div style={S.modal}>
+        <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+            <span style={{ fontSize:'14px', fontWeight:'500' }}>{branchDetailEditMode?'✏️ Edit Branch':`🔍 ${branchDetailItem['Branch Code']||'Branch Detail'}`}</span>
+            {!branchDetailEditMode&&isEditor&&<button onClick={()=>setBranchDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
+          </div>
+          <div style={{ display:'flex', gap:'8px' }}>
+            {branchDetailEditMode?(<><button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setBranchDetailEditMode(false);setBranchDetailError('');setBranchDetailForm(Object.fromEntries(BRANCH_EDIT.map(([k])=>[k,branchDetailItem[k]||''])));}}>Cancel</button><button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchDetailSave}>Save</button></>)
+            :<button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowBranchDetail(false)}>Close</button>}
+          </div>
+        </div>
+        {renderBranchFormFields(branchDetailForm,setBranchDetailForm,branchDetailError,setBranchDetailError,branchDetailEditMode)}
+        {!branchDetailEditMode&&(<div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0', marginTop:'4px' }}><div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}><div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated By</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{branchDetailItem['updated_by']||'-'}</div></div><div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated At</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(branchDetailItem['updated_at'])}</div></div></div></div>)}
+      </div></div>)}
+
+      {showBranchNew&&(<div style={S.overlay}><div style={S.modal}>
+        <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          <h3 style={{ fontSize:'15px', margin:0 }}>+ New Branch</h3>
+          <div style={{ display:'flex', gap:'8px' }}>
+            <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setShowBranchNew(false);setBranchNewForm({});setBranchNewError('');}}>Cancel</button>
+            <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchNewSave}>Save</button>
+          </div>
+        </div>
+        {renderBranchFormFields(branchNewForm,setBranchNewForm,branchNewError,setBranchNewError,true)}
+      </div></div>)}
+
+      {showRateConfirm&&rateConfirmData&&(<div style={{...S.overlay,zIndex:1000}}>
+        <div style={{ background:'white', borderRadius:'12px', width:isMobile?'90vw':'420px', padding:'24px' }}>
+          <div style={{ fontSize:'24px', textAlign:'center', marginBottom:'8px' }}>⚠️</div>
+          <h3 style={{ fontSize:'15px', fontWeight:'600', textAlign:'center', marginBottom:'16px' }}>ยืนยันการเปลี่ยน VAT Rate</h3>
+          <div style={{ background:'#f8f9fa', borderRadius:'8px', padding:'16px', marginBottom:'16px' }}>
+            <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:'20px', marginBottom:'12px' }}>
+              <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate เดิม → Last Rate (%)</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#791F1F' }}>{rateConfirmData.oldRate}%</div></div>
+              <div style={{ fontSize:'22px', color:'#888' }}>→</div>
+              <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate ใหม่ → VAT %</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#27500A' }}>{rateConfirmData.newRate}%</div></div>
+            </div>
+            <div style={{ textAlign:'center', fontSize:'12px', color:'#555', borderTop:'0.5px solid #e8e8e8', paddingTop:'12px' }}>จะอัปเดต <strong style={{ color:'#1a3a5c' }}>{rateConfirmData.branchCount} สาขา</strong> ที่มี Tax ID: {rateConfirmData.taxId}</div>
+          </div>
+          <div style={{ display:'flex', gap:'8px' }}>
+            <button onClick={()=>{setShowRateConfirm(false);setRateConfirmData(null);}} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'1px solid #ddd', background:'white', fontSize:'13px', cursor:'pointer', color:'#555' }}>Cancel</button>
+            <button onClick={handleRateConfirm} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'none', background:'#1a3a5c', color:'white', fontSize:'13px', cursor:'pointer', fontWeight:'500' }}>✅ ยืนยัน อัปเดต {rateConfirmData.branchCount} สาขา</button>
+          </div>
+        </div>
+      </div>)}
 
       <ImportPreviewModal show={showInfoPreview} onClose={()=>{setShowInfoPreview(false);setInfoPreviewRows([]);}} onConfirm={handleInfoConfirmImport} importing={infoImporting} previewRows={infoPreviewRows} keyField={INFO_KEY} allFields={INFO_FIELDS} isMobile={isMobile}/>
       <ImportPreviewModal show={showBranchPreview} onClose={()=>{setShowBranchPreview(false);setBranchPreviewRows([]);}} onConfirm={handleBranchConfirmImport} importing={branchImporting} previewRows={branchPreviewRows} keyField={BRANCH_KEY} allFields={BRANCH_FIELDS} isMobile={isMobile}/>
