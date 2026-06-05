@@ -89,8 +89,6 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
       <div style={{ background: 'white', borderRadius: '12px', width: '460px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-        {/* Header */}
         <div style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span style={{ fontSize: '15px', fontWeight: '500', color: '#1a3a5c' }}>🔔 การแจ้งเตือน</span>
@@ -102,8 +100,6 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '20px', lineHeight: 1 }}>×</button>
         </div>
-
-        {/* Body */}
         <div style={{ overflowY: 'auto', flex: 1 }}>
           {visibleRequests.length === 0 && (
             <div style={{ padding: '48px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
@@ -111,8 +107,6 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
               ไม่มีการแจ้งเตือน
             </div>
           )}
-
-          {/* Pending section */}
           {pendingReqs.length > 0 && (
             <>
               <div style={{ padding: '6px 18px', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
@@ -134,12 +128,8 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
                         </div>
                         {isOwner && (
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <button onClick={() => onApprove(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: 'none', background: '#EAF3DE', color: '#27500A', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              ✅ อนุมัติ
-                            </button>
-                            <button onClick={() => onReject(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              ❌ ปฏิเสธ
-                            </button>
+                            <button onClick={() => onApprove(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: 'none', background: '#EAF3DE', color: '#27500A', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>✅ อนุมัติ</button>
+                            <button onClick={() => onReject(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>❌ ปฏิเสธ</button>
                           </div>
                         )}
                         {!isOwner && (
@@ -152,8 +142,6 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
               })}
             </>
           )}
-
-          {/* Handled section */}
           {handledReqs.length > 0 && (
             <>
               <div style={{ padding: '6px 18px', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
@@ -185,8 +173,6 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
             </>
           )}
         </div>
-
-        {/* Footer */}
         <div style={{ padding: '12px 18px', borderTop: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
           <span style={{ fontSize: '11px', color: '#aaa' }}>จัดการแล้วจะหายอัตโนมัติใน 24 ชม.</span>
           {isOwner && (
@@ -220,7 +206,6 @@ function MainApp() {
   const { isOwner } = useUserRole();
   const screenWidth = useWindowWidth();
 
-  // ✅ useEffect ต้องอยู่ก่อน early return เสมอ
   useEffect(() => {
     const handler = (e) => {
       if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
@@ -241,23 +226,16 @@ function MainApp() {
 
   const fetchRequests = async () => {
     try {
-      const { data } = await supabase
-        .from('access_requests')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const { data } = await supabase.from('access_requests').select('*').order('created_at', { ascending: false });
       setRequests(data || []);
     } catch (err) { console.error('fetchRequests error:', err); }
   };
 
-  // ✅ Maintenance mode polling — check ทุก 30 วิ
   useEffect(() => {
     if (!currentUser) return;
     const checkMaintenance = async () => {
       try {
-        const { data } = await supabase
-          .from('system_settings')
-          .select('key, value')
-          .in('key', ['maintenance_mode', 'maintenance_menus']);
+        const { data } = await supabase.from('system_settings').select('key, value').in('key', ['maintenance_mode', 'maintenance_menus']);
         if (data) {
           const fullMode = data.find(d => d.key === 'maintenance_mode');
           const menusRow = data.find(d => d.key === 'maintenance_menus');
@@ -273,19 +251,12 @@ function MainApp() {
 
   const handleApprove = async (req) => {
     try {
-      // upsert doc_access_override → allowed = true
       await supabase.from('doc_access_override').upsert({
-        user_id: req.requester_id,
-        folder_key: req.folder_key,
-        allowed: true,
-        updated_by: userName || currentUser?.email || '',
-        updated_at: new Date().toISOString(),
+        user_id: req.requester_id, folder_key: req.folder_key, allowed: true,
+        updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id,folder_key' });
-      // update access_requests status
       await supabase.from('access_requests').update({
-        status: 'approved',
-        handled_by: userName || currentUser?.email || '',
-        handled_at: new Date().toISOString(),
+        status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
       }).eq('id', req.id);
       fetchRequests();
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
@@ -294,95 +265,54 @@ function MainApp() {
   const handleReject = async (req) => {
     try {
       await supabase.from('access_requests').update({
-        status: 'rejected',
-        handled_by: userName || currentUser?.email || '',
-        handled_at: new Date().toISOString(),
+        status: 'rejected', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
       }).eq('id', req.id);
       fetchRequests();
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
-  // ✅ Auto Logout เมื่อ Idle 1 ชั่วโมง
   useEffect(() => {
     if (!currentUser) return;
-    const IDLE_TIMEOUT = 60 * 60 * 1000; // 1 ชั่วโมง
+    const IDLE_TIMEOUT = 60 * 60 * 1000;
     let timer = null;
-
     const resetTimer = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(async () => {
-        await logout();
-      }, IDLE_TIMEOUT);
+      timer = setTimeout(async () => { await logout(); }, IDLE_TIMEOUT);
     };
-
     const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
     events.forEach(e => window.addEventListener(e, resetTimer));
-    resetTimer(); // เริ่ม timer ทันที
-
+    resetTimer();
     return () => {
       if (timer) clearTimeout(timer);
       events.forEach(e => window.removeEventListener(e, resetTimer));
     };
   }, [currentUser]);
 
-  // ✅ early return หลัง hooks ทั้งหมด
   if (!currentUser) return <Login />;
 
   const isAdmin = isOwner;
   const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
   const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
-  const handleProfileIconClick = () => {
-    selectPage('users');
-  };
-
-  const clearCloseTimer = () => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-  };
-
+  const handleProfileIconClick = () => { selectPage('users'); };
+  const clearCloseTimer = () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); };
   const startCloseTimer = () => {
     clearCloseTimer();
-    closeTimerRef.current = setTimeout(() => {
-      setSidebarExpanded(true);
-      setOpenMenu(null);
-    }, 300);
+    closeTimerRef.current = setTimeout(() => { setSidebarExpanded(true); setOpenMenu(null); }, 300);
   };
-
-  const handleSidebarEnter = () => {
-    clearCloseTimer();
-    setSidebarExpanded(true);
-    setOpenMenu(null);
-  };
-
-  const handleMasterEnter = () => {
-    clearCloseTimer();
-    setSidebarExpanded(false);
-    setOpenMenu('master');
-  };
-
-  const handleFlyoutEnter = () => {
-    clearCloseTimer();
-  };
-
-  const handleMouseLeave = () => {
-    startCloseTimer();
-  };
-
-  const selectPage = (id) => {
-    setActivePage(id);
-    setSidebarExpanded(true);
-    setOpenMenu(null);
-  };
+  const handleSidebarEnter  = () => { clearCloseTimer(); setSidebarExpanded(true); setOpenMenu(null); };
+  const handleMasterEnter   = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('master'); };
+  const handleFlyoutEnter   = () => { clearCloseTimer(); };
+  const handleMouseLeave    = () => { startCloseTimer(); };
+  const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
 
   const ALL_FUNCTION_MENUS = [
-    { id: 'ap-controller',   icon: '🧾', label: 'AP Controller',  permKey: 'VAT'   },
-    { id: 'vat-controller',  icon: '💹', label: 'VAT Controller', permKey: 'VAT'   },
-    { id: 'i-expense',       icon: '💸', label: 'I-Expense',      permKey: 'IE'    },
-    { id: 'gl-functional',   icon: '📊', label: 'GL Functional',  permKey: 'GL'    },
-    { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface',permKey: 'I-Pro' },
+    { id: 'ap-controller',   icon: '🧾', label: 'AP Controller',   permKey: 'VAT'   },
+    { id: 'vat-controller',  icon: '💹', label: 'VAT Controller',  permKey: 'VAT'   },
+    { id: 'i-expense',       icon: '💸', label: 'I-Expense',       permKey: 'IE'    },
+    { id: 'gl-functional',   icon: '📊', label: 'GL Functional',   permKey: 'GL'    },
+    { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface', permKey: 'I-Pro' },
   ];
-  // เฉพาะ Owner เท่านั้นที่เห็นทุก menu — คนอื่นทุก role filter ตาม permission
-  // และซ่อน menu ที่อยู่ใน maintenanceMenus (Selective Maintenance)
   const FUNCTION_MENUS = isOwner
     ? ALL_FUNCTION_MENUS.filter(m => !maintenanceMenus.includes(m.id))
     : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(m.id));
@@ -390,6 +320,7 @@ function MainApp() {
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-code','vendor-category'];
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
+  // ✅ FIX 1: เพิ่ม flyoutOpen prop ให้ VendorMaster
   const renderPage = () => {
     switch (activePage) {
       case 'ap-controller':   return (isOwner || userPermissions?.['VAT'])   ? <PlaceholderPage title="AP Controller" icon="🧾" />   : <NoAccessPage />;
@@ -400,10 +331,10 @@ function MainApp() {
       case 'bu-info':         return <BusinessUnit activeSubTab="info" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
       case 'bu-branch':       return <BusinessUnit activeSubTab="branch" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
       case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'coa-account':     return <ChartOfAccounts activeSubTab="account" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'coa-account':     return <ChartOfAccounts activeSubTab="account"    onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'vendor-code':     return <VendorMaster activeSubTab="code" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'vendor-category': return <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} />;
+      case 'vendor-code':     return <VendorMaster activeSubTab="code"     onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'vendor-category': return <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'itemcode':        return <ItemCodeList />;
       case 'upload':          return <UploadGen />;
       case 'users':           return <UserManagement />;
@@ -414,20 +345,8 @@ function MainApp() {
   const sidebarW = sidebarExpanded ? 220 : 56;
 
   const navItem = (id, icon, label) => (
-    <div key={id}
-      onClick={() => selectPage(id)}
-      onMouseEnter={handleSidebarEnter} 
-      title={!sidebarExpanded ? label : ''}
-      style={{
-        height: '38px', display: 'flex', alignItems: 'center',
-        justifyContent: sidebarExpanded ? 'flex-start' : 'center',
-        padding: sidebarExpanded ? '0 16px' : '0',
-        gap: '8px', cursor: 'pointer', fontSize: '13px',
-        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
-        background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent',
-        color: activePage === id ? 'white' : 'rgba(255,255,255,0.7)',
-        whiteSpace: 'nowrap', overflow: 'hidden',
-      }}>
+    <div key={id} onClick={() => selectPage(id)} title={!sidebarExpanded ? label : ''}
+      style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'flex-start' : 'center', padding: sidebarExpanded ? '0 16px' : '0', gap: '8px', cursor: 'pointer', fontSize: '13px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent', color: activePage === id ? 'white' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
       <span style={{ fontSize: '16px', flexShrink: 0 }}>{icon}</span>
       {sidebarExpanded && <span>{label}</span>}
     </div>
@@ -435,36 +354,20 @@ function MainApp() {
 
   const fpSub = (id, icon, label) => (
     <div key={id} onClick={() => selectPage(id)}
-      style={{
-        padding: '7px 16px 7px 36px', fontSize: '12px', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: '8px',
-        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
-        background: activePage === id ? '#f0faf6' : 'transparent',
-        color: activePage === id ? '#0F6E56' : '#555',
-        fontWeight: activePage === id ? '500' : '400',
-      }}>
+      style={{ padding: '7px 16px 7px 36px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? '#f0faf6' : 'transparent', color: activePage === id ? '#0F6E56' : '#555', fontWeight: activePage === id ? '500' : '400' }}>
       <span>{icon}</span> {label}
     </div>
   );
 
   const fpItem = (id, icon, label) => (
     <div key={id} onClick={() => selectPage(id)}
-      style={{
-        padding: '8px 16px', fontSize: '13px', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: '10px',
-        borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent',
-        background: activePage === id ? '#f0faf6' : 'transparent',
-        color: activePage === id ? '#0F6E56' : '#333',
-        fontWeight: activePage === id ? '500' : '400',
-      }}>
+      style={{ padding: '8px 16px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? '#f0faf6' : 'transparent', color: activePage === id ? '#0F6E56' : '#333', fontWeight: activePage === id ? '500' : '400' }}>
       <span>{icon}</span> {label}
     </div>
   );
 
   const fpGroup = (icon, label) => (
-    <div style={{ padding: '8px 16px 3px', fontSize: '10px', fontWeight: '500', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-      {icon} {label}
-    </div>
+    <div style={{ padding: '8px 16px 3px', fontSize: '10px', fontWeight: '500', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{icon} {label}</div>
   );
 
   const fpDiv = () => <div style={{ height: '0.5px', background: '#e8eaf0', margin: '4px 16px' }} />;
@@ -472,24 +375,14 @@ function MainApp() {
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
 
-      <div ref={sidebarRef}
-        style={{ position: 'relative', zIndex: 30, display: 'flex', flexShrink: 0 }}
-        onMouseLeave={handleMouseLeave}>
+      <div ref={sidebarRef} style={{ position: 'relative', zIndex: 30, display: 'flex', flexShrink: 0 }} onMouseLeave={handleMouseLeave}>
 
         {/* Sidebar */}
         <div
-          onMouseEnter={handleSidebarEnter}
-          style={{
-            width: `${sidebarW}px`, minWidth: `${sidebarW}px`,
-            background: '#1a3a5c', color: 'white',
-            display: 'flex', flexDirection: 'column',
-            transition: 'width 0.2s ease, min-width 0.2s ease',
-            overflow: 'hidden',
-            scrollbarWidth: 'none', msOverflowStyle: 'none',
-          }}>
+          style={{ width: `${sidebarW}px`, minWidth: `${sidebarW}px`, background: '#1a3a5c', color: 'white', display: 'flex', flexDirection: 'column', transition: 'width 0.2s ease, min-width 0.2s ease', overflow: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
 
           {/* Logo */}
-          <div style={{ padding: sidebarExpanded ? '12px 16px' : '12px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'flex-start' : 'center', gap: '10px', overflow: 'hidden', flexShrink: 0 }}>
+          <div onMouseEnter={handleSidebarEnter} style={{ padding: sidebarExpanded ? '12px 16px' : '12px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'flex-start' : 'center', gap: '10px', overflow: 'hidden', flexShrink: 0 }}>
             <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: '#1a3a5c', flexShrink: 0 }}>{initial}</div>
             {sidebarExpanded && (
               <div style={{ overflow: 'hidden' }}>
@@ -505,36 +398,17 @@ function MainApp() {
               <div style={{ padding: '6px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Functions</div>
             )}
             {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
-
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-
-            {/* Master Data */}
-            <div
-              onMouseEnter={handleMasterEnter}
-              title={!sidebarExpanded ? 'Master Data' : ''}
-              style={{
-                height: '38px', display: 'flex', alignItems: 'center',
-                justifyContent: sidebarExpanded ? 'space-between' : 'center',
-                padding: sidebarExpanded ? '0 16px' : '0',
-                cursor: 'pointer', fontSize: sidebarExpanded ? '11px' : '16px',
-                fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase',
-                borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent',
-                background: openMenu === 'master' ? 'rgba(93,202,165,0.12)' : isMasterActive ? 'rgba(255,255,255,0.08)' : 'transparent',
-                color: isMasterActive || openMenu === 'master' ? '#5DCAA5' : 'rgba(255,255,255,0.4)',
-                whiteSpace: 'nowrap', overflow: 'hidden',
-              }}>
-              {sidebarExpanded
-                ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>▸</span></>
-                : <span>📦</span>
-              }
+            <div onMouseEnter={handleMasterEnter} title={!sidebarExpanded ? 'Master Data' : ''}
+              style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '11px' : '16px', fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase', borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.12)' : isMasterActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isMasterActive || openMenu === 'master' ? '#5DCAA5' : 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+              {sidebarExpanded ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>📦</span>}
             </div>
-
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
             {navItem('upload', '📁', 'Document Center')}
           </nav>
 
           {/* Bottom */}
-          <div style={{ padding: sidebarExpanded ? '12px 16px' : '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: sidebarExpanded ? 'stretch' : 'center', gap: '8px', flexShrink: 0 }}>
+          <div onMouseEnter={handleSidebarEnter} style={{ padding: sidebarExpanded ? '12px 16px' : '12px 0', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: sidebarExpanded ? 'stretch' : 'center', gap: '8px', flexShrink: 0 }}>
             {sidebarExpanded ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -543,7 +417,6 @@ function MainApp() {
                     <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    {/* Bell */}
                     <button onClick={() => setShowBell(v => !v)}
                       style={{ background: showBell ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${showBell ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: showBell ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                       <BellIcon />
@@ -553,15 +426,13 @@ function MainApp() {
                         </span>
                       )}
                     </button>
-                    {/* User icon */}
                     <button onClick={handleProfileIconClick}
                       style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <UserIcon />
                     </button>
                   </div>
                 </div>
-                <button onClick={logout}
-                  style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <button onClick={logout} style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                   <LogoutIcon /> Logout
                 </button>
               </>
@@ -589,16 +460,8 @@ function MainApp() {
 
         {/* Flyout Panel */}
         {openMenu === 'master' && (
-          <div
-            onMouseEnter={handleFlyoutEnter}
-            onMouseLeave={handleMouseLeave}
-            style={{
-              position: 'absolute', left: '56px', top: 0, bottom: 0,
-              width: '164px', background: 'white',
-              borderRight: '0.5px solid #e8eaf0',
-              zIndex: 20, display: 'flex', flexDirection: 'column',
-              boxShadow: '4px 0 12px rgba(0,0,0,0.08)',
-            }}>
+          <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
             <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📦 Master Data</div>
             </div>
@@ -622,7 +485,7 @@ function MainApp() {
         )}
       </div>
 
-      {/* Main Content */}
+      {/* ✅ FIX 2: overflow:'hidden' แทน 'auto' → scroll อยู่ใน component เอง */}
       <div style={{ flex: 1, overflow: 'hidden', background: '#f5f5f5', minWidth: 0, marginLeft: openMenu === 'master' ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
         {renderPage()}
       </div>
