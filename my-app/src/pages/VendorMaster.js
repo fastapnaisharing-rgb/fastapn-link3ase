@@ -490,8 +490,9 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const minW = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
   const totalW = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
   const extraW = Math.max(0, totalW - minW);
+  const stretchKey = tab === 'category' ? 'REMARK' : 'Name';
   const COLUMNS_SCALED = cfg.columns.map(c =>
-    (c.key === 'Name' || c.key === 'Supplier Name') ? { ...c, w: c.w + Math.min(extraW, 300) } : c
+    (c.key === stretchKey || c.key === 'Supplier Name') ? { ...c, w: c.w + Math.min(extraW, 300) } : c
   );
 
   const S = {
