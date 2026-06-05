@@ -4,13 +4,15 @@ const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL || 'https://tpmdixdgvvgw
 const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || 'sb_publishable_DiL5SGeQKmNkj4QRTHkBbA_Ukj-OJO4';
 const SUPABASE_SERVICE_KEY = process.env.REACT_APP_SUPABASE_SERVICE_KEY || '';
 
-// Public client — ใช้ทั่วทั้งแอป
+// ✅ ใช้ sessionStorage → ปิด tab แล้วต้อง login ใหม่ทันที
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { storageKey: 'fastapn-auth' }
+  auth: {
+    storageKey: 'fastapn-auth',
+    storage: window.sessionStorage,
+  }
 });
 
-// Admin client — ใช้เฉพาะ UserManagement (create/delete auth user)
-// storageKey แยกกันเพื่อไม่ให้ conflict กับ public client
+// Admin client — ไม่ต้องแก้
 export const supabaseAdmin = createClient(
   SUPABASE_URL,
   SUPABASE_SERVICE_KEY || SUPABASE_ANON_KEY,
