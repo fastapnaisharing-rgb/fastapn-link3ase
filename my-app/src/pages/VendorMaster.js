@@ -184,7 +184,7 @@ const TAB_CONFIG = {
     ],
     columns: [
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
-      { key: 'Supplier Name', label: 'Supplier Name', w: 260 },
+      { key: 'Supplier Name', label: 'Supplier Name', w: 320 },
       { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
       { key: 'No.',           label: 'No.',           w: 70  },
       { key: 'BU',            label: 'BU',  sortable: true, w: 80 },
@@ -492,7 +492,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const extraW = Math.max(0, totalW - minW);
   const stretchKey = tab === 'category' ? 'REMARK' : 'Name';
   const COLUMNS_SCALED = cfg.columns.map(c =>
-    (c.key === stretchKey || c.key === 'Supplier Name') ? { ...c, w: c.w + Math.min(extraW, 300) } : c
+    c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c
   );
 
   const S = {
