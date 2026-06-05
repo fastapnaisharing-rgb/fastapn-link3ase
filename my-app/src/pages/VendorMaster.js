@@ -262,6 +262,9 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [showPreview, setShowPreview] = useState(false);
   const [previewRows, setPreviewRows] = useState([]);
   const [importing, setImporting]     = useState(false);
+  const [showRecycleBin, setShowRecycleBin] = useState(false);
+  const [recycleBinItems, setRecycleBinItems] = useState([]);
+  const [recycleBinLoading, setRecycleBinLoading] = useState(false);
 
   const fileRef      = useRef(null);
   const theadRef     = useRef(null);
@@ -407,6 +410,46 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     setShowDetailModal(false); invalidate(cfg.table); await fetchTab(tab);
   };
 
+  const handleOpenRecycleBin = async () => {
+    setShowRecycleBin(true);
+    setRecycleBinLoading(true);
+    try {
+      const tables = Object.values(TAB_CONFIG).map(c => c.table);
+      const { data, error } = await supabase
+        .from('recycle_bin')
+        .select('*')
+        .in('source_table', tables)
+        .order('deleted_at', { ascending: false });
+      if (error) throw error;
+      setRecycleBinItems(data || []);
+    } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
+    setRecycleBinLoading(false);
+  };
+
+  const handleRestore = async (binItem) => {
+    try {
+      const { error } = await supabase
+        .from(binItem.source_table)
+        .update({ deleted: false, deleted_by: null, deleted_at: null })
+        .eq('id', binItem.source_id);
+      if (error) throw error;
+      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+      const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => c.table === binItem.source_table)?.[0];
+      if (tabKey) { invalidate(binItem.source_table); await fetchTab(tabKey); }
+      alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
+    } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
+  };
+
+  const handlePermanentDelete = async (binItem) => {
+    if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
+    try {
+      await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);
+      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+    } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
+  };
+
   const filtered = useMemo(() => items
     .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
     .sort((a, b) => { const ca = a[sort.field]||'', cb = b[sort.field]||''; return sort.dir==='asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); }),
@@ -539,6 +582,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         </div>
         {isAdmin && (
           <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
+            <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile&&' Recycle Bin'}</button>
             <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
             <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
@@ -675,6 +719,78 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       )}
 
       <ImportPreviewModal show={showPreview} onClose={()=>{setShowPreview(false); setPreviewRows([]);}} onConfirm={handleConfirmImport} importing={importing} previewRows={previewRows} keyField={cfg.key} allFields={cfg.fields} isMobile={isMobile} isCategory={tab === 'category'} />
+
+      {/* ─── Recycle Bin Modal ─── */}
+      {showRecycleBin && (
+        <div style={S.overlay}>
+          <div style={{ background:'white', borderRadius:'10px', width: isMobile?'95vw':'860px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
+            {/* Header */}
+            <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                <span style={{ fontSize:'15px', fontWeight:'500' }}>🗑️ Recycle Bin</span>
+                <span style={{ fontSize:'11px', background:'#f5f5f5', color:'#888', padding:'2px 8px', borderRadius:'20px' }}>{recycleBinItems.length} รายการ</span>
+              </div>
+              <button onClick={()=>setShowRecycleBin(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'20px', lineHeight:1 }}>×</button>
+            </div>
+            {/* Body */}
+            <div style={{ overflowY:'auto', flex:1 }}>
+              {recycleBinLoading ? (
+                <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>กำลังโหลด...</div>
+              ) : recycleBinItems.length === 0 ? (
+                <div style={{ padding:'48px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>
+                  <div style={{ fontSize:'32px', marginBottom:'8px' }}>🗑️</div>
+                  Recycle Bin ว่างเปล่า
+                </div>
+              ) : (
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>Source</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>Key</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>ลบโดย</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>วันที่ลบ</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', fontWeight:'500', fontSize:'11px', width:'140px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recycleBinItems.map(item => {
+                      const tabLabel = Object.values(TAB_CONFIG).find(c => c.table === item.source_table)?.label || item.source_table;
+                      const deletedAt = item.deleted_at ? new Date(item.deleted_at) : null;
+                      const deletedAtStr = deletedAt ? `${String(deletedAt.getDate()).padStart(2,'0')}/${String(deletedAt.getMonth()+1).padStart(2,'0')}/${deletedAt.getFullYear()} ${String(deletedAt.getHours()).padStart(2,'0')}:${String(deletedAt.getMinutes()).padStart(2,'0')}` : '-';
+                      return (
+                        <tr key={item.id} style={{ borderBottom:'0.5px solid #f0f0f0' }}>
+                          <td style={{ padding:'9px 12px' }}>
+                            <span style={{ background:'#e8f0fb', color:'#1a3a5c', padding:'2px 8px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>{tabLabel}</span>
+                          </td>
+                          <td style={{ padding:'9px 12px', fontWeight:'500', color:'#1a3a5c', fontSize:'12px' }}>{item.source_key}</td>
+                          <td style={{ padding:'9px 12px', color:'#555', fontSize:'11px' }}>{item.deleted_by || '-'}</td>
+                          <td style={{ padding:'9px 12px', color:'#888', fontSize:'11px', whiteSpace:'nowrap' }}>{deletedAtStr}</td>
+                          <td style={{ padding:'9px 12px', textAlign:'center' }}>
+                            <div style={{ display:'inline-flex', gap:'6px' }}>
+                              <button onClick={()=>handleRestore(item)}
+                                style={{ padding:'4px 12px', borderRadius:'5px', border:'none', background:'#EAF3DE', color:'#27500A', fontSize:'11px', cursor:'pointer', fontWeight:'500' }}>
+                                ♻️ Restore
+                              </button>
+                              <button onClick={()=>handlePermanentDelete(item)}
+                                style={{ padding:'4px 10px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background:'#FCEBEB', color:'#791F1F', fontSize:'11px', cursor:'pointer' }}>
+                                🗑️ ลบถาวร
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            {/* Footer */}
+            <div style={{ padding:'10px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
+              <button onClick={()=>setShowRecycleBin(false)} style={{ padding:'6px 16px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
