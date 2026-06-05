@@ -402,7 +402,7 @@ function MainApp() {
       case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'coa-account':     return <ChartOfAccounts activeSubTab="account" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'vendor-code':     return <VendorMaster activeSubTab="code" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} />;
+      case 'vendor-code':     return <VendorMaster activeSubTab="code" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'vendor-category': return <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} />;
       case 'itemcode':        return <ItemCodeList />;
       case 'upload':          return <UploadGen />;
@@ -416,6 +416,7 @@ function MainApp() {
   const navItem = (id, icon, label) => (
     <div key={id}
       onClick={() => selectPage(id)}
+      onMouseEnter={handleSidebarEnter} 
       title={!sidebarExpanded ? label : ''}
       style={{
         height: '38px', display: 'flex', alignItems: 'center',
