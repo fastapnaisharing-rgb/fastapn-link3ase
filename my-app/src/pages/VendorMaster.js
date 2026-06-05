@@ -454,7 +454,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     return item[c.key] || '-';
   };
 
-  const actionW = isAdmin ? 70 : 50;
+  const actionW = isAdmin ? (56 * 2) + 20 : 56 + 20;
   const minW    = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
   const totalW  = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
   const extraW  = Math.max(0, totalW - minW);
@@ -468,8 +468,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     tabBar: { display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
     tab: (active) => ({ padding: isMobile?'6px 12px':'8px 18px', fontSize: isMobile?'12px':'13px', cursor:'pointer', color: active?'#1a3a5c':'#888', borderBottom: active?'2px solid #1a3a5c':'2px solid transparent', marginBottom:'-2px', borderRadius:'6px 6px 0 0', background: active?'white':'transparent', fontWeight: active?'500':'400', display:'flex', alignItems:'center', gap:'4px' }),
     tabBadge: (active) => ({ background: active?'#1a3a5c':'#e8e8e8', color: active?'white':'#888', fontSize:'10px', padding:'1px 5px', borderRadius:'20px' }),
-    outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1, minWidth:0 },
-    theadWrap: { overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
+    outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', display:'flex', flexDirection:'column', flex:1, minWidth:0, overflow:'hidden' },
+    theadWrap: { overflowX:'hidden', flexShrink:0 },
     tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1, minWidth:0 },
     table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
     th: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
