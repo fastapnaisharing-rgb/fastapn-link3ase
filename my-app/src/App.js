@@ -288,24 +288,6 @@ function MainApp() {
     };
   }, [currentUser]);
 
-  // ✅ Logout เมื่อปิด Tab
-  useEffect(() => {
-    if (!currentUser) return;
-    const handleBeforeUnload = (e) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    const handleUnload = () => {
-      supabase.auth.signOut();
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    window.addEventListener('unload', handleUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      window.removeEventListener('unload', handleUnload);
-    };
-  }, [currentUser]);
-
   if (!currentUser) return <Login />;
 
   const isAdmin = isOwner;
@@ -417,7 +399,7 @@ function MainApp() {
             )}
             {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-            <div onMouseEnter={handleMasterEnter} title={!sidebarExpanded ? 'Master Data' : ''}
+            <div onClick={handleMasterEnter} title={!sidebarExpanded ? 'Master Data' : ''}
               style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '11px' : '16px', fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase', borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.12)' : isMasterActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isMasterActive || openMenu === 'master' ? '#5DCAA5' : 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
               {sidebarExpanded ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>📦</span>}
             </div>
