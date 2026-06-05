@@ -145,44 +145,56 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
   );
 }
 
-// ─── Supabase table mapping ────────────────────────────────────────────────────
-// Firebase collection  →  Supabase table
-// SupplierList         →  supplier_list
-// VendorCategory       →  vendor_category
-// ──────────────────────────────────────────────────────────────────────────────
-
+// ─── Tab Config ───────────────────────────────────────────────────────────────
 const TAB_CONFIG = {
   code: {
     label: 'Code', icon: '🏭', table: 'supplier_list', key: 'Supplier Code',
     fields: ['Supplier Code', 'Name', 'Tax ID', 'Branch', 'Site', 'BU', 'Notice', 'Sub Acc', 'Status', 'username', 'last_update'],
     combo: ['Site', 'BU', 'Notice', 'Status'],
-    edit: [['Supplier Code', 'Supplier Code'], ['Name', 'Name'], ['Tax ID', 'Tax ID'], ['Branch', 'Branch'], ['Site', 'Site'], ['BU', 'BU'], ['Notice', 'Notice'], ['Sub Acc', 'Sub Acc'], ['Status', 'Status']],
+    edit: [
+      ['Supplier Code', 'Supplier Code'], ['Name', 'Name'], ['Tax ID', 'Tax ID'],
+      ['Branch', 'Branch'], ['Site', 'Site'], ['BU', 'BU'],
+      ['Notice', 'Notice'], ['Sub Acc', 'Sub Acc'], ['Status', 'Status'],
+    ],
     columns: [
-      { key: 'Supplier Code', label: 'Supplier Code', sortable: true, w: 120 },
-      { key: 'Name', label: 'Name', w: 220 },
-      { key: 'Tax ID', label: 'Tax ID', w: 130 },
-      { key: 'Branch', label: 'Branch', w: 80 },
-      { key: 'Site', label: 'Site', w: 140 },
-      { key: 'BU', label: 'BU', sortable: true, w: 80 },
-      { key: 'Notice', label: 'Notice', w: 100 },
-      { key: 'Sub Acc', label: 'Sub Acc', w: 90 },
-      { key: 'Status', label: 'Status', w: 90 },
-      { key: 'username', label: 'Username', w: 120 },
-      { key: 'last_update', label: 'Last Update', w: 140 },
+      { key: 'Supplier Code', label: 'Supplier Code', sortable: true, w: 130 },
+      { key: 'Name',          label: 'Name',          w: 220 },
+      { key: 'Tax ID',        label: 'Tax ID',         w: 130 },
+      { key: 'Branch',        label: 'Branch',         w: 80  },
+      { key: 'Site',          label: 'Site',           w: 140 },
+      { key: 'BU',            label: 'BU',   sortable: true, w: 80 },
+      { key: 'Notice',        label: 'Notice',         w: 100 },
+      { key: 'Sub Acc',       label: 'Sub Acc',        w: 90  },
+      { key: 'Status',        label: 'Status',         w: 90  },
+      { key: 'username',      label: 'Username',       w: 120 },
+      { key: 'last_update',   label: 'Last Update',    w: 140 },
     ],
   },
   category: {
-    label: 'Category', icon: '🗂️', table: 'vendor_category', key: 'Category Code',
-    fields: ['Category Code', 'Description', 'Type', 'Status', 'username', 'last_update'],
-    combo: ['Type', 'Status'],
-    edit: [['Category Code', 'Category Code'], ['Description', 'Description'], ['Type', 'Type'], ['Status', 'Status']],
+    label: 'Category', icon: '🗂️', table: 'vendor_category', key: 'Code',
+    fields: ['Code', 'Supplier Name', 'TAX ID', 'No.', 'BU', 'TYPE', 'SUB TYPE', 'REMARK', 'username', 'last_update'],
+    combo: ['BU', 'TYPE', 'SUB TYPE'],
+    edit: [
+      ['Code',          'Code'],
+      ['Supplier Name', 'Supplier Name'],
+      ['TAX ID',        'TAX ID'],
+      ['No.',           'No.'],
+      ['BU',            'BU'],
+      ['TYPE',          'TYPE'],
+      ['SUB TYPE',      'SUB TYPE'],
+      ['REMARK',        'REMARK'],
+    ],
     columns: [
-      { key: 'Category Code', label: 'Category Code', sortable: true, w: 130 },
-      { key: 'Description', label: 'Description', w: 300 },
-      { key: 'Type', label: 'Type', w: 120 },
-      { key: 'Status', label: 'Status', w: 90 },
-      { key: 'username', label: 'Username', w: 120 },
-      { key: 'last_update', label: 'Last Update', w: 140 },
+      { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
+      { key: 'Supplier Name', label: 'Supplier Name', w: 260 },
+      { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
+      { key: 'No.',           label: 'No.',           w: 70  },
+      { key: 'BU',            label: 'BU',  sortable: true, w: 80 },
+      { key: 'TYPE',          label: 'TYPE',          w: 100 },
+      { key: 'SUB TYPE',      label: 'SUB TYPE',      w: 100 },
+      { key: 'REMARK',        label: 'REMARK',        w: 120 },
+      { key: 'username',      label: 'Username',      w: 120 },
+      { key: 'last_update',   label: 'Last Update',   w: 140 },
     ],
   },
 };
@@ -191,89 +203,79 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'code');
   const { currentUser, userName } = useAuth();
   const { fetchCollection, invalidate } = useDataCache();
-  const { isOwner, isAdmin, isEditor } = useUserRole();
+  const { isAdmin } = useUserRole();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
 
   const cfg = TAB_CONFIG[tab];
 
-  const [dataMap, setDataMap] = useState({ code: [], category: [] });
-  const [searchMap, setSearchMap] = useState({ code: '', category: '' });
+  const [dataMap, setDataMap]       = useState({ code: [], category: [] });
+  const [searchMap, setSearchMap]   = useState({ code: '', category: '' });
   const [selectedMap, setSelectedMap] = useState({ code: [], category: [] });
-  const [sortMap, setSortMap] = useState({ code: { field: 'Supplier Code', dir: 'asc' }, category: { field: 'Category Code', dir: 'asc' } });
-  const [showForm, setShowForm] = useState(false);
-  const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({});
+  const [sortMap, setSortMap]       = useState({
+    code:     { field: 'Supplier Code', dir: 'asc' },
+    category: { field: 'Code',          dir: 'asc' },
+  });
+  const [showForm,        setShowForm]        = useState(false);
+  const [editId,          setEditId]          = useState(null);
+  const [form,            setForm]            = useState({});
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [detailItem, setDetailItem] = useState(null);
-  const [detailEditMode, setDetailEditMode] = useState(false);
-  const [detailForm, setDetailForm] = useState({});
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewRows, setPreviewRows] = useState([]);
-  const [importing, setImporting] = useState(false);
+  const [detailItem,      setDetailItem]      = useState(null);
+  const [detailEditMode,  setDetailEditMode]  = useState(false);
+  const [detailForm,      setDetailForm]      = useState({});
+  const [showPreview,     setShowPreview]     = useState(false);
+  const [previewRows,     setPreviewRows]     = useState([]);
+  const [importing,       setImporting]       = useState(false);
 
-  const fileRef = useRef(null);
+  const fileRef  = useRef(null);
   const theadRef = useRef(null);
   const tbodyRef = useRef(null);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
-  const items = dataMap[tab] || [];
-  const search = searchMap[tab] || '';
+  const items    = dataMap[tab]    || [];
+  const search   = searchMap[tab]  || '';
   const selected = selectedMap[tab] || [];
-  const sort = sortMap[tab] || { field: cfg.key, dir: 'asc' };
+  const sort     = sortMap[tab]    || { field: cfg.key, dir: 'asc' };
 
-  // ─── Helpers ────────────────────────────────────────────────────────────────
-
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
   const getTimestamp = () => {
-    const now = new Date();
-    return `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    const n = new Date();
+    return `${String(n.getDate()).padStart(2,'0')}/${String(n.getMonth()+1).padStart(2,'0')}/${n.getFullYear()} ${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
   };
-
   const getFileTimestamp = () => {
-    const now = new Date();
-    return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+    const n = new Date();
+    return `${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}_${String(n.getHours()).padStart(2,'0')}${String(n.getMinutes()).padStart(2,'0')}`;
   };
-
   const formatLastUpdate = (val) => {
     if (!val || val === '-') return '-';
     if (!isNaN(val) && Number(val) > 40000) {
       const d = new Date(Math.round((Number(val) - 25569) * 86400 * 1000));
-      return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`;
+      return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
     }
     try {
       const d = new Date(val);
-      if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-    } catch { }
+      if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    } catch {}
     return val;
   };
 
-  // ─── Fetch (via DataCache) ───────────────────────────────────────────────────
-  // fetchCollection ใน DataCacheContext ต้อง accept ชื่อ Supabase table
-  // และ return array of objects (with id field)
-
-  // ✅ SOFT DELETE: filter deleted items
+  // ─── Fetch ────────────────────────────────────────────────────────────────────
   const fetchTab = useCallback(async (t) => {
     const data = await fetchCollection(TAB_CONFIG[t].table);
     setDataMap(prev => ({ ...prev, [t]: (data || []).filter(i => !i.deleted) }));
   }, [fetchCollection]);
 
-  useEffect(() => {
-    fetchTab('code');
-    fetchTab('category');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { fetchTab('code'); fetchTab('category'); }, []);
 
   useEffect(() => {
     if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab);
   }, [activeSubTab, tab]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
-
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
 
-  // ─── Build Preview Rows ──────────────────────────────────────────────────────
-
+  // ─── Build Preview Rows ───────────────────────────────────────────────────────
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
     const dataFields = allFields.filter(f => !['username', 'last_update'].includes(f));
     const existingMap = {};
@@ -296,8 +298,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     });
   };
 
-  // ─── Export ──────────────────────────────────────────────────────────────────
-
+  // ─── Export ───────────────────────────────────────────────────────────────────
   const exportToExcel = (data, fields, sheetName, filePrefix) => {
     const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; });
     const ws = XLSX.utils.json_to_sheet(rows, { header: fields });
@@ -306,18 +307,24 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     XLSX.writeFile(wb, `${filePrefix}_${getFileTimestamp()}.xlsx`);
   };
 
-  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['username', 'last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g, ''));
-  const handleExportAll = () => exportToExcel(filtered, cfg.fields.filter(f => !['username', 'last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g, ''));
-
+  const handleExportSelected = () => exportToExcel(
+    items.filter(i => selected.includes(i.id)),
+    cfg.fields.filter(f => !['username','last_update'].includes(f)),
+    cfg.label, cfg.label.replace(/ /g,'')
+  );
+  const handleExportAll = () => exportToExcel(
+    filtered,
+    cfg.fields.filter(f => !['username','last_update'].includes(f)),
+    cfg.label, cfg.label.replace(/ /g,'')
+  );
   const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['username', 'last_update'].includes(f))]);
+    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['username','last_update'].includes(f))]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, cfg.label);
-    XLSX.writeFile(wb, `${cfg.label.replace(/ /g, '')}_Template.xlsx`);
+    XLSX.writeFile(wb, `${cfg.label.replace(/ /g,'')}_Template.xlsx`);
   };
 
   // ─── Import ───────────────────────────────────────────────────────────────────
-
   const handleFileChange = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
@@ -334,47 +341,41 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     setImporting(true);
     try {
       const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
-      const newRows = toProcess.filter(r => r._status === 'new');
+      const newRows    = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
       const ts = getTimestamp();
       const currentUsername = userName || currentUser?.email || '';
 
-      // INSERT new rows (bulk upsert via Supabase)
       if (newRows.length > 0) {
-        const insertPayload = newRows.map(row => {
-          const data = {};
-          cfg.fields.forEach(k => {
-            if (k === 'username') data[k] = currentUsername;
-            else if (k === 'last_update') data[k] = ts;
-            else data[k] = String(row[k] ?? '');
+        for (let i = 0; i < newRows.length; i += 500) {
+          const payload = newRows.slice(i, i+500).map(row => {
+            const d = {};
+            cfg.fields.forEach(k => {
+              if (k === 'username') d[k] = currentUsername;
+              else if (k === 'last_update') d[k] = ts;
+              else d[k] = String(row[k] ?? '');
+            });
+            return d;
           });
-          return data;
-        });
-        // Batch in chunks of 500
-        for (let i = 0; i < insertPayload.length; i += 500) {
-          const { error } = await supabase.from(cfg.table).insert(insertPayload.slice(i, i + 500));
+          const { error } = await supabase.from(cfg.table).insert(payload);
           if (error) throw new Error(error.message);
         }
       }
-
-      // UPDATE existing rows one by one (or upsert by key)
       if (updateRows.length > 0) {
         for (let i = 0; i < updateRows.length; i += 500) {
-          const chunk = updateRows.slice(i, i + 500);
-          const upsertPayload = chunk.map(row => {
-            const data = { id: row._existingId };
+          const payload = updateRows.slice(i, i+500).map(row => {
+            const d = { id: row._existingId };
             cfg.fields.forEach(k => {
-              if (k === 'username') data[k] = currentUsername;
-              else if (k === 'last_update') data[k] = ts;
-              else data[k] = String(row[k] ?? '');
+              if (k === 'username') d[k] = currentUsername;
+              else if (k === 'last_update') d[k] = ts;
+              else d[k] = String(row[k] ?? '');
             });
-            return data;
+            return d;
           });
-          const { error } = await supabase.from(cfg.table).upsert(upsertPayload, { onConflict: 'id' });
+          const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' });
           if (error) throw new Error(error.message);
         }
       }
-
       setShowPreview(false); setPreviewRows([]);
       invalidate(cfg.table);
       await fetchTab(tab);
@@ -384,7 +385,6 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   };
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────────
-
   const handleNewSave = async () => {
     const data = { ...form, username: userName || currentUser?.email || '', last_update: getTimestamp() };
     if (editId) {
@@ -395,20 +395,16 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
       if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
     }
     setShowForm(false); setEditId(null); setForm({});
-    invalidate(cfg.table);
-    await fetchTab(tab);
+    invalidate(cfg.table); await fetchTab(tab);
   };
 
-  // ✅ SOFT DELETE: handleDelete
   const handleDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = items.find(i => i.id === id);
       await supabase.from('recycle_bin').insert([{
-        source_table: cfg.table,
-        source_id: id,
-        source_key: item?.[cfg.key] || id,
-        data: item,
+        source_table: cfg.table, source_id: id,
+        source_key: item?.[cfg.key] || id, data: item,
         deleted_by: userName || currentUser?.email || '',
         deleted_at: new Date().toISOString(),
       }]);
@@ -417,23 +413,18 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         .eq('id', id);
       if (error) throw error;
       setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
-      invalidate(cfg.table);
-      await fetchTab(tab);
+      invalidate(cfg.table); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  // ✅ SOFT DELETE: handleBulkDelete
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
       const bins = items.filter(i => selected.includes(i.id)).map(item => ({
-        source_table: cfg.table,
-        source_id: item.id,
-        source_key: item[cfg.key] || item.id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: now,
+        source_table: cfg.table, source_id: item.id,
+        source_key: item[cfg.key] || item.id, data: item,
+        deleted_by: userName || currentUser?.email || '', deleted_at: now,
       }));
       if (bins.length) await supabase.from('recycle_bin').insert(bins);
       const { error } = await supabase.from(cfg.table)
@@ -441,8 +432,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         .in('id', selected);
       if (error) throw error;
       setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-      invalidate(cfg.table);
-      await fetchTab(tab);
+      invalidate(cfg.table); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -458,96 +448,94 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
     if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
     setShowDetailModal(false);
-    invalidate(cfg.table);
-    await fetchTab(tab);
+    invalidate(cfg.table); await fetchTab(tab);
   };
 
-  // ─── Filtered / Sorted ───────────────────────────────────────────────────────
-
+  // ─── Filtered / Sorted ────────────────────────────────────────────────────────
   const filtered = useMemo(() => items
     .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
     .sort((a, b) => {
       const ca = a[sort.field] || '', cb = b[sort.field] || '';
       return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca);
     }),
-    [items, search, sort, cfg.fields]);
+    [items, search, sort, cfg.fields]
+  );
 
-  // ─── Render helpers ──────────────────────────────────────────────────────────
-
+  // ─── Render helpers ───────────────────────────────────────────────────────────
   const statusBadge = (val) => {
-    const map = { Active: ['#EAF3DE', '#27500A'], Inactive: ['#FCEBEB', '#791F1F'] };
-    const [bg, color] = map[val] || ['#e8e8e8', '#555'];
+    const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] };
+    const [bg, color] = map[val] || ['#e8e8e8','#555'];
     return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '20px', fontSize: '10px' }}>{val || '-'}</span>;
   };
-
   const noticeBadge = (val) => {
-    const map = { 'ITC': ['#e8f0fb', '#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE', '#27500A'], 'EFT': ['#f0f7ff', '#0F6E56'], 'C/O': ['#FFF3CD', '#856404'], 'C/P': ['#FFF3CD', '#856404'], 'TC': ['#f5f5f5', '#555'], 'N': ['#f5f5f5', '#888'] };
-    const [bg, color] = map[val] || ['#f5f5f5', '#555'];
+    const map = { ITC: ['#e8f0fb','#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE','#27500A'], EFT: ['#f0f7ff','#0F6E56'], CPN: ['#f5f5f5','#555'], MER: ['#FFF3CD','#856404'] };
+    const [bg, color] = map[val] || ['#f5f5f5','#555'];
     return val ? <span style={{ background: bg, color, padding: '2px 7px', borderRadius: '20px', fontSize: '10px' }}>{val}</span> : '-';
   };
-
   const renderCell = (c, item) => {
     if (c.key === 'last_update') return formatLastUpdate(item[c.key]);
     if (c.key === 'Status') return statusBadge(item[c.key]);
     if (c.key === 'Notice') return noticeBadge(item[c.key]);
+    if (c.key === 'TYPE' || c.key === 'SUB TYPE') return noticeBadge(item[c.key]);
     return item[c.key] || '-';
   };
 
-  // ─── Layout math ────────────────────────────────────────────────────────────
-
+  // ─── Layout ───────────────────────────────────────────────────────────────────
   const sidebarW = isMobile ? 0 : 200;
   const paddingW = isMobile ? 24 : 40;
-  const actionW = isAdmin ? 70 : 50;
+  const actionW  = isAdmin ? 70 : 50;
   const minW = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
   const totalW = Math.max(minW, screenWidth - sidebarW - paddingW);
   const extraW = totalW - minW;
-  const COLUMNS_SCALED = cfg.columns.map(c => c.key === 'Name' || c.key === 'Description' ? { ...c, w: c.w + Math.min(extraW, 200) } : c);
+  const COLUMNS_SCALED = cfg.columns.map(c =>
+    (c.key === 'Name' || c.key === 'Supplier Name') ? { ...c, w: c.w + Math.min(extraW, 200) } : c
+  );
 
   const S = {
-    container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box' },
-    topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, flexWrap: isMobile ? 'wrap' : 'nowrap', gap: '8px' },
-    btn: { padding: isMobile ? '6px 10px' : '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: isMobile ? '12px' : '13px', marginLeft: isMobile ? '4px' : '8px' },
-    tabBar: { display: 'flex', alignItems: 'flex-end', padding: '10px 0 0', flexShrink: 0, borderBottom: '2px solid #e8e8e8' },
-    tab: (active) => ({ padding: isMobile ? '6px 12px' : '8px 18px', fontSize: isMobile ? '12px' : '13px', cursor: 'pointer', color: active ? '#1a3a5c' : '#888', borderBottom: active ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px', borderRadius: '6px 6px 0 0', background: active ? 'white' : 'transparent', fontWeight: active ? '500' : '400', display: 'flex', alignItems: 'center', gap: '4px' }),
-    tabBadge: (active) => ({ background: active ? '#1a3a5c' : '#e8e8e8', color: active ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }),
-    outer: { background: 'white', borderRadius: '8px', border: '0.5px solid #e8e8e8', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1 },
-    theadWrap: { overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' },
-    tbodyWrap: { overflowY: 'auto', overflowX: 'auto', flex: 1 },
-    table: { borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' },
-    th: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-    thSort: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis' },
-    thCheck: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'center', fontSize: '11px', width: '36px' },
-    thAction: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'center', fontSize: '11px', fontWeight: '500' },
-    td: { padding: '7px 10px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-    tdCenter: { padding: '6px 8px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center' },
-    input: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', marginBottom: '8px', boxSizing: 'border-box' },
-    inputDisabled: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #eee', fontSize: '13px', width: '100%', marginBottom: '8px', boxSizing: 'border-box', background: '#f5f5f5', color: '#999' },
-    inputReadonly: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #f0f0f0', fontSize: '12px', width: '100%', marginBottom: '6px', boxSizing: 'border-box', background: '#fafafa', color: '#333' },
-    overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
-    modal: { background: 'white', borderRadius: '10px', width: isMobile ? '95vw' : '500px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' },
-    iconBtn: (color, bg, border) => ({ background: bg || 'none', border: `0.5px solid ${border || color}`, borderRadius: '4px', cursor: 'pointer', padding: '3px 6px', color, fontSize: '12px', lineHeight: 1 }),
+    container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box' },
+    topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0, flexWrap: isMobile?'wrap':'nowrap', gap:'8px' },
+    btn: { padding: isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize: isMobile?'12px':'13px', marginLeft: isMobile?'4px':'8px' },
+    tabBar: { display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
+    tab: (active) => ({ padding: isMobile?'6px 12px':'8px 18px', fontSize: isMobile?'12px':'13px', cursor:'pointer', color: active?'#1a3a5c':'#888', borderBottom: active?'2px solid #1a3a5c':'2px solid transparent', marginBottom:'-2px', borderRadius:'6px 6px 0 0', background: active?'white':'transparent', fontWeight: active?'500':'400', display:'flex', alignItems:'center', gap:'4px' }),
+    tabBadge: (active) => ({ background: active?'#1a3a5c':'#e8e8e8', color: active?'white':'#888', fontSize:'10px', padding:'1px 5px', borderRadius:'20px' }),
+    outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1 },
+    theadWrap: { overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
+    tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1 },
+    table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
+    th: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
+    thSort: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', cursor:'pointer', userSelect:'none', overflow:'hidden', textOverflow:'ellipsis' },
+    thCheck: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', width:'36px' },
+    thAction: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', fontWeight:'500' },
+    td: { padding:'7px 10px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
+    tdCenter: { padding:'6px 8px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', textAlign:'center' },
+    input: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #ddd', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box' },
+    inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
+    inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
+    overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
+    modal: { background:'white', borderRadius:'10px', width: isMobile?'95vw':'500px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
+    iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
   };
 
   const renderColGroup = (columns) => (
     <colgroup>
-      <col style={{ width: '36px', minWidth: '36px' }} />
-      {columns.map((c, i) => <col key={i} style={{ width: `${c.w}px`, minWidth: `${c.w}px` }} />)}
-      <col style={{ width: `${actionW}px`, minWidth: `${actionW}px` }} />
+      <col style={{ width:'36px', minWidth:'36px' }} />
+      {columns.map((c, i) => <col key={i} style={{ width:`${c.w}px`, minWidth:`${c.w}px` }} />)}
+      <col style={{ width:`${actionW}px`, minWidth:`${actionW}px` }} />
     </colgroup>
   );
 
   const renderFormFields = (formData, setFormData, editMode = true) => (
-    <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
+    <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
       {cfg.edit.map(([key, label]) => (
-        <div key={key} style={{ marginBottom: '4px' }}>
-          <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '2px' }}>{label}</label>
+        <div key={key} style={{ marginBottom:'4px' }}>
+          <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
           {editMode ? (
             cfg.combo.includes(key)
-              ? <ComboBox value={formData[key] || ''} onChange={val => setFormData({ ...formData, [key]: val })} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
-              : <input style={S.input} value={formData[key] || ''} onChange={e => setFormData({ ...formData, [key]: e.target.value })} />
+              ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
+              : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
           ) : (
             <div style={S.inputReadonly}>
-              {key === 'Status' ? statusBadge(formData[key]) : key === 'Notice' ? noticeBadge(formData[key]) : (formData[key] || '-')}
+              {key==='Status' ? statusBadge(formData[key]) : key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}
             </div>
           )}
         </div>
@@ -556,54 +544,55 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   );
 
   // ─── Render ───────────────────────────────────────────────────────────────────
-
   return (
     <div style={S.container}>
       <div style={S.topbar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '600', margin: 0 }}>👥 Vendor Master</h2>
-          {isAdmin && selected.length > 0 && <button style={{ ...S.btn, background: '#c0392b', color: 'white', marginLeft: 0 }} onClick={handleBulkDelete}>🗑️{!isMobile && ` ลบ ${selected.length}`}</button>}
+        <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
+          <h2 style={{ fontSize: isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>👥 Vendor Master</h2>
+          {isAdmin && selected.length > 0 && <button style={{...S.btn, background:'#c0392b', color:'white', marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
           {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
         </div>
         {isAdmin && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '0' }}>
-            <button style={{ ...S.btn, background: '#0F6E56', color: 'white' }} onClick={handleDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
-            <button style={{ ...S.btn, background: '#5DCAA5', color: '#1a3a5c' }} onClick={() => fileRef.current.click()}>📂{!isMobile && ' Import'}</button>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />
-            <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setForm(Object.fromEntries(cfg.edit.map(([k]) => [k, '']))); setEditId(null); setShowForm(true); }}>+ New</button>
+          <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
+            <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
+            <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
+            <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={()=>{setForm(Object.fromEntries(cfg.edit.map(([k])=>[k,'']))); setEditId(null); setShowForm(true);}}>+ New</button>
           </div>
         )}
       </div>
 
       <div style={S.tabBar}>
         {Object.entries(TAB_CONFIG).map(([key, c]) => (
-          <div key={key} style={S.tab(tab === key)} onClick={() => handleTabChange(key)}>
+          <div key={key} style={S.tab(tab===key)} onClick={()=>handleTabChange(key)}>
             {c.icon} {!isMobile && c.label}
-            <span style={S.tabBadge(tab === key)}>{(dataMap[key] || []).length}</span>
+            <span style={S.tabBadge(tab===key)}>{(dataMap[key]||[]).length}</span>
           </div>
         ))}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0', margin: '4px 0', flexShrink: 0, gap: '8px' }}>
-        <input placeholder={isMobile ? 'Search...' : `Search ${cfg.label}...`} value={search} onChange={e => setSearchMap(prev => ({ ...prev, [tab]: e.target.value }))}
-          style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '100%' : isTablet ? '180px' : '240px' }} />
-        {!isMobile && <span style={{ fontSize: '12px', color: '#888' }}>ทั้งหมด {items.length} รายการ{search ? ` | ผลการค้นหา ${filtered.length} รายการ` : ''}{selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}</span>}
+      <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px' }}>
+        <input placeholder={isMobile?'Search...':`Search ${cfg.label}...`} value={search}
+          onChange={e=>setSearchMap(prev=>({...prev,[tab]:e.target.value}))}
+          style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width: isMobile?'100%':isTablet?'180px':'240px' }} />
+        {!isMobile && <span style={{ fontSize:'12px', color:'#888' }}>ทั้งหมด {items.length} รายการ{search?` | ผลการค้นหา ${filtered.length} รายการ`:''}{selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}</span>}
       </div>
 
       <div style={S.outer}>
-        <div ref={theadRef} style={{ ...S.theadWrap, msOverflowStyle: 'none' }}>
-          <table style={{ ...S.table, width: `${totalW}px` }}>
+        <div ref={theadRef} style={{...S.theadWrap, msOverflowStyle:'none'}}>
+          <table style={{...S.table, width:`${totalW}px`}}>
             {renderColGroup(COLUMNS_SCALED)}
             <thead>
               <tr>
                 <th style={S.thCheck}>
-                  <input type="checkbox" checked={filtered.length > 0 && selected.length === filtered.length}
-                    onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].length === filtered.length ? [] : filtered.map(i => i.id) }))} />
+                  <input type="checkbox"
+                    checked={filtered.length>0 && selected.length===filtered.length}
+                    onChange={()=>setSelectedMap(prev=>({...prev,[tab]: prev[tab].length===filtered.length?[]:filtered.map(i=>i.id)}))} />
                 </th>
                 {COLUMNS_SCALED.map(c => (
-                  <th key={c.key} style={c.sortable ? S.thSort : S.th}
-                    onClick={c.sortable ? () => setSortMap(prev => ({ ...prev, [tab]: { field: c.key, dir: prev[tab].field === c.key && prev[tab].dir === 'asc' ? 'desc' : 'asc' } })) : undefined}>
-                    {c.label}{c.sortable ? (sort.field === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
+                  <th key={c.key} style={c.sortable?S.thSort:S.th}
+                    onClick={c.sortable?()=>setSortMap(prev=>({...prev,[tab]:{field:c.key,dir:prev[tab].field===c.key&&prev[tab].dir==='asc'?'desc':'asc'}})):undefined}>
+                    {c.label}{c.sortable?(sort.field===c.key?(sort.dir==='asc'?' ▲':' ▼'):' ↕'):''}
                   </th>
                 ))}
                 <th style={S.thAction}>Action</th>
@@ -612,22 +601,22 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
           </table>
         </div>
         <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
-          <table style={{ ...S.table, width: `${totalW}px` }}>
+          <table style={{...S.table, width:`${totalW}px`}}>
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
               {filtered.map(item => (
-                <tr key={item.id} style={{ background: selected.includes(item.id) ? '#f0f7ff' : 'white' }}>
+                <tr key={item.id} style={{ background: selected.includes(item.id)?'#f0f7ff':'white' }}>
                   <td style={S.tdCenter}>
                     <input type="checkbox" checked={selected.includes(item.id)}
-                      onChange={() => setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].includes(item.id) ? prev[tab].filter(s => s !== item.id) : [...prev[tab], item.id] }))} />
+                      onChange={()=>setSelectedMap(prev=>({...prev,[tab]:prev[tab].includes(item.id)?prev[tab].filter(s=>s!==item.id):[...prev[tab],item.id]}))} />
                   </td>
                   {COLUMNS_SCALED.map(c => (
-                    <td key={c.key} style={S.td} title={item[c.key] || ''}>{renderCell(c, item)}</td>
+                    <td key={c.key} style={S.td} title={String(item[c.key]||'')}>{renderCell(c, item)}</td>
                   ))}
                   <td style={S.tdCenter}>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <button onClick={() => handleOpenDetail(item)} title="View / Edit" style={S.iconBtn('#1a3a5c')}>🔍</button>
-                      {isAdmin && <button onClick={() => handleDelete(item.id)} style={S.iconBtn('#791F1F', '#FCEBEB', '#f7c1c1')}>🗑️</button>}
+                    <div style={{ display:'inline-flex', alignItems:'center', gap:'4px' }}>
+                      <button onClick={()=>handleOpenDetail(item)} style={S.iconBtn('#1a3a5c')}>🔍</button>
+                      {isAdmin && <button onClick={()=>handleDelete(item.id)} style={S.iconBtn('#791F1F','#FCEBEB','#f7c1c1')}>🗑️</button>}
                     </div>
                   </td>
                 </tr>
@@ -641,18 +630,18 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <h3 style={{ fontSize: '15px', margin: 0 }}>{editId ? `✏️ Edit ${cfg.label}` : `+ New ${cfg.label}`}</h3>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowForm(false)}>Cancel</button>
-                <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleNewSave}>Save</button>
+            <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <h3 style={{ fontSize:'15px', margin:0 }}>{editId?`✏️ Edit ${cfg.label}`:`+ New ${cfg.label}`}</h3>
+              <div style={{ display:'flex', gap:'8px' }}>
+                <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowForm(false)}>Cancel</button>
+                <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleNewSave}>Save</button>
               </div>
             </div>
             {renderFormFields(form, setForm, true)}
-            <div style={{ padding: '0 20px 16px' }}>
-              <label style={{ fontSize: '11px', color: '#888' }}>Username</label>
-              <input style={S.inputDisabled} value={userName || currentUser?.email || ''} disabled />
-              <label style={{ fontSize: '11px', color: '#888' }}>Last Update</label>
+            <div style={{ padding:'0 20px 16px' }}>
+              <label style={{ fontSize:'11px', color:'#888' }}>Username</label>
+              <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled />
+              <label style={{ fontSize:'11px', color:'#888' }}>Last Update</label>
               <input style={S.inputDisabled} value={getTimestamp()} disabled />
             </div>
           </div>
@@ -663,26 +652,29 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
       {showDetailModal && detailItem && (
         <div style={S.overlay}>
           <div style={S.modal}>
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '14px', fontWeight: '500' }}>{detailEditMode ? `✏️ Edit ${cfg.label}` : `🔍 ${detailItem[cfg.key] || 'Detail'}`}</span>
-                {!detailEditMode && <button onClick={() => setDetailEditMode(true)} style={{ padding: '3px 10px', borderRadius: '5px', border: '1px solid #1a3a5c', background: 'white', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer' }}>✏️ Edit</button>}
+            <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                <span style={{ fontSize:'14px', fontWeight:'500' }}>{detailEditMode?`✏️ Edit ${cfg.label}`:`🔍 ${detailItem[cfg.key]||'Detail'}`}</span>
+                {!detailEditMode && <button onClick={()=>setDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
               </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display:'flex', gap:'8px' }}>
                 {detailEditMode ? (
                   <>
-                    <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => { setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || '']))); }}>Cancel</button>
-                    <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleDetailSave}>Save</button>
+                    <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])));}}>Cancel</button>
+                    <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleDetailSave}>Save</button>
                   </>
-                ) : <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowDetailModal(false)}>Close</button>}
+                ) : <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowDetailModal(false)}>Close</button>}
               </div>
             </div>
-            {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k]) => [k, detailItem[k] || ''])), setDetailForm, detailEditMode)}
+            {renderFormFields(
+              detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])),
+              setDetailForm, detailEditMode
+            )}
             {!detailEditMode && (
-              <div style={{ padding: '0 20px 16px', borderTop: '0.5px solid #f0f0f0' }}>
-                <div style={{ display: 'flex', gap: '16px', paddingTop: '12px' }}>
-                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Username</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{detailItem['username'] || '-'}</div></div>
-                  <div style={{ flex: 1 }}><div style={{ fontSize: '11px', color: '#888' }}>Last Update</div><div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{formatLastUpdate(detailItem['last_update'])}</div></div>
+              <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0' }}>
+                <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
+                  <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Username</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{detailItem['username']||'-'}</div></div>
+                  <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Last Update</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(detailItem['last_update'])}</div></div>
                 </div>
               </div>
             )}
@@ -692,7 +684,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
 
       <ImportPreviewModal
         show={showPreview}
-        onClose={() => { setShowPreview(false); setPreviewRows([]); }}
+        onClose={()=>{setShowPreview(false); setPreviewRows([]);}}
         onConfirm={handleConfirmImport}
         importing={importing}
         previewRows={previewRows}
