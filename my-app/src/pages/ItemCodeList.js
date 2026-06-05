@@ -371,7 +371,7 @@ function ItemCodeList() {
       <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px', justifyContent:'space-between' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
           <input
-            placeholder={isMobile?'Search...':'Search Code, Description, BU, Account...'}
+            placeholder={isMobile?'Search...':'Search...'}
             value={search} onChange={e=>setSearch(e.target.value)}
             style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'140px':isTablet?'180px':'240px' }}
           />
