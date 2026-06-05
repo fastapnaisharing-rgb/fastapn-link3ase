@@ -68,7 +68,7 @@ function ExportDropdown({ onExportSelected, onExportAll, selectedCount, isMobile
   );
 }
 
-function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile }) {
+function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile, isCategory }) {
   if (!show) return null;
   const summary = previewRows.reduce((acc, r) => { acc[r._status] = (acc[r._status] || 0) + 1; return acc; }, {});
   const confirmCount = previewRows.filter(r => r._status === 'new' || r._status === 'update').length;
@@ -86,7 +86,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
           <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{previewRows.length} รายการในไฟล์</span>
         </div>
         <div style={{ background: '#f8f9fa', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', color: '#666', marginBottom: '12px' }}>
-          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ Username และ Last Update จะถูก Auto ใส่ให้
+          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ{isCategory && ' · TAX ID และ No. จะถูก normalize อัตโนมัติ'} Username และ Last Update จะถูก Auto ใส่ให้
         </div>
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
           {[['new', '➕ New', '#EAF3DE', '#27500A'], ['update', '🔄 Update', '#e8f0fb', '#1a3a5c'], ['nochange', '✅ No Change', '#f5f5f5', '#666'], ['duplicate', '⚠️ Duplicate', '#FFF3CD', '#856404']].map(([key, label, bg, color]) => (
@@ -99,6 +99,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
               <tr>
                 <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, width: '100px' }}>สถานะ</th>
                 {displayFields.map(f => <th key={f} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>{f}</th>)}
+                {isCategory && <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>ประเภท</th>}
                 <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, minWidth: '200px' }}>การเปลี่ยนแปลง</th>
               </tr>
             </thead>
@@ -109,6 +110,11 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                   <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>{statusTag(row._status)}</td>
                     {displayFields.map(f => <td key={f} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(row[f] ?? '') || '-'}</td>)}
+                    {isCategory && (
+                      <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0' }}>
+                        {entityBadge(row['TAX ID'])}
+                      </td>
+                    )}
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>
                       {row._status === 'update' && row._changes?.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -186,6 +192,7 @@ const TAB_CONFIG = {
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
       { key: 'Supplier Name', label: 'Supplier Name', w: 320 },
       { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
+      { key: '_entityType',   label: 'ประเภท',        w: 110 },
       { key: 'No.',           label: 'No.',           w: 70  },
       { key: 'BU',            label: 'BU',  sortable: true, w: 80 },
       { key: 'TYPE',          label: 'TYPE',          w: 100 },
@@ -193,6 +200,31 @@ const TAB_CONFIG = {
       { key: 'REMARK',        label: 'REMARK',        w: 120 },
     ],
   },
+};
+
+// ─── Tax ID / No. helpers ─────────────────────────────────────────────────────
+const normalizeTaxId = (val) => {
+  let str = String(val ?? '').trim().replace(/[^0-9]/g, '');
+  if (str.length === 12) str = '0' + str;
+  return str;
+};
+const normalizeNo = (val) => {
+  const str = String(val ?? '').trim().replace(/[^0-9]/g, '');
+  return str ? str.padStart(5, '0') : '';
+};
+const getEntityType = (taxId) => {
+  const str = String(taxId || '').replace(/[^0-9]/g, '');
+  if (str.length !== 13) return null;
+  if (str[0] === '0') return 'นิติบุคคล';
+  if (str[0] === '9') return 'องค์กรพิเศษ';
+  return 'บุคคลธรรมดา';
+};
+const entityBadge = (taxId) => {
+  const type = getEntityType(taxId);
+  if (!type) return <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>ตรวจสอบด้วยตนเอง</span>;
+  const map = { 'นิติบุคคล': ['#E6F1FB','#0C447C'], 'บุคคลธรรมดา': ['#EAF3DE','#27500A'], 'องค์กรพิเศษ': ['#EEEDFE','#3C3489'] };
+  const [bg, color] = map[type];
+  return <span style={{ background: bg, color, padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{type}</span>;
 };
 
 function VendorMaster({ activeSubTab, onSubTabChange }) {
@@ -287,19 +319,25 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     existingItems.forEach(item => { if (item[keyField]) existingMap[String(item[keyField]).trim()] = item; });
     const seenKeys = new Set();
     return rawRows.map(row => {
-      const keyVal = String(row[keyField] ?? '').trim();
-      if (!keyVal) return { ...row, _status: 'duplicate', _changes: [] };
-      if (seenKeys.has(keyVal)) return { ...row, _status: 'duplicate', _changes: [] };
+      // ✅ Normalize TAX ID และ No. สำหรับ category tab
+      const normalizedRow = { ...row };
+      if (tab === 'category') {
+        normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']);
+        normalizedRow['No.']    = normalizeNo(row['No.']);
+      }
+      const keyVal = String(normalizedRow[keyField] ?? '').trim();
+      if (!keyVal) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
+      if (seenKeys.has(keyVal)) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
       seenKeys.add(keyVal);
       const existing = existingMap[keyVal];
-      if (!existing) return { ...row, _status: 'new', _changes: [] };
+      if (!existing) return { ...normalizedRow, _status: 'new', _changes: [] };
       const changes = [];
       dataFields.forEach(f => {
-        const newVal = String(row[f] ?? '').trim();
+        const newVal = String(normalizedRow[f] ?? '').trim();
         const oldVal = String(existing[f] ?? '').trim();
         if (newVal !== oldVal) changes.push({ field: f, old: oldVal, new: newVal });
       });
-      return { ...row, _status: changes.length > 0 ? 'update' : 'nochange', _changes: changes, _existingId: existing.id };
+      return { ...normalizedRow, _status: changes.length > 0 ? 'update' : 'nochange', _changes: changes, _existingId: existing.id };
     });
   };
 
@@ -482,6 +520,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     if (c.key === 'Status') return statusBadge(item[c.key]);
     if (c.key === 'Notice') return noticeBadge(item[c.key]);
     if (c.key === 'TYPE' || c.key === 'SUB TYPE') return noticeBadge(item[c.key]);
+    if (c.key === '_entityType') return entityBadge(item['TAX ID']);
     return item[c.key] || '-';
   };
 
@@ -695,6 +734,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         keyField={cfg.key}
         allFields={cfg.fields}
         isMobile={isMobile}
+        isCategory={tab === 'category'}
       />
     </div>
   );
