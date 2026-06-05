@@ -68,6 +68,32 @@ function ExportDropdown({ onExportSelected, onExportAll, selectedCount, isMobile
   );
 }
 
+// ─── Tax ID / No. helpers ─────────────────────────────────────────────────────
+const normalizeTaxId = (val) => {
+  let str = String(val ?? '').trim().replace(/[^0-9]/g, '');
+  if (str.length === 12) str = '0' + str;
+  return str;
+};
+const normalizeNo = (val) => {
+  const str = String(val ?? '').trim().replace(/[^0-9]/g, '');
+  return str ? str.padStart(5, '0') : '';
+};
+const getEntityType = (taxId) => {
+  const str = String(taxId || '').replace(/[^0-9]/g, '');
+  if (str.length !== 13) return null;
+  if (str[0] === '0') return 'นิติบุคคล';
+  if (str[0] === '9') return 'องค์กรพิเศษ';
+  return 'บุคคลธรรมดา';
+};
+const entityBadge = (taxId) => {
+  const type = getEntityType(taxId);
+  if (!type) return <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>ตรวจสอบด้วยตนเอง</span>;
+  const map = { 'นิติบุคคล': ['#E6F1FB','#0C447C'], 'บุคคลธรรมดา': ['#EAF3DE','#27500A'], 'องค์กรพิเศษ': ['#EEEDFE','#3C3489'] };
+  const [bg, color] = map[type];
+  return <span style={{ background: bg, color, padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{type}</span>;
+};
+
+// ─── Import Preview Modal ─────────────────────────────────────────────────────
 function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile, isCategory }) {
   const [filterStatus, setFilterStatus] = React.useState(null);
   const summary = (previewRows || []).reduce((acc, r) => { acc[r._status] = (acc[r._status] || 0) + 1; return acc; }, {});
@@ -81,12 +107,11 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
     return <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: '500', background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>{m.label}</span>;
   };
   const displayFields = allFields.filter(f => !['username', 'last_update'].includes(f)).slice(0, 5);
-
   const BADGE_CONFIG = [
-    ['new',      '➕ New',        '#EAF3DE', '#27500A', '#c0dda0'],
-    ['update',   '🔄 Update',     '#e8f0fb', '#1a3a5c', '#aac4e8'],
-    ['nochange', '✅ No Change',  '#f5f5f5', '#666',    '#ccc'   ],
-    ['duplicate','⚠️ Duplicate', '#FFF3CD', '#856404', '#f5d87a'],
+    ['new',       '➕ New',       '#EAF3DE', '#27500A', '#c0dda0'],
+    ['update',    '🔄 Update',    '#e8f0fb', '#1a3a5c', '#aac4e8'],
+    ['nochange',  '✅ No Change', '#f5f5f5', '#666',    '#ccc'   ],
+    ['duplicate', '⚠️ Duplicate','#FFF3CD', '#856404', '#f5d87a'],
   ];
 
   return (
@@ -94,32 +119,26 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
       <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <h3 style={{ fontSize: '15px', margin: 0 }}>📋 Preview ข้อมูลที่จะ Import</h3>
-          <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{previewRows.length} รายการในไฟล์</span>
+          <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{(previewRows||[]).length} รายการในไฟล์</span>
         </div>
         <div style={{ background: '#f8f9fa', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', color: '#666', marginBottom: '12px' }}>
           ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ{isCategory && ' · TAX ID และ No. จะถูก normalize อัตโนมัติ'} Username และ Last Update จะถูก Auto ใส่ให้
         </div>
-
-        {/* ✅ Clickable filter badges */}
+        {/* Clickable filter badges */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
           {BADGE_CONFIG.map(([key, label, bg, color, border]) => {
             if (!summary[key]) return null;
             const isActive = filterStatus === key;
             return (
               <span key={key} onClick={() => setFilterStatus(isActive ? null : key)}
-                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: isActive ? bg : '#f5f5f5', color: isActive ? color : '#888', border: `1.5px solid ${isActive ? border : '#ddd'}`, cursor: 'pointer', userSelect: 'none', transition: 'all 0.15s' }}>
+                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: isActive ? bg : '#f5f5f5', color: isActive ? color : '#888', border: `1.5px solid ${isActive ? border : '#ddd'}`, cursor: 'pointer', userSelect: 'none' }}>
                 {label} <strong>{summary[key]}</strong>
                 {isActive && <span style={{ fontSize: '10px', marginLeft: '2px', opacity: 0.7 }}>✕</span>}
               </span>
             );
           })}
-          {filterStatus && (
-            <span style={{ fontSize: '11px', color: '#888' }}>
-              แสดง {displayRows.length} รายการ
-            </span>
-          )}
+          {filterStatus && <span style={{ fontSize: '11px', color: '#888' }}>แสดง {displayRows.length} รายการ</span>}
         </div>
-
         <div style={{ overflow: 'auto', flex: 1, borderRadius: '6px', border: '0.5px solid #e8e8e8', marginBottom: '14px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
             <thead>
@@ -137,11 +156,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                   <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>{statusTag(row._status)}</td>
                     {displayFields.map(f => <td key={f} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(row[f] ?? '') || '-'}</td>)}
-                    {isCategory && (
-                      <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0' }}>
-                        {entityBadge(row['TAX ID'])}
-                      </td>
-                    )}
+                    {isCategory && <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0' }}>{entityBadge(row['TAX ID'])}</td>}
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>
                       {row._status === 'update' && row._changes?.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -180,78 +195,6 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
     </div>
   );
 }
-  return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-      <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h3 style={{ fontSize: '15px', margin: 0 }}>📋 Preview ข้อมูลที่จะ Import</h3>
-          <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{previewRows.length} รายการในไฟล์</span>
-        </div>
-        <div style={{ background: '#f8f9fa', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', color: '#666', marginBottom: '12px' }}>
-          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ{isCategory && ' · TAX ID และ No. จะถูก normalize อัตโนมัติ'} Username และ Last Update จะถูก Auto ใส่ให้
-        </div>
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          {[['new', '➕ New', '#EAF3DE', '#27500A'], ['update', '🔄 Update', '#e8f0fb', '#1a3a5c'], ['nochange', '✅ No Change', '#f5f5f5', '#666'], ['duplicate', '⚠️ Duplicate', '#FFF3CD', '#856404']].map(([key, label, bg, color]) => (
-            summary[key] ? <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: bg, color }}>{label} <strong>{summary[key]}</strong></span> : null
-          ))}
-        </div>
-        <div style={{ overflow: 'auto', flex: 1, borderRadius: '6px', border: '0.5px solid #e8e8e8', marginBottom: '14px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-            <thead>
-              <tr>
-                <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, width: '100px' }}>สถานะ</th>
-                {displayFields.map(f => <th key={f} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>{f}</th>)}
-                {isCategory && <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>ประเภท</th>}
-                <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, minWidth: '200px' }}>การเปลี่ยนแปลง</th>
-              </tr>
-            </thead>
-            <tbody>
-              {previewRows.map((row, i) => {
-                const rowBg = { new: '#f9fffe', update: '#f5f8ff', nochange: 'white', duplicate: '#fffdf0' }[row._status] || 'white';
-                return (
-                  <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
-                    <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>{statusTag(row._status)}</td>
-                    {displayFields.map(f => <td key={f} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(row[f] ?? '') || '-'}</td>)}
-                    {isCategory && (
-                      <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0' }}>
-                        {entityBadge(row['TAX ID'])}
-                      </td>
-                    )}
-                    <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>
-                      {row._status === 'update' && row._changes?.length > 0 ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                          {row._changes.map((c, ci) => (
-                            <div key={ci} style={{ fontSize: '10px', background: '#f0f7ff', padding: '2px 6px', borderRadius: '4px', display: 'inline-flex', gap: '4px', alignItems: 'center', maxWidth: '300px' }}>
-                              <span style={{ color: '#555', fontWeight: '500' }}>{c.field}:</span>
-                              <span style={{ color: '#791F1F', textDecoration: 'line-through' }}>{c.old || '-'}</span>
-                              <span style={{ color: '#888' }}>→</span>
-                              <span style={{ color: '#27500A', fontWeight: '500' }}>{c.new || '-'}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : row._status === 'new' ? <span style={{ fontSize: '10px', color: '#888' }}>เพิ่มใหม่</span>
-                        : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์ — ข้ามแถวนี้</span>
-                          : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', color: '#888' }}>จะ Import เฉพาะ ➕ New และ 🔄 Update รวม <strong style={{ color: '#1a3a5c' }}>{confirmCount} รายการ</strong></span>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#f0f0f0', color: '#555' }} onClick={onClose}>Cancel</button>
-            <button style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: confirmCount > 0 ? '#1a3a5c' : '#ccc', color: 'white', fontWeight: '500' }} onClick={onConfirm} disabled={importing || confirmCount === 0}>
-              {importing ? 'กำลัง Import...' : `✅ Confirm Import ${confirmCount} รายการ`}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 const TAB_CONFIG = {
@@ -260,17 +203,17 @@ const TAB_CONFIG = {
     fields: ['Supplier Code', 'Name', 'Tax ID', 'Branch', 'Site', 'BU', 'Notice', 'Sub Acc', 'Status', 'username', 'last_update'],
     combo: ['Site', 'BU', 'Notice', 'Status'],
     edit: [
-      ['Supplier Code', 'Supplier Code'], ['Name', 'Name'], ['Tax ID', 'Tax ID'],
-      ['Branch', 'Branch'], ['Site', 'Site'], ['BU', 'BU'],
-      ['Notice', 'Notice'], ['Sub Acc', 'Sub Acc'], ['Status', 'Status'],
+      ['Supplier Code','Supplier Code'],['Name','Name'],['Tax ID','Tax ID'],
+      ['Branch','Branch'],['Site','Site'],['BU','BU'],
+      ['Notice','Notice'],['Sub Acc','Sub Acc'],['Status','Status'],
     ],
     columns: [
       { key: 'Supplier Code', label: 'Supplier Code', sortable: true, w: 130 },
-      { key: 'Name',          label: 'Name',          w: 220 },
+      { key: 'Name',          label: 'Name',           w: 220 },
       { key: 'Tax ID',        label: 'Tax ID',         w: 130 },
       { key: 'Branch',        label: 'Branch',         w: 80  },
       { key: 'Site',          label: 'Site',           w: 140 },
-      { key: 'BU',            label: 'BU',   sortable: true, w: 80 },
+      { key: 'BU',            label: 'BU', sortable: true, w: 80 },
       { key: 'Notice',        label: 'Notice',         w: 100 },
       { key: 'Sub Acc',       label: 'Sub Acc',        w: 90  },
       { key: 'Status',        label: 'Status',         w: 90  },
@@ -281,14 +224,8 @@ const TAB_CONFIG = {
     fields: ['Code', 'Supplier Name', 'TAX ID', 'No.', 'BU', 'TYPE', 'SUB TYPE', 'REMARK', 'username', 'last_update'],
     combo: ['BU', 'TYPE', 'SUB TYPE'],
     edit: [
-      ['Code',          'Code'],
-      ['Supplier Name', 'Supplier Name'],
-      ['TAX ID',        'TAX ID'],
-      ['No.',           'No.'],
-      ['BU',            'BU'],
-      ['TYPE',          'TYPE'],
-      ['SUB TYPE',      'SUB TYPE'],
-      ['REMARK',        'REMARK'],
+      ['Code','Code'],['Supplier Name','Supplier Name'],['TAX ID','TAX ID'],
+      ['No.','No.'],['BU','BU'],['TYPE','TYPE'],['SUB TYPE','SUB TYPE'],['REMARK','REMARK'],
     ],
     columns: [
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
@@ -296,37 +233,12 @@ const TAB_CONFIG = {
       { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
       { key: '_entityType',   label: 'ประเภท',        w: 110 },
       { key: 'No.',           label: 'No.',           w: 70  },
-      { key: 'BU',            label: 'BU',  sortable: true, w: 80 },
+      { key: 'BU',            label: 'BU', sortable: true, w: 80 },
       { key: 'TYPE',          label: 'TYPE',          w: 100 },
       { key: 'SUB TYPE',      label: 'SUB TYPE',      w: 100 },
       { key: 'REMARK',        label: 'REMARK',        w: 120 },
     ],
   },
-};
-
-// ─── Tax ID / No. helpers ─────────────────────────────────────────────────────
-const normalizeTaxId = (val) => {
-  let str = String(val ?? '').trim().replace(/[^0-9]/g, '');
-  if (str.length === 12) str = '0' + str;
-  return str;
-};
-const normalizeNo = (val) => {
-  const str = String(val ?? '').trim().replace(/[^0-9]/g, '');
-  return str ? str.padStart(5, '0') : '';
-};
-const getEntityType = (taxId) => {
-  const str = String(taxId || '').replace(/[^0-9]/g, '');
-  if (str.length !== 13) return null;
-  if (str[0] === '0') return 'นิติบุคคล';
-  if (str[0] === '9') return 'องค์กรพิเศษ';
-  return 'บุคคลธรรมดา';
-};
-const entityBadge = (taxId) => {
-  const type = getEntityType(taxId);
-  if (!type) return <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>ตรวจสอบด้วยตนเอง</span>;
-  const map = { 'นิติบุคคล': ['#E6F1FB','#0C447C'], 'บุคคลธรรมดา': ['#EAF3DE','#27500A'], 'องค์กรพิเศษ': ['#EEEDFE','#3C3489'] };
-  const [bg, color] = map[type];
-  return <span style={{ background: bg, color, padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{type}</span>;
 };
 
 function VendorMaster({ activeSubTab, onSubTabChange }) {
@@ -337,26 +249,22 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
-
   const cfg = TAB_CONFIG[tab];
 
-  const [dataMap, setDataMap]       = useState({ code: [], category: [] });
-  const [searchMap, setSearchMap]   = useState({ code: '', category: '' });
+  const [dataMap, setDataMap]         = useState({ code: [], category: [] });
+  const [searchMap, setSearchMap]     = useState({ code: '', category: '' });
   const [selectedMap, setSelectedMap] = useState({ code: [], category: [] });
-  const [sortMap, setSortMap]       = useState({
-    code:     { field: 'Supplier Code', dir: 'asc' },
-    category: { field: 'Code',          dir: 'asc' },
-  });
-  const [showForm,        setShowForm]        = useState(false);
-  const [editId,          setEditId]          = useState(null);
-  const [form,            setForm]            = useState({});
+  const [sortMap, setSortMap]         = useState({ code: { field: 'Supplier Code', dir: 'asc' }, category: { field: 'Code', dir: 'asc' } });
+  const [showForm, setShowForm]       = useState(false);
+  const [editId, setEditId]           = useState(null);
+  const [form, setForm]               = useState({});
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [detailItem,      setDetailItem]      = useState(null);
-  const [detailEditMode,  setDetailEditMode]  = useState(false);
-  const [detailForm,      setDetailForm]      = useState({});
-  const [showPreview,     setShowPreview]     = useState(false);
-  const [previewRows,     setPreviewRows]     = useState([]);
-  const [importing,       setImporting]       = useState(false);
+  const [detailItem, setDetailItem]   = useState(null);
+  const [detailEditMode, setDetailEditMode] = useState(false);
+  const [detailForm, setDetailForm]   = useState({});
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewRows, setPreviewRows] = useState([]);
+  const [importing, setImporting]     = useState(false);
 
   const fileRef      = useRef(null);
   const theadRef     = useRef(null);
@@ -372,56 +280,37 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   }, []);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
-  const items    = dataMap[tab]    || [];
-  const search   = searchMap[tab]  || '';
+  const items    = dataMap[tab]     || [];
+  const search   = searchMap[tab]   || '';
   const selected = selectedMap[tab] || [];
-  const sort     = sortMap[tab]    || { field: cfg.key, dir: 'asc' };
+  const sort     = sortMap[tab]     || { field: cfg.key, dir: 'asc' };
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────────
-  const getTimestamp = () => {
-    const n = new Date();
-    return `${String(n.getDate()).padStart(2,'0')}/${String(n.getMonth()+1).padStart(2,'0')}/${n.getFullYear()} ${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
-  };
-  const getFileTimestamp = () => {
-    const n = new Date();
-    return `${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}_${String(n.getHours()).padStart(2,'0')}${String(n.getMinutes()).padStart(2,'0')}`;
-  };
+  const getTimestamp = () => { const n = new Date(); return `${String(n.getDate()).padStart(2,'0')}/${String(n.getMonth()+1).padStart(2,'0')}/${n.getFullYear()} ${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`; };
+  const getFileTimestamp = () => { const n = new Date(); return `${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}_${String(n.getHours()).padStart(2,'0')}${String(n.getMinutes()).padStart(2,'0')}`; };
   const formatLastUpdate = (val) => {
     if (!val || val === '-') return '-';
-    if (!isNaN(val) && Number(val) > 40000) {
-      const d = new Date(Math.round((Number(val) - 25569) * 86400 * 1000));
-      return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
-    }
-    try {
-      const d = new Date(val);
-      if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    } catch {}
+    if (!isNaN(val) && Number(val) > 40000) { const d = new Date(Math.round((Number(val)-25569)*86400*1000)); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; }
+    try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch {}
     return val;
   };
 
-  // ─── Fetch ────────────────────────────────────────────────────────────────────
   const fetchTab = useCallback(async (t) => {
     const data = await fetchCollection(TAB_CONFIG[t].table);
     setDataMap(prev => ({ ...prev, [t]: (data || []).filter(i => !i.deleted) }));
   }, [fetchCollection]);
 
   useEffect(() => { fetchTab('code'); fetchTab('category'); }, []);
-
-  useEffect(() => {
-    if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab);
-  }, [activeSubTab, tab]);
+  useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
 
-  // ─── Build Preview Rows ───────────────────────────────────────────────────────
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
     const dataFields = allFields.filter(f => !['username', 'last_update'].includes(f));
     const existingMap = {};
     existingItems.forEach(item => { if (item[keyField]) existingMap[String(item[keyField]).trim()] = item; });
     const seenKeys = new Set();
     return rawRows.map(row => {
-      // ✅ Normalize TAX ID และ No. สำหรับ category tab
       const normalizedRow = { ...row };
       if (tab === 'category') {
         normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']);
@@ -443,7 +332,6 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     });
   };
 
-  // ─── Export ───────────────────────────────────────────────────────────────────
   const exportToExcel = (data, fields, sheetName, filePrefix) => {
     const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; });
     const ws = XLSX.utils.json_to_sheet(rows, { header: fields });
@@ -451,17 +339,8 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     XLSX.writeFile(wb, `${filePrefix}_${getFileTimestamp()}.xlsx`);
   };
-
-  const handleExportSelected = () => exportToExcel(
-    items.filter(i => selected.includes(i.id)),
-    cfg.fields.filter(f => !['username','last_update'].includes(f)),
-    cfg.label, cfg.label.replace(/ /g,'')
-  );
-  const handleExportAll = () => exportToExcel(
-    filtered,
-    cfg.fields.filter(f => !['username','last_update'].includes(f)),
-    cfg.label, cfg.label.replace(/ /g,'')
-  );
+  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
+  const handleExportAll      = () => exportToExcel(filtered, cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
   const handleDownloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['username','last_update'].includes(f))]);
     const wb = XLSX.utils.book_new();
@@ -469,7 +348,6 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     XLSX.writeFile(wb, `${cfg.label.replace(/ /g,'')}_Template.xlsx`);
   };
 
-  // ─── Import ───────────────────────────────────────────────────────────────────
   const handleFileChange = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
@@ -485,60 +363,36 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   const handleConfirmImport = async () => {
     setImporting(true);
     try {
-      const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
+      const toProcess  = previewRows.filter(r => r._status === 'new' || r._status === 'update');
       const newRows    = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
       const ts = getTimestamp();
       const currentUsername = userName || currentUser?.email || '';
-
       if (newRows.length > 0) {
         for (let i = 0; i < newRows.length; i += 500) {
-          const payload = newRows.slice(i, i+500).map(row => {
-            const d = {};
-            cfg.fields.forEach(k => {
-              if (k === 'username') d[k] = currentUsername;
-              else if (k === 'last_update') d[k] = ts;
-              else d[k] = String(row[k] ?? '');
-            });
-            return d;
-          });
+          const payload = newRows.slice(i,i+500).map(row => { const d = {}; cfg.fields.forEach(k => { if (k==='username') d[k]=currentUsername; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; });
           const { error } = await supabase.from(cfg.table).insert(payload);
           if (error) throw new Error(error.message);
         }
       }
       if (updateRows.length > 0) {
         for (let i = 0; i < updateRows.length; i += 500) {
-          const payload = updateRows.slice(i, i+500).map(row => {
-            const d = { id: row._existingId };
-            cfg.fields.forEach(k => {
-              if (k === 'username') d[k] = currentUsername;
-              else if (k === 'last_update') d[k] = ts;
-              else d[k] = String(row[k] ?? '');
-            });
-            return d;
-          });
+          const payload = updateRows.slice(i,i+500).map(row => { const d = { id: row._existingId }; cfg.fields.forEach(k => { if (k==='username') d[k]=currentUsername; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; });
           const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' });
           if (error) throw new Error(error.message);
         }
       }
       setShowPreview(false); setPreviewRows([]);
-      invalidate(cfg.table);
-      await fetchTab(tab);
+      invalidate(cfg.table); await fetchTab(tab);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setImporting(false);
   };
 
-  // ─── CRUD ─────────────────────────────────────────────────────────────────────
   const handleNewSave = async () => {
     const data = { ...form, username: userName || currentUser?.email || '', last_update: getTimestamp() };
-    if (editId) {
-      const { error } = await supabase.from(cfg.table).update(data).eq('id', editId);
-      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-    } else {
-      const { error } = await supabase.from(cfg.table).insert([data]);
-      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-    }
+    if (editId) { const { error } = await supabase.from(cfg.table).update(data).eq('id', editId); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
+    else { const { error } = await supabase.from(cfg.table).insert([data]); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
     setShowForm(false); setEditId(null); setForm({});
     invalidate(cfg.table); await fetchTab(tab);
   };
@@ -547,15 +401,8 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = items.find(i => i.id === id);
-      await supabase.from('recycle_bin').insert([{
-        source_table: cfg.table, source_id: id,
-        source_key: item?.[cfg.key] || id, data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: new Date().toISOString(),
-      }]);
-      const { error } = await supabase.from(cfg.table)
-        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() })
-        .eq('id', id);
+      await supabase.from('recycle_bin').insert([{ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key]||id, data: item, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }]);
+      const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
       setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
       invalidate(cfg.table); await fetchTab(tab);
@@ -566,15 +413,9 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = items.filter(i => selected.includes(i.id)).map(item => ({
-        source_table: cfg.table, source_id: item.id,
-        source_key: item[cfg.key] || item.id, data: item,
-        deleted_by: userName || currentUser?.email || '', deleted_at: now,
-      }));
+      const bins = items.filter(i => selected.includes(i.id)).map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key]||item.id, data: item, deleted_by: userName||currentUser?.email||'', deleted_at: now }));
       if (bins.length) await supabase.from('recycle_bin').insert(bins);
-      const { error } = await supabase.from(cfg.table)
-        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
-        .in('id', selected);
+      const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: now }).in('id', selected);
       if (error) throw error;
       setSelectedMap(prev => ({ ...prev, [tab]: [] }));
       invalidate(cfg.table); await fetchTab(tab);
@@ -589,52 +430,36 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
   };
 
   const handleDetailSave = async () => {
-    const data = { ...detailForm, username: userName || currentUser?.email || '', last_update: getTimestamp() };
+    const data = { ...detailForm, username: userName||currentUser?.email||'', last_update: getTimestamp() };
     const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
     if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
     setShowDetailModal(false);
     invalidate(cfg.table); await fetchTab(tab);
   };
 
-  // ─── Filtered / Sorted ────────────────────────────────────────────────────────
   const filtered = useMemo(() => items
     .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
-    .sort((a, b) => {
-      const ca = a[sort.field] || '', cb = b[sort.field] || '';
-      return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca);
-    }),
+    .sort((a, b) => { const ca = a[sort.field]||'', cb = b[sort.field]||''; return sort.dir==='asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); }),
     [items, search, sort, cfg.fields]
   );
 
-  // ─── Render helpers ───────────────────────────────────────────────────────────
-  const statusBadge = (val) => {
-    const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] };
-    const [bg, color] = map[val] || ['#e8e8e8','#555'];
-    return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '20px', fontSize: '10px' }}>{val || '-'}</span>;
-  };
-  const noticeBadge = (val) => {
-    const map = { ITC: ['#e8f0fb','#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE','#27500A'], EFT: ['#f0f7ff','#0F6E56'], CPN: ['#f5f5f5','#555'], MER: ['#FFF3CD','#856404'] };
-    const [bg, color] = map[val] || ['#f5f5f5','#555'];
-    return val ? <span style={{ background: bg, color, padding: '2px 7px', borderRadius: '20px', fontSize: '10px' }}>{val}</span> : '-';
-  };
+  const statusBadge = (val) => { const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] }; const [bg, color] = map[val]||['#e8e8e8','#555']; return <span style={{ background: bg, color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>{val||'-'}</span>; };
+  const noticeBadge = (val) => { const map = { ITC: ['#e8f0fb','#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE','#27500A'], EFT: ['#f0f7ff','#0F6E56'], CPN: ['#f5f5f5','#555'], MER: ['#FFF3CD','#856404'] }; const [bg, color] = map[val]||['#f5f5f5','#555']; return val ? <span style={{ background: bg, color, padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{val}</span> : '-'; };
   const renderCell = (c, item) => {
-    if (c.key === 'last_update') return formatLastUpdate(item[c.key]);
-    if (c.key === 'Status') return statusBadge(item[c.key]);
-    if (c.key === 'Notice') return noticeBadge(item[c.key]);
+    if (c.key === 'last_update')  return formatLastUpdate(item[c.key]);
+    if (c.key === 'Status')       return statusBadge(item[c.key]);
+    if (c.key === 'Notice')       return noticeBadge(item[c.key]);
     if (c.key === 'TYPE' || c.key === 'SUB TYPE') return noticeBadge(item[c.key]);
-    if (c.key === '_entityType') return entityBadge(item['TAX ID']);
+    if (c.key === '_entityType')  return entityBadge(item['TAX ID']);
     return item[c.key] || '-';
   };
 
-  // ─── Layout ───────────────────────────────────────────────────────────────────
-  const actionW  = isAdmin ? 70 : 50;
-  const minW = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
-  const totalW = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
-  const extraW = Math.max(0, totalW - minW);
+  const actionW = isAdmin ? 70 : 50;
+  const minW    = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
+  const totalW  = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
+  const extraW  = Math.max(0, totalW - minW);
   const stretchKey = tab === 'category' ? 'REMARK' : 'Name';
-  const COLUMNS_SCALED = cfg.columns.map(c =>
-    c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c
-  );
+  const COLUMNS_SCALED = cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c);
 
   const S = {
     container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box' },
@@ -688,7 +513,6 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
     </div>
   );
 
-  // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <div style={S.container}>
       <div style={S.topbar}>
@@ -730,8 +554,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
             <thead>
               <tr>
                 <th style={S.thCheck}>
-                  <input type="checkbox"
-                    checked={filtered.length>0 && selected.length===filtered.length}
+                  <input type="checkbox" checked={filtered.length>0 && selected.length===filtered.length}
                     onChange={()=>setSelectedMap(prev=>({...prev,[tab]: prev[tab].length===filtered.length?[]:filtered.map(i=>i.id)}))} />
                 </th>
                 {COLUMNS_SCALED.map(c => (
@@ -771,7 +594,6 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         </div>
       </div>
 
-      {/* New / Edit Modal */}
       {showForm && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -793,7 +615,6 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
         </div>
       )}
 
-      {/* Detail Modal */}
       {showDetailModal && detailItem && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -811,10 +632,7 @@ function VendorMaster({ activeSubTab, onSubTabChange }) {
                 ) : <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowDetailModal(false)}>Close</button>}
               </div>
             </div>
-            {renderFormFields(
-              detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])),
-              setDetailForm, detailEditMode
-            )}
+            {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])), setDetailForm, detailEditMode)}
             {!detailEditMode && (
               <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0' }}>
                 <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
