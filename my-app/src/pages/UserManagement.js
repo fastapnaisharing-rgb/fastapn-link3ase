@@ -490,7 +490,7 @@ useEffect(() => {
       setSelected(prev => prev.filter(s => s !== item.id));
 
       fetchBins();
-
+      fetchBinCount();
       alert('✅ Restore สำเร็จแล้วครับ');
 
     } catch (err) {
@@ -577,6 +577,7 @@ useEffect(() => {
       setConfirmDelete(null);
       setSelected(prev => prev.filter(s => s !== item.id));
       fetchBins();
+      fetchBinCount();
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setLoading(false);
   };
@@ -608,6 +609,7 @@ useEffect(() => {
       setConfirmBulkDelete(false);
       setProgress('');
       fetchBins();
+      fetchBinCount();
       alert(`✅ ลบถาวรสำเร็จ ${targets.length} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setLoading(false);
