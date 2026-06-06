@@ -268,17 +268,33 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
 
+ 
   const buList = useMemo(() => {
     if (tab !== 'account') return [];
-    return [...new Set(items.map(i => i['bu']).filter(v => v && v !== 'ALL' && v !== 'REV'))].sort();
+
+    return [...new Set(
+      items
+        .map(i => (i['bu'] || '').trim().toUpperCase())
+        .filter(v => v && v !== 'ALL')
+    )].sort();
+
   }, [items, tab]);
+
+
 
   const filterCounts = useMemo(() => {
     if (tab !== 'account') return {};
+
     const counts = {};
-    items.forEach(i => { const bu = i['bu'] || 'ALL'; counts[bu] = (counts[bu] || 0) + 1; });
+
+    items.forEach(i => {
+      const bu = (i['bu'] || 'ALL').trim().toUpperCase();
+      counts[bu] = (counts[bu] || 0) + 1;
+    });
+
     return counts;
   }, [items, tab]);
+
 
   const getFileTimestamp = () => { const now = new Date(); return `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`; };
   const formatLastUpdate = (val) => { if (!val || val === '-') return '-'; try { const d = new Date(val); if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch {} return val; };
@@ -320,7 +336,27 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     reader.readAsBinaryString(file); e.target.value = '';
   };
 
-  const buildRowData = (row, fields) => { const data = {}; fields.forEach(k => { if (k === 'updated_by') data[k] = userName || currentUser?.email || ''; else if (k === 'updated_at') data[k] = new Date().toISOString(); else data[k] = String(row[k] ?? ''); }); return data; };
+ 
+    const buildRowData = (row, fields) => {
+      const data = {};
+
+      fields.forEach(k => {
+        if (k === 'updated_by') {
+          data[k] = userName || currentUser?.email || '';
+        } 
+        else if (k === 'updated_at') {
+          data[k] = new Date().toISOString();
+        }
+        else if (k === 'bu') {
+          data[k] = (row[k] || '').trim().toUpperCase(); // ✅ FIX
+        }
+        else {
+          data[k] = String(row[k] ?? '');
+        }
+      });
+
+      return data;
+    };
 
   const handleConfirmImport = async () => {
     setImporting(true);
@@ -517,15 +553,34 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
 
-  const filtered = useMemo(() => {
-    let result = items;
-    if (tab === 'account') {
-      if (accountFilter === 'REV') result = result.filter(isRevAccount);
-      else if (accountFilter === 'ALL') result = result.filter(i => i['bu'] === 'ALL');
-      else result = result.filter(i => i['bu'] === accountFilter);
+
+const filtered = useMemo(() => {
+  let result = items;
+
+  if (tab === 'account') {
+    if (accountFilter !== 'ALL') {
+      result = result.filter(i =>
+        (i['bu'] || '').trim().toUpperCase() === accountFilter
+      );
     }
-    return result.filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase()))).sort((a, b) => { const ca = a[sort.field] || '', cb = b[sort.field] || ''; return sort.dir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); });
-  }, [items, search, sort, tab, accountFilter, cfg.fields]);
+  }
+
+  return result
+    .filter(i =>
+      cfg.fields.some(f =>
+        String(i[f] || '').toLowerCase().includes(search.toLowerCase())
+      )
+    )
+    .sort((a, b) => {
+      const ca = a[sort.field] || '';
+      const cb = b[sort.field] || '';
+      return sort.dir === 'asc'
+        ? ca.localeCompare(cb)
+        : cb.localeCompare(ca);
+    });
+
+}, [items, search, sort, tab, accountFilter, cfg.fields]);
+
 
   const effectivePageSize = pageSize === 'ทั้งหมด' || pageSize >= filtered.length ? filtered.length || 1 : pageSize;
   const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
@@ -583,7 +638,11 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   );
 
   const renderInfoText = () => { if (isMobile) return `${filtered.length} รายการ`; const start = (page - 1) * effectivePageSize + 1; const end = Math.min(page * effectivePageSize, filtered.length); return `แสดง ${start}-${end} จาก ${filtered.length} รายการ${search ? ` | ค้นหา "${search}"` : ''}${selected.length > 0 ? ` | เลือกอยู่ ${selected.length} รายการ` : ''}`; };
-  const filterTabs = tab === 'account' ? ['ALL', 'REV', ...buList] : [];
+  
+  const filterTabs = tab === 'account'
+    ? ['ALL', ...buList]
+    : [];
+
 
   return (
     <div style={S.container}>
