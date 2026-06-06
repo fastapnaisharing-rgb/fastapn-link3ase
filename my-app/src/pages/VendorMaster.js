@@ -271,7 +271,8 @@ const TAB_CONFIG = {
 function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [tab, setTab] = useState(activeSubTab || 'apcode');
   const { currentUser, userName } = useAuth();
-  const { isAdmin } = useUserRole();
+  const { isAdmin, isEditor } = useUserRole();
+  const canEdit = isAdmin || isEditor;
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -365,7 +366,10 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const seenKeys = new Set();
     return rawRows.map(row => {
       const normalizedRow = { ...row };
-      if (tab === 'category') { normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']); normalizedRow['No.'] = normalizeNo(row['No.']); }
+      // normalize TAX ID (13 digit) and No. (5 digit) for all tabs that have these fields
+      if ('TAX ID' in normalizedRow)  normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']);
+      if ('Tax ID' in normalizedRow)  normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
+      if ('No.' in normalizedRow)     normalizedRow['No.']    = normalizeNo(row['No.']);
       const keyVal = String(normalizedRow[keyField] ?? '').trim();
       if (!keyVal) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
       if (seenKeys.has(keyVal)) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
@@ -673,9 +677,9 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
           {isAdmin && selected.length > 0 && <button style={{...S.btn, background:'#c0392b', color:'white', marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
           {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
         </div>
-        {isAdmin && (
+        {canEdit && (
           <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
-            <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile&&' Recycle Bin'}</button>
+            {isAdmin && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile&&' Recycle Bin'}</button>}
             <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
             <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
@@ -787,7 +791,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
             <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
               <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
                 <span style={{ fontSize:'14px', fontWeight:'500' }}>{detailEditMode?`✏️ Edit ${cfg.label}`:`🔍 ${detailItem[cfg.key]||'Detail'}`}</span>
-                {!detailEditMode && isAdmin && <button onClick={()=>setDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
+                {!detailEditMode && canEdit && <button onClick={()=>setDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
               </div>
               <div style={{ display:'flex', gap:'8px' }}>
                 {detailEditMode ? (
