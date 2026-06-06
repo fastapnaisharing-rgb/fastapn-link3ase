@@ -371,7 +371,7 @@ function AccessControlTab({ users, currentUser, userName }) {
   );
 }
 
-// ─── Recycle Bin Tab (with bulk select) ──────────────────────────────────────
+// ─── Recycle Bin Tab ──────────────────────────────────────────────────────────
 function RecycleBinTab({ currentUser, userName }) {
   const [bins, setBins] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -383,6 +383,7 @@ function RecycleBinTab({ currentUser, userName }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState('');
 
   const fetchBins = async () => {
     const { data, error } = await supabase.from('recycle_bin').select('*').order('deleted_at', { ascending: false });
@@ -427,17 +428,31 @@ function RecycleBinTab({ currentUser, userName }) {
     setLoading(false);
   };
 
+  // ✅ Batch Restore — group by table, batch .in() ทีละ 100
   const handleBulkRestore = async () => {
     setLoading(true);
     try {
       const targets = bins.filter(b => selected.includes(b.id));
-      for (const item of targets) {
-        await supabase.from(item.source_table)
-          .update({ deleted: false, deleted_by: null, deleted_at: null })
-          .eq('id', item.source_id);
+      const byTable = {};
+      targets.forEach(item => {
+        if (!byTable[item.source_table]) byTable[item.source_table] = [];
+        byTable[item.source_table].push(item.source_id);
+      });
+      for (const [table, ids] of Object.entries(byTable)) {
+        for (let i = 0; i < ids.length; i += 100) {
+          const { error } = await supabase.from(table)
+            .update({ deleted: false, deleted_by: null, deleted_at: null })
+            .in('id', ids.slice(i, i + 100));
+          if (error) throw error;
+          setProgress(`Restore ${table}: ${Math.min(i + 100, ids.length)} / ${ids.length}`);
+        }
       }
-      await supabase.from('recycle_bin').delete().in('id', selected);
+      const binIds = targets.map(b => b.id);
+      for (let i = 0; i < binIds.length; i += 100) {
+        await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 100));
+      }
       setSelected([]);
+      setProgress('');
       fetchBins();
       alert(`✅ Restore สำเร็จ ${targets.length} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
@@ -456,17 +471,34 @@ function RecycleBinTab({ currentUser, userName }) {
     setLoading(false);
   };
 
+  // ✅ Batch Permanent Delete — group by table, batch .in() ทีละ 100
   const handleBulkDeletePermanent = async () => {
     setLoading(true);
     try {
       const targets = bins.filter(b => selected.includes(b.id));
-      for (const item of targets) {
-        await supabase.from(item.source_table).delete().eq('id', item.source_id);
+      const byTable = {};
+      targets.forEach(item => {
+        if (!byTable[item.source_table]) byTable[item.source_table] = [];
+        byTable[item.source_table].push(item.source_id);
+      });
+      for (const [table, ids] of Object.entries(byTable)) {
+        for (let i = 0; i < ids.length; i += 100) {
+          const { error } = await supabase.from(table).delete().in('id', ids.slice(i, i + 100));
+          if (error) throw error;
+          setProgress(`ลบจาก ${table}: ${Math.min(i + 100, ids.length)} / ${ids.length}`);
+        }
       }
-      await supabase.from('recycle_bin').delete().in('id', selected);
+      const binIds = targets.map(b => b.id);
+      for (let i = 0; i < binIds.length; i += 100) {
+        const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 100));
+        if (error) throw error;
+        setProgress(`ล้าง Recycle Bin: ${Math.min(i + 100, binIds.length)} / ${binIds.length}`);
+      }
       setSelected([]);
       setConfirmBulkDelete(false);
+      setProgress('');
       fetchBins();
+      alert(`✅ ลบถาวรสำเร็จ ${targets.length} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setLoading(false);
   };
@@ -488,18 +520,15 @@ function RecycleBinTab({ currentUser, userName }) {
 
   return (
     <div>
-      {/* Filter bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0' }}>
         <span style={{ fontSize: '12px', color: '#888' }}>{filtered.length} รายการ</span>
-
-        {/* Bulk action buttons */}
         {selected.length > 0 && (
           <>
             <button onClick={handleBulkRestore} disabled={loading}
               style={{ padding: '4px 12px', borderRadius: '6px', border: '0.5px solid #97C459', fontSize: '12px', cursor: 'pointer', background: '#EAF3DE', color: '#27500A', fontWeight: '500' }}>
               ↩ Restore {selected.length} รายการ
             </button>
-            <button onClick={() => setConfirmBulkDelete(true)}
+            <button onClick={() => setConfirmBulkDelete(true)} disabled={loading}
               style={{ padding: '4px 12px', borderRadius: '6px', border: '0.5px solid #f7c1c1', fontSize: '12px', cursor: 'pointer', background: '#FCEBEB', color: '#791F1F', fontWeight: '500' }}>
               🗑️ ลบถาวร {selected.length} รายการ
             </button>
@@ -509,7 +538,7 @@ function RecycleBinTab({ currentUser, userName }) {
             </button>
           </>
         )}
-
+        {progress && <span style={{ fontSize: '11px', color: '#0F6E56', background: '#EAF3DE', padding: '2px 8px', borderRadius: '20px' }}>⏳ {progress}</span>}
         <select value={filterTable} onChange={e => setFilterTable(e.target.value)} style={S.filterSelect}>
           <option value="">Table ทั้งหมด</option>
           {Object.entries(TABLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -530,7 +559,6 @@ function RecycleBinTab({ currentUser, userName }) {
         )}
       </div>
 
-      {/* Table */}
       <div style={{ overflowX: 'auto', borderRadius: '0 0 8px 8px', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '800px' }}>
           <thead>
@@ -568,7 +596,7 @@ function RecycleBinTab({ currentUser, userName }) {
                     <div style={{ display: 'inline-flex', gap: '4px' }}>
                       <button onClick={() => setViewItem(item)} style={S.btn('#f5f5f5','#555','#ddd')}>🔍 ดู</button>
                       <button onClick={() => handleRestore(item)} disabled={loading} style={S.btn('#EAF3DE','#27500A','#97C459')}>↩</button>
-                      <button onClick={() => setConfirmDelete(item)} style={S.btn('#FCEBEB','#791F1F','#f7c1c1')}>🗑️</button>
+                      <button onClick={() => setConfirmDelete(item)} disabled={loading} style={S.btn('#FCEBEB','#791F1F','#f7c1c1')}>🗑️</button>
                     </div>
                   </td>
                 </tr>
@@ -578,7 +606,6 @@ function RecycleBinTab({ currentUser, userName }) {
         </table>
       </div>
 
-      {/* View Modal */}
       {viewItem && (
         <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
           <div style={{ background:'white', borderRadius:'10px', padding:'20px', width:'480px', maxHeight:'80vh', display:'flex', flexDirection:'column' }}>
@@ -602,7 +629,6 @@ function RecycleBinTab({ currentUser, userName }) {
         </div>
       )}
 
-      {/* Confirm single delete */}
       {confirmDelete && (
         <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
           <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
@@ -617,16 +643,18 @@ function RecycleBinTab({ currentUser, userName }) {
         </div>
       )}
 
-      {/* Confirm bulk delete */}
       {confirmBulkDelete && (
         <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
           <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
             <h3 style={{ fontSize:'15px', marginBottom:'12px' }}>🗑️ ลบถาวร {selected.length} รายการ</h3>
             <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>ต้องการลบ <strong>{selected.length} รายการ</strong> ถาวรหรือไม่?</p>
             <div style={{ background:'#FCEBEB', border:'0.5px solid #f7c1c1', borderRadius:'6px', padding:'10px 12px', marginBottom:'16px', fontSize:'12px', color:'#791F1F' }}>⚠️ ไม่สามารถกู้คืนได้ทั้งหมด</div>
+            {progress && <div style={{ fontSize:'11px', color:'#0F6E56', background:'#EAF3DE', padding:'6px 10px', borderRadius:'6px', marginBottom:'12px' }}>⏳ {progress}</div>}
             <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px' }}>
-              <button onClick={() => setConfirmBulkDelete(false)} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>Cancel</button>
-              <button onClick={handleBulkDeletePermanent} disabled={loading} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>ลบถาวรทั้งหมด</button>
+              <button onClick={() => setConfirmBulkDelete(false)} disabled={loading} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>Cancel</button>
+              <button onClick={handleBulkDeletePermanent} disabled={loading} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background: loading ? '#ccc' : '#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>
+                {loading ? 'กำลังลบ...' : 'ลบถาวรทั้งหมด'}
+              </button>
             </div>
           </div>
         </div>
@@ -1005,7 +1033,6 @@ function UserManagement() {
   return (
     <div style={S.container}>
       <div style={S.topbar}>
-        {/* ✅ เปลี่ยนชื่อเป็น System Console */}
         <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>⚙️ System Console</h2>
         {tab === 'users' && <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setShowForm(true); setError(''); }}>+ Add User</button>}
       </div>
