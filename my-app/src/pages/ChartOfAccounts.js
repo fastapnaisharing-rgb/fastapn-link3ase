@@ -242,8 +242,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const { data, error } = await supabase
       .from(tbl)
       .select('*')
-      .is('deleted', false)
-      .is('permanently_deleted', false)
+      .or('deleted.is.null,deleted.eq.false') 
       .range(from, from + batchSize - 1);
       if (error) { console.error('fetchTab error:', error); break; }
       if (isFirst) { setDataMap(prev => ({ ...prev, [t]: data || [] })); isFirst = false; }
@@ -467,7 +466,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         .update({ deleted: false, deleted_by: null, deleted_at: null })
         .eq('id', binItem.source_id);
       if (error) throw error;
-      await supabase.from('recycle_bin').update({ permanently_deleted: true }).eq('id', binItem.id);
+      await supabase.from('recycle_bin').delete().eq('id', binItem.id);  // ✅ delete จริง
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
       const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => SUPABASE_TABLE[c.collection] === binItem.source_table)?.[0];
       if (tabKey) await fetchTab(tabKey);
@@ -475,42 +474,13 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
   };
 
-
   const handlePermanentDelete = async (binItem) => {
-    if (!window.confirm(`ลบถาวร "${binItem.source_key}" ?`)) return;
-
+    if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
     try {
-      console.log('DELETE DEBUG:', binItem); // ✅ ดูค่าจริง
-
-      const { data, error } = await supabase
-        .from(binItem.source_table)
-        .update({
-          permanently_deleted: true
-        })
-        .eq('id', binItem.source_id)
-        .select(); // ✅ สำคัญมาก
-
-      if (error) throw error;
-
-      // ✅ จัดการกรณีหา record ไม่เจอ
-      if (!data || data.length === 0) {
-        console.warn('⚠️ Record ไม่เจอ (อาจถูกลบไปแล้ว)');
-      }
-
-      // ✅ ลบจาก recycle bin ต่อเสมอ
-      await supabase
-        .from('recycle_bin')
-        .delete()
-        .eq('id', binItem.id);
-
-      setRecycleBinItems(prev =>
-        prev.filter(i => i.id !== binItem.id)
-      );
-
-    } catch (err) {
-      console.error(err);
-      alert('❌ ลบถาวรไม่สำเร็จ: ' + err.message);
-    }
+      await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);  // ✅ ลบจริง
+      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+    } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
   };
 
 
