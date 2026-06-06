@@ -374,8 +374,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       // normalize TAX ID (13 digit) and No. (5 digit) for all tabs that have these fields
 
       if ('Tax ID' in normalizedRow) normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
-      if ('No.' in normalizedRow && row['Short Name'] !== 'T36') normalizedRow['No.'] = normalizeNo(row['No.']);
-      if ('Branch' in normalizedRow)   normalizedRow['Branch']    = normalizeNo(row['Branch']);
+      if ('Branch' in normalizedRow && row['Short Name'] !== 'T36') normalizedRow['Branch'] = normalizeNo(row['Branch']);
+      if ('No.' in normalizedRow)   normalizedRow['No.']    = normalizeNo(row['No.']);
     // ✅ CPC 5 digit, Account 8 digit, Sub Acc 6 digit
       if ('CPC_Dr' in normalizedRow)   normalizedRow['CPC_Dr']    = normalizeCpc(row['CPC_Dr']);
       if ('CPC_Cr' in normalizedRow)   normalizedRow['CPC_Cr']    = normalizeCpc(row['CPC_Cr']);
