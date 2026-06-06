@@ -241,17 +241,17 @@ const TAB_CONFIG = {
     columns: [
       { key: 'SM-Code',        label: 'SM-Code',        sortable: true, w: 110 },
       { key: 'Company Name',   label: 'Company Name',   w: 200 },
-      { key: 'Tax ID',         label: 'Tax ID',         w: 120 },
-      { key: 'Branch',         label: 'Branch',         w: 65  },
-      { key: '_debitAccount',  label: 'Debit Account',  w: 150 },
-      { key: '_creditAccount', label: 'Credit Account', w: 150 },
-      { key: 'Short Name',     label: 'AT-Match',       w: 90  },
-      { key: 'Special Rule1',  label: 'Rule1',          w: 60  },
-      { key: 'Special Rule2',  label: 'Rule2',          w: 60  },
-      { key: 'Simple Rule3',   label: 'Rule3',          w: 60  },
-      { key: 'Special Rule4',  label: 'Rule4',          w: 60  },
-      { key: 'Special Rule5',  label: 'Rule5',          w: 60  },
-      { key: 'BU',             label: 'BU', sortable: true, w: 80 },
+      { key: 'Tax ID',         label: 'Tax ID',         w: 120, center: true },
+      { key: 'Branch',         label: 'Branch',         w: 65 , center: true  },
+      { key: '_debitAccount',  label: 'Debit Account',  w: 140 , center: true},
+      { key: '_creditAccount', label: 'Credit Account', w: 140 , center: true },
+      { key: 'Short Name',     label: 'AT-Match',       w: 90 , center: true },
+      { key: 'Special Rule1',  label: 'Rule1',  w: 90, center: true },
+      { key: 'Special Rule2',  label: 'Rule2',  w: 90, center: true },
+      { key: 'Simple Rule3',   label: 'Rule3',  w: 90, center: true },
+      { key: 'Special Rule4',  label: 'Rule4',  w: 90, center: true },
+      { key: 'Special Rule5',  label: 'Rule5',  w: 90, center: true },
+      { key: 'BU',             label: 'BU', sortable: true, w: 60, center: true },
     ],
   },
   category: {
@@ -374,7 +374,10 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       // normalize TAX ID (13 digit) and No. (5 digit) for all tabs that have these fields
 
       if ('Tax ID' in normalizedRow) normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
-      if ('Branch' in normalizedRow && row['Short Name'] !== 'T36') normalizedRow['Branch'] = normalizeNo(row['Branch']);
+      if (row['Short Name'] !== 'T36') {
+        const branch = row['Branch'];
+        normalizedRow['Branch'] = branch ? normalizeNo(branch) : '';
+      }
       if ('No.' in normalizedRow)   normalizedRow['No.']    = normalizeNo(row['No.']);
     // ✅ CPC 5 digit, Account 8 digit, Sub Acc 6 digit
       if ('CPC_Dr' in normalizedRow)   normalizedRow['CPC_Dr']    = normalizeCpc(row['CPC_Dr']);
@@ -818,11 +821,22 @@ const handleBulkDelete = async () => {
             <thead>
               <tr>
                 <th style={S.thCheck}><input type="checkbox" checked={filtered.length>0 && selected.length===filtered.length} onChange={()=>setSelectedMap(prev=>({...prev,[tab]: prev[tab].length===filtered.length?[]:filtered.map(i=>i.id)}))} /></th>
-                {COLUMNS_SCALED.map(c => (
-                  <th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>setSortMap(prev=>({...prev,[tab]:{field:c.key,dir:prev[tab].field===c.key&&prev[tab].dir==='asc'?'desc':'asc'}})):undefined}>
-                    {c.label}{c.sortable?(sort.field===c.key?(sort.dir==='asc'?' ▲':' ▼'):' ↕'):''}
-                  </th>
-                ))}
+                  {COLUMNS_SCALED.map(c => (
+                    <th
+                      key={c.key}
+                      style={{
+                        ...(c.sortable ? S.thSort : S.th),
+                        ...(c.center ? { textAlign: 'center' } : {})
+                      }}
+                      onClick={c.sortable ? () => setSortMap(prev => ({
+                        ...prev,
+                        [tab]: { field: c.key, dir: prev[tab].field === c.key && prev[tab].dir === 'asc' ? 'desc' : 'asc' }
+                      })) : undefined}
+                    >
+                      {c.label}{c.sortable ? (sort.field === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
+                    </th>
+                  ))}
+
                 <th style={S.thAction}>Action</th>
               </tr>
             </thead>
@@ -835,7 +849,15 @@ const handleBulkDelete = async () => {
               {paginated.map(item => (
                 <tr key={item.id} style={{ background: selected.includes(item.id)?'#f0f7ff':'white' }}>
                   <td style={S.tdCenter}><input type="checkbox" checked={selected.includes(item.id)} onChange={()=>setSelectedMap(prev=>({...prev,[tab]:prev[tab].includes(item.id)?prev[tab].filter(s=>s!==item.id):[...prev[tab],item.id]}))} /></td>
-                  {COLUMNS_SCALED.map(c => (<td key={c.key} style={S.td} title={String(item[c.key]||'')}>{renderCell(c, item)}</td>))}
+                  {COLUMNS_SCALED.map(c => (
+                    <td
+                      key={c.key}
+                      style={{ ...S.td, ...(c.center ? { textAlign: 'center' } : {}) }}
+                      title={String(item[c.key] || '')}
+                    >
+                      {renderCell(c, item)}
+                    </td>
+                  ))}
                   <td style={S.tdCenter}>
                     <div style={{ display:'inline-flex', alignItems:'center', gap:'4px' }}>
                       <button onClick={()=>handleOpenDetail(item)} style={S.iconBtn('#1a3a5c')}>🔍</button>
