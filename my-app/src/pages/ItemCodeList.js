@@ -272,21 +272,42 @@ function ItemCodeList() {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = items.filter(i => selected.includes(i.id)).map(item => ({
+      const BATCH = 100; // ✅ เล็กลงเพื่อหลีกเลี่ยง URL length limit ของ Supabase
+      const deletedBy = userName || currentUser?.email || '';
+
+      // ── ใช้ Set สำหรับ lookup O(1) แทน .includes() O(n) ──────────
+      const selectedSet = new Set(selected);
+      const rowsToDelete = items.filter(i => selectedSet.has(i.id));
+
+      // ── 1. Insert recycle_bin เป็น batch 100 ──────────────────────
+      const bins = rowsToDelete.map(item => ({
         source_table: 'itemcode_list',
-        source_id: item.id,
-        source_key: item.code || item.id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: now,
+        source_id:    item.id,
+        source_key:   item.code || item.id,
+        data:         item,
+        deleted_by:   deletedBy,
+        deleted_at:   now,
       }));
-      if (bins.length) await supabase.from('recycle_bin').insert(bins);
-      const { error } = await supabase.from('itemcode_list')
-        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
-        .in('id', selected);
-      if (error) throw error;
+      for (let i = 0; i < bins.length; i += BATCH) {
+        const { error } = await supabase
+          .from('recycle_bin')
+          .insert(bins.slice(i, i + BATCH));
+        if (error) throw error;
+      }
+
+      // ── 2. Soft-delete itemcode_list เป็น batch 100 id ───────────
+      const ids = rowsToDelete.map(i => i.id);
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const { error } = await supabase
+          .from('itemcode_list')
+          .update({ deleted: true, deleted_by: deletedBy, deleted_at: now })
+          .in('id', ids.slice(i, i + BATCH));
+        if (error) throw error;
+      }
+
       setSelected([]);
       fetchData();
+      alert(`✅ ลบสำเร็จ ${rowsToDelete.length} รายการ`);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
