@@ -743,7 +743,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
             </thead>
           </table>
         </div>
-        <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
+        <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
           <table style={{...S.table, width:`${totalW}px`}}>
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
