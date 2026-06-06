@@ -440,9 +440,9 @@ const handleConfirmImport = async () => {
           if (k === 'username') d[k] = cu;
           else if (k === 'last_update') d[k] = ts;
           // ✅ ถ้า T36 → ยึด Tax ID จาก existing (original) ไม่เอาจากไฟล์
-          else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') {
+          else if (k === 'No.' && tab === 'smcode' && row['Short Name'] === 'T36') {
             const existing = items.find(i => i[cfg.key] === row[cfg.key]);
-            d[k] = existing?.['Tax ID'] ?? String(row[k] ?? '');
+            d[k] = existing?.['No.'] ?? String(row[k] ?? '');
           }
           else d[k] = String(row[k] ?? '');
         });
