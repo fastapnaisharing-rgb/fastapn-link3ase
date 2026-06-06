@@ -353,126 +353,144 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    const handleDelete = async (id) => {
+      if (!window.confirm('ต้องการลบรายการนี้?')) return;
 
-    try {
-      const item = items.find(i => i.id === id);
+      try {
+        const item = items.find(i => i.id === id);
+        if (!item) throw new Error('Item not found');
 
-      // ✅ FIX: ต้องมี item เท่านั้น
-      if (!item || !item.id) {
-        throw new Error('Item not found or id missing');
-      }
-
-      console.log('DELETE ITEM:', item);
-
-      await supabase.from('recycle_bin').insert([{
-        source_table: tableName(tab),
-        source_id: item.id,  // ✅ บังคับใช้ UUID
-        source_key: item[cfg.key] || item.id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: new Date().toISOString()
-      }]);
-
-      const { error } = await supabase
-        .from(tableName(tab))
-        .update({
-          deleted: true,
-          deleted_by: userName || currentUser?.email || '',
-          deleted_at: new Date().toISOString()
-        })
-        .eq('id', item.id);
-
-      if (error) throw error;
-
-      await fetchTab(tab);
-
-    } catch (err) {
-      alert('ลบไม่สำเร็จ: ' + err.message);
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-
-    try {
-      const now = new Date().toISOString();
-      const tbl = tableName(tab);
-      const batchSize = 200;
-
-      for (let i = 0; i < selected.length; i += batchSize) {
-        const batch = selected.slice(i, i + batchSize);
-
-        const { error } = await supabase
-          .from(tbl)
-          .update({
-            deleted: true,
+        // ✅ 1. Insert เข้า bin
+        const { error: insertError } = await supabase
+          .from('recycle_bin')
+          .insert([{
+            source_table: tableName(tab),
+            source_id: item.id,
+            source_key: item[cfg.key] || item.id,
+            data: item,
             deleted_by: userName || currentUser?.email || '',
-            deleted_at: now
-          })
-          .in('id', batch);
+            deleted_at: new Date().toISOString()
+          }]);
 
-        // ✅ ✅ ✅ ต้องอยู่ตรงนี้เท่านั้น
-        if (error) {
-          console.error('❌ Batch delete error:', error);
-          throw error;
-        }
+        if (insertError) throw insertError;
+
+        // ✅ 2. DELETE จริง (ไม่ใช่ flag)
+        const { error: deleteError } = await supabase
+          .from(tableName(tab))
+          .delete()
+          .eq('id', item.id);
+
+        if (deleteError) throw deleteError;
+
+        await fetchTab(tab);
+
+      } catch (err) {
+        alert('ลบไม่สำเร็จ: ' + err.message);
       }
-
-      setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-      await fetchTab(tab);
-
-      alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
-
-    } catch (err) {
-      alert('ลบไม่สำเร็จ: ' + err.message);
-    }
-  };
+    };
 
 
+  
+    const handleBulkDelete = async () => {
+      if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
 
-  const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
+      try {
+        const tbl = tableName(tab);
+        const now = new Date().toISOString();
 
-  const handleDetailSave = async () => {
-    try {
-      const { error } = await supabase.from(tableName(tab)).update(buildRowData(detailForm, cfg.fields)).eq('id', detailItem.id);
-      if (error) throw error;
-      setShowDetailModal(false); await fetchTab(tab);
-    } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
-  };
+        const rowsToDelete = items.filter(i => selected.includes(i.id));
 
-  // ✅ Recycle Bin handlers — เหมือน VendorMaster แต่ใช้ SUPABASE_TABLE mapping
-  const handleOpenRecycleBin = async () => {
-    setShowRecycleBin(true);
-    setRecycleBinLoading(true);
-    try {
-      const tables = Object.values(TAB_CONFIG).map(c => SUPABASE_TABLE[c.collection]);
-      const { data, error } = await supabase
-        .from('recycle_bin')
-        .select('*')
-        .in('source_table', tables)
-        .order('deleted_at', { ascending: false });
-      if (error) throw error;
-      setRecycleBinItems(data || []);
-    } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
-    setRecycleBinLoading(false);
-  };
+        // ✅ 1. insert bin ทั้งก้อน
+        const { error: insertError } = await supabase
+          .from('recycle_bin')
+          .insert(
+            rowsToDelete.map(item => ({
+              source_table: tbl,
+              source_id: item.id,
+              source_key: item[cfg.key] || item.id,
+              data: item,
+              deleted_by: userName || currentUser?.email || '',
+              deleted_at: now
+            }))
+          );
 
-  const handleRestore = async (binItem) => {
-    try {
-      const { error } = await supabase
-        .from(binItem.source_table)
-        .update({ deleted: false, deleted_by: null, deleted_at: null })
-        .eq('id', binItem.source_id);
-      if (error) throw error;
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);  // ✅ delete จริง
-      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-      const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => SUPABASE_TABLE[c.collection] === binItem.source_table)?.[0];
-      if (tabKey) await fetchTab(tabKey);
-      alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
-    } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
-  };
+        if (insertError) throw insertError;
+
+        // ✅ 2. delete จริง
+        const { error: deleteError } = await supabase
+          .from(tbl)
+          .delete()
+          .in('id', selected);
+
+        if (deleteError) throw deleteError;
+
+        setSelectedMap(prev => ({ ...prev, [tab]: [] }));
+        await fetchTab(tab);
+
+        alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
+
+      } catch (err) {
+        alert('ลบไม่สำเร็จ: ' + err.message);
+      }
+    };
+
+
+
+
+      const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
+
+      const handleDetailSave = async () => {
+        try {
+          const { error } = await supabase.from(tableName(tab)).update(buildRowData(detailForm, cfg.fields)).eq('id', detailItem.id);
+          if (error) throw error;
+          setShowDetailModal(false); await fetchTab(tab);
+        } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
+      };
+
+      // ✅ Recycle Bin handlers — เหมือน VendorMaster แต่ใช้ SUPABASE_TABLE mapping
+      const handleOpenRecycleBin = async () => {
+        setShowRecycleBin(true);
+        setRecycleBinLoading(true);
+        try {
+          const tables = Object.values(TAB_CONFIG).map(c => SUPABASE_TABLE[c.collection]);
+          const { data, error } = await supabase
+            .from('recycle_bin')
+            .select('*')
+            .in('source_table', tables)
+            .order('deleted_at', { ascending: false });
+          if (error) throw error;
+          setRecycleBinItems(data || []);
+        } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
+        setRecycleBinLoading(false);
+      };
+
+
+    const handleRestore = async (binItem) => {
+      try {
+        // ✅ insert กลับ table เดิม
+        const { error: insertError } = await supabase
+          .from(binItem.source_table)
+          .insert([binItem.data]);
+
+        if (insertError) throw insertError;
+
+        // ✅ ลบออกจาก bin
+        await supabase
+          .from('recycle_bin')
+          .delete()
+          .eq('id', binItem.id);
+
+        setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+
+        await fetchTab(tab);
+
+        alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
+
+      } catch (err) {
+        alert('Restore ไม่สำเร็จ: ' + err.message);
+      }
+    };
+
 
   const handlePermanentDelete = async (binItem) => {
     if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
