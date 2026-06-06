@@ -272,7 +272,7 @@ function ItemCodeList() {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const BATCH = 100; // ✅ เล็กลงเพื่อหลีกเลี่ยง URL length limit ของ Supabase
+      const BATCH = 300; // ✅ เล็กลงเพื่อหลีกเลี่ยง URL length limit ของ Supabase
       const deletedBy = userName || currentUser?.email || '';
 
       // ── ใช้ Set สำหรับ lookup O(1) แทน .includes() O(n) ──────────
