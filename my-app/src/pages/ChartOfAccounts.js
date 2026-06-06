@@ -233,24 +233,38 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const page = pageMap[tab] || 1;
   const tableName = (t) => SUPABASE_TABLE[TAB_CONFIG[t].collection];
 
+
   const fetchTab = useCallback(async (t) => {
     const tbl = SUPABASE_TABLE[TAB_CONFIG[t].collection];
+
     let from = 0;
     const batchSize = 1000;
-    let isFirst = true;
+    let allData = [];
+
     while (true) {
-    const { data, error } = await supabase
-      .from(tbl)
-      .select('*')
-      .or('deleted.is.null,deleted.eq.false') 
-      .range(from, from + batchSize - 1);
-      if (error) { console.error('fetchTab error:', error); break; }
-      if (isFirst) { setDataMap(prev => ({ ...prev, [t]: data || [] })); isFirst = false; }
-      else { setDataMap(prev => ({ ...prev, [t]: [...(prev[t] || []), ...(data || [])] })); }
+      const { data, error } = await supabase
+        .from(tbl)
+        .select('*')
+        .range(from, from + batchSize - 1);
+
+      if (error) {
+        console.error('fetchTab error:', error);
+        break;
+      }
+
+      allData = [...allData, ...(data || [])];
+
       if (!data || data.length < batchSize) break;
       from += batchSize;
     }
+
+    // ✅ overwrite state เท่านั้น (ห้าม append)
+    setDataMap(prev => ({
+      ...prev,
+      [t]: allData
+    }));
   }, []);
+
 
   useEffect(() => { fetchTab('costcenter'); fetchTab('account'); fetchTab('subaccount'); }, []);
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
@@ -378,7 +392,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         const { error: deleteError } = await supabase
           .from(tableName(tab))
           .delete()
-          .eq('id', item.id);
+          .eq(cfg.key, item[cfg.key]);
+
 
         if (deleteError) throw deleteError;
 
@@ -420,7 +435,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         const { error: deleteError } = await supabase
           .from(tbl)
           .delete()
-          .in('id', selected);
+          .in(cfg.key, rowsToDelete.map(i => i[cfg.key]));
+
 
         if (deleteError) throw deleteError;
 
@@ -470,7 +486,14 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         // ✅ insert กลับ table เดิม
         const { error: insertError } = await supabase
           .from(binItem.source_table)
-          .insert([binItem.data]);
+ 
+            const data = { ...binItem.data };
+            delete data.id;
+
+            await supabase
+              .from(binItem.source_table)
+              .insert([data]);
+
 
         if (insertError) throw insertError;
 
