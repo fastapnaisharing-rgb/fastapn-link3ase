@@ -515,14 +515,34 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     };
 
 
-  const handlePermanentDelete = async (binItem) => {
-    if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
-    try {
-      await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);  // ✅ ลบจริง
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
-      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-    } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
-  };
+
+    const handlePermanentDelete = async (binItem) => {
+      if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
+
+      try {
+        // ✅ พยายามลบจาก table จริง (ถ้ายังอยู่)
+        if (binItem.source_id) {
+          await supabase
+            .from(binItem.source_table)
+            .delete()
+            .eq('id', binItem.source_id);
+        }
+
+        // ✅ ลบออกจาก recycle_bin เสมอ
+        await supabase
+          .from('recycle_bin')
+          .delete()
+          .eq('id', binItem.id);
+
+        setRecycleBinItems(prev =>
+          prev.filter(i => i.id !== binItem.id)
+        );
+
+      } catch (err) {
+        alert('ลบถาวรไม่สำเร็จ: ' + err.message);
+      }
+    };
+
 
 
   const filtered = useMemo(() => {

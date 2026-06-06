@@ -468,52 +468,106 @@ useEffect(() => {
 
   const toggleOne = (id) => setSelected(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
 
+
   const handleRestore = async (item) => {
     setLoading(true);
+
     try {
+      const data = { ...item.data };
+      delete data.id;
+
       const { error } = await supabase
         .from(item.source_table)
-        .update({ deleted: false, deleted_by: null, deleted_at: null })
-        .eq('id', item.source_id);
+        .insert([data]);
+
       if (error) throw error;
-      await supabase.from('recycle_bin').delete().eq('id', item.id);
+
+      await supabase
+        .from('recycle_bin')
+        .delete()
+        .eq('id', item.id);
+
       setSelected(prev => prev.filter(s => s !== item.id));
+
       fetchBins();
+
       alert('✅ Restore สำเร็จแล้วครับ');
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+
     setLoading(false);
   };
 
+
   // ✅ Batch Restore — group by table, batch .in() ทีละ 100
+
   const handleBulkRestore = async () => {
     setLoading(true);
+
     try {
+      const batchSize = 200;
+
+      // ✅ เอาของที่เลือก
       const targets = bins.filter(b => selected.includes(b.id));
-      const byTable = {};
+
+      // ✅ group ตาม table
+      const grouped = {};
+
       targets.forEach(item => {
-        if (!byTable[item.source_table]) byTable[item.source_table] = [];
-        byTable[item.source_table].push(item.source_id);
+        if (!grouped[item.source_table]) {
+          grouped[item.source_table] = [];
+        }
+        grouped[item.source_table].push(item);
       });
-      for (const [table, ids] of Object.entries(byTable)) {
-        for (let i = 0; i < ids.length; i += 100) {
-          const { error } = await supabase.from(table)
-            .update({ deleted: false, deleted_by: null, deleted_at: null })
-            .in('id', ids.slice(i, i + 100));
+
+      // ✅ LOOP ทีละ table
+      for (const [table, items] of Object.entries(grouped)) {
+
+        for (let i = 0; i < items.length; i += batchSize) {
+          const chunk = items.slice(i, i + batchSize);
+
+          // ✅ build rows สำหรับ insert
+          const rows = chunk.map(i => {
+            const data = { ...i.data };
+            delete data.id; // ✅ กันชน PK
+            return data;
+          });
+
+          const { error } = await supabase
+            .from(table)
+            .insert(rows);
+
           if (error) throw error;
-          setProgress(`Restore ${table}: ${Math.min(i + 100, ids.length)} / ${ids.length}`);
+
+          setProgress(`Restore ${table}: ${Math.min(i + batchSize, items.length)} / ${items.length}`);
         }
       }
+
+      // ✅ ลบจาก recycle_bin
       const binIds = targets.map(b => b.id);
-      for (let i = 0; i < binIds.length; i += 100) {
-        await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 100));
+
+      for (let i = 0; i < binIds.length; i += batchSize) {
+        await supabase
+          .from('recycle_bin')
+          .delete()
+          .in('id', binIds.slice(i, i + batchSize));
       }
+
       setSelected([]);
       setProgress('');
       fetchBins();
+
       alert(`✅ Restore สำเร็จ ${targets.length} รายการ`);
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+
     setLoading(false);
   };
+
 
   const handleDeletePermanent = async (item) => {
     setLoading(true);
