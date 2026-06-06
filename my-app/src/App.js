@@ -188,23 +188,27 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
 
 
 const getBuildVersion = () => {
-  const buildTime = process.env.REACT_APP_BUILD_TIME;
-  const sha = process.env.VERCEL_GIT_COMMIT_SHA;
+  const ts = Number(process.env.REACT_APP_BUILD_TIME);
+  const commit = process.env.REACT_APP_COMMIT_SHA?.slice(0, 7);
+  const envRaw = process.env.REACT_APP_ENV || process.env.NODE_ENV;
 
-  let version = '';
+  const envMap = {
+    production: 'PROD',
+    preview: 'PREVIEW',
+    development: 'DEV'
+  };
 
-  if (buildTime) {
-    const d = new Date(Number(buildTime));
-    if (!isNaN(d.getTime())) {
-      version = `v${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`;
-    }
+  const env = envMap[envRaw] || envRaw?.toUpperCase();
+
+  const d = new Date(ts);
+
+  if (isNaN(d.getTime())) {
+    return `v-- · ${env}`;
   }
 
-  if (sha) {
-    return `Link3ase · ${version} · #${sha.substring(0, 7)}`;
-  }
+  const dateStr = `${String(d.getFullYear()).slice(2)}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
 
-  return `Link3ase · ${version}`;
+  return `Link3ase · v${dateStr} · ${env}${commit ? ` · ${commit}` : ''}`;
 };
 
 
