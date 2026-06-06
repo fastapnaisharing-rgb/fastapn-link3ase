@@ -224,13 +224,37 @@ function AccessControlTab({ users, currentUser, userName }) {
 
   useEffect(() => { fetchOverrides(); }, []);
 
+
+
   const getEffective = (user, folderKey) => {
     const folder = DOC_FOLDERS.find(f => f.key === folderKey);
-    const baseAccess = user.role === 'Owner' || user.role === 'Admin' ? true : (user.permissions?.[folder?.permKey] ?? false);
-    const override = overrides.find(o => o.user_id === user.id && o.folder_key === folderKey);
-    if (override) return { allowed: override.allowed, hasOverride: override.allowed !== baseAccess };
+
+    // ✅ FIX: Owner / Admin เข้าได้เสมอ (ignore override)
+    if (user.role === 'Owner' || user.role === 'Admin') {
+      return { allowed: true, hasOverride: false };
+    }
+
+    // ✅ permission ปกติ
+    const baseAccess = user.permissions?.[folder?.permKey] ?? false;
+
+    // ✅ หา override
+    const override = overrides.find(
+      o => o.user_id === user.id && o.folder_key === folderKey
+    );
+
+    // ✅ ถ้ามี override ให้ใช้ override
+    if (override) {
+      return {
+        allowed: override.allowed,
+        hasOverride: override.allowed !== baseAccess
+      };
+    }
+
+    // ✅ ถ้าไม่มี override → ใช้ base
     return { allowed: baseAccess, hasOverride: false };
   };
+
+
 
   const getPendingValue = (userId, folderKey) => {
     const key = `${userId}_${folderKey}`;
