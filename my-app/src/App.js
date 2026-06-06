@@ -208,7 +208,7 @@ const getBuildVersion = () => {
 
   const dateStr = `${String(d.getFullYear()).slice(2)}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
 
-  return `v${dateStr} · ${env}${commit ? ` · ${commit}` : ''}`;
+  return `Link3ase · v${dateStr} · ${env}${commit ? ` · ${commit}` : ''}`;
 };
 
 
