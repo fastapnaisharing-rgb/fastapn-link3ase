@@ -414,15 +414,43 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     reader.readAsBinaryString(file); e.target.value = '';
   };
 
-  const handleConfirmImport = async () => {
+const handleConfirmImport = async () => {
     setImporting(true);
     try {
       const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
       const newRows = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
       const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
-      if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const payload = newRows.slice(i,i+500).map(row => { const d = {}; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).insert(payload); if (error) throw new Error(error.message); } }
-      if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i,i+500).map(row => { const d = { id: row._existingId }; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
+
+      const buildPayload = (row) => {
+        const d = {};
+        cfg.fields.forEach(k => {
+          if (k === 'username') d[k] = cu;
+          else if (k === 'last_update') d[k] = ts;
+          // ✅ ถ้า T36 → ยึด Tax ID จาก existing (original) ไม่เอาจากไฟล์
+          else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') {
+            const existing = items.find(i => i[cfg.key] === row[cfg.key]);
+            d[k] = existing?.['Tax ID'] ?? String(row[k] ?? '');
+          }
+          else d[k] = String(row[k] ?? '');
+        });
+        return d;
+      };
+
+      if (newRows.length > 0) {
+        for (let i = 0; i < newRows.length; i += 500) {
+          const payload = newRows.slice(i, i+500).map(buildPayload);
+          const { error } = await supabase.from(cfg.table).insert(payload);
+          if (error) throw new Error(error.message);
+        }
+      }
+      if (updateRows.length > 0) {
+        for (let i = 0; i < updateRows.length; i += 500) {
+          const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) }));
+          const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' });
+          if (error) throw new Error(error.message);
+        }
+      }
       setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
