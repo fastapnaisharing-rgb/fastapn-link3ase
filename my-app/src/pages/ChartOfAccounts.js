@@ -395,17 +395,46 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
 
+
+
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
+
     try {
-      const now = new Date().toISOString(); const tbl = tableName(tab);
-      const bins = items.filter(i => selected.includes(i.id)).map(item => ({ source_table: tbl, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now }));
-      if (bins.length) await supabase.from('recycle_bin').insert(bins);
-      const { error } = await supabase.from(tbl).update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', selected);
-      if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: [] })); await fetchTab(tab);
-    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+      const now = new Date().toISOString();
+      const tbl = tableName(tab);
+      const batchSize = 200;
+
+      for (let i = 0; i < selected.length; i += batchSize) {
+        const batch = selected.slice(i, i + batchSize);
+
+        const { error } = await supabase
+          .from(tbl)
+          .update({
+            deleted: true,
+            deleted_by: userName || currentUser?.email || '',
+            deleted_at: now
+          })
+          .in('id', batch);
+
+        // ✅ ✅ ✅ ต้องอยู่ตรงนี้เท่านั้น
+        if (error) {
+          console.error('❌ Batch delete error:', error);
+          throw error;
+        }
+      }
+
+      setSelectedMap(prev => ({ ...prev, [tab]: [] }));
+      await fetchTab(tab);
+
+      alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
+
+    } catch (err) {
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
   };
+
+
 
   const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
 
