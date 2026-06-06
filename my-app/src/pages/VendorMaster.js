@@ -257,8 +257,8 @@ const TAB_CONFIG = {
     columns: [
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
       { key: 'Supplier Name', label: 'Supplier Name', w: 320 },
+      { key: '_entityType',   label: 'ประเภท',        w: 110 },  
       { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
-      { key: '_entityType',   label: 'ประเภท',        w: 110 },
       { key: 'No.',           label: 'No.',           w: 70  },
       { key: 'BU',            label: 'BU', sortable: true, w: 80 },
       { key: 'TYPE',          label: 'TYPE',          w: 100 },
