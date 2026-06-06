@@ -370,7 +370,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       const normalizedRow = { ...row };
       // normalize TAX ID (13 digit) and No. (5 digit) for all tabs that have these fields
       if ('TAX ID' in normalizedRow)  normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']);
-      if ('Tax ID' in normalizedRow)  normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
+      if ('Tax ID' in normalizedRow && row['Short Name'] !== 'T36') normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
       if ('No.' in normalizedRow)     normalizedRow['No.']    = normalizeNo(row['No.']);
       if ('Branch' in normalizedRow)  normalizedRow['Branch'] = normalizeNo(row['Branch']);
       const keyVal = String(normalizedRow[keyField] ?? '').trim();
