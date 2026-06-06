@@ -239,11 +239,12 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const batchSize = 1000;
     let isFirst = true;
     while (true) {
-      const { data, error } = await supabase
-        .from(tbl)
-        .select('*')
-        .or('deleted.is.null,deleted.eq.false')
-        .range(from, from + batchSize - 1);
+    const { data, error } = await supabase
+      .from(tbl)
+      .select('*')
+      .or('deleted.is.null,deleted.eq.false')
+      .or('permanently_deleted.is.null,permanently_deleted.eq.false')
+      .range(from, from + batchSize - 1);
       if (error) { console.error('fetchTab error:', error); break; }
       if (isFirst) { setDataMap(prev => ({ ...prev, [t]: data || [] })); isFirst = false; }
       else { setDataMap(prev => ({ ...prev, [t]: [...(prev[t] || []), ...(data || [])] })); }
@@ -352,17 +353,47 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
+
   const handleDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
+
     try {
       const item = items.find(i => i.id === id);
-      await supabase.from('recycle_bin').insert([{ source_table: tableName(tab), source_id: id, source_key: item?.[cfg.key] || id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }]);
-      const { error } = await supabase.from(tableName(tab)).update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
+
+      // ✅ FIX: ต้องมี item เท่านั้น
+      if (!item || !item.id) {
+        throw new Error('Item not found or id missing');
+      }
+
+      console.log('DELETE ITEM:', item);
+
+      await supabase.from('recycle_bin').insert([{
+        source_table: tableName(tab),
+        source_id: item.id,  // ✅ บังคับใช้ UUID
+        source_key: item[cfg.key] || item.id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: new Date().toISOString()
+      }]);
+
+      const { error } = await supabase
+        .from(tableName(tab))
+        .update({
+          deleted: true,
+          deleted_by: userName || currentUser?.email || '',
+          deleted_at: new Date().toISOString()
+        })
+        .eq('id', item.id);
+
       if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
+
       await fetchTab(tab);
-    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+
+    } catch (err) {
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
   };
+
 
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
@@ -410,7 +441,7 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         .update({ deleted: false, deleted_by: null, deleted_at: null })
         .eq('id', binItem.source_id);
       if (error) throw error;
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      await supabase.from('recycle_bin').update({ permanently_deleted: true }).eq('id', binItem.id);
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
       const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => SUPABASE_TABLE[c.collection] === binItem.source_table)?.[0];
       if (tabKey) await fetchTab(tabKey);
@@ -418,14 +449,44 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
   };
 
+
   const handlePermanentDelete = async (binItem) => {
-    if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
+    if (!window.confirm(`ลบถาวร "${binItem.source_key}" ?`)) return;
+
     try {
-      await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
-      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-    } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
+      console.log('DELETE DEBUG:', binItem); // ✅ ดูค่าจริง
+
+      const { data, error } = await supabase
+        .from(binItem.source_table)
+        .update({
+          permanently_deleted: true
+        })
+        .eq('id', binItem.source_id)
+        .select(); // ✅ สำคัญมาก
+
+      if (error) throw error;
+
+      // ✅ จัดการกรณีหา record ไม่เจอ
+      if (!data || data.length === 0) {
+        console.warn('⚠️ Record ไม่เจอ (อาจถูกลบไปแล้ว)');
+      }
+
+      // ✅ ลบจาก recycle bin ต่อเสมอ
+      await supabase
+        .from('recycle_bin')
+        .delete()
+        .eq('id', binItem.id);
+
+      setRecycleBinItems(prev =>
+        prev.filter(i => i.id !== binItem.id)
+      );
+
+    } catch (err) {
+      console.error(err);
+      alert('❌ ลบถาวรไม่สำเร็จ: ' + err.message);
+    }
   };
+
 
   const filtered = useMemo(() => {
     let result = items;
