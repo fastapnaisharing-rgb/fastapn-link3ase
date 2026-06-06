@@ -72,6 +72,10 @@ function ExportDropdown({ onExportSelected, onExportAll, selectedCount, isMobile
 // ─── Tax ID helpers ───────────────────────────────────────────────────────────
 const normalizeTaxId = (val) => { let str = String(val ?? '').trim().replace(/[^0-9]/g, ''); if (str.length === 12) str = '0' + str; return str; };
 const normalizeNo = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(5, '0') : ''; };
+const normalizeCpc     = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(5, '0') : ''; };
+const normalizeAccount = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(8, '0') : ''; };
+const normalizeSubAcc  = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(6, '0') : ''; };
+
 const getEntityType = (taxId) => { const str = String(taxId || '').replace(/[^0-9]/g, ''); if (str.length !== 13) return null; if (str[0] === '0') return 'นิติบุคคล'; if (str[0] === '9') return 'องค์กรพิเศษ'; return 'บุคคลธรรมดา'; };
 const entityBadge = (taxId) => {
   const type = getEntityType(taxId);
@@ -369,10 +373,18 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     return rawRows.map(row => {
       const normalizedRow = { ...row };
       // normalize TAX ID (13 digit) and No. (5 digit) for all tabs that have these fields
-      if ('TAX ID' in normalizedRow)  normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']);
-      if ('Tax ID' in normalizedRow && row['Short Name'] !== 'T36') normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
-      if ('No.' in normalizedRow)     normalizedRow['No.']    = normalizeNo(row['No.']);
-      if ('Branch' in normalizedRow)  normalizedRow['Branch'] = normalizeNo(row['Branch']);
+      if ('Tax ID' in normalizedRow) normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
+      if ('No.' in normalizedRow && row['Short Name'] !== 'T36') normalizedRow['No.'] = normalizeNo(row['No.']);
+      if ('Branch' in normalizedRow)   normalizedRow['Branch']    = normalizeNo(row['Branch']);
+    // ✅ CPC 5 digit, Account 8 digit, Sub Acc 6 digit
+      if ('CPC_Dr' in normalizedRow)   normalizedRow['CPC_Dr']    = normalizeCpc(row['CPC_Dr']);
+      if ('CPC_Cr' in normalizedRow)   normalizedRow['CPC_Cr']    = normalizeCpc(row['CPC_Cr']);
+      if ('Account_Dr' in normalizedRow)  normalizedRow['Account_Dr']  = normalizeAccount(row['Account_Dr']);
+      if ('Account_Dr2' in normalizedRow) normalizedRow['Account_Dr2'] = normalizeAccount(row['Account_Dr2']);
+      if ('Sub Acc_Dr' in normalizedRow)  normalizedRow['Sub Acc_Dr']  = normalizeSubAcc(row['Sub Acc_Dr']);
+      if ('Sub Acc_Cr' in normalizedRow)  normalizedRow['Sub Acc_Cr']  = normalizeSubAcc(row['Sub Acc_Cr']);
+      // AP-Code Sub Acc
+      if ('Sub Acc' in normalizedRow && tab !== 'smcode') normalizedRow['Sub Acc'] = normalizeSubAcc(row['Sub Acc'])
       const keyVal = String(normalizedRow[keyField] ?? '').trim();
       if (!keyVal) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
       if (seenKeys.has(keyVal)) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
