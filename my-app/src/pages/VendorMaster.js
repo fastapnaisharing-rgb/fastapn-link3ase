@@ -487,17 +487,59 @@ const handleConfirmImport = async () => {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  const handleBulkDelete = async () => {
-    if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-    try {
-      const now = new Date().toISOString();
-      const bins = items.filter(i => selected.includes(i.id)).map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key]||item.id, data: item, deleted_by: userName||currentUser?.email||'', deleted_at: now }));
-      if (bins.length) await supabase.from('recycle_bin').insert(bins);
-      const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: now }).in('id', selected);
+
+const handleBulkDelete = async () => {
+  if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
+
+  try {
+    const now = new Date().toISOString();
+
+    const rows = items.filter(i => selected.includes(i.id));
+
+    // ✅ 1. insert bin (ทำทีเดียวก่อน)
+    const { error: insertError } = await supabase
+      .from('recycle_bin')
+      .insert(
+        rows.map(item => ({
+          source_table: cfg.table,
+          source_id: item.id,
+          source_key: item[cfg.key] || item.id,
+          data: item,
+          deleted_by: userName || currentUser?.email || '',
+          deleted_at: now
+        }))
+      );
+
+    if (insertError) throw insertError;
+
+    // ✅ 2. delete เป็น batch
+    const batchSize = 300;
+
+    for (let i = 0; i < selected.length; i += batchSize) {
+      const chunk = selected.slice(i, i + batchSize);
+
+      const { error } = await supabase
+        .from(cfg.table)
+        .update({
+          deleted: true,
+          deleted_by: userName || currentUser?.email || '',
+          deleted_at: now
+        })
+        .in('id', chunk);
+
       if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: [] })); await fetchTab(tab);
-    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
-  };
+    }
+
+    setSelectedMap(prev => ({ ...prev, [tab]: [] }));
+    await fetchTab(tab);
+
+    alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
+
+  } catch (err) {
+    alert('ลบไม่สำเร็จ: ' + err.message);
+  }
+};
+
 
   const handleOpenDetail = (item) => {
     setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true);
