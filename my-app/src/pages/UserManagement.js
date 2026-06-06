@@ -396,7 +396,7 @@ function AccessControlTab({ users, currentUser, userName }) {
 }
 
 // ─── Recycle Bin Tab ──────────────────────────────────────────────────────────
-function RecycleBinTab({ currentUser, userName }) {
+function RecycleBinTab({ currentUser, userName, fetchBinCount }) {
   const [bins, setBins] = useState([]);
   const [selected, setSelected] = useState([]);
   const [filterTable, setFilterTable] = useState('');
@@ -414,7 +414,39 @@ function RecycleBinTab({ currentUser, userName }) {
     if (!error) setBins(data || []);
   };
 
-  useEffect(() => { fetchBins(); }, []);
+  
+useEffect(() => {
+  // โหลดครั้งแรก
+  fetchBins();
+  fetchBinCount(); // ✅ sync badge ด้วย
+
+  // ✅ realtime subscribe
+  const channel = supabase
+    .channel('recycle_bin_changes')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'recycle_bin',
+      },
+      () => {
+        // ✅ debounce กันยิงถี่
+        clearTimeout(window._rbTimer);
+        window._rbTimer = setTimeout(() => {
+          fetchBins();
+          fetchBinCount();
+        }, 300);
+      }
+    )
+    .subscribe();
+
+  // ✅ cleanup (สำคัญมาก)
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []);
+
 
   const deletedByOptions = useMemo(() => [...new Set(bins.map(b => b.deleted_by).filter(Boolean))], [bins]);
 
@@ -1152,7 +1184,7 @@ function UserManagement() {
 
       {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} />}
       {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
-      {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} />}
+      {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
 
       {showForm && (
         <div style={S.overlay}>
