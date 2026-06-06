@@ -172,20 +172,54 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 const TAB_CONFIG = {
   apcode: {
-    label: 'AP-Code', icon: '🏭', table: 'supplier_list', key: 'Supplier Code',
-    fields: ['Supplier Code', 'Name', 'Tax ID', 'Branch', 'Site', 'BU', 'Notice', 'Sub Acc', 'Status', 'username', 'last_update'],
-    combo: ['Site', 'BU', 'Notice', 'Status'],
-    edit: [['Supplier Code','Supplier Code'],['Name','Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Site','Site'],['BU','BU'],['Notice','Notice'],['Sub Acc','Sub Acc'],['Status','Status']],
+    label: 'AP-Code', icon: '🏭', table: 'supplier_list', key: 'Code',
+    fields: [
+      'Code', 'BU Code', 'Supplier Name', 'Supplier Number', 'Supplier Site',
+      'Tax-Type', 'Notice', 'Supplier Ref.', 'Sub Acc',
+      'First Part', 'Mid Part', 'Last Part', 'Invoice No.', 'Digit', 'Due',
+      'Tax ID', 'No.', 'Contact', 'Email', 'Address',
+      'NoticeDescrip', 'RuleDescrip', 'username', 'last_update'
+    ],
+    combo: ['BU Code', 'Supplier Site', 'Tax-Type', 'Notice'],
+    edit: [
+      ['Code',            'Code'],
+      ['BU Code',         'BU Code'],
+      ['Supplier Name',   'Supplier Name'],
+      ['Supplier Number', 'Supplier Number'],
+      ['Supplier Site',   'Supplier Site'],
+      ['Tax-Type',        'Tax-Type'],
+      ['Notice',          'Notice'],
+      ['Supplier Ref.',   'Supplier Ref.'],
+      ['Sub Acc',         'Sub Acc'],
+      ['First Part',      'First Part'],
+      ['Mid Part',        'Mid Part'],
+      ['Last Part',       'Last Part'],
+      ['Invoice No.',     'Invoice No.'],
+      ['Digit',           'Digit'],
+      ['Due',             'Due'],
+      ['Tax ID',          'Tax ID'],
+      ['No.',             'No.'],
+      ['Contact',         'Contact'],
+      ['Email',           'Email'],
+      ['Address',         'Address'],
+      ['NoticeDescrip',   'Notice Description'],
+      ['RuleDescrip',     'Rule Description'],
+    ],
     columns: [
-      { key: 'Supplier Code', label: 'Supplier Code', sortable: true, w: 130 },
-      { key: 'Name',          label: 'Name',           w: 220 },
-      { key: 'Tax ID',        label: 'Tax ID',         w: 130 },
-      { key: 'Branch',        label: 'Branch',         w: 80  },
-      { key: 'Site',          label: 'Site',           w: 140 },
-      { key: 'BU',            label: 'BU', sortable: true, w: 80 },
-      { key: 'Notice',        label: 'Notice',         w: 100 },
-      { key: 'Sub Acc',       label: 'Sub Acc',        w: 90  },
-      { key: 'Status',        label: 'Status',         w: 90  },
+      { key: 'Code',            label: 'Code',          sortable: true, w: 130 },
+      { key: 'BU Code',         label: 'BU',            sortable: true, w: 80  },
+      { key: 'Supplier Name',   label: 'Supplier Name', w: 260 },
+      { key: 'Supplier Number', label: 'Supplier No.',  w: 110 },
+      { key: 'Supplier Site',   label: 'Site',          w: 120 },
+      { key: 'Tax-Type',        label: 'Tax-Type',      w: 80  },
+      { key: 'Notice',          label: 'Notice',        w: 90  },
+      { key: 'Sub Acc',         label: 'Sub Acc',       w: 80  },
+      { key: 'Tax ID',          label: 'Tax ID',        w: 130 },
+      { key: 'No.',             label: 'No.',           w: 60  },
+      { key: 'Due',             label: 'Due',           w: 70  },
+      { key: 'Digit',           label: 'Digit',         w: 70  },
+      { key: 'Contact',         label: 'Contact',       w: 100 },
+      { key: 'Email',           label: 'Email',         w: 160 },
     ],
   },
   smcode: {
@@ -247,7 +281,11 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [dataMap, setDataMap]         = useState({ apcode: [], smcode: [], category: [] });
   const [searchMap, setSearchMap]     = useState({ apcode: '', smcode: '', category: '' });
   const [selectedMap, setSelectedMap] = useState({ apcode: [], smcode: [], category: [] });
-  const [sortMap, setSortMap]         = useState({ apcode: { field: 'Supplier Code', dir: 'asc' }, smcode: { field: 'SM-Code', dir: 'asc' }, category: { field: 'Code', dir: 'asc' } });
+  const [sortMap, setSortMap]         = useState({
+    apcode:   { field: 'Code',     dir: 'asc' },
+    smcode:   { field: 'SM-Code',  dir: 'asc' },
+    category: { field: 'Code',     dir: 'asc' },
+  });
   const [pageSize, setPageSize]       = useState(50);
   const [pageMap, setPageMap]         = useState({ apcode: 1, smcode: 1, category: 1 });
   const [showForm, setShowForm]       = useState(false);
@@ -303,7 +341,6 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         .or('deleted.is.null,deleted.eq.false')
         .range(from, from + batchSize - 1);
       if (error) { console.error('fetchTab error:', error); break; }
-      // ✅ Chunked Loading — render ทันทีทุก chunk ไม่รอทั้งหมด
       if (isFirst) {
         setDataMap(prev => ({ ...prev, [t]: data || [] }));
         isFirst = false;
@@ -352,7 +389,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
   const handleExportAll      = () => exportToExcel(filtered, cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
   const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([cfg.fields.filter(f => !['username','last_update'].includes(f))]);
+    const templateFields = cfg.fields.filter(f => !['username','last_update'].includes(f));
+    const ws = XLSX.utils.aoa_to_sheet([templateFields]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, cfg.label);
     XLSX.writeFile(wb, `${cfg.label.replace(/ /g,'')}_Template.xlsx`);
@@ -482,7 +520,6 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const renderCell = (c, item) => {
     if (c.key === 'last_update')     return formatLastUpdate(item[c.key]);
-    if (c.key === 'Status')          return statusBadge(item[c.key]);
     if (c.key === 'Notice')          return noticeBadge(item[c.key]);
     if (c.key === 'TYPE' || c.key === 'SUB TYPE') return noticeBadge(item[c.key]);
     if (c.key === '_entityType')     return entityBadge(item['TAX ID']);
@@ -497,8 +534,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const minW    = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
   const totalW  = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
   const extraW  = Math.max(0, totalW - minW);
-  const stretchMap = { apcode: 'Name', smcode: 'Company Name', category: 'REMARK' };
-  const stretchKey = stretchMap[tab] || 'Name';
+  const stretchMap = { apcode: 'Supplier Name', smcode: 'Company Name', category: 'REMARK' };
+  const stretchKey = stretchMap[tab] || 'Supplier Name';
   const COLUMNS_SCALED = cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c);
 
   const S = {
@@ -568,6 +605,47 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         </div>
       );
     }
+
+    // ── apcode: 2-column grid layout ──────────────────────────────────────────
+    if (tab === 'apcode') {
+      const sections = [
+        { label: 'ข้อมูลหลัก', keys: ['Code','BU Code','Supplier Name','Supplier Number','Supplier Site','Tax-Type','Notice','Supplier Ref.','Sub Acc'] },
+        { label: 'Coding', keys: ['First Part','Mid Part','Last Part','Invoice No.','Digit','Due'] },
+        { label: 'ข้อมูลติดต่อ', keys: ['Tax ID','No.','Contact','Email','Address'] },
+        { label: 'คำอธิบาย', keys: ['NoticeDescrip','RuleDescrip'] },
+      ];
+      return (
+        <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
+          {sections.map(sec => (
+            <div key={sec.label} style={{ marginBottom:'16px' }}>
+              <div style={{ fontSize:'10px', fontWeight:'600', color:'#888', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:'8px', borderBottom:'0.5px solid #f0f0f0', paddingBottom:'4px' }}>{sec.label}</div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
+                {sec.keys.map(key => {
+                  const label = cfg.edit.find(([k]) => k === key)?.[1] || key;
+                  // Address and descriptions take full width
+                  const fullWidth = ['Address','NoticeDescrip','RuleDescrip'].includes(key);
+                  return (
+                    <div key={key} style={{ marginBottom:'4px', gridColumn: fullWidth ? '1 / -1' : 'auto' }}>
+                      <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
+                      {editMode
+                        ? cfg.combo.includes(key)
+                          ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
+                          : fullWidth
+                            ? <textarea style={{ ...S.input, resize:'vertical', minHeight:'56px', fontFamily:'inherit' }} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
+                            : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
+                        : <div style={{ ...S.inputReadonly, whiteSpace: fullWidth ? 'pre-wrap' : 'nowrap', overflow: 'hidden', textOverflow: fullWidth ? 'unset' : 'ellipsis' }}>{formData[key]||'-'}</div>
+                      }
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── default (category) ────────────────────────────────────────────────────
     return (
       <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
         {cfg.edit.map(([key, label]) => (
@@ -579,7 +657,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
                 : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
             ) : (
               <div style={S.inputReadonly}>
-                {key==='Status' ? statusBadge(formData[key]) : key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}
+                {key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}
               </div>
             )}
           </div>
@@ -685,7 +763,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
       {showForm && (
         <div style={S.overlay}>
-          <div style={S.modal}>
+          <div style={{...S.modal, width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'?'660px':'500px'}}>
             <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
               <h3 style={{ fontSize:'15px', margin:0 }}>{editId?`✏️ Edit ${cfg.label}`:`+ New ${cfg.label}`}</h3>
               <div style={{ display:'flex', gap:'8px' }}>
@@ -706,11 +784,11 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
       {showDetailModal && detailItem && (
         <div style={S.overlay}>
-          <div style={S.modal}>
+          <div style={{...S.modal, width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'?'660px':'500px'}}>
             <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
               <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
                 <span style={{ fontSize:'14px', fontWeight:'500' }}>{detailEditMode?`✏️ Edit ${cfg.label}`:`🔍 ${detailItem[cfg.key]||'Detail'}`}</span>
-                {!detailEditMode && <button onClick={()=>setDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
+                {!detailEditMode && isAdmin && <button onClick={()=>setDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
               </div>
               <div style={{ display:'flex', gap:'8px' }}>
                 {detailEditMode ? (
@@ -734,13 +812,22 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
         </div>
       )}
 
-      <ImportPreviewModal show={showPreview} onClose={()=>{setShowPreview(false); setPreviewRows([]);}} onConfirm={handleConfirmImport} importing={importing} previewRows={previewRows} keyField={cfg.key} allFields={cfg.fields} isMobile={isMobile} isCategory={tab === 'category'} />
+      <ImportPreviewModal
+        show={showPreview}
+        onClose={()=>{setShowPreview(false); setPreviewRows([]);}}
+        onConfirm={handleConfirmImport}
+        importing={importing}
+        previewRows={previewRows}
+        keyField={cfg.key}
+        allFields={cfg.fields}
+        isMobile={isMobile}
+        isCategory={tab === 'category'}
+      />
 
       {/* ─── Recycle Bin Modal ─── */}
       {showRecycleBin && (
         <div style={S.overlay}>
           <div style={{ background:'white', borderRadius:'10px', width: isMobile?'95vw':'860px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
-            {/* Header */}
             <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
               <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
                 <span style={{ fontSize:'15px', fontWeight:'500' }}>🗑️ Recycle Bin</span>
@@ -748,7 +835,6 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
               </div>
               <button onClick={()=>setShowRecycleBin(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'20px', lineHeight:1 }}>×</button>
             </div>
-            {/* Body */}
             <div style={{ overflowY:'auto', flex:1 }}>
               {recycleBinLoading ? (
                 <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>กำลังโหลด...</div>
@@ -800,7 +886,6 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
                 </table>
               )}
             </div>
-            {/* Footer */}
             <div style={{ padding:'10px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
               <button onClick={()=>setShowRecycleBin(false)} style={{ padding:'6px 16px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Close</button>
             </div>
