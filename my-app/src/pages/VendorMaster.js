@@ -218,7 +218,6 @@ const TAB_CONFIG = {
       { key: 'No.',             label: 'No.',           w: 60  },
       { key: 'Due',             label: 'Due',           w: 70  },
       { key: 'Digit',           label: 'Digit',         w: 70  },
-      { key: 'Contact',         label: 'Contact',       w: 100 },
       { key: 'Email',           label: 'Email',         w: 160 },
     ],
   },
