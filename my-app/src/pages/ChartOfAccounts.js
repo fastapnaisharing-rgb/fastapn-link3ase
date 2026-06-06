@@ -242,8 +242,8 @@ function ChartOfAccounts({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const { data, error } = await supabase
       .from(tbl)
       .select('*')
-      .or('deleted.is.null,deleted.eq.false')
-      .or('permanently_deleted.is.null,permanently_deleted.eq.false')
+      .is('deleted', false)
+      .is('permanently_deleted', false)
       .range(from, from + batchSize - 1);
       if (error) { console.error('fetchTab error:', error); break; }
       if (isFirst) { setDataMap(prev => ({ ...prev, [t]: data || [] })); isFirst = false; }
