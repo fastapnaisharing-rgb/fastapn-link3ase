@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 
+
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
   useEffect(() => {
@@ -70,6 +71,10 @@ function ExportDropdown({ onExportSelected, onExportAll, selectedCount, isMobile
 // ─── Tax ID helpers ───────────────────────────────────────────────────────────
 const normalizeTaxId = (val) => { let str = String(val ?? '').trim().replace(/[^0-9]/g, ''); if (str.length === 12) str = '0' + str; return str; };
 const normalizeNo = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(5, '0') : ''; };
+const normalizeCpc     = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(5, '0') : ''; };
+const normalizeAccount = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(8, '0') : ''; };
+const normalizeSubAcc  = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(6, '0') : ''; };
+
 const getEntityType = (taxId) => { const str = String(taxId || '').replace(/[^0-9]/g, ''); if (str.length !== 13) return null; if (str[0] === '0') return 'นิติบุคคล'; if (str[0] === '9') return 'องค์กรพิเศษ'; return 'บุคคลธรรมดา'; };
 const entityBadge = (taxId) => {
   const type = getEntityType(taxId);
@@ -257,8 +262,8 @@ const TAB_CONFIG = {
     columns: [
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
       { key: 'Supplier Name', label: 'Supplier Name', w: 320 },
+      { key: '_entityType',   label: 'ประเภท',        w: 110 },  
       { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
-      { key: '_entityType',   label: 'ประเภท',        w: 110 },
       { key: 'No.',           label: 'No.',           w: 70  },
       { key: 'BU',            label: 'BU', sortable: true, w: 80 },
       { key: 'TYPE',          label: 'TYPE',          w: 100 },
@@ -271,7 +276,7 @@ const TAB_CONFIG = {
 function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [tab, setTab] = useState(activeSubTab || 'apcode');
   const { currentUser, userName } = useAuth();
-  const { isAdmin, isEditor } = useUserRole();
+  const { isAdmin, isEditor, isOwner } = useUserRole();
   const canEdit = isAdmin || isEditor;
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
@@ -367,11 +372,19 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     return rawRows.map(row => {
       const normalizedRow = { ...row };
       // normalize TAX ID (13 digit) and No. (5 digit) for all tabs that have these fields
-      if ('TAX ID' in normalizedRow)  normalizedRow['TAX ID'] = normalizeTaxId(row['TAX ID']);
-      if ('Tax ID' in normalizedRow)  normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
-      if ('No.' in normalizedRow)     normalizedRow['No.']    = normalizeNo(row['No.']);
-      // normalize Branch to 5 digits (smcode)
-      if ('Branch' in normalizedRow)  normalizedRow['Branch'] = normalizeNo(row['Branch']);
+
+      if ('Tax ID' in normalizedRow) normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
+      if ('No.' in normalizedRow && row['Short Name'] !== 'T36') normalizedRow['No.'] = normalizeNo(row['No.']);
+      if ('Branch' in normalizedRow)   normalizedRow['Branch']    = normalizeNo(row['Branch']);
+    // ✅ CPC 5 digit, Account 8 digit, Sub Acc 6 digit
+      if ('CPC_Dr' in normalizedRow)   normalizedRow['CPC_Dr']    = normalizeCpc(row['CPC_Dr']);
+      if ('CPC_Cr' in normalizedRow)   normalizedRow['CPC_Cr']    = normalizeCpc(row['CPC_Cr']);
+      if ('Account_Dr' in normalizedRow)  normalizedRow['Account_Dr']  = normalizeAccount(row['Account_Dr']);
+      if ('Account_Dr2' in normalizedRow) normalizedRow['Account_Dr2'] = normalizeAccount(row['Account_Dr2']);
+      if ('Sub Acc_Dr' in normalizedRow)  normalizedRow['Sub Acc_Dr']  = normalizeSubAcc(row['Sub Acc_Dr']);
+      if ('Sub Acc_Cr' in normalizedRow)  normalizedRow['Sub Acc_Cr']  = normalizeSubAcc(row['Sub Acc_Cr']);
+      // AP-Code Sub Acc
+      if ('Sub Acc' in normalizedRow && tab !== 'smcode') normalizedRow['Sub Acc'] = normalizeSubAcc(row['Sub Acc'])
       const keyVal = String(normalizedRow[keyField] ?? '').trim();
       if (!keyVal) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
       if (seenKeys.has(keyVal)) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
@@ -413,15 +426,43 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     reader.readAsBinaryString(file); e.target.value = '';
   };
 
-  const handleConfirmImport = async () => {
+const handleConfirmImport = async () => {
     setImporting(true);
     try {
       const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
       const newRows = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
       const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
-      if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const payload = newRows.slice(i,i+500).map(row => { const d = {}; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).insert(payload); if (error) throw new Error(error.message); } }
-      if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i,i+500).map(row => { const d = { id: row._existingId }; cfg.fields.forEach(k => { if (k==='username') d[k]=cu; else if (k==='last_update') d[k]=ts; else d[k]=String(row[k]??''); }); return d; }); const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
+
+      const buildPayload = (row) => {
+        const d = {};
+        cfg.fields.forEach(k => {
+          if (k === 'username') d[k] = cu;
+          else if (k === 'last_update') d[k] = ts;
+          // ✅ ถ้า T36 → ยึด Tax ID จาก existing (original) ไม่เอาจากไฟล์
+          else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') {
+            const existing = items.find(i => i[cfg.key] === row[cfg.key]);
+            d[k] = existing?.['Tax ID'] ?? String(row[k] ?? '');
+          }
+          else d[k] = String(row[k] ?? '');
+        });
+        return d;
+      };
+
+      if (newRows.length > 0) {
+        for (let i = 0; i < newRows.length; i += 500) {
+          const payload = newRows.slice(i, i+500).map(buildPayload);
+          const { error } = await supabase.from(cfg.table).insert(payload);
+          if (error) throw new Error(error.message);
+        }
+      }
+      if (updateRows.length > 0) {
+        for (let i = 0; i < updateRows.length; i += 500) {
+          const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) }));
+          const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' });
+          if (error) throw new Error(error.message);
+        }
+      }
       setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
@@ -450,18 +491,10 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const cu = userName || currentUser?.email || '';
-      const bins = items.filter(i => selected.includes(i.id)).map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key]||item.id, data: item, deleted_by: cu, deleted_at: now }));
-      // ✅ batch insert recycle_bin ทีละ 100 rows ป้องกัน timeout
-      for (let i = 0; i < bins.length; i += 100) {
-        const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 100));
-        if (error) throw error;
-      }
-      // ✅ batch update deleted flag ทีละ 100 rows
-      for (let i = 0; i < selected.length; i += 100) {
-        const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cu, deleted_at: now }).in('id', selected.slice(i, i + 100));
-        if (error) throw error;
-      }
+      const bins = items.filter(i => selected.includes(i.id)).map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key]||item.id, data: item, deleted_by: userName||currentUser?.email||'', deleted_at: now }));
+      if (bins.length) await supabase.from('recycle_bin').insert(bins);
+      const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: now }).in('id', selected);
+      if (error) throw error;
       setSelectedMap(prev => ({ ...prev, [tab]: [] })); await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
@@ -684,12 +717,12 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       <div style={S.topbar}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
           <h2 style={{ fontSize: isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>👥 Vendor Master</h2>
-          {isAdmin && selected.length > 0 && <button style={{...S.btn, background:'#c0392b', color:'white', marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
+          {isOwner && selected.length > 0 && <button style={{...S.btn, background:'#c0392b', color:'white', marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
           {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
         </div>
         {canEdit && (
           <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
-            {isAdmin && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile&&' Recycle Bin'}</button>}
+            {isOwner && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile&&' Recycle Bin'}</button>}
             <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
             <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
@@ -753,7 +786,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
             </thead>
           </table>
         </div>
-        <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
+        <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
           <table style={{...S.table, width:`${totalW}px`}}>
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
