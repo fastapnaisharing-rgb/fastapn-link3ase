@@ -363,18 +363,23 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       }
 
       if (t === 'subaccount') {
-        // Excel ใช้ "Sub Acc" แต่ DB ใช้ "Sub Acc Code" — remap
         if (newRow['Sub Acc'] !== undefined && newRow['Sub Acc Code'] === undefined) {
           newRow['Sub Acc Code'] = String(newRow['Sub Acc'] || '');
           delete newRow['Sub Acc'];
         }
-        // normalize: 6 digits
-        if (newRow['Sub Acc Code'] !== undefined)
-          newRow['Sub Acc Code'] = String(newRow['Sub Acc Code'] || '').replace(/\D/g, '').padStart(6, '0');
-        // normalize No. — 5 digits
-        if (newRow['No.'] !== undefined && String(newRow['No.'] || '').trim() !== '')
-          newRow['No.'] = String(newRow['No.'] || '').replace(/\D/g, '').padStart(5, '0');
-      }
+        // ── แก้ตรงนี้ ──
+        if (newRow['Sub Acc Code'] !== undefined) {
+          const raw = String(newRow['Sub Acc Code'] || '').trim();
+          // ถ้ามีตัวอักษร (เช่น 0550AR) ใช้ค่าเดิม ไม่ pad
+          // ถ้าเป็นตัวเลขล้วน ให้ pad 6 digits
+          newRow['Sub Acc Code'] = /[a-zA-Z]/.test(raw)
+            ? raw
+            : raw.replace(/\D/g, '').padStart(6, '0');
+        }
+  // normalize No. — 5 digits (ยังเหมือนเดิม)
+  if (newRow['No.'] !== undefined && String(newRow['No.'] || '').trim() !== '')
+    newRow['No.'] = String(newRow['No.'] || '').replace(/\D/g, '').padStart(5, '0');
+}
 
       return newRow;
     };
