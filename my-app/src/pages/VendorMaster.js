@@ -96,7 +96,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
     const m = map[s] || { label: s, bg: '#eee', color: '#333' };
     return <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: '500', background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>{m.label}</span>;
   };
-  const displayFields = allFields.filter(f => !['username', 'last_update'].includes(f)).slice(0, 5);
+  const displayFields = allFields.filter(f => !['username', 'last_update', 'SY-Running'].includes(f)).slice(0, 5);
   const BADGE_CONFIG = [['new','➕ New','#EAF3DE','#27500A','#c0dda0'],['update','🔄 Update','#e8f0fb','#1a3a5c','#aac4e8'],['nochange','✅ No Change','#f5f5f5','#666','#ccc'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404','#f5d87a']];
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
@@ -106,7 +106,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
           <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{(previewRows||[]).length} รายการในไฟล์</span>
         </div>
         <div style={{ background: '#f8f9fa', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', color: '#666', marginBottom: '12px' }}>
-          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong>{isCategory && ' · TAX ID และ No. จะถูก normalize อัตโนมัติ'} Username และ Last Update จะถูก Auto ใส่ให้
+          ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong>{isCategory && ' · TAX ID และ No. จะถูก normalize อัตโนมัติ'} SY-Running จะถูก Auto Running, Username และ Last Update จะถูก Auto ใส่ให้
         </div>
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
           {BADGE_CONFIG.map(([key, label, bg, color, border]) => {
@@ -149,7 +149,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                             </div>
                           ))}
                         </div>
-                      ) : row._status === 'new' ? <span style={{ fontSize: '10px', color: '#888' }}>เพิ่มใหม่</span>
+                      ) : row._status === 'new' ? <span style={{ fontSize: '10px', color: '#888' }}>เพิ่มใหม่ (SY-Running: Auto)</span>
                         : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์</span>
                           : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
                     </td>
@@ -174,6 +174,43 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
   );
 }
 
+// ─── SY-Running helpers (pattern P0000001) ────────────────────────────────────
+const computeNextSyRunning = async () => {
+  let allCodes = [];
+  let from = 0;
+  while (true) {
+    const { data } = await supabase.from('ie_code_list').select('"SY-Running"').range(from, from + 999);
+    if (!data || data.length === 0) break;
+    allCodes = [...allCodes, ...data.map(d => d['SY-Running'] || '')];
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  const nums = allCodes
+    .filter(c => /^P\d{7}$/.test(c))
+    .map(c => parseInt(c.replace('P', ''), 10))
+    .sort((a, b) => a - b);
+  if (!nums.length) return 'P0000001';
+  for (let i = 0; i < nums.length - 1; i++) {
+    if (nums[i + 1] - nums[i] > 1) return `P${String(nums[i] + 1).padStart(7, '0')}`;
+  }
+  return `P${String(nums[nums.length - 1] + 1).padStart(7, '0')}`;
+};
+
+const getSyRunningPool = (existingCodes) => {
+  const nums = existingCodes
+    .filter(c => /^P\d{7}$/.test(c))
+    .map(c => parseInt(c.replace('P', ''), 10))
+    .sort((a, b) => a - b);
+  const gaps = [];
+  for (let i = 0; i < nums.length - 1; i++)
+    for (let g = nums[i] + 1; g < nums[i + 1]; g++) gaps.push(g);
+  const max = nums.length > 0 ? nums[nums.length - 1] : 0;
+  let idx = 0;
+  return () => idx < gaps.length
+    ? `P${String(gaps[idx++]).padStart(7, '0')}`
+    : `P${String(max + (idx++ - gaps.length + 1)).padStart(7, '0')}`;
+};
+
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 const TAB_CONFIG = {
   apcode: {
@@ -187,28 +224,14 @@ const TAB_CONFIG = {
     ],
     combo: ['BU Code', 'Supplier Site', 'Tax-Type', 'Notice'],
     edit: [
-      ['Code',            'Code'],
-      ['BU Code',         'BU Code'],
-      ['Supplier Name',   'Supplier Name'],
-      ['Supplier Number', 'Supplier Number'],
-      ['Supplier Site',   'Supplier Site'],
-      ['Tax-Type',        'Tax-Type'],
-      ['Notice',          'Notice'],
-      ['Supplier Ref.',   'Supplier Ref.'],
-      ['Sub Acc',         'Sub Acc'],
-      ['First Part',      'First Part'],
-      ['Mid Part',        'Mid Part'],
-      ['Last Part',       'Last Part'],
-      ['Invoice No.',     'Invoice No.'],
-      ['Digit',           'Digit'],
-      ['Due',             'Due'],
-      ['Tax ID',          'Tax ID'],
-      ['No.',             'No.'],
-      ['Contact',         'Contact'],
-      ['Email',           'Email'],
-      ['Address',         'Address'],
-      ['NoticeDescrip',   'Notice Description'],
-      ['RuleDescrip',     'Rule Description'],
+      ['Code','Code'],['BU Code','BU Code'],['Supplier Name','Supplier Name'],
+      ['Supplier Number','Supplier Number'],['Supplier Site','Supplier Site'],
+      ['Tax-Type','Tax-Type'],['Notice','Notice'],['Supplier Ref.','Supplier Ref.'],
+      ['Sub Acc','Sub Acc'],['First Part','First Part'],['Mid Part','Mid Part'],
+      ['Last Part','Last Part'],['Invoice No.','Invoice No.'],['Digit','Digit'],
+      ['Due','Due'],['Tax ID','Tax ID'],['No.','No.'],['Contact','Contact'],
+      ['Email','Email'],['Address','Address'],['NoticeDescrip','Notice Description'],
+      ['RuleDescrip','Rule Description'],
     ],
     columns: [
       { key: 'Code',            label: 'Code',          sortable: true, w: 130 },
@@ -228,7 +251,7 @@ const TAB_CONFIG = {
   },
   smcode: {
     label: 'SM-Code', icon: '🔖', table: 'sm_code_list', key: 'SM-Code',
-    fields: ['SM-Code', 'Company Name', 'Tax ID', 'Branch', 'Short Name', 'CPC_Dr', 'Account_Dr', 'Sub Acc_Dr', 'Expense Type', 'First Part', 'Mid Part', 'Last Part', 'Special Rule1', 'Special Rule2', 'Simple Rule3', 'Special Rule4', 'Special Rule5', 'Digit', 'CPC_Cr', 'Account_Dr2', 'Sub Acc_Cr', 'BU', 'Ofin Code', 'Simple Brand Code', 'Short Branch', 'Remark', 'Supplier Code', 'username', 'last_update'],
+    fields: ['SM-Code','Company Name','Tax ID','Branch','Short Name','CPC_Dr','Account_Dr','Sub Acc_Dr','Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','CPC_Cr','Account_Dr2','Sub Acc_Cr','BU','Ofin Code','Simple Brand Code','Short Branch','Remark','Supplier Code','username','last_update'],
     combo: ['BU', 'Short Name'],
     edit: [
       ['SM-Code','SM-Code'],['Company Name','Company Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Short Name','AT-Match (Short Name)'],
@@ -242,16 +265,50 @@ const TAB_CONFIG = {
       { key: 'SM-Code',        label: 'SM-Code',        sortable: true, w: 110 },
       { key: 'Company Name',   label: 'Company Name',   w: 200 },
       { key: 'Tax ID',         label: 'Tax ID',         w: 120, center: true },
-      { key: 'Branch',         label: 'Branch',         w: 65 , center: true  },
-      { key: '_debitAccount',  label: 'Debit Account',  w: 150 , center: true},
-      { key: '_creditAccount', label: 'Credit Account', w: 150 , center: true },
-      { key: 'Short Name',     label: 'AT-Match',       w: 100 , center: true },
+      { key: 'Branch',         label: 'Branch',         w: 65,  center: true },
+      { key: '_debitAccount',  label: 'Debit Account',  w: 150, center: true },
+      { key: '_creditAccount', label: 'Credit Account', w: 150, center: true },
+      { key: 'Short Name',     label: 'AT-Match',       w: 100, center: true },
       { key: 'Special Rule1',  label: 'Rule1',  w: 90, center: true },
       { key: 'Special Rule2',  label: 'Rule2',  w: 90, center: true },
       { key: 'Simple Rule3',   label: 'Rule3',  w: 90, center: true },
       { key: 'Special Rule4',  label: 'Rule4',  w: 90, center: true },
       { key: 'Special Rule5',  label: 'Rule5',  w: 90, center: true },
       { key: 'BU',             label: 'BU', sortable: true, w: 60, center: true },
+    ],
+  },
+  iecode: {
+    label: 'IE-Code', icon: '💸', table: 'ie_code_list', key: 'IE-Code',
+    fields: [
+      'SY-Running', 'IE-Code', 'BU Code', 'Supplier Name', 'Supplier Number', 'Supplier Site',
+      'Tax-Type', 'Notice', 'Vendor Index', 'Sub Acc',
+      'First Part', 'Mid Part', 'Last Part', 'Invoice No.', 'Digit', 'Due',
+      'Tax ID', 'No.', 'Contact', 'Email', 'Address',
+      'NoticeDescrip', 'RuleDescrip', 'username', 'last_update'
+    ],
+    combo: ['BU Code', 'Supplier Site', 'Tax-Type', 'Notice'],
+    edit: [
+      ['IE-Code','IE-Code'],['BU Code','BU Code'],['Supplier Name','Supplier Name'],
+      ['Supplier Number','Supplier Number'],['Supplier Site','Supplier Site'],
+      ['Tax-Type','Tax-Type'],['Notice','Notice'],['Vendor Index','Vendor Index'],
+      ['Sub Acc','Sub Acc'],['First Part','First Part'],['Mid Part','Mid Part'],
+      ['Last Part','Last Part'],['Invoice No.','Invoice No.'],['Digit','Digit'],
+      ['Due','Due'],['Tax ID','Tax ID'],['No.','No.'],['Contact','Contact'],
+      ['Email','Email'],['Address','Address'],['NoticeDescrip','Notice Description'],
+      ['RuleDescrip','Rule Description'],
+    ],
+    columns: [
+      { key: 'SY-Running',      label: 'SY-Running',    sortable: true, w: 100 },
+      { key: 'IE-Code',         label: 'IE-Code',       sortable: true, w: 120 },
+      { key: 'BU Code',         label: 'BU',            w: 70  },
+      { key: 'Supplier Name',   label: 'Supplier Name', w: 240 },
+      { key: 'Supplier Number', label: 'Supplier No.',  w: 110 },
+      { key: 'Supplier Site',   label: 'Site',          w: 120 },
+      { key: 'Tax-Type',        label: 'Tax-Type',      w: 80  },
+      { key: 'Notice',          label: 'Notice',        w: 90  },
+      { key: 'Tax ID',          label: 'Tax ID',        w: 130 },
+      { key: 'No.',             label: 'No.',           w: 60  },
+      { key: 'Email',           label: 'Email',         w: 160 },
     ],
   },
   category: {
@@ -262,7 +319,7 @@ const TAB_CONFIG = {
     columns: [
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
       { key: 'Supplier Name', label: 'Supplier Name', w: 320 },
-      { key: '_entityType',   label: 'ประเภท',        w: 110 },  
+      { key: '_entityType',   label: 'ประเภท',        w: 110 },
       { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
       { key: 'No.',           label: 'No.',           w: 70  },
       { key: 'BU',            label: 'BU', sortable: true, w: 80 },
@@ -283,16 +340,17 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
   const cfg = TAB_CONFIG[tab];
 
-  const [dataMap, setDataMap]         = useState({ apcode: [], smcode: [], category: [] });
-  const [searchMap, setSearchMap]     = useState({ apcode: '', smcode: '', category: '' });
-  const [selectedMap, setSelectedMap] = useState({ apcode: [], smcode: [], category: [] });
+  const [dataMap, setDataMap]         = useState({ apcode: [], smcode: [], iecode: [], category: [] });
+  const [searchMap, setSearchMap]     = useState({ apcode: '', smcode: '', iecode: '', category: '' });
+  const [selectedMap, setSelectedMap] = useState({ apcode: [], smcode: [], iecode: [], category: [] });
   const [sortMap, setSortMap]         = useState({
-    apcode:   { field: 'Code',     dir: 'asc' },
-    smcode:   { field: 'SM-Code',  dir: 'asc' },
-    category: { field: 'Code',     dir: 'asc' },
+    apcode:   { field: 'Code',       dir: 'asc' },
+    smcode:   { field: 'SM-Code',    dir: 'asc' },
+    iecode:   { field: 'SY-Running', dir: 'asc' },
+    category: { field: 'Code',       dir: 'asc' },
   });
   const [pageSize, setPageSize]       = useState(50);
-  const [pageMap, setPageMap]         = useState({ apcode: 1, smcode: 1, category: 1 });
+  const [pageMap, setPageMap]         = useState({ apcode: 1, smcode: 1, iecode: 1, category: 1 });
   const [showForm, setShowForm]       = useState(false);
   const [editId, setEditId]           = useState(null);
   const [form, setForm]               = useState({});
@@ -309,6 +367,8 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [recycleBinSelected, setRecycleBinSelected] = useState([]);
   const [recycleBinProgress, setRecycleBinProgress] = useState(0);
   const [recycleBinLoading2, setRecycleBinLoading2] = useState(false);
+  // ─── IE-Code SY-Running ───────────────────────────────────────────────────
+  const [nextSyRunning, setNextSyRunning] = useState('');
 
   const fileRef      = useRef(null);
   const theadRef     = useRef(null);
@@ -343,54 +403,48 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const batchSize = 1000;
     let isFirst = true;
     while (true) {
-      const { data, error } = await supabase
-        .from(TAB_CONFIG[t].table)
-        .select('*')
-        .or('deleted.is.null,deleted.eq.false')
-        .range(from, from + batchSize - 1);
+      let query = supabase.from(TAB_CONFIG[t].table).select('*').range(from, from + batchSize - 1);
+      // apcode/smcode/category ใช้ soft-delete, iecode ไม่มี deleted flag
+      if (t !== 'iecode') query = query.or('deleted.is.null,deleted.eq.false');
+      const { data, error } = await query;
       if (error) { console.error('fetchTab error:', error); break; }
-      if (isFirst) {
-        setDataMap(prev => ({ ...prev, [t]: data || [] }));
-        isFirst = false;
-      } else {
-        setDataMap(prev => ({ ...prev, [t]: [...(prev[t] || []), ...(data || [])] }));
-      }
+      if (isFirst) { setDataMap(prev => ({ ...prev, [t]: data || [] })); isFirst = false; }
+      else { setDataMap(prev => ({ ...prev, [t]: [...(prev[t] || []), ...(data || [])] })); }
       if (!data || data.length < batchSize) break;
       from += batchSize;
     }
   }, []);
 
-  useEffect(() => { fetchTab('apcode'); fetchTab('smcode'); fetchTab('category'); }, []);
+  const refreshNextSyRunning = useCallback(async () => {
+    const next = await computeNextSyRunning();
+    setNextSyRunning(next);
+  }, []);
+
+  useEffect(() => { fetchTab('apcode'); fetchTab('smcode'); fetchTab('iecode'); fetchTab('category'); refreshNextSyRunning(); }, []);
   useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
   useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
+  useEffect(() => { if (tab === 'iecode') refreshNextSyRunning(); }, [tab]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
 
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
-    const dataFields = allFields.filter(f => !['username', 'last_update'].includes(f));
+    const dataFields = allFields.filter(f => !['username', 'last_update', 'SY-Running'].includes(f));
     const existingMap = {};
     existingItems.forEach(item => { if (item[keyField]) existingMap[String(item[keyField]).trim()] = item; });
     const seenKeys = new Set();
     return rawRows.map(row => {
       const normalizedRow = { ...row };
-      // normalize TAX ID (13 digit) and No. (5 digit) for all tabs that have these fields
-
       if ('Tax ID' in normalizedRow) normalizedRow['Tax ID'] = normalizeTaxId(row['Tax ID']);
-      if (row['Short Name'] !== 'T36') {
-        const branch = row['Branch'];
-        normalizedRow['Branch'] = branch ? normalizeNo(branch) : '';
-      }
-      if ('No.' in normalizedRow)   normalizedRow['No.']    = normalizeNo(row['No.']);
-    // ✅ CPC 5 digit, Account 8 digit, Sub Acc 6 digit
-      if ('CPC_Dr' in normalizedRow)   normalizedRow['CPC_Dr']    = normalizeCpc(row['CPC_Dr']);
-      if ('CPC_Cr' in normalizedRow)   normalizedRow['CPC_Cr']    = normalizeCpc(row['CPC_Cr']);
-      if ('Account_Dr' in normalizedRow)  normalizedRow['Account_Dr']  = normalizeAccount(row['Account_Dr']);
+      if (row['Short Name'] !== 'T36') { const branch = row['Branch']; normalizedRow['Branch'] = branch ? normalizeNo(branch) : ''; }
+      if ('No.' in normalizedRow) normalizedRow['No.'] = normalizeNo(row['No.']);
+      if ('CPC_Dr' in normalizedRow) normalizedRow['CPC_Dr'] = normalizeCpc(row['CPC_Dr']);
+      if ('CPC_Cr' in normalizedRow) normalizedRow['CPC_Cr'] = normalizeCpc(row['CPC_Cr']);
+      if ('Account_Dr' in normalizedRow) normalizedRow['Account_Dr'] = normalizeAccount(row['Account_Dr']);
       if ('Account_Dr2' in normalizedRow) normalizedRow['Account_Dr2'] = normalizeAccount(row['Account_Dr2']);
-      if ('Sub Acc_Dr' in normalizedRow)  normalizedRow['Sub Acc_Dr']  = normalizeSubAcc(row['Sub Acc_Dr']);
-      if ('Sub Acc_Cr' in normalizedRow)  normalizedRow['Sub Acc_Cr']  = normalizeSubAcc(row['Sub Acc_Cr']);
-      // AP-Code Sub Acc
-      if ('Sub Acc' in normalizedRow && tab !== 'smcode') normalizedRow['Sub Acc'] = normalizeSubAcc(row['Sub Acc'])
+      if ('Sub Acc_Dr' in normalizedRow) normalizedRow['Sub Acc_Dr'] = normalizeSubAcc(row['Sub Acc_Dr']);
+      if ('Sub Acc_Cr' in normalizedRow) normalizedRow['Sub Acc_Cr'] = normalizeSubAcc(row['Sub Acc_Cr']);
+      if ('Sub Acc' in normalizedRow && tab !== 'smcode') normalizedRow['Sub Acc'] = normalizeSubAcc(row['Sub Acc']);
       const keyVal = String(normalizedRow[keyField] ?? '').trim();
       if (!keyVal) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
       if (seenKeys.has(keyVal)) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
@@ -404,16 +458,17 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
   const exportToExcel = (data, fields, sheetName, filePrefix) => {
-    const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; });
-    const ws = XLSX.utils.json_to_sheet(rows, { header: fields });
+    const exportFields = fields.filter(f => !['username','last_update'].includes(f));
+    const rows = data.map(item => { const row = {}; exportFields.forEach(f => { row[f] = item[f] || ''; }); return row; });
+    const ws = XLSX.utils.json_to_sheet(rows, { header: exportFields });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     XLSX.writeFile(wb, `${filePrefix}_${getFileTimestamp()}.xlsx`);
   };
-  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
-  const handleExportAll      = () => exportToExcel(filtered, cfg.fields.filter(f => !['username','last_update'].includes(f)), cfg.label, cfg.label.replace(/ /g,''));
+  const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields, cfg.label, cfg.label.replace(/ /g,''));
+  const handleExportAll      = () => exportToExcel(filtered, cfg.fields, cfg.label, cfg.label.replace(/ /g,''));
   const handleDownloadTemplate = () => {
-    const templateFields = cfg.fields.filter(f => !['username','last_update'].includes(f));
+    const templateFields = cfg.fields.filter(f => !['username','last_update','SY-Running'].includes(f));
     const ws = XLSX.utils.aoa_to_sheet([templateFields]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, cfg.label);
@@ -432,7 +487,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     reader.readAsBinaryString(file); e.target.value = '';
   };
 
-const handleConfirmImport = async () => {
+  const handleConfirmImport = async () => {
     setImporting(true);
     try {
       const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
@@ -440,33 +495,72 @@ const handleConfirmImport = async () => {
       const updateRows = toProcess.filter(r => r._status === 'update');
       const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
 
-      const buildPayload = (row) => {
-        const d = {};
-        cfg.fields.forEach(k => {
-          if (k === 'username') d[k] = cu;
-          else if (k === 'last_update') d[k] = ts;
-          // ✅ ถ้า T36 → ยึด Tax ID จาก existing (original) ไม่เอาจากไฟล์
-          else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') {
-            const existing = items.find(i => i[cfg.key] === row[cfg.key]);
-            d[k] = existing?.['Tax ID'] ?? String(row[k] ?? '');
-          }
-          else d[k] = String(row[k] ?? '');
-        });
-        return d;
-      };
-
-      if (newRows.length > 0) {
-        for (let i = 0; i < newRows.length; i += 500) {
-          const payload = newRows.slice(i, i+500).map(buildPayload);
-          const { error } = await supabase.from(cfg.table).insert(payload);
-          if (error) throw new Error(error.message);
+      if (tab === 'iecode') {
+        // ── IE-Code: SY-Running auto-generate ──────────────────────────────
+        let allCodesData = [];
+        let from = 0;
+        while (true) {
+          const { data } = await supabase.from('ie_code_list').select('"SY-Running"').range(from, from + 999);
+          if (!data || data.length === 0) break;
+          allCodesData = [...allCodesData, ...data.map(d => d['SY-Running'] || '')];
+          if (data.length < 1000) break;
+          from += 1000;
         }
-      }
-      if (updateRows.length > 0) {
-        for (let i = 0; i < updateRows.length; i += 500) {
-          const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) }));
-          const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' });
-          if (error) throw new Error(error.message);
+        const getNextSy = getSyRunningPool(allCodesData.map(c => ({ 'SY-Running': c })).reduce((arr, d) => { arr.push(d['SY-Running']); return arr; }, []));
+
+        const buildIePayload = (row) => {
+          const d = {};
+          cfg.fields.forEach(k => {
+            if (k === 'SY-Running') return; // จะใส่ทีหลัง
+            if (k === 'username') d[k] = cu;
+            else if (k === 'last_update') d[k] = ts;
+            else d[k] = String(row[k] ?? '');
+          });
+          return d;
+        };
+
+        if (newRows.length > 0) {
+          for (let i = 0; i < newRows.length; i += 500) {
+            const payload = newRows.slice(i, i + 500).map(row => ({ 'SY-Running': getNextSy(), ...buildIePayload(row) }));
+            const { error } = await supabase.from('ie_code_list').insert(payload);
+            if (error) throw new Error(error.message);
+          }
+        }
+        if (updateRows.length > 0) {
+          for (let i = 0; i < updateRows.length; i += 500) {
+            const payload = updateRows.slice(i, i + 500).map(row => ({ id: row._existingId, ...buildIePayload(row) }));
+            const { error } = await supabase.from('ie_code_list').upsert(payload, { onConflict: 'id' });
+            if (error) throw new Error(error.message);
+          }
+        }
+        await refreshNextSyRunning();
+      } else {
+        // ── AP-Code / SM-Code / Category ──────────────────────────────────
+        const buildPayload = (row) => {
+          const d = {};
+          cfg.fields.forEach(k => {
+            if (k === 'username') d[k] = cu;
+            else if (k === 'last_update') d[k] = ts;
+            else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') {
+              const existing = items.find(i => i[cfg.key] === row[cfg.key]);
+              d[k] = existing?.['Tax ID'] ?? String(row[k] ?? '');
+            }
+            else d[k] = String(row[k] ?? '');
+          });
+          return d;
+        };
+        if (newRows.length > 0) {
+          for (let i = 0; i < newRows.length; i += 500) {
+            const { error } = await supabase.from(cfg.table).insert(newRows.slice(i, i+500).map(buildPayload));
+            if (error) throw new Error(error.message);
+          }
+        }
+        if (updateRows.length > 0) {
+          for (let i = 0; i < updateRows.length; i += 500) {
+            const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) }));
+            const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' });
+            if (error) throw new Error(error.message);
+          }
         }
       }
       setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
@@ -476,83 +570,74 @@ const handleConfirmImport = async () => {
   };
 
   const handleNewSave = async () => {
-    const data = { ...form, username: userName || currentUser?.email || '', last_update: getTimestamp() };
-    if (editId) { const { error } = await supabase.from(cfg.table).update(data).eq('id', editId); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
-    else { const { error } = await supabase.from(cfg.table).insert([data]); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
-    setShowForm(false); setEditId(null); setForm({}); await fetchTab(tab);
+    const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
+    let data = { ...form, username: cu, last_update: ts };
+    if (tab === 'iecode') {
+      data['SY-Running'] = nextSyRunning;
+    }
+    if (editId) {
+      const { error } = await supabase.from(cfg.table).update(data).eq('id', editId);
+      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from(cfg.table).insert([data]);
+      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
+    }
+    setShowForm(false); setEditId(null); setForm({});
+    await fetchTab(tab);
+    if (tab === 'iecode') await refreshNextSyRunning();
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = items.find(i => i.id === id);
-      await supabase.from('recycle_bin').insert([{ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key]||id, data: item, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }]);
-      const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: userName||currentUser?.email||'', deleted_at: new Date().toISOString() }).eq('id', id);
-      if (error) throw error;
-      setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) })); await fetchTab(tab);
+      await supabase.from('recycle_bin').insert([{ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key]||id, data: item, deleted_by: cu()||'', deleted_at: new Date().toISOString() }]);
+      if (tab === 'iecode') {
+        const { error } = await supabase.from(cfg.table).delete().eq('id', id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cu()||'', deleted_at: new Date().toISOString() }).eq('id', id);
+        if (error) throw error;
+      }
+      setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
+      await fetchTab(tab);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
+  const cu = () => userName || currentUser?.email || '';
 
-const handleBulkDelete = async () => {
-  if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-
-  try {
-    const now = new Date().toISOString();
-
-    const rows = items.filter(i => selected.includes(i.id));
-
-    // ✅ 1. insert bin (ทำทีเดียวก่อน)
-    const { error: insertError } = await supabase
-      .from('recycle_bin')
-      .insert(
-        rows.map(item => ({
-          source_table: cfg.table,
-          source_id: item.id,
-          source_key: item[cfg.key] || item.id,
-          data: item,
-          deleted_by: userName || currentUser?.email || '',
-          deleted_at: now
-        }))
+  const handleBulkDelete = async () => {
+    if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
+    try {
+      const now = new Date().toISOString();
+      const rows = items.filter(i => selected.includes(i.id));
+      const { error: insertError } = await supabase.from('recycle_bin').insert(
+        rows.map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: cu(), deleted_at: now }))
       );
-
-    if (insertError) throw insertError;
-
-    // ✅ 2. delete เป็น batch
-    const batchSize = 300;
-
-    for (let i = 0; i < selected.length; i += batchSize) {
-      const chunk = selected.slice(i, i + batchSize);
-
-      const { error } = await supabase
-        .from(cfg.table)
-        .update({
-          deleted: true,
-          deleted_by: userName || currentUser?.email || '',
-          deleted_at: now
-        })
-        .in('id', chunk);
-
-      if (error) throw error;
-    }
-
-    setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-    await fetchTab(tab);
-
-    alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
-
-  } catch (err) {
-    alert('ลบไม่สำเร็จ: ' + err.message);
-  }
-};
-
+      if (insertError) throw insertError;
+      if (tab === 'iecode') {
+        for (let i = 0; i < selected.length; i += 300) {
+          const { error } = await supabase.from(cfg.table).delete().in('id', selected.slice(i, i + 300));
+          if (error) throw error;
+        }
+      } else {
+        for (let i = 0; i < selected.length; i += 300) {
+          const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cu(), deleted_at: now }).in('id', selected.slice(i, i + 300));
+          if (error) throw error;
+        }
+      }
+      setSelectedMap(prev => ({ ...prev, [tab]: [] }));
+      await fetchTab(tab);
+      alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+  };
 
   const handleOpenDetail = (item) => {
     setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true);
   };
 
   const handleDetailSave = async () => {
-    const data = { ...detailForm, username: userName||currentUser?.email||'', last_update: getTimestamp() };
+    const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
     const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
     if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
     setShowDetailModal(false); await fetchTab(tab);
@@ -560,30 +645,38 @@ const handleBulkDelete = async () => {
 
   const handleOpenRecycleBin = async () => {
     setShowRecycleBin(true);
+    setRecycleBinSelected([]);
     setRecycleBinLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('recycle_bin')
-        .select('*')
-        .eq('source_table', cfg.table)  // ← เฉพาะ table นี้
-        .order('deleted_at', { ascending: false });
-      if (error) throw error;
-      setRecycleBinItems(data || []);
+      let from = 0; const batchSize = 1000; let allData = [];
+      while (true) {
+        const { data, error } = await supabase.from('recycle_bin').select('*').eq('source_table', cfg.table).order('deleted_at', { ascending: false }).range(from, from + batchSize - 1);
+        if (error) throw error;
+        allData = [...allData, ...(data || [])];
+        if (!data || data.length < batchSize) break;
+        from += batchSize;
+      }
+      setRecycleBinItems(allData);
     } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
     setRecycleBinLoading(false);
   };
 
   const handleRestore = async (binItem) => {
     try {
-      const { error } = await supabase
-        .from(binItem.source_table)
-        .update({ deleted: false, deleted_by: null, deleted_at: null })
-        .eq('id', binItem.source_id);
-      if (error) throw error;
+      if (binItem.source_table === 'ie_code_list') {
+        // hard-delete pattern — insert กลับ
+        const data = { ...binItem.data }; delete data.id;
+        const { error } = await supabase.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
+        if (error) throw error;
+      } else {
+        // soft-delete pattern — update deleted=false
+        const { error } = await supabase.from(binItem.source_table).update({ deleted: false, deleted_by: null, deleted_at: null }).eq('id', binItem.source_id);
+        if (error) throw error;
+      }
       await supabase.from('recycle_bin').delete().eq('id', binItem.id);
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
       const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => c.table === binItem.source_table)?.[0];
-      if (tabKey) { await fetchTab(tabKey); }
+      if (tabKey) await fetchTab(tabKey);
       alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
     } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
   };
@@ -598,81 +691,70 @@ const handleBulkDelete = async () => {
   };
 
   const handleBulkRestoreBin = async () => {
-  if (!recycleBinSelected.length) return;
-  setRecycleBinLoading2(true);
-  setRecycleBinProgress(0);
-  try {
-    const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
-    const total = targets.length;
-    let done = 0;
-    const BATCH = 500;
-    const grouped = {};
-    targets.forEach(item => {
-      if (!grouped[item.source_table]) grouped[item.source_table] = [];
-      grouped[item.source_table].push(item);
-    });
-    for (const [table, binItems] of Object.entries(grouped)) {
-      for (let i = 0; i < binItems.length; i += BATCH) {
-        const chunk = binItems.slice(i, i + BATCH);
-        // ✅ update แทน insert เพราะ soft-delete
-        const ids = chunk.map(b => b.source_id);
-        const { error } = await supabase.from(table)
-          .update({ deleted: false, deleted_by: null, deleted_at: null })
-          .in('id', ids);
-        if (error) throw error;
-        done += chunk.length;
-        setRecycleBinProgress(Math.round((done / total) * 100));
+    if (!recycleBinSelected.length) return;
+    setRecycleBinLoading2(true); setRecycleBinProgress(0);
+    try {
+      const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
+      const total = targets.length; let done = 0;
+      const grouped = {};
+      targets.forEach(item => { if (!grouped[item.source_table]) grouped[item.source_table] = []; grouped[item.source_table].push(item); });
+      for (const [table, binItems] of Object.entries(grouped)) {
+        for (let i = 0; i < binItems.length; i += 500) {
+          const chunk = binItems.slice(i, i + 500);
+          if (table === 'ie_code_list') {
+            // hard-delete pattern
+            const rows = chunk.map(item => { const data = { ...item.data }; delete data.id; return { ...data, id: item.source_id }; });
+            const { error } = await supabase.from(table).insert(rows);
+            if (error) throw error;
+          } else {
+            // soft-delete pattern
+            const ids = chunk.map(b => b.source_id);
+            const { error } = await supabase.from(table).update({ deleted: false, deleted_by: null, deleted_at: null }).in('id', ids);
+            if (error) throw error;
+          }
+          done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
+        }
       }
-    }
-    const binIds = targets.map(b => b.id);
-    for (let i = 0; i < binIds.length; i += 500) {
-      const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
-      if (error) throw error;
-    }
-    setRecycleBinSelected([]);
-    setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
-    await fetchTab(tab);
-    alert(`✅ Restore สำเร็จ ${total} รายการ`);
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-  setRecycleBinLoading2(false);
-  setRecycleBinProgress(0);
-};
+      const binIds = targets.map(b => b.id);
+      for (let i = 0; i < binIds.length; i += 500) {
+        const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+        if (error) throw error;
+      }
+      setRecycleBinSelected([]);
+      setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
+      await fetchTab(tab);
+      alert(`✅ Restore สำเร็จ ${total} รายการ`);
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    setRecycleBinLoading2(false); setRecycleBinProgress(0);
+  };
 
-// ✅ Bulk Permanent Delete
-const handleBulkPermanentDeleteBin = async () => {
-  if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ? ไม่สามารถกู้คืนได้`)) return;
-  setRecycleBinLoading2(true);
-  setRecycleBinProgress(0);
-  try {
-    const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
-    const total = targets.length;
-    let done = 0;
-    const byTable = {};
-    targets.forEach(item => {
-      if (!byTable[item.source_table]) byTable[item.source_table] = [];
-      byTable[item.source_table].push(item.source_id);
-    });
-    for (const [table, ids] of Object.entries(byTable)) {
-      for (let i = 0; i < ids.length; i += 500) {
-        const chunk = ids.slice(i, i + 500);
-        const { error } = await supabase.from(table).delete().in('id', chunk);
-        if (error) throw error;
-        done += chunk.length;
-        setRecycleBinProgress(Math.round((done / total) * 100));
+  const handleBulkPermanentDeleteBin = async () => {
+    if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ? ไม่สามารถกู้คืนได้`)) return;
+    setRecycleBinLoading2(true); setRecycleBinProgress(0);
+    try {
+      const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
+      const total = targets.length; let done = 0;
+      const byTable = {};
+      targets.forEach(item => { if (!byTable[item.source_table]) byTable[item.source_table] = []; byTable[item.source_table].push(item.source_id); });
+      for (const [table, ids] of Object.entries(byTable)) {
+        for (let i = 0; i < ids.length; i += 500) {
+          const { error } = await supabase.from(table).delete().in('id', ids.slice(i, i + 500));
+          if (error) throw error;
+          done += ids.slice(i, i + 500).length; setRecycleBinProgress(Math.round((done / total) * 100));
+        }
       }
-    }
-    const binIds = targets.map(b => b.id);
-    for (let i = 0; i < binIds.length; i += 500) {
-      const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
-      if (error) throw error;
-    }
-    setRecycleBinSelected([]);
-    setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
-    alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-  setRecycleBinLoading2(false);
-  setRecycleBinProgress(0);
-};
+      const binIds = targets.map(b => b.id);
+      for (let i = 0; i < binIds.length; i += 500) {
+        const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+        if (error) throw error;
+      }
+      setRecycleBinSelected([]);
+      setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
+      alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    setRecycleBinLoading2(false); setRecycleBinProgress(0);
+  };
+
   const filtered = useMemo(() => items
     .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
     .sort((a, b) => { const ca = a[sort.field]||'', cb = b[sort.field]||''; return sort.dir==='asc' ? ca.localeCompare(cb) : cb.localeCompare(ca); }),
@@ -683,9 +765,8 @@ const handleBulkPermanentDeleteBin = async () => {
   const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
   const paginated  = filtered.slice((page - 1) * effectivePageSize, page * effectivePageSize);
 
-  const statusBadge = (val) => { const map = { Active: ['#EAF3DE','#27500A'], Inactive: ['#FCEBEB','#791F1F'] }; const [bg, color] = map[val]||['#e8e8e8','#555']; return <span style={{ background: bg, color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>{val||'-'}</span>; };
   const noticeBadge = (val) => { const map = { ITC: ['#e8f0fb','#1a3a5c'], 'LUK-APN|ITC': ['#EAF3DE','#27500A'], EFT: ['#f0f7ff','#0F6E56'], CPN: ['#f5f5f5','#555'], MER: ['#FFF3CD','#856404'] }; const [bg, color] = map[val]||['#f5f5f5','#555']; return val ? <span style={{ background: bg, color, padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{val}</span> : '-'; };
-  const ruleBadge = (val) => { if (!val || val === '-' || val === '') return <span style={{ color: '#ccc' }}>-</span>; const colors = ['#e8f0fb','#1a3a5c']; return <span style={{ background: colors[0], color: colors[1], padding:'2px 6px', borderRadius:'20px', fontSize:'10px' }}>{val}</span>; };
+  const ruleBadge = (val) => { if (!val || val === '-' || val === '') return <span style={{ color: '#ccc' }}>-</span>; return <span style={{ background:'#e8f0fb', color:'#1a3a5c', padding:'2px 6px', borderRadius:'20px', fontSize:'10px' }}>{val}</span>; };
 
   const renderCell = (c, item) => {
     if (c.key === 'last_update')     return formatLastUpdate(item[c.key]);
@@ -696,6 +777,7 @@ const handleBulkPermanentDeleteBin = async () => {
     if (c.key === '_creditAccount')  return <span style={{ fontSize:'10px', color:'#555' }}>{[item['CPC_Cr'], item['Account_Dr2'], item['Sub Acc_Cr']].filter(Boolean).join(' · ') || '-'}</span>;
     if (['Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5'].includes(c.key)) return ruleBadge(item[c.key]);
     if (c.key === 'Short Name')      return item[c.key] ? <span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{item[c.key]}</span> : '-';
+    if (c.key === 'SY-Running')      return item[c.key] ? <span style={{ background:'#f0faf6', color:'#0F6E56', padding:'2px 7px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>{item[c.key]}</span> : '-';
     return item[c.key] || '-';
   };
 
@@ -703,7 +785,7 @@ const handleBulkPermanentDeleteBin = async () => {
   const minW    = 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW;
   const totalW  = containerW > 0 ? Math.max(minW, containerW) : minW + 200;
   const extraW  = Math.max(0, totalW - minW);
-  const stretchMap = { apcode: 'Supplier Name', smcode: 'Company Name', category: 'REMARK' };
+  const stretchMap = { apcode: 'Supplier Name', smcode: 'Company Name', iecode: 'Supplier Name', category: 'REMARK' };
   const stretchKey = stretchMap[tab] || 'Supplier Name';
   const COLUMNS_SCALED = cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c);
 
@@ -728,7 +810,7 @@ const handleBulkPermanentDeleteBin = async () => {
     inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
     inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
     overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-    modal: { background:'white', borderRadius:'10px', width: isMobile?'95vw': tab==='smcode'?'700px':'500px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
+    modal: { background:'white', borderRadius:'10px', width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'||tab==='iecode'?'660px':'500px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
     iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
   };
 
@@ -759,12 +841,7 @@ const handleBulkPermanentDeleteBin = async () => {
                   return (
                     <div key={key} style={{ marginBottom:'4px' }}>
                       <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
-                      {editMode
-                        ? cfg.combo.includes(key)
-                          ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
-                          : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
-                        : <div style={S.inputReadonly}>{formData[key]||'-'}</div>
-                      }
+                      {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={S.inputReadonly}>{formData[key]||'-'}</div>}
                     </div>
                   );
                 })}
@@ -775,9 +852,14 @@ const handleBulkPermanentDeleteBin = async () => {
       );
     }
 
-    // ── apcode: 2-column grid layout ──────────────────────────────────────────
-    if (tab === 'apcode') {
-      const sections = [
+    if (tab === 'apcode' || tab === 'iecode') {
+      const isIe = tab === 'iecode';
+      const sections = isIe ? [
+        { label: 'ข้อมูลหลัก', keys: ['IE-Code','BU Code','Supplier Name','Supplier Number','Supplier Site','Tax-Type','Notice','Vendor Index','Sub Acc'] },
+        { label: 'Coding', keys: ['First Part','Mid Part','Last Part','Invoice No.','Digit','Due'] },
+        { label: 'ข้อมูลติดต่อ', keys: ['Tax ID','No.','Contact','Email','Address'] },
+        { label: 'คำอธิบาย', keys: ['NoticeDescrip','RuleDescrip'] },
+      ] : [
         { label: 'ข้อมูลหลัก', keys: ['Code','BU Code','Supplier Name','Supplier Number','Supplier Site','Tax-Type','Notice','Supplier Ref.','Sub Acc'] },
         { label: 'Coding', keys: ['First Part','Mid Part','Last Part','Invoice No.','Digit','Due'] },
         { label: 'ข้อมูลติดต่อ', keys: ['Tax ID','No.','Contact','Email','Address'] },
@@ -791,19 +873,11 @@ const handleBulkPermanentDeleteBin = async () => {
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
                 {sec.keys.map(key => {
                   const label = cfg.edit.find(([k]) => k === key)?.[1] || key;
-                  // Address and descriptions take full width
                   const fullWidth = ['Address','NoticeDescrip','RuleDescrip'].includes(key);
                   return (
                     <div key={key} style={{ marginBottom:'4px', gridColumn: fullWidth ? '1 / -1' : 'auto' }}>
                       <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
-                      {editMode
-                        ? cfg.combo.includes(key)
-                          ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
-                          : fullWidth
-                            ? <textarea style={{ ...S.input, resize:'vertical', minHeight:'56px', fontFamily:'inherit' }} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
-                            : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
-                        : <div style={{ ...S.inputReadonly, whiteSpace: fullWidth ? 'pre-wrap' : 'nowrap', overflow: 'hidden', textOverflow: fullWidth ? 'unset' : 'ellipsis' }}>{formData[key]||'-'}</div>
-                      }
+                      {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : fullWidth ? <textarea style={{ ...S.input, resize:'vertical', minHeight:'56px', fontFamily:'inherit' }} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={{ ...S.inputReadonly, whiteSpace: fullWidth ? 'pre-wrap' : 'nowrap', overflow:'hidden', textOverflow: fullWidth ? 'unset' : 'ellipsis' }}>{formData[key]||'-'}</div>}
                     </div>
                   );
                 })}
@@ -814,21 +888,12 @@ const handleBulkPermanentDeleteBin = async () => {
       );
     }
 
-    // ── default (category) ────────────────────────────────────────────────────
     return (
       <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
         {cfg.edit.map(([key, label]) => (
           <div key={key} style={{ marginBottom:'4px' }}>
             <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
-            {editMode ? (
-              cfg.combo.includes(key)
-                ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
-                : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
-            ) : (
-              <div style={S.inputReadonly}>
-                {key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}
-              </div>
-            )}
+            {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={S.inputReadonly}>{key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}</div>}
           </div>
         ))}
       </div>
@@ -842,6 +907,11 @@ const handleBulkPermanentDeleteBin = async () => {
           <h2 style={{ fontSize: isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>👥 Vendor Master</h2>
           {isOwner && selected.length > 0 && <button style={{...S.btn, background:'#c0392b', color:'white', marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
           {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
+          {tab === 'iecode' && nextSyRunning && !isMobile && (
+            <span style={{ fontSize:'12px', color:'#0F6E56', fontWeight:'500', background:'#f0faf6', padding:'3px 10px', borderRadius:'20px' }}>
+              Next: {nextSyRunning}
+            </span>
+          )}
         </div>
         {canEdit && (
           <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
@@ -865,9 +935,7 @@ const handleBulkPermanentDeleteBin = async () => {
 
       <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px', justifyContent:'space-between' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-          <input placeholder={isMobile?'Search...':`Search ${cfg.label}...`} value={search}
-            onChange={e=>setSearchMap(prev=>({...prev,[tab]:e.target.value}))}
-            style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width: isMobile?'120px':isTablet?'160px':'220px' }} />
+          <input placeholder={isMobile?'Search...':`Search ${cfg.label}...`} value={search} onChange={e=>setSearchMap(prev=>({...prev,[tab]:e.target.value}))} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width: isMobile?'120px':isTablet?'160px':'220px' }} />
           {!isMobile && <span style={{ fontSize:'12px', color:'#888', whiteSpace:'nowrap' }}>
             {filtered.length > 0 ? `แสดง ${(page-1)*effectivePageSize+1}-${Math.min(page*effectivePageSize, filtered.length)} จาก ${filtered.length} รายการ` : '0 รายการ'}
             {selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}
@@ -876,8 +944,7 @@ const handleBulkPermanentDeleteBin = async () => {
         {filtered.length > 0 && (
           <div style={{ display:'flex', alignItems:'center', gap:'4px', flexShrink:0 }}>
             <div style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'12px', color:'#888', marginRight:'4px' }}>
-              <select value={pageSize} onChange={e => { setPageSize(e.target.value === 'ทั้งหมด' ? 'ทั้งหมด' : Number(e.target.value)); setPageMap(prev=>({...prev,[tab]:1})); }}
-                style={{ padding:'3px 6px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', background:'white', cursor:'pointer' }}>
+              <select value={pageSize} onChange={e => { setPageSize(e.target.value === 'ทั้งหมด' ? 'ทั้งหมด' : Number(e.target.value)); setPageMap(prev=>({...prev,[tab]:1})); }} style={{ padding:'3px 6px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', background:'white', cursor:'pointer' }}>
                 {[25,50,100,'ทั้งหมด'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               {!isMobile && <span>รายการ/หน้า</span>}
@@ -899,22 +966,12 @@ const handleBulkPermanentDeleteBin = async () => {
             <thead>
               <tr>
                 <th style={S.thCheck}><input type="checkbox" checked={filtered.length>0 && selected.length===filtered.length} onChange={()=>setSelectedMap(prev=>({...prev,[tab]: prev[tab].length===filtered.length?[]:filtered.map(i=>i.id)}))} /></th>
-                  {COLUMNS_SCALED.map(c => (
-                    <th
-                      key={c.key}
-                      style={{
-                        ...(c.sortable ? S.thSort : S.th),
-                        ...(c.center ? { textAlign: 'center' } : {})
-                      }}
-                      onClick={c.sortable ? () => setSortMap(prev => ({
-                        ...prev,
-                        [tab]: { field: c.key, dir: prev[tab].field === c.key && prev[tab].dir === 'asc' ? 'desc' : 'asc' }
-                      })) : undefined}
-                    >
-                      {c.label}{c.sortable ? (sort.field === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
-                    </th>
-                  ))}
-
+                {COLUMNS_SCALED.map(c => (
+                  <th key={c.key} style={{ ...(c.sortable ? S.thSort : S.th), ...(c.center ? { textAlign:'center' } : {}) }}
+                    onClick={c.sortable ? () => setSortMap(prev => ({ ...prev, [tab]: { field: c.key, dir: prev[tab].field===c.key && prev[tab].dir==='asc' ? 'desc' : 'asc' } })) : undefined}>
+                    {c.label}{c.sortable ? (sort.field===c.key ? (sort.dir==='asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
+                  </th>
+                ))}
                 <th style={S.thAction}>Action</th>
               </tr>
             </thead>
@@ -928,11 +985,7 @@ const handleBulkPermanentDeleteBin = async () => {
                 <tr key={item.id} style={{ background: selected.includes(item.id)?'#f0f7ff':'white' }}>
                   <td style={S.tdCenter}><input type="checkbox" checked={selected.includes(item.id)} onChange={()=>setSelectedMap(prev=>({...prev,[tab]:prev[tab].includes(item.id)?prev[tab].filter(s=>s!==item.id):[...prev[tab],item.id]}))} /></td>
                   {COLUMNS_SCALED.map(c => (
-                    <td
-                      key={c.key}
-                      style={{ ...S.td, ...(c.center ? { textAlign: 'center' } : {}) }}
-                      title={String(item[c.key] || '')}
-                    >
+                    <td key={c.key} style={{ ...S.td, ...(c.center ? { textAlign:'center' } : {}) }} title={String(item[c.key] || '')}>
                       {renderCell(c, item)}
                     </td>
                   ))}
@@ -951,9 +1004,12 @@ const handleBulkPermanentDeleteBin = async () => {
 
       {showForm && (
         <div style={S.overlay}>
-          <div style={{...S.modal, width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'?'660px':'500px'}}>
+          <div style={S.modal}>
             <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-              <h3 style={{ fontSize:'15px', margin:0 }}>{editId?`✏️ Edit ${cfg.label}`:`+ New ${cfg.label}`}</h3>
+              <div>
+                <h3 style={{ fontSize:'15px', margin:0 }}>{editId?`✏️ Edit ${cfg.label}`:`+ New ${cfg.label}`}</h3>
+                {tab === 'iecode' && !editId && <div style={{ fontSize:'11px', color:'#0F6E56', marginTop:'2px' }}>SY-Running: {nextSyRunning} (Auto)</div>}
+              </div>
               <div style={{ display:'flex', gap:'8px' }}>
                 <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowForm(false)}>Cancel</button>
                 <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleNewSave}>Save</button>
@@ -962,7 +1018,7 @@ const handleBulkPermanentDeleteBin = async () => {
             {renderFormFields(form, setForm, true)}
             <div style={{ padding:'0 20px 16px' }}>
               <label style={{ fontSize:'11px', color:'#888' }}>Username</label>
-              <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled />
+              <input style={S.inputDisabled} value={cu()} disabled />
               <label style={{ fontSize:'11px', color:'#888' }}>Last Update</label>
               <input style={S.inputDisabled} value={getTimestamp()} disabled />
             </div>
@@ -972,10 +1028,11 @@ const handleBulkPermanentDeleteBin = async () => {
 
       {showDetailModal && detailItem && (
         <div style={S.overlay}>
-          <div style={{...S.modal, width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'?'660px':'500px'}}>
+          <div style={S.modal}>
             <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
               <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
                 <span style={{ fontSize:'14px', fontWeight:'500' }}>{detailEditMode?`✏️ Edit ${cfg.label}`:`🔍 ${detailItem[cfg.key]||'Detail'}`}</span>
+                {tab === 'iecode' && detailItem['SY-Running'] && <span style={{ fontSize:'11px', background:'#f0faf6', color:'#0F6E56', padding:'2px 8px', borderRadius:'20px' }}>{detailItem['SY-Running']}</span>}
                 {!detailEditMode && canEdit && <button onClick={()=>setDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
               </div>
               <div style={{ display:'flex', gap:'8px' }}>
@@ -1013,121 +1070,89 @@ const handleBulkPermanentDeleteBin = async () => {
       />
 
       {/* ─── Recycle Bin Modal ─── */}
-{showRecycleBin && (
-  <div style={S.overlay}>
-    <div style={{ background:'white', borderRadius:'10px', width: isMobile?'95vw':'860px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
-
-      {/* Header */}
-      <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
-          <span style={{ fontSize:'15px', fontWeight:'500' }}>🗑️ Recycle Bin — {cfg.label}</span>
-          <span style={{ fontSize:'11px', background:'#f5f5f5', color:'#888', padding:'2px 8px', borderRadius:'20px' }}>{recycleBinItems.length} รายการ</span>
-        </div>
-        <button onClick={()=>setShowRecycleBin(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'20px', lineHeight:1 }}>×</button>
-      </div>
-
-      {/* Bulk Toolbar */}
-      {recycleBinSelected.length > 0 && (
-        <div style={{ padding:'8px 16px', background:'#f8f9fa', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', gap:'8px', flexShrink:0, flexWrap:'wrap' }}>
-          <span style={{ fontSize:'12px', color:'#555' }}>เลือก {recycleBinSelected.length} รายการ</span>
-          {!recycleBinLoading2 ? (
-            <>
-              <button onClick={handleBulkRestoreBin}
-                style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #97C459', fontSize:'12px', cursor:'pointer', background:'#EAF3DE', color:'#27500A', fontWeight:'500' }}>
-                ♻️ Restore ทั้งหมด
-              </button>
-              <button onClick={handleBulkPermanentDeleteBin}
-                style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #f7c1c1', fontSize:'12px', cursor:'pointer', background:'#FCEBEB', color:'#791F1F', fontWeight:'500' }}>
-                🗑️ ลบถาวรทั้งหมด
-              </button>
-              <button onClick={() => setRecycleBinSelected([])}
-                style={{ padding:'4px 8px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', cursor:'pointer', background:'#f5f5f5', color:'#555' }}>
-                ✕ ยกเลิก
-              </button>
-            </>
-          ) : (
-            <div style={{ flex:1, maxWidth:'300px' }}>
-              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
-                <span style={{ fontSize:'11px', color:'#555' }}>กำลังดำเนินการ...</span>
-                <span style={{ fontSize:'11px', fontWeight:'500', color:'#1a3a5c' }}>{recycleBinProgress}%</span>
+      {showRecycleBin && (
+        <div style={S.overlay}>
+          <div style={{ background:'white', borderRadius:'10px', width: isMobile?'95vw':'860px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
+            <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                <span style={{ fontSize:'15px', fontWeight:'500' }}>🗑️ Recycle Bin — {cfg.label}</span>
+                <span style={{ fontSize:'11px', background:'#f5f5f5', color:'#888', padding:'2px 8px', borderRadius:'20px' }}>{recycleBinItems.length} รายการ</span>
               </div>
-              <div style={{ background:'#f0f0f0', borderRadius:'20px', height:'6px', overflow:'hidden' }}>
-                <div style={{ height:'100%', borderRadius:'20px', background:'linear-gradient(90deg, #5DCAA5, #1a3a5c)', width:`${recycleBinProgress}%`, transition:'width 0.3s ease' }}/>
-              </div>
+              <button onClick={()=>setShowRecycleBin(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'20px', lineHeight:1 }}>×</button>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Table */}
-      <div style={{ overflowY:'auto', flex:1 }}>
-        {recycleBinLoading ? (
-          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>กำลังโหลด...</div>
-        ) : recycleBinItems.length === 0 ? (
-          <div style={{ padding:'48px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>
-            <div style={{ fontSize:'32px', marginBottom:'8px' }}>🗑️</div>
-            Recycle Bin ว่างเปล่า
+            {recycleBinSelected.length > 0 && (
+              <div style={{ padding:'8px 16px', background:'#f8f9fa', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', gap:'8px', flexShrink:0, flexWrap:'wrap' }}>
+                <span style={{ fontSize:'12px', color:'#555' }}>เลือก {recycleBinSelected.length} รายการ</span>
+                {!recycleBinLoading2 ? (
+                  <>
+                    <button onClick={handleBulkRestoreBin} style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #97C459', fontSize:'12px', cursor:'pointer', background:'#EAF3DE', color:'#27500A', fontWeight:'500' }}>♻️ Restore ทั้งหมด</button>
+                    <button onClick={handleBulkPermanentDeleteBin} style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #f7c1c1', fontSize:'12px', cursor:'pointer', background:'#FCEBEB', color:'#791F1F', fontWeight:'500' }}>🗑️ ลบถาวรทั้งหมด</button>
+                    <button onClick={() => setRecycleBinSelected([])} style={{ padding:'4px 8px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', cursor:'pointer', background:'#f5f5f5', color:'#555' }}>✕ ยกเลิก</button>
+                  </>
+                ) : (
+                  <div style={{ flex:1, maxWidth:'300px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                      <span style={{ fontSize:'11px', color:'#555' }}>กำลังดำเนินการ...</span>
+                      <span style={{ fontSize:'11px', fontWeight:'500', color:'#1a3a5c' }}>{recycleBinProgress}%</span>
+                    </div>
+                    <div style={{ background:'#f0f0f0', borderRadius:'20px', height:'6px', overflow:'hidden' }}>
+                      <div style={{ height:'100%', borderRadius:'20px', background:'linear-gradient(90deg, #5DCAA5, #1a3a5c)', width:`${recycleBinProgress}%`, transition:'width 0.3s ease' }}/>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ overflowY:'auto', flex:1 }}>
+              {recycleBinLoading ? (
+                <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>กำลังโหลด...</div>
+              ) : recycleBinItems.length === 0 ? (
+                <div style={{ padding:'48px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>
+                  <div style={{ fontSize:'32px', marginBottom:'8px' }}>🗑️</div>Recycle Bin ว่างเปล่า
+                </div>
+              ) : (
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', width:'36px' }}>
+                        <input type="checkbox" checked={recycleBinItems.length > 0 && recycleBinSelected.length === recycleBinItems.length} onChange={() => setRecycleBinSelected(recycleBinSelected.length === recycleBinItems.length ? [] : recycleBinItems.map(i => i.id))} />
+                      </th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>Key</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>ลบโดย</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>วันที่ลบ</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', fontWeight:'500', fontSize:'11px', width:'120px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recycleBinItems.map(item => {
+                      const isChecked = recycleBinSelected.includes(item.id);
+                      const deletedAt = item.deleted_at ? new Date(item.deleted_at) : null;
+                      const deletedAtStr = deletedAt ? `${String(deletedAt.getDate()).padStart(2,'0')}/${String(deletedAt.getMonth()+1).padStart(2,'0')}/${deletedAt.getFullYear()} ${String(deletedAt.getHours()).padStart(2,'0')}:${String(deletedAt.getMinutes()).padStart(2,'0')}` : '-';
+                      return (
+                        <tr key={item.id} style={{ background: isChecked?'#f0f7ff':'white', borderBottom:'0.5px solid #f0f0f0' }}>
+                          <td style={{ padding:'8px 12px', textAlign:'center' }}>
+                            <input type="checkbox" checked={isChecked} onChange={() => setRecycleBinSelected(prev => prev.includes(item.id) ? prev.filter(s => s !== item.id) : [...prev, item.id])} />
+                          </td>
+                          <td style={{ padding:'9px 12px', fontWeight:'500', color:'#1a3a5c', fontSize:'12px' }}>{item.source_key}</td>
+                          <td style={{ padding:'9px 12px', color:'#555', fontSize:'11px' }}>{item.deleted_by || '-'}</td>
+                          <td style={{ padding:'9px 12px', color:'#888', fontSize:'11px', whiteSpace:'nowrap' }}>{deletedAtStr}</td>
+                          <td style={{ padding:'9px 12px', textAlign:'center' }}>
+                            <div style={{ display:'inline-flex', gap:'6px' }}>
+                              <button onClick={()=>handleRestore(item)} disabled={recycleBinLoading2} style={{ padding:'4px 12px', borderRadius:'5px', border:'none', background: recycleBinLoading2?'#f5f5f5':'#EAF3DE', color: recycleBinLoading2?'#aaa':'#27500A', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer', fontWeight:'500' }}>♻️</button>
+                              <button onClick={()=>handlePermanentDelete(item)} disabled={recycleBinLoading2} style={{ padding:'4px 10px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background: recycleBinLoading2?'#f5f5f5':'#FCEBEB', color: recycleBinLoading2?'#aaa':'#791F1F', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer' }}>🗑️</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div style={{ padding:'10px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
+              <button onClick={()=>setShowRecycleBin(false)} style={{ padding:'6px 16px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Close</button>
+            </div>
           </div>
-        ) : (
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
-            <thead>
-              <tr>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', width:'36px' }}>
-                  <input type="checkbox"
-                    checked={recycleBinItems.length > 0 && recycleBinSelected.length === recycleBinItems.length}
-                    onChange={() => setRecycleBinSelected(
-                      recycleBinSelected.length === recycleBinItems.length ? [] : recycleBinItems.map(i => i.id)
-                    )}
-                  />
-                </th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>Key</th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>ลบโดย</th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>วันที่ลบ</th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', fontWeight:'500', fontSize:'11px', width:'120px' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recycleBinItems.map(item => {
-                const isChecked = recycleBinSelected.includes(item.id);
-                const deletedAt = item.deleted_at ? new Date(item.deleted_at) : null;
-                const deletedAtStr = deletedAt ? `${String(deletedAt.getDate()).padStart(2,'0')}/${String(deletedAt.getMonth()+1).padStart(2,'0')}/${deletedAt.getFullYear()} ${String(deletedAt.getHours()).padStart(2,'0')}:${String(deletedAt.getMinutes()).padStart(2,'0')}` : '-';
-                return (
-                  <tr key={item.id} style={{ background: isChecked?'#f0f7ff':'white', borderBottom:'0.5px solid #f0f0f0' }}>
-                    <td style={{ padding:'8px 12px', textAlign:'center' }}>
-                      <input type="checkbox" checked={isChecked}
-                        onChange={() => setRecycleBinSelected(prev =>
-                          prev.includes(item.id) ? prev.filter(s => s !== item.id) : [...prev, item.id]
-                        )}
-                      />
-                    </td>
-                    <td style={{ padding:'9px 12px', fontWeight:'500', color:'#1a3a5c', fontSize:'12px' }}>{item.source_key}</td>
-                    <td style={{ padding:'9px 12px', color:'#555', fontSize:'11px' }}>{item.deleted_by || '-'}</td>
-                    <td style={{ padding:'9px 12px', color:'#888', fontSize:'11px', whiteSpace:'nowrap' }}>{deletedAtStr}</td>
-                    <td style={{ padding:'9px 12px', textAlign:'center' }}>
-                      <div style={{ display:'inline-flex', gap:'6px' }}>
-                        <button onClick={()=>handleRestore(item)} disabled={recycleBinLoading2}
-                          style={{ padding:'4px 12px', borderRadius:'5px', border:'none', background: recycleBinLoading2?'#f5f5f5':'#EAF3DE', color: recycleBinLoading2?'#aaa':'#27500A', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer', fontWeight:'500' }}>
-                          ♻️
-                        </button>
-                        <button onClick={()=>handlePermanentDelete(item)} disabled={recycleBinLoading2}
-                          style={{ padding:'4px 10px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background: recycleBinLoading2?'#f5f5f5':'#FCEBEB', color: recycleBinLoading2?'#aaa':'#791F1F', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer' }}>
-                          🗑️
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <div style={{ padding:'10px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
-        <button onClick={()=>setShowRecycleBin(false)} style={{ padding:'6px 16px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Close</button>
-      </div>
-    </div>
-  </div>
+        </div>
       )}
     </div>
   );

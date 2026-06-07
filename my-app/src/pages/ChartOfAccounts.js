@@ -541,16 +541,25 @@
         // ✅ Recycle Bin handlers — เหมือน VendorMaster แต่ใช้ SUPABASE_TABLE mapping
         const handleOpenRecycleBin = async () => {
           setShowRecycleBin(true);
-          setRecycleBinSelected([]);  // ← reset
+          setRecycleBinSelected([]);
           setRecycleBinLoading(true);
           try {
-            const { data, error } = await supabase
-              .from('recycle_bin')
-              .select('*')
-              .eq('source_table', tableName(tab))  // ← filter เฉพาะ tab ปัจจุบัน
-              .order('deleted_at', { ascending: false });
-            if (error) throw error;
-            setRecycleBinItems(data || []);
+            let from = 0;
+            const batchSize = 1000;
+            let allData = [];
+            while (true) {
+              const { data, error } = await supabase
+                .from('recycle_bin')
+                .select('*')
+                .eq('source_table', tableName(tab))
+                .order('deleted_at', { ascending: false })
+                .range(from, from + batchSize - 1);
+              if (error) throw error;
+              allData = [...allData, ...(data || [])];
+              if (!data || data.length < batchSize) break;
+              from += batchSize;
+            }
+            setRecycleBinItems(allData);
           } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
           setRecycleBinLoading(false);
         };
