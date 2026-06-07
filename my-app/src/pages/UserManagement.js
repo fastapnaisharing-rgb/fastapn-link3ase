@@ -410,10 +410,25 @@ function RecycleBinTab({ currentUser, userName, fetchBinCount }) {
   const [progress, setProgress] = useState('');
 
   const fetchBins = async () => {
-    const { data, error } = await supabase.from('recycle_bin').select('*').order('deleted_at', { ascending: false });
-    if (!error) setBins(data || []);
+    let allData = [];
+    let from = 0;
+    const pageSize = 1000;
+    
+    while (true) {
+      const { data, error } = await supabase
+        .from('recycle_bin')
+        .select('*')
+        .order('deleted_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+      
+      if (error || !data || data.length === 0) break;
+      allData = [...allData, ...data];
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    
+    setBins(allData);
   };
-
   
 useEffect(() => {
   // โหลดครั้งแรก
@@ -622,7 +637,7 @@ useEffect(() => {
 
   const formatDate = (val) => {
     if (!val) return '-';
-    const d = new Date(val);
+    const d = new Date(new Date(val).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
     return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   };
 
@@ -847,7 +862,7 @@ function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
 
   const formatDate = (val) => {
     if (!val) return '-';
-    const d = new Date(val);
+    const d = new Date(new Date(val).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
     return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   };
 
