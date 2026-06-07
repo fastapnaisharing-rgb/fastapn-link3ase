@@ -485,8 +485,12 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
           }))
         );
         if (insertError) throw insertError;
-        const { error: deleteError } = await supabase.from(tbl).delete().in('id', rowsToDelete.map(i => i.id));
-        if (deleteError) throw deleteError;
+        const ids = rowsToDelete.map(i => i.id);
+        for (let i = 0; i < ids.length; i += 300) {
+          const { error: deleteError } = await supabase.from(tbl).delete().in('id', ids.slice(i, i + 300));
+          if (deleteError) throw deleteError;
+        }
+        // ลบ if (deleteError) throw deleteError; ออก
         setSelectedMap(prev => ({ ...prev, [tab]: [] }));
         await fetchTab(tab);
         alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
@@ -523,7 +527,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       try {
         const data = { ...binItem.data };
         delete data.id;
-        const { error } = await supabase.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
+        const { error } = await supabase.from(binItem.source_table).insert([data]);
         if (error) throw error;
         await supabase.from('recycle_bin').delete().eq('id', binItem.id);
         setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
@@ -552,7 +556,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         for (const [table, binItems] of Object.entries(grouped)) {
           for (let i = 0; i < binItems.length; i += 500) {
             const chunk = binItems.slice(i, i + 500);
-            const rows = chunk.map(item => { const d = { ...item.data }; delete d.id; return { ...d, id: item.source_id }; });
+            const rows = chunk.map(item => { const d = { ...item.data }; delete d.id; return d; });
             const { error } = await supabase.from(table).insert(rows);
             if (error) throw error;
             done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
