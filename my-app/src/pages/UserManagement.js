@@ -230,27 +230,24 @@
       const folder = DOC_FOLDERS.find(f => f.key === folderKey);
 
       // ✅ FIX: Owner / Admin เข้าได้เสมอ (ignore override)
-      if (user.role === 'Owner' || user.role === 'Admin') {
+      if (user.role === 'Owner') {
         return { allowed: true, hasOverride: false };
       }
 
-      // ✅ permission ปกติ
+      // Admin และ role อื่น — ใช้ permission + override ปกติ
       const baseAccess = user.permissions?.[folder?.permKey] ?? false;
 
-      // ✅ หา override
       const override = overrides.find(
         o => o.user_id === user.id && o.folder_key === folderKey
       );
 
-      // ✅ ถ้ามี override ให้ใช้ override
       if (override) {
         return {
           allowed: override.allowed,
-          hasOverride: override.allowed !== baseAccess
+          hasOverride: override.allowed !== baseAccess,
         };
       }
 
-      // ✅ ถ้าไม่มี override → ใช้ base
       return { allowed: baseAccess, hasOverride: false };
     };
 
