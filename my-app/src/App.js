@@ -337,7 +337,7 @@ function MainApp() {
     ? ALL_FUNCTION_MENUS.filter(m => !maintenanceMenus.includes(m.id))
     : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(m.id));
 
-  const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-category'];
+  const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category'];
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   // ✅ FIX 1: เพิ่ม flyoutOpen prop ให้ VendorMaster
@@ -355,6 +355,7 @@ function MainApp() {
       case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'vendor-apcode':   return <VendorMaster activeSubTab="apcode" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'vendor-smcode':   return <VendorMaster activeSubTab="smcode" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'vendor-iecode':   return <VendorMaster activeSubTab="iecode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'vendor-category': return <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'itemcode':        return <ItemCodeList />;
       case 'upload':          return <UploadGen />;
@@ -499,6 +500,7 @@ function MainApp() {
               {fpGroup('👥', 'Vendor Master')}
               {fpSub('vendor-apcode', '🏭', 'AP-Code')}   
               {fpSub('vendor-smcode', '🔖', 'SM-Code')} 
+              {fpSub('vendor-iecode',   '💸', 'IE-Code')}
               {fpSub('vendor-category', '🗂️', 'Category')}
               {fpDiv()}
               {fpItem('itemcode', '🔖', 'Item Code')}
