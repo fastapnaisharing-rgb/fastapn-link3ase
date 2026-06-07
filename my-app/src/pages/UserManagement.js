@@ -413,23 +413,20 @@ function RecycleBinTab({ currentUser, userName, fetchBinCount }) {
     let allData = [];
     let from = 0;
     const pageSize = 1000;
-    
     while (true) {
       const { data, error } = await supabase
         .from('recycle_bin')
         .select('*')
         .order('deleted_at', { ascending: false })
         .range(from, from + pageSize - 1);
-      
       if (error || !data || data.length === 0) break;
       allData = [...allData, ...data];
       if (data.length < pageSize) break;
       from += pageSize;
     }
-    
     setBins(allData);
   };
-  
+    
 useEffect(() => {
   // โหลดครั้งแรก
   fetchBins();
@@ -491,32 +488,25 @@ useEffect(() => {
 
   const handleRestore = async (item) => {
     setLoading(true);
-
     try {
       const data = { ...item.data };
-      delete data.id;
+      data.deleted = false;
+      data.deleted_by = null;
+      data.deleted_at = null;
 
       const { error } = await supabase
         .from(item.source_table)
-        .insert([data]);
+        .upsert([{ ...data, id: item.source_id }]);
 
       if (error) throw error;
-
-      await supabase
-        .from('recycle_bin')
-        .delete()
-        .eq('id', item.id);
-
+      await supabase.from('recycle_bin').delete().eq('id', item.id);
       setSelected(prev => prev.filter(s => s !== item.id));
-
       fetchBins();
       fetchBinCount();
       alert('✅ Restore สำเร็จแล้วครับ');
-
     } catch (err) {
       alert('เกิดข้อผิดพลาด: ' + err.message);
     }
-
     setLoading(false);
   };
 
@@ -551,8 +541,10 @@ useEffect(() => {
           // ✅ build rows สำหรับ insert
           const rows = chunk.map(i => {
             const data = { ...i.data };
-            delete data.id; // ✅ กันชน PK
-            return data;
+            data.deleted = false;
+            data.deleted_by = null;
+            data.deleted_at = null;
+            return { ...data, id: i.source_id }; // ✅ ใส่ id กลับเพื่อ upsert ถูก row
           });
 
           const { error } = await supabase
