@@ -223,7 +223,7 @@ function MainApp() {
   const closeTimerRef = useRef(null);
   const sidebarRef = useRef(null);
   const { currentUser, userRole, userName, logout, userPermissions } = useAuth();
-  const { isOwner } = useUserRole();
+  const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
 
   useEffect(() => {
@@ -310,7 +310,6 @@ function MainApp() {
 
   if (!currentUser) return <Login />;
 
-  const isAdmin = isOwner;
   const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
   const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
@@ -353,10 +352,18 @@ function MainApp() {
       case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'coa-account':     return <ChartOfAccounts activeSubTab="account"    onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'vendor-apcode':   return <VendorMaster activeSubTab="apcode" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'vendor-smcode':   return <VendorMaster activeSubTab="smcode" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'vendor-iecode':   return <VendorMaster activeSubTab="iecode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'vendor-category': return <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'vendor-apcode':   return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
+        ? <VendorMaster activeSubTab="apcode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
+        : <NoAccessPage />;
+      case 'vendor-smcode':   return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
+        ? <VendorMaster activeSubTab="smcode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
+        : <NoAccessPage />;
+      case 'vendor-category': return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
+        ? <VendorMaster activeSubTab="category"  onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
+        : <NoAccessPage />;
+      case 'vendor-iecode':   return (isEditor && userPermissions?.['IE'])
+        ? <VendorMaster activeSubTab="iecode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
+        : <NoAccessPage />;
       case 'itemcode':        return <ItemCodeList />;
       case 'upload':          return <UploadGen />;
       case 'users':           return <UserManagement />;
@@ -498,10 +505,10 @@ function MainApp() {
               {fpSub('coa-subaccount', '🔖', 'Sub Account')}
               {fpDiv()}
               {fpGroup('👥', 'Vendor Master')}
-              {fpSub('vendor-apcode', '🏭', 'AP-Code')}   
-              {fpSub('vendor-smcode', '🔖', 'SM-Code')} 
-              {fpSub('vendor-iecode',   '💸', 'IE-Code')}
-              {fpSub('vendor-category', '🗂️', 'Category')}
+              {(isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual'])) && fpSub('vendor-apcode', '🏭', 'AP-Code')}
+              {(isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual'])) && fpSub('vendor-smcode', '🔖', 'SM-Code')}
+              {(isEditor && userPermissions?.['IE']) && fpSub('vendor-iecode', '💸', 'IE-Code')}
+              {(isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual'])) && fpSub('vendor-category', '🗂️', 'Category')}
               {fpDiv()}
               {fpItem('itemcode', '🔖', 'Item Code')}
             </div>

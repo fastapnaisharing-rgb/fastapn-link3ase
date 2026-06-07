@@ -1142,8 +1142,14 @@
     };
 
     const handleRoleChange = (id, newRole) => {
-      const perms = DEFAULT_PERMISSIONS[newRole] || DEFAULT_PERMISSIONS.Editor;
-      setUsers(prev => { const updated = prev.map(u => u.id === id ? { ...u, role: newRole, permissions: perms } : u); saveUser(updated.find(u => u.id === id)); return updated; });
+      setUsers(prev => {
+        const updated = prev.map(u => u.id === id
+          ? { ...u, role: newRole }  // ← ไม่แตะ permissions
+          : u
+        );
+        saveUser(updated.find(u => u.id === id));
+        return updated;
+      });
     };
 
     const handlePermissionChange = (id, perm, value) => {
