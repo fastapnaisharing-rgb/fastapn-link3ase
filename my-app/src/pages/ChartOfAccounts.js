@@ -195,10 +195,10 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       ],
       columns: [
         { key: 'Sub Acc Code',  label: 'Sub Acc Code',  sortable: true, w: 120 },
-        { key: 'Tax ID',        label: 'Tax ID',         w: 130 },
-        { key: 'No.',           label: 'No.',            w: 70  },
+        { key: 'Tax ID',        label: 'Tax ID',         w: 150 },
+        { key: 'No.',           label: 'No.',            w: 90  },
         { key: 'Supplier Code', label: 'Supplier Code',  w: 120 },
-        { key: 'Description',   label: 'Description',    w: 300 },
+        { key: 'Description',   label: 'Description',    w: 400 },
         { key: 'Remark',        label: 'Remark',         w: 200 },
       ],
     },
