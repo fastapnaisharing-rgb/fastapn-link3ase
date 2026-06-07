@@ -332,7 +332,7 @@ const TAB_CONFIG = {
 
 function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const [tab, setTab] = useState(activeSubTab || 'apcode');
-  const { currentUser, userName } = useAuth();
+  const { currentUser, userName, userPermissions } = useAuth();
   const { isAdmin, isEditor, isOwner } = useUserRole();
   const canEdit = isAdmin || isEditor;
   const screenWidth = useWindowWidth();
@@ -383,6 +383,22 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     return () => obs.disconnect();
   }, [flyoutOpen]);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
+
+  const VISIBLE_TABS = Object.entries(TAB_CONFIG).filter(([key]) => {
+  if (isOwner || isAdmin) return true;
+  if (key === 'apcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
+  if (key === 'smcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
+  if (key === 'iecode')   return isEditor && userPermissions?.['IE'];
+  if (key === 'category') return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
+  return false;
+});
+
+useEffect(() => {
+  const allowed = VISIBLE_TABS.map(([key]) => key);
+  if (allowed.length > 0 && !allowed.includes(tab)) {
+    handleTabChange(allowed[0]);
+  }
+}, [tab]);
 
   const items    = dataMap[tab]     || [];
   const search   = searchMap[tab]   || '';
@@ -925,7 +941,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
       </div>
 
       <div style={S.tabBar}>
-        {Object.entries(TAB_CONFIG).map(([key, c]) => (
+        {VISIBLE_TABS.map(([key, c]) => (
           <div key={key} style={S.tab(tab===key)} onClick={()=>handleTabChange(key)}>
             {c.icon} {!isMobile && c.label}
             <span style={S.tabBadge(tab===key)}>{(dataMap[key]||[]).length}</span>
