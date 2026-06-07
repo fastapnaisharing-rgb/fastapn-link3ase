@@ -544,8 +544,11 @@
             setProgress(Math.round((done / total) * 100));
           }
         }
-        const { error } = await supabase.from('recycle_bin').delete().in('id', targets.map(b => b.id));
-        if (error) throw error;
+        const binIds = targets.map(b => b.id);
+        for (let i = 0; i < binIds.length; i += 500) {
+          const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+          if (error) throw error;
+        }
         setSelected([]);
         fetchBins();
         fetchBinCount();
@@ -598,8 +601,11 @@
             setProgress(Math.round((done / total) * 100));
           }
         }
-        const { error } = await supabase.from('recycle_bin').delete().in('id', targets.map(b => b.id));
-        if (error) throw error;
+        const binIds = targets.map(b => b.id);
+        for (let i = 0; i < binIds.length; i += 500) {
+          const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+          if (error) throw error;
+        }
         setSelected([]);
         setConfirmBulkDelete(false);
         fetchBins();
