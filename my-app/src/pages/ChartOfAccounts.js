@@ -763,7 +763,7 @@
           </div>
           {isAdmin && (
             <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '0' }}>
-              {isOwner && (
+              {isAdmin && (
                 <button style={{ ...S.btn, background: '#f5f5f5', color: '#555', border: '0.5px solid #ddd' }} onClick={handleOpenRecycleBin}>
                   🗑️{!isMobile && ' Recycle Bin'}
                 </button>

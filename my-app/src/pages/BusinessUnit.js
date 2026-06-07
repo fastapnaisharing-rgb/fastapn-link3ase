@@ -812,7 +812,7 @@ const handleRestore = async (binItem) => {
         </div>
         {isEditor && (
           <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
-            {isOwner && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile && ' Recycle Bin'}</button>}
+            {isAdmin && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile && ' Recycle Bin'}</button>}
             {tab === 'info' ? <>
               <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleInfoDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
               <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => infoFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
