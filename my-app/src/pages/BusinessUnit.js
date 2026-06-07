@@ -183,6 +183,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [branchPreviewRows, setBranchPreviewRows] = useState([]);
   const [branchImporting, setBranchImporting] = useState(false);
   const branchFileRef = useRef(null);
+  const [showRecycleBin, setShowRecycleBin] = useState(false);
+  const [recycleBinItems, setRecycleBinItems] = useState([]);
+  const [recycleBinLoading, setRecycleBinLoading] = useState(false);
+  const [recycleBinSelected, setRecycleBinSelected] = useState([]);
+  const [recycleBinProgress, setRecycleBinProgress] = useState(0);
+  const [recycleBinLoading2, setRecycleBinLoading2] = useState(false);
 
   const [branchPage, setBranchPage] = useState(1);
   const [branchPageSize, setBranchPageSize] = useState(100);
@@ -542,6 +548,120 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
+const currentTable = () => tab === 'info' ? 'company_list' : 'branch_list';
+const currentLabel = () => tab === 'info' ? 'Info' : 'Branch';
+
+const handleOpenRecycleBin = async () => {
+  setShowRecycleBin(true);
+  setRecycleBinSelected([]);
+  setRecycleBinLoading(true);
+  try {
+    const { data, error } = await supabase
+      .from('recycle_bin')
+      .select('*')
+      .eq('source_table', currentTable())
+      .order('deleted_at', { ascending: false });
+    if (error) throw error;
+    setRecycleBinItems(data || []);
+  } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
+  setRecycleBinLoading(false);
+};
+
+const handleRestore = async (binItem) => {
+  try {
+    const data = { ...binItem.data };
+    delete data.id;
+    const { error } = await supabase.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
+    if (error) throw error;
+    await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+    setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+    if (binItem.source_table === 'company_list') await fetchInfo();
+    else await fetchBranch();
+    alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
+  } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
+};
+
+  const handlePermanentDelete = async (binItem) => {
+    if (!window.confirm(`ลบถาวร "${binItem.source_key}"? ไม่สามารถกู้คืนได้`)) return;
+    try {
+      if (binItem.source_id) await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);
+      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+    } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
+  };
+
+  const handleBulkRestoreBin = async () => {
+    if (!recycleBinSelected.length) return;
+    setRecycleBinLoading2(true);
+    setRecycleBinProgress(0);
+    try {
+      const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
+      const total = targets.length;
+      let done = 0;
+      const grouped = {};
+      targets.forEach(item => {
+        if (!grouped[item.source_table]) grouped[item.source_table] = [];
+        grouped[item.source_table].push(item);
+      });
+      for (const [table, binItems] of Object.entries(grouped)) {
+        for (let i = 0; i < binItems.length; i += 500) {
+          const chunk = binItems.slice(i, i + 500);
+          const rows = chunk.map(item => { const data = { ...item.data }; delete data.id; return { ...data, id: item.source_id }; });
+          const { error } = await supabase.from(table).insert(rows);
+          if (error) throw error;
+          done += chunk.length;
+          setRecycleBinProgress(Math.round((done / total) * 100));
+        }
+      }
+      const binIds = targets.map(b => b.id);
+      for (let i = 0; i < binIds.length; i += 500) {
+        const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+        if (error) throw error;
+      }
+      setRecycleBinSelected([]);
+      setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
+      await fetchInfo(); await fetchBranch();
+      alert(`✅ Restore สำเร็จ ${total} รายการ`);
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    setRecycleBinLoading2(false);
+    setRecycleBinProgress(0);
+  };
+
+  const handleBulkPermanentDeleteBin = async () => {
+    if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ? ไม่สามารถกู้คืนได้`)) return;
+    setRecycleBinLoading2(true);
+    setRecycleBinProgress(0);
+    try {
+      const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
+      const total = targets.length;
+      let done = 0;
+      const byTable = {};
+      targets.forEach(item => {
+        if (!byTable[item.source_table]) byTable[item.source_table] = [];
+        byTable[item.source_table].push(item.source_id);
+      });
+      for (const [table, ids] of Object.entries(byTable)) {
+        for (let i = 0; i < ids.length; i += 500) {
+          const chunk = ids.slice(i, i + 500);
+          const { error } = await supabase.from(table).delete().in('id', chunk);
+          if (error) throw error;
+          done += chunk.length;
+          setRecycleBinProgress(Math.round((done / total) * 100));
+        }
+      }
+      const binIds = targets.map(b => b.id);
+      for (let i = 0; i < binIds.length; i += 500) {
+        const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+        if (error) throw error;
+      }
+      setRecycleBinSelected([]);
+      setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
+      alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
+    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    setRecycleBinLoading2(false);
+    setRecycleBinProgress(0);
+  };
+
   const handleBranchDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([BRANCH_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'BranchList'); XLSX.writeFile(wb, 'BranchList_Template.xlsx'); };
 
   const handleBranchFileChange = (e) => {
@@ -690,18 +810,19 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           {tab==='info'&&infoSelected.length>0&&<ExportDropdown onExportSelected={handleInfoExportSelected} onExportAll={handleInfoExportAll} selectedCount={infoSelected.length} isMobile={isMobile}/>}
           {tab==='branch'&&branchSelected.length>0&&<ExportDropdown onExportSelected={handleBranchExportSelected} onExportAll={handleBranchExportAll} selectedCount={branchSelected.length} isMobile={isMobile}/>}
         </div>
-        {isEditor&&(
-          <div style={{ display:'flex', alignItems:'center', gap:isMobile?'4px':'0' }}>
-            {tab==='info'?<>
-              <button style={{...S.btn,background:'#0F6E56',color:'white'}} onClick={handleInfoDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
-              <button style={{...S.btn,background:'#5DCAA5',color:'#1a3a5c'}} onClick={()=>infoFileRef.current.click()}>📂{!isMobile&&' Import'}</button>
-              <input ref={infoFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleInfoFileChange}/>
-              <button style={{...S.btn,background:'#1a3a5c',color:'white'}} onClick={()=>{setShowInfoForm(true);setInfoEditId(null);setInfoForm(emptyInfoForm());}}>+ New</button>
-            </>:<>
-              <button style={{...S.btn,background:'#0F6E56',color:'white'}} onClick={handleBranchDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
-              <button style={{...S.btn,background:'#5DCAA5',color:'#1a3a5c'}} onClick={()=>branchFileRef.current.click()}>📂{!isMobile&&' Import'}</button>
-              <input ref={branchFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleBranchFileChange}/>
-              <button style={{...S.btn,background:'#1a3a5c',color:'white'}} onClick={()=>{setShowBranchNew(true);setBranchNewForm(Object.fromEntries(BRANCH_EDIT.map(([k])=>[k,''])));setBranchNewError('');}}>+ New</button>
+        {isEditor && (
+          <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
+            {isOwner && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile && ' Recycle Bin'}</button>}
+            {tab === 'info' ? <>
+              <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleInfoDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
+              <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => infoFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
+              <input ref={infoFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleInfoFileChange} />
+              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowInfoForm(true); setInfoEditId(null); setInfoForm(emptyInfoForm()); }}>+ New</button>
+            </> : <>
+              <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleBranchDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
+              <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => branchFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
+              <input ref={branchFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleBranchFileChange} />
+              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowBranchNew(true); setBranchNewForm(Object.fromEntries(BRANCH_EDIT.map(([k]) => [k, '']))); setBranchNewError(''); }}>+ New</button>
             </>}
           </div>
         )}
@@ -876,10 +997,128 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         </div>
       </div>)}
 
+
+{/* ─── Recycle Bin Modal ─── */}
+{showRecycleBin && (
+  <div style={S.overlay}>
+    <div style={{ background:'white', borderRadius:'10px', width: isMobile?'95vw':'860px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
+
+      {/* Header */}
+      <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+          <span style={{ fontSize:'15px', fontWeight:'500' }}>🗑️ Recycle Bin — {currentLabel()}</span>
+          <span style={{ fontSize:'11px', background:'#f5f5f5', color:'#888', padding:'2px 8px', borderRadius:'20px' }}>{recycleBinItems.length} รายการ</span>
+        </div>
+        <button onClick={()=>setShowRecycleBin(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'20px', lineHeight:1 }}>×</button>
+      </div>
+
+      {/* Bulk Toolbar */}
+      {recycleBinSelected.length > 0 && (
+        <div style={{ padding:'8px 16px', background:'#f8f9fa', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', gap:'8px', flexShrink:0, flexWrap:'wrap' }}>
+          <span style={{ fontSize:'12px', color:'#555' }}>เลือก {recycleBinSelected.length} รายการ</span>
+          {!recycleBinLoading2 ? (
+            <>
+              <button onClick={handleBulkRestoreBin}
+                style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #97C459', fontSize:'12px', cursor:'pointer', background:'#EAF3DE', color:'#27500A', fontWeight:'500' }}>
+                ♻️ Restore ทั้งหมด
+              </button>
+              <button onClick={handleBulkPermanentDeleteBin}
+                style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #f7c1c1', fontSize:'12px', cursor:'pointer', background:'#FCEBEB', color:'#791F1F', fontWeight:'500' }}>
+                🗑️ ลบถาวรทั้งหมด
+              </button>
+              <button onClick={() => setRecycleBinSelected([])}
+                style={{ padding:'4px 8px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', cursor:'pointer', background:'#f5f5f5', color:'#555' }}>
+                ✕ ยกเลิก
+              </button>
+            </>
+          ) : (
+            <div style={{ flex:1, maxWidth:'300px' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                <span style={{ fontSize:'11px', color:'#555' }}>กำลังดำเนินการ...</span>
+                <span style={{ fontSize:'11px', fontWeight:'500', color:'#1a3a5c' }}>{recycleBinProgress}%</span>
+              </div>
+              <div style={{ background:'#f0f0f0', borderRadius:'20px', height:'6px', overflow:'hidden' }}>
+                <div style={{ height:'100%', borderRadius:'20px', background:'linear-gradient(90deg, #5DCAA5, #1a3a5c)', width:`${recycleBinProgress}%`, transition:'width 0.3s ease' }}/>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Table */}
+      <div style={{ overflowY:'auto', flex:1 }}>
+        {recycleBinLoading ? (
+          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>กำลังโหลด...</div>
+        ) : recycleBinItems.length === 0 ? (
+          <div style={{ padding:'48px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>
+            <div style={{ fontSize:'32px', marginBottom:'8px' }}>🗑️</div>
+            Recycle Bin ว่างเปล่า
+          </div>
+        ) : (
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+            <thead>
+              <tr>
+                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', width:'36px' }}>
+                  <input type="checkbox"
+                    checked={recycleBinItems.length > 0 && recycleBinSelected.length === recycleBinItems.length}
+                    onChange={() => setRecycleBinSelected(recycleBinSelected.length === recycleBinItems.length ? [] : recycleBinItems.map(i => i.id))}
+                  />
+                </th>
+                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>Key</th>
+                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>ลบโดย</th>
+                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>วันที่ลบ</th>
+                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', fontWeight:'500', fontSize:'11px', width:'120px' }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recycleBinItems.map(item => {
+                const isChecked = recycleBinSelected.includes(item.id);
+                const deletedAt = item.deleted_at ? new Date(item.deleted_at) : null;
+                const deletedAtStr = deletedAt ? `${String(deletedAt.getDate()).padStart(2,'0')}/${String(deletedAt.getMonth()+1).padStart(2,'0')}/${deletedAt.getFullYear()} ${String(deletedAt.getHours()).padStart(2,'0')}:${String(deletedAt.getMinutes()).padStart(2,'0')}` : '-';
+                return (
+                  <tr key={item.id} style={{ background: isChecked?'#f0f7ff':'white', borderBottom:'0.5px solid #f0f0f0' }}>
+                    <td style={{ padding:'8px 12px', textAlign:'center' }}>
+                      <input type="checkbox" checked={isChecked}
+                        onChange={() => setRecycleBinSelected(prev => prev.includes(item.id) ? prev.filter(s => s !== item.id) : [...prev, item.id])}
+                      />
+                    </td>
+                    <td style={{ padding:'9px 12px', fontWeight:'500', color:'#1a3a5c', fontSize:'12px' }}>{item.source_key}</td>
+                    <td style={{ padding:'9px 12px', color:'#555', fontSize:'11px' }}>{item.deleted_by || '-'}</td>
+                    <td style={{ padding:'9px 12px', color:'#888', fontSize:'11px', whiteSpace:'nowrap' }}>{deletedAtStr}</td>
+                    <td style={{ padding:'9px 12px', textAlign:'center' }}>
+                      <div style={{ display:'inline-flex', gap:'6px' }}>
+                        <button onClick={()=>handleRestore(item)} disabled={recycleBinLoading2}
+                          style={{ padding:'4px 12px', borderRadius:'5px', border:'none', background: recycleBinLoading2?'#f5f5f5':'#EAF3DE', color: recycleBinLoading2?'#aaa':'#27500A', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer', fontWeight:'500' }}>
+                          ♻️
+                        </button>
+                        <button onClick={()=>handlePermanentDelete(item)} disabled={recycleBinLoading2}
+                          style={{ padding:'4px 10px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background: recycleBinLoading2?'#f5f5f5':'#FCEBEB', color: recycleBinLoading2?'#aaa':'#791F1F', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer' }}>
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div style={{ padding:'10px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
+        <button onClick={()=>setShowRecycleBin(false)} style={{ padding:'6px 16px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Close</button>
+      </div>
+    </div>
+  </div>
+)}
+
+
       <ImportPreviewModal show={showInfoPreview} onClose={()=>{setShowInfoPreview(false);setInfoPreviewRows([]);}} onConfirm={handleInfoConfirmImport} importing={infoImporting} previewRows={infoPreviewRows} keyField={INFO_KEY} allFields={INFO_FIELDS} isMobile={isMobile}/>
       <ImportPreviewModal show={showBranchPreview} onClose={()=>{setShowBranchPreview(false);setBranchPreviewRows([]);}} onConfirm={handleBranchConfirmImport} importing={branchImporting} previewRows={branchPreviewRows} keyField={BRANCH_KEY} allFields={BRANCH_FIELDS} isMobile={isMobile}/>
     </div>
   );
 }
+
+
 
 export default BusinessUnit;
