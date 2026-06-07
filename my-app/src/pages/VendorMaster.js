@@ -385,7 +385,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
   const VISIBLE_TABS = Object.entries(TAB_CONFIG).filter(([key]) => {
-  if (isOwner || isAdmin) return true;
+  if (isOwner) return true;
   if (key === 'apcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
   if (key === 'smcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
   if (key === 'iecode')   return isEditor && userPermissions?.['IE'];
