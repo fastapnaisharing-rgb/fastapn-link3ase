@@ -68,9 +68,12 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
   }
 
   function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile }) {
+    const [filterStatus, setFilterStatus] = React.useState(null);
     if (!show) return null;
     const summary = previewRows.reduce((acc, r) => { acc[r._status] = (acc[r._status] || 0) + 1; return acc; }, {});
     const confirmCount = previewRows.filter(r => r._status === 'new' || r._status === 'update').length;
+    const displayRows = filterStatus ? previewRows.filter(r => r._status === filterStatus) : previewRows;
+    const BADGE_CONFIG = [['new','➕ New','#EAF3DE','#27500A','#c0dda0'],['update','🔄 Update','#e8f0fb','#1a3a5c','#aac4e8'],['nochange','✅ No Change','#f5f5f5','#666','#ccc'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404','#f5d87a']];
     const statusTag = (s) => {
       const map = { new: { label: '➕ New', bg: '#EAF3DE', color: '#27500A' }, update: { label: '🔄 Update', bg: '#e8f0fb', color: '#1a3a5c' }, nochange: { label: '✅ No Change', bg: '#f5f5f5', color: '#666' }, duplicate: { label: '⚠️ Duplicate', bg: '#FFF3CD', color: '#856404' } };
       const m = map[s] || { label: s, bg: '#eee', color: '#333' };
@@ -87,10 +90,21 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
           <div style={{ background: '#f8f9fa', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', color: '#666', marginBottom: '12px' }}>
             ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong> — เปรียบเทียบกับข้อมูลในระบบ
           </div>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-            {[['new','➕ New','#EAF3DE','#27500A'],['update','🔄 Update','#e8f0fb','#1a3a5c'],['nochange','✅ No Change','#f5f5f5','#666'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404']].map(([key,label,bg,color]) => (
-              summary[key] ? <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: bg, color }}>{label} <strong>{summary[key]}</strong></span> : null
-            ))}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {BADGE_CONFIG.map(([key, label, bg, color, border]) => {
+              if (!summary[key]) return null;
+              const isActive = filterStatus === key;
+              return (
+                <span key={key} onClick={() => setFilterStatus(isActive ? null : key)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '500',
+                    background: isActive ? bg : '#f5f5f5', color: isActive ? color : '#888',
+                    border: `1.5px solid ${isActive ? border : '#ddd'}`, cursor: 'pointer', userSelect: 'none' }}>
+                  {label} <strong>{summary[key]}</strong>
+                  {isActive && <span style={{ fontSize: '10px', marginLeft: '2px', opacity: 0.7 }}>✕</span>}
+                </span>
+              );
+            })}
+            {filterStatus && <span style={{ fontSize: '11px', color: '#888' }}>แสดง {displayRows.length} รายการ</span>}
           </div>
           <div style={{ overflow: 'auto', flex: 1, borderRadius: '6px', border: '0.5px solid #e8e8e8', marginBottom: '14px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
@@ -100,7 +114,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
                 <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, minWidth: '200px' }}>การเปลี่ยนแปลง</th>
               </tr></thead>
               <tbody>
-                {previewRows.map((row, i) => {
+                {displayRows.map((row, i) => {
                   const rowBg = { new: '#f9fffe', update: '#f5f8ff', nochange: 'white', duplicate: '#fffdf0' }[row._status] || 'white';
                   return (
                     <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
@@ -195,10 +209,10 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       ],
       columns: [
         { key: 'Sub Acc Code',  label: 'Sub Acc Code',  sortable: true, w: 120 },
-        { key: 'Tax ID',        label: 'Tax ID',         w: 150 },
-        { key: 'No.',           label: 'No.',            w: 90  },
+        { key: 'Tax ID',        label: 'Tax ID',         w: 130 },
+        { key: 'No.',           label: 'No.',            w: 70  },
         { key: 'Supplier Code', label: 'Supplier Code',  w: 120 },
-        { key: 'Description',   label: 'Description',    w: 400 },
+        { key: 'Description',   label: 'Description',    w: 300 },
         { key: 'Remark',        label: 'Remark',         w: 200 },
       ],
     },
@@ -538,11 +552,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         for (const [table, binItems] of Object.entries(grouped)) {
           for (let i = 0; i < binItems.length; i += 500) {
             const chunk = binItems.slice(i, i + 500);
-            const rows = chunk.map(item => {
-              const d = { ...item.data };
-              delete d.id;
-              return d;
-            });
+            const rows = chunk.map(item => { const d = { ...item.data }; delete d.id; return { ...d, id: item.source_id }; });
             const { error } = await supabase.from(table).insert(rows);
             if (error) throw error;
             done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
