@@ -259,7 +259,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const branchTaxIds = useMemo(() => new Set(branches.map(b => b['BU-TaxID']).filter(Boolean)), [branches]);
 
-  // ✅ Chunked Loading — render ทันทีทุก chunk ไม่รอทั้งหมด
+  // ✅ Chunked Loading
   const fetchInfo = useCallback(async () => {
     let from = 0;
     const batchSize = 1000;
@@ -278,7 +278,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     }
   }, []);
 
-  // ✅ Chunked Loading — render ทันทีทุก chunk ไม่รอทั้งหมด
+  // ✅ Chunked Loading
   const fetchBranch = useCallback(async () => {
     let from = 0;
     const batchSize = 1000;
@@ -396,14 +396,38 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
+  // ✅ BulkDelete with Batch (company_list)
   const handleInfoBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${infoSelected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = infoItems.filter(i => infoSelected.includes(i.id)).map(item => ({ source_table: 'company_list', source_id: item.id, source_key: item['TAX ID'] || item.id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now }));
-      if (bins.length) await supabase.from('recycle_bin').insert(bins);
-      const { error } = await supabase.from('company_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', infoSelected);
-      if (error) throw error;
+      const bins = infoItems
+        .filter(i => infoSelected.includes(i.id))
+        .map(item => ({
+          source_table: 'company_list',
+          source_id: item.id,
+          source_key: item['TAX ID'] || item.id,
+          data: item,
+          deleted_by: userName || currentUser?.email || '',
+          deleted_at: now,
+        }));
+
+      // ✅ Batch insert recycle_bin
+      for (let i = 0; i < bins.length; i += 500) {
+        const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
+        if (error) throw error;
+      }
+
+      // ✅ Batch soft delete
+      for (let i = 0; i < infoSelected.length; i += 500) {
+        const chunk = infoSelected.slice(i, i + 500);
+        const { error } = await supabase
+          .from('company_list')
+          .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
+          .in('id', chunk);
+        if (error) throw error;
+      }
+
       setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
       setInfoSelected([]);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
@@ -483,14 +507,38 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
+  // ✅ BulkDelete with Batch (branch_list)
   const handleBranchBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${branchSelected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = branches.filter(b => branchSelected.includes(b.id)).map(item => ({ source_table: 'branch_list', source_id: item.id, source_key: item['Branch Code'] || item.id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now }));
-      if (bins.length) await supabase.from('recycle_bin').insert(bins);
-      const { error } = await supabase.from('branch_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now }).in('id', branchSelected);
-      if (error) throw error;
+      const bins = branches
+        .filter(b => branchSelected.includes(b.id))
+        .map(item => ({
+          source_table: 'branch_list',
+          source_id: item.id,
+          source_key: item['Branch Code'] || item.id,
+          data: item,
+          deleted_by: userName || currentUser?.email || '',
+          deleted_at: now,
+        }));
+
+      // ✅ Batch insert recycle_bin
+      for (let i = 0; i < bins.length; i += 500) {
+        const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
+        if (error) throw error;
+      }
+
+      // ✅ Batch soft delete
+      for (let i = 0; i < branchSelected.length; i += 500) {
+        const chunk = branchSelected.slice(i, i + 500);
+        const { error } = await supabase
+          .from('branch_list')
+          .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
+          .in('id', chunk);
+        if (error) throw error;
+      }
+
       setBranches(prev => prev.filter(b => !branchSelected.includes(b.id)));
       setBranchSelected([]);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
