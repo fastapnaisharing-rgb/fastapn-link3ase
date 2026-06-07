@@ -459,11 +459,16 @@ useEffect(() => {
   }), [bins, filterTable, filterBy, fromDate, toDate]);
 
   const allSelected = filtered.length > 0 && filtered.every(i => selected.includes(i.id));
+  const someSelected = filtered.some(i => selected.includes(i.id)) && !allSelected;
 
   const toggleSelectAll = () => {
-    const ids = filtered.map(i => i.id);
-    if (allSelected) setSelected(prev => prev.filter(id => !ids.includes(id)));
-    else setSelected(prev => [...new Set([...prev, ...ids])]);
+    if (allSelected) {
+      // uncheck ทั้งหมด
+      setSelected([]);
+    } else {
+      // เลือกทั้งหมดใน filtered
+      setSelected(filtered.map(i => i.id));
+    }
   };
 
   const toggleOne = (id) => setSelected(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
@@ -644,6 +649,12 @@ useEffect(() => {
               style={{ padding: '4px 12px', borderRadius: '6px', border: '0.5px solid #f7c1c1', fontSize: '12px', cursor: 'pointer', background: '#FCEBEB', color: '#791F1F', fontWeight: '500' }}>
               🗑️ ลบถาวร {selected.length} รายการ
             </button>
+              {selected.length > 0 && selected.length < filtered.length && (
+                <button onClick={() => setSelected(filtered.map(i => i.id))}
+                  style={{ fontSize: '12px', color: '#1a3a5c', background: '#e8f0fb', border: 'none', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}>
+                  เลือกทั้งหมด {filtered.length} รายการ
+                </button>
+              )}
             <button onClick={() => setSelected([])}
               style={{ padding: '4px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>
               ✕ ยกเลิก
@@ -676,7 +687,12 @@ useEffect(() => {
           <thead>
             <tr>
               <th style={{ ...S.thCenter, width: '36px' }}>
-                <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+                <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={el => { if (el) el.indeterminate = someSelected; }}
+                    onChange={toggleSelectAll}
+                  />
               </th>
               <th style={{ ...S.th, width: '110px' }}>Table</th>
               <th style={{ ...S.th, width: '130px' }}>Key</th>
