@@ -268,7 +268,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       const { data, error } = await supabase
         .from('company_list')
         .select('*')
-        .or('deleted.is.null,deleted.eq.false')
         .range(from, from + batchSize - 1);
       if (error) { console.error('fetchInfo error:', error); break; }
       if (isFirst) { setInfoItems(data || []); isFirst = false; }
@@ -287,7 +286,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       const { data, error } = await supabase
         .from('branch_list')
         .select('*')
-        .or('deleted.is.null,deleted.eq.false')
         .range(from, from + batchSize - 1);
       if (error) { console.error('fetchBranch error:', error); break; }
       if (isFirst) { setBranches(data || []); isFirst = false; }
@@ -388,8 +386,16 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = infoItems.find(i => i.id === id);
-      await supabase.from('recycle_bin').insert([{ source_table: 'company_list', source_id: id, source_key: item?.['TAX ID'] || id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }]);
-      const { error } = await supabase.from('company_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
+      const { error: binError } = await supabase.from('recycle_bin').insert([{
+        source_table: 'company_list',
+        source_id: id,
+        source_key: item?.['TAX ID'] || id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: new Date().toISOString()
+      }]);
+      if (binError) throw binError;
+      const { error } = await supabase.from('company_list').delete().eq('id', id);
       if (error) throw error;
       setInfoItems(prev => prev.filter(i => i.id !== id));
       setInfoSelected(p => p.filter(s => s !== id));
@@ -397,7 +403,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   // ✅ BulkDelete with Batch (company_list)
-  const handleInfoBulkDelete = async () => {
+    const handleInfoBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${infoSelected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
@@ -411,36 +417,28 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           deleted_by: userName || currentUser?.email || '',
           deleted_at: now,
         }));
-
-      // ✅ Batch insert recycle_bin
       for (let i = 0; i < bins.length; i += 500) {
         const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
         if (error) throw error;
       }
-
-      // ✅ Batch soft delete
       for (let i = 0; i < infoSelected.length; i += 500) {
         const chunk = infoSelected.slice(i, i + 500);
-        const { error } = await supabase
-          .from('company_list')
-          .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
-          .in('id', chunk);
+        const { error } = await supabase.from('company_list').delete().in('id', chunk);
         if (error) throw error;
       }
-
       setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
       setInfoSelected([]);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  const handleInfoDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([INFO_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'CompanyList'); XLSX.writeFile(wb, 'CompanyList_Template.xlsx'); };
+    const handleInfoDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([INFO_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'CompanyList'); XLSX.writeFile(wb, 'CompanyList_Template.xlsx'); };
 
-  const handleInfoFileChange = (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => { const wb = XLSX.read(evt.target.result, { type: 'binary' }); const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }); setInfoPreviewRows(buildPreviewRows(rawRows, infoItems, INFO_KEY, INFO_FIELDS)); setShowInfoPreview(true); };
-    reader.readAsBinaryString(file); e.target.value = '';
-  };
+    const handleInfoFileChange = (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => { const wb = XLSX.read(evt.target.result, { type: 'binary' }); const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }); setInfoPreviewRows(buildPreviewRows(rawRows, infoItems, INFO_KEY, INFO_FIELDS)); setShowInfoPreview(true); };
+      reader.readAsBinaryString(file); e.target.value = '';
+    };
 
   const handleInfoConfirmImport = async () => {
     setInfoImporting(true);
@@ -499,8 +497,16 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = branches.find(b => b.id === id);
-      await supabase.from('recycle_bin').insert([{ source_table: 'branch_list', source_id: id, source_key: item?.['Branch Code'] || id, data: item, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }]);
-      const { error } = await supabase.from('branch_list').update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString() }).eq('id', id);
+      const { error: binError } = await supabase.from('recycle_bin').insert([{
+        source_table: 'branch_list',
+        source_id: id,
+        source_key: item?.['Branch Code'] || id,
+        data: item,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: new Date().toISOString()
+      }]);
+      if (binError) throw binError;
+      const { error } = await supabase.from('branch_list').delete().eq('id', id);
       if (error) throw error;
       setBranches(prev => prev.filter(b => b.id !== id));
       setBranchSelected(p => p.filter(s => s !== id));
@@ -522,23 +528,15 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           deleted_by: userName || currentUser?.email || '',
           deleted_at: now,
         }));
-
-      // ✅ Batch insert recycle_bin
       for (let i = 0; i < bins.length; i += 500) {
         const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
         if (error) throw error;
       }
-
-      // ✅ Batch soft delete
       for (let i = 0; i < branchSelected.length; i += 500) {
         const chunk = branchSelected.slice(i, i + 500);
-        const { error } = await supabase
-          .from('branch_list')
-          .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
-          .in('id', chunk);
+        const { error } = await supabase.from('branch_list').delete().in('id', chunk);
         if (error) throw error;
       }
-
       setBranches(prev => prev.filter(b => !branchSelected.includes(b.id)));
       setBranchSelected([]);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
