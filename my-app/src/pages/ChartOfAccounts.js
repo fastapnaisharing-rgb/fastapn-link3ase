@@ -155,6 +155,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         { key: 'Description', label: 'Description', w: 280 },
         { key: 'Type', label: 'Type', w: 120 },
         { key: 'BU', label: 'BU', sortable: true, w: 120 },
+        { key: 'updated_by', label: 'Updated By', w: 110 },
+        { key: 'updated_at', label: 'Updated At', w: 140 },
       ],
     },
     account: {
@@ -179,8 +181,6 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         'Supplier Code',
         'Description',
         'Remark',
-        'updated_by',
-        'updated_at',
       ],
       combo: [],
       edit: [
