@@ -340,6 +340,9 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
   const cfg = TAB_CONFIG[tab];
 
+  // ── helper: current user string (declared early so all handlers can use it) ──
+  const cu = useCallback(() => userName || currentUser?.email || '', [userName, currentUser]);
+
   const [dataMap, setDataMap]         = useState({ apcode: [], smcode: [], iecode: [], category: [] });
   const [searchMap, setSearchMap]     = useState({ apcode: '', smcode: '', iecode: '', category: '' });
   const [selectedMap, setSelectedMap] = useState({ apcode: [], smcode: [], iecode: [], category: [] });
@@ -385,20 +388,20 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
   const VISIBLE_TABS = Object.entries(TAB_CONFIG).filter(([key]) => {
-  if (isOwner) return true;
-  if (key === 'apcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
-  if (key === 'smcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
-  if (key === 'iecode')   return isEditor && userPermissions?.['IE'];
-  if (key === 'category') return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
-  return false;
-});
+    if (isOwner) return true;
+    if (key === 'apcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
+    if (key === 'smcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
+    if (key === 'iecode')   return isEditor && userPermissions?.['IE'];
+    if (key === 'category') return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
+    return false;
+  });
 
-useEffect(() => {
-  const allowed = VISIBLE_TABS.map(([key]) => key);
-  if (allowed.length > 0 && !allowed.includes(tab)) {
-    handleTabChange(allowed[0]);
-  }
-}, [tab]);
+  useEffect(() => {
+    const allowed = VISIBLE_TABS.map(([key]) => key);
+    if (allowed.length > 0 && !allowed.includes(tab)) {
+      handleTabChange(allowed[0]);
+    }
+  }, [tab]);
 
   const items    = dataMap[tab]     || [];
   const search   = searchMap[tab]   || '';
@@ -420,7 +423,6 @@ useEffect(() => {
     let isFirst = true;
     while (true) {
       let query = supabase.from(TAB_CONFIG[t].table).select('*').range(from, from + batchSize - 1);
-      // apcode/smcode/category ใช้ soft-delete, iecode ไม่มี deleted flag
       if (t !== 'iecode') query = query.or('deleted.is.null,deleted.eq.false');
       const { data, error } = await query;
       if (error) { console.error('fetchTab error:', error); break; }
@@ -509,10 +511,9 @@ useEffect(() => {
       const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
       const newRows = toProcess.filter(r => r._status === 'new');
       const updateRows = toProcess.filter(r => r._status === 'update');
-      const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
+      const ts = getTimestamp(); const cuStr = cu();
 
       if (tab === 'iecode') {
-        // ── IE-Code: SY-Running auto-generate ──────────────────────────────
         let allCodesData = [];
         let from = 0;
         while (true) {
@@ -522,13 +523,13 @@ useEffect(() => {
           if (data.length < 1000) break;
           from += 1000;
         }
-        const getNextSy = getSyRunningPool(allCodesData.map(c => ({ 'SY-Running': c })).reduce((arr, d) => { arr.push(d['SY-Running']); return arr; }, []));
+        const getNextSy = getSyRunningPool(allCodesData);
 
         const buildIePayload = (row) => {
           const d = {};
           cfg.fields.forEach(k => {
-            if (k === 'SY-Running') return; // จะใส่ทีหลัง
-            if (k === 'username') d[k] = cu;
+            if (k === 'SY-Running') return;
+            if (k === 'username') d[k] = cuStr;
             else if (k === 'last_update') d[k] = ts;
             else d[k] = String(row[k] ?? '');
           });
@@ -551,11 +552,10 @@ useEffect(() => {
         }
         await refreshNextSyRunning();
       } else {
-        // ── AP-Code / SM-Code / Category ──────────────────────────────────
         const buildPayload = (row) => {
           const d = {};
           cfg.fields.forEach(k => {
-            if (k === 'username') d[k] = cu;
+            if (k === 'username') d[k] = cuStr;
             else if (k === 'last_update') d[k] = ts;
             else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') {
               const existing = items.find(i => i[cfg.key] === row[cfg.key]);
@@ -586,8 +586,8 @@ useEffect(() => {
   };
 
   const handleNewSave = async () => {
-    const ts = getTimestamp(); const cu = userName || currentUser?.email || '';
-    let data = { ...form, username: cu, last_update: ts };
+    const ts = getTimestamp(); const cuStr = cu();
+    let data = { ...form, username: cuStr, last_update: ts };
     if (tab === 'iecode') {
       data['SY-Running'] = nextSyRunning;
     }
@@ -603,47 +603,65 @@ useEffect(() => {
     if (tab === 'iecode') await refreshNextSyRunning();
   };
 
+  // ─── FIX: handleDelete — iecode uses hard delete, others use soft delete ──
   const handleDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    const cuStr = cu();
+    const now = new Date().toISOString();
     try {
       const item = items.find(i => i.id === id);
-      await supabase.from('recycle_bin').insert([{ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key]||id, data: item, deleted_by: cu()||'', deleted_at: new Date().toISOString() }]);
+      const { error: binError } = await supabase.from('recycle_bin').insert([{
+        source_table: cfg.table,
+        source_id: id,
+        source_key: item?.[cfg.key] || id,
+        data: item,
+        deleted_by: cuStr,
+        deleted_at: now,
+      }]);
+      if (binError) throw binError;
+
       if (tab === 'iecode') {
+        // hard delete — row is fully removed from table
         const { error } = await supabase.from(cfg.table).delete().eq('id', id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cu()||'', deleted_at: new Date().toISOString() }).eq('id', id);
+        // soft delete — mark deleted flag
+        const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cuStr, deleted_at: now }).eq('id', id);
         if (error) throw error;
       }
       setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
       await fetchTab(tab);
+      if (tab === 'iecode') await refreshNextSyRunning();
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  const cu = () => userName || currentUser?.email || '';
-
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
+    const cuStr = cu();
+    const now = new Date().toISOString();
     try {
-      const now = new Date().toISOString();
       const rows = items.filter(i => selected.includes(i.id));
       const { error: insertError } = await supabase.from('recycle_bin').insert(
-        rows.map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: cu(), deleted_at: now }))
+        rows.map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: cuStr, deleted_at: now }))
       );
       if (insertError) throw insertError;
+
       if (tab === 'iecode') {
+        // hard delete in batches
         for (let i = 0; i < selected.length; i += 300) {
           const { error } = await supabase.from(cfg.table).delete().in('id', selected.slice(i, i + 300));
           if (error) throw error;
         }
       } else {
+        // soft delete in batches
         for (let i = 0; i < selected.length; i += 300) {
-          const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cu(), deleted_at: now }).in('id', selected.slice(i, i + 300));
+          const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cuStr, deleted_at: now }).in('id', selected.slice(i, i + 300));
           if (error) throw error;
         }
       }
       setSelectedMap(prev => ({ ...prev, [tab]: [] }));
       await fetchTab(tab);
+      if (tab === 'iecode') await refreshNextSyRunning();
       alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
@@ -677,22 +695,34 @@ useEffect(() => {
     setRecycleBinLoading(false);
   };
 
+  // ─── FIX: handleRestore — iecode: insert without forcing old id ──────────
   const handleRestore = async (binItem) => {
     try {
       if (binItem.source_table === 'ie_code_list') {
-        // hard-delete pattern — insert กลับ
-        const data = { ...binItem.data }; delete data.id;
-        const { error } = await supabase.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
+        // hard-delete pattern — re-insert the row WITHOUT specifying id
+        // so DB generates a fresh PK; SY-Running is preserved from saved data
+        const data = { ...binItem.data };
+        delete data.id; // let DB assign new id
+        const { error } = await supabase.from(binItem.source_table).insert([data]);
         if (error) throw error;
       } else {
-        // soft-delete pattern — update deleted=false
-        const { error } = await supabase.from(binItem.source_table).update({ deleted: false, deleted_by: null, deleted_at: null }).eq('id', binItem.source_id);
+        // soft-delete pattern — flip deleted flag back
+        const { error } = await supabase
+          .from(binItem.source_table)
+          .update({ deleted: false, deleted_by: null, deleted_at: null })
+          .eq('id', binItem.source_id);
         if (error) throw error;
       }
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      // remove from recycle_bin
+      const { error: binError } = await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      if (binError) throw binError;
+
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
       const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => c.table === binItem.source_table)?.[0];
-      if (tabKey) await fetchTab(tabKey);
+      if (tabKey) {
+        await fetchTab(tabKey);
+        if (tabKey === 'iecode') await refreshNextSyRunning();
+      }
       alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
     } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
   };
@@ -700,70 +730,109 @@ useEffect(() => {
   const handlePermanentDelete = async (binItem) => {
     if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
     try {
-      await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      // For iecode, row was already hard-deleted from ie_code_list when moved to bin
+      // so we only need to remove the recycle_bin entry itself
+      // For others, also permanently delete from source table
+      if (binItem.source_table !== 'ie_code_list') {
+        const { error: srcError } = await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);
+        if (srcError) throw srcError;
+      }
+      const { error: binError } = await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      if (binError) throw binError;
+
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
     } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
   };
 
+  // ─── FIX: handleBulkRestoreBin — iecode: insert without forcing old id ───
   const handleBulkRestoreBin = async () => {
     if (!recycleBinSelected.length) return;
     setRecycleBinLoading2(true); setRecycleBinProgress(0);
     try {
       const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
       const total = targets.length; let done = 0;
+
+      // group by source_table
       const grouped = {};
-      targets.forEach(item => { if (!grouped[item.source_table]) grouped[item.source_table] = []; grouped[item.source_table].push(item); });
+      targets.forEach(item => {
+        if (!grouped[item.source_table]) grouped[item.source_table] = [];
+        grouped[item.source_table].push(item);
+      });
+
       for (const [table, binItems] of Object.entries(grouped)) {
         for (let i = 0; i < binItems.length; i += 500) {
           const chunk = binItems.slice(i, i + 500);
           if (table === 'ie_code_list') {
-            // hard-delete pattern
-            const rows = chunk.map(item => { const data = { ...item.data }; delete data.id; return { ...data, id: item.source_id }; });
+            // hard-delete pattern — insert WITHOUT old id
+            const rows = chunk.map(item => {
+              const data = { ...item.data };
+              delete data.id; // let DB assign fresh PKs
+              return data;
+            });
             const { error } = await supabase.from(table).insert(rows);
             if (error) throw error;
           } else {
-            // soft-delete pattern
+            // soft-delete pattern — flip deleted flag
             const ids = chunk.map(b => b.source_id);
             const { error } = await supabase.from(table).update({ deleted: false, deleted_by: null, deleted_at: null }).in('id', ids);
             if (error) throw error;
           }
-          done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
+          done += chunk.length;
+          setRecycleBinProgress(Math.round((done / total) * 100));
         }
       }
+
+      // clean up recycle_bin entries
       const binIds = targets.map(b => b.id);
       for (let i = 0; i < binIds.length; i += 500) {
         const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
         if (error) throw error;
       }
+
       setRecycleBinSelected([]);
       setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
       await fetchTab(tab);
+      if (tab === 'iecode') await refreshNextSyRunning();
       alert(`✅ Restore สำเร็จ ${total} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setRecycleBinLoading2(false); setRecycleBinProgress(0);
   };
 
+  // ─── FIX: handleBulkPermanentDeleteBin — iecode rows already deleted ─────
   const handleBulkPermanentDeleteBin = async () => {
     if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ? ไม่สามารถกู้คืนได้`)) return;
     setRecycleBinLoading2(true); setRecycleBinProgress(0);
     try {
       const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
       const total = targets.length; let done = 0;
+
+      // For non-iecode tables we must permanently delete from the source table too
+      const nonIeTargets = targets.filter(b => b.source_table !== 'ie_code_list');
       const byTable = {};
-      targets.forEach(item => { if (!byTable[item.source_table]) byTable[item.source_table] = []; byTable[item.source_table].push(item.source_id); });
+      nonIeTargets.forEach(item => {
+        if (!byTable[item.source_table]) byTable[item.source_table] = [];
+        byTable[item.source_table].push(item.source_id);
+      });
       for (const [table, ids] of Object.entries(byTable)) {
         for (let i = 0; i < ids.length; i += 500) {
           const { error } = await supabase.from(table).delete().in('id', ids.slice(i, i + 500));
           if (error) throw error;
-          done += ids.slice(i, i + 500).length; setRecycleBinProgress(Math.round((done / total) * 100));
+          done += ids.slice(i, i + 500).length;
+          setRecycleBinProgress(Math.round((done / total) * 100));
         }
       }
+      // iecode rows were already hard-deleted, count them for progress
+      const ieCount = targets.length - nonIeTargets.length;
+      done += ieCount;
+      setRecycleBinProgress(Math.round((done / total) * 100));
+
+      // delete all from recycle_bin
       const binIds = targets.map(b => b.id);
       for (let i = 0; i < binIds.length; i += 500) {
         const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
         if (error) throw error;
       }
+
       setRecycleBinSelected([]);
       setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
       alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
