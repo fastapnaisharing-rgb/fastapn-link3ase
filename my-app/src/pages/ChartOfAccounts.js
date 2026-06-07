@@ -181,6 +181,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         'Supplier Code',
         'Description',
         'Remark',
+        'updated_by',
+        'updated_at',
       ],
       combo: [],
       edit: [
@@ -198,8 +200,6 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         { key: 'Supplier Code', label: 'Supplier Code',  w: 120 },
         { key: 'Description',   label: 'Description',    w: 300 },
         { key: 'Remark',        label: 'Remark',         w: 200 },
-        { key: 'updated_by',    label: 'Updated By',     w: 110 },
-        { key: 'updated_at',    label: 'Updated At',     w: 140 },
       ],
     },
   };
