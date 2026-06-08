@@ -469,7 +469,7 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPref
   const { isOwner, isAdmin }        = useUserRole();
 
   const [bu, setBu]                   = useState('');
-  const [receiveDate, setReceiveDate] = useState('');
+
   const [dueDate, setDueDate]         = useState('');
   const [period, setPeriod]           = useState('Current');
   const [grt, setGrt]                 = useState('');
