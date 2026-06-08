@@ -431,6 +431,10 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, onApGrt
 
 // ── Phase 1: Batch Setup ───────────────────────────────────────────────────────
 function BatchSetup({ onStart, infoItems = [] }) {
+    const today = new Date();
+    const pad2  = (n) => String(n).padStart(2, '0');
+    const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
+    const [receiveDate, setReceiveDate] = useState(todayStr);
   const { userName, currentUser }   = useAuth();
   const { isOwner, isAdmin }        = useUserRole();
 
