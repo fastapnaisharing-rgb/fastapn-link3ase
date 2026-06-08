@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { useUserRole } from '../contexts/useUserRole';
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 const MOCK_GRS = [
@@ -406,8 +408,10 @@ function BuInfoPanel({ buInfo, grt, grn, onGrtChange, onGrnChange }) {
 }
 
 // ── Phase 1: Batch Setup ───────────────────────────────────────────────────────
-// infoItems = company_list cache passed from BusinessUnit (หรือ parent component)
 function BatchSetup({ onStart, infoItems = [] }) {
+  const { userName, currentUser }   = useAuth();
+  const { isOwner, isAdmin }        = useUserRole();
+
   const [bu, setBu]                   = useState('');
   const [receiveDate, setReceiveDate] = useState('');
   const [dueDate, setDueDate]         = useState('');
@@ -416,6 +420,42 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [grn, setGrn]                 = useState('');
   const [buInfo, setBuInfo]           = useState(null);
   const [showPopup, setShowPopup]     = useState(false);
+
+  // ── Batch History ──────────────────────────────────────────────
+  const [historyTab, setHistoryTab]   = useState('mine');   // 'mine' | 'all'
+  const [historyMine, setHistoryMine] = useState([]);
+  const [historyAll, setHistoryAll]   = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const canSeeAll = isOwner || isAdmin;
+  const me = userName || currentUser?.email || '';
+
+  useEffect(() => {
+    const load = async () => {
+      setHistoryLoading(true);
+      try {
+        // โหลดของตัวเอง
+        const { data: mine } = await supabase
+          .from('batch_list')
+          .select('*')
+          .eq('created_by', me)
+          .order('created_at', { ascending: false })
+          .limit(100);
+        setHistoryMine(mine || []);
+
+        // โหลดทั้งหมด (เฉพาะ Admin/Owner)
+        if (canSeeAll) {
+          const { data: all } = await supabase
+            .from('batch_list')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(500);
+          setHistoryAll(all || []);
+        }
+      } catch (e) { console.error('loadHistory:', e); }
+      setHistoryLoading(false);
+    };
+    if (me) load();
+  }, [me, canSeeAll]);
 
   // เลือก BU จาก popup → populate ฝั่งขวา
   const handleSelectBU = (item) => {
@@ -557,21 +597,126 @@ function BatchSetup({ onStart, infoItems = [] }) {
         </div>
       </div>
 
-      {/* Batch History */}
+      {/* ── Batch History ── */}
       <div style={card}>
-        <div style={cardHead}>
-          <span style={cardLabel}>Batch history</span>
+        {/* Tab bar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
+          <div style={{ display: 'flex' }}>
+            {[
+              { key: 'mine', label: '👤 ของฉัน', count: historyMine.length },
+              ...(canSeeAll ? [{ key: 'all', label: '👥 ทั้งหมด', count: historyAll.length }] : []),
+            ].map(t => (
+              <div key={t.key} onClick={() => setHistoryTab(t.key)}
+                style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: historyTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: historyTab === t.key ? '#1a3a5c' : '#888', fontWeight: historyTab === t.key ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {t.label}
+                <span style={{ background: historyTab === t.key ? '#1a3a5c' : '#e8e8e8', color: historyTab === t.key ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{t.count}</span>
+              </div>
+            ))}
+          </div>
+          <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Batch History</span>
         </div>
+
+        {/* Table */}
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
-              {['Batch ID','Business Unit','Period','Inv.','ยอดรวม','สถานะ'].map(h => (
-                <th key={h} style={{ padding: '6px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0' }}>{h}</th>
+              {[
+                'Batch Name',
+                'Business Unit',
+                'Receive Date',
+                'ยอดรวม',
+                ...(historyTab === 'all' ? ['สร้างโดย'] : []),
+                'ไฟล์แนบ',
+                'Status',
+              ].map(h => (
+                <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            <tr><td colSpan={6} style={{ textAlign: 'center', color: '#aaa', padding: '18px', fontSize: '12px' }}>ยังไม่มีประวัติ Batch</td></tr>
+            {historyLoading ? (
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>กำลังโหลด...</td></tr>
+            ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>
+                {historyTab === 'mine' ? 'ยังไม่มีประวัติ Batch ของคุณ' : 'ยังไม่มีประวัติ Batch'}
+              </td></tr>
+            ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
+              const statusMap = {
+                done:       { bg: '#EAF3DE', color: '#27500A', label: 'Done' },
+                processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' },
+                error:      { bg: '#FCEBEB', color: '#791F1F', label: 'Error' },
+                draft:      { bg: '#F1EFE8', color: '#444441', label: 'Draft' },
+              };
+              const st = statusMap[b.status] || statusMap.draft;
+
+              const receiveAt = b.receive_date ? new Date(b.receive_date) : null;
+              const receiveDateStr = receiveAt
+                ? `${String(receiveAt.getDate()).padStart(2,'0')}/${String(receiveAt.getMonth()+1).padStart(2,'0')}/${receiveAt.getFullYear()}`
+                : '-';
+
+              return (
+                <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+
+                  {/* Batch Name */}
+                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600' }}>{b.batch_id || b.id}</div>
+                    {b.note && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px' }}>{b.note}</div>}
+                  </td>
+
+                  {/* Business Unit */}
+                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                    <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>
+                      {b.bu || '-'}
+                    </span>
+                  </td>
+
+                  {/* Receive Date */}
+                  <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap' }}>{receiveDateStr}</td>
+
+                  {/* ยอดรวม */}
+                  <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap' }}>
+                    {b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}
+                  </td>
+
+                  {/* สร้างโดย (all tab only) */}
+                  {historyTab === 'all' && (
+                    <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', maxWidth: '130px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {b.created_by || '-'}
+                    </td>
+                  )}
+
+                  {/* ไฟล์แนบ — View + Download */}
+                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                    <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+                      {b.file_url ? (
+                        <>
+                          {/* View */}
+                          <a href={b.file_url} target="_blank" rel="noreferrer"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
+                            👁 View
+                          </a>
+                          {/* Download */}
+                          <a href={b.file_url} download
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
+                            ⬇ Download
+                          </a>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: '11px', color: '#ccc' }}>ไม่มีไฟล์</span>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Status */}
+                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                    <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>
+                      {st.label}
+                    </span>
+                  </td>
+
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
