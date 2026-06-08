@@ -345,7 +345,7 @@ function StepBar({ step, batchConfig, onGo }) {
 }
 
 // ── BU Info Panel ─────────────────────────────────────────────────────────────
-function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,  onApGrtChange, onApGrnChange, onApGrtRunningChange, onApGrnRunningChange }) {
+function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix, onApGrtRunningChange, onApGrnRunningChange }) {
   const rows = [
     ['Company name', buInfo?.['THAI COMPANY NAME']],
     ['Tax ID',       buInfo?.['TAX ID']],
@@ -358,18 +358,6 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPref
   const infoRowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr' };
   const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center' };
   const valStyle = (hasVal) => ({ fontSize: '12px', color: hasVal ? '#1a3a5c' : '#ccc', padding: '7px 10px', background: 'white', display: 'flex', alignItems: 'center', fontStyle: hasVal ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-    const numInput = (val, onChange, isRed = false) => (
-    <input
-        type="number" min="0" value={val}
-        onChange={e => onChange(e.target.value)}
-        style={{
-        width: '100%', height: '28px', padding: '0 8px', fontSize: '12px',
-        border: '0.5px solid #ddd', borderRadius: '5px', background: 'white',
-        color: isRed ? '#c0392b' : '#1a2a3a',
-        outline: 'none', boxSizing: 'border-box', textAlign: 'right'
-        }}
-    />
-    );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -391,55 +379,43 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPref
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div>
             </div>
             {/* 4 columns */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
 
-                {/* GRT Amount */}
-                <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
-                <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px' }}>GRT</div>
-                {numInput(apGrt, onApGrtChange)}
-                </div>
+                {/* GRT — full running number */}
+                    <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
+                    <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px' }}>GRT</div>
+                    <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
+                        <span style={{ padding: '0 7px', fontSize: '11px', color: '#1a3a5c', background: '#f0f3f8', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
+                        {grtPrefix}
+                        </span>
+                        <input
+                        type="text" inputMode="numeric"
+                        value={apGrtRunning}
+                        onChange={e => onApGrtRunningChange(e.target.value)}
+                        maxLength={4}
+                        placeholder="0000"
+                        style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color: '#1a2a3a', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }}
+                        />
+                    </div>
+                    </div>
 
-                {/* GRT Running No. */}
-                <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
-                <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px' }}>Running No.</div>
-                <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
-                    <span style={{ padding: '0 5px', fontSize: '10px', color: '#1a3a5c', background: '#f0f3f8', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '500', whiteSpace: 'nowrap' }}>
-                    {grtPrefix}
-                    </span>
-                    <input
-                    type="text" inputMode="numeric"
-                    value={apGrtRunning}
-                    onChange={e => onApGrtRunningChange(e.target.value)}
-                    maxLength={4}
-                    style={{ flex: 1, height: '100%', padding: '0 4px', fontSize: '12px', border: 'none', outline: 'none', color: '#1a2a3a', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.1em' }}
-                    />
-                </div>
-                <div style={{ fontSize: '9px', color: '#aaa', marginTop: '2px' }}>→ {grtPrefix}{apGrtRunning}</div>
-                </div>
-
-                {/* GRN Amount */}
-                <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
-                <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px' }}>GRN</div>
-                {numInput(apGrn, onApGrnChange, true)}
-                </div>
-
-                {/* GRN Running No. */}
-                <div style={{ padding: '7px 10px' }}>
-                <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px' }}>Running No.</div>
-                <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
-                    <span style={{ padding: '0 5px', fontSize: '10px', color: '#c0392b', background: '#fdf0f0', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '500', whiteSpace: 'nowrap' }}>
-                    {grnPrefix}
-                    </span>
-                    <input
-                    type="text" inputMode="numeric"
-                    value={apGrnRunning}
-                    onChange={e => onApGrnRunningChange(e.target.value)}
-                    maxLength={4}
-                    style={{ flex: 1, height: '100%', padding: '0 4px', fontSize: '12px', border: 'none', outline: 'none', color: '#c0392b', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.1em' }}
-                    />
-                </div>
-                <div style={{ fontSize: '9px', color: '#aaa', marginTop: '2px' }}>→ {grnPrefix}{apGrnRunning}</div>
-                </div>
+                    {/* GRN — full running number */}
+                    <div style={{ padding: '7px 10px' }}>
+                    <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px' }}>GRN</div>
+                    <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
+                        <span style={{ padding: '0 7px', fontSize: '11px', color: '#c0392b', background: '#fdf0f0', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
+                        {grnPrefix}
+                        </span>
+                        <input
+                        type="text" inputMode="numeric"
+                        value={apGrnRunning}
+                        onChange={e => onApGrnRunningChange(e.target.value)}
+                        maxLength={4}
+                        placeholder="0000"
+                        style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color: '#c0392b', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }}
+                        />
+                    </div>
+                    </div>
 
             </div>
             </div>
@@ -455,13 +431,11 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPref
     const [receiveDate, setReceiveDate] = useState(todayStr);
 
     const getPrefix = (type) => {
-    const d   = receiveDate ? new Date(receiveDate) : new Date();
-    const yy  = String(d.getFullYear()).slice(-2);   // e.g. "26"
-    const mm  = pad2(d.getMonth() + 1);              // e.g. "06"
-    // GRT = Y92MM0  →  "Y" + "9" + "2" + MM + "0"
-    // GRN = Y91MM0  →  "Y" + "9" + "1" + MM + "0"
-    if (type === 'GRT') return `Y92${mm}0`;
-    if (type === 'GRN') return `Y91${mm}0`;
+    const d  = receiveDate ? new Date(receiveDate) : new Date();
+    const y  = String(d.getFullYear()).slice(-1);   // เลขหลักสุดท้ายของปี เช่น "6"
+    const mm = pad2(d.getMonth() + 1);              // เดือน 2 หลัก เช่น "06"
+    if (type === 'GRT') return `${y}92${mm}0`;      // → "692060"
+    if (type === 'GRN') return `${y}91${mm}0`;      // → "691060"
     return '';
     };
 
@@ -472,12 +446,8 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPref
 
   const [dueDate, setDueDate]         = useState('');
   const [period, setPeriod]           = useState('Current');
-  const [grt, setGrt]                 = useState('');
-  const [grn, setGrn]                 = useState('');
   const [buInfo, setBuInfo]           = useState(null);
   const [showPopup, setShowPopup]     = useState(false);
-  const [apGrt, setApGrt]             = useState(0);
-  const [apGrn, setApGrn]             = useState(0);
   const [apGrtRunning, setApGrtRunning] = useState('0000');
   const [apGrnRunning, setApGrnRunning] = useState('0000');
 
@@ -632,7 +602,7 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPref
                   style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
                     onClick={() => onStart({
                     bu: bu || '-', receiveDate, dueDate, period,
-                    apGrt, apGrn, apGrtRunning, apGrnRunning, buInfo,
+                    apGrtRunning, apGrnRunning, buInfo,
                     })}
                 >
                   ▶ Start Batch
@@ -645,16 +615,15 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, grtPref
               <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
                 BU Info
               </div>
-                <BuInfoPanel
-                buInfo={buInfo}
-                apGrt={apGrt} apGrn={apGrn}
-                apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning}
-                grtPrefix={getPrefix('GRT')}
-                grnPrefix={getPrefix('GRN')}
-                onApGrtChange={setApGrt} onApGrnChange={setApGrn}
-                onApGrtRunningChange={(v) => handleRunningChange(v, setApGrtRunning)}
-                onApGrnRunningChange={(v) => handleRunningChange(v, setApGrnRunning)}
-                />
+                    <BuInfoPanel
+                    buInfo={buInfo}
+                    apGrtRunning={apGrtRunning}
+                    apGrnRunning={apGrnRunning}
+                    grtPrefix={getPrefix('GRT')}
+                    grnPrefix={getPrefix('GRN')}
+                    onApGrtRunningChange={(v) => handleRunningChange(v, setApGrtRunning)}
+                    onApGrnRunningChange={(v) => handleRunningChange(v, setApGrnRunning)}
+                    />
             </div>
 
           </div>
