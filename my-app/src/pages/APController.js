@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 const MOCK_GRS = [
@@ -27,27 +27,160 @@ const MOCK_GRS = [
   },
 ];
 
-// ── Mock BU lookup data ───────────────────────────────────────────────────────
-const MOCK_BU_INFO = {
-  ART: {
-    companyName: 'บริษัท อาร์ต ตง เอียง จำกัด',
-    taxId: '0105556186714',
-    companyCode: '8-85-8507-',
-    book: 'CGT',
-    segment3: '8507',
-    grtStatus: 'Manual',
-  },
-  BKK: {
-    companyName: 'บริษัท แบงค็อก เทค ซัพพลาย จำกัด',
-    taxId: '0105567123456',
-    companyCode: '9-10-1001-',
-    book: 'STD',
-    segment3: '1001',
-    grtStatus: 'Auto',
-  },
-};
-
 const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BUSearchPopup — ค้นหา BU จาก infoItems cache (company_list)
+// Props:
+//   show        — boolean
+//   onClose     — () => void
+//   onSelect    — (item) => void   item = row จาก company_list
+//   infoItems   — array ที่ BusinessUnit โหลดไว้แล้ว
+// ─────────────────────────────────────────────────────────────────────────────
+function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
+  const [query, setQuery]   = useState('');
+  const [active, setActive] = useState(-1);
+  const inputRef            = useRef(null);
+  const listRef             = useRef(null);
+
+  // reset & focus ทุกครั้งที่เปิด
+  useEffect(() => {
+    if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); }
+  }, [show]);
+
+  // Esc ปิด popup
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
+
+  if (!show) return null;
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? infoItems.filter(i =>
+        i['bu']?.toLowerCase().includes(q) ||
+        i['THAI COMPANY NAME']?.toLowerCase().includes(q) ||
+        i['ENGLISH COMPANY NAME']?.toLowerCase().includes(q) ||
+        i['TAX ID']?.includes(q)
+      )
+    : infoItems;
+
+  const handleKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
+    else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
+  };
+
+  // scroll active row into view
+  useEffect(() => {
+    if (active < 0 || !listRef.current) return;
+    listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: 'white', borderRadius: '10px', width: '680px', maxWidth: '95vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 8px 32px rgba(26,58,92,0.18)' }}>
+
+        {/* Header */}
+        <div style={{ padding: '14px 16px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+          <span style={{ fontSize: '15px' }}>🏢</span>
+          <span style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c', flex: 1 }}>เลือก Business Unit</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#aaa', fontSize: '20px', lineHeight: 1, padding: '0 2px' }}>×</button>
+        </div>
+
+        {/* Search box */}
+        <div style={{ padding: '10px 16px', borderBottom: '0.5px solid #f0f0f0', flexShrink: 0 }}>
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#aaa', fontSize: '14px', pointerEvents: 'none' }}>🔍</span>
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => { setQuery(e.target.value); setActive(-1); }}
+              onKeyDown={handleKey}
+              placeholder="พิมพ์ BU, ชื่อบริษัท, Tax ID..."
+              style={{ width: '100%', padding: '8px 34px 8px 34px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '7px', outline: 'none', boxSizing: 'border-box', background: '#fafafa' }}
+            />
+            {query && (
+              <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+                style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', fontSize: '16px', lineHeight: 1 }}>×</button>
+            )}
+          </div>
+          <div style={{ marginTop: '6px', fontSize: '11px', color: '#aaa' }}>
+            {filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}{infoItems.length > 0 ? '' : ' — (ยังโหลดข้อมูลไม่สำเร็จ)'} — ↑↓ นำทาง · Enter เลือก · Esc ปิด
+          </div>
+        </div>
+
+        {/* Result table */}
+        <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+              <div style={{ fontSize: '28px', marginBottom: '8px' }}>🔍</div>
+              ไม่พบข้อมูล BU {query ? `"${query}"` : ''}
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                <tr>
+                  {[['BU','70px'],['ชื่อบริษัท',''],['Tax ID','130px'],['Book','70px'],['AP GRT','90px']].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', width: w || undefined }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item, i) => {
+                  const isActive = i === active;
+                  return (
+                    <tr
+                      key={item.id}
+                      data-row={i}
+                      onClick={() => onSelect(item)}
+                      onMouseEnter={() => setActive(i)}
+                      style={{ background: isActive ? '#e8f0fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f5f5f5' }}
+                    >
+                      <td style={{ padding: '9px 10px', fontWeight: '600', color: '#1a3a5c', whiteSpace: 'nowrap' }}>
+                        {item['bu'] || '-'}
+                      </td>
+                      <td style={{ padding: '9px 10px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontWeight: isActive ? '500' : '400', color: '#333' }}>{item['THAI COMPANY NAME'] || '-'}</div>
+                        <div style={{ fontSize: '10px', color: '#999', marginTop: '1px' }}>{item['ENGLISH COMPANY NAME'] || ''}</div>
+                      </td>
+                      <td style={{ padding: '9px 10px', color: '#555', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' }}>
+                        {item['TAX ID'] || '-'}
+                      </td>
+                      <td style={{ padding: '9px 10px', color: '#555', whiteSpace: 'nowrap' }}>
+                        {item['BOOK'] || '-'}
+                      </td>
+                      <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
+                        {item['AP GRT Control']
+                          ? <span style={{ ...bdgBlue, fontSize: '10px' }}>{item['AP GRT Control']}</span>
+                          : <span style={{ color: '#ccc' }}>-</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '10px 16px', borderTop: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+          <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Math.round(n).toLocaleString('th-TH');
@@ -181,12 +314,12 @@ function StepBar({ step, batchConfig, onGo }) {
 // ── BU Info Panel ─────────────────────────────────────────────────────────────
 function BuInfoPanel({ buInfo, grt, grn, onGrtChange, onGrnChange }) {
   const rows = [
-    ['Company name', buInfo?.companyName],
-    ['Tax ID',       buInfo?.taxId],
-    ['Company code', buInfo?.companyCode],
-    ['Book',         buInfo?.book],
-    ['Segment3',     buInfo?.segment3],
-    ['GRT status',   buInfo?.grtStatus],
+    ['Company name', buInfo?.['THAI COMPANY NAME']],
+    ['Tax ID',       buInfo?.['TAX ID']],
+    ['Company code', buInfo?.['COMPANY CODE']],
+    ['Book',         buInfo?.['BOOK']],
+    ['Segment3',     buInfo?.['SEGMENT3']],
+    ['GRT status',   buInfo?.['AP GRT Control']],
   ];
 
   const infoRowStyle = {
@@ -251,53 +384,51 @@ function BuInfoPanel({ buInfo, grt, grn, onGrtChange, onGrnChange }) {
 }
 
 // ── Phase 1: Batch Setup ───────────────────────────────────────────────────────
-function BatchSetup({ onStart }) {
-  const [bu, setBu]           = useState('');
+// infoItems = company_list cache passed from BusinessUnit (หรือ parent component)
+function BatchSetup({ onStart, infoItems = [] }) {
+  const [bu, setBu]                   = useState('');
   const [receiveDate, setReceiveDate] = useState('');
-  const [dueDate, setDueDate] = useState('');
-  const [period, setPeriod]   = useState('Current');
-  const [grt, setGrt]         = useState('');
-  const [grn, setGrn]         = useState('');
-  const [buInfo, setBuInfo]   = useState(null);
-  const [buError, setBuError] = useState(false);
+  const [dueDate, setDueDate]         = useState('');
+  const [period, setPeriod]           = useState('Current');
+  const [grt, setGrt]                 = useState('');
+  const [grn, setGrn]                 = useState('');
+  const [buInfo, setBuInfo]           = useState(null);
+  const [showPopup, setShowPopup]     = useState(false);
 
-  const handleBuSearch = () => {
-    const info = MOCK_BU_INFO[bu.trim().toUpperCase()];
-    if (info) {
-      setBuInfo(info);
-      setBuError(false);
-    } else {
-      setBuInfo(null);
-      setBuError(true);
+  // เลือก BU จาก popup → populate ฝั่งขวา
+  const handleSelectBU = (item) => {
+    setBu(item['bu'] || '');
+    setBuInfo(item);
+    setShowPopup(false);
+  };
+
+  // พิมพ์แล้ว Enter → หา exact match จาก cache โดยไม่ต้องเปิด popup
+  const handleBuKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      const match = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
+      setBuInfo(match || null);
     }
   };
 
-  const handleBuKeyDown = (e) => {
-    if (e.key === 'Enter') handleBuSearch();
-  };
+  const handleBuChange = (val) => { setBu(val); if (!val) setBuInfo(null); };
 
   const inputBase = {
-    width: '100%',
-    height: '32px',
-    padding: '0 8px',
-    fontSize: '12px',
-    border: '0.5px solid #ddd',
-    borderRadius: '6px',
-    background: 'white',
-    color: '#1a3a5c',
-    outline: 'none',
-    boxSizing: 'border-box',
+    width: '100%', height: '32px', padding: '0 8px', fontSize: '12px',
+    border: '0.5px solid #ddd', borderRadius: '6px', background: 'white',
+    color: '#1a3a5c', outline: 'none', boxSizing: 'border-box',
   };
-
-  const dateInputStyle = {
-    ...inputBase,
-    paddingRight: '30px',
-  };
-
-  const inputWrap = { position: 'relative', display: 'flex', alignItems: 'center' };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
+    <>
+      {/* ── BU Search Popup ── */}
+      <BUSearchPopup
+        show={showPopup}
+        onClose={() => setShowPopup(false)}
+        onSelect={handleSelectBU}
+        infoItems={infoItems}
+      />
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
 
       {/* ── Main Setup Card ── */}
       <div style={card}>
@@ -322,20 +453,17 @@ function BatchSetup({ onStart }) {
               {/* BU */}
               <div style={fieldWrap}>
                 <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
-                <div style={inputWrap}>
+                <div style={{ position: 'relative' }}>
                   <input
                     value={bu}
-                    onChange={e => { setBu(e.target.value); setBuError(false); }}
+                    onChange={e => handleBuChange(e.target.value)}
                     onKeyDown={handleBuKeyDown}
                     placeholder="ระบุตัวย่อ BU..."
-                    style={{
-                      ...inputBase,
-                      paddingRight: '36px',
-                      border: `0.5px solid ${buError ? '#e24b4a' : '#ddd'}`,
-                    }}
+                    style={{ ...inputBase, paddingRight: '36px' }}
                   />
+                  {/* 🔍 ปุ่มเปิด Popup */}
                   <button
-                    onClick={handleBuSearch}
+                    onClick={() => setShowPopup(true)}
                     style={{
                       position: 'absolute', right: 0, top: 0,
                       height: '32px', width: '32px',
@@ -345,13 +473,16 @@ function BatchSetup({ onStart }) {
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: '13px',
                     }}
-                    title="Search BU"
+                    title="เปิด Popup ค้นหา BU"
                   >
                     🔍
                   </button>
                 </div>
-                {buError && (
-                  <span style={{ fontSize: '10px', color: '#e24b4a' }}>ไม่พบข้อมูล BU "{bu}"</span>
+                {/* hint แสดงชื่อบริษัทที่เลือก */}
+                {buInfo && (
+                  <span style={{ fontSize: '10px', color: '#0F6E56', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    ✓ {buInfo['THAI COMPANY NAME'] || buInfo['ENGLISH COMPANY NAME']}
+                  </span>
                 )}
               </div>
 
@@ -359,36 +490,18 @@ function BatchSetup({ onStart }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
                 <div style={fieldWrap}>
                   <label style={fieldLabel}>Receive date</label>
-                  <div style={inputWrap}>
-                    <input
-                      type="date"
-                      value={receiveDate}
-                      onChange={e => setReceiveDate(e.target.value)}
-                      style={inputBase}
-                    />
-                  </div>
+                  <input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} style={inputBase} />
                 </div>
                 <div style={fieldWrap}>
                   <label style={fieldLabel}>Due date</label>
-                  <div style={inputWrap}>
-                    <input
-                      type="date"
-                      value={dueDate}
-                      onChange={e => setDueDate(e.target.value)}
-                      style={inputBase}
-                    />
-                  </div>
+                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} />
                 </div>
               </div>
 
               {/* Period */}
               <div style={fieldWrap}>
                 <label style={fieldLabel}>Period</label>
-                <select
-                  value={period}
-                  onChange={e => setPeriod(e.target.value)}
-                  style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}
-                >
+                <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>
                   {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
@@ -397,7 +510,7 @@ function BatchSetup({ onStart }) {
               <div style={{ marginTop: '4px' }}>
                 <button
                   style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
-                  onClick={() => onStart({ bu: bu || 'ART', receiveDate, dueDate, period, grt, grn })}
+                  onClick={() => onStart({ bu: bu || '-', receiveDate, dueDate, period, grt, grn, buInfo })}
                 >
                   ▶ Start Batch
                 </button>
@@ -816,7 +929,9 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
 }
 
 // ── Main APController ──────────────────────────────────────────────────────────
-export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
+// infoItems — pass company_list cache from BusinessUnit:
+//   <APController infoItems={infoItems} ... />
+export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, infoItems = [] }) {
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
   const [invoices, setInvoices]       = useState([]);
@@ -846,7 +961,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
       <StepBar step={step} batchConfig={batchConfig} onGo={setStep} />
 
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {step === 1 && <BatchSetup onStart={handleStart} />}
+        {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
         {step === 2 && (
           <InvoiceEntry
             batchConfig={batchConfig}
