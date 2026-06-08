@@ -315,7 +315,7 @@ function MainApp() {
 
   const handleSidebarEnter = () => { clearCloseTimer(); setSidebarExpanded(true); setOpenMenu(null); };
   const handleMasterEnter  = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('master'); };
-  const handleAPEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ap-gr'); };
+  const handleAPEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ap'); };
   const handleFlyoutEnter  = () => { clearCloseTimer(); };
   const handleMouseLeave   = () => { startCloseTimer(); };
   const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
@@ -434,8 +434,8 @@ function MainApp() {
 
             {/* AP Controller — flyout trigger (แสดงเสมอถ้า isOwner หรือมี VAT permission) */}
             {(isOwner || userPermissions?.['Manual']) && !maintenanceMenus.includes('ap-controller') && (
-              <div onMouseEnter={handleAPEnter} title={!sidebarExpanded ? 'AP Controller' : ''}
-                style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isAPActive || openMenu === 'ap' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ap' ? 'rgba(93,202,165,0.12)' : isAPActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isAPActive || openMenu === 'ap' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+              <div onClick={handleAPEnter} title={!sidebarExpanded ? 'AP Controller' : ''}
+                style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isAPActive || openMenu === 'ap-gr' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ap' ? 'rgba(93,202,165,0.12)' : isAPActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isAPActive || openMenu === 'ap' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                 {sidebarExpanded ? <><span>🧾 AP Controller</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>🧾</span>}
               </div>
             )}
