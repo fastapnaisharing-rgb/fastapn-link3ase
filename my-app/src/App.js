@@ -8,6 +8,7 @@ import ChartOfAccounts from './pages/ChartOfAccounts';
 import VendorMaster from './pages/VendorMaster';
 import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
+import APController from './pages/APController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { supabase } from './supabase';
@@ -186,34 +187,20 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
   );
 }
 
-
 const getBuildVersion = () => {
   const ts = Number(process.env.REACT_APP_BUILD_TIME);
   const commit = process.env.REACT_APP_COMMIT_SHA?.slice(0, 7);
   const envRaw = process.env.REACT_APP_ENV || process.env.NODE_ENV;
-
-  const envMap = {
-    production: 'PROD',
-    preview: 'PREVIEW',
-    development: 'DEV'
-  };
-
+  const envMap = { production: 'PROD', preview: 'PREVIEW', development: 'DEV' };
   const env = envMap[envRaw] || envRaw?.toUpperCase();
-
   const d = new Date(ts);
-
-  if (isNaN(d.getTime())) {
-    return `v-- · ${env}`;
-  }
-
+  if (isNaN(d.getTime())) return `v-- · ${env}`;
   const dateStr = `${String(d.getFullYear()).slice(2)}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
-
   return `Link3ase · v${dateStr} · ${env}${commit ? ` · ${commit}` : ''}`;
 };
 
-
 function MainApp() {
-  const [activePage, setActivePage] = useState('ap-controller');
+  const [activePage, setActivePage] = useState('ap-gr');
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
@@ -225,6 +212,12 @@ function MainApp() {
   const { currentUser, userRole, userName, logout, userPermissions } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
+
+  // ── Page groups ──────────────────────────────────────────────────────────────
+  const AP_PAGES     = ['ap-gr', 'ap-ocr', 'ap-form', 'ap-drafts'];
+  const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category'];
+  const isAPActive     = AP_PAGES.includes(activePage);
+  const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
     const handler = (e) => {
@@ -319,51 +312,61 @@ function MainApp() {
     clearCloseTimer();
     closeTimerRef.current = setTimeout(() => { setSidebarExpanded(true); setOpenMenu(null); }, 300);
   };
-  const handleSidebarEnter  = () => { clearCloseTimer(); setSidebarExpanded(true); setOpenMenu(null); };
-  const handleMasterEnter   = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('master'); };
-  const handleFlyoutEnter   = () => { clearCloseTimer(); };
-  const handleMouseLeave    = () => { startCloseTimer(); };
+
+  const handleSidebarEnter = () => { clearCloseTimer(); setSidebarExpanded(true); setOpenMenu(null); };
+  const handleMasterEnter  = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('master'); };
+  const handleAPEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ap'); };
+  const handleFlyoutEnter  = () => { clearCloseTimer(); };
+  const handleMouseLeave   = () => { startCloseTimer(); };
   const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
 
   const ALL_FUNCTION_MENUS = [
-    { id: 'ap-controller',   icon: '🧾', label: 'AP Controller',   permKey: 'VAT'   },
-    { id: 'vat-controller',  icon: '💹', label: 'VAT Controller',  permKey: 'VAT'   },
-    { id: 'i-expense',       icon: '💸', label: 'I-Expense',       permKey: 'IE'    },
-    { id: 'gl-functional',   icon: '📊', label: 'GL Functional',   permKey: 'GL'    },
-    { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface', permKey: 'I-Pro' },
+    { id: 'ap-gr',         icon: '🧾', label: 'AP Controller',   permKey: 'VAT'   },
+    { id: 'vat-controller',icon: '💹', label: 'VAT Controller',  permKey: 'VAT'   },
+    { id: 'i-expense',     icon: '💸', label: 'I-Expense',       permKey: 'IE'    },
+    { id: 'gl-functional', icon: '📊', label: 'GL Functional',   permKey: 'GL'    },
+    { id: 'i-pro-interface',icon:'🔗', label: 'I-Pro Interface', permKey: 'I-Pro' },
   ];
   const FUNCTION_MENUS = isOwner
     ? ALL_FUNCTION_MENUS.filter(m => !maintenanceMenus.includes(m.id))
     : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(m.id));
 
-  const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category'];
-  const isMasterActive = MASTER_PAGES.includes(activePage);
-
-  // ✅ FIX 1: เพิ่ม flyoutOpen prop ให้ VendorMaster
+  // ── renderPage ───────────────────────────────────────────────────────────────
   const renderPage = () => {
     switch (activePage) {
-      case 'ap-controller':   return (isOwner || userPermissions?.['VAT'])   ? <PlaceholderPage title="AP Controller" icon="🧾" />   : <NoAccessPage />;
+      // AP Controller
+      case 'ap-gr':
+      case 'ap-ocr':
+      case 'ap-form':
+      case 'ap-drafts':
+        return (isOwner || userPermissions?.['VAT'])
+          ? <APController
+              activeSubTab={activePage.replace('ap-', '')}
+              onSubTabChange={sub => setActivePage(`ap-${sub}`)}
+              flyoutOpen={openMenu === 'ap'}
+            />
+          : <NoAccessPage />;
+
+      // Functions (placeholder)
       case 'vat-controller':  return (isOwner || userPermissions?.['VAT'])   ? <PlaceholderPage title="VAT Controller" icon="💹" />  : <NoAccessPage />;
       case 'i-expense':       return (isOwner || userPermissions?.['IE'])    ? <PlaceholderPage title="I-Expense" icon="💸" />       : <NoAccessPage />;
       case 'gl-functional':   return (isOwner || userPermissions?.['GL'])    ? <PlaceholderPage title="GL Functional" icon="📊" />   : <NoAccessPage />;
       case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
-      case 'bu-info':         return <BusinessUnit activeSubTab="info" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
-      case 'bu-branch':       return <BusinessUnit activeSubTab="branch" onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
-      case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'coa-account':     return <ChartOfAccounts activeSubTab="account"    onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount" onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+
+      // Master Data
+      case 'bu-info':         return <BusinessUnit activeSubTab="info"        onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
+      case 'bu-branch':       return <BusinessUnit activeSubTab="branch"      onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
+      case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter"  onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'coa-account':     return <ChartOfAccounts activeSubTab="account"     onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount"  onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
       case 'vendor-apcode':   return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
-        ? <VendorMaster activeSubTab="apcode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
-        : <NoAccessPage />;
+        ? <VendorMaster activeSubTab="apcode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'vendor-smcode':   return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
-        ? <VendorMaster activeSubTab="smcode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
-        : <NoAccessPage />;
+        ? <VendorMaster activeSubTab="smcode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'vendor-category': return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
-        ? <VendorMaster activeSubTab="category"  onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
-        : <NoAccessPage />;
+        ? <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'vendor-iecode':   return (isEditor && userPermissions?.['IE'])
-        ? <VendorMaster activeSubTab="iecode"    onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} />
-        : <NoAccessPage />;
+        ? <VendorMaster activeSubTab="iecode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'itemcode':        return <ItemCodeList />;
       case 'upload':          return <UploadGen />;
       case 'users':           return <UserManagement />;
@@ -373,6 +376,7 @@ function MainApp() {
 
   const sidebarW = sidebarExpanded ? 220 : 56;
 
+  // ── Sidebar helpers ──────────────────────────────────────────────────────────
   const navItem = (id, icon, label) => (
     <div key={id} onClick={() => selectPage(id)} title={!sidebarExpanded ? label : ''}
       style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'flex-start' : 'center', padding: sidebarExpanded ? '0 16px' : '0', gap: '8px', cursor: 'pointer', fontSize: '13px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? 'rgba(255,255,255,0.1)' : 'transparent', color: activePage === id ? 'white' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
@@ -401,14 +405,15 @@ function MainApp() {
 
   const fpDiv = () => <div style={{ height: '0.5px', background: '#e8eaf0', margin: '4px 16px' }} />;
 
+  const flyoutOpen = openMenu === 'master' || openMenu === 'ap';
+
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
 
       <div ref={sidebarRef} style={{ position: 'relative', zIndex: 30, display: 'flex', flexShrink: 0 }} onMouseLeave={handleMouseLeave}>
 
-        {/* Sidebar */}
-        <div
-          style={{ width: `${sidebarW}px`, minWidth: `${sidebarW}px`, background: '#1a3a5c', color: 'white', display: 'flex', flexDirection: 'column', transition: 'width 0.2s ease, min-width 0.2s ease', overflow: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        {/* ── Sidebar ── */}
+        <div style={{ width: `${sidebarW}px`, minWidth: `${sidebarW}px`, background: '#1a3a5c', color: 'white', display: 'flex', flexDirection: 'column', transition: 'width 0.2s ease, min-width 0.2s ease', overflow: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
 
           {/* Logo */}
           <div onMouseEnter={handleSidebarEnter} style={{ padding: sidebarExpanded ? '12px 16px' : '12px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'flex-start' : 'center', gap: '10px', overflow: 'hidden', flexShrink: 0 }}>
@@ -426,12 +431,26 @@ function MainApp() {
             {sidebarExpanded && (
               <div style={{ padding: '6px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Functions</div>
             )}
-            {FUNCTION_MENUS.map(m => navItem(m.id, m.icon, m.label))}
+
+            {/* AP Controller — flyout trigger */}
+            {FUNCTION_MENUS.find(m => m.id === 'ap-gr') && (
+              <div onMouseEnter={handleAPEnter} title={!sidebarExpanded ? 'AP Controller' : ''}
+                style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isAPActive || openMenu === 'ap' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ap' ? 'rgba(93,202,165,0.12)' : isAPActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isAPActive || openMenu === 'ap' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                {sidebarExpanded ? <><span>🧾 AP Controller</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>🧾</span>}
+              </div>
+            )}
+
+            {/* Other function menus (skip ap-gr, handled above) */}
+            {FUNCTION_MENUS.filter(m => m.id !== 'ap-gr').map(m => navItem(m.id, m.icon, m.label))}
+
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+
+            {/* Master Data — flyout trigger */}
             <div onClick={handleMasterEnter} title={!sidebarExpanded ? 'Master Data' : ''}
               style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '11px' : '16px', fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase', borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.12)' : isMasterActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isMasterActive || openMenu === 'master' ? '#5DCAA5' : 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
               {sidebarExpanded ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>📦</span>}
             </div>
+
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
             {navItem('upload', '📁', 'Document Center')}
           </nav>
@@ -487,7 +506,26 @@ function MainApp() {
           </div>
         </div>
 
-        {/* Flyout Panel */}
+        {/* ── Flyout: AP Controller ── */}
+        {openMenu === 'ap' && (
+          <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+              <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>🧾 AP Controller</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+              {fpGroup('📥', 'Invoice Entry')}
+              {fpSub('ap-gr',   '📋', 'GR Reference')}
+              {fpSub('ap-ocr',  '🔍', 'OCR / สแกน')}
+              {fpSub('ap-form', '📝', 'Invoice Form')}
+              {fpDiv()}
+              {fpGroup('🗂️', 'จัดการ')}
+              {fpSub('ap-drafts', '📄', 'Draft List')}
+            </div>
+          </div>
+        )}
+
+        {/* ── Flyout: Master Data ── */}
         {openMenu === 'master' && (
           <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
             style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
@@ -516,12 +554,19 @@ function MainApp() {
         )}
       </div>
 
-      {/* ✅ FIX 2: overflow:'hidden' แทน 'auto' → scroll อยู่ใน component เอง */}
-      <div style={{ flex: 1, overflow: 'hidden', background: '#f5f5f5', minWidth: 0, marginLeft: openMenu === 'master' ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
+      {/* ── Content area ── */}
+      <div style={{ flex: 1, overflow: 'hidden', background: '#f5f5f5', minWidth: 0, marginLeft: flyoutOpen ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
         {renderPage()}
       </div>
 
-      {showBell && <BellModal requests={requests} isOwner={isOwner} onApprove={handleApprove} onReject={handleReject} onClose={() => setShowBell(false)} onGoAccess={() => { selectPage('users'); setShowBell(false); }} />}
+      {showBell && (
+        <BellModal
+          requests={requests} isOwner={isOwner}
+          onApprove={handleApprove} onReject={handleReject}
+          onClose={() => setShowBell(false)}
+          onGoAccess={() => { selectPage('users'); setShowBell(false); }}
+        />
+      )}
     </div>
   );
 }

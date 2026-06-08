@@ -561,7 +561,10 @@
     const handleDeletePermanent = async (item) => {
       setLoading(true);
       try {
-        await supabase.from(item.source_table).delete().eq('id', item.source_id);
+        // ข้าม delete source สำหรับ hard-delete tables
+        if (!HARD_DELETE_TABLES.includes(item.source_table)) {
+          await supabase.from(item.source_table).delete().eq('id', item.source_id);
+        }
         await supabase.from('recycle_bin').delete().eq('id', item.id);
         setConfirmDelete(null);
         setSelected(prev => prev.filter(s => s !== item.id));
@@ -570,7 +573,6 @@
       } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
       setLoading(false);
     };
-
     // ✅ Batch Permanent Delete — group by table, batch .in() ทีละ 100
       const handleBulkDeletePermanent = async () => {
       setLoading(true);
@@ -588,6 +590,13 @@
         });
         const BATCH = 500;
         for (const [table, ids] of Object.entries(byTable)) {
+          // ข้าม hard-delete tables
+          if (HARD_DELETE_TABLES.includes(table)) {
+            done += ids.length;
+            setProgressDone(done);
+            setProgress(Math.round((done / total) * 100));
+            continue;
+          }
           setProgressLabel(`กำลังลบ ${TABLE_LABELS[table] || table}`);
           for (let i = 0; i < ids.length; i += BATCH) {
             const chunk = ids.slice(i, i + BATCH);
