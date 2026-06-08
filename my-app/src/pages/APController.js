@@ -27,11 +27,7 @@ const MOCK_GRS = [
   },
 ];
 
-const BATCH_HISTORY = [
-  { id: '2026-0088', bu: 'บ.ไทยคะโมริ จก.',    period: 'พ.ค. 2026', count: 3, total: 530962 },
-  { id: '2026-0085', bu: 'Bangkok Tech Co.',    period: 'พ.ค. 2026', count: 5, total: 1240000 },
-  { id: '2026-0081', bu: 'บ.สยามพริ้นติ้ง จก.', period: 'เม.ย. 2026', count: 2, total: 184500 },
-];
+
 
 const BU_OPTIONS    = ['บ.ไทยคะโมริ จก.', 'บ.สยามพริ้นติ้ง จก.', 'Bangkok Tech Co.'];
 const TYPE_OPTIONS  = ['AP Invoice', 'AP Credit Note', 'AP Debit Note'];
@@ -221,34 +217,7 @@ function BatchSetup({ onStart }) {
         </div>
       </div>
 
-      {/* Batch History */}
-      <div style={card}>
-        <div style={cardHead}>
-          <span style={cardLabel}>Batch history</span>
-          <span style={{ fontSize: '11px', color: '#888' }}>3 รายการล่าสุด</span>
-        </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-          <thead>
-            <tr style={{ background: '#f8f9fa' }}>
-              {['Batch ID','Business Unit','Period','Inv.','ยอดรวม','สถานะ'].map(h => (
-                <th key={h} style={{ padding: '6px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {BATCH_HISTORY.map(b => (
-              <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
-                <td style={{ padding: '7px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c' }}>{b.id}</td>
-                <td style={{ padding: '7px 9px' }}>{b.bu}</td>
-                <td style={{ padding: '7px 9px' }}>{b.period}</td>
-                <td style={{ padding: '7px 9px' }}>{b.count}</td>
-                <td style={{ padding: '7px 9px', fontWeight: '500' }}>฿{fmt(b.total)}</td>
-                <td style={{ padding: '7px 9px' }}><span style={bdgGreen}>exported</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+
     </div>
   );
 }
