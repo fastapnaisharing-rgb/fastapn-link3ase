@@ -18,6 +18,8 @@
     branch_list: 'Branch', company_list: 'Company',
   };
 
+  const HARD_DELETE_TABLES = [];
+  
   const DOC_FOLDERS = [
     { key: 'ap',   label: 'AP Manual',      icon: '🧾', permKey: 'VAT',   color: '#E6F1FB', textColor: '#0C447C' },
     { key: 'vat',  label: 'VAT Control',    icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A' },
