@@ -345,7 +345,7 @@ function StepBar({ step, batchConfig, onGo }) {
 }
 
 // ── BU Info Panel ─────────────────────────────────────────────────────────────
-function BuInfoPanel({ buInfo, apGrt, apGrn, ieGrt, ieGrn, onApGrtChange, onApGrnChange, onIeGrtChange, onIeGrnChange }) {
+function BuInfoPanel({ buInfo, apGrt, apGrn, onApGrtChange, onApGrnChange })  {
   const rows = [
     ['Company name', buInfo?.['THAI COMPANY NAME']],
     ['Tax ID',       buInfo?.['TAX ID']],
@@ -380,35 +380,22 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, ieGrt, ieGrn, onApGrtChange, onApGr
       </div>
 
       {/* AP-GRT / AP-GRN / IE-GRT / IE-GRN */}
-      <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
-        {/* Column headers */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
-          <div style={{ padding: '5px 10px', fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase', borderRight: '0.5px solid #f0f0f0' }}>AP</div>
-          <div style={{ padding: '5px 10px', fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>IE</div>
-        </div>
-        {/* GRT row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '0.5px solid #f0f0f0' }}>
-          <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
-            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRT</div>
-            {numInput(apGrt, onApGrtChange)}
-          </div>
-          <div style={{ padding: '7px 10px' }}>
-            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRT</div>
-            {numInput(ieGrt, onIeGrtChange)}
-          </div>
-        </div>
-        {/* GRN row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
-          <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
-            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRN</div>
-            {numInput(apGrn, onApGrnChange)}
-          </div>
-          <div style={{ padding: '7px 10px' }}>
-            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRN</div>
-            {numInput(ieGrn, onIeGrnChange)}
-          </div>
-        </div>
-      </div>
+            <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
+            {/* Header */}
+            <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
+                <div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div>
+            </div>
+            {/* GRT row */}
+            <div style={{ borderBottom: '0.5px solid #f0f0f0', padding: '7px 10px' }}>
+                <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRT</div>
+                {numInput(apGrt, onApGrtChange)}
+            </div>
+            {/* GRN row */}
+            <div style={{ padding: '7px 10px' }}>
+                <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRN</div>
+                {numInput(apGrn, onApGrnChange)}
+            </div>
+            </div>
 
     </div>
   );
@@ -429,8 +416,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [showPopup, setShowPopup]     = useState(false);
   const [apGrt, setApGrt]             = useState(0);
   const [apGrn, setApGrn]             = useState(0);
-  const [ieGrt, setIeGrt]             = useState(0);
-  const [ieGrn, setIeGrn]             = useState(0);
+
 
   // ── Batch History ──────────────────────────────────────────────
   const [historyTab, setHistoryTab]   = useState('mine');   // 'mine' | 'all'
@@ -581,7 +567,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     receiveDate,
                     dueDate,
                     period,
-                    apGrt, apGrn, ieGrt, ieGrn,
+                    apGrt, apGrn,
                     buInfo,
                   })}
                 >
@@ -595,12 +581,11 @@ function BatchSetup({ onStart, infoItems = [] }) {
               <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
                 BU Info
               </div>
-              <BuInfoPanel
+                <BuInfoPanel
                 buInfo={buInfo}
-                apGrt={apGrt} apGrn={apGrn} ieGrt={ieGrt} ieGrn={ieGrn}
+                apGrt={apGrt} apGrn={apGrn}
                 onApGrtChange={setApGrt} onApGrnChange={setApGrn}
-                onIeGrtChange={setIeGrt} onIeGrnChange={setIeGrn}
-              />
+                />
             </div>
 
           </div>
