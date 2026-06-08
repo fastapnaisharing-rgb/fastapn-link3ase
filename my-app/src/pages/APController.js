@@ -555,6 +555,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
       </div>
 
     </div>
+    </>
   );
 }
 
