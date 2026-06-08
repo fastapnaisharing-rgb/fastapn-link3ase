@@ -613,8 +613,8 @@ function BatchSetup({ onStart, infoItems = [] }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
           <div style={{ display: 'flex' }}>
             {[
-              { key: 'mine', label: '👤 ของฉัน', count: historyMine.length },
-              ...(canSeeAll ? [{ key: 'all', label: '👥 ทั้งหมด', count: historyAll.length }] : []),
+              { key: 'mine', label: '👤 My Job', count: historyMine.length },
+              ...(canSeeAll ? [{ key: 'all', label: '👥 All Jobs', count: historyAll.length }] : []),
             ].map(t => (
               <div key={t.key} onClick={() => setHistoryTab(t.key)}
                 style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: historyTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: historyTab === t.key ? '#1a3a5c' : '#888', fontWeight: historyTab === t.key ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -628,15 +628,15 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
         {/* Table */}
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-          <colgroup>
-            <col style={{ width: '22%' }} /> {/* Batch Name */}
-            <col style={{ width: '10%' }} /> {/* Business Unit */}
-            <col style={{ width: '12%' }} /> {/* Receive Date */}
-            <col style={{ width: '13%' }} /> {/* ยอดรวม */}
-            {historyTab === 'all' && <col style={{ width: '13%' }} />} {/* สร้างโดย */}
-            <col style={{ width: historyTab === 'all' ? '18%' : '25%' }} /> {/* ไฟล์แนบ */}
-            <col style={{ width: '10%' }} /> {/* Status */}
-          </colgroup>
+                <colgroup>
+                <col style={{ width: '24%' }} /> {/* Batch Name */}
+                <col style={{ width: '10%' }} /> {/* Business Unit */}
+                <col style={{ width: '11%' }} /> {/* Receive Date */}
+                <col style={{ width: '12%' }} /> {/* ยอดรวม */}
+                {historyTab === 'all' && <col style={{ width: '13%' }} />} {/* สร้างโดย */}
+                <col style={{ width: historyTab === 'all' ? '20%' : '33%' }} /> {/* ไฟล์แนบ */}
+                <col style={{ width: '10%' }} /> {/* Status */}
+                </colgroup>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
               {[
@@ -657,7 +657,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
               <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>กำลังโหลด...</td></tr>
             ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
               <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>
-                {historyTab === 'mine' ? 'ยังไม่มีประวัติ Batch ของคุณ' : 'ยังไม่มีประวัติ Batch'}
+                {historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}
               </td></tr>
             ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
               const statusMap = {
