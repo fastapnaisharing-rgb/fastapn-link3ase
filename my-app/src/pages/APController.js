@@ -439,6 +439,8 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
     return '';
     };
 
+    
+
   const { userName, currentUser }   = useAuth();
   const { isOwner, isAdmin }        = useUserRole();
 
@@ -500,14 +502,47 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
   };
 
   // พิมพ์แล้ว Enter → หา exact match จาก cache โดยไม่ต้องเปิด popup
-  const handleBuKeyDown = (e) => {
+    const handleBuKeyDown = (e) => {
     if (e.key === 'Enter') {
-      const match = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
-      setBuInfo(match || null);
+        const match = infoItems.find(i =>
+        i['bu']?.toLowerCase() === bu.trim().toLowerCase()
+        );
+        if (match) {
+        setBuInfo(match);
+        } else {
+        // partial — เอาตัวแรกที่ match
+        const partial = infoItems.find(i =>
+            i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
+        );
+        setBuInfo(partial || null);
+        }
     }
-  };
+    };
 
-  const handleBuChange = (val) => { setBu(val); if (!val) setBuInfo(null); };
+    const handleBuChange = (val) => {
+    setBu(val);
+    if (!val) {
+        setBuInfo(null);
+        return;
+    }
+    // auto-lookup ทันทีที่พิมพ์ — exact match ก่อน, ถ้าไม่เจอลอง partial
+    const exact = infoItems.find(i =>
+        i['bu']?.toLowerCase() === val.trim().toLowerCase()
+    );
+    if (exact) {
+        setBuInfo(exact);
+    } else {
+        // partial match — ถ้าพิมพ์ครบและ match เดียว ก็ set เลย
+        const partials = infoItems.filter(i =>
+        i['bu']?.toLowerCase().startsWith(val.trim().toLowerCase())
+        );
+        if (partials.length === 1) {
+        setBuInfo(partials[0]);
+        } else {
+        setBuInfo(null);
+        }
+    }
+    };
 
   const inputBase = {
     width: '100%', height: '32px', padding: '0 8px', fontSize: '12px',
@@ -544,13 +579,24 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
               <div style={fieldWrap}>
                 <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
                 <div style={{ position: 'relative' }}>
-                  <input
+                    <input
                     value={bu}
                     onChange={e => handleBuChange(e.target.value)}
                     onKeyDown={handleBuKeyDown}
+                    onBlur={() => {
+                        if (!bu.trim()) return;
+                        const exact = infoItems.find(i =>
+                        i['bu']?.toLowerCase() === bu.trim().toLowerCase()
+                        );
+                        if (exact) { setBuInfo(exact); return; }
+                        const partial = infoItems.find(i =>
+                        i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
+                        );
+                        setBuInfo(partial || null);
+                    }}
                     placeholder="ระบุตัวย่อ BU..."
                     style={{ ...inputBase, paddingRight: '36px' }}
-                  />
+                    />
                   {/* 🔍 ปุ่มเปิด Popup */}
                   <button
                     onClick={() => setShowPopup(true)}
@@ -814,8 +860,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
     setLines([{ desc: '', qty: '', unit: '', amount: 0 }]);
     setGrSel(null);
   };
-
-  const batchTotal = invoices.reduce((s, v) => s + v.net, 0);
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
