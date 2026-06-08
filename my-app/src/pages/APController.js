@@ -29,10 +29,10 @@ const MOCK_GRS = [
 
 
 
-const BU_OPTIONS    = ['บ.ไทยคะโมริ จก.', 'บ.สยามพริ้นติ้ง จก.', 'Bangkok Tech Co.'];
-const TYPE_OPTIONS  = ['AP Invoice', 'AP Credit Note', 'AP Debit Note'];
-const PERIOD_OPTIONS = ['มิถุนายน 2026', 'พฤษภาคม 2026', 'เมษายน 2026'];
-const GLSET_OPTIONS = ['AP-TH-STD', 'AP-TH-VAT7', 'AP-TH-WHT3'];
+const BU_OPTIONS     = [];
+const TYPE_OPTIONS   = [];
+const PERIOD_OPTIONS = [];
+const GLSET_OPTIONS  = [];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Math.round(n).toLocaleString('th-TH');
@@ -171,7 +171,7 @@ function BatchSetup({ onStart }) {
     type: TYPE_OPTIONS[0],
     period: PERIOD_OPTIONS[0],
     glset: GLSET_OPTIONS[0],
-    postDate: '08/06/2026',
+    postDate: '',
     note: '',
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -217,6 +217,24 @@ function BatchSetup({ onStart }) {
         </div>
       </div>
 
+      {/* Batch History */}
+      <div style={card}>
+        <div style={cardHead}>
+          <span style={cardLabel}>Batch history</span>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+          <thead>
+            <tr style={{ background: '#f8f9fa' }}>
+              {['Batch ID','Business Unit','Period','Inv.','ยอดรวม','สถานะ'].map(h => (
+                <th key={h} style={{ padding: '6px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colSpan={6} style={{ textAlign: 'center', color: '#aaa', padding: '18px', fontSize: '12px' }}>ยังไม่มีประวัติ Batch</td></tr>
+          </tbody>
+        </table>
+      </div>
 
     </div>
   );
