@@ -437,7 +437,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
               {[
                 ['Batch ID',   <span style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '11px', fontFamily: 'monospace' }}>2026-0090</span>],
                 ['Business',   <span style={{ fontSize: '11px' }}>{batchConfig.bu}</span>],
-                ['Period',     <span>{batchConfig.period.replace('ถุนายน','ิ.ย.').replace('พฤษภาคม','พ.ค.').replace('เมษายน','เม.ย.')}</span>],
+                ['Period',     <span>{batchConfig.period || '-'}</span>],
                 ['ประเภท',     <span>{batchConfig.type}</span>],
                 ['สถานะ',      <span style={bdgAmber}>In progress</span>],
               ].map(([k, v]) => (
