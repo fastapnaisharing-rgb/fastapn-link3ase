@@ -484,10 +484,8 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     handleTabChange('form');
   };
 
-  const contentMargin = flyoutOpen ? '164px' : '0';
-
   return (
-    <div style={{ ...s.wrap, marginLeft: contentMargin, transition: 'margin-left 0.2s ease' }}>
+    <div style={{ ...s.wrap }}>
       <div style={s.topbar}>
         <span style={{ fontSize: '18px' }}>🧾</span>
         <div>
