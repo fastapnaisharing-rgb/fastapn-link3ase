@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { supabase } from '../supabase';
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 const MOCK_GRS = [
@@ -929,13 +930,32 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
   );
 }
 
-// ── Main APController ──────────────────────────────────────────────────────────
-// infoItems — pass company_list cache from BusinessUnit:
-//   <APController infoItems={infoItems} ... />
-export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, infoItems = [] }) {
+export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
   const [invoices, setInvoices]       = useState([]);
+  const [infoItems, setInfoItems]     = useState([]);
+
+  // โหลด company_list cache ตอน mount
+  useEffect(() => {
+    const load = async () => {
+      let from = 0;
+      const size = 1000;
+      let all = [];
+      while (true) {
+        const { data, error } = await supabase
+          .from('company_list')
+          .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"')
+          .range(from, from + size - 1);
+        if (error || !data) break;
+        all = [...all, ...data];
+        if (data.length < size) break;
+        from += size;
+      }
+      setInfoItems(all);
+    };
+    load();
+  }, []);
 
   const handleStart = (config) => {
     setBatchConfig(config);
