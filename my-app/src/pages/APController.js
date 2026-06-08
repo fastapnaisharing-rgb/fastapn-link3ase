@@ -1197,7 +1197,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
         while (true) {
             const { data, error } = await supabase
             .from('company_list')
-            .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control","AP-GRT","AP-GRN"')
+            .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"')
             .range(from, from + size - 1);
 
             if (error) {
