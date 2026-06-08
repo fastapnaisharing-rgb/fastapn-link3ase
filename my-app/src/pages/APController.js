@@ -345,7 +345,7 @@ function StepBar({ step, batchConfig, onGo }) {
 }
 
 // ── BU Info Panel ─────────────────────────────────────────────────────────────
-function BuInfoPanel({ buInfo, apGrt, apGrn, onApGrtChange, onApGrnChange })  {
+function BuInfoPanel({ buInfo, apGrt, apGrn, apGrtRunning, apGrnRunning, onApGrtChange, onApGrnChange, onApGrtRunningChange, onApGrnRunningChange }) {
   const rows = [
     ['Company name', buInfo?.['THAI COMPANY NAME']],
     ['Tax ID',       buInfo?.['TAX ID']],
@@ -358,13 +358,18 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, onApGrtChange, onApGrnChange })  {
   const infoRowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr' };
   const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center' };
   const valStyle = (hasVal) => ({ fontSize: '12px', color: hasVal ? '#1a3a5c' : '#ccc', padding: '7px 10px', background: 'white', display: 'flex', alignItems: 'center', fontStyle: hasVal ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-  const numInput = (val, onChange) => (
+    const numInput = (val, onChange, isRed = false) => (
     <input
-      type="number" min="0" value={val}
-      onChange={e => onChange(e.target.value)}
-      style={{ width: '100%', height: '28px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', boxSizing: 'border-box', textAlign: 'right' }}
+        type="number" min="0" value={val}
+        onChange={e => onChange(e.target.value)}
+        style={{
+        width: '100%', height: '28px', padding: '0 8px', fontSize: '12px',
+        border: '0.5px solid #ddd', borderRadius: '5px', background: 'white',
+        color: isRed ? '#c0392b' : '#1a2a3a',
+        outline: 'none', boxSizing: 'border-box', textAlign: 'right'
+        }}
     />
-  );
+    );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -385,15 +390,38 @@ function BuInfoPanel({ buInfo, apGrt, apGrn, onApGrtChange, onApGrnChange })  {
             <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div>
             </div>
-            {/* GRT row */}
-            <div style={{ borderBottom: '0.5px solid #f0f0f0', padding: '7px 10px' }}>
-                <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRT</div>
+            {/* 4 columns */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', borderBottom: 'none' }}>
+                {/* GRT Amount */}
+                <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
+                <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px' }}>GRT</div>
                 {numInput(apGrt, onApGrtChange)}
-            </div>
-            {/* GRN row */}
-            <div style={{ padding: '7px 10px' }}>
-                <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRN</div>
-                {numInput(apGrn, onApGrnChange)}
+                </div>
+                {/* GRT Running No. */}
+                <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
+                <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px' }}>Running No.</div>
+                <input
+                    type="text"
+                    value={apGrtRunning}
+                    onChange={e => onApGrtRunningChange(e.target.value)}
+                    style={{ width: '100%', height: '28px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '5px', background: 'white', color: '#1a2a3a', outline: 'none', boxSizing: 'border-box' }}
+                />
+                </div>
+                {/* GRN Amount */}
+                <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
+                <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px' }}>GRN</div>
+                {numInput(apGrn, onApGrnChange, true)}
+                </div>
+                {/* GRN Running No. */}
+                <div style={{ padding: '7px 10px' }}>
+                <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px' }}>Running No.</div>
+                <input
+                    type="text"
+                    value={apGrnRunning}
+                    onChange={e => onApGrnRunningChange(e.target.value)}
+                    style={{ width: '100%', height: '28px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '5px', background: 'white', color: '#c0392b', outline: 'none', boxSizing: 'border-box' }}
+                />
+                </div>
             </div>
             </div>
 
@@ -416,7 +444,8 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [showPopup, setShowPopup]     = useState(false);
   const [apGrt, setApGrt]             = useState(0);
   const [apGrn, setApGrn]             = useState(0);
-
+  const [apGrtRunning, setApGrtRunning] = useState('');
+  const [apGrnRunning, setApGrnRunning] = useState('');
 
   // ── Batch History ──────────────────────────────────────────────
   const [historyTab, setHistoryTab]   = useState('mine');   // 'mine' | 'all'
@@ -562,14 +591,10 @@ function BatchSetup({ onStart, infoItems = [] }) {
               <div style={{ marginTop: '4px' }}>
                 <button
                   style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
-                  onClick={() => onStart({
-                    bu: bu || '-',
-                    receiveDate,
-                    dueDate,
-                    period,
-                    apGrt, apGrn,
-                    buInfo,
-                  })}
+                    onClick={() => onStart({
+                    bu: bu || '-', receiveDate, dueDate, period,
+                    apGrt, apGrn, apGrtRunning, apGrnRunning, buInfo,
+                    })}
                 >
                   ▶ Start Batch
                 </button>
