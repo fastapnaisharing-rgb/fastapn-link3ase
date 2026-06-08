@@ -56,6 +56,12 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
     return () => document.removeEventListener('keydown', h);
   }, [show, onClose]);
 
+  // scroll active row into view — ต้องอยู่ก่อน early return ทุก Hook
+  useEffect(() => {
+    if (active < 0 || !listRef.current) return;
+    listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+
   if (!show) return null;
 
   const q = query.trim().toLowerCase();
@@ -73,12 +79,6 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
-
-  // scroll active row into view
-  useEffect(() => {
-    if (active < 0 || !listRef.current) return;
-    listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
-  }, [active]);
 
   return (
     <div
