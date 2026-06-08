@@ -83,53 +83,65 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(2px)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: 'white', borderRadius: '10px', width: '680px', maxWidth: '95vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 8px 32px rgba(26,58,92,0.18)' }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: '700px', maxWidth: '95vw', maxHeight: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22), 0 4px 16px rgba(0,0,0,0.08)' }}>
 
-        {/* Header */}
-        <div style={{ padding: '14px 16px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-          <span style={{ fontSize: '15px' }}>🏢</span>
-          <span style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c', flex: 1 }}>เลือก Business Unit</span>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#aaa', fontSize: '20px', lineHeight: 1, padding: '0 2px' }}>×</button>
+        {/* ── Header ── */}
+        <div style={{ padding: '16px 20px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏢</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>เลือก Business Unit</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
+              {infoItems.length > 0 ? `${filtered.length} รายการ${query ? ` · ค้นหา "${query}"` : ''}` : 'กำลังโหลด...'}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
         </div>
 
-        {/* Search box */}
-        <div style={{ padding: '10px 16px', borderBottom: '0.5px solid #f0f0f0', flexShrink: 0 }}>
+        {/* ── Search box ── */}
+        <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
           <div style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#aaa', fontSize: '14px', pointerEvents: 'none' }}>🔍</span>
+            <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input
               ref={inputRef}
               value={query}
               onChange={e => { setQuery(e.target.value); setActive(-1); }}
               onKeyDown={handleKey}
               placeholder="พิมพ์ BU, ชื่อบริษัท, Tax ID..."
-              style={{ width: '100%', padding: '8px 34px 8px 34px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '7px', outline: 'none', boxSizing: 'border-box', background: '#fafafa' }}
+              style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c', transition: 'border-color 0.15s' }}
+              onFocus={e => e.target.style.borderColor = '#1a3a5c'}
+              onBlur={e => e.target.style.borderColor = '#e2e6ed'}
             />
             {query && (
               <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-                style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', fontSize: '16px', lineHeight: 1 }}>×</button>
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
             )}
           </div>
-          <div style={{ marginTop: '6px', fontSize: '11px', color: '#aaa' }}>
-            {filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}{infoItems.length > 0 ? '' : ' — (ยังโหลดข้อมูลไม่สำเร็จ)'} — ↑↓ นำทาง · Enter เลือก · Esc ปิด
+          <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
+            {[['↑↓','นำทาง'], ['Enter','เลือก'], ['Esc','ปิด']].map(([key, label]) => (
+              <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
+                <span>{label}</span>
+              </span>
+            ))}
           </div>
         </div>
 
-        {/* Result table */}
+        {/* ── Result table ── */}
         <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
           {filtered.length === 0 ? (
-            <div style={{ padding: '48px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
-              <div style={{ fontSize: '28px', marginBottom: '8px' }}>🔍</div>
-              ไม่พบข้อมูล BU {query ? `"${query}"` : ''}
+            <div style={{ padding: '56px', textAlign: 'center', color: '#ccc' }}>
+              <div style={{ fontSize: '36px', marginBottom: '10px' }}>🔍</div>
+              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบข้อมูล BU {query ? `"${query}"` : ''}</div>
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
-                  {[['BU','70px'],['ชื่อบริษัท',''],['Tax ID','130px'],['Book','70px'],['AP GRT','90px']].map(([h, w]) => (
-                    <th key={h} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', width: w || undefined }}>
+                  {[['BU','72px'],['ชื่อบริษัท',''],['Tax ID','132px'],['Book','68px'],['AP GRT','88px']].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>
                       {h}
                     </th>
                   ))}
@@ -137,32 +149,40 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
               </thead>
               <tbody>
                 {filtered.map((item, i) => {
-                  const isActive = i === active;
+                  const isAct = i === active;
                   return (
                     <tr
                       key={item.id}
                       data-row={i}
                       onClick={() => onSelect(item)}
                       onMouseEnter={() => setActive(i)}
-                      style={{ background: isActive ? '#e8f0fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f5f5f5' }}
+                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6', transition: 'background 0.08s' }}
                     >
-                      <td style={{ padding: '9px 10px', fontWeight: '600', color: '#1a3a5c', whiteSpace: 'nowrap' }}>
-                        {item['bu'] || '-'}
+                      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                        <span style={{ display: 'inline-block', background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600', letterSpacing: '0.03em', transition: 'all 0.1s' }}>
+                          {item['bu'] || '-'}
+                        </span>
                       </td>
-                      <td style={{ padding: '9px 10px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        <div style={{ fontWeight: isActive ? '500' : '400', color: '#333' }}>{item['THAI COMPANY NAME'] || '-'}</div>
-                        <div style={{ fontSize: '10px', color: '#999', marginTop: '1px' }}>{item['ENGLISH COMPANY NAME'] || ''}</div>
+                      <td style={{ padding: '10px 12px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontWeight: '500', color: '#1a2a3a', fontSize: '12px' }}>{item['THAI COMPANY NAME'] || '-'}</div>
+                        <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px' }}>{item['ENGLISH COMPANY NAME'] || ''}</div>
                       </td>
-                      <td style={{ padding: '9px 10px', color: '#555', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' }}>
+                      <td style={{ padding: '10px 12px', color: '#778', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap', letterSpacing: '0.03em' }}>
                         {item['TAX ID'] || '-'}
                       </td>
-                      <td style={{ padding: '9px 10px', color: '#555', whiteSpace: 'nowrap' }}>
-                        {item['BOOK'] || '-'}
+                      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                        <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 7px', fontSize: '11px', fontWeight: '500' }}>
+                          {item['BOOK'] || '-'}
+                        </span>
                       </td>
-                      <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
-                        {item['AP GRT Control']
-                          ? <span style={{ ...bdgBlue, fontSize: '10px' }}>{item['AP GRT Control']}</span>
-                          : <span style={{ color: '#ccc' }}>-</span>}
+                      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                        {item['AP GRT Control'] ? (
+                          <span style={{
+                            fontSize: '10px', padding: '2px 8px', borderRadius: '20px', fontWeight: '600',
+                            background: item['AP GRT Control'] === 'Auto' ? '#EAF3DE' : '#E6F1FB',
+                            color: item['AP GRT Control'] === 'Auto' ? '#27500A' : '#0C447C',
+                          }}>{item['AP GRT Control']}</span>
+                        ) : <span style={{ color: '#ddd' }}>—</span>}
                       </td>
                     </tr>
                   );
@@ -172,9 +192,10 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
           )}
         </div>
 
-        {/* Footer */}
-        <div style={{ padding: '10px 16px', borderTop: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-          <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>
+        {/* ── Footer ── */}
+        <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {infoItems.length} รายการ</span>
+          <button onClick={onClose} style={{ padding: '7px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
             Cancel
           </button>
         </div>
