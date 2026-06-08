@@ -68,7 +68,7 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
   if (!show) return null;
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const raw = q
     ? infoItems.filter(i =>
         i['bu']?.toLowerCase().includes(q) ||
         i['THAI COMPANY NAME']?.toLowerCase().includes(q) ||
@@ -76,6 +76,15 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
         i['TAX ID']?.includes(q)
       )
     : infoItems;
+
+  // deduplicate โดยใช้ TAX ID เป็น key (ถ้า DB มีข้อมูลซ้ำ)
+  const seen = new Set();
+  const filtered = raw.filter(i => {
+    const key = i['TAX ID'] || i['bu'] || i.id;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   const handleKey = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
@@ -498,13 +507,6 @@ function BatchSetup({ onStart, infoItems = [] }) {
           <span style={cardLabel}>Batch setup</span>
         </div>
         <div style={cardBody}>
-
-          {/* Info banner */}
-          <div style={{ background: '#f0f6ff', border: '0.5px solid #cde0f7', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', color: '#4a6fa5', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '7px' }}>
-            <span style={{ fontSize: '13px' }}>ℹ️</span>
-            กรอกข้อมูลเพื่อสร้าง Batch — Batch ID จะถูก generate อัตโนมัติรูปแบบ{' '}
-            <code style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', background: '#e0eaf8', padding: '1px 5px', borderRadius: '3px' }}>BATCH-YYYY-XXXX</code>
-          </div>
 
           {/* 2-column layout */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
