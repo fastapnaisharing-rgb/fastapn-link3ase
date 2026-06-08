@@ -1190,22 +1190,30 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
 
   // โหลด company_list cache ตอน mount
   useEffect(() => {
-    const load = async () => {
-      let from = 0;
-      const size = 1000;
-      let all = [];
-      while (true) {
-        const { data, error } = await supabase
-          .from('company_list')
-          .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control","AP-GRT","AP-GRN","IE-GRT","IE-GRN"')
-          .range(from, from + size - 1);
-        if (error || !data) break;
-        all = [...all, ...data];
-        if (data.length < size) break;
-        from += size;
-      }
-      setInfoItems(all);
-    };
+        const load = async () => {
+        let from = 0;
+        const size = 1000;
+        let all = [];
+        while (true) {
+            const { data, error } = await supabase
+            .from('company_list')
+            .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control","AP-GRT","AP-GRN"')
+            .range(from, from + size - 1);
+
+            if (error) {
+            console.error('❌ Supabase error:', error);  // ← เพิ่มตรงนี้
+            break;
+            }
+            if (!data) break;
+
+            console.log(`✅ Loaded ${data.length} rows (from=${from})`);  // ← เพิ่มตรงนี้
+            all = [...all, ...data];
+            if (data.length < size) break;
+            from += size;
+        }
+        console.log('Total infoItems:', all.length);  // ← เพิ่มตรงนี้
+        setInfoItems(all);
+        };
     load();
   }, []);
 
