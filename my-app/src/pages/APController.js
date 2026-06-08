@@ -27,12 +27,27 @@ const MOCK_GRS = [
   },
 ];
 
+// ── Mock BU lookup data ───────────────────────────────────────────────────────
+const MOCK_BU_INFO = {
+  ART: {
+    companyName: 'บริษัท อาร์ต ตง เอียง จำกัด',
+    taxId: '0105556186714',
+    companyCode: '8-85-8507-',
+    book: 'CGT',
+    segment3: '8507',
+    grtStatus: 'Manual',
+  },
+  BKK: {
+    companyName: 'บริษัท แบงค็อก เทค ซัพพลาย จำกัด',
+    taxId: '0105567123456',
+    companyCode: '9-10-1001-',
+    book: 'STD',
+    segment3: '1001',
+    grtStatus: 'Auto',
+  },
+};
 
-
-const BU_OPTIONS     = [];
-const TYPE_OPTIONS   = [];
-const PERIOD_OPTIONS = [];
-const GLSET_OPTIONS  = [];
+const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Math.round(n).toLocaleString('th-TH');
@@ -151,7 +166,6 @@ function StepBar({ step, batchConfig, onGo }) {
         );
       })}
 
-      {/* Batch pill (step 2+) */}
       {step > 1 && batchConfig && (
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '7px' }}>
           <span style={{ ...bdgBlue, fontSize: '11px' }}>
@@ -164,55 +178,246 @@ function StepBar({ step, batchConfig, onGo }) {
   );
 }
 
+// ── BU Info Panel ─────────────────────────────────────────────────────────────
+function BuInfoPanel({ buInfo, grt, grn, onGrtChange, onGrnChange }) {
+  const rows = [
+    ['Company name', buInfo?.companyName],
+    ['Tax ID',       buInfo?.taxId],
+    ['Company code', buInfo?.companyCode],
+    ['Book',         buInfo?.book],
+    ['Segment3',     buInfo?.segment3],
+    ['GRT status',   buInfo?.grtStatus],
+  ];
+
+  const infoRowStyle = {
+    display: 'grid',
+    gridTemplateColumns: '110px 1fr',
+    borderBottom: '0.5px solid #f0f0f0',
+  };
+  const keyStyle = {
+    fontSize: '11px',
+    color: '#999',
+    padding: '7px 10px',
+    background: '#fafafa',
+    borderRight: '0.5px solid #f0f0f0',
+    display: 'flex',
+    alignItems: 'center',
+  };
+  const valStyle = {
+    fontSize: '12px',
+    color: buInfo ? '#1a3a5c' : '#ccc',
+    padding: '7px 10px',
+    background: 'white',
+    display: 'flex',
+    alignItems: 'center',
+    fontStyle: buInfo ? 'normal' : 'italic',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* BU Info box */}
+      <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
+        {rows.map(([key, val], i) => (
+          <div key={key} style={{ ...infoRowStyle, borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}>
+            <div style={keyStyle}>{key}</div>
+            <div style={valStyle}>{val || '—'}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* GRT / GRN inputs */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+        <div style={fieldWrap}>
+          <label style={fieldLabel}>GRT</label>
+          <input
+            value={grt}
+            onChange={e => onGrtChange(e.target.value)}
+            placeholder="—"
+            style={{ ...fieldInput(false), height: '30px', boxSizing: 'border-box' }}
+          />
+        </div>
+        <div style={fieldWrap}>
+          <label style={fieldLabel}>GRN</label>
+          <input
+            value={grn}
+            onChange={e => onGrnChange(e.target.value)}
+            placeholder="—"
+            style={{ ...fieldInput(false), height: '30px', boxSizing: 'border-box' }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Phase 1: Batch Setup ───────────────────────────────────────────────────────
 function BatchSetup({ onStart }) {
-  const [form, setForm] = useState({
-    bu: BU_OPTIONS[0],
-    type: TYPE_OPTIONS[0],
-    period: PERIOD_OPTIONS[0],
-    glset: GLSET_OPTIONS[0],
-    postDate: '',
-    note: '',
-  });
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [bu, setBu]           = useState('');
+  const [receiveDate, setReceiveDate] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [period, setPeriod]   = useState('Current');
+  const [grt, setGrt]         = useState('');
+  const [grn, setGrn]         = useState('');
+  const [buInfo, setBuInfo]   = useState(null);
+  const [buError, setBuError] = useState(false);
+
+  const handleBuSearch = () => {
+    const info = MOCK_BU_INFO[bu.trim().toUpperCase()];
+    if (info) {
+      setBuInfo(info);
+      setBuError(false);
+    } else {
+      setBuInfo(null);
+      setBuError(true);
+    }
+  };
+
+  const handleBuKeyDown = (e) => {
+    if (e.key === 'Enter') handleBuSearch();
+  };
+
+  const inputBase = {
+    width: '100%',
+    height: '32px',
+    padding: '0 8px',
+    fontSize: '12px',
+    border: '0.5px solid #ddd',
+    borderRadius: '6px',
+    background: 'white',
+    color: '#1a3a5c',
+    outline: 'none',
+    boxSizing: 'border-box',
+  };
+
+  const dateInputStyle = {
+    ...inputBase,
+    paddingRight: '30px',
+  };
+
+  const inputWrap = { position: 'relative', display: 'flex', alignItems: 'center' };
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
+
+      {/* ── Main Setup Card ── */}
       <div style={card}>
-        <div style={cardHead}><span style={cardLabel}>Batch setup</span></div>
+        <div style={cardHead}>
+          <span style={cardLabel}>Batch setup</span>
+        </div>
         <div style={cardBody}>
-          <div style={{ background: '#f5f7fa', borderRadius: '6px', padding: '8px 12px', fontSize: '12px', color: '#666', marginBottom: '12px' }}>
-            ℹ️ กรอกข้อมูลเพื่อสร้าง Batch — Batch ID จะถูก generate อัตโนมัติรูปแบบ{' '}
-            <code style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c' }}>BATCH-YYYY-XXXX</code>
+
+          {/* Info banner */}
+          <div style={{ background: '#f0f6ff', border: '0.5px solid #cde0f7', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', color: '#4a6fa5', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '7px' }}>
+            <span style={{ fontSize: '13px' }}>ℹ️</span>
+            กรอกข้อมูลเพื่อสร้าง Batch — Batch ID จะถูก generate อัตโนมัติรูปแบบ{' '}
+            <code style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', background: '#e0eaf8', padding: '1px 5px', borderRadius: '3px' }}>BATCH-YYYY-XXXX</code>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '9px', marginBottom: '12px' }}>
-            {[
-              ['Business Unit', 'bu', BU_OPTIONS],
-              ['ประเภท Batch',  'type', TYPE_OPTIONS],
-              ['Period',        'period', PERIOD_OPTIONS],
-              ['รหัส GL Set',   'glset', GLSET_OPTIONS],
-            ].map(([label, key, opts]) => (
-              <div key={key} style={fieldWrap}>
-                <label style={fieldLabel}>{label}</label>
-                <select value={form[key]} onChange={e => set(key, e.target.value)}
-                  style={{ ...fieldInput(false), appearance: 'auto' }}>
-                  {opts.map(o => <option key={o}>{o}</option>)}
+
+          {/* 2-column layout */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+
+            {/* ── LEFT: Setup fields ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+
+              {/* BU */}
+              <div style={fieldWrap}>
+                <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
+                <div style={inputWrap}>
+                  <input
+                    value={bu}
+                    onChange={e => { setBu(e.target.value); setBuError(false); }}
+                    onKeyDown={handleBuKeyDown}
+                    placeholder="ระบุตัวย่อ BU..."
+                    style={{
+                      ...inputBase,
+                      paddingRight: '36px',
+                      border: `0.5px solid ${buError ? '#e24b4a' : '#ddd'}`,
+                    }}
+                  />
+                  <button
+                    onClick={handleBuSearch}
+                    style={{
+                      position: 'absolute', right: 0, top: 0,
+                      height: '32px', width: '32px',
+                      background: '#1a3a5c', border: 'none',
+                      borderRadius: '0 6px 6px 0',
+                      color: 'white', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '13px',
+                    }}
+                    title="Search BU"
+                  >
+                    🔍
+                  </button>
+                </div>
+                {buError && (
+                  <span style={{ fontSize: '10px', color: '#e24b4a' }}>ไม่พบข้อมูล BU "{bu}"</span>
+                )}
+              </div>
+
+              {/* Receive Date / Due Date */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
+                <div style={fieldWrap}>
+                  <label style={fieldLabel}>Receive date</label>
+                  <div style={inputWrap}>
+                    <input
+                      type="date"
+                      value={receiveDate}
+                      onChange={e => setReceiveDate(e.target.value)}
+                      style={inputBase}
+                    />
+                  </div>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={fieldLabel}>Due date</label>
+                  <div style={inputWrap}>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={e => setDueDate(e.target.value)}
+                      style={inputBase}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Period */}
+              <div style={fieldWrap}>
+                <label style={fieldLabel}>Period</label>
+                <select
+                  value={period}
+                  onChange={e => setPeriod(e.target.value)}
+                  style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}
+                >
+                  {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-            ))}
-            <div style={fieldWrap}>
-              <label style={fieldLabel}>วันที่ Post</label>
-              <input value={form.postDate} onChange={e => set('postDate', e.target.value)} style={fieldInput(false)} />
+
+              {/* Start Batch */}
+              <div style={{ marginTop: '4px' }}>
+                <button
+                  style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
+                  onClick={() => onStart({ bu: bu || 'ART', receiveDate, dueDate, period, grt, grn })}
+                >
+                  ▶ Start Batch
+                </button>
+              </div>
             </div>
-            <div style={fieldWrap}>
-              <label style={fieldLabel}>หมายเหตุ</label>
-              <input value={form.note} onChange={e => set('note', e.target.value)} placeholder="ระบุ (optional)" style={fieldInput(false)} />
+
+            {/* ── RIGHT: BU Info panel ── */}
+            <div>
+              <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                BU Info
+              </div>
+              <BuInfoPanel
+                buInfo={buInfo}
+                grt={grt}
+                grn={grn}
+                onGrtChange={setGrt}
+                onGrnChange={setGrn}
+              />
             </div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button style={btnPrimary} onClick={() => onStart(form)}>
-              ▶ Start Batch
-            </button>
+
           </div>
         </div>
       </div>
@@ -306,7 +511,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
               </div>
             </div>
 
-            {/* GR Dropdown Panel */}
             {grOpen && (
               <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
                 <input
@@ -348,7 +552,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
                 </div>
               )}
 
-              {/* Header fields */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', marginBottom: '9px' }}>
                 {[
                   ['vendor',      'Vendor',         ''],
@@ -370,7 +573,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
                 ))}
               </div>
 
-              {/* Line items */}
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '9px', tableLayout: 'fixed' }}>
                 <thead>
                   <tr style={{ background: '#f8f9fa' }}>
@@ -429,8 +631,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
 
         {/* Right sidebar */}
         <div style={{ width: '186px', minWidth: '186px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-
-          {/* Batch Info */}
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>Batch info</span></div>
             <div style={{ padding: '10px 13px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
@@ -438,7 +638,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
                 ['Batch ID',   <span style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '11px', fontFamily: 'monospace' }}>2026-0090</span>],
                 ['Business',   <span style={{ fontSize: '11px' }}>{batchConfig.bu}</span>],
                 ['Period',     <span>{batchConfig.period || '-'}</span>],
-                ['ประเภท',     <span>{batchConfig.type}</span>],
                 ['สถานะ',      <span style={bdgAmber}>In progress</span>],
               ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -451,7 +650,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
             </div>
           </div>
 
-          {/* Invoice list */}
           <div style={card}>
             <div style={cardHead}>
               <span style={cardLabel}>Invoice ใน Batch</span>
@@ -473,7 +671,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
             </div>
             <div style={{ padding: '6px 10px', borderTop: '0.5px solid #e8eaf0', fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: '#888' }}>รวม</span>
-              <span style={{ fontWeight: '500', color: '#1a3a5c' }}>฿{fmt(batchTotal)}</span>
+              <span style={{ fontWeight: '500', color: '#1a3a5c' }}>฿{fmt(invoices.reduce((s, v) => s + v.net, 0))}</span>
             </div>
           </div>
         </div>
@@ -490,7 +688,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
 
 // ── Phase 3: Generate & Export ─────────────────────────────────────────────────
 function GenerateExport({ invoices, onNewBatch, onBack }) {
-  const [opts, setOpts]       = useState({ xlsx: true, txt: true, wht: false, vat: false });
+  const [opts, setOpts]         = useState({ xlsx: true, txt: true, wht: false, vat: false });
   const [exported, setExported] = useState(false);
 
   const toggleOpt = (k) => setOpts(o => ({ ...o, [k]: !o[k] }));
@@ -507,8 +705,6 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
       <div style={{ display: 'flex', gap: '12px' }}>
-
-        {/* Left: Summary table */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>สรุป Batch 2026-0090</span></div>
@@ -537,8 +733,6 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
                 ))}
               </tbody>
             </table>
-
-            {/* Summary totals */}
             <div style={{ display: 'flex', borderTop: '0.5px solid #e8eaf0' }}>
               {[
                 ['Invoice',       invoices.length],
@@ -555,10 +749,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
           </div>
         </div>
 
-        {/* Right sidebar */}
         <div style={{ width: '186px', minWidth: '186px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-
-          {/* Export options */}
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>Export options</span></div>
             <div style={{ padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -576,7 +767,6 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
             </div>
           </div>
 
-          {/* Actions */}
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>Actions</span></div>
             <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
@@ -592,7 +782,6 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
             </div>
           </div>
 
-          {/* Downloaded files */}
           {exported && (
             <div style={card}>
               <div style={cardHead}><span style={cardLabel}>ไฟล์ที่ Generate</span></div>
@@ -628,9 +817,9 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
 
 // ── Main APController ──────────────────────────────────────────────────────────
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
-  const [step, setStep]           = useState(1);
+  const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
-  const [invoices, setInvoices]   = useState([]);
+  const [invoices, setInvoices]       = useState([]);
 
   const handleStart = (config) => {
     setBatchConfig(config);
@@ -646,7 +835,6 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
 
-      {/* Top bar */}
       <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
         <span style={{ fontSize: '17px' }}>🧾</span>
         <div>
@@ -655,10 +843,8 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
         </div>
       </div>
 
-      {/* Step bar */}
       <StepBar step={step} batchConfig={batchConfig} onGo={setStep} />
 
-      {/* Phase content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {step === 1 && <BatchSetup onStart={handleStart} />}
         {step === 2 && (
