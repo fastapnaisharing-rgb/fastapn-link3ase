@@ -345,7 +345,7 @@ function StepBar({ step, batchConfig, onGo }) {
 }
 
 // ── BU Info Panel ─────────────────────────────────────────────────────────────
-function BuInfoPanel({ buInfo, grt, grn, onGrtChange, onGrnChange }) {
+function BuInfoPanel({ buInfo, apGrt, apGrn, ieGrt, ieGrn, onApGrtChange, onApGrnChange, onIeGrtChange, onIeGrnChange }) {
   const rows = [
     ['Company name', buInfo?.['THAI COMPANY NAME']],
     ['Tax ID',       buInfo?.['TAX ID']],
@@ -355,63 +355,61 @@ function BuInfoPanel({ buInfo, grt, grn, onGrtChange, onGrnChange }) {
     ['GRT status',   buInfo?.['AP GRT Control']],
   ];
 
-  const infoRowStyle = {
-    display: 'grid',
-    gridTemplateColumns: '110px 1fr',
-    borderBottom: '0.5px solid #f0f0f0',
-  };
-  const keyStyle = {
-    fontSize: '11px',
-    color: '#999',
-    padding: '7px 10px',
-    background: '#fafafa',
-    borderRight: '0.5px solid #f0f0f0',
-    display: 'flex',
-    alignItems: 'center',
-  };
-  const valStyle = {
-    fontSize: '12px',
-    color: buInfo ? '#1a3a5c' : '#ccc',
-    padding: '7px 10px',
-    background: 'white',
-    display: 'flex',
-    alignItems: 'center',
-    fontStyle: buInfo ? 'normal' : 'italic',
-  };
+  const infoRowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr' };
+  const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center' };
+  const valStyle = (hasVal) => ({ fontSize: '12px', color: hasVal ? '#1a3a5c' : '#ccc', padding: '7px 10px', background: 'white', display: 'flex', alignItems: 'center', fontStyle: hasVal ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  const numInput = (val, onChange) => (
+    <input
+      type="number" min="0" value={val}
+      onChange={e => onChange(e.target.value)}
+      style={{ width: '100%', height: '28px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', boxSizing: 'border-box', textAlign: 'right' }}
+    />
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      {/* BU Info box */}
+
+      {/* BU Info rows */}
       <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
         {rows.map(([key, val], i) => (
           <div key={key} style={{ ...infoRowStyle, borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}>
             <div style={keyStyle}>{key}</div>
-            <div style={valStyle}>{val || '—'}</div>
+            <div style={valStyle(!!val)} title={val || ''}>{val || '—'}</div>
           </div>
         ))}
       </div>
 
-      {/* GRT / GRN inputs */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-        <div style={fieldWrap}>
-          <label style={fieldLabel}>GRT</label>
-          <input
-            value={grt}
-            onChange={e => onGrtChange(e.target.value)}
-            placeholder="—"
-            style={{ ...fieldInput(false), height: '30px', boxSizing: 'border-box' }}
-          />
+      {/* AP-GRT / AP-GRN / IE-GRT / IE-GRN */}
+      <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
+        {/* Column headers */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
+          <div style={{ padding: '5px 10px', fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase', borderRight: '0.5px solid #f0f0f0' }}>AP</div>
+          <div style={{ padding: '5px 10px', fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>IE</div>
         </div>
-        <div style={fieldWrap}>
-          <label style={fieldLabel}>GRN</label>
-          <input
-            value={grn}
-            onChange={e => onGrnChange(e.target.value)}
-            placeholder="—"
-            style={{ ...fieldInput(false), height: '30px', boxSizing: 'border-box' }}
-          />
+        {/* GRT row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '0.5px solid #f0f0f0' }}>
+          <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
+            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRT</div>
+            {numInput(apGrt, onApGrtChange)}
+          </div>
+          <div style={{ padding: '7px 10px' }}>
+            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRT</div>
+            {numInput(ieGrt, onIeGrtChange)}
+          </div>
+        </div>
+        {/* GRN row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+          <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
+            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRN</div>
+            {numInput(apGrn, onApGrnChange)}
+          </div>
+          <div style={{ padding: '7px 10px' }}>
+            <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>GRN</div>
+            {numInput(ieGrn, onIeGrnChange)}
+          </div>
         </div>
       </div>
+
     </div>
   );
 }
@@ -429,6 +427,10 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [grn, setGrn]                 = useState('');
   const [buInfo, setBuInfo]           = useState(null);
   const [showPopup, setShowPopup]     = useState(false);
+  const [apGrt, setApGrt]             = useState(0);
+  const [apGrn, setApGrn]             = useState(0);
+  const [ieGrt, setIeGrt]             = useState(0);
+  const [ieGrn, setIeGrn]             = useState(0);
 
   // ── Batch History ──────────────────────────────────────────────
   const [historyTab, setHistoryTab]   = useState('mine');   // 'mine' | 'all'
@@ -574,7 +576,14 @@ function BatchSetup({ onStart, infoItems = [] }) {
               <div style={{ marginTop: '4px' }}>
                 <button
                   style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
-                  onClick={() => onStart({ bu: bu || '-', receiveDate, dueDate, period, grt, grn, buInfo })}
+                  onClick={() => onStart({
+                    bu: bu || '-',
+                    receiveDate,
+                    dueDate,
+                    period,
+                    apGrt, apGrn, ieGrt, ieGrn,
+                    buInfo,
+                  })}
                 >
                   ▶ Start Batch
                 </button>
@@ -588,10 +597,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
               </div>
               <BuInfoPanel
                 buInfo={buInfo}
-                grt={grt}
-                grn={grn}
-                onGrtChange={setGrt}
-                onGrnChange={setGrn}
+                apGrt={apGrt} apGrn={apGrn} ieGrt={ieGrt} ieGrn={ieGrn}
+                onApGrtChange={setApGrt} onApGrnChange={setApGrn}
+                onIeGrtChange={setIeGrt} onIeGrnChange={setIeGrn}
               />
             </div>
 
@@ -619,7 +627,16 @@ function BatchSetup({ onStart, infoItems = [] }) {
         </div>
 
         {/* Table */}
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '22%' }} /> {/* Batch Name */}
+            <col style={{ width: '10%' }} /> {/* Business Unit */}
+            <col style={{ width: '12%' }} /> {/* Receive Date */}
+            <col style={{ width: '13%' }} /> {/* ยอดรวม */}
+            {historyTab === 'all' && <col style={{ width: '13%' }} />} {/* สร้างโดย */}
+            <col style={{ width: historyTab === 'all' ? '18%' : '25%' }} /> {/* ไฟล์แนบ */}
+            <col style={{ width: '10%' }} /> {/* Status */}
+          </colgroup>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
               {[
@@ -631,7 +648,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
                 'ไฟล์แนบ',
                 'Status',
               ].map(h => (
-                <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</th>
+                <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -660,29 +677,29 @@ function BatchSetup({ onStart, infoItems = [] }) {
                 <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
 
                   {/* Batch Name */}
-                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
-                    <div style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600' }}>{b.batch_id || b.id}</div>
-                    {b.note && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px' }}>{b.note}</div>}
+                  <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.batch_id || b.id}</div>
+                    {b.note && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.note}</div>}
                   </td>
 
                   {/* Business Unit */}
-                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                  <td style={{ padding: '8px 9px', overflow: 'hidden' }}>
                     <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>
                       {b.bu || '-'}
                     </span>
                   </td>
 
                   {/* Receive Date */}
-                  <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap' }}>{receiveDateStr}</td>
+                  <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{receiveDateStr}</td>
 
                   {/* ยอดรวม */}
-                  <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap' }}>
+                  <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}
                   </td>
 
                   {/* สร้างโดย (all tab only) */}
                   {historyTab === 'all' && (
-                    <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', maxWidth: '130px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {b.created_by || '-'}
                     </td>
                   )}
@@ -1113,7 +1130,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
       while (true) {
         const { data, error } = await supabase
           .from('company_list')
-          .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"')
+          .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control","AP-GRT","AP-GRN","IE-GRT","IE-GRN"')
           .range(from, from + size - 1);
         if (error || !data) break;
         all = [...all, ...data];
