@@ -379,11 +379,11 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div>
             </div>
             {/* 4 columns */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
 
                 {/* GRT — full running number */}
                     <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
-                    <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px' }}>GRT</div>
+                    <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px',textAlign: 'center' }}>GRT</div>
                     <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
                         <span style={{ padding: '0 7px', fontSize: '11px', color: '#1a3a5c', background: '#f0f3f8', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
                         {grtPrefix}
@@ -401,7 +401,7 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 
                     {/* GRN — full running number */}
                     <div style={{ padding: '7px 10px' }}>
-                    <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px' }}>GRN</div>
+                    <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>GRN</div>
                     <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
                         <span style={{ padding: '0 7px', fontSize: '11px', color: '#c0392b', background: '#fdf0f0', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
                         {grnPrefix}
@@ -572,89 +572,91 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
           {/* 2-column layout */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
 
-            {/* ── LEFT: Setup fields ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+{/* ── LEFT: Setup fields ── */}
+    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
 
-              {/* BU */}
-              <div style={fieldWrap}>
-                <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
-                <div style={{ position: 'relative' }}>
-                    <input
-                    value={bu}
-                    onChange={e => handleBuChange(e.target.value)}
-                    onKeyDown={handleBuKeyDown}
-                    onBlur={() => {
-                        if (!bu.trim()) return;
-                        const exact = infoItems.find(i =>
-                        i['bu']?.toLowerCase() === bu.trim().toLowerCase()
-                        );
-                        if (exact) { setBuInfo(exact); return; }
-                        const partial = infoItems.find(i =>
-                        i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
-                        );
-                        setBuInfo(partial || null);
-                    }}
-                    placeholder="ระบุตัวย่อ BU..."
-                    style={{ ...inputBase, paddingRight: '36px' }}
-                    />
-                  {/* 🔍 ปุ่มเปิด Popup */}
-                  <button
-                    onClick={() => setShowPopup(true)}
-                    style={{
-                      position: 'absolute', right: 0, top: 0,
-                      height: '32px', width: '32px',
-                      background: '#1a3a5c', border: 'none',
-                      borderRadius: '0 6px 6px 0',
-                      color: 'white', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '13px',
-                    }}
-                    title="เปิด Popup ค้นหา BU"
-                  >
-                    🔍
-                  </button>
-                </div>
-                {/* hint แสดงชื่อบริษัทที่เลือก */}
-                {buInfo && (
-                  <span style={{ fontSize: '10px', color: '#0F6E56', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    ✓ {buInfo['THAI COMPANY NAME'] || buInfo['ENGLISH COMPANY NAME']}
-                  </span>
-                )}
-              </div>
+    {/* fields group */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
-              {/* Receive Date / Due Date */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
-                <div style={fieldWrap}>
-                  <label style={fieldLabel}>Receive date</label>
-                  <input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} style={inputBase} />
-                </div>
-                <div style={fieldWrap}>
-                  <label style={fieldLabel}>Due date</label>
-                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} />
-                </div>
-              </div>
+      {/* BU */}
+      <div style={fieldWrap}>
+        <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
+        <div style={{ position: 'relative' }}>
+          <input
+            value={bu}
+            onChange={e => handleBuChange(e.target.value)}
+            onKeyDown={handleBuKeyDown}
+            onBlur={() => {
+              if (!bu.trim()) return;
+              const exact = infoItems.find(i =>
+                i['bu']?.toLowerCase() === bu.trim().toLowerCase()
+              );
+              if (exact) { setBuInfo(exact); return; }
+              const partial = infoItems.find(i =>
+                i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
+              );
+              setBuInfo(partial || null);
+            }}
+            placeholder="ระบุตัวย่อ BU..."
+            style={{ ...inputBase, paddingRight: '36px' }}
+          />
+          <button
+            onClick={() => setShowPopup(true)}
+            style={{
+              position: 'absolute', right: 0, top: 0,
+              height: '32px', width: '32px',
+              background: '#1a3a5c', border: 'none',
+              borderRadius: '0 6px 6px 0',
+              color: 'white', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '13px',
+            }}
+            title="เปิด Popup ค้นหา BU"
+          >
+            🔍
+          </button>
+        </div>
+        {buInfo && (
+          <span style={{ fontSize: '10px', color: '#0F6E56', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            ✓ {buInfo['THAI COMPANY NAME'] || buInfo['ENGLISH COMPANY NAME']}
+          </span>
+        )}
+      </div>
 
-              {/* Period */}
-              <div style={fieldWrap}>
-                <label style={fieldLabel}>Period</label>
-                <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>
-                  {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
-                </select>
-              </div>
+      {/* Receive Date / Due Date */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
+        <div style={fieldWrap}>
+          <label style={fieldLabel}>Receive date</label>
+          <input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} style={inputBase} />
+        </div>
+        <div style={fieldWrap}>
+          <label style={fieldLabel}>Due date</label>
+          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} />
+        </div>
+      </div>
 
-              {/* Start Batch */}
-              <div style={{ marginTop: '4px' }}>
-                <button
-                  style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
-                    onClick={() => onStart({
-                    bu: bu || '-', receiveDate, dueDate, period,
-                    apGrtRunning, apGrnRunning, buInfo,
-                    })}
-                >
-                  ▶ Start Batch
-                </button>
-              </div>
-            </div>
+      {/* Period */}
+      <div style={fieldWrap}>
+        <label style={fieldLabel}>Period</label>
+        <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>
+          {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
+        </select>
+      </div>
+
+    </div>
+
+    {/* Start Batch — ดันลงล่างขนานกับ AP */}
+    <button
+      style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
+      onClick={() => onStart({
+        bu: bu || '-', receiveDate, dueDate, period,
+        apGrtRunning, apGrnRunning, buInfo,
+      })}
+    >
+      ▶ Start Batch
+    </button>
+
+  </div>
 
             {/* ── RIGHT: BU Info panel ── */}
             <div>
@@ -1262,3 +1264,31 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     </div>
   );
 }
+
+const getNextRunning = async (bu, type, prefix) => {
+  const { data, error } = await supabase
+    .rpc('get_next_running', {
+      p_bu: bu,
+      p_type: type,
+      p_prefix: prefix,
+    });
+  if (error) throw error;
+  return data; // เช่น "6920600023"
+};
+
+// ตอน user เลือก BU
+const handleSelectBU = async (item) => {
+  const bu = item['bu'];
+  const grtPrefix = getPrefix('GRT');
+  const grnPrefix = getPrefix('GRN');
+
+  const [grtNo, grnNo] = await Promise.all([
+    getNextRunning(bu, 'GRT', grtPrefix),
+    getNextRunning(bu, 'GRN', grnPrefix),
+  ]);
+
+  setApGrtRunning(grtNo.slice(-4));  // เอาแค่ 4 หลักสุดท้าย
+  setApGrnRunning(grnNo.slice(-4));
+  setBu(bu);
+  setBuInfo(item);
+};
