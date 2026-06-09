@@ -33,12 +33,7 @@ const MOCK_GRS = [
 const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BUSearchPopup — ค้นหา BU จาก infoItems cache (company_list)
-// Props:
-//   show        — boolean
-//   onClose     — () => void
-//   onSelect    — (item) => void   item = row จาก company_list
-//   infoItems   — array ที่ BusinessUnit โหลดไว้แล้ว
+// BUSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
 function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
   const [query, setQuery]   = useState('');
@@ -46,12 +41,10 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
   const inputRef            = useRef(null);
   const listRef             = useRef(null);
 
-  // reset & focus ทุกครั้งที่เปิด
   useEffect(() => {
     if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); }
   }, [show]);
 
-  // Esc ปิด popup
   useEffect(() => {
     if (!show) return;
     const h = (e) => { if (e.key === 'Escape') onClose(); };
@@ -59,7 +52,6 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
     return () => document.removeEventListener('keydown', h);
   }, [show, onClose]);
 
-  // scroll active row into view — ต้องอยู่ก่อน early return ทุก Hook
   useEffect(() => {
     if (active < 0 || !listRef.current) return;
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
@@ -77,7 +69,6 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
       )
     : infoItems;
 
-  // deduplicate โดยใช้ TAX ID เป็น key (ถ้า DB มีข้อมูลซ้ำ)
   const seen = new Set();
   const filtered = raw.filter(i => {
     const key = i['TAX ID'] || i['bu'] || i.id;
@@ -103,9 +94,9 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
         <div style={{ padding: '16px 20px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
           <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏢</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>เลือก Business Unit</div>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Business Unit</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
-              {infoItems.length > 0 ? `${filtered.length} รายการ${query ? ` · ค้นหา "${query}"` : ''}` : 'กำลังโหลด...'}
+              {infoItems.length > 0 ? `${filtered.length} records${query ? ` · Search "${query}"` : ''}` : 'Loading...'}
             </div>
           </div>
           <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
@@ -120,7 +111,7 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
               value={query}
               onChange={e => { setQuery(e.target.value); setActive(-1); }}
               onKeyDown={handleKey}
-              placeholder="พิมพ์ BU, ชื่อบริษัท, Tax ID..."
+              placeholder="Type BU, company name, Tax ID..."
               style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c', transition: 'border-color 0.15s' }}
               onFocus={e => e.target.style.borderColor = '#1a3a5c'}
               onBlur={e => e.target.style.borderColor = '#e2e6ed'}
@@ -131,7 +122,7 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
             )}
           </div>
           <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
-            {[['↑↓','นำทาง'], ['Enter','เลือก'], ['Esc','ปิด']].map(([key, label]) => (
+            {[['↑↓','Navigate'], ['Enter','Select'], ['Esc','Close']].map(([key, label]) => (
               <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
                 <span>{label}</span>
@@ -145,13 +136,13 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
           {filtered.length === 0 ? (
             <div style={{ padding: '56px', textAlign: 'center', color: '#ccc' }}>
               <div style={{ fontSize: '36px', marginBottom: '10px' }}>🔍</div>
-              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบข้อมูล BU {query ? `"${query}"` : ''}</div>
+              <div style={{ fontSize: '13px', color: '#aaa' }}>No BU found {query ? `"${query}"` : ''}</div>
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
-                  {[['BU','72px'],['ชื่อบริษัท',''],['Tax ID','132px'],['Book','68px'],['AP GRT','88px']].map(([h, w]) => (
+                  {[['BU','72px'],['Company Name',''],['Tax ID','132px'],['Book','68px'],['AP GRT','88px']].map(([h, w]) => (
                     <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>
                       {h}
                     </th>
@@ -205,7 +196,7 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
 
         {/* ── Footer ── */}
         <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {infoItems.length} รายการ</span>
+          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {infoItems.length} records</span>
           <button onClick={onClose} style={{ padding: '7px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
             Cancel
           </button>
@@ -372,80 +363,75 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
         ))}
       </div>
 
-     {/* AP Section */}
-            <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
-            {/* Header */}
-            <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
-                <div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div>
-            </div>
-            {/* 4 columns */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+      {/* AP Section */}
+      <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
+        <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
+          <div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
 
-                {/* GRT — full running number */}
-                    <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
-                    <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px',textAlign: 'center' }}>GRT</div>
-                    <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
-                        <span style={{ padding: '0 7px', fontSize: '11px', color: '#1a3a5c', background: '#f0f3f8', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
-                        {grtPrefix}
-                        </span>
-                        <input
-                        type="text" inputMode="numeric"
-                        value={apGrtRunning}
-                        onChange={e => onApGrtRunningChange(e.target.value)}
-                        maxLength={4}
-                        placeholder="0000"
-                        style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color: '#1a2a3a', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }}
-                        />
-                    </div>
-                    </div>
-
-                    {/* GRN — full running number */}
-                    <div style={{ padding: '7px 10px' }}>
-                    <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>GRN</div>
-                    <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
-                        <span style={{ padding: '0 7px', fontSize: '11px', color: '#c0392b', background: '#fdf0f0', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
-                        {grnPrefix}
-                        </span>
-                        <input
-                        type="text" inputMode="numeric"
-                        value={apGrnRunning}
-                        onChange={e => onApGrnRunningChange(e.target.value)}
-                        maxLength={4}
-                        placeholder="0000"
-                        style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color: '#c0392b', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }}
-                        />
-                    </div>
-                    </div>
-
+          {/* GRT */}
+          <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
+            <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>GRT</div>
+            <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
+              <span style={{ padding: '0 7px', fontSize: '11px', color: '#1a3a5c', background: '#f0f3f8', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
+                {grtPrefix}
+              </span>
+              <input
+                type="text" inputMode="numeric"
+                value={apGrtRunning}
+                onChange={e => onApGrtRunningChange(e.target.value)}
+                maxLength={4}
+                placeholder="0000"
+                style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color: '#1a2a3a', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }}
+              />
             </div>
+          </div>
+
+          {/* GRN */}
+          <div style={{ padding: '7px 10px' }}>
+            <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>GRN</div>
+            <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
+              <span style={{ padding: '0 7px', fontSize: '11px', color: '#c0392b', background: '#fdf0f0', borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>
+                {grnPrefix}
+              </span>
+              <input
+                type="text" inputMode="numeric"
+                value={apGrnRunning}
+                onChange={e => onApGrnRunningChange(e.target.value)}
+                maxLength={4}
+                placeholder="0000"
+                style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color: '#c0392b', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }}
+              />
             </div>
+          </div>
+
+        </div>
+      </div>
     </div>
   );
 }
 
 // ── Phase 1: Batch Setup ───────────────────────────────────────────────────────
-    function BatchSetup({ onStart, infoItems = [] }) {
-    const today = new Date();
-    const pad2  = (n) => String(n).padStart(2, '0');
-    const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
-    const [receiveDate, setReceiveDate] = useState(todayStr);
+function BatchSetup({ onStart, infoItems = [] }) {
+  const today = new Date();
+  const pad2  = (n) => String(n).padStart(2, '0');
+  const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
+  const [receiveDate, setReceiveDate] = useState(todayStr);
 
-    const getPrefix = (type) => {
+  const getPrefix = (type) => {
     const d  = receiveDate ? new Date(receiveDate) : new Date();
-    const y  = String(d.getFullYear()).slice(-1);   // เลขหลักสุดท้ายของปี เช่น "6"
-    const mm = pad2(d.getMonth() + 1);              // เดือน 2 หลัก เช่น "06"
-    if (type === 'GRT') return `${y}92${mm}0`;      // → "692060"
-    if (type === 'GRN') return `${y}91${mm}0`;      // → "691060"
+    const y  = String(d.getFullYear()).slice(-1);
+    const mm = pad2(d.getMonth() + 1);
+    if (type === 'GRT') return `${y}92${mm}0`;
+    if (type === 'GRN') return `${y}91${mm}0`;
     return '';
-    };
-
-    
+  };
 
   const { userName, currentUser }   = useAuth();
   const { isOwner, isAdmin }        = useUserRole();
 
   const [bu, setBu]                   = useState('');
-
   const [dueDate, setDueDate]         = useState('');
   const [period, setPeriod]           = useState('Current');
   const [buInfo, setBuInfo]           = useState(null);
@@ -453,8 +439,7 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
   const [apGrtRunning, setApGrtRunning] = useState('0000');
   const [apGrnRunning, setApGrnRunning] = useState('0000');
 
-  // ── Batch History ──────────────────────────────────────────────
-  const [historyTab, setHistoryTab]   = useState('mine');   // 'mine' | 'all'
+  const [historyTab, setHistoryTab]   = useState('mine');
   const [historyMine, setHistoryMine] = useState([]);
   const [historyAll, setHistoryAll]   = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -462,15 +447,14 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
   const me = userName || currentUser?.email || '';
 
   const handleRunningChange = (val, setter) => {
-  const num = val.replace(/\D/g, '').slice(0, 4);   // เฉพาะตัวเลข ≤ 4 ตัว
-  setter(num.padStart(4, '0'));
-};
+    const num = val.replace(/\D/g, '').slice(0, 4);
+    setter(num.padStart(4, '0'));
+  };
 
   useEffect(() => {
     const load = async () => {
       setHistoryLoading(true);
       try {
-        // โหลดของตัวเอง
         const { data: mine } = await supabase
           .from('batch_list')
           .select('*')
@@ -479,7 +463,6 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
           .limit(100);
         setHistoryMine(mine || []);
 
-        // โหลดทั้งหมด (เฉพาะ Admin/Owner)
         if (canSeeAll) {
           const { data: all } = await supabase
             .from('batch_list')
@@ -494,55 +477,50 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
     if (me) load();
   }, [me, canSeeAll]);
 
-  // เลือก BU จาก popup → populate ฝั่งขวา
   const handleSelectBU = (item) => {
     setBu(item['bu'] || '');
     setBuInfo(item);
     setShowPopup(false);
   };
 
-  // พิมพ์แล้ว Enter → หา exact match จาก cache โดยไม่ต้องเปิด popup
-    const handleBuKeyDown = (e) => {
+  const handleBuKeyDown = (e) => {
     if (e.key === 'Enter') {
-        const match = infoItems.find(i =>
+      const match = infoItems.find(i =>
         i['bu']?.toLowerCase() === bu.trim().toLowerCase()
-        );
-        if (match) {
+      );
+      if (match) {
         setBuInfo(match);
-        } else {
-        // partial — เอาตัวแรกที่ match
+      } else {
         const partial = infoItems.find(i =>
-            i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
+          i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
         );
         setBuInfo(partial || null);
-        }
+      }
     }
-    };
+  };
 
-    const handleBuChange = (val) => {
+  const handleBuChange = (val) => {
     setBu(val);
     if (!val) {
-        setBuInfo(null);
-        return;
+      setBuInfo(null);
+      return;
     }
-    // auto-lookup ทันทีที่พิมพ์ — exact match ก่อน, ถ้าไม่เจอลอง partial
     const exact = infoItems.find(i =>
-        i['bu']?.toLowerCase() === val.trim().toLowerCase()
+      i['bu']?.toLowerCase() === val.trim().toLowerCase()
     );
     if (exact) {
-        setBuInfo(exact);
+      setBuInfo(exact);
     } else {
-        // partial match — ถ้าพิมพ์ครบและ match เดียว ก็ set เลย
-        const partials = infoItems.filter(i =>
+      const partials = infoItems.filter(i =>
         i['bu']?.toLowerCase().startsWith(val.trim().toLowerCase())
-        );
-        if (partials.length === 1) {
+      );
+      if (partials.length === 1) {
         setBuInfo(partials[0]);
-        } else {
+      } else {
         setBuInfo(null);
-        }
+      }
     }
-    };
+  };
 
   const inputBase = {
     width: '100%', height: '32px', padding: '0 8px', fontSize: '12px',
@@ -552,7 +530,6 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 
   return (
     <>
-      {/* ── BU Search Popup ── */}
       <BUSearchPopup
         show={showPopup}
         onClose={() => setShowPopup(false)}
@@ -562,256 +539,242 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
 
-      {/* ── Main Setup Card ── */}
-      <div style={card}>
-        <div style={cardHead}>
-          <span style={cardLabel}>Batch setup</span>
-        </div>
-        <div style={cardBody}>
-
-          {/* 2-column layout */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-
-{/* ── LEFT: Setup fields ── */}
-    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
-
-    {/* fields group */}
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-
-      {/* BU */}
-      <div style={fieldWrap}>
-        <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
-        <div style={{ position: 'relative' }}>
-          <input
-            value={bu}
-            onChange={e => handleBuChange(e.target.value)}
-            onKeyDown={handleBuKeyDown}
-            onBlur={() => {
-              if (!bu.trim()) return;
-              const exact = infoItems.find(i =>
-                i['bu']?.toLowerCase() === bu.trim().toLowerCase()
-              );
-              if (exact) { setBuInfo(exact); return; }
-              const partial = infoItems.find(i =>
-                i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
-              );
-              setBuInfo(partial || null);
-            }}
-            placeholder="ระบุตัวย่อ BU..."
-            style={{ ...inputBase, paddingRight: '36px' }}
-          />
-          <button
-            onClick={() => setShowPopup(true)}
-            style={{
-              position: 'absolute', right: 0, top: 0,
-              height: '32px', width: '32px',
-              background: '#1a3a5c', border: 'none',
-              borderRadius: '0 6px 6px 0',
-              color: 'white', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '13px',
-            }}
-            title="เปิด Popup ค้นหา BU"
-          >
-            🔍
-          </button>
-        </div>
-        {buInfo && (
-          <span style={{ fontSize: '10px', color: '#0F6E56', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            ✓ {buInfo['THAI COMPANY NAME'] || buInfo['ENGLISH COMPANY NAME']}
-          </span>
-        )}
-      </div>
-
-      {/* Receive Date / Due Date */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
-        <div style={fieldWrap}>
-          <label style={fieldLabel}>Receive date</label>
-          <input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} style={inputBase} />
-        </div>
-        <div style={fieldWrap}>
-          <label style={fieldLabel}>Due date</label>
-          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} />
-        </div>
-      </div>
-
-      {/* Period */}
-      <div style={fieldWrap}>
-        <label style={fieldLabel}>Period</label>
-        <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>
-          {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
-        </select>
-      </div>
-
-    </div>
-
-    {/* Start Batch — ดันลงล่างขนานกับ AP */}
-    <button
-      style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
-      onClick={() => onStart({
-        bu: bu || '-', receiveDate, dueDate, period,
-        apGrtRunning, apGrnRunning, buInfo,
-      })}
-    >
-      ▶ Start Batch
-    </button>
-
-  </div>
-
-            {/* ── RIGHT: BU Info panel ── */}
-            <div>
-              <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
-                BU Info
-              </div>
-                    <BuInfoPanel
-                    buInfo={buInfo}
-                    apGrtRunning={apGrtRunning}
-                    apGrnRunning={apGrnRunning}
-                    grtPrefix={getPrefix('GRT')}
-                    grnPrefix={getPrefix('GRN')}
-                    onApGrtRunningChange={(v) => handleRunningChange(v, setApGrtRunning)}
-                    onApGrnRunningChange={(v) => handleRunningChange(v, setApGrnRunning)}
-                    />
-            </div>
-
+        {/* ── Main Setup Card ── */}
+        <div style={card}>
+          <div style={cardHead}>
+            <span style={cardLabel}>Batch setup</span>
           </div>
-        </div>
-      </div>
+          <div style={cardBody}>
 
-      {/* ── Batch History ── */}
-      <div style={card}>
-        {/* Tab bar */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
-          <div style={{ display: 'flex' }}>
-            {[
-              { key: 'mine', label: '👤 My Job', count: historyMine.length },
-              ...(canSeeAll ? [{ key: 'all', label: '👥 All Jobs', count: historyAll.length }] : []),
-            ].map(t => (
-              <div key={t.key} onClick={() => setHistoryTab(t.key)}
-                style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: historyTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: historyTab === t.key ? '#1a3a5c' : '#888', fontWeight: historyTab === t.key ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                {t.label}
-                <span style={{ background: historyTab === t.key ? '#1a3a5c' : '#e8e8e8', color: historyTab === t.key ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{t.count}</span>
-              </div>
-            ))}
-          </div>
-          <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Batch History</span>
-        </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
 
-        {/* Table */}
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-                <colgroup>
-                <col style={{ width: '24%' }} /> {/* Batch Name */}
-                <col style={{ width: '10%' }} /> {/* Business Unit */}
-                <col style={{ width: '11%' }} /> {/* Receive Date */}
-                <col style={{ width: '12%' }} /> {/* ยอดรวม */}
-                {historyTab === 'all' && <col style={{ width: '13%' }} />} {/* สร้างโดย */}
-                <col style={{ width: historyTab === 'all' ? '20%' : '33%' }} /> {/* ไฟล์แนบ */}
-                <col style={{ width: '10%' }} /> {/* Status */}
-                </colgroup>
-          <thead>
-            <tr style={{ background: '#f8f9fa' }}>
-              {[
-                'Batch Name',
-                'Business Unit',
-                'Receive Date',
-                'ยอดรวม',
-                ...(historyTab === 'all' ? ['สร้างโดย'] : []),
-                'ไฟล์แนบ',
-                'Status',
-              ].map(h => (
-                <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {historyLoading ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>กำลังโหลด...</td></tr>
-            ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>
-                {historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}
-              </td></tr>
-            ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
-              const statusMap = {
-                done:       { bg: '#EAF3DE', color: '#27500A', label: 'Done' },
-                processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' },
-                error:      { bg: '#FCEBEB', color: '#791F1F', label: 'Error' },
-                draft:      { bg: '#F1EFE8', color: '#444441', label: 'Draft' },
-              };
-              const st = statusMap[b.status] || statusMap.draft;
+              {/* ── LEFT: Setup fields ── */}
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
 
-              const receiveAt = b.receive_date ? new Date(b.receive_date) : null;
-              const receiveDateStr = receiveAt
-                ? `${String(receiveAt.getDate()).padStart(2,'0')}/${String(receiveAt.getMonth()+1).padStart(2,'0')}/${receiveAt.getFullYear()}`
-                : '-';
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
-              return (
-                <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
-
-                  {/* Batch Name */}
-                  <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    <div style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.batch_id || b.id}</div>
-                    {b.note && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.note}</div>}
-                  </td>
-
-                  {/* Business Unit */}
-                  <td style={{ padding: '8px 9px', overflow: 'hidden' }}>
-                    <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>
-                      {b.bu || '-'}
-                    </span>
-                  </td>
-
-                  {/* Receive Date */}
-                  <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{receiveDateStr}</td>
-
-                  {/* ยอดรวม */}
-                  <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}
-                  </td>
-
-                  {/* สร้างโดย (all tab only) */}
-                  {historyTab === 'all' && (
-                    <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {b.created_by || '-'}
-                    </td>
-                  )}
-
-                  {/* ไฟล์แนบ — View + Download */}
-                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
-                    <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
-                      {b.file_url ? (
-                        <>
-                          {/* View */}
-                          <a href={b.file_url} target="_blank" rel="noreferrer"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
-                            👁 View
-                          </a>
-                          {/* Download */}
-                          <a href={b.file_url} download
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
-                            ⬇ Download
-                          </a>
-                        </>
-                      ) : (
-                        <span style={{ fontSize: '11px', color: '#ccc' }}>ไม่มีไฟล์</span>
-                      )}
+                  {/* BU */}
+                  <div style={fieldWrap}>
+                    <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        value={bu}
+                        onChange={e => handleBuChange(e.target.value)}
+                        onKeyDown={handleBuKeyDown}
+                        onBlur={() => {
+                          if (!bu.trim()) return;
+                          const exact = infoItems.find(i =>
+                            i['bu']?.toLowerCase() === bu.trim().toLowerCase()
+                          );
+                          if (exact) { setBuInfo(exact); return; }
+                          const partial = infoItems.find(i =>
+                            i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
+                          );
+                          setBuInfo(partial || null);
+                        }}
+                        placeholder="Enter BU code..."
+                        style={{ ...inputBase, paddingRight: '36px' }}
+                      />
+                      <button
+                        onClick={() => setShowPopup(true)}
+                        style={{
+                          position: 'absolute', right: 0, top: 0,
+                          height: '32px', width: '32px',
+                          background: '#1a3a5c', border: 'none',
+                          borderRadius: '0 6px 6px 0',
+                          color: 'white', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '13px',
+                        }}
+                        title="Open BU search popup"
+                      >
+                        🔍
+                      </button>
                     </div>
-                  </td>
+                    {buInfo && (
+                      <span style={{ fontSize: '10px', color: '#0F6E56', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        ✓ {buInfo['THAI COMPANY NAME'] || buInfo['ENGLISH COMPANY NAME']}
+                      </span>
+                    )}
+                  </div>
 
-                  {/* Status */}
-                  <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
-                    <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>
-                      {st.label}
-                    </span>
-                  </td>
+                  {/* Receive Date / Due Date */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
+                    <div style={fieldWrap}>
+                      <label style={fieldLabel}>Receive date</label>
+                      <input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} style={inputBase} />
+                    </div>
+                    <div style={fieldWrap}>
+                      <label style={fieldLabel}>Due date</label>
+                      <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} />
+                    </div>
+                  </div>
 
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  {/* Period */}
+                  <div style={fieldWrap}>
+                    <label style={fieldLabel}>Period</label>
+                    <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>
+                      {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  </div>
+
+                </div>
+
+                <button
+                  style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
+                  onClick={() => onStart({
+                    bu: bu || '-', receiveDate, dueDate, period,
+                    apGrtRunning, apGrnRunning, buInfo,
+                  })}
+                >
+                  ▶ Start Batch
+                </button>
+
+              </div>
+
+              {/* ── RIGHT: BU Info panel ── */}
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                  BU Info
+                </div>
+                <BuInfoPanel
+                  buInfo={buInfo}
+                  apGrtRunning={apGrtRunning}
+                  apGrnRunning={apGrnRunning}
+                  grtPrefix={getPrefix('GRT')}
+                  grnPrefix={getPrefix('GRN')}
+                  onApGrtRunningChange={(v) => handleRunningChange(v, setApGrtRunning)}
+                  onApGrnRunningChange={(v) => handleRunningChange(v, setApGrnRunning)}
+                />
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        {/* ── Batch History ── */}
+        <div style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
+            <div style={{ display: 'flex' }}>
+              {[
+                { key: 'mine', label: '👤 My Jobs', count: historyMine.length },
+                ...(canSeeAll ? [{ key: 'all', label: '👥 All Jobs', count: historyAll.length }] : []),
+              ].map(t => (
+                <div key={t.key} onClick={() => setHistoryTab(t.key)}
+                  style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: historyTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: historyTab === t.key ? '#1a3a5c' : '#888', fontWeight: historyTab === t.key ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {t.label}
+                  <span style={{ background: historyTab === t.key ? '#1a3a5c' : '#e8e8e8', color: historyTab === t.key ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{t.count}</span>
+                </div>
+              ))}
+            </div>
+            <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Batch History</span>
+          </div>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: '24%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: historyTab === 'all' ? '20%' : '33%' }} />
+              <col style={{ width: '10%' }} />
+              {historyTab === 'all' && <col style={{ width: '13%' }} />}
+            </colgroup>
+            <thead>
+              <tr style={{ background: '#f8f9fa' }}>
+                {[
+                  'Batch Name',
+                  'Business Unit',
+                  'Receive Date',
+                  'Total Amount',
+                  'Attachment',
+                  'Status',
+                  ...(historyTab === 'all' ? ['Created By'] : []),
+                ].map(h => (
+                  <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {historyLoading ? (
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
+              ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>
+                  {historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}
+                </td></tr>
+              ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
+                const statusMap = {
+                  done:       { bg: '#EAF3DE', color: '#27500A', label: 'Done' },
+                  processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' },
+                  error:      { bg: '#FCEBEB', color: '#791F1F', label: 'Error' },
+                  draft:      { bg: '#F1EFE8', color: '#444441', label: 'Draft' },
+                };
+                const st = statusMap[b.status] || statusMap.draft;
+
+                const receiveAt = b.receive_date ? new Date(b.receive_date) : null;
+                const receiveDateStr = receiveAt
+                  ? `${String(receiveAt.getDate()).padStart(2,'0')}/${String(receiveAt.getMonth()+1).padStart(2,'0')}/${receiveAt.getFullYear()}`
+                  : '-';
+
+                return (
+                  <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+
+                    <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.batch_id || b.id}</div>
+                      {b.note && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.note}</div>}
+                    </td>
+
+                    <td style={{ padding: '8px 9px', overflow: 'hidden' }}>
+                      <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>
+                        {b.bu || '-'}
+                      </span>
+                    </td>
+
+                    <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{receiveDateStr}</td>
+
+                    <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}
+                    </td>
+
+                    <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+                        {b.file_url ? (
+                          <>
+                            <a href={b.file_url} target="_blank" rel="noreferrer"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
+                              👁 View
+                            </a>
+                            <a href={b.file_url} download
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
+                              ⬇ Download
+                            </a>
+                          </>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>
+                        )}
+                      </div>
+                    </td>
+
+                    <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                      <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>
+                        {st.label}
+                      </span>
+                    </td>
+
+                    {historyTab === 'all' && (
+                      <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {b.created_by || '-'}
+                      </td>
+                    )}
+
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
       </div>
-
-    </div>
     </>
   );
 }
@@ -885,7 +848,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
                 <input
                   value={grSearch}
                   onChange={e => setGrSearch(e.target.value)}
-                  placeholder="ค้นหา GR No. / Vendor..."
+                  placeholder="Search GR No. / Vendor..."
                   style={{ width: '100%', padding: '5px 9px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', marginBottom: '8px', outline: 'none' }}
                 />
                 {filteredGRs.map(gr => (
@@ -906,7 +869,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
                       <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c' }}>{gr.id}</div>
                       <div style={{ fontSize: '11px', color: '#888' }}>{gr.vendor} · {gr.po} · ฿{fmt(gr.total)}</div>
                     </div>
-                    <span style={gr.status === 'ready' ? bdgGreen : bdgGray}>{gr.status === 'ready' ? 'พร้อมใช้' : 'ใช้แล้ว'}</span>
+                    <span style={gr.status === 'ready' ? bdgGreen : bdgGray}>{gr.status === 'ready' ? 'Available' : 'Used'}</span>
                   </div>
                 ))}
               </div>
@@ -916,19 +879,19 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
               {grSel && (
                 <div style={{ marginBottom: '9px' }}>
                   <span style={{ fontSize: '11px', background: '#f0faf6', color: '#0F6E56', padding: '2px 9px', borderRadius: '20px', border: '0.5px solid #5DCAA5' }}>
-                    🔗 ดึงจาก {grSel.id}
+                    🔗 Pulled from {grSel.id}
                   </span>
                 </div>
               )}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', marginBottom: '9px' }}>
                 {[
-                  ['vendor',      'Vendor',         ''],
-                  ['po',          'PO อ้างอิง',      'PO-XXXX'],
-                  ['invoiceNo',   'เลขที่ Invoice',   'INV-XXXX-XXXX'],
-                  ['invoiceDate', 'วันที่ Invoice',   'DD/MM/YYYY'],
-                  ['dueDate',     'วันครบกำหนด',     'DD/MM/YYYY'],
-                  ['glAccount',   'GL Account',       'Lookup จาก Master...'],
+                  ['vendor',      'Vendor',          ''],
+                  ['po',          'PO Reference',    'PO-XXXX'],
+                  ['invoiceNo',   'Invoice No.',      'INV-XXXX-XXXX'],
+                  ['invoiceDate', 'Invoice Date',     'DD/MM/YYYY'],
+                  ['dueDate',     'Due Date',         'DD/MM/YYYY'],
+                  ['glAccount',   'GL Account',       'Lookup from Master...'],
                 ].map(([key, label, placeholder]) => (
                   <div key={key} style={fieldWrap}>
                     <label style={fieldLabel}>{label}</label>
@@ -945,7 +908,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '9px', tableLayout: 'fixed' }}>
                 <thead>
                   <tr style={{ background: '#f8f9fa' }}>
-                    {[['รายการ','44%'],['จำนวน','14%'],['ราคา/หน่วย','20%'],['ยอดรวม','18%'],['','4%']].map(([h, w]) => (
+                    {[['Description','44%'],['Qty','14%'],['Unit Price','20%'],['Amount','18%'],['','4%']].map(([h, w]) => (
                       <th key={h} style={{ padding: '6px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', width: w }}>{h}</th>
                     ))}
                   </tr>
@@ -954,7 +917,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
                   {lines.length === 0 || (lines.length === 1 && !lines[0].desc) ? (
                     <tr>
                       <td colSpan={5} style={{ textAlign: 'center', color: '#aaa', padding: '18px', fontSize: '12px' }}>
-                        ยังไม่มีรายการ — ดึงจาก GR หรือกรอกเอง
+                        No items — pull from GR or enter manually
                       </td>
                     </tr>
                   ) : lines.map((l, i) => (
@@ -983,14 +946,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <button style={btnSmall} onClick={() => setLines(ls => [...ls, { desc: '', qty: '', unit: '', amount: 0 }])}>
-                  + เพิ่มบรรทัด
+                  + Add line
                 </button>
                 <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '12px' }}>
                   <span style={{ color: '#888' }}>
-                    ยอดสุทธิ <strong style={{ color: '#1a3a5c', fontSize: '14px' }}>฿{fmt(net)}</strong>
+                    Net Amount <strong style={{ color: '#1a3a5c', fontSize: '14px' }}>฿{fmt(net)}</strong>
                   </span>
                   <button style={btnPrimary} onClick={addInvoice}>
-                    + เพิ่มใน Batch
+                    + Add to Batch
                   </button>
                 </div>
               </div>
@@ -1004,29 +967,29 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
             <div style={cardHead}><span style={cardLabel}>Batch info</span></div>
             <div style={{ padding: '10px 13px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
               {[
-                ['Batch ID',   <span style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '11px', fontFamily: 'monospace' }}>2026-0090</span>],
-                ['Business',   <span style={{ fontSize: '11px' }}>{batchConfig.bu}</span>],
-                ['Period',     <span>{batchConfig.period || '-'}</span>],
-                ['สถานะ',      <span style={bdgAmber}>In progress</span>],
+                ['Batch ID',  <span style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '11px', fontFamily: 'monospace' }}>2026-0090</span>],
+                ['Business', <span style={{ fontSize: '11px' }}>{batchConfig.bu}</span>],
+                ['Period',   <span>{batchConfig.period || '-'}</span>],
+                ['Status',   <span style={bdgAmber}>In progress</span>],
               ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ color: '#888' }}>{k}</span>{v}
                 </div>
               ))}
               <div style={{ borderTop: '0.5px solid #e8eaf0', paddingTop: '8px' }}>
-                <button style={{ ...btnSmall, width: '100%', justifyContent: 'center' }}>✏️ แก้ไข setup</button>
+                <button style={{ ...btnSmall, width: '100%', justifyContent: 'center' }}>✏️ Edit setup</button>
               </div>
             </div>
           </div>
 
           <div style={card}>
             <div style={cardHead}>
-              <span style={cardLabel}>Invoice ใน Batch</span>
+              <span style={cardLabel}>Invoices in Batch</span>
               <span style={invoices.length ? bdgBlue : bdgRed}>{invoices.length}</span>
             </div>
             <div style={{ padding: '8px' }}>
               {invoices.length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#aaa', fontSize: '12px', padding: '18px 0' }}>ยังไม่มี Invoice</div>
+                <div style={{ textAlign: 'center', color: '#aaa', fontSize: '12px', padding: '18px 0' }}>No invoices yet</div>
               ) : invoices.map(v => (
                 <div key={v.id} style={{ padding: '5px 7px', border: '0.5px solid #e8eaf0', borderRadius: '6px', marginBottom: '5px', fontSize: '11px' }}>
                   <div style={{ fontWeight: '500', color: '#1a3a5c' }}>{v.id}</div>
@@ -1039,7 +1002,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
               ))}
             </div>
             <div style={{ padding: '6px 10px', borderTop: '0.5px solid #e8eaf0', fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#888' }}>รวม</span>
+              <span style={{ color: '#888' }}>Total</span>
               <span style={{ fontWeight: '500', color: '#1a3a5c' }}>฿{fmt(invoices.reduce((s, v) => s + v.net, 0))}</span>
             </div>
           </div>
@@ -1048,7 +1011,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
 
       <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
         <button style={btnPrimary} onClick={onNext}>
-          ถัดไป: Generate &amp; export →
+          Next: Generate &amp; export →
         </button>
       </div>
     </div>
@@ -1067,7 +1030,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
   const net      = invoices.reduce((s, v) => s + v.net, 0);
 
   const doExport = () => {
-    if (!invoices.length) { alert('ยังไม่มี Invoice ใน Batch'); return; }
+    if (!invoices.length) { alert('No invoices in batch'); return; }
     setExported(true);
   };
 
@@ -1076,18 +1039,18 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
       <div style={{ display: 'flex', gap: '12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={card}>
-            <div style={cardHead}><span style={cardLabel}>สรุป Batch 2026-0090</span></div>
+            <div style={cardHead}><span style={cardLabel}>Batch 2026-0090 Summary</span></div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
               <thead>
                 <tr style={{ background: '#f8f9fa' }}>
-                  {[['Invoice No.','25%'],['Vendor','30%'],['GR อ้างอิง','22%'],['ยอดสุทธิ','23%']].map(([h, w]) => (
+                  {[['Invoice No.','25%'],['Vendor','30%'],['GR Reference','22%'],['Net Amount','23%']].map(([h, w]) => (
                     <th key={h} style={{ padding: '6px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', width: w }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {invoices.length === 0 ? (
-                  <tr><td colSpan={4} style={{ textAlign: 'center', color: '#aaa', padding: '18px' }}>ยังไม่มี Invoice ใน Batch</td></tr>
+                  <tr><td colSpan={4} style={{ textAlign: 'center', color: '#aaa', padding: '18px' }}>No invoices in batch</td></tr>
                 ) : invoices.map(v => (
                   <tr key={v.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
                     <td style={{ padding: '7px 9px', fontWeight: '500', color: '#1a3a5c' }}>{v.id}</td>
@@ -1095,7 +1058,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
                     <td style={{ padding: '7px 9px', color: '#888' }}>{v.gr}</td>
                     <td style={{ padding: '7px 9px' }}>
                       {exported
-                        ? <span style={bdgGreen}>exported</span>
+                        ? <span style={bdgGreen}>Exported</span>
                         : <span style={{ fontWeight: '500' }}>฿{fmt(v.net)}</span>}
                     </td>
                   </tr>
@@ -1104,10 +1067,10 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
             </table>
             <div style={{ display: 'flex', borderTop: '0.5px solid #e8eaf0' }}>
               {[
-                ['Invoice',       invoices.length],
-                ['ยอดก่อน VAT',   `฿${fmt(subtotal)}`],
+                ['Invoices',      invoices.length],
+                ['Subtotal',      `฿${fmt(subtotal)}`],
                 ['VAT 7%',        `฿${fmt(vat)}`],
-                ['ยอดสุทธิรวม',   `฿${fmt(net)}`],
+                ['Net Total',     `฿${fmt(net)}`],
               ].map(([label, val], i, arr) => (
                 <div key={label} style={{ flex: 1, padding: '9px', textAlign: 'center', borderRight: i < arr.length - 1 ? '0.5px solid #e8eaf0' : 'none' }}>
                   <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>{label}</div>
@@ -1123,7 +1086,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
             <div style={cardHead}><span style={cardLabel}>Export options</span></div>
             <div style={{ padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {[
-                ['xlsx', 'ไฟล์โหลด (.xlsx)'],
+                ['xlsx', 'Load file (.xlsx)'],
                 ['txt',  'AP Interface (.txt)'],
                 ['wht',  'WHT Certificate (.pdf)'],
                 ['vat',  'VAT Summary (.xlsx)'],
@@ -1146,14 +1109,14 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
                 {exported ? '✓ Exported' : '⬇ Generate & export'}
               </button>
               <button style={{ ...btnOutline, width: '100%', justifyContent: 'center' }} onClick={onBack}>
-                ← กลับแก้ไข
+                ← Back to edit
               </button>
             </div>
           </div>
 
           {exported && (
             <div style={card}>
-              <div style={cardHead}><span style={cardLabel}>ไฟล์ที่ Generate</span></div>
+              <div style={cardHead}><span style={cardLabel}>Generated files</span></div>
               <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {opts.xlsx && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}>
@@ -1177,7 +1140,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
 
       <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
         <button style={btnOutline} onClick={onNewBatch}>
-          + สร้าง Batch ใหม่
+          + New Batch
         </button>
       </div>
     </div>
@@ -1190,32 +1153,31 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   const [invoices, setInvoices]       = useState([]);
   const [infoItems, setInfoItems]     = useState([]);
 
-  // โหลด company_list cache ตอน mount
   useEffect(() => {
-        const load = async () => {
-        let from = 0;
-        const size = 1000;
-        let all = [];
-        while (true) {
-            const { data, error } = await supabase
-            .from('company_list')
-            .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"')
-            .range(from, from + size - 1);
+    const load = async () => {
+      let from = 0;
+      const size = 1000;
+      let all = [];
+      while (true) {
+        const { data, error } = await supabase
+          .from('company_list')
+          .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"')
+          .range(from, from + size - 1);
 
-            if (error) {
-            console.error('❌ Supabase error:', error);  // ← เพิ่มตรงนี้
-            break;
-            }
-            if (!data) break;
-
-            console.log(`✅ Loaded ${data.length} rows (from=${from})`);  // ← เพิ่มตรงนี้
-            all = [...all, ...data];
-            if (data.length < size) break;
-            from += size;
+        if (error) {
+          console.error('❌ Supabase error:', error);
+          break;
         }
-        console.log('Total infoItems:', all.length);  // ← เพิ่มตรงนี้
-        setInfoItems(all);
-        };
+        if (!data) break;
+
+        console.log(`✅ Loaded ${data.length} rows (from=${from})`);
+        all = [...all, ...data];
+        if (data.length < size) break;
+        from += size;
+      }
+      console.log('Total infoItems:', all.length);
+      setInfoItems(all);
+    };
     load();
   }, []);
 
@@ -1264,4 +1226,3 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     </div>
   );
 }
-
