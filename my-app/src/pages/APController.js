@@ -90,7 +90,6 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
     >
       <div style={{ background: 'white', borderRadius: '14px', width: '700px', maxWidth: '95vw', height: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22), 0 4px 16px rgba(0,0,0,0.08)' }}>
 
-        {/* ── Header ── */}
         <div style={{ padding: '16px 20px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
           <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏢</div>
           <div style={{ flex: 1 }}>
@@ -102,7 +101,6 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
           <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
         </div>
 
-        {/* ── Search box ── */}
         <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
           <div style={{ position: 'relative' }}>
             <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -131,7 +129,6 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
           </div>
         </div>
 
-        {/* ── Result table ── */}
         <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
           {filtered.length === 0 ? (
             <div style={{ padding: '56px', textAlign: 'center', color: '#ccc' }}>
@@ -194,7 +191,6 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
           )}
         </div>
 
-        {/* ── Footer ── */}
         <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
           <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {infoItems.length} records</span>
           <button onClick={onClose} style={{ padding: '7px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
@@ -352,8 +348,6 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-
-      {/* BU Info rows */}
       <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
         {rows.map(([key, val], i) => (
           <div key={key} style={{ ...infoRowStyle, borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}>
@@ -363,14 +357,11 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
         ))}
       </div>
 
-      {/* AP Section */}
       <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
         <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
           <div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-
-          {/* GRT */}
           <div style={{ padding: '7px 10px', borderRight: '0.5px solid #f0f0f0' }}>
             <div style={{ fontSize: '10px', color: '#1a2a3a', fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>GRT</div>
             <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
@@ -387,8 +378,6 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
               />
             </div>
           </div>
-
-          {/* GRN */}
           <div style={{ padding: '7px 10px' }}>
             <div style={{ fontSize: '10px', color: '#c0392b', fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>GRN</div>
             <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
@@ -405,7 +394,6 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
               />
             </div>
           </div>
-
         </div>
       </div>
     </div>
@@ -485,15 +473,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
   const handleBuKeyDown = (e) => {
     if (e.key === 'Enter') {
-      const match = infoItems.find(i =>
-        i['bu']?.toLowerCase() === bu.trim().toLowerCase()
-      );
-      if (match) {
-        setBuInfo(match);
-      } else {
-        const partial = infoItems.find(i =>
-          i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
-        );
+      const match = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
+      if (match) { setBuInfo(match); } else {
+        const partial = infoItems.find(i => i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase()));
         setBuInfo(partial || null);
       }
     }
@@ -501,24 +483,11 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
   const handleBuChange = (val) => {
     setBu(val);
-    if (!val) {
-      setBuInfo(null);
-      return;
-    }
-    const exact = infoItems.find(i =>
-      i['bu']?.toLowerCase() === val.trim().toLowerCase()
-    );
-    if (exact) {
-      setBuInfo(exact);
-    } else {
-      const partials = infoItems.filter(i =>
-        i['bu']?.toLowerCase().startsWith(val.trim().toLowerCase())
-      );
-      if (partials.length === 1) {
-        setBuInfo(partials[0]);
-      } else {
-        setBuInfo(null);
-      }
+    if (!val) { setBuInfo(null); return; }
+    const exact = infoItems.find(i => i['bu']?.toLowerCase() === val.trim().toLowerCase());
+    if (exact) { setBuInfo(exact); } else {
+      const partials = infoItems.filter(i => i['bu']?.toLowerCase().startsWith(val.trim().toLowerCase()));
+      setBuInfo(partials.length === 1 ? partials[0] : null);
     }
   };
 
@@ -530,30 +499,16 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
   return (
     <>
-      <BUSearchPopup
-        show={showPopup}
-        onClose={() => setShowPopup(false)}
-        onSelect={handleSelectBU}
-        infoItems={infoItems}
-      />
+      <BUSearchPopup show={showPopup} onClose={() => setShowPopup(false)} onSelect={handleSelectBU} infoItems={infoItems} />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
-
-        {/* ── Main Setup Card ── */}
         <div style={card}>
-          <div style={cardHead}>
-            <span style={cardLabel}>Batch setup</span>
-          </div>
+          <div style={cardHead}><span style={cardLabel}>Batch setup</span></div>
           <div style={cardBody}>
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
 
-              {/* ── LEFT: Setup fields ── */}
               <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
-
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-
-                  {/* BU */}
                   <div style={fieldWrap}>
                     <label style={fieldLabel}>BU <span style={{ color: '#e24b4a' }}>*</span></label>
                     <div style={{ position: 'relative' }}>
@@ -563,33 +518,17 @@ function BatchSetup({ onStart, infoItems = [] }) {
                         onKeyDown={handleBuKeyDown}
                         onBlur={() => {
                           if (!bu.trim()) return;
-                          const exact = infoItems.find(i =>
-                            i['bu']?.toLowerCase() === bu.trim().toLowerCase()
-                          );
+                          const exact = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
                           if (exact) { setBuInfo(exact); return; }
-                          const partial = infoItems.find(i =>
-                            i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())
-                          );
+                          const partial = infoItems.find(i => i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase()));
                           setBuInfo(partial || null);
                         }}
                         placeholder="Enter BU code..."
                         style={{ ...inputBase, paddingRight: '36px' }}
                       />
-                      <button
-                        onClick={() => setShowPopup(true)}
-                        style={{
-                          position: 'absolute', right: 0, top: 0,
-                          height: '32px', width: '32px',
-                          background: '#1a3a5c', border: 'none',
-                          borderRadius: '0 6px 6px 0',
-                          color: 'white', cursor: 'pointer',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: '13px',
-                        }}
-                        title="Open BU search popup"
-                      >
-                        🔍
-                      </button>
+                      <button onClick={() => setShowPopup(true)}
+                        style={{ position: 'absolute', right: 0, top: 0, height: '32px', width: '32px', background: '#1a3a5c', border: 'none', borderRadius: '0 6px 6px 0', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px' }}
+                        title="Open BU search popup">🔍</button>
                     </div>
                     {buInfo && (
                       <span style={{ fontSize: '10px', color: '#0F6E56', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -598,7 +537,6 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     )}
                   </div>
 
-                  {/* Receive Date / Due Date */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
                     <div style={fieldWrap}>
                       <label style={fieldLabel}>Receive date</label>
@@ -610,33 +548,24 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     </div>
                   </div>
 
-                  {/* Period */}
                   <div style={fieldWrap}>
                     <label style={fieldLabel}>Period</label>
                     <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>
                       {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
-
                 </div>
 
                 <button
                   style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }}
-                  onClick={() => onStart({
-                    bu: bu || '-', receiveDate, dueDate, period,
-                    apGrtRunning, apGrnRunning, buInfo,
-                  })}
+                  onClick={() => onStart({ bu: bu || '-', receiveDate, dueDate, period, apGrtRunning, apGrnRunning, buInfo })}
                 >
                   ▶ Start Batch
                 </button>
-
               </div>
 
-              {/* ── RIGHT: BU Info panel ── */}
               <div>
-                <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
-                  BU Info
-                </div>
+                <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
                 <BuInfoPanel
                   buInfo={buInfo}
                   apGrtRunning={apGrtRunning}
@@ -647,12 +576,10 @@ function BatchSetup({ onStart, infoItems = [] }) {
                   onApGrnRunningChange={(v) => handleRunningChange(v, setApGrnRunning)}
                 />
               </div>
-
             </div>
           </div>
         </div>
 
-        {/* ── Batch History ── */}
         <div style={card}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
             <div style={{ display: 'flex' }}>
@@ -672,25 +599,13 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: '24%' }} />
-              <col style={{ width: '10%' }} />
-              <col style={{ width: '11%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: historyTab === 'all' ? '20%' : '33%' }} />
-              <col style={{ width: '10%' }} />
-              {historyTab === 'all' && <col style={{ width: '13%' }} />}
+              <col style={{ width: '24%' }} /><col style={{ width: '10%' }} /><col style={{ width: '11%' }} />
+              <col style={{ width: '12%' }} /><col style={{ width: historyTab === 'all' ? '20%' : '33%' }} />
+              <col style={{ width: '10%' }} />{historyTab === 'all' && <col style={{ width: '13%' }} />}
             </colgroup>
             <thead>
               <tr style={{ background: '#f8f9fa' }}>
-                {[
-                  'Batch Name',
-                  'Business Unit',
-                  'Receive Date',
-                  'Total Amount',
-                  'Attachment',
-                  'Status',
-                  ...(historyTab === 'all' ? ['Created By'] : []),
-                ].map(h => (
+                {['Batch Name','Business Unit','Receive Date','Total Amount','Attachment','Status',...(historyTab === 'all' ? ['Created By'] : [])].map(h => (
                   <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
                 ))}
               </tr>
@@ -699,81 +614,47 @@ function BatchSetup({ onStart, infoItems = [] }) {
               {historyLoading ? (
                 <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>
-                  {historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}
-                </td></tr>
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
-                const statusMap = {
-                  done:       { bg: '#EAF3DE', color: '#27500A', label: 'Done' },
-                  processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' },
-                  error:      { bg: '#FCEBEB', color: '#791F1F', label: 'Error' },
-                  draft:      { bg: '#F1EFE8', color: '#444441', label: 'Draft' },
-                };
+                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
-
                 const receiveAt = b.receive_date ? new Date(b.receive_date) : null;
-                const receiveDateStr = receiveAt
-                  ? `${String(receiveAt.getDate()).padStart(2,'0')}/${String(receiveAt.getMonth()+1).padStart(2,'0')}/${receiveAt.getFullYear()}`
-                  : '-';
-
+                const receiveDateStr = receiveAt ? `${String(receiveAt.getDate()).padStart(2,'0')}/${String(receiveAt.getMonth()+1).padStart(2,'0')}/${receiveAt.getFullYear()}` : '-';
                 return (
                   <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
-
                     <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <div style={{ fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.batch_id || b.id}</div>
                       {b.note && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.note}</div>}
                     </td>
-
                     <td style={{ padding: '8px 9px', overflow: 'hidden' }}>
-                      <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>
-                        {b.bu || '-'}
-                      </span>
+                      <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{b.bu || '-'}</span>
                     </td>
-
                     <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{receiveDateStr}</td>
-
                     <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}
                     </td>
-
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
                         {b.file_url ? (
                           <>
-                            <a href={b.file_url} target="_blank" rel="noreferrer"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
-                              👁 View
-                            </a>
-                            <a href={b.file_url} download
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>
-                              ⬇ Download
-                            </a>
+                            <a href={b.file_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>👁 View</a>
+                            <a href={b.file_url} download style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}>⬇ Download</a>
                           </>
-                        ) : (
-                          <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>
-                        )}
+                        ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
                       </div>
                     </td>
-
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
-                      <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>
-                        {st.label}
-                      </span>
+                      <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>{st.label}</span>
                     </td>
-
                     {historyTab === 'all' && (
-                      <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {b.created_by || '-'}
-                      </td>
+                      <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.created_by || '-'}</td>
                     )}
-
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-
       </div>
     </>
   );
@@ -781,239 +662,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
 // ── Phase 2: Invoice Entry ─────────────────────────────────────────────────────
 function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
-  const [grOpen, setGrOpen]     = useState(false);
-  const [grSearch, setGrSearch] = useState('');
-  const [grSel, setGrSel]       = useState(null);
-  const [form, setForm]         = useState({ vendor: '', po: '', invoiceNo: '', invoiceDate: '', dueDate: '', glAccount: '' });
-  const [lines, setLines]       = useState([{ desc: '', qty: '', unit: '', amount: 0 }]);
-
-  const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setLine  = (i, k, v) => {
-    const ls = [...lines];
-    ls[i] = { ...ls[i], [k]: v };
-    if (k === 'qty' || k === 'unit') ls[i].amount = (Number(ls[i].qty) || 0) * (Number(ls[i].unit) || 0);
-    setLines(ls);
-  };
-
-  const filteredGRs = MOCK_GRS.filter(g =>
-    g.id.toLowerCase().includes(grSearch.toLowerCase()) ||
-    g.vendor.toLowerCase().includes(grSearch.toLowerCase())
-  );
-
-  const pickGR = (gr) => {
-    setGrSel(gr);
-    setForm(f => ({ ...f, vendor: gr.vendor, po: gr.po }));
-    setLines(gr.lines.map(l => ({ ...l, amount: l.qty * l.unit })));
-    setGrOpen(false);
-  };
-
-  const subtotal = lines.reduce((s, l) => s + (l.amount || 0), 0);
-  const vat      = Math.round(subtotal * 0.07);
-  const wht      = Math.round(subtotal * 0.03);
-  const net      = subtotal + vat - wht;
-
-  const addInvoice = () => {
-    const inv = {
-      id: `INV-2026-0${141 + invoices.length}`,
-      vendor: form.vendor || 'Vendor',
-      gr: grSel?.id || '-',
-      raw: subtotal,
-      net,
-    };
-    setInvoices(prev => [...prev, inv]);
-    setForm({ vendor: '', po: '', invoiceNo: '', invoiceDate: '', dueDate: '', glAccount: '' });
-    setLines([{ desc: '', qty: '', unit: '', amount: 0 }]);
-    setGrSel(null);
-  };
-
+  // TODO: ออกแบบใหม่
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
-      <div style={{ display: 'flex', gap: '12px' }}>
-
-        {/* Left: Invoice Form */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={card}>
-            <div style={cardHead}>
-              <span style={cardLabel}>Invoice form</span>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <button style={btnSmall} onClick={() => setGrOpen(v => !v)}>
-                  📋 GR Reference {grOpen ? '▲' : '▼'}
-                </button>
-                <button style={btnSmall}>🔍 OCR</button>
-              </div>
-            </div>
-
-            {grOpen && (
-              <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
-                <input
-                  value={grSearch}
-                  onChange={e => setGrSearch(e.target.value)}
-                  placeholder="Search GR No. / Vendor..."
-                  style={{ width: '100%', padding: '5px 9px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', marginBottom: '8px', outline: 'none' }}
-                />
-                {filteredGRs.map(gr => (
-                  <div
-                    key={gr.id}
-                    onClick={() => gr.status === 'ready' && pickGR(gr)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '9px',
-                      padding: '7px 9px',
-                      border: `0.5px solid ${grSel?.id === gr.id ? '#1a3a5c' : '#e8eaf0'}`,
-                      borderRadius: '6px', marginBottom: '5px',
-                      cursor: gr.status === 'ready' ? 'pointer' : 'default',
-                      background: grSel?.id === gr.id ? '#f0f7ff' : 'white',
-                      opacity: gr.status === 'used' ? 0.6 : 1,
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c' }}>{gr.id}</div>
-                      <div style={{ fontSize: '11px', color: '#888' }}>{gr.vendor} · {gr.po} · ฿{fmt(gr.total)}</div>
-                    </div>
-                    <span style={gr.status === 'ready' ? bdgGreen : bdgGray}>{gr.status === 'ready' ? 'Available' : 'Used'}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={cardBody}>
-              {grSel && (
-                <div style={{ marginBottom: '9px' }}>
-                  <span style={{ fontSize: '11px', background: '#f0faf6', color: '#0F6E56', padding: '2px 9px', borderRadius: '20px', border: '0.5px solid #5DCAA5' }}>
-                    🔗 Pulled from {grSel.id}
-                  </span>
-                </div>
-              )}
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', marginBottom: '9px' }}>
-                {[
-                  ['vendor',      'Vendor',          ''],
-                  ['po',          'PO Reference',    'PO-XXXX'],
-                  ['invoiceNo',   'Invoice No.',      'INV-XXXX-XXXX'],
-                  ['invoiceDate', 'Invoice Date',     'DD/MM/YYYY'],
-                  ['dueDate',     'Due Date',         'DD/MM/YYYY'],
-                  ['glAccount',   'GL Account',       'Lookup from Master...'],
-                ].map(([key, label, placeholder]) => (
-                  <div key={key} style={fieldWrap}>
-                    <label style={fieldLabel}>{label}</label>
-                    <input
-                      value={form[key]}
-                      onChange={e => setField(key, e.target.value)}
-                      placeholder={placeholder}
-                      style={fieldInput(grSel && (key === 'vendor' || key === 'po'))}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '9px', tableLayout: 'fixed' }}>
-                <thead>
-                  <tr style={{ background: '#f8f9fa' }}>
-                    {[['Description','44%'],['Qty','14%'],['Unit Price','20%'],['Amount','18%'],['','4%']].map(([h, w]) => (
-                      <th key={h} style={{ padding: '6px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', width: w }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.length === 0 || (lines.length === 1 && !lines[0].desc) ? (
-                    <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: '#aaa', padding: '18px', fontSize: '12px' }}>
-                        No items — pull from GR or enter manually
-                      </td>
-                    </tr>
-                  ) : lines.map((l, i) => (
-                    <tr key={i} style={{ borderBottom: '0.5px solid #f0f0f0', background: grSel ? '#f0faf6' : 'white' }}>
-                      <td style={{ padding: '5px 8px' }}>
-                        <input value={l.desc} onChange={e => setLine(i, 'desc', e.target.value)}
-                          style={{ width: '100%', padding: '4px 6px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '4px', outline: 'none' }} />
-                      </td>
-                      <td style={{ padding: '5px 8px' }}>
-                        <input value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
-                          style={{ width: '100%', padding: '4px 6px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '4px', outline: 'none' }} />
-                      </td>
-                      <td style={{ padding: '5px 8px' }}>
-                        <input value={l.unit} onChange={e => setLine(i, 'unit', e.target.value)}
-                          style={{ width: '100%', padding: '4px 6px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '4px', outline: 'none' }} />
-                      </td>
-                      <td style={{ padding: '5px 9px', fontWeight: '500', color: '#1a3a5c' }}>฿{fmt(l.amount || 0)}</td>
-                      <td style={{ padding: '5px 8px' }}>
-                        <button onClick={() => setLines(ls => ls.filter((_, idx) => idx !== i))}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: '14px' }}>✕</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <button style={btnSmall} onClick={() => setLines(ls => [...ls, { desc: '', qty: '', unit: '', amount: 0 }])}>
-                  + Add line
-                </button>
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '12px' }}>
-                  <span style={{ color: '#888' }}>
-                    Net Amount <strong style={{ color: '#1a3a5c', fontSize: '14px' }}>฿{fmt(net)}</strong>
-                  </span>
-                  <button style={btnPrimary} onClick={addInvoice}>
-                    + Add to Batch
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right sidebar */}
-        <div style={{ width: '186px', minWidth: '186px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={card}>
-            <div style={cardHead}><span style={cardLabel}>Batch info</span></div>
-            <div style={{ padding: '10px 13px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
-              {[
-                ['Batch ID',  <span style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '11px', fontFamily: 'monospace' }}>2026-0090</span>],
-                ['Business', <span style={{ fontSize: '11px' }}>{batchConfig.bu}</span>],
-                ['Period',   <span>{batchConfig.period || '-'}</span>],
-                ['Status',   <span style={bdgAmber}>In progress</span>],
-              ].map(([k, v]) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: '#888' }}>{k}</span>{v}
-                </div>
-              ))}
-              <div style={{ borderTop: '0.5px solid #e8eaf0', paddingTop: '8px' }}>
-                <button style={{ ...btnSmall, width: '100%', justifyContent: 'center' }}>✏️ Edit setup</button>
-              </div>
-            </div>
-          </div>
-
-          <div style={card}>
-            <div style={cardHead}>
-              <span style={cardLabel}>Invoices in Batch</span>
-              <span style={invoices.length ? bdgBlue : bdgRed}>{invoices.length}</span>
-            </div>
-            <div style={{ padding: '8px' }}>
-              {invoices.length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#aaa', fontSize: '12px', padding: '18px 0' }}>No invoices yet</div>
-              ) : invoices.map(v => (
-                <div key={v.id} style={{ padding: '5px 7px', border: '0.5px solid #e8eaf0', borderRadius: '6px', marginBottom: '5px', fontSize: '11px' }}>
-                  <div style={{ fontWeight: '500', color: '#1a3a5c' }}>{v.id}</div>
-                  <div style={{ color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.vendor}</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
-                    <span style={{ color: '#aaa' }}>{v.gr}</span>
-                    <span style={{ fontWeight: '500' }}>฿{fmt(v.net)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ padding: '6px 10px', borderTop: '0.5px solid #e8eaf0', fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#888' }}>Total</span>
-              <span style={{ fontWeight: '500', color: '#1a3a5c' }}>฿{fmt(invoices.reduce((s, v) => s + v.net, 0))}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
-        <button style={btnPrimary} onClick={onNext}>
-          Next: Generate &amp; export →
-        </button>
-      </div>
     </div>
   );
 }
@@ -1057,21 +708,14 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
                     <td style={{ padding: '7px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.vendor}</td>
                     <td style={{ padding: '7px 9px', color: '#888' }}>{v.gr}</td>
                     <td style={{ padding: '7px 9px' }}>
-                      {exported
-                        ? <span style={bdgGreen}>Exported</span>
-                        : <span style={{ fontWeight: '500' }}>฿{fmt(v.net)}</span>}
+                      {exported ? <span style={bdgGreen}>Exported</span> : <span style={{ fontWeight: '500' }}>฿{fmt(v.net)}</span>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <div style={{ display: 'flex', borderTop: '0.5px solid #e8eaf0' }}>
-              {[
-                ['Invoices',      invoices.length],
-                ['Subtotal',      `฿${fmt(subtotal)}`],
-                ['VAT 7%',        `฿${fmt(vat)}`],
-                ['Net Total',     `฿${fmt(net)}`],
-              ].map(([label, val], i, arr) => (
+              {[['Invoices', invoices.length],['Subtotal', `฿${fmt(subtotal)}`],['VAT 7%', `฿${fmt(vat)}`],['Net Total', `฿${fmt(net)}`]].map(([label, val], i, arr) => (
                 <div key={label} style={{ flex: 1, padding: '9px', textAlign: 'center', borderRight: i < arr.length - 1 ? '0.5px solid #e8eaf0' : 'none' }}>
                   <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>{label}</div>
                   <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{val}</div>
@@ -1085,12 +729,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>Export options</span></div>
             <div style={{ padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {[
-                ['xlsx', 'Load file (.xlsx)'],
-                ['txt',  'AP Interface (.txt)'],
-                ['wht',  'WHT Certificate (.pdf)'],
-                ['vat',  'VAT Summary (.xlsx)'],
-              ].map(([key, label]) => (
+              {[['xlsx','Load file (.xlsx)'],['txt','AP Interface (.txt)'],['wht','WHT Certificate (.pdf)'],['vat','VAT Summary (.xlsx)']].map(([key, label]) => (
                 <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
                   <input type="checkbox" checked={opts[key]} onChange={() => toggleOpt(key)} />
                   {label}
@@ -1102,15 +741,10 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>Actions</span></div>
             <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
-              <button
-                style={{ ...btnPrimary, width: '100%', justifyContent: 'center', background: exported ? '#27500A' : '#1a3a5c' }}
-                onClick={doExport}
-              >
+              <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', background: exported ? '#27500A' : '#1a3a5c' }} onClick={doExport}>
                 {exported ? '✓ Exported' : '⬇ Generate & export'}
               </button>
-              <button style={{ ...btnOutline, width: '100%', justifyContent: 'center' }} onClick={onBack}>
-                ← Back to edit
-              </button>
+              <button style={{ ...btnOutline, width: '100%', justifyContent: 'center' }} onClick={onBack}>← Back to edit</button>
             </div>
           </div>
 
@@ -1120,16 +754,12 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
               <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {opts.xlsx && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}>
-                    <span style={{ color: '#27500A' }}>📊</span>
-                    <span style={{ flex: 1 }}>AP_LOAD_0090.xlsx</span>
-                    <span style={{ color: '#888', cursor: 'pointer' }}>⬇</span>
+                    <span style={{ color: '#27500A' }}>📊</span><span style={{ flex: 1 }}>AP_LOAD_0090.xlsx</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span>
                   </div>
                 )}
                 {opts.txt && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}>
-                    <span style={{ color: '#0C447C' }}>📄</span>
-                    <span style={{ flex: 1 }}>AP_INTERFACE_0090.txt</span>
-                    <span style={{ color: '#888', cursor: 'pointer' }}>⬇</span>
+                    <span style={{ color: '#0C447C' }}>📄</span><span style={{ flex: 1 }}>AP_INTERFACE_0090.txt</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span>
                   </div>
                 )}
               </div>
@@ -1139,9 +769,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
       </div>
 
       <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
-        <button style={btnOutline} onClick={onNewBatch}>
-          + New Batch
-        </button>
+        <button style={btnOutline} onClick={onNewBatch}>+ New Batch</button>
       </div>
     </div>
   );
@@ -1163,38 +791,22 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
           .from('company_list')
           .select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"')
           .range(from, from + size - 1);
-
-        if (error) {
-          console.error('❌ Supabase error:', error);
-          break;
-        }
+        if (error) { console.error('❌ Supabase error:', error); break; }
         if (!data) break;
-
-        console.log(`✅ Loaded ${data.length} rows (from=${from})`);
         all = [...all, ...data];
         if (data.length < size) break;
         from += size;
       }
-      console.log('Total infoItems:', all.length);
       setInfoItems(all);
     };
     load();
   }, []);
 
-  const handleStart = (config) => {
-    setBatchConfig(config);
-    setStep(2);
-  };
-
-  const handleNewBatch = () => {
-    setBatchConfig(null);
-    setInvoices([]);
-    setStep(1);
-  };
+  const handleStart    = (config) => { setBatchConfig(config); setStep(2); };
+  const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
-
       <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
         <span style={{ fontSize: '17px' }}>🧾</span>
         <div>
@@ -1207,21 +819,8 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
 
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
-        {step === 2 && (
-          <InvoiceEntry
-            batchConfig={batchConfig}
-            invoices={invoices}
-            setInvoices={setInvoices}
-            onNext={() => setStep(3)}
-          />
-        )}
-        {step === 3 && (
-          <GenerateExport
-            invoices={invoices}
-            onNewBatch={handleNewBatch}
-            onBack={() => setStep(2)}
-          />
-        )}
+        {step === 2 && <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} />}
+        {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} />}
       </div>
     </div>
   );
