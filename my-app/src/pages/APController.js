@@ -1265,30 +1265,3 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   );
 }
 
-const getNextRunning = async (bu, type, prefix) => {
-  const { data, error } = await supabase
-    .rpc('get_next_running', {
-      p_bu: bu,
-      p_type: type,
-      p_prefix: prefix,
-    });
-  if (error) throw error;
-  return data; // เช่น "6920600023"
-};
-
-// ตอน user เลือก BU
-const handleSelectBU = async (item) => {
-  const bu = item['bu'];
-  const grtPrefix = getPrefix('GRT');
-  const grnPrefix = getPrefix('GRN');
-
-  const [grtNo, grnNo] = await Promise.all([
-    getNextRunning(bu, 'GRT', grtPrefix),
-    getNextRunning(bu, 'GRN', grnPrefix),
-  ]);
-
-  setApGrtRunning(grtNo.slice(-4));  // เอาแค่ 4 หลักสุดท้าย
-  setApGrnRunning(grnNo.slice(-4));
-  setBu(bu);
-  setBuInfo(item);
-};
