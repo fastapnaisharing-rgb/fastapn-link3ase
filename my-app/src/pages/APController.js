@@ -243,65 +243,33 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
 function VendorInfoPanel({ vendorInfo, vendorLoading }) {
-  const th = (label) => ({
-    fontSize: '10px', fontWeight: '600', color: 'rgba(255,255,255,0.7)',
-    padding: '5px 8px', background: '#1a3a5c', borderRight: '0.5px solid rgba(255,255,255,0.12)',
-    whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.03em',
-  });
-  const td = (wide, highlight) => ({
-    fontSize: '12px', color: highlight ? '#1a3a5c' : '#333',
-    fontWeight: highlight ? '500' : '400',
-    padding: '5px 8px', background: 'white',
-    borderRight: '0.5px solid #f0f0f0',
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    ...(wide ? { minWidth: '180px' } : {}),
-  });
-  // Map from supplier_list columns (Code, Supplier Name, Supplier Number, Supplier Site, Tax-Type, Notice, Sub Acc, No., Due, Digit)
   const v = vendorLoading ? null : vendorInfo;
-  const dash = <span style={{ color: '#ccc' }}>—</span>;
+  const rows = [
+    ['Vendor Name',   v?.['Supplier Name']],
+    ['Vendor No.',    v?.['Supplier Number']],
+    ['Vendor Site',   v?.['Supplier Site']],
+    ['Method',        v?.['Tax-Type']],
+    ['Paygroup',      v?.['Notice']],
+    ['Par',           v?.['Sub Acc']],
+    ['Tax ID',        v?.['Tax ID']],
+    ['Address',       v?.['Address']],
+  ];
+  const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center', width: '90px', flexShrink: 0 };
+  const valStyle = (hasVal) => ({ fontSize: '12px', color: hasVal ? '#1a3a5c' : '#ccc', padding: '7px 10px', background: 'white', display: 'flex', alignItems: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
   return (
-    <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', width: '100%', position: 'relative' }}>
+    <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', position: 'relative' }}>
       {vendorLoading && (
-        <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, fontSize: '11px', color: '#888' }}>
-          Loading...
-        </div>
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, fontSize: '11px', color: '#888' }}>Loading...</div>
       )}
-      {/* Row 1 — headers */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr' }}>
-        <div style={th()}>Vendor Name</div>
-        <div style={th()}>Vendor No.</div>
-        <div style={th()}>Vendor Site</div>
-        <div style={th()}>Tax-Type</div>
-        <div style={th()}>Notice</div>
-        <div style={{ ...th(), borderRight: 'none' }}>Sub Acc</div>
+      <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
+        <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Vendor Info</div>
       </div>
-      {/* Row 1 — values */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', borderBottom: '0.5px solid #e8eaf0' }}>
-        <div style={{ ...td(true, true) }}>{v?.['Supplier Name'] || dash}</div>
-        <div style={td()}>{v?.['Supplier Number'] || dash}</div>
-        <div style={td()}>{v?.['Supplier Site'] || dash}</div>
-        <div style={td()}>{v?.['Tax-Type'] || dash}</div>
-        <div style={td()}>{v?.['Notice'] || dash}</div>
-        <div style={{ ...td(), borderRight: 'none' }}>{v?.['Sub Acc'] || dash}</div>
-      </div>
-      {/* Row 2 — headers */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr 1fr' }}>
-        <div style={th()}>Tax ID</div>
-        <div style={th()}>No.</div>
-        <div style={th()}>Due</div>
-        <div style={th()}>Digit</div>
-        <div style={{ ...th(), background: '#0f2a45' }}>First Part</div>
-        <div style={{ ...th(), background: '#7a1a1a', borderRight: 'none' }}>Last Part</div>
-      </div>
-      {/* Row 2 — values */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr 1fr' }}>
-        <div style={td()}>{v?.['Tax ID'] || dash}</div>
-        <div style={{ ...td(true) }}>{v?.['No.'] || dash}</div>
-        <div style={td()}>{v?.['Due'] || dash}</div>
-        <div style={td()}>{v?.['Digit'] || dash}</div>
-        <div style={{ ...td(), color: '#0f2a45', fontWeight: '500', fontFamily: 'monospace', borderRight: 'none' }}>{v?.['First Part'] || dash}</div>
-        <div style={{ ...td(), color: '#7a1a1a', fontWeight: '500', fontFamily: 'monospace', borderRight: 'none' }}>{v?.['Last Part'] || dash}</div>
-      </div>
+      {rows.map(([key, val], i) => (
+        <div key={key} style={{ display: 'flex', borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}>
+          <div style={keyStyle}>{key}</div>
+          <div style={valStyle(!!val)} title={val || ''}>{val || '—'}</div>
+        </div>
+      ))}
     </div>
   );
 }
