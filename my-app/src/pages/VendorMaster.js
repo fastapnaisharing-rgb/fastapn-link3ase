@@ -502,7 +502,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   useEffect(() => { if (cfg) setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
   useEffect(() => { if (tab === 'iecode') refreshNextSyRunning(); }, [tab]);
 
-  const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
+  const handleTabChange = (t) => { setTab(t); };
   const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
 
 
