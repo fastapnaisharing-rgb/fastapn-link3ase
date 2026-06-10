@@ -489,6 +489,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const fetchVendorRules = useCallback(async () => {
     const { data, error } = await supabase.from('Vendor_rule').select('*').order('id', { ascending: true });
+    console.log('Vendor_rule fetch:', { data, error }); // เพิ่มบรรทัดนี้
     if (!error) setVendorRules(data || []);
   }, []);
 
