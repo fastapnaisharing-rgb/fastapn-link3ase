@@ -369,7 +369,7 @@ function MainApp() {
       case 'vendor-iecode':   return (isEditor && userPermissions?.['IE'])
         ? <VendorMaster activeSubTab="iecode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'condition-rule': return (isOwner)
-        ? <VendorMaster activeSubTab="condition-rule" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
+        ? <VendorMaster activeSubTab="vendor_rule" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'itemcode':        return <ItemCodeList />;
 
       case 'upload':          return <UploadGen />;
