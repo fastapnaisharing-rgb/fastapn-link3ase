@@ -97,7 +97,7 @@ const RULE_FIELDS = [
 ];
 
 function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
-  const cols = [['#','36px'],['Item (Notice)','140px'],['Method','100px'],['Paygroup','120px'],['Par','70px'],['VAT','70px'],['WHT','70px'],['Contract','80px'],['Period','70px'],['Itemcode','80px'],['Action','80px']];
+  const cols = [['Item (Notice)','140px'],['Method','100px'],['Paygroup','120px'],['Par','70px'],['VAT','70px'],['WHT','70px'],['Contract','80px'],['Period','70px'],['Itemcode','80px'],['Action','80px']];
   if (loading) return <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>Loading...</div>;
   return (
     <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column' }}>
@@ -119,7 +119,6 @@ function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
               <tr><td colSpan={11} style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>ยังไม่มี Rule — กด "+ New Rule" เพื่อเพิ่ม</td></tr>
             ) : rules.map((r, i) => (
               <tr key={r.id} style={{ borderBottom:'0.5px solid #f5f5f5' }}>
-                <td style={{ padding:'8px 12px', color:'#bbb', fontSize:'11px' }}>{i + 1}</td>
                 <td style={{ padding:'8px 12px' }}><span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 8px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>{r.item || '—'}</span></td>
                 <td style={{ padding:'8px 12px', color:'#333' }}>{r.Method || <span style={{ color:'#ccc' }}>—</span>}</td>
                 <td style={{ padding:'8px 12px', color:'#333' }}>{r.Paygroup || <span style={{ color:'#ccc' }}>—</span>}</td>
