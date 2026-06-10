@@ -795,7 +795,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const extraW  = cfg ? Math.max(0, totalW - minW) : 0;
   const stretchMap = { apcode: 'Supplier Name', smcode: 'Company Name', iecode: 'Supplier Name', category: 'REMARK' };
   const stretchKey = cfg ? (stretchMap[tab] || 'Supplier Name') : '';
-  const COLUMNS_SCALED = cfg ? cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + Math.min(extraW, 300) } : c) : [];
+  const COLUMNS_SCALED = cfg ? cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + extraW } : c) : [];
 
   const S = {
     container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth:0, overflow:'hidden' },
