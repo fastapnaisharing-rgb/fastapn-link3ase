@@ -259,27 +259,27 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
         <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor Info</div>
       </div>
 
-      {/* Row 1: Vendor Name | Tax ID */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', ...divider }}>
+      {/* Row 1: Vendor Name | Vendor Code | Vendor Site | Tax ID | No. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={keyStyle}>Vendor Name</span>
           <span style={valStyle(!!v?.['Supplier Name'])} title={v?.['Supplier Name'] || ''}>{v?.['Supplier Name'] || '—'}</span>
         </div>
-        <div style={rowStyle}>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={keyStyle}>Vendor Code</span>
+          <span style={valStyle(!!v?.['Code'])}>{v?.['Code'] || '—'}</span>
+        </div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={keyStyle}>Vendor Site</span>
+          <span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || '—'}</span>
+        </div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={keyStyle}>Tax ID</span>
           <span style={{ ...valStyle(!!v?.['Tax ID']), fontFamily: 'monospace' }}>{v?.['Tax ID'] || '—'}</span>
         </div>
-      </div>
-
-      {/* Row 2: Vendor No. | Vendor Site */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', ...divider }}>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={keyStyle}>Vendor No.</span>
-          <span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span>
-        </div>
         <div style={rowStyle}>
-          <span style={keyStyle}>Vendor Site</span>
-          <span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || '—'}</span>
+          <span style={keyStyle}>No.</span>
+          <span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span>
         </div>
       </div>
 
