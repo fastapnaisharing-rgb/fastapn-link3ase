@@ -243,31 +243,59 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
 function VendorInfoPanel({ vendorInfo }) {
-  const rows = [
-    ['Supplier name', vendorInfo?.supplier_name],
-    ['Tax ID',        vendorInfo?.tax_id],
-    ['Site',          vendorInfo?.site],
-    ['Tax type',      vendorInfo?.tax_type],
-    ['Notice',        vendorInfo?.notice],
-    ['GRT status',    vendorInfo?.grt_status],
-  ];
-  const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center', width: '100px', flexShrink: 0 };
-  const valStyle = (hasVal) => ({ fontSize: '12px', color: hasVal ? '#1a3a5c' : '#ccc', padding: '7px 10px', background: 'white', display: 'flex', alignItems: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  const th = (label) => ({
+    fontSize: '10px', fontWeight: '600', color: 'rgba(255,255,255,0.7)',
+    padding: '5px 8px', background: '#1a3a5c', borderRight: '0.5px solid rgba(255,255,255,0.12)',
+    whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.03em',
+  });
+  const td = (wide, highlight) => ({
+    fontSize: '12px', color: highlight ? '#1a3a5c' : '#333',
+    fontWeight: highlight ? '500' : '400',
+    padding: '5px 8px', background: 'white',
+    borderRight: '0.5px solid #f0f0f0',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    ...(wide ? { minWidth: '180px' } : {}),
+  });
+  const v = vendorInfo;
+  const dash = <span style={{ color: '#ccc' }}>—</span>;
   return (
-    <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
-      <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
-        <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Vendor Info</div>
+    <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', width: '100%' }}>
+      {/* Row 1 — headers */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr' }}>
+        <div style={th(true)}>Vendor Name</div>
+        <div style={th()}>Vendor No.</div>
+        <div style={th()}>Vendor Site</div>
+        <div style={th()}>Method</div>
+        <div style={th()}>Paygroup</div>
+        <div style={{ ...th(), borderRight: 'none' }}>Par</div>
       </div>
-      {rows.map(([key, val], i) => (
-        <div key={key} style={{ display: 'flex', borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}>
-          <div style={keyStyle}>{key}</div>
-          <div style={valStyle(!!val)} title={val || ''}>
-            {key === 'GRT status' && val
-              ? <span style={val === 'Active' ? bdgGreen : bdgAmber}>{val}</span>
-              : (val || '—')}
-          </div>
-        </div>
-      ))}
+      {/* Row 1 — values */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', borderBottom: '0.5px solid #e8eaf0' }}>
+        <div style={{ ...td(true, true) }}>{v?.supplier_name || dash}</div>
+        <div style={td()}>{v?.vendor_no || dash}</div>
+        <div style={td()}>{v?.vendor_site || dash}</div>
+        <div style={td()}>{v?.method || dash}</div>
+        <div style={td()}>{v?.paygroup || dash}</div>
+        <div style={{ ...td(), borderRight: 'none' }}>{v?.par || dash}</div>
+      </div>
+      {/* Row 2 — headers */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr 1fr' }}>
+        <div style={th()}>Branch</div>
+        <div style={th(true)}>Branch Name</div>
+        <div style={th()}>Tax Code</div>
+        <div style={th()}>Wht Code</div>
+        <div style={{ ...th(), background: '#0f2a45' }}>GRT</div>
+        <div style={{ ...th(), background: '#7a1a1a', borderRight: 'none' }}>GRN</div>
+      </div>
+      {/* Row 2 — values */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr 1fr' }}>
+        <div style={td()}>{v?.branch || dash}</div>
+        <div style={{ ...td(true) }}>{v?.branch_name || dash}</div>
+        <div style={td()}>{v?.tax_code || dash}</div>
+        <div style={td()}>{v?.wht_code || dash}</div>
+        <div style={{ ...td(), color: '#0f2a45', fontWeight: '500', fontFamily: 'monospace' }}>{v?.grt || dash}</div>
+        <div style={{ ...td(), color: '#7a1a1a', fontWeight: '500', fontFamily: 'monospace', borderRight: 'none' }}>{v?.grn || dash}</div>
+      </div>
     </div>
   );
 }
@@ -477,26 +505,24 @@ function InvoiceHeader({ form, setField, vendorInfo }) {
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>Header</div>
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap', flex: 1 }}>
-          {fld('Supplier code', 'supplierCode', { required: true, width: '90px' })}
-          {fld('Inv date', 'invDate', { type: 'date', width: '130px' })}
-          {fld('Invoice num', 'invoiceNum', { width: '110px' })}
-          {fld('CPC', 'cpc', { width: '60px' })}
-          {fld('Branch no.', 'branchNo', { type: 'select', width: '100px' })}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-            <label style={{ fontSize: '11px', color: '#888' }}>GRT</label>
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-              <input value={form.grt} readOnly
-                style={{ height: '30px', width: '80px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #5DCAA5', borderRadius: '6px', background: '#E1F5EE', color: '#085041', outline: 'none' }} />
-              <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#E6F1FB', color: '#0C447C', fontWeight: '500' }}>RC</span>
-            </div>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '12px' }}>
+        {fld('Supplier code', 'supplierCode', { required: true, width: '90px' })}
+        {fld('Inv date', 'invDate', { type: 'date', width: '130px' })}
+        {fld('Invoice num', 'invoiceNum', { width: '110px' })}
+        {fld('CPC', 'cpc', { width: '60px' })}
+        {fld('Branch no.', 'branchNo', { type: 'select', width: '100px' })}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+          <label style={{ fontSize: '11px', color: '#888' }}>GRT</label>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <input value={form.grt} readOnly
+              style={{ height: '30px', width: '80px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #5DCAA5', borderRadius: '6px', background: '#E1F5EE', color: '#085041', outline: 'none' }} />
+            <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#E6F1FB', color: '#0C447C', fontWeight: '500' }}>RC</span>
           </div>
-          {fld('GRN', 'grn', { width: '80px' })}
-          {fld('Due date', 'dueDate', { type: 'select', width: '100px' })}
         </div>
-        <VendorInfoPanel vendorInfo={vendorInfo} />
+        {fld('GRN', 'grn', { width: '80px' })}
+        {fld('Due date', 'dueDate', { type: 'select', width: '100px' })}
       </div>
+      <VendorInfoPanel vendorInfo={vendorInfo} />
     </div>
   );
 }
