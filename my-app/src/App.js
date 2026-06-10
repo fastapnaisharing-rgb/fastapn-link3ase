@@ -215,7 +215,8 @@ function MainApp() {
 
   // ── Page groups ──────────────────────────────────────────────────────────────
   const AP_PAGES     = ['ap-gr', 'ap-ocr', 'ap-form', 'ap-drafts'];
-  const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category'];
+  // [CHANGE 1] เพิ่ม 'condition-rule' เข้า MASTER_PAGES เพื่อให้ sidebar highlight ถูกต้อง
+  const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category','condition-rule'];
   const isAPActive     = AP_PAGES.includes(activePage);
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
@@ -368,6 +369,9 @@ function MainApp() {
       case 'vendor-iecode':   return (isEditor && userPermissions?.['IE'])
         ? <VendorMaster activeSubTab="iecode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'itemcode':        return <ItemCodeList />;
+      // [CHANGE 2] เพิ่ม case condition-rule — เห็นเฉพาะ Owner
+      case 'condition-rule':  return isOwner
+        ? <PlaceholderPage title="Condition / Rule" icon="📐" /> : <NoAccessPage />;
       case 'upload':          return <UploadGen />;
       case 'users':           return <UserManagement />;
       default:                return <PlaceholderPage title="AP Controller" icon="🧾" />;
@@ -432,7 +436,7 @@ function MainApp() {
               <div style={{ padding: '6px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Functions</div>
             )}
 
-            {/* AP Controller — flyout trigger (แสดงเสมอถ้า isOwner หรือมี VAT permission) */}
+            {/* AP Controller — flyout trigger */}
             {(isOwner || userPermissions?.['Manual']) && !maintenanceMenus.includes('ap-controller') && (
               <div onClick={handleAPEnter} title={!sidebarExpanded ? 'AP Controller' : ''}
                 style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isAPActive || openMenu === 'ap-gr' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ap' ? 'rgba(93,202,165,0.12)' : isAPActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isAPActive || openMenu === 'ap' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
@@ -549,6 +553,9 @@ function MainApp() {
               {(isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual'])) && fpSub('vendor-category', '🗂️', 'Category')}
               {fpDiv()}
               {fpItem('itemcode', '🔖', 'Item Code')}
+              {/* [CHANGE 3] เพิ่ม Condition / Rule — แสดงเฉพาะ Owner */}
+              {isOwner && fpDiv()}
+              {isOwner && fpItem('condition-rule', '📐', 'Condition / Rule')}
             </div>
           </div>
         )}
