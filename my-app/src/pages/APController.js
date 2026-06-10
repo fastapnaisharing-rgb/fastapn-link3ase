@@ -544,7 +544,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         {fld('CPC',        'cpc',       {                  width: '60px'  })}
         {fld('Branch no.', 'branchNo',  { type: 'select', width: '100px' })}
         {fld('GRT',        'grt',       { readOnly: true,  width: '80px'  })}
-        {fld('GRN',        'grn',       {                  width: '80px'  })}
         {fld('Due date',   'dueDate',   { type: 'select', width: '100px' })}
       </div>
 
@@ -564,9 +563,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     invoiceNum:   '',
     cpc:          '',
     branchNo:     '',
-    grt:          '',
-    grn:          '',
-    dueDate:      '',
+    grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
+    dueDate:      '',  // ลบ grn ออก
   });
   const [vendorInfo, setVendorInfo] = useState(null);
 
