@@ -368,8 +368,8 @@ function MainApp() {
         ? <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'vendor-iecode':   return (isEditor && userPermissions?.['IE'])
         ? <VendorMaster activeSubTab="iecode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
-      case 'condition-rule':   return (isOwner)
-        ? <VendorMaster activeSubTab="Condition / Rule"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
+      case 'condition-rule': return (isOwner)
+        ? <VendorMaster activeSubTab="apcode" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'itemcode':        return <ItemCodeList />;
 
       case 'upload':          return <UploadGen />;
@@ -551,11 +551,9 @@ function MainApp() {
               {(isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual'])) && fpSub('vendor-smcode', '🔖', 'SM-Code')}
               {(isEditor && userPermissions?.['IE']) && fpSub('vendor-iecode', '💸', 'IE-Code')}
               {(isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual'])) && fpSub('vendor-category', '🗂️', 'Category')}
+              {isOwner && fpSub('condition-rule', '📐', 'Condition / Rule')}
               {fpDiv()}
               {fpItem('itemcode', '🔖', 'Item Code')}
-              {/* [CHANGE 3] เพิ่ม Condition / Rule — แสดงเฉพาะ Owner */}
-              {isOwner && fpDiv()}
-              {isOwner && fpItem('condition-rule', '📐', 'Condition / Rule')}
             </div>
           </div>
         )}
