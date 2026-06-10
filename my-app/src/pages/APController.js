@@ -283,8 +283,8 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
         </div>
       </div>
 
-      {/* Row 3: Method | Paygroup | Par */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 0.5fr', ...divider }}>
+      {/* Row 2: Method | Paygroup | Par | Tax-Type | Notice | Sub Acc */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '52px' }}>Method</span>
           <span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span>
@@ -293,8 +293,20 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
           <span style={{ ...keyStyle, width: '62px' }}>Paygroup</span>
           <span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span>
         </div>
-        <div style={{ ...rowStyle }}>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '26px' }}>Par</span>
+          <span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span>
+        </div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={{ ...keyStyle, width: '60px' }}>Tax-Type</span>
+          <span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span>
+        </div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={{ ...keyStyle, width: '52px' }}>Notice</span>
+          <span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span>
+        </div>
+        <div style={rowStyle}>
+          <span style={{ ...keyStyle, width: '52px' }}>Sub Acc</span>
           <span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span>
         </div>
       </div>
