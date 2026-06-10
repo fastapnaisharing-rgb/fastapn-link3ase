@@ -241,6 +241,37 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
   );
 }
 
+// ── Vendor Info Panel ─────────────────────────────────────────────────────────
+function VendorInfoPanel({ vendorInfo }) {
+  const rows = [
+    ['Supplier name', vendorInfo?.supplier_name],
+    ['Tax ID',        vendorInfo?.tax_id],
+    ['Site',          vendorInfo?.site],
+    ['Tax type',      vendorInfo?.tax_type],
+    ['Notice',        vendorInfo?.notice],
+    ['GRT status',    vendorInfo?.grt_status],
+  ];
+  const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center', width: '100px', flexShrink: 0 };
+  const valStyle = (hasVal) => ({ fontSize: '12px', color: hasVal ? '#1a3a5c' : '#ccc', padding: '7px 10px', background: 'white', display: 'flex', alignItems: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  return (
+    <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
+      <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
+        <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Vendor Info</div>
+      </div>
+      {rows.map(([key, val], i) => (
+        <div key={key} style={{ display: 'flex', borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}>
+          <div style={keyStyle}>{key}</div>
+          <div style={valStyle(!!val)} title={val || ''}>
+            {key === 'GRT status' && val
+              ? <span style={val === 'Active' ? bdgGreen : bdgAmber}>{val}</span>
+              : (val || '—')}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Phase 1: Batch Setup ──────────────────────────────────────────────────────
 function BatchSetup({ onStart, infoItems = [] }) {
   const today = new Date();
@@ -386,7 +417,8 @@ function BatchSetup({ onStart, infoItems = [] }) {
                 const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
                 const ra = b.receive_date ? new Date(b.receive_date) : null;
-                const rds = ra ? `${String(ra.getDate()).padStart(2,'0')}/${String(ra.getMonth()+1).padStart(2,'0')}/${ra.getFullYear()}` : '-';
+                const pad2 = (n) => String(n).padStart(2, '0');
+                const rds = ra ? `${pad2(ra.getDate())}/${pad2(ra.getMonth()+1)}/${ra.getFullYear()}` : '-';
                 return (
                   <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
                     <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -418,7 +450,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField }) {
+function InvoiceHeader({ form, setField, vendorInfo }) {
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -445,27 +477,25 @@ function InvoiceHeader({ form, setField }) {
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>Header</div>
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-
-        {fld('Supplier code', 'supplierCode', { required: true, width: '90px' })}
-        {fld('Inv date', 'invDate', { type: 'date', width: '130px' })}
-        {fld('Invoice num', 'invoiceNum', { width: '110px' })}
-        {fld('CPC', 'cpc', { width: '60px' })}
-        {fld('Branch no.', 'branchNo', { type: 'select', width: '100px' })}
-
-        {/* GRT — readonly + RC badge */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-          <label style={{ fontSize: '11px', color: '#888' }}>GRT</label>
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <input value={form.grt} readOnly
-              style={{ height: '30px', width: '80px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #5DCAA5', borderRadius: '6px', background: '#E1F5EE', color: '#085041', outline: 'none' }} />
-            <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#E6F1FB', color: '#0C447C', fontWeight: '500' }}>RC</span>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap', flex: 1 }}>
+          {fld('Supplier code', 'supplierCode', { required: true, width: '90px' })}
+          {fld('Inv date', 'invDate', { type: 'date', width: '130px' })}
+          {fld('Invoice num', 'invoiceNum', { width: '110px' })}
+          {fld('CPC', 'cpc', { width: '60px' })}
+          {fld('Branch no.', 'branchNo', { type: 'select', width: '100px' })}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <label style={{ fontSize: '11px', color: '#888' }}>GRT</label>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+              <input value={form.grt} readOnly
+                style={{ height: '30px', width: '80px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #5DCAA5', borderRadius: '6px', background: '#E1F5EE', color: '#085041', outline: 'none' }} />
+              <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#E6F1FB', color: '#0C447C', fontWeight: '500' }}>RC</span>
+            </div>
           </div>
+          {fld('GRN', 'grn', { width: '80px' })}
+          {fld('Due date', 'dueDate', { type: 'select', width: '100px' })}
         </div>
-
-        {fld('GRN', 'grn', { width: '80px' })}
-        {fld('Due date', 'dueDate', { type: 'select', width: '100px' })}
-
+        <VendorInfoPanel vendorInfo={vendorInfo} />
       </div>
     </div>
   );
@@ -473,7 +503,7 @@ function InvoiceHeader({ form, setField }) {
 
 // ── Phase 2: Invoice Entry ────────────────────────────────────────────────────
 function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
-  const [form, setForm] = useState({
+  const [form, setFormState] = useState({
     supplierCode: '',
     invDate:      '',
     invoiceNum:   '',
@@ -483,14 +513,37 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
     grn:          '',
     dueDate:      '',
   });
+  const [vendorInfo, setVendorInfo]   = useState(null);
+  const [vendorLoading, setVendorLoading] = useState(false);
 
-  const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
+  const setField = (key, val) => setFormState(f => ({ ...f, [key]: val }));
+
+  // Lookup vendor from Supabase when supplierCode changes (on blur or enter)
+  const lookupVendor = async (code) => {
+    if (!code?.trim()) { setVendorInfo(null); return; }
+    setVendorLoading(true);
+    try {
+      const { data } = await supabase
+        .from('vendor_list')   // ← adjust table name as needed
+        .select('*')
+        .ilike('supplier_code', code.trim())
+        .limit(1)
+        .single();
+      setVendorInfo(data || null);
+    } catch { setVendorInfo(null); }
+    setVendorLoading(false);
+  };
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
       <div style={card}>
-        <InvoiceHeader form={form} setField={setField} />
-        {/* TODO: sections ถัดไป */}
+        <InvoiceHeader form={form} setField={(key, val) => {
+          setField(key, val);
+          if (key === 'supplierCode' && !val) setVendorInfo(null);
+        }} vendorInfo={vendorLoading ? null : vendorInfo}
+        // pass onBlur lookup via a wrapper; InvoiceHeader exposes supplierCode input blur via setField
+        />
+        {/* TODO: Invoice lines section */}
       </div>
     </div>
   );
