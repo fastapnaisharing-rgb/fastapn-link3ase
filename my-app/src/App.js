@@ -372,9 +372,9 @@ function MainApp() {
       ? <VendorMaster 
           activeSubTab="vendor_rule" 
           onSubTabChange={sub => setActivePage(sub === 'vendor_rule' ? 'condition-rule' : `vendor-${sub}`)} 
-          flyoutOpen={openMenu === 'master'} 
-        /> 
-      : <NoAccessPage />;
+          flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
+        
+      
       case 'itemcode':        return <ItemCodeList />;
 
       case 'upload':          return <UploadGen />;

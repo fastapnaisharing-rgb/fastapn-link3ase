@@ -498,7 +498,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     fetchVendorRules();
   }, []);
 
-  useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
+  useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab]);
   useEffect(() => { if (cfg) setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
   useEffect(() => { if (tab === 'iecode') refreshNextSyRunning(); }, [tab]);
 
