@@ -97,7 +97,7 @@ const RULE_FIELDS = [
 ];
 
 function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
-  const cols = [['Item (Notice)','140px'],['Method','100px'],['Paygroup','120px'],['Par','70px'],['VAT','70px'],['WHT','70px'],['Contract','80px'],['Period','70px'],['Itemcode','80px'],['Action','80px']];
+  const cols = [['Item (Notice)','160px'],['Method','100px'],['Paygroup','120px'],['Par','70px'],['VAT','70px'],['WHT','70px'],['Contract','80px'],['Period','70px'],['Itemcode','80px'],['Action','80px']];
   if (loading) return <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>Loading...</div>;
   return (
     <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column' }}>
@@ -106,18 +106,21 @@ function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
         <button onClick={onNew} style={{ padding:'6px 14px', background:'#1a3a5c', color:'white', border:'none', borderRadius:'6px', fontSize:'12px', cursor:'pointer' }}>+ New Rule</button>
       </div>
       <div style={{ background:'white', borderRadius:'8px', border:'0.5px solid #e8eaf0', flex:1, overflow:'auto' }}>
-        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px', tableLayout:'fixed' }}>
+          <colgroup>
+            {cols.map(([h, w]) => <col key={h} style={{ width: w }} />)}
+          </colgroup>
           <thead>
             <tr>
-              {cols.map(([h, w]) => (
-                <th key={h} style={{ background:'#1a3a5c', color:'rgba(255,255,255,0.8)', padding:'9px 12px', textAlign:'left', fontSize:'10px', fontWeight:'600', letterSpacing:'0.04em', whiteSpace:'nowrap', width: w || undefined, position:'sticky', top:0 }}>{h}</th>
+              {cols.map(([h]) => (
+                <th key={h} style={{ background:'#1a3a5c', color:'rgba(255,255,255,0.8)', padding:'9px 12px', textAlign:'left', fontSize:'10px', fontWeight:'600', letterSpacing:'0.04em', whiteSpace:'nowrap', position:'sticky', top:0 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rules.length === 0 ? (
-              <tr><td colSpan={11} style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>ยังไม่มี Rule — กด "+ New Rule" เพื่อเพิ่ม</td></tr>
-            ) : rules.map((r, i) => (
+              <tr><td colSpan={cols.length} style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>ยังไม่มี Rule — กด "+ New Rule" เพื่อเพิ่ม</td></tr>
+            ) : rules.map((r) => (
               <tr key={r.id} style={{ borderBottom:'0.5px solid #f5f5f5' }}>
                 <td style={{ padding:'8px 12px' }}><span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 8px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>{r.item || '—'}</span></td>
                 <td style={{ padding:'8px 12px', color:'#333' }}>{r.Method || <span style={{ color:'#ccc' }}>—</span>}</td>
