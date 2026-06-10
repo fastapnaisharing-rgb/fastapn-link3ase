@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase';
+import { useDataCache } from '../contexts/DataCacheContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 
@@ -163,20 +164,14 @@ const cardBody  = { padding: '12px 14px' };
 
 const fieldWrap  = { display: 'flex', flexDirection: 'column', gap: '3px' };
 const fieldLabel = { fontSize: '11px', color: '#888' };
-const fieldInput = (pre) => ({ width: '100%', padding: '5px 8px', fontSize: '12px', border: `0.5px solid ${pre ? '#5DCAA5' : '#ddd'}`, borderRadius: '6px', background: pre ? '#f0faf6' : 'white', color: '#1a3a5c', outline: 'none' });
 
 const btnPrimary = { padding: '7px 16px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '7px', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '5px' };
 const btnOutline = { padding: '5px 12px', background: 'white', color: '#555', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' };
-const btnSmall   = { padding: '3px 9px', background: 'transparent', color: '#555', border: '0.5px solid #ddd', borderRadius: '5px', fontSize: '11px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '3px' };
 
 const bdgGreen = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#EAF3DE', color: '#27500A' };
-const bdgAmber = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#FAEEDA', color: '#633806' };
-const bdgBlue  = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#E6F1FB', color: '#0C447C' };
-const bdgRed   = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#FCEBEB', color: '#791F1F' };
-const bdgGray  = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#F1EFE8', color: '#444441' };
 
 // ── Step indicator ────────────────────────────────────────────────────────────
-function StepBar({ step, batchConfig, onGo }) {
+function StepBar({ step, onGo }) {
   const steps = [{ n: 1, label: 'Batch setup' }, { n: 2, label: 'Invoice entry' }, { n: 3, label: 'Generate & export' }];
   return (
     <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '0 18px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
@@ -238,7 +233,6 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
 function VendorInfoPanel({ vendorInfo, vendorLoading }) {
   const v = vendorLoading ? null : vendorInfo;
-
   const keyStyle = { fontSize: '10px', color: '#999', width: '72px', flexShrink: 0 };
   const valStyle = (hasVal) => ({ fontSize: '11px', color: hasVal ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 });
   const rowStyle = { display: 'flex', alignItems: 'center', padding: '4px 8px' };
@@ -252,7 +246,6 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
       <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '4px 8px' }}>
         <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor Info</div>
       </div>
-
       {/* Row 1: Vendor Name | Vendor Code | Vendor Site | Tax ID | No. */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
@@ -276,9 +269,8 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
           <span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || '—'}</span>
         </div>
       </div>
-
       {/* Row 2: Method | Paygroup | Par | Tax-Type | Notice | Sub Acc */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', ...divider }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '52px' }}>Method</span>
           <span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span>
@@ -304,8 +296,7 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
           <span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span>
         </div>
       </div>
-
-      {/* Row 4: Address full width */}
+      {/* Row 3: Address */}
       <div style={rowStyle}>
         <span style={keyStyle}>Address</span>
         <span style={{ fontSize: '11px', color: v?.['Address'] ? '#1a3a5c' : '#ccc', flex: 1, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{v?.['Address'] || '—'}</span>
@@ -517,7 +508,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
 
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
-      {/* Fields แถวบน */}
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
@@ -530,15 +520,13 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
             style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' }}
           />
         </div>
-        {fld('Inv date',   'invDate',  { type: 'date',   width: '130px' })}
-        {fld('Invoice num','invoiceNum',{                  width: '110px' })}
-        {fld('CPC',        'cpc',       {                  width: '60px'  })}
-        {fld('Branch no.', 'branchNo',  { type: 'select', width: '100px' })}
-        {fld('GRT Status',   'grt',      { readOnly: true,  width: '80px'  })}
-        {fld('Due date',   'dueDate',   { type: 'select', width: '100px' })}
+        {fld('Inv date',    'invDate',    { type: 'date',   width: '130px' })}
+        {fld('Invoice num', 'invoiceNum', {                  width: '110px' })}
+        {fld('CPC',         'cpc',        {                  width: '60px'  })}
+        {fld('Branch no.',  'branchNo',   { type: 'select', width: '100px' })}
+        {fld('GRT Status',  'grt',        { readOnly: true,  width: '80px'  })}
+        {fld('Due date',    'dueDate',    { type: 'select', width: '100px' })}
       </div>
-
-      {/* Vendor Info ด้านล่าง เต็มความกว้าง */}
       <div style={{ marginTop: '10px' }}>
         <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} />
       </div>
@@ -547,7 +535,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
 }
 
 // ── Phase 2: Invoice Entry ────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [] }) {
+function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [] }) {
   const [form, setFormState] = useState({
     supplierCode: '',
     invDate:      '',
@@ -555,7 +543,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     cpc:          '',
     branchNo:     '',
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
-    dueDate:      '',  // ลบ grn ออก
+    dueDate:      '',
   });
   const [vendorInfo, setVendorInfo] = useState(null);
 
@@ -564,32 +552,21 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     if (key === 'supplierCode' && !val) setVendorInfo(null);
   };
 
-  // Lookup in-memory from supplierItems (already loaded at app startup)
   const lookupVendor = (code) => {
     if (!code?.trim()) { setVendorInfo(null); return; }
-    
     const bu = batchConfig?.bu || '';
     const search = code.trim().toLowerCase();
-    
-    // ลอง match เต็มก่อน
-    let found = supplierItems.find(
-      s => String(s['Code'] ?? '').trim().toLowerCase() === search
-    );
-    
-    // ถ้าไม่เจอ ลอง prefix BU- แล้ว match
+    let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
     if (!found && bu) {
       const withPrefix = `${bu.toLowerCase()}-${search}`;
-      found = supplierItems.find(
-        s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix
-      );
+      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix);
     }
-    
     setVendorInfo(found || null);
   };
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
-      <div style={card}>
+      <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader
           form={form}
           setField={setField}
@@ -618,7 +595,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
       <div style={{ display: 'flex', gap: '12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={card}>
-            <div style={cardHead}><span style={cardLabel}>Batch 2026-0090 Summary</span></div>
+            <div style={cardHead}><span style={cardLabel}>Summary</span></div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
               <thead>
                 <tr style={{ background: '#f8f9fa' }}>
@@ -672,8 +649,8 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
             <div style={card}>
               <div style={cardHead}><span style={cardLabel}>Generated files</span></div>
               <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {opts.xlsx && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#27500A' }}>📊</span><span style={{ flex: 1 }}>AP_LOAD_0090.xlsx</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span></div>}
-                {opts.txt  && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#0C447C' }}>📄</span><span style={{ flex: 1 }}>AP_INTERFACE_0090.txt</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span></div>}
+                {opts.xlsx && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#27500A' }}>📊</span><span style={{ flex: 1 }}>AP_LOAD.xlsx</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span></div>}
+                {opts.txt  && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#0C447C' }}>📄</span><span style={{ flex: 1 }}>AP_INTERFACE.txt</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span></div>}
               </div>
             </div>
           )}
@@ -688,34 +665,33 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
+  const { fetchCollection, getCached } = useDataCache();
+
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
   const [invoices, setInvoices]       = useState([]);
-  const [infoItems, setInfoItems]     = useState([]);
-  const [supplierItems, setSupplierItems] = useState([]);
 
   useEffect(() => {
-    const loadAll = async () => {
-      // company_list — for BU Info panel
-      const loadTable = async (table, selectCols, setter) => {
-        let from = 0; const size = 1000; let all = [];
-        while (true) {
-          const { data, error } = await supabase.from(table).select(selectCols).range(from, from + size - 1);
-          if (error) { console.error(`❌ ${table}:`, error); break; }
-          if (!data) break;
-          all = [...all, ...data];
-          if (data.length < size) break;
-          from += size;
-        }
-        setter(all);
-      };
-      await Promise.all([
-        loadTable('company_list', 'bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"', setInfoItems),
-        loadTable('supplier_list', '*', setSupplierItems),
-      ]);
-    };
-    loadAll();
+    fetchCollection('CompanyList');
+    fetchCollection('SupplierList');
+    fetchCollection('BranchList');
+    fetchCollection('AccountList');
+    fetchCollection('SubAccList');
+    fetchCollection('CpcList');
+    fetchCollection('ItemcodeList');
+    fetchCollection('VendorCategory');
+    fetchCollection('NoticeList');
   }, []);
+
+  const infoItems     = getCached('CompanyList');
+  const supplierItems = getCached('SupplierList');
+  const branchItems   = getCached('BranchList');
+  const accountItems  = getCached('AccountList');
+  const subAccItems   = getCached('SubAccList');
+  const cpcItems      = getCached('CpcList');
+  const itemcodeItems = getCached('ItemcodeList');
+  const categoryItems = getCached('VendorCategory');
+  const noticeItems   = getCached('NoticeList');
 
   const handleStart    = (config) => { setBatchConfig(config); setStep(2); };
   const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
@@ -729,10 +705,23 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
           <div style={{ fontSize: '11px', color: '#aaa' }}>Accounts Payable Invoice Management</div>
         </div>
       </div>
-      <StepBar step={step} batchConfig={batchConfig} onGo={setStep} />
+      <StepBar step={step} onGo={setStep} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
-        {step === 2 && <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} supplierItems={supplierItems} />}
+        {step === 2 && <InvoiceEntry
+          batchConfig={batchConfig}
+          invoices={invoices}
+          setInvoices={setInvoices}
+          onNext={() => setStep(3)}
+          supplierItems={supplierItems}
+          branchItems={branchItems}
+          accountItems={accountItems}
+          subAccItems={subAccItems}
+          cpcItems={cpcItems}
+          itemcodeItems={itemcodeItems}
+          categoryItems={categoryItems}
+          noticeItems={noticeItems}
+        />}
         {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} />}
       </div>
     </div>
