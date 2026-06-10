@@ -567,9 +567,23 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   // Lookup in-memory from supplierItems (already loaded at app startup)
   const lookupVendor = (code) => {
     if (!code?.trim()) { setVendorInfo(null); return; }
-    const found = supplierItems.find(
-      s => String(s['Code'] ?? '').trim().toLowerCase() === code.trim().toLowerCase()
+    
+    const bu = batchConfig?.bu || '';
+    const search = code.trim().toLowerCase();
+    
+    // ลอง match เต็มก่อน
+    let found = supplierItems.find(
+      s => String(s['Code'] ?? '').trim().toLowerCase() === search
     );
+    
+    // ถ้าไม่เจอ ลอง prefix BU- แล้ว match
+    if (!found && bu) {
+      const withPrefix = `${bu.toLowerCase()}-${search}`;
+      found = supplierItems.find(
+        s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix
+      );
+    }
+    
     setVendorInfo(found || null);
   };
 
