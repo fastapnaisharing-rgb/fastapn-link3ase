@@ -97,8 +97,23 @@ const RULE_FIELDS = [
 ];
 
 function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
-  const cols = [['Item (Notice)','160px'],['Method','100px'],['Paygroup','120px'],['Par','70px'],['VAT','70px'],['WHT','70px'],['Contract','80px'],['Period','70px'],['Itemcode','80px'],['Action','80px']];
+  const cols = [['Item (Notice)','160px'],['Method','100px'],['Paygroup','120px'],['Par','70px'],['VAT','70px'],['WHT','70px'],['Contract','80px'],['Period','70px'],['Itemcode','80px'],['Action','90px']];
   if (loading) return <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>Loading...</div>;
+
+  const yesNo = (val, yesColor) => {
+    const colors = {
+      green:  { bg:'#EAF3DE', color:'#27500A' },
+      amber:  { bg:'#FAEEDA', color:'#633806' },
+      blue:   { bg:'#E6F1FB', color:'#0C447C' },
+    };
+    const c = colors[yesColor] || colors.green;
+    return val === 'Yes'
+      ? <span style={{ background: c.bg, color: c.color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>Yes</span>
+      : <span style={{ background:'#F3F4F6', color:'#9CA3AF', padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>No</span>;
+  };
+
+  const dash = <span style={{ color:'#D1D5DB', fontSize:'12px' }}>—</span>;
+
   return (
     <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column' }}>
       <div style={{ padding:'8px 0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
@@ -113,24 +128,26 @@ function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
           <thead>
             <tr>
               {cols.map(([h]) => (
-                <th key={h} style={{ background:'#1a3a5c', color:'rgba(255,255,255,0.8)', padding:'9px 12px', textAlign:'left', fontSize:'10px', fontWeight:'600', letterSpacing:'0.04em', whiteSpace:'nowrap', position:'sticky', top:0 }}>{h}</th>
+                <th key={h} style={{ background:'#1a3a5c', color:'rgba(255,255,255,0.85)', padding:'9px 12px', textAlign: ['Contract','Period','Itemcode','Action'].includes(h) ? 'center' : 'left', fontSize:'10px', fontWeight:'600', letterSpacing:'0.04em', whiteSpace:'nowrap', position:'sticky', top:0 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rules.length === 0 ? (
               <tr><td colSpan={cols.length} style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>ยังไม่มี Rule — กด "+ New Rule" เพื่อเพิ่ม</td></tr>
-            ) : rules.map((r) => (
-              <tr key={r.id} style={{ borderBottom:'0.5px solid #f5f5f5' }}>
-                <td style={{ padding:'8px 12px' }}><span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 8px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>{r.item || '—'}</span></td>
-                <td style={{ padding:'8px 12px', color:'#333' }}>{r.Method || <span style={{ color:'#ccc' }}>—</span>}</td>
-                <td style={{ padding:'8px 12px', color:'#333' }}>{r.Paygroup || <span style={{ color:'#ccc' }}>—</span>}</td>
-                <td style={{ padding:'8px 12px', color:'#333' }}>{r.Par || <span style={{ color:'#ccc' }}>—</span>}</td>
-                <td style={{ padding:'8px 12px', color:'#333' }}>{r.Vat || <span style={{ color:'#ccc' }}>—</span>}</td>
-                <td style={{ padding:'8px 12px', color:'#333' }}>{r.Wht || <span style={{ color:'#ccc' }}>—</span>}</td>
-                <td style={{ padding:'8px 12px', textAlign:'center' }}>{r.Contract === 'Yes' ? <span style={{ background:'#EAF3DE', color:'#27500A', padding:'2px 7px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>Yes</span> : <span style={{ color:'#ccc', fontSize:'11px' }}>No</span>}</td>
-                <td style={{ padding:'8px 12px', textAlign:'center' }}>{r.Period === 'Yes' ? <span style={{ background:'#FAEEDA', color:'#633806', padding:'2px 7px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>Yes</span> : <span style={{ color:'#ccc', fontSize:'11px' }}>No</span>}</td>
-                <td style={{ padding:'8px 12px', textAlign:'center' }}>{r.Itemcode === 'Yes' ? <span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 7px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>Yes</span> : <span style={{ color:'#ccc', fontSize:'11px' }}>No</span>}</td>
+            ) : rules.map((r, i) => (
+              <tr key={r.id} style={{ borderBottom:'0.5px solid #f0f2f5', background: i % 2 === 0 ? 'white' : '#FAFBFC' }}>
+                <td style={{ padding:'8px 12px' }}>
+                  <span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 8px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>{r.item || '—'}</span>
+                </td>
+                <td style={{ padding:'8px 12px', color:'#374151', fontSize:'11px' }}>{r.Method || dash}</td>
+                <td style={{ padding:'8px 12px', color:'#374151', fontSize:'11px' }}>{r.Paygroup || dash}</td>
+                <td style={{ padding:'8px 12px', color:'#374151', fontSize:'11px', textAlign:'center' }}>{r.Par || dash}</td>
+                <td style={{ padding:'8px 12px', color:'#374151', fontSize:'11px', textAlign:'center' }}>{r.Vat || dash}</td>
+                <td style={{ padding:'8px 12px', color:'#374151', fontSize:'11px', textAlign:'center' }}>{r.Wht || dash}</td>
+                <td style={{ padding:'8px 12px', textAlign:'center' }}>{yesNo(r.Contract, 'green')}</td>
+                <td style={{ padding:'8px 12px', textAlign:'center' }}>{yesNo(r.Period, 'amber')}</td>
+                <td style={{ padding:'8px 12px', textAlign:'center' }}>{yesNo(r.Itemcode, 'blue')}</td>
                 <td style={{ padding:'8px 12px', textAlign:'center' }}>
                   <div style={{ display:'inline-flex', gap:'4px' }}>
                     <button onClick={() => onEdit(r)} style={{ padding:'3px 8px', borderRadius:'4px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'11px', cursor:'pointer' }}>✏️</button>
