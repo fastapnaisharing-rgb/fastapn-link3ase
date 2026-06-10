@@ -100,7 +100,7 @@ function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
   const cols = [['Item (Notice)','160px'],['Method','100px'],['Paygroup','120px'],['Par','70px'],['VAT','70px'],['WHT','70px'],['Contract','80px'],['Period','70px'],['Itemcode','80px'],['Action','90px']];
   if (loading) return <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>Loading...</div>;
 
-  const yesNo = (val, yesColor) => {
+  const yesNo = (val) => {
     const colors = {
       green:  { bg:'#EAF3DE', color:'#27500A' },
       amber:  { bg:'#FAEEDA', color:'#633806' },
@@ -108,9 +108,9 @@ function VendorRuleTab({ rules, loading, onNew, onEdit, onDelete }) {
     };
     const c = colors[yesColor] || colors.green;
     return val === 'Yes'
-      ? <span style={{ background: c.bg, color: c.color, padding:'2px 8px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>Yes</span>
-      : <span style={{ background:'#F3F4F6', color:'#9CA3AF', padding:'2px 8px', borderRadius:'20px', fontSize:'10px' }}>No</span>;
-  };
+        ? <span style={{ background:'#EAF3DE', color:'#27500A', padding:'2px 8px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>Yes</span>
+        : <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'2px 8px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>No</span>;
+    };
 
   const dash = <span style={{ color:'#D1D5DB', fontSize:'12px' }}>—</span>;
 
