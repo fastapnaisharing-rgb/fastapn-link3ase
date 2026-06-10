@@ -554,13 +554,33 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
   const lookupVendor = (code) => {
     if (!code?.trim()) { setVendorInfo(null); return; }
+    
     const bu = batchConfig?.bu || '';
     const search = code.trim().toLowerCase();
-    let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
+    
+    // กรอกเต็ม เช่น LKS-A5897
+    let found = supplierItems.find(
+      s => String(s['Code'] ?? '').trim().toLowerCase() === search
+    );
+
+    // ถ้าเจอแล้ว ตรวจว่าเป็น BU เดียวกันมั้ย
+    if (found) {
+      const codePrefix = String(found['Code'] ?? '').split('-')[0].toLowerCase();
+      if (bu && codePrefix !== bu.toLowerCase()) {
+        // ข้าม BU — ไม่ให้ match
+        setVendorInfo(null);
+        return;
+      }
+    }
+
+    // กรอกแค่ code เช่น A5897 → เติม BU- ให้อัตโนมัติ
     if (!found && bu) {
       const withPrefix = `${bu.toLowerCase()}-${search}`;
-      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix);
+      found = supplierItems.find(
+        s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix
+      );
     }
+
     setVendorInfo(found || null);
   };
 
