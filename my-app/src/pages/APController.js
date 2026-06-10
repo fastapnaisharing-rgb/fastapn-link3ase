@@ -524,8 +524,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
 
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
-      <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>Header</div>
-
       {/* Fields แถวบน */}
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
@@ -543,7 +541,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         {fld('Invoice num','invoiceNum',{                  width: '110px' })}
         {fld('CPC',        'cpc',       {                  width: '60px'  })}
         {fld('Branch no.', 'branchNo',  { type: 'select', width: '100px' })}
-        {fld('GRT',        'grt',       { readOnly: true,  width: '80px'  })}
+        {fld('GRT Status',   'grt',      { readOnly: true,  width: '80px'  })}
         {fld('Due date',   'dueDate',   { type: 'select', width: '100px' })}
       </div>
 
