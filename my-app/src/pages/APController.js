@@ -244,32 +244,66 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
 function VendorInfoPanel({ vendorInfo, vendorLoading }) {
   const v = vendorLoading ? null : vendorInfo;
-  const rows = [
-    ['Vendor Name',   v?.['Supplier Name']],
-    ['Vendor No.',    v?.['Supplier Number']],
-    ['Vendor Site',   v?.['Supplier Site']],
-    ['Method',        v?.['Tax-Type']],
-    ['Paygroup',      v?.['Notice']],
-    ['Par',           v?.['Sub Acc']],
-    ['Tax ID',        v?.['Tax ID']],
-    ['Address',       v?.['Address']],
-  ];
-  const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center', width: '90px', flexShrink: 0 };
-  const valStyle = (hasVal) => ({ fontSize: '12px', color: hasVal ? '#1a3a5c' : '#ccc', padding: '7px 10px', background: 'white', display: 'flex', alignItems: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+  const keyStyle = { fontSize: '10px', color: '#999', width: '72px', flexShrink: 0 };
+  const valStyle = (hasVal) => ({ fontSize: '11px', color: hasVal ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 });
+  const rowStyle = { display: 'flex', alignItems: 'center', padding: '4px 8px' };
+  const divider  = { borderBottom: '0.5px solid #f0f0f0' };
+
   return (
     <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', position: 'relative' }}>
       {vendorLoading && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, fontSize: '11px', color: '#888' }}>Loading...</div>
       )}
-      <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}>
-        <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Vendor Info</div>
+      <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '4px 8px' }}>
+        <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor Info</div>
       </div>
-      {rows.map(([key, val], i) => (
-        <div key={key} style={{ display: 'flex', borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}>
-          <div style={keyStyle}>{key}</div>
-          <div style={valStyle(!!val)} title={val || ''}>{val || '—'}</div>
+
+      {/* Row 1: Vendor Name | Tax ID */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', ...divider }}>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={keyStyle}>Vendor Name</span>
+          <span style={valStyle(!!v?.['Supplier Name'])} title={v?.['Supplier Name'] || ''}>{v?.['Supplier Name'] || '—'}</span>
         </div>
-      ))}
+        <div style={rowStyle}>
+          <span style={keyStyle}>Tax ID</span>
+          <span style={{ ...valStyle(!!v?.['Tax ID']), fontFamily: 'monospace' }}>{v?.['Tax ID'] || '—'}</span>
+        </div>
+      </div>
+
+      {/* Row 2: Vendor No. | Vendor Site */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', ...divider }}>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={keyStyle}>Vendor No.</span>
+          <span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span>
+        </div>
+        <div style={rowStyle}>
+          <span style={keyStyle}>Vendor Site</span>
+          <span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || '—'}</span>
+        </div>
+      </div>
+
+      {/* Row 3: Method | Paygroup | Par */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', ...divider }}>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={keyStyle}>Method</span>
+          <span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span>
+        </div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={keyStyle}>Paygroup</span>
+          <span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span>
+        </div>
+        <div style={rowStyle}>
+          <span style={keyStyle}>Par</span>
+          <span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span>
+        </div>
+      </div>
+
+      {/* Row 4: Address full width */}
+      <div style={rowStyle}>
+        <span style={keyStyle}>Address</span>
+        <span style={{ fontSize: '11px', color: v?.['Address'] ? '#1a3a5c' : '#ccc', flex: 1, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{v?.['Address'] || '—'}</span>
+      </div>
     </div>
   );
 }
