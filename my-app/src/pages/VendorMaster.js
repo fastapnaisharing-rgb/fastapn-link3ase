@@ -454,7 +454,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   useEffect(() => {
     const allowed = VISIBLE_TABS.map(([key]) => key);
     if (allowed.length > 0 && !allowed.includes(tab)) handleTabChange(allowed[0]);
-  }, [tab]);
+  }, []); // run once on mount only — tab is controlled by parent via activeSubTab
 
   const items    = cfg ? (dataMap[tab] || []) : [];
   const search   = cfg ? (searchMap[tab] || '') : '';
@@ -489,7 +489,6 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
   const fetchVendorRules = useCallback(async () => {
     const { data, error } = await supabase.from('Vendor_rule').select('*').order('id', { ascending: true });
-    console.log('Vendor_rule fetch:', { data, error }); // เพิ่มบรรทัดนี้
     if (!error) setVendorRules(data || []);
   }, []);
 
