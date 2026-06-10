@@ -282,9 +282,9 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
           <span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || '—'}</span>
         </div>
       </div>
-      
+
       {/* Row 3: Method | Paygroup | Par */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 0.5fr', ...div }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 0.5fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '52px' }}>Method</span>
           <span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span>
