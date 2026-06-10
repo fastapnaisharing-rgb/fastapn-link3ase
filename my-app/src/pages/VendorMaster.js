@@ -352,7 +352,7 @@ const TAB_CONFIG = {
       { key: 'SY-Running',      label: 'SY-Running',    sortable: true, w: 100 },
       { key: 'IE-Code',         label: 'IE-Code',       sortable: true, w: 120 },
       { key: 'BU Code',         label: 'BU',            w: 70  },
-      { key: 'Supplier Name',   label: 'Supplier Name', w: 240 },
+      { key: 'Supplier Name',   label: 'Supplier Name', w: 380 },
       { key: 'Supplier Number', label: 'Supplier No.',  w: 110 },
       { key: 'Supplier Site',   label: 'Site',          w: 120 },
       { key: 'Tax-Type',        label: 'Tax-Type',      w: 80  },
@@ -369,7 +369,7 @@ const TAB_CONFIG = {
     edit: [['Code','Code'],['Supplier Name','Supplier Name'],['TAX ID','TAX ID'],['No.','No.'],['BU','BU'],['TYPE','TYPE'],['SUB TYPE','SUB TYPE'],['REMARK','REMARK']],
     columns: [
       { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
-      { key: 'Supplier Name', label: 'Supplier Name', w: 320 },
+      { key: 'Supplier Name', label: 'Supplier Name', w: 520 },
       { key: '_entityType',   label: 'ประเภท',        w: 110 },
       { key: 'TAX ID',        label: 'TAX ID',        w: 130 },
       { key: 'No.',           label: 'No.',           w: 70  },
@@ -790,12 +790,10 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   };
 
   const actionW = isAdmin ? (56 * 2) + 20 : 56 + 20;
-  const minW    = cfg ? 36 + cfg.columns.reduce((s, c) => s + c.w, 0) + actionW : 0;
-  const totalW  = cfg ? (containerW > 0 ? Math.max(minW, containerW) : minW + 200) : 0;
-  const extraW  = cfg ? Math.max(0, totalW - minW) : 0;
-  const stretchMap = { apcode: 'Supplier Name', smcode: 'Company Name', iecode: 'Supplier Name', category: 'REMARK' };
-  const stretchKey = cfg ? (stretchMap[tab] || 'Supplier Name') : '';
-  const COLUMNS_SCALED = cfg ? cfg.columns.map(c => c.key === stretchKey ? { ...c, w: c.w + extraW } : c) : [];
+  // "auto" column fills remaining space — no width calculation needed
+  const autoColMap = { apcode: 'Supplier Name', smcode: 'Company Name', iecode: 'Supplier Name', category: 'Supplier Name' };
+  const autoColKey = cfg ? (autoColMap[tab] || 'Supplier Name') : '';
+  const COLUMNS_SCALED = cfg ? cfg.columns : [];
 
   const S = {
     container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth:0, overflow:'hidden' },
@@ -807,7 +805,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', display:'flex', flexDirection:'column', flex:1, minWidth:0, overflow:'hidden' },
     theadWrap: { overflowX:'hidden', flexShrink:0 },
     tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1, minWidth:0 },
-    table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
+    table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed', width:'100%' },
     th: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
     thSort: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', cursor:'pointer', userSelect:'none', overflow:'hidden', textOverflow:'ellipsis' },
     thCheck: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', width:'36px' },
@@ -825,7 +823,11 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const renderColGroup = (columns) => (
     <colgroup>
       <col style={{ width:'36px', minWidth:'36px' }} />
-      {columns.map((c, i) => <col key={i} style={{ width:`${c.w}px`, minWidth:`${c.w}px` }} />)}
+      {columns.map((c, i) => (
+        c.key === autoColKey
+          ? <col key={i} style={{ minWidth:`${c.w}px` }} />
+          : <col key={i} style={{ width:`${c.w}px`, minWidth:`${c.w}px` }} />
+      ))}
       <col style={{ width:`${actionW}px`, minWidth:`${actionW}px` }} />
     </colgroup>
   );
@@ -973,7 +975,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
 
       <div ref={containerRef} style={S.outer}>
         <div ref={theadRef} style={{...S.theadWrap, msOverflowStyle:'none'}}>
-          <table style={{...S.table, width:`${totalW}px`}}>
+          <table style={{...S.table}}>
             {renderColGroup(COLUMNS_SCALED)}
             <thead>
               <tr>
@@ -990,7 +992,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
           </table>
         </div>
         <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
-          <table style={{...S.table, width:`${totalW}px`}}>
+          <table style={{...S.table}}>
             {renderColGroup(COLUMNS_SCALED)}
             <tbody>
               {paginated.map(item => (
