@@ -530,14 +530,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
           {fld('Invoice num', 'invoiceNum', { width: '110px' })}
           {fld('CPC', 'cpc', { width: '60px' })}
           {fld('Branch no.', 'branchNo', { type: 'select', width: '100px' })}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-            <label style={{ fontSize: '11px', color: '#888' }}>GRT</label>
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-              <input value={form.grt} readOnly
-                style={{ height: '30px', width: '80px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #5DCAA5', borderRadius: '6px', background: '#E1F5EE', color: '#085041', outline: 'none' }} />
-              <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#E6F1FB', color: '#0C447C', fontWeight: '500' }}>RC</span>
-            </div>
-          </div>
+          {fld('GRT', 'grt', { readOnly: true, width: '80px' })}
           {fld('GRN', 'grn', { width: '80px' })}
           {fld('Due date', 'dueDate', { type: 'select', width: '100px' })}
         </div>
