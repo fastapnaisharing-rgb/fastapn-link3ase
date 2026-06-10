@@ -194,12 +194,6 @@ function StepBar({ step, batchConfig, onGo }) {
           </React.Fragment>
         );
       })}
-      {step > 1 && batchConfig && (
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '7px' }}>
-          <span style={{ ...bdgBlue, fontSize: '11px' }}>BATCH-2026-0090 · {batchConfig.bu}</span>
-          <span style={{ fontSize: '11px', color: '#aaa' }}>Auto-saved ✓</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -409,7 +403,6 @@ function BatchSetup({ onStart, infoItems = [] }) {
                       <button onClick={() => setShowPopup(true)} title="Open BU search popup"
                         style={{ position: 'absolute', right: 0, top: 0, height: '32px', width: '32px', background: '#1a3a5c', border: 'none', borderRadius: '0 6px 6px 0', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px' }}>🔍</button>
                     </div>
-                    {buInfo && <span style={{ fontSize: '10px', color: '#0F6E56', display: 'flex', alignItems: 'center', gap: '4px' }}>✓ {buInfo['THAI COMPANY NAME'] || buInfo['ENGLISH COMPANY NAME']}</span>}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
                     <div style={fieldWrap}><label style={fieldLabel}>Receive date</label><input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} style={inputBase} /></div>
