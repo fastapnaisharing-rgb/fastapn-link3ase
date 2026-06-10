@@ -242,7 +242,7 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 }
 
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
-function VendorInfoPanel({ vendorInfo }) {
+function VendorInfoPanel({ vendorInfo, vendorLoading }) {
   const th = (label) => ({
     fontSize: '10px', fontWeight: '600', color: 'rgba(255,255,255,0.7)',
     padding: '5px 8px', background: '#1a3a5c', borderRight: '0.5px solid rgba(255,255,255,0.12)',
@@ -256,45 +256,51 @@ function VendorInfoPanel({ vendorInfo }) {
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     ...(wide ? { minWidth: '180px' } : {}),
   });
-  const v = vendorInfo;
+  // Map from supplier_list columns (Code, Supplier Name, Supplier Number, Supplier Site, Tax-Type, Notice, Sub Acc, No., Due, Digit)
+  const v = vendorLoading ? null : vendorInfo;
   const dash = <span style={{ color: '#ccc' }}>—</span>;
   return (
-    <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', width: '100%' }}>
+    <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', width: '100%', position: 'relative' }}>
+      {vendorLoading && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, fontSize: '11px', color: '#888' }}>
+          Loading...
+        </div>
+      )}
       {/* Row 1 — headers */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr' }}>
-        <div style={th(true)}>Vendor Name</div>
+        <div style={th()}>Vendor Name</div>
         <div style={th()}>Vendor No.</div>
         <div style={th()}>Vendor Site</div>
-        <div style={th()}>Method</div>
-        <div style={th()}>Paygroup</div>
-        <div style={{ ...th(), borderRight: 'none' }}>Par</div>
+        <div style={th()}>Tax-Type</div>
+        <div style={th()}>Notice</div>
+        <div style={{ ...th(), borderRight: 'none' }}>Sub Acc</div>
       </div>
       {/* Row 1 — values */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', borderBottom: '0.5px solid #e8eaf0' }}>
-        <div style={{ ...td(true, true) }}>{v?.supplier_name || dash}</div>
-        <div style={td()}>{v?.vendor_no || dash}</div>
-        <div style={td()}>{v?.vendor_site || dash}</div>
-        <div style={td()}>{v?.method || dash}</div>
-        <div style={td()}>{v?.paygroup || dash}</div>
-        <div style={{ ...td(), borderRight: 'none' }}>{v?.par || dash}</div>
+        <div style={{ ...td(true, true) }}>{v?.['Supplier Name'] || dash}</div>
+        <div style={td()}>{v?.['Supplier Number'] || dash}</div>
+        <div style={td()}>{v?.['Supplier Site'] || dash}</div>
+        <div style={td()}>{v?.['Tax-Type'] || dash}</div>
+        <div style={td()}>{v?.['Notice'] || dash}</div>
+        <div style={{ ...td(), borderRight: 'none' }}>{v?.['Sub Acc'] || dash}</div>
       </div>
       {/* Row 2 — headers */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr 1fr' }}>
-        <div style={th()}>Branch</div>
-        <div style={th(true)}>Branch Name</div>
-        <div style={th()}>Tax Code</div>
-        <div style={th()}>Wht Code</div>
-        <div style={{ ...th(), background: '#0f2a45' }}>GRT</div>
-        <div style={{ ...th(), background: '#7a1a1a', borderRight: 'none' }}>GRN</div>
+        <div style={th()}>Tax ID</div>
+        <div style={th()}>No.</div>
+        <div style={th()}>Due</div>
+        <div style={th()}>Digit</div>
+        <div style={{ ...th(), background: '#0f2a45' }}>First Part</div>
+        <div style={{ ...th(), background: '#7a1a1a', borderRight: 'none' }}>Last Part</div>
       </div>
       {/* Row 2 — values */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr 1fr' }}>
-        <div style={td()}>{v?.branch || dash}</div>
-        <div style={{ ...td(true) }}>{v?.branch_name || dash}</div>
-        <div style={td()}>{v?.tax_code || dash}</div>
-        <div style={td()}>{v?.wht_code || dash}</div>
-        <div style={{ ...td(), color: '#0f2a45', fontWeight: '500', fontFamily: 'monospace' }}>{v?.grt || dash}</div>
-        <div style={{ ...td(), color: '#7a1a1a', fontWeight: '500', fontFamily: 'monospace', borderRight: 'none' }}>{v?.grn || dash}</div>
+        <div style={td()}>{v?.['Tax ID'] || dash}</div>
+        <div style={{ ...td(true) }}>{v?.['No.'] || dash}</div>
+        <div style={td()}>{v?.['Due'] || dash}</div>
+        <div style={td()}>{v?.['Digit'] || dash}</div>
+        <div style={{ ...td(), color: '#0f2a45', fontWeight: '500', fontFamily: 'monospace', borderRight: 'none' }}>{v?.['First Part'] || dash}</div>
+        <div style={{ ...td(), color: '#7a1a1a', fontWeight: '500', fontFamily: 'monospace', borderRight: 'none' }}>{v?.['Last Part'] || dash}</div>
       </div>
     </div>
   );
@@ -478,7 +484,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, vendorInfo }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading }) {
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -505,30 +511,44 @@ function InvoiceHeader({ form, setField, vendorInfo }) {
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>Header</div>
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '12px' }}>
-        {fld('Supplier code', 'supplierCode', { required: true, width: '90px' })}
-        {fld('Inv date', 'invDate', { type: 'date', width: '130px' })}
-        {fld('Invoice num', 'invoiceNum', { width: '110px' })}
-        {fld('CPC', 'cpc', { width: '60px' })}
-        {fld('Branch no.', 'branchNo', { type: 'select', width: '100px' })}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-          <label style={{ fontSize: '11px', color: '#888' }}>GRT</label>
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <input value={form.grt} readOnly
-              style={{ height: '30px', width: '80px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #5DCAA5', borderRadius: '6px', background: '#E1F5EE', color: '#085041', outline: 'none' }} />
-            <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#E6F1FB', color: '#0C447C', fontWeight: '500' }}>RC</span>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap', flex: '0 0 auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
+            <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
+            <input
+              type="text"
+              value={form.supplierCode}
+              onChange={e => setField('supplierCode', e.target.value)}
+              onBlur={() => onSupplierBlur(form.supplierCode)}
+              onKeyDown={e => { if (e.key === 'Enter') onSupplierBlur(form.supplierCode); }}
+              style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' }}
+            />
           </div>
+          {fld('Inv date', 'invDate', { type: 'date', width: '130px' })}
+          {fld('Invoice num', 'invoiceNum', { width: '110px' })}
+          {fld('CPC', 'cpc', { width: '60px' })}
+          {fld('Branch no.', 'branchNo', { type: 'select', width: '100px' })}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <label style={{ fontSize: '11px', color: '#888' }}>GRT</label>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+              <input value={form.grt} readOnly
+                style={{ height: '30px', width: '80px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #5DCAA5', borderRadius: '6px', background: '#E1F5EE', color: '#085041', outline: 'none' }} />
+              <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#E6F1FB', color: '#0C447C', fontWeight: '500' }}>RC</span>
+            </div>
+          </div>
+          {fld('GRN', 'grn', { width: '80px' })}
+          {fld('Due date', 'dueDate', { type: 'select', width: '100px' })}
         </div>
-        {fld('GRN', 'grn', { width: '80px' })}
-        {fld('Due date', 'dueDate', { type: 'select', width: '100px' })}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <VendorInfoPanel vendorInfo={vendorInfo} />
+        </div>
       </div>
-      <VendorInfoPanel vendorInfo={vendorInfo} />
     </div>
   );
 }
 
 // ── Phase 2: Invoice Entry ────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
+function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [] }) {
   const [form, setFormState] = useState({
     supplierCode: '',
     invDate:      '',
@@ -539,35 +559,31 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext }) {
     grn:          '',
     dueDate:      '',
   });
-  const [vendorInfo, setVendorInfo]   = useState(null);
-  const [vendorLoading, setVendorLoading] = useState(false);
+  const [vendorInfo, setVendorInfo] = useState(null);
 
-  const setField = (key, val) => setFormState(f => ({ ...f, [key]: val }));
+  const setField = (key, val) => {
+    setFormState(f => ({ ...f, [key]: val }));
+    if (key === 'supplierCode' && !val) setVendorInfo(null);
+  };
 
-  // Lookup vendor from Supabase when supplierCode changes (on blur or enter)
-  const lookupVendor = async (code) => {
+  // Lookup in-memory from supplierItems (already loaded at app startup)
+  const lookupVendor = (code) => {
     if (!code?.trim()) { setVendorInfo(null); return; }
-    setVendorLoading(true);
-    try {
-      const { data } = await supabase
-        .from('vendor_list')   // ← adjust table name as needed
-        .select('*')
-        .ilike('supplier_code', code.trim())
-        .limit(1)
-        .single();
-      setVendorInfo(data || null);
-    } catch { setVendorInfo(null); }
-    setVendorLoading(false);
+    const found = supplierItems.find(
+      s => String(s['Code'] ?? '').trim().toLowerCase() === code.trim().toLowerCase()
+    );
+    setVendorInfo(found || null);
   };
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
       <div style={card}>
-        <InvoiceHeader form={form} setField={(key, val) => {
-          setField(key, val);
-          if (key === 'supplierCode' && !val) setVendorInfo(null);
-        }} vendorInfo={vendorLoading ? null : vendorInfo}
-        // pass onBlur lookup via a wrapper; InvoiceHeader exposes supplierCode input blur via setField
+        <InvoiceHeader
+          form={form}
+          setField={setField}
+          onSupplierBlur={lookupVendor}
+          vendorInfo={vendorInfo}
+          vendorLoading={false}
         />
         {/* TODO: Invoice lines section */}
       </div>
@@ -664,21 +680,29 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   const [batchConfig, setBatchConfig] = useState(null);
   const [invoices, setInvoices]       = useState([]);
   const [infoItems, setInfoItems]     = useState([]);
+  const [supplierItems, setSupplierItems] = useState([]);
 
   useEffect(() => {
-    const load = async () => {
-      let from = 0; const size = 1000; let all = [];
-      while (true) {
-        const { data, error } = await supabase.from('company_list').select('bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"').range(from, from + size - 1);
-        if (error) { console.error('❌ Supabase error:', error); break; }
-        if (!data) break;
-        all = [...all, ...data];
-        if (data.length < size) break;
-        from += size;
-      }
-      setInfoItems(all);
+    const loadAll = async () => {
+      // company_list — for BU Info panel
+      const loadTable = async (table, selectCols, setter) => {
+        let from = 0; const size = 1000; let all = [];
+        while (true) {
+          const { data, error } = await supabase.from(table).select(selectCols).range(from, from + size - 1);
+          if (error) { console.error(`❌ ${table}:`, error); break; }
+          if (!data) break;
+          all = [...all, ...data];
+          if (data.length < size) break;
+          from += size;
+        }
+        setter(all);
+      };
+      await Promise.all([
+        loadTable('company_list', 'bu,"THAI COMPANY NAME","ENGLISH COMPANY NAME","TAX ID","COMPANY CODE","BOOK","SEGMENT3","AP GRT Control"', setInfoItems),
+        loadTable('supplier_list', '*', setSupplierItems),
+      ]);
     };
-    load();
+    loadAll();
   }, []);
 
   const handleStart    = (config) => { setBatchConfig(config); setStep(2); };
@@ -696,7 +720,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
       <StepBar step={step} batchConfig={batchConfig} onGo={setStep} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
-        {step === 2 && <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} />}
+        {step === 2 && <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} supplierItems={supplierItems} />}
         {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} />}
       </div>
     </div>
