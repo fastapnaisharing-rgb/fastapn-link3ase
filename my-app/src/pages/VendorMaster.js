@@ -328,6 +328,34 @@ const TAB_CONFIG = {
       { key: 'REMARK',        label: 'REMARK',        w: 120 },
     ],
   },
+  'condition-rule': {
+    label: 'Condition / Rule', icon: '📐', table: 'Vendor_rule', key: 'item',
+    fields: ['item', 'Method', 'Paygroup', 'Par', 'Vat', 'Wht', 'Contract', 'Period', 'Itemcode'],
+    combo: ['Method', 'Paygroup', 'Vat', 'Wht', 'Contract', 'Period', 'Itemcode'],
+    edit: [
+      ['item', 'Item'],
+      ['Method', 'Method'],
+      ['Paygroup', 'Paygroup'],
+      ['Par', 'Par'],
+      ['Vat', 'Vat'],
+      ['Wht', 'Wht'],
+      ['Contract', 'Contract'],
+      ['Period', 'Period'],
+      ['Itemcode', 'Itemcode'],
+    ],
+    columns: [
+      { key: 'item',     label: 'Item',     sortable: true, w: 120 },
+      { key: 'Method',   label: 'Method',   w: 100 },
+      { key: 'Paygroup', label: 'Paygroup', w: 120 },
+      { key: 'Par',      label: 'Par',      w: 80  },
+      { key: 'Vat',      label: 'Vat',      w: 80  },
+      { key: 'Wht',      label: 'Wht',      w: 80  },
+      { key: 'Contract', label: 'Contract', w: 100 },
+      { key: 'Period',   label: 'Period',   w: 100 },
+      { key: 'Itemcode', label: 'Itemcode', w: 100 },
+    ],
+  },
+
 };
 
 function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
@@ -388,6 +416,7 @@ function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
   const VISIBLE_TABS = Object.entries(TAB_CONFIG).filter(([key]) => {
+    if (key === 'condition-rule') return isOwner;
     if (isOwner) return true;
     if (key === 'apcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
     if (key === 'smcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
