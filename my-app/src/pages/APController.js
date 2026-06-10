@@ -399,7 +399,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     <div style={{ position: 'relative' }}>
                       <input value={bu} onChange={e => handleBuChange(e.target.value)} onKeyDown={handleBuKeyDown}
                         onBlur={() => { if (!bu.trim()) return; const m = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase()); setBuInfo(m || infoItems.find(i => i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())) || null); }}
-                        placeholder="Enter BU code..." style={{ ...inputBase, paddingRight: '36px' }} />
+                        placeholder="BU code..." style={{ ...inputBase, paddingRight: '36px' }} />
                       <button onClick={() => setShowPopup(true)} title="Open BU search popup"
                         style={{ position: 'absolute', right: 0, top: 0, height: '32px', width: '32px', background: '#1a3a5c', border: 'none', borderRadius: '0 6px 6px 0', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px' }}>🔍</button>
                     </div>
