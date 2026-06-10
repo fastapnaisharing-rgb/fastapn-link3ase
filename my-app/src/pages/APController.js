@@ -267,7 +267,7 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
         </div>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={keyStyle}>Vendor Code</span>
-          <span style={valStyle(!!v?.['Code'])}>{v?.['Code'] || '—'}</span>
+          <span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span>
         </div>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={keyStyle}>Vendor Site</span>
@@ -279,7 +279,7 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
         </div>
         <div style={rowStyle}>
           <span style={keyStyle}>No.</span>
-          <span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span>
+          <span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || '—'}</span>
         </div>
       </div>
 
