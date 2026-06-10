@@ -368,10 +368,10 @@ function MainApp() {
         ? <VendorMaster activeSubTab="category" onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'vendor-iecode':   return (isEditor && userPermissions?.['IE'])
         ? <VendorMaster activeSubTab="iecode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
+      case 'condition-rule':   return (isOwner)
+        ? <VendorMaster activeSubTab="Condition / Rule"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'itemcode':        return <ItemCodeList />;
-      // [CHANGE 2] เพิ่ม case condition-rule — เห็นเฉพาะ Owner
-      case 'condition-rule':  return isOwner
-        ? <PlaceholderPage title="Condition / Rule" icon="📐" /> : <NoAccessPage />;
+
       case 'upload':          return <UploadGen />;
       case 'users':           return <UserManagement />;
       default:                return <PlaceholderPage title="AP Controller" icon="🧾" />;
