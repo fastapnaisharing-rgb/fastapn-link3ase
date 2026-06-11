@@ -161,14 +161,11 @@ const card      = { background: 'white', border: '0.5px solid #e8eaf0', borderRa
 const cardHead  = { padding: '9px 14px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
 const cardLabel = { fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' };
 const cardBody  = { padding: '12px 14px' };
-
 const fieldWrap  = { display: 'flex', flexDirection: 'column', gap: '3px' };
 const fieldLabel = { fontSize: '11px', color: '#888' };
-
 const btnPrimary = { padding: '7px 16px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '7px', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '5px' };
 const btnOutline = { padding: '5px 12px', background: 'white', color: '#555', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' };
-
-const bdgGreen = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#EAF3DE', color: '#27500A' };
+const bdgGreen   = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#EAF3DE', color: '#27500A' };
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 function StepBar({ step, onGo }) {
@@ -231,8 +228,9 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 }
 
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
-function VendorInfoPanel({ vendorInfo, vendorLoading }) {
+function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
   const v = vendorLoading ? null : vendorInfo;
+  const r = matchedRule;
   const keyStyle = { fontSize: '10px', color: '#999', width: '72px', flexShrink: 0 };
   const valStyle = (hasVal) => ({ fontSize: '11px', color: hasVal ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 });
   const rowStyle = { display: 'flex', alignItems: 'center', padding: '4px 8px' };
@@ -269,19 +267,19 @@ function VendorInfoPanel({ vendorInfo, vendorLoading }) {
           <span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || '—'}</span>
         </div>
       </div>
-      {/* Row 2: Method | Paygroup | Par | Tax-Type | Notice | Sub Acc */}
+      {/* Row 2: Method(rule) | Paygroup(rule) | Par(rule) | Tax-Type | Notice | Sub Acc */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '52px' }}>Method</span>
-          <span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span>
+          <span style={valStyle(!!r?.Method)}>{r?.Method || '—'}</span>
         </div>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '62px' }}>Paygroup</span>
-          <span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span>
+          <span style={valStyle(!!r?.Paygroup)}>{r?.Paygroup || '—'}</span>
         </div>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '26px' }}>Par</span>
-          <span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span>
+          <span style={valStyle(!!r?.Par)}>{r?.Par || '—'}</span>
         </div>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '60px' }}>Tax-Type</span>
@@ -482,7 +480,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule }) {
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -528,14 +526,22 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         {fld('Due date',    'dueDate',    { type: 'select', width: '100px' })}
       </div>
       <div style={{ marginTop: '10px' }}>
-        <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} />
+        <VendorInfoPanel
+          vendorInfo={vendorInfo}
+          vendorLoading={vendorLoading}
+          matchedRule={matchedRule}
+        />
       </div>
     </div>
   );
 }
 
 // ── Phase 2: Invoice Entry ────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [] }) {
+function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
+  supplierItems = [], branchItems = [], accountItems = [], subAccItems = [],
+  cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [],
+  vendorRuleItems = [] }) {
+
   const [form, setFormState] = useState({
     supplierCode: '',
     invDate:      '',
@@ -552,37 +558,36 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     if (key === 'supplierCode' && !val) setVendorInfo(null);
   };
 
+  // ── lookup rule จาก Notice ของ vendor ──────────────────────────────────────
+  const getMatchedRule = (vendor) => {
+    if (!vendor?.['Notice']) return null;
+    const notices = vendor['Notice'].split('|').map(n => n.trim()).filter(Boolean);
+    for (const notice of notices) {
+      const rule = vendorRuleItems.find(
+        r => String(r['item'] ?? '').trim().toLowerCase() === notice.toLowerCase()
+      );
+      if (rule) return rule;
+    }
+    return null;
+  };
+
   const lookupVendor = (code) => {
     if (!code?.trim()) { setVendorInfo(null); return; }
-    
     const bu = batchConfig?.bu || '';
     const search = code.trim().toLowerCase();
-    
-    // กรอกเต็ม เช่น LKS-A5897
-    let found = supplierItems.find(
-      s => String(s['Code'] ?? '').trim().toLowerCase() === search
-    );
-
-    // ถ้าเจอแล้ว ตรวจว่าเป็น BU เดียวกันมั้ย
+    let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
     if (found) {
       const codePrefix = String(found['Code'] ?? '').split('-')[0].toLowerCase();
-      if (bu && codePrefix !== bu.toLowerCase()) {
-        // ข้าม BU — ไม่ให้ match
-        setVendorInfo(null);
-        return;
-      }
+      if (bu && codePrefix !== bu.toLowerCase()) { setVendorInfo(null); return; }
     }
-
-    // กรอกแค่ code เช่น A5897 → เติม BU- ให้อัตโนมัติ
     if (!found && bu) {
       const withPrefix = `${bu.toLowerCase()}-${search}`;
-      found = supplierItems.find(
-        s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix
-      );
+      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix);
     }
-
     setVendorInfo(found || null);
   };
+
+  const matchedRule = getMatchedRule(vendorInfo);
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
@@ -593,6 +598,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
           onSupplierBlur={lookupVendor}
           vendorInfo={vendorInfo}
           vendorLoading={false}
+          matchedRule={matchedRule}
         />
         {/* TODO: Invoice lines section */}
       </div>
@@ -704,15 +710,15 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     fetchCollection('VendorRule');
   }, []);
 
-  const infoItems     = getCached('CompanyList');
-  const supplierItems = getCached('SupplierList');
-  const branchItems   = getCached('BranchList');
-  const accountItems  = getCached('AccountList');
-  const subAccItems   = getCached('SubAccList');
-  const cpcItems      = getCached('CpcList');
-  const itemcodeItems = getCached('ItemcodeList');
-  const categoryItems = getCached('VendorCategory');
-  const noticeItems   = getCached('NoticeList');
+  const infoItems       = getCached('CompanyList');
+  const supplierItems   = getCached('SupplierList');
+  const branchItems     = getCached('BranchList');
+  const accountItems    = getCached('AccountList');
+  const subAccItems     = getCached('SubAccList');
+  const cpcItems        = getCached('CpcList');
+  const itemcodeItems   = getCached('ItemcodeList');
+  const categoryItems   = getCached('VendorCategory');
+  const noticeItems     = getCached('NoticeList');
   const vendorRuleItems = getCached('VendorRule');
 
   const handleStart    = (config) => { setBatchConfig(config); setStep(2); };
@@ -743,6 +749,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
           itemcodeItems={itemcodeItems}
           categoryItems={categoryItems}
           noticeItems={noticeItems}
+          vendorRuleItems={vendorRuleItems}
         />}
         {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} />}
       </div>
