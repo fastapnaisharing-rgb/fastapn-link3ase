@@ -76,23 +76,15 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
         <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
           <div style={{ position: 'relative' }}>
             <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={e => { setQuery(e.target.value); setActive(-1); }}
-              onKeyDown={handleKey}
+            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
               placeholder="Type BU, company name, Tax ID..."
-              style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c', transition: 'border-color 0.15s' }}
-              onFocus={e => e.target.style.borderColor = '#1a3a5c'}
-              onBlur={e => e.target.style.borderColor = '#e2e6ed'}
-            />
-            {query && (
-              <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
-            )}
+              style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>}
           </div>
           <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
-            {[['↑↓','Navigate'], ['Enter','Select'], ['Esc','Close']].map(([key, label]) => (
+            {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
               <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
                 <span>{label}</span>
@@ -147,6 +139,138 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
         <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
           <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {infoItems.length} records</span>
           <button onClick={onClose} style={{ padding: '7px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Branch Search Popup ───────────────────────────────────────────────────────
+function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' }) {
+  const [query, setQuery]   = useState('');
+  const [active, setActive] = useState(-1);
+  const inputRef            = useRef(null);
+  const listRef             = useRef(null);
+
+  useEffect(() => {
+    if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); }
+  }, [show]);
+
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
+
+  useEffect(() => {
+    if (active < 0 || !listRef.current) return;
+    listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+
+  if (!show) return null;
+
+  const buFiltered = bu
+    ? branchItems.filter(i => String(i['BU'] ?? '').toLowerCase() === bu.toLowerCase())
+    : branchItems;
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? buFiltered.filter(i =>
+        String(i['Branch Code'] ?? '').toLowerCase().includes(q) ||
+        String(i['Branch Direct'] ?? '').toLowerCase().includes(q) ||
+        String(i['Company Name'] ?? '').toLowerCase().includes(q) ||
+        String(i['BU Branch'] ?? '').toLowerCase().includes(q)
+      )
+    : buFiltered;
+
+  const handleKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
+    else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
+  };
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(2px)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: 'white', borderRadius: '14px', width: '680px', maxWidth: '95vw', height: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+        <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏪</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Branch</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
+              BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || 'ทั้งหมด'}</span>
+              {' · '}{filtered.length} สาขา
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+        <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
+          <div style={{ position: 'relative' }}>
+            <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
+              placeholder="Branch code, ชื่อสาขา..."
+              style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
+          </div>
+          <div style={{ marginTop: '6px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
+            {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
+              <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
+                <span>{label}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+        <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
+              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏪</div>
+              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบสาขา{query ? ` "${query}"` : ''}</div>
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                <tr>
+                  {[['Branch Code','100px'],['Direct','110px'],['Company Name',''],['BU Branch','80px'],['Status','70px']].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item, i) => {
+                  const isAct = i === active;
+                  const isClosed = item['Status'] === 'Closed';
+                  return (
+                    <tr key={item.id || i} data-row={i}
+                      onClick={() => !isClosed && onSelect(item)}
+                      onMouseEnter={() => !isClosed && setActive(i)}
+                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
+                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                        <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span>
+                      </td>
+                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
+                      <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company Name'] || '-'}</td>
+                      <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU Branch'] || '-'}</td>
+                      <td style={{ padding: '9px 12px' }}>
+                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>
+                          {item['Status'] || 'Active'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} สาขา</span>
+          <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -244,7 +368,6 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
       <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '4px 8px' }}>
         <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor Info</div>
       </div>
-      {/* Row 1: Vendor Name | Vendor Code | Vendor Site | Tax ID | No. */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={keyStyle}>Vendor Name</span>
@@ -267,7 +390,6 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
           <span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || '—'}</span>
         </div>
       </div>
-      {/* Row 2: Method(rule) | Paygroup(rule) | Par(rule) | Tax-Type | Notice | Sub Acc */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', ...divider }}>
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
           <span style={{ ...keyStyle, width: '52px' }}>Method</span>
@@ -294,7 +416,6 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
           <span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span>
         </div>
       </div>
-      {/* Row 3: Address */}
       <div style={rowStyle}>
         <span style={keyStyle}>Address</span>
         <span style={{ fontSize: '11px', color: v?.['Address'] ? '#1a3a5c' : '#ccc', flex: 1, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{v?.['Address'] || '—'}</span>
@@ -480,7 +601,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, onBranchSearch }) {
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -493,13 +614,8 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
           {(opts.options || []).map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : (
-        <input
-          type={opts.type || 'text'}
-          value={form[key]}
-          onChange={e => setField(key, e.target.value)}
-          readOnly={opts.readOnly}
-          style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: opts.readOnly ? '0.5px solid #5DCAA5' : '0.5px solid #ddd', background: opts.readOnly ? '#E1F5EE' : 'white', color: opts.readOnly ? '#085041' : '#1a3a5c' }}
-        />
+        <input type={opts.type || 'text'} value={form[key]} onChange={e => setField(key, e.target.value)} readOnly={opts.readOnly}
+          style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: opts.readOnly ? '0.5px solid #5DCAA5' : '0.5px solid #ddd', background: opts.readOnly ? '#E1F5EE' : 'white', color: opts.readOnly ? '#085041' : '#1a3a5c' }} />
       )}
     </div>
   );
@@ -507,30 +623,35 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        {/* Supplier code */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
-          <input
-            type="text"
-            value={form.supplierCode}
+          <input type="text" value={form.supplierCode}
             onChange={e => setField('supplierCode', e.target.value)}
             onBlur={() => onSupplierBlur(form.supplierCode)}
             onKeyDown={e => { if (e.key === 'Enter') onSupplierBlur(form.supplierCode); }}
-            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' }}
-          />
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' }} />
         </div>
-        {fld('Inv date',    'invDate',    { type: 'date',   width: '130px' })}
-        {fld('Invoice num', 'invoiceNum', {                  width: '110px' })}
-        {fld('CPC',         'cpc',        {                  width: '60px'  })}
-        {fld('Branch no.',  'branchNo',   { type: 'select', width: '100px' })}
-        {fld('GRT Status',  'grt',        { readOnly: true,  width: '80px'  })}
-        {fld('Due date', 'dueDate', { type: 'date', width: '130px' })}
+        {fld('Inv date',    'invDate',    { type: 'date',  width: '130px' })}
+        {fld('Invoice num', 'invoiceNum', {                 width: '110px' })}
+        {fld('CPC',         'cpc',        {                 width: '60px'  })}
+        {/* Branch no. — input + search icon */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
+          <label style={{ fontSize: '11px', color: '#888' }}>Branch no.</label>
+          <div style={{ position: 'relative' }}>
+            <input type="text" value={form.branchNo} onChange={e => setField('branchNo', e.target.value)}
+              style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+            <button onClick={onBranchSearch}
+              style={{ position: 'absolute', right: 0, top: 0, height: '30px', width: '28px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            </button>
+          </div>
+        </div>
+        {fld('GRT Status',  'grt',        { readOnly: true, width: '80px'  })}
+        {fld('Due date',    'dueDate',    { type: 'date',  width: '130px' })}
       </div>
       <div style={{ marginTop: '10px' }}>
-        <VendorInfoPanel
-          vendorInfo={vendorInfo}
-          vendorLoading={vendorLoading}
-          matchedRule={matchedRule}
-        />
+        <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} matchedRule={matchedRule} />
       </div>
     </div>
   );
@@ -549,23 +670,21 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
     cpc:          '',
     branchNo:     '',
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
-    dueDate:      batchConfig?.dueDate || '',  // ← ดึงจาก Batch Setup
+    dueDate:      batchConfig?.dueDate || '',
   });
-  const [vendorInfo, setVendorInfo] = useState(null);
+  const [vendorInfo, setVendorInfo]         = useState(null);
+  const [showBranchPopup, setShowBranchPopup] = useState(false);
 
   const setField = (key, val) => {
     setFormState(f => ({ ...f, [key]: val }));
     if (key === 'supplierCode' && !val) setVendorInfo(null);
   };
 
-  // ── lookup rule จาก Notice ของ vendor ──────────────────────────────────────
   const getMatchedRule = (vendor) => {
     if (!vendor?.['Notice']) return null;
     const notices = vendor['Notice'].split('|').map(n => n.trim()).filter(Boolean);
     for (const notice of notices) {
-      const rule = vendorRuleItems.find(
-        r => String(r['item'] ?? '').trim().toLowerCase() === notice.toLowerCase()
-      );
+      const rule = vendorRuleItems.find(r => String(r['item'] ?? '').trim().toLowerCase() === notice.toLowerCase());
       if (rule) return rule;
     }
     return null;
@@ -591,6 +710,13 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
+      <BranchSearchPopup
+        show={showBranchPopup}
+        onClose={() => setShowBranchPopup(false)}
+        onSelect={(item) => { setField('branchNo', item['Branch Code'] || ''); setShowBranchPopup(false); }}
+        branchItems={branchItems}
+        bu={batchConfig?.bu || ''}
+      />
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader
           form={form}
@@ -599,6 +725,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
           vendorInfo={vendorInfo}
           vendorLoading={false}
           matchedRule={matchedRule}
+          onBranchSearch={() => setShowBranchPopup(true)}
         />
         {/* TODO: Invoice lines section */}
       </div>
