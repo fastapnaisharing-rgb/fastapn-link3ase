@@ -171,7 +171,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' 
   if (!show) return null;
 
   const buFiltered = bu
-    ? branchItems.filter(i => String(i['BU'] ?? '').toLowerCase() === bu.toLowerCase())
+    ? branchItems.filter(i => String(i['bu'] ?? '').toLowerCase() === bu.toLowerCase())
     : branchItems;
 
   const q = query.trim().toLowerCase();
