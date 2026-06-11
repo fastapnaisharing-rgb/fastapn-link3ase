@@ -6,6 +6,27 @@ import { useUserRole } from '../contexts/useUserRole';
 
 const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
 
+const BRANCH_EDIT = [
+  ['Branch Code',                           'Branch Code'],
+  ['Branch Direct',                         'Branch Direct'],
+  ['Branch Allocate',                       'Branch Allocate'],
+  ['BU Code',                               'BU Code'],
+  ['Company for Show in Report Display',    'Company for Report'],
+  ['Simple Company',                        'Simple Company'],
+  ['BU-TaxID',                              'BU Tax ID'],
+  ['BU-Branch',                             'BU Branch'],
+  ['Simple Brand Code',                     'Simple Brand Code'],
+  ['%',                                     '%'],
+  ['DB(%)',                                 'DB(%)'],
+  ['cpc',                                   'CPC'],
+  ['Branch Address',                        'Branch Address'],
+  ['Group-P',                               'Group-P'],
+  ['bu',                                    'BU'],
+  ['status',                                'Status'],
+  ['Inactive Date',                         'Inactive Date'],
+];
+const BRANCH_COMBO = ['Branch Direct', 'bu', 'Group-P', 'status'];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BUSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,24 +166,49 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
   );
 }
 
-// ── Branch Search Popup ───────────────────────────────────────────────────────
-function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onAdd }) {
-  const [query, setQuery]   = useState('');
-  const [active, setActive] = useState(-1);
-  const inputRef            = useRef(null);
-  const listRef             = useRef(null);
+// ─────────────────────────────────────────────────────────────────────────────
+// BranchSearchPopup  (view: 'search' | 'edit' | 'new')
+// ─────────────────────────────────────────────────────────────────────────────
+function BranchSearchPopup({
+  show, onClose, onSelect,
+  branchItems = [], bu = '',
+  onSaveBranch,          // async ({ form, isEdit, editTarget }) => void
+  branchOptions = {},    // { 'Branch Direct': [...], bu: [...], 'Group-P': [...], status: [...] }
+}) {
+  const [query,       setQuery]       = useState('');
+  const [active,      setActive]      = useState(-1);
+  const [view,        setView]        = useState('search'); // 'search' | 'edit' | 'new'
+  const [editTarget,  setEditTarget]  = useState(null);
+  const [form,        setForm]        = useState({});
+  const [formError,   setFormError]   = useState('');
+  const [saving,      setSaving]      = useState(false);
 
+  const inputRef = useRef(null);
+  const listRef  = useRef(null);
+
+  // ── reset on open/close ──
   useEffect(() => {
-    if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); }
+    if (show) {
+      setQuery(''); setActive(-1);
+      setView('search'); setEditTarget(null); setForm({}); setFormError('');
+      setTimeout(() => inputRef.current?.focus(), 60);
+    }
   }, [show]);
 
+  // ── keyboard ──
   useEffect(() => {
     if (!show) return;
-    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    const h = (e) => {
+      if (e.key === 'Escape') {
+        if (view === 'search') onClose();
+        else handleBack();
+      }
+    };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [show, onClose]);
+  }, [show, onClose, view]);
 
+  // ── scroll active row ──
   useEffect(() => {
     if (active < 0 || !listRef.current) return;
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
@@ -170,10 +216,10 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
 
   if (!show) return null;
 
+  // ── filter ──
   const buFiltered = bu
     ? branchItems.filter(i => String(i['bu'] ?? '').toLowerCase() === bu.toLowerCase())
     : branchItems;
-
   const q = query.trim().toLowerCase();
   const filtered = q
     ? buFiltered.filter(i =>
@@ -190,14 +236,68 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
 
-  // SVG icons
-  const IconInterbranch = () => (
+  // ── open edit ──
+  const handleOpenEdit = (item) => {
+    const f = {};
+    BRANCH_EDIT.forEach(([k]) => { f[k] = item[k] || ''; });
+    setEditTarget(item);
+    setForm(f);
+    setFormError('');
+    setView('edit');
+  };
+
+  // ── open new ──
+  const handleOpenNew = () => {
+    const f = {};
+    BRANCH_EDIT.forEach(([k]) => { f[k] = ''; });
+    if (bu) f['bu'] = bu;   // pre-fill BU จาก batchConfig
+    setEditTarget(null);
+    setForm(f);
+    setFormError('');
+    setView('new');
+  };
+
+  // ── back to search ──
+  const handleBack = () => {
+    setView('search');
+    setEditTarget(null);
+    setForm({});
+    setFormError('');
+    setTimeout(() => inputRef.current?.focus(), 60);
+  };
+
+  // ── validate ──
+  const validateForm = (f) => {
+    if (!f['Branch Code']?.trim())                                return 'กรุณากรอก Branch Code';
+    if (f['status'] === 'Closed' && !f['Inactive Date'])          return 'กรุณากรอก Inactive Date เมื่อ Status เป็น Closed';
+    if (f['status'] === 'Relocate' && !f['Branch Allocate'])      return 'กรุณากรอก Branch Allocate เมื่อ Status เป็น Relocate';
+    return '';
+  };
+
+  // ── save ──
+  const handleSave = async () => {
+    const err = validateForm(form);
+    if (err) { setFormError(err); return; }
+    setSaving(true);
+    try {
+      await onSaveBranch({ form, isEdit: view === 'edit', editTarget });
+      handleBack();
+    } catch (e) {
+      setFormError('บันทึกไม่สำเร็จ: ' + e.message);
+    }
+    setSaving(false);
+  };
+
+  // ── setFormField ──
+  const setField = (key, val) => { setForm(f => ({ ...f, [key]: val })); setFormError(''); };
+
+  // ── icons ──
+  const IconIB = () => (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3m8 0h3a2 2 0 002-2v-3"/>
       <circle cx="12" cy="12" r="3"/>
     </svg>
   );
-
   const IconEdit = () => (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
@@ -205,160 +305,251 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
     </svg>
   );
 
-  return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(2px)' }}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      {/* ── Modal — wider + taller ── */}
-      <div style={{ background: 'white', borderRadius: '14px', width: '900px', maxWidth: '96vw', height: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
-
+  // ════════════════════════════════════════════════════════
+  // RENDER: Form View (Edit / New) — same form, different mode
+  // ════════════════════════════════════════════════════════
+  const renderFormView = () => {
+    const isEdit = view === 'edit';
+    return (
+      <>
         {/* Header */}
         <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏪</div>
+          <button onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>
+            ← Back
+          </button>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isEdit ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>
+            {isEdit ? '✏️' : '➕'}
+          </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Branch</div>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>
+              {isEdit ? `Edit branch — ${editTarget?.['Branch Code'] || ''}` : 'New branch'}
+            </div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
-              BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || 'ทั้งหมด'}</span>
-              {' · '}{filtered.length} สาขา
+              BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || '-'}</span>
             </div>
           </div>
-          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding: '7px 18px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            {saving ? 'Saving...' : '💾 Save'}
+          </button>
         </div>
 
-        {/* Search bar row — narrower input + Add button */}
-      <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
-
-      {/* Search input — flex:1 ยืดเต็มพื้นที่ */}
-      <div style={{ position: 'relative', flex: 1 }}>
-        <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-        </svg>
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={e => { setQuery(e.target.value); setActive(-1); }}
-          onKeyDown={handleKey}
-          placeholder="Branch code, ชื่อสาขา..."
-          style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
-          onFocus={e => e.target.style.borderColor = '#1a3a5c'}
-          onBlur={e => e.target.style.borderColor = '#e2e6ed'}
-        />
-        {query && (
-          <button
-            onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            ×
-          </button>
+        {/* Error banner */}
+        {formError && (
+          <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>
+            ⚠️ {formError}
+          </div>
         )}
-      </div>
 
-          {/* Add button — ชิดขวา */}
-          <button
-            onClick={() => onAdd && onAdd()}
-            style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 'auto' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Add
-          </button>
-        </div>
+        {/* Form body — 2 columns */}
+        <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px' }}>
+            {BRANCH_EDIT.map(([key, label]) => {
+              const isReadOnly   = key === 'Branch Code' && isEdit;
+              const isFullWidth  = key === 'Branch Address';
+              const needInactive = key === 'Inactive Date';
+              const isDisabled   = needInactive && form['status'] !== 'Closed';
+              const isRequired   =
+                (key === 'Branch Code') ||
+                (key === 'Inactive Date'  && form['status'] === 'Closed') ||
+                (key === 'Branch Allocate'&& form['status'] === 'Relocate');
+              const hasErr = !!formError && isRequired && !form[key]?.trim();
 
-          {/* Keyboard hints */}
-          <div style={{ fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
-            {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
-              <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
-                <span>{label}</span>
-              </span>
-            ))}
+              const baseInput = {
+                height: '30px', padding: '0 8px', fontSize: '12px',
+                borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%',
+                border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd',
+                background: (isReadOnly || isDisabled) ? '#f5f5f5' : 'white',
+                color:      (isReadOnly || isDisabled) ? '#999'    : '#1a3a5c',
+              };
+
+              const opts = branchOptions[key] || [];
+
+              return (
+                <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: isFullWidth ? 'span 2' : undefined }}>
+                  <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>
+                    {label}{isRequired && <span style={{ color: '#e24b4a' }}> *</span>}
+                    {needInactive && <span style={{ fontSize: '10px', color: '#bbb' }}> (เฉพาะ Closed)</span>}
+                  </label>
+
+                  {key === 'Inactive Date' ? (
+                    <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={baseInput} />
+                  ) : BRANCH_COMBO.includes(key) ? (
+                    // inline datalist combobox
+                    <>
+                      <input
+                        list={`combo-branch-${key}`}
+                        value={form[key] || ''}
+                        onChange={e => setField(key, e.target.value)}
+                        placeholder={`เลือก ${label}`}
+                        style={baseInput}
+                      />
+                      <datalist id={`combo-branch-${key}`}>
+                        {opts.map((o, i) => <option key={i} value={o} />)}
+                      </datalist>
+                    </>
+                  ) : (
+                    <input
+                      value={form[key] || ''}
+                      readOnly={isReadOnly}
+                      onChange={e => !isReadOnly && setField(key, e.target.value)}
+                      style={baseInput}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
-        </div>
-
-        {/* Table */}
-        <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
-              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏪</div>
-              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบสาขา{query ? ` "${query}"` : ''}</div>
-            </div>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                <tr>
-                  {[
-                    ['Branch Code', '110px'],
-                    ['Direct',      '120px'],
-                    ['Company Name',''],
-                    ['BU Branch',   '90px'],
-                    ['Status',      '80px'],
-                    ['Action',      '128px'],
-                  ].map(([h, w]) => (
-                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((item, i) => {
-                  const isAct    = i === active;
-                  const isClosed = item['status'] === 'Closed';
-                  return (
-                    <tr
-                      key={item.id || i}
-                      data-row={i}
-                      onClick={() => !isClosed && onSelect(item)}
-                      onMouseEnter={() => !isClosed && setActive(i)}
-                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}
-                    >
-                      {/* Branch Code */}
-                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
-                        <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span>
-                      </td>
-                      {/* Direct */}
-                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
-                      {/* Company Name */}
-                      <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>{item['Company for Show in Report Display'] || '-'}</td>
-                      {/* BU Branch */}
-                      <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU-Branch'] || '-'}</td>
-                      {/* Status */}
-                      <td style={{ padding: '9px 12px' }}>
-                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>
-                          {item['status'] || 'Active'}
-                        </span>
-                      </td>
-                      {/* Action — Interbranch + Edit */}
-                      <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                          {/* Interbranch button */}
-                          <button
-                            title="Interbranch"
-                            onClick={e => { e.stopPropagation(); /* TODO: interbranch handler */ }}
-                            style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
-                            <IconInterbranch />
-                            IB
-                          </button>
-                          {/* Edit button */}
-                          <button
-                            title="Edit"
-                            onClick={e => { e.stopPropagation(); /* TODO: edit handler */ }}
-                            style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
-                            <IconEdit />
-                            Edit
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
         </div>
 
         {/* Footer */}
         <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} สาขา</span>
-          <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+          {/* updated_by/at — แสดงเฉพาะ Edit mode */}
+          {isEdit && editTarget?.['updated_by'] ? (
+            <span style={{ fontSize: '11px', color: '#bbb' }}>
+              Updated by <strong style={{ color: '#888' }}>{editTarget['updated_by']}</strong>
+              {editTarget['updated_at'] ? ` · ${new Date(editTarget['updated_at']).toLocaleString('th-TH')}` : ''}
+            </span>
+          ) : <span />}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={handleBack} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>
+              ← Back to search
+            </button>
+            <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>
+              {saving ? 'Saving...' : '💾 Save'}
+            </button>
+          </div>
         </div>
+      </>
+    );
+  };
+
+  // ════════════════════════════════════════════════════════
+  // RENDER: Search View (Table ปกติ)
+  // ════════════════════════════════════════════════════════
+  const renderSearchView = () => (
+    <>
+      {/* Header */}
+      <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏪</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Branch</div>
+          <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
+            BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || 'ทั้งหมด'}</span>
+            {' · '}{filtered.length} สาขา
+          </div>
+        </div>
+        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+      </div>
+
+      {/* Search bar + Add */}
+      <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            <input ref={inputRef} value={query}
+              onChange={e => { setQuery(e.target.value); setActive(-1); }}
+              onKeyDown={handleKey}
+              placeholder="Branch code, ชื่อสาขา..."
+              style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+              onFocus={e => e.target.style.borderColor = '#1a3a5c'}
+              onBlur={e => e.target.style.borderColor = '#e2e6ed'}
+            />
+            {query && (
+              <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+            )}
+          </div>
+          <button onClick={handleOpenNew} style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add
+          </button>
+        </div>
+        <div style={{ fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
+          {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
+            <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
+              <span>{label}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
+            <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏪</div>
+            <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบสาขา{query ? ` "${query}"` : ''}</div>
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+              <tr>
+                {[['Branch Code','110px'],['Direct','120px'],['Company Name',''],['BU Branch','90px'],['Status','80px'],['Action','128px']].map(([h, w]) => (
+                  <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((item, i) => {
+                const isAct    = i === active;
+                const isClosed = item['status'] === 'Closed';
+                return (
+                  <tr key={item.id || i} data-row={i}
+                    onClick={() => !isClosed && onSelect(item)}
+                    onMouseEnter={() => !isClosed && setActive(i)}
+                    style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
+                    <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                      <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span>
+                    </td>
+                    <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
+                    <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>{item['Company for Show in Report Display'] || '-'}</td>
+                    <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU-Branch'] || '-'}</td>
+                    <td style={{ padding: '9px 12px' }}>
+                      <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>
+                        {item['status'] || 'Active'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {/* IB button — TODO: IB handler */}
+                        <button title="Interbranch" onClick={e => e.stopPropagation()}
+                          style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
+                          <IconIB /> IB
+                        </button>
+                        {/* Edit → สลับ view */}
+                        <button title="Edit" onClick={e => { e.stopPropagation(); handleOpenEdit(item); }}
+                          style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
+                          <IconEdit /> Edit
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+        <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} สาขา</span>
+        <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+      </div>
+    </>
+  );
+
+  // ── main render ──
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(2px)' }}
+      onMouseDown={e => { if (e.target === e.currentTarget && view === 'search') onClose(); }}
+    >
+      <div style={{ background: 'white', borderRadius: '14px', width: '900px', maxWidth: '96vw', height: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+        {view === 'search' ? renderSearchView() : renderFormView()}
       </div>
     </div>
   );
@@ -446,7 +637,6 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
   const valStyle = (hasVal) => ({ fontSize: '11px', color: hasVal ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 });
   const rowStyle = { display: 'flex', alignItems: 'center', padding: '4px 8px' };
   const divider  = { borderBottom: '0.5px solid #f0f0f0' };
-
   return (
     <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', position: 'relative' }}>
       {vendorLoading && (
@@ -456,52 +646,19 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
         <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor Info</div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', ...divider }}>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={keyStyle}>Vendor Name</span>
-          <span style={valStyle(!!v?.['Supplier Name'])} title={v?.['Supplier Name'] || ''}>{v?.['Supplier Name'] || '—'}</span>
-        </div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={keyStyle}>Vendor Code</span>
-          <span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span>
-        </div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={keyStyle}>Vendor Site</span>
-          <span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || '—'}</span>
-        </div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={keyStyle}>Tax ID</span>
-          <span style={{ ...valStyle(!!v?.['Tax ID']), fontFamily: 'monospace' }}>{v?.['Tax ID'] || '—'}</span>
-        </div>
-        <div style={rowStyle}>
-          <span style={keyStyle}>No.</span>
-          <span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || '—'}</span>
-        </div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Name</span><span style={valStyle(!!v?.['Supplier Name'])} title={v?.['Supplier Name'] || ''}>{v?.['Supplier Name'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Code</span><span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Site</span><span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Tax ID</span><span style={{ ...valStyle(!!v?.['Tax ID']), fontFamily: 'monospace' }}>{v?.['Tax ID'] || '—'}</span></div>
+        <div style={rowStyle}><span style={keyStyle}>No.</span><span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || '—'}</span></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', ...divider }}>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={{ ...keyStyle, width: '52px' }}>Method</span>
-          <span style={valStyle(!!r?.Method)}>{r?.Method || '—'}</span>
-        </div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={{ ...keyStyle, width: '62px' }}>Paygroup</span>
-          <span style={valStyle(!!r?.Paygroup)}>{r?.Paygroup || '—'}</span>
-        </div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={{ ...keyStyle, width: '26px' }}>Par</span>
-          <span style={valStyle(!!r?.Par)}>{r?.Par || '—'}</span>
-        </div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={{ ...keyStyle, width: '60px' }}>Tax-Type</span>
-          <span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span>
-        </div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}>
-          <span style={{ ...keyStyle, width: '52px' }}>Notice</span>
-          <span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span>
-        </div>
-        <div style={rowStyle}>
-          <span style={{ ...keyStyle, width: '52px' }}>Sub Acc</span>
-          <span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span>
-        </div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Method</span><span style={valStyle(!!r?.Method)}>{r?.Method || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '62px' }}>Paygroup</span><span style={valStyle(!!r?.Paygroup)}>{r?.Paygroup || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '26px' }}>Par</span><span style={valStyle(!!r?.Par)}>{r?.Par || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '60px' }}>Tax-Type</span><span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Notice</span><span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span></div>
+        <div style={rowStyle}><span style={{ ...keyStyle, width: '52px' }}>Sub Acc</span><span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span></div>
       </div>
       <div style={rowStyle}>
         <span style={keyStyle}>Address</span>
@@ -710,7 +867,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        {/* Supplier code */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
           <input type="text" value={form.supplierCode}
@@ -722,7 +878,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         {fld('Inv date',    'invDate',    { type: 'date',  width: '130px' })}
         {fld('Invoice num', 'invoiceNum', {                 width: '110px' })}
         {fld('CPC',         'cpc',        {                 width: '60px'  })}
-        {/* Branch no. — input + search icon */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Branch no.</label>
           <div style={{ position: 'relative' }}>
@@ -745,11 +900,14 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
 }
 
 // ── Phase 2: Invoice Entry ────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
+function InvoiceEntry({
+  batchConfig, invoices, setInvoices, onNext,
   supplierItems = [], branchItems = [], accountItems = [], subAccItems = [],
   cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [],
-  vendorRuleItems = [] }) {
-
+  vendorRuleItems = [],
+  fetchCollection,   // ✅ รับจาก APController
+  userName = '',     // ✅ รับจาก APController
+}) {
   const [form, setFormState] = useState({
     supplierCode: '',
     invDate:      '',
@@ -759,12 +917,20 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
     dueDate:      batchConfig?.dueDate || '',
   });
-  const [vendorInfo, setVendorInfo]           = useState(null);
-  const [showBranchPopup, setShowBranchPopup] = useState(false);
+  const [vendorInfo,       setVendorInfo]       = useState(null);
+  const [showBranchPopup,  setShowBranchPopup]  = useState(false);
 
   const setField = (key, val) => {
     setFormState(f => ({ ...f, [key]: val }));
     if (key === 'supplierCode' && !val) setVendorInfo(null);
+  };
+
+  // ── build branchOptions for combobox datalist ──
+  const branchOptions = {
+    'Branch Direct': [...new Set(branchItems.map(b => b['Branch Direct']).filter(Boolean))],
+    'bu':            [...new Set(branchItems.map(b => b['bu']).filter(Boolean))],
+    'Group-P':       [...new Set(branchItems.map(b => b['Group-P']).filter(Boolean))],
+    'status':        ['Active', 'Closed', 'Relocate'],
   };
 
   const getMatchedRule = (vendor) => {
@@ -793,6 +959,33 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
     setVendorInfo(found || null);
   };
 
+  // ✅ Save branch: Insert หรือ Update ทีละ 1 แล้ว refresh cache
+  const handleSaveBranch = async ({ form: branchForm, isEdit, editTarget }) => {
+    const meta = {
+      updated_by: userName,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (isEdit) {
+      // ── Update ──
+      const { error } = await supabase
+        .from('branch_list')
+        .update({ ...branchForm, ...meta })
+        .eq('id', editTarget.id);
+      if (error) throw error;
+    } else {
+      // ── Insert ──
+      const { error } = await supabase
+        .from('branch_list')
+        .insert([{ ...branchForm, ...meta }]);
+      if (error) throw error;
+    }
+
+    // ✅ Force refresh BranchList ใน DataCache
+    // → branchItems prop จะอัปทันทีผ่าน getCached ใน APController
+    await fetchCollection('BranchList', true);
+  };
+
   const matchedRule = getMatchedRule(vendorInfo);
 
   return (
@@ -803,7 +996,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
         onSelect={(item) => { setField('branchNo', item['Branch Code'] || ''); setShowBranchPopup(false); }}
         branchItems={branchItems}
         bu={batchConfig?.bu || ''}
-        onAdd={() => { /* TODO: open add branch form */ }}
+        onSaveBranch={handleSaveBranch}
+        branchOptions={branchOptions}
       />
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader
@@ -907,6 +1101,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
   const { fetchCollection, getCached } = useDataCache();
+  const { userName, currentUser }      = useAuth(); // ✅ เพิ่ม
 
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
@@ -951,21 +1146,25 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
       <StepBar step={step} onGo={setStep} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
-        {step === 2 && <InvoiceEntry
-          batchConfig={batchConfig}
-          invoices={invoices}
-          setInvoices={setInvoices}
-          onNext={() => setStep(3)}
-          supplierItems={supplierItems}
-          branchItems={branchItems}
-          accountItems={accountItems}
-          subAccItems={subAccItems}
-          cpcItems={cpcItems}
-          itemcodeItems={itemcodeItems}
-          categoryItems={categoryItems}
-          noticeItems={noticeItems}
-          vendorRuleItems={vendorRuleItems}
-        />}
+        {step === 2 && (
+          <InvoiceEntry
+            batchConfig={batchConfig}
+            invoices={invoices}
+            setInvoices={setInvoices}
+            onNext={() => setStep(3)}
+            supplierItems={supplierItems}
+            branchItems={branchItems}
+            accountItems={accountItems}
+            subAccItems={subAccItems}
+            cpcItems={cpcItems}
+            itemcodeItems={itemcodeItems}
+            categoryItems={categoryItems}
+            noticeItems={noticeItems}
+            vendorRuleItems={vendorRuleItems}
+            fetchCollection={fetchCollection}                    // ✅ ส่งลงไป
+            userName={userName || currentUser?.email || ''}      // ✅ ส่งลงไป
+          />
+        )}
         {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} />}
       </div>
     </div>
