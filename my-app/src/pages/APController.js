@@ -100,13 +100,13 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                <tr>
-                  {[['BU','72px'],['Company Name',''],['Tax ID','132px'],['Book','68px'],['AP GRT','88px']].map(([h, w]) => (
-                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                  <tr>
+                    {[['Branch Code','100px'],['Branch Direct','110px'],['Company Name',''],['BU Branch','80px'],['Status','70px']].map(([h, w]) => (
+                      <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
               <tbody>
                 {filtered.map((item, i) => {
                   const isAct = i === active;
@@ -179,8 +179,8 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' 
     ? buFiltered.filter(i =>
         String(i['Branch Code'] ?? '').toLowerCase().includes(q) ||
         String(i['Branch Direct'] ?? '').toLowerCase().includes(q) ||
-        String(i['Company Name'] ?? '').toLowerCase().includes(q) ||
-        String(i['BU Branch'] ?? '').toLowerCase().includes(q)
+        String(i['Company for Show in Report Display'] ?? '').toLowerCase().includes(q) ||
+        String(i['BU-Branch'] ?? '').toLowerCase().includes(q)
       )
     : buFiltered;
 
@@ -242,27 +242,27 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' 
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item, i) => {
-                  const isAct = i === active;
-                  const isClosed = item['Status'] === 'Closed';
-                  return (
-                    <tr key={item.id || i} data-row={i}
-                      onClick={() => !isClosed && onSelect(item)}
-                      onMouseEnter={() => !isClosed && setActive(i)}
-                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
-                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
-                        <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span>
-                      </td>
-                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
-                      <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company Name'] || '-'}</td>
-                      <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU Branch'] || '-'}</td>
-                      <td style={{ padding: '9px 12px' }}>
-                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>
-                          {item['Status'] || 'Active'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
+                  {filtered.map((item, i) => {
+                    const isAct = i === active;
+                    const isClosed = item['status'] === 'Closed';
+                    return (
+                      <tr key={item.id || i} data-row={i}
+                        onClick={() => !isClosed && onSelect(item)}
+                        onMouseEnter={() => !isClosed && setActive(i)}
+                        style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
+                        <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                          <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span>
+                        </td>
+                        <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
+                        <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company for Show in Report Display'] || '-'}</td>
+                        <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU-Branch'] || '-'}</td>
+                        <td style={{ padding: '9px 12px' }}>
+                          <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>
+                            {item['status'] || 'Active'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
                 })}
               </tbody>
             </table>
