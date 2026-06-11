@@ -23,6 +23,7 @@ const TABLE_MAP = {
   itemcode_list:   'itemcode_list',
   supplier_list:   'supplier_list',
   vendor_category: 'vendor_category',
+  VendorRule:       'Vendor_rule',
   notice_list:     'notice_list',
   sub_acc_list:    'sub_acc_list',
   cpc_list:        'cpc_list',
