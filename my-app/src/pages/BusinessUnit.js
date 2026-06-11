@@ -316,21 +316,37 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
-    const dataFields = allFields.filter(f => !['updated_by','updated_at'].includes(f));
-    const existingMap = {};
-    existingItems.forEach(item => { if (item[keyField]) existingMap[String(item[keyField]).trim()] = item; });
-    const seenKeys = new Set();
-    return rawRows.map(row => {
-      const keyVal = String(row[keyField] ?? '').trim();
-      if (!keyVal || seenKeys.has(keyVal)) return { ...row, _status: 'duplicate', _changes: [] };
-      seenKeys.add(keyVal);
-      const existing = existingMap[keyVal];
-      if (!existing) return { ...row, _status: 'new', _changes: [] };
-      const changes = [];
-      dataFields.forEach(f => { const n = String(row[f]??'').trim(), o = String(existing[f]??'').trim(); if (n !== o) changes.push({ field: f, old: o, new: n }); });
-      return { ...row, _status: changes.length > 0 ? 'update' : 'nochange', _changes: changes, _existingId: existing.id };
+  const dataFields = allFields.filter(f => !['updated_by', 'updated_at'].includes(f));
+  const existingMap = {};
+  existingItems.forEach(item => {
+    if (item[keyField]) existingMap[String(item[keyField]).trim()] = item;
+  });
+  const seenKeys = new Set();
+
+  return rawRows.map(row => {
+    const keyVal = String(row[keyField] ?? '').trim();
+    if (!keyVal || seenKeys.has(keyVal)) return { ...row, _status: 'duplicate', _changes: [] };
+    seenKeys.add(keyVal);
+    const existing = existingMap[keyVal];
+    if (!existing) return { ...row, _status: 'new', _changes: [] };
+
+    const changes = [];
+    dataFields.forEach(f => {
+      const newVal = String(row[f] ?? '').trim();
+      const oldVal = String(existing[f] ?? '').trim();
+      // ✅ ข้ามถ้าค่าใหม่ว่าง — ไม่นับเป็น change
+      if (newVal === '') return;
+      if (newVal !== oldVal) changes.push({ field: f, old: oldVal, new: newVal });
     });
-  };
+
+    return {
+      ...row,
+      _status: changes.length > 0 ? 'update' : 'nochange',
+      _changes: changes,
+      _existingId: existing.id,
+    };
+  });
+};
 
   const exportToExcel = (data, fields, sheetName, filePrefix) => {
     const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; });
@@ -461,8 +477,22 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         }
       }
       for (const row of updateRows) {
-        const d = {}; INFO_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); });
-        const { data: upd, error } = await supabase.from('company_list').update(d).eq('id', row._existingId).select().single();
+        const existing = infoItems.find(i => i.id === row._existingId);
+        const d = { ...existing };
+
+        INFO_FIELDS.forEach(k => {
+          if (k === 'updated_by') { d[k] = userName || currentUser?.email || ''; return; }
+          if (k === 'updated_at') { d[k] = new Date().toISOString(); return; }
+          const newVal = String(row[k] ?? '').trim();
+          if (newVal !== '') d[k] = newVal;
+        });
+
+        const { data: upd, error } = await supabase
+          .from('company_list')
+          .update(d)
+          .eq('id', row._existingId)
+          .select()
+          .single();
         if (error) throw error;
         setInfoItems(prev => prev.map(i => i.id === row._existingId ? { ...i, ...upd } : i));
       }
@@ -686,11 +716,26 @@ const handleRestore = async (binItem) => {
         }
       }
       for (const row of updateRows) {
-        const d = {}; BRANCH_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); });
-        const { data: upd, error } = await supabase.from('branch_list').update(d).eq('id', row._existingId).select().single();
-        if (error) throw error;
-        setBranches(prev => prev.map(b => b.id === row._existingId ? { ...b, ...upd } : b));
-      }
+          const existing = branches.find(b => b.id === row._existingId);
+          const d = { ...existing }; // เริ่มจากข้อมูลเดิมทั้งหมด
+
+          // ✅ Merge เฉพาะ field ที่ไฟล์มีค่า (ไม่ว่าง)
+          BRANCH_FIELDS.forEach(k => {
+            if (k === 'updated_by') { d[k] = userName || currentUser?.email || ''; return; }
+            if (k === 'updated_at') { d[k] = new Date().toISOString(); return; }
+            const newVal = String(row[k] ?? '').trim();
+            if (newVal !== '') d[k] = newVal; // Replace เฉพาะถ้ามีค่าใหม่
+          });
+
+          const { data: upd, error } = await supabase
+            .from('branch_list')
+            .update(d)
+            .eq('id', row._existingId)
+            .select()
+            .single();
+          if (error) throw error;
+          setBranches(prev => prev.map(b => b.id === row._existingId ? { ...b, ...upd } : b));
+        }
       setShowBranchPreview(false); setBranchPreviewRows([]);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
