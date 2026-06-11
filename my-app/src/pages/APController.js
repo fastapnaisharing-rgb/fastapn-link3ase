@@ -701,6 +701,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     fetchCollection('ItemcodeList');
     fetchCollection('VendorCategory');
     fetchCollection('NoticeList');
+    fetchCollection('VendorRule');
   }, []);
 
   const infoItems     = getCached('CompanyList');
@@ -712,6 +713,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   const itemcodeItems = getCached('ItemcodeList');
   const categoryItems = getCached('VendorCategory');
   const noticeItems   = getCached('NoticeList');
+  const vendorRuleItems = getCached('VendorRule');
 
   const handleStart    = (config) => { setBatchConfig(config); setStep(2); };
   const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
