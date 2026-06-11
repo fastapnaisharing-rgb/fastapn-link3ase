@@ -100,13 +100,13 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                  <tr>
-                    {[['Branch Code','100px'],['Branch Direct','110px'],['Company Name',''],['BU Branch','80px'],['Status','70px']].map(([h, w]) => (
-                      <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                <tr>
+                  {[['Branch Code','100px'],['Branch Direct','110px'],['Company Name',''],['BU Branch','80px'],['Status','70px']].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
               <tbody>
                 {filtered.map((item, i) => {
                   const isAct = i === active;
@@ -146,7 +146,7 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
 }
 
 // ── Branch Search Popup ───────────────────────────────────────────────────────
-function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' }) {
+function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onAdd }) {
   const [query, setQuery]   = useState('');
   const [active, setActive] = useState(-1);
   const inputRef            = useRef(null);
@@ -190,12 +190,30 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' 
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
 
+  // SVG icons
+  const IconInterbranch = () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3m8 0h3a2 2 0 002-2v-3"/>
+      <circle cx="12" cy="12" r="3"/>
+    </svg>
+  );
+
+  const IconEdit = () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+    </svg>
+  );
+
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(2px)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: 'white', borderRadius: '14px', width: '680px', maxWidth: '95vw', height: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+      {/* ── Modal — wider + taller ── */}
+      <div style={{ background: 'white', borderRadius: '14px', width: '900px', maxWidth: '96vw', height: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+
+        {/* Header */}
         <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
           <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏪</div>
           <div style={{ flex: 1 }}>
@@ -207,17 +225,40 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' 
           </div>
           <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
+
+        {/* Search bar row — narrower input + Add button */}
         <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
-          <div style={{ position: 'relative' }}>
-            <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
-              placeholder="Branch code, ชื่อสาขา..."
-              style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
-              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
-            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
+            {/* Search input — fixed width, not full-width */}
+            <div style={{ position: 'relative', width: '340px', flexShrink: 0 }}>
+              <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={e => { setQuery(e.target.value); setActive(-1); }}
+                onKeyDown={handleKey}
+                placeholder="Branch code, ชื่อสาขา..."
+                style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+                onFocus={e => e.target.style.borderColor = '#1a3a5c'}
+                onBlur={e => e.target.style.borderColor = '#e2e6ed'}
+              />
+              {query && (
+                <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+              )}
+            </div>
+
+            {/* Add button */}
+            <button
+              onClick={() => onAdd && onAdd()}
+              style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add
+            </button>
           </div>
-          <div style={{ marginTop: '6px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
+
+          {/* Keyboard hints */}
+          <div style={{ fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
             {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
               <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
@@ -226,6 +267,8 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' 
             ))}
           </div>
         </div>
+
+        {/* Table */}
         <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
           {filtered.length === 0 ? (
             <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
@@ -236,38 +279,76 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '' 
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
-                  {[['Branch Code','100px'],['Direct','110px'],['Company Name',''],['BU Branch','80px'],['Status','70px']].map(([h, w]) => (
-                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                  {[
+                    ['Branch Code', '110px'],
+                    ['Direct',      '120px'],
+                    ['Company Name',''],
+                    ['BU Branch',   '90px'],
+                    ['Status',      '80px'],
+                    ['Action',      '128px'],
+                  ].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                  {filtered.map((item, i) => {
-                    const isAct = i === active;
-                    const isClosed = item['status'] === 'Closed';
-                    return (
-                      <tr key={item.id || i} data-row={i}
-                        onClick={() => !isClosed && onSelect(item)}
-                        onMouseEnter={() => !isClosed && setActive(i)}
-                        style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
-                        <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
-                          <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span>
-                        </td>
-                        <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
-                        <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company for Show in Report Display'] || '-'}</td>
-                        <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU-Branch'] || '-'}</td>
-                        <td style={{ padding: '9px 12px' }}>
-                          <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>
-                            {item['status'] || 'Active'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
+                {filtered.map((item, i) => {
+                  const isAct    = i === active;
+                  const isClosed = item['status'] === 'Closed';
+                  return (
+                    <tr
+                      key={item.id || i}
+                      data-row={i}
+                      onClick={() => !isClosed && onSelect(item)}
+                      onMouseEnter={() => !isClosed && setActive(i)}
+                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}
+                    >
+                      {/* Branch Code */}
+                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                        <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span>
+                      </td>
+                      {/* Direct */}
+                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
+                      {/* Company Name */}
+                      <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>{item['Company for Show in Report Display'] || '-'}</td>
+                      {/* BU Branch */}
+                      <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU-Branch'] || '-'}</td>
+                      {/* Status */}
+                      <td style={{ padding: '9px 12px' }}>
+                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>
+                          {item['status'] || 'Active'}
+                        </span>
+                      </td>
+                      {/* Action — Interbranch + Edit */}
+                      <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          {/* Interbranch button */}
+                          <button
+                            title="Interbranch"
+                            onClick={e => { e.stopPropagation(); /* TODO: interbranch handler */ }}
+                            style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
+                            <IconInterbranch />
+                            IB
+                          </button>
+                          {/* Edit button */}
+                          <button
+                            title="Edit"
+                            onClick={e => { e.stopPropagation(); /* TODO: edit handler */ }}
+                            style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
+                            <IconEdit />
+                            Edit
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
                 })}
               </tbody>
             </table>
           )}
         </div>
+
+        {/* Footer */}
         <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
           <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} สาขา</span>
           <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
@@ -672,7 +753,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
     dueDate:      batchConfig?.dueDate || '',
   });
-  const [vendorInfo, setVendorInfo]         = useState(null);
+  const [vendorInfo, setVendorInfo]           = useState(null);
   const [showBranchPopup, setShowBranchPopup] = useState(false);
 
   const setField = (key, val) => {
@@ -716,6 +797,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
         onSelect={(item) => { setField('branchNo', item['Branch Code'] || ''); setShowBranchPopup(false); }}
         branchItems={branchItems}
         bu={batchConfig?.bu || ''}
+        onAdd={() => { /* TODO: open add branch form */ }}
       />
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader
