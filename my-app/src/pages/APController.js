@@ -523,7 +523,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         {fld('CPC',         'cpc',        {                  width: '60px'  })}
         {fld('Branch no.',  'branchNo',   { type: 'select', width: '100px' })}
         {fld('GRT Status',  'grt',        { readOnly: true,  width: '80px'  })}
-        {fld('Due date',    'dueDate',    { type: 'select', width: '100px' })}
+        {fld('Due date', 'dueDate', { type: 'date', width: '130px' })}
       </div>
       <div style={{ marginTop: '10px' }}>
         <VendorInfoPanel
@@ -549,7 +549,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext,
     cpc:          '',
     branchNo:     '',
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
-    dueDate:      '',
+    dueDate:      batchConfig?.dueDate || '',  // ← ดึงจาก Batch Setup
   });
   const [vendorInfo, setVendorInfo] = useState(null);
 
