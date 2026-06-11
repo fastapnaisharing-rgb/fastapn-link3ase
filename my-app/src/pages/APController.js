@@ -227,35 +227,41 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
         </div>
 
         {/* Search bar row — narrower input + Add button */}
-        <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
-            {/* Search input — fixed width, not full-width */}
-            <div style={{ position: 'relative', width: '340px', flexShrink: 0 }}>
-              <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={e => { setQuery(e.target.value); setActive(-1); }}
-                onKeyDown={handleKey}
-                placeholder="Branch code, ชื่อสาขา..."
-                style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
-                onFocus={e => e.target.style.borderColor = '#1a3a5c'}
-                onBlur={e => e.target.style.borderColor = '#e2e6ed'}
-              />
-              {query && (
-                <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
-              )}
-            </div>
+      <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
 
-            {/* Add button */}
-            <button
-              onClick={() => onAdd && onAdd()}
-              style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Add
-            </button>
-          </div>
+      {/* Search input — flex:1 ยืดเต็มพื้นที่ */}
+      <div style={{ position: 'relative', flex: 1 }}>
+        <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={e => { setQuery(e.target.value); setActive(-1); }}
+          onKeyDown={handleKey}
+          placeholder="Branch code, ชื่อสาขา..."
+          style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+          onFocus={e => e.target.style.borderColor = '#1a3a5c'}
+          onBlur={e => e.target.style.borderColor = '#e2e6ed'}
+        />
+        {query && (
+          <button
+            onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            ×
+          </button>
+        )}
+      </div>
+
+          {/* Add button — ชิดขวา */}
+          <button
+            onClick={() => onAdd && onAdd()}
+            style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 'auto' }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add
+          </button>
+        </div>
 
           {/* Keyboard hints */}
           <div style={{ fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
