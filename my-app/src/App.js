@@ -336,17 +336,29 @@ function MainApp() {
   const renderPage = () => {
     switch (activePage) {
       // AP Controller
-      case 'ap-gr':
-      case 'ap-ocr':
-      case 'ap-form':
-      case 'ap-drafts':
-        return (isOwner || userPermissions?.['Manual'])
-          ? <APController
-              activeSubTab={activePage.replace('ap-', '')}
-              onSubTabChange={sub => setActivePage(`ap-${sub}`)}
-              flyoutOpen={openMenu === 'ap'}
-            />
-          : <NoAccessPage />;
+    case 'ap-gr':
+      return (isEditor || userPermissions?.['Manual'])
+        ? <APController
+            activeSubTab={activePage.replace('ap-', '')}
+            onSubTabChange={sub => setActivePage(`ap-${sub}`)}
+            flyoutOpen={openMenu === 'ap'}
+          />
+        : <NoAccessPage />;
+
+    case 'ap-ocr':
+      return (isEditor || userPermissions?.['Manual'])
+        ? <PlaceholderPage title="Scan OCR" icon="🔍" />
+        : <NoAccessPage />;
+
+    case 'ap-form':
+      return (isEditor || userPermissions?.['Manual'])
+        ? <PlaceholderPage title="Purchase Order" icon="📝" />
+        : <NoAccessPage />;
+
+    case 'ap-drafts':
+      return (isEditor || userPermissions?.['Manual'])
+        ? <PlaceholderPage title="Draft List" icon="📄" />
+        : <NoAccessPage />;
 
       // Functions (placeholder)
       case 'vat-controller':  return (isOwner || userPermissions?.['VAT'])   ? <PlaceholderPage title="VAT Controller" icon="💹" />  : <NoAccessPage />;
@@ -524,9 +536,9 @@ function MainApp() {
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {fpGroup('📥', 'Invoice Entry')}
-              {fpSub('ap-gr',   '📋', 'GR Reference')}
-              {fpSub('ap-ocr',  '🔍', 'OCR / สแกน')}
-              {fpSub('ap-form', '📝', 'Invoice Form')}
+              {fpSub('ap-gr',   '📋', 'AP Manual')}
+              {fpSub('ap-ocr',  '🔍', 'Scan OCR')} 
+              {fpSub('ap-form', '📝', 'Purchase Order')}
               {fpDiv()}
               {fpGroup('🗂️', 'จัดการ')}
               {fpSub('ap-drafts', '📄', 'Draft List')}
