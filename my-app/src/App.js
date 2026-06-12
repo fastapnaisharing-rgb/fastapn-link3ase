@@ -213,6 +213,14 @@ function MainApp() {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
 
+  useEffect(() => {
+  const dpr = window.devicePixelRatio;
+  const w = window.screen.width;
+  const h = window.screen.height;
+  const isLaptop = dpr >= 1.25 || (w <= 1440 && h <= 900);
+  document.body.style.zoom = isLaptop ? '0.8' : '1';
+}, []);
+
   // ── Page groups ──────────────────────────────────────────────────────────────
   const AP_PAGES     = ['ap-gr', 'ap-ocr', 'ap-form', 'ap-drafts'];
   // [CHANGE 1] เพิ่ม 'condition-rule' เข้า MASTER_PAGES เพื่อให้ sidebar highlight ถูกต้อง
