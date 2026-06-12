@@ -673,28 +673,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField }) {
             </div>
           </div>
 
-          {/* Inv date / CPC / Invoice num — อยู่ระหว่าง Header Detail กับ Invoice lines */}
-          <div style={{ marginBottom: '14px' }}>
-            {/* แถว 1: Inv date / CPC */}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '130px' }}>
-                <label style={fieldLabel}>Inv date</label>
-                <input type="date" value={form?.invDate || ''} onChange={e => setField('invDate', e.target.value)}
-                  style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '80px' }}>
-                <label style={fieldLabel}>CPC</label>
-                <input type="text" value={form?.cpc || ''} onChange={e => setField('cpc', e.target.value)}
-                  style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-              </div>
+          {/* Inv date / CPC / Invoice num — แถวเดียวกัน ระหว่าง Header Detail กับ Invoice lines */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '130px' }}>
+              <label style={fieldLabel}>Inv date</label>
+              <input type="date" value={form?.invDate || ''} onChange={e => setField('invDate', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
             </div>
-            {/* แถว 2: Invoice num */}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '220px', maxWidth: '100%' }}>
-                <label style={fieldLabel}>Invoice num</label>
-                <input type="text" value={form?.invoiceNum || ''} onChange={e => setField('invoiceNum', e.target.value)}
-                  style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-              </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '80px' }}>
+              <label style={fieldLabel}>CPC</label>
+              <input type="text" value={form?.cpc || ''} onChange={e => setField('cpc', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 220px', minWidth: '220px' }}>
+              <label style={fieldLabel}>Invoice num</label>
+              <input type="text" value={form?.invoiceNum || ''} onChange={e => setField('invoiceNum', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
             </div>
           </div>
 
