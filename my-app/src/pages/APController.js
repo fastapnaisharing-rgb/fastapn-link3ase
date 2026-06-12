@@ -586,56 +586,107 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const handleMoneyBlur  = (key, val) => { if (val === '' || val === '.') { setLine1Field(key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLine1Field(key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
   const handleMoneyFocus = (key, val) => { setLine1Field(key, val.replace(/,/g, '')); };
 
-  // ── Auto-calculate desc & account ────────────────────────────────────────────
-useEffect(() => {
-  if (!line1.itemCode) {
-    setLine1(l => ({ ...l, desc: '', account: '' }));
-    return;
-  }
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const buildTaxCode = (vatChar, branchDirectCode) => {
+    const v = String(vatChar ?? '').trim().toUpperCase();
+    if (v === 'V') return `${branchDirectCode}-N VAT7%`;
+    if (v === 'S') return `${branchDirectCode}-N SVAT7%`;
+    return '';
+  };
+  const buildWhtCode = (whtChar, branchDirectCode) => {
+    const w = String(whtChar ?? '').trim().toUpperCase();
+    if (w === 'N' || w === '') return '';
+    return `${branchDirectCode}-WHT${w}%`;
+  };
+  const fmt2 = (n) => n === 0 ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // lookup item
-  const itemData = itemcodeItems.find(
-    i => String(i.code ?? '').trim().toUpperCase() === line1.itemCode.trim().toUpperCase()
-  );
-  if (!itemData) return;
+  // ── Auto-calculate ALL line fields ────────────────────────────────────────
+  useEffect(() => {
+    if (!line1.itemCode) {
+      setLine1(l => ({ ...l, desc: '', account: '', taxCode: '', whtCode: '', tax: '', wht: '', total: '' }));
+      return;
+    }
+    const itemData = itemcodeItems.find(
+      i => String(i.code ?? '').trim().toUpperCase() === line1.itemCode.trim().toUpperCase()
+    );
+    if (!itemData) return;
 
-  // ── ACCOUNT ──────────────────────────────────────────────────────────────
-  const rawSub  = String(itemData.sub ?? '').trim();
-  const subVal  = rawSub.toUpperCase() === 'SUB'
-    ? String(vendorInfo?.['Sub Acc'] ?? '').trim()
-    : rawSub;
-  const accountVal = [
-    String(itemData.cpc     ?? '').trim(),
-    String(itemData.account ?? '').trim(),
-    subVal,
-  ].filter(Boolean).join('-');
+    // ── ACCOUNT ──────────────────────────────────────────────────────────
+    const rawSub = String(itemData.sub ?? '').trim();
+    const subVal = rawSub.toUpperCase() === 'SUB'
+      ? String(vendorInfo?.['Sub Acc'] ?? '').trim()
+      : rawSub;
+    const accountVal = [
+      String(itemData.cpc     ?? '').trim(),
+      String(itemData.account ?? '').trim(),
+      subVal,
+    ].filter(Boolean).join('-');
 
-  // ── DESC ─────────────────────────────────────────────────────────────────
-  const hasIB    = form?.branchIBLabel && form.branchIBLabel !== '-';
-  const ibPrefix = hasIB ? `${form?.branchNo ?? ''}-IB` : 'IB-ALL';
-  const descVal  = [
-    ibPrefix,
-    form?.period      ?? '',
-    String(itemData.description ?? '').trim(),
-    form?.backDesc1   ?? '',
-    form?.backDesc2   ?? '',
-    form?.backDesc3   ?? '',
-    hasIB ? (form?.branchIBLabel ?? '') : '',
-  ].filter(Boolean).join(' ');
+    // ── DESC ─────────────────────────────────────────────────────────────
+    const hasIB    = form?.branchIBLabel && form.branchIBLabel !== '-';
+    const ibPrefix = hasIB ? `${form?.branchNo ?? ''}-IB` : 'IB-ALL';
+    const ibLabel  = hasIB
+      ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}`
+      : '';
+    const descVal  = [
+      ibPrefix,
+      form?.period    ?? '',
+      String(itemData.description ?? '').trim(),
+      form?.backDesc1 ?? '',
+      form?.backDesc2 ?? '',
+      form?.backDesc3 ?? '',
+      ibLabel,
+    ].filter(Boolean).join(' ');
 
-  setLine1(l => ({ ...l, account: accountVal, desc: descVal }));
+    // ── NOTICE parsing ────────────────────────────────────────────────────
+    const notices  = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
+    const hasITC   = notices.includes('ITC');
+    const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
+    const hasTC    = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
 
-}, [
-  line1.itemCode,
-  form?.period,
-  form?.backDesc1,
-  form?.backDesc2,
-  form?.backDesc3,
-  form?.branchNo,
-  form?.branchIBLabel,
-  vendorInfo,
-  itemcodeItems,
-]);
+    // ── SOURCE string (เช่น 'VN', 'V1', 'S3') ────────────────────────────
+    let sourceStr = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
+    if (hasTC || hasVITEM) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase();
+    const vatChar = sourceStr[0] ?? '';
+    const whtChar = sourceStr[1] ?? '';
+
+    // ── BRANCH DIRECT CODE ────────────────────────────────────────────────
+    const branchDirectCode = String(form?.branchDirectLabel ?? '').split('-')[0].trim();
+
+    // ── TAX CODE & WHT CODE ───────────────────────────────────────────────
+    const taxCodeVal = buildTaxCode(vatChar, branchDirectCode);
+    const whtCodeVal = hasITC ? '' : buildWhtCode(whtChar, branchDirectCode);
+
+    // ── AMOUNTS ───────────────────────────────────────────────────────────
+    const amountNum = parseFloat(String(line1.amount).replace(/,/g, '')) || 0;
+    const taxNum    = (vatChar === 'V' || vatChar === 'S') ? Math.round(amountNum * 0.07 * 100) / 100 : 0;
+    const whtPct    = hasITC ? 0 : (parseFloat(whtChar) || 0);
+    const whtNum    = Math.round(amountNum * (whtPct / 100) * 100) / 100;
+    const totalNum  = Math.round((amountNum + taxNum) * 100) / 100;
+
+    setLine1(l => ({
+      ...l,
+      desc:    descVal,
+      account: accountVal,
+      taxCode: taxCodeVal,
+      whtCode: whtCodeVal,
+      tax:     fmt2(taxNum),
+      wht:     fmt2(whtNum),
+      total:   fmt2(totalNum),
+    }));
+  }, [
+    line1.itemCode,
+    line1.amount,
+    form?.period,
+    form?.backDesc1,
+    form?.backDesc2,
+    form?.backDesc3,
+    form?.branchNo,
+    form?.branchDirectLabel,
+    form?.branchIBLabel,
+    vendorInfo,
+    itemcodeItems,
+  ]);
 
   useEffect(() => {
     if (!show) return;
