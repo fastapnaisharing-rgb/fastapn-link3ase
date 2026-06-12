@@ -476,7 +476,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
 
-  const COLS = [['code','Code','100px'],['bu','BU','60px'],['description','Description',''],['cpc','CPC','75px'],['account','Account','95px'],['sub','SUB','70px']];
+  const COLS = [['code','Code','100px'],['bu','BU','60px'],['description','Description',''],['cpc','CPC','75px'],['account','Account','95px'],['sub','SUB','70px'],['spec_tx','SPEC-TX','80px']];
   const FIELD_OPTIONS = {};
   ITEM_COMBO_FIELDS.forEach(key => { FIELD_OPTIONS[key] = [...new Set(itemcodeItems.map(i => i[key]).filter(v => v !== undefined && v !== null && String(v).trim() !== ''))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })); });
 
