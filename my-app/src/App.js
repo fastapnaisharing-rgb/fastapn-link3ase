@@ -43,6 +43,25 @@ function PlaceholderPage({ title, icon }) {
   );
 }
 
+// ✅ Maps activePage -> maintenance menu key (as set in System Console > Access Control)
+const PAGE_MAINTENANCE_MAP = {
+  'ap-gr': 'ap-controller', 'ap-ocr': 'ap-controller', 'ap-form': 'ap-controller', 'ap-drafts': 'ap-controller',
+  'vat-controller': 'vat-controller',
+  'i-expense': 'i-expense',
+  'gl-functional': 'gl-functional',
+  'i-pro-interface': 'i-pro-interface',
+};
+
+function MaintenancePage({ label }) {
+  return (
+    <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
+      <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔧</div>
+      <div style={{ fontSize: '18px', fontWeight: '500', color: '#1a3a5c', marginBottom: '8px' }}>อยู่ระหว่างการปรับปรุง</div>
+      <div style={{ fontSize: '13px', color: '#aaa' }}>{label ? `${label} ` : ''}ปิดให้บริการชั่วคราว — กรุณาลองใหม่อีกครั้งในภายหลัง</div>
+    </div>
+  );
+}
+
 const LogoutIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
@@ -331,11 +350,17 @@ function MainApp() {
     { id: 'i-pro-interface',icon:'🔗', label: 'I-Pro Interface', permKey: 'I-Pro' },
   ];
   const FUNCTION_MENUS = isOwner
-    ? ALL_FUNCTION_MENUS.filter(m => !maintenanceMenus.includes(m.id))
-    : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(m.id));
+    ? ALL_FUNCTION_MENUS
+    : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(PAGE_MAINTENANCE_MAP[m.id] || m.id));
 
   // ── renderPage ───────────────────────────────────────────────────────────────
   const renderPage = () => {
+    // ✅ Enforce maintenance mode for the CONTENT area too (not just the
+    // sidebar). Owner is exempt so they can still verify / turn it off.
+    const maintKey = PAGE_MAINTENANCE_MAP[activePage];
+    if (maintKey && maintenanceMenus.includes(maintKey) && !isOwner) {
+      return <MaintenancePage />;
+    }
     switch (activePage) {
       // AP Controller
     case 'ap-gr':
@@ -456,7 +481,7 @@ function MainApp() {
             )}
 
             {/* AP Controller — flyout trigger */}
-            {(isOwner || userPermissions?.['Manual']) && !maintenanceMenus.includes('ap-controller') && (
+            {(isOwner || (userPermissions?.['Manual'] && !maintenanceMenus.includes('ap-controller'))) && (
               <div onClick={handleAPEnter} title={!sidebarExpanded ? 'AP Controller' : ''}
                 style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isAPActive || openMenu === 'ap-gr' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ap' ? 'rgba(93,202,165,0.12)' : isAPActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isAPActive || openMenu === 'ap' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                 {sidebarExpanded ? <><span>🧾 AP Controller</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>🧾</span>}
