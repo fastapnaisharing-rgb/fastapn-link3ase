@@ -651,8 +651,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
 
           </div>
 
-          {/* Inv date / CPC / Invoice num */}
-          {/* Inv date / Invoice num / CPC / Period / Vat / WHT / GRT / GRN */}
+          {/* Inv date / Invoice num / CPC / Period / Vat / WHT / GRT / GRN / Back Desc 1-3 */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', overflowX: 'auto', marginBottom: '14px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>Inv date</label>
@@ -662,19 +661,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>Invoice num</label>
               <input type="text" value={form?.invoiceNum || ''} onChange={e => setField('invoiceNum', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '230px' }} />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
-              <label style={fieldLabel}>CPC</label>
-              <input type="text" value={form?.cpc || ''} onChange={e => setField('cpc', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '72px' }} />
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '150px' }} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>Period</label>
-              <select value={form?.period || 'Current'} onChange={e => setField('period', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '90px', appearance: 'auto', cursor: 'pointer' }}>
-                {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
-              </select>
+              <input type="text" value={form?.period || ''} onChange={e => setField('period', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '90px' }} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>Vat</label>
@@ -696,8 +688,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
               <input type="text" value={form?.grn || ''} onChange={e => setField('grn', e.target.value)}
                 style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '75px' }} />
             </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>Back Description 1</label>
+              <input type="text" value={form?.backDesc1 || ''} onChange={e => setField('backDesc1', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '120px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>Back Description 2</label>
+              <input type="text" value={form?.backDesc2 || ''} onChange={e => setField('backDesc2', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '120px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>Back Description 3</label>
+              <input type="text" value={form?.backDesc3 || ''} onChange={e => setField('backDesc3', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '120px' }} />
+            </div>
           </div>
-
           <div style={{ border: '1px dashed #dde', borderRadius: '10px', padding: isMobile ? '28px' : '48px', textAlign: 'center', color: '#bbb' }}>
             <div style={{ fontSize: '32px', marginBottom: '10px' }}>🧾</div>
             <div style={{ fontSize: '13px' }}>Invoice lines — coming soon</div>
@@ -1096,7 +1102,6 @@ function InvoiceEntry({
     supplierCode: '',
     invDate:      '',
     invoiceNum:   '',
-    cpc:          '',
     branchNo:     '',
     branchDirectLabel: '',
     branchIBLabel:     '',
@@ -1107,6 +1112,10 @@ function InvoiceEntry({
     wht:    '',
     grtNum: '',
     grn:    '',
+    backDesc1: '',
+    backDesc2: '',
+    backDesc3: '',
+
   });
   const [vendorInfo,        setVendorInfo]        = useState(null);
   const [showBranchPopup,   setShowBranchPopup]   = useState(false);
