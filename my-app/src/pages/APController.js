@@ -39,6 +39,23 @@ const BRANCH_EDIT = [
 ];
 const BRANCH_COMBO = ['Branch Direct', 'bu', 'Group-P', 'status'];
 
+// ── IB helpers ───────────────────────────────────────────────────────────────
+// format = "BRANCH CODE-COMPANY NAME"
+const formatBranchLabel = (item) =>
+  `${item?.['Branch Code'] ?? ''}-${item?.['Company for Show in Report Display'] ?? ''}`;
+
+// HO branch ของ BU = company name มีคำว่า Head Office / สำนักงานใหญ่ / สนญ
+const isHeadOffice = (companyName) => {
+  const n = String(companyName ?? '').toLowerCase();
+  return n.includes('head office') || n.includes('สำนักงานใหญ่') || n.includes('สนญ');
+};
+
+const findHOBranch = (branchItems, bu) =>
+  branchItems.find(b =>
+    String(b['bu'] ?? '').toLowerCase() === String(bu ?? '').toLowerCase() &&
+    isHeadOffice(b['Company for Show in Report Display'])
+  );
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BUSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,6 +211,8 @@ function BranchSearchPopup({
   const [form,        setForm]        = useState({});
   const [formError,   setFormError]   = useState('');
   const [saving,      setSaving]      = useState(false);
+  const [sortField,   setSortField]   = useState('Branch Code');
+  const [sortDir,     setSortDir]     = useState('asc');
 
   const inputRef = useRef(null);
   const listRef  = useRef(null);
@@ -233,7 +252,7 @@ function BranchSearchPopup({
     ? branchItems.filter(i => String(i['bu'] ?? '').toLowerCase() === bu.toLowerCase())
     : branchItems;
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered0 = q
     ? buFiltered.filter(i =>
         String(i['Branch Code'] ?? '').toLowerCase().includes(q) ||
         String(i['Branch Direct'] ?? '').toLowerCase().includes(q) ||
@@ -242,10 +261,24 @@ function BranchSearchPopup({
       )
     : buFiltered;
 
+  // ── sort ──
+  const filtered = [...filtered0].sort((a, b) => {
+    const va = String(a[sortField] ?? '');
+    const vb = String(b[sortField] ?? '');
+    const cmp = va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' });
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+
+  const handleSort = (field) => {
+    setActive(-1);
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('asc'); }
+  };
+
   const handleKey = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
-    else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
+    else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active], { isIB: false }); }
   };
 
   // ── open edit ──
@@ -340,9 +373,6 @@ function BranchSearchPopup({
               BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || '-'}</span>
             </div>
           </div>
-          <button onClick={handleSave} disabled={saving} style={{ padding: '7px 18px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
-            {saving ? 'Saving...' : '💾 Save'}
-          </button>
         </div>
 
         {/* Error banner */}
@@ -498,8 +528,18 @@ function BranchSearchPopup({
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
               <tr>
-                {[['Branch Code','110px'],['Direct','120px'],['Company Name',''],['BU Branch','90px'],['Status','80px'],['Action','128px']].map(([h, w]) => (
-                  <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                {[
+                  ['Branch Code','110px','Branch Code'],
+                  ['Direct','120px','Branch Direct'],
+                  ['Company Name','','Company for Show in Report Display'],
+                  ['BU Branch','90px','BU-Branch'],
+                  ['Status','80px','status'],
+                  ['Action','128px',null],
+                ].map(([h, w, field]) => (
+                  <th key={h} onClick={field ? () => handleSort(field) : undefined}
+                    style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined, cursor: field ? 'pointer' : 'default', userSelect: 'none' }}>
+                    {h}{field ? (sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -509,7 +549,7 @@ function BranchSearchPopup({
                 const isClosed = item['status'] === 'Closed';
                 return (
                   <tr key={item.id || i} data-row={i}
-                    onClick={() => !isClosed && onSelect(item)}
+                    onClick={() => !isClosed && onSelect(item, { isIB: false })}
                     onMouseEnter={() => !isClosed && setActive(i)}
                     style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
@@ -525,8 +565,8 @@ function BranchSearchPopup({
                     </td>
                     <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        {/* IB button — TODO: IB handler */}
-                        <button title="Interbranch" onClick={e => e.stopPropagation()}
+                        {/* IB button — กด IB เพื่อใช้ branch นี้เป็น Branch IB และดึง HO ของ BU มาเป็น Branch Direct */}
+                        <button title="Interbranch" onClick={e => { e.stopPropagation(); !isClosed && onSelect(item, { isIB: true }); }}
                           style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
                           <IconIB /> IB
                         </button>
@@ -641,10 +681,9 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 }
 
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
-function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchInfo }) {
+function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchDirectLabel, branchIBLabel }) {
   const v = vendorLoading ? null : vendorInfo;
   const r = matchedRule;
-  const b = branchInfo;
   const keyStyle = { fontSize: '10px', color: '#999', width: '72px', flexShrink: 0 };
   const valStyle = (hasVal) => ({ fontSize: '11px', color: hasVal ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 });
   const rowStyle = { display: 'flex', alignItems: 'center', padding: '4px 8px' };
@@ -685,11 +724,11 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchInfo })
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ ...rowStyle, flex: 1, borderBottom: '0.5px solid #f0f0f0' }}>
             <span style={{ ...keyStyle, width: '88px' }}>Branch Direct</span>
-            <span style={valStyle(!!b?.['Branch Direct'])}>{b?.['Branch Direct'] || '—'}</span>
+            <span style={valStyle(!!branchDirectLabel)}>{branchDirectLabel || '—'}</span>
           </div>
           <div style={{ ...rowStyle, flex: 1 }}>
             <span style={{ ...keyStyle, width: '88px' }}>Branch IB</span>
-            <span style={valStyle(!!b?.['BU-Branch'])}>{b?.['BU-Branch'] || '—'}</span>
+            <span style={valStyle(!!branchIBLabel)}>{branchIBLabel || '—'}</span>
           </div>
         </div>
       </div>
@@ -874,7 +913,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, branchInfo, onBranchSearch }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, onBranchSearch }) {
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -922,7 +961,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         {fld('Due date',    'dueDate',    { type: 'date',  width: '130px' })}
       </div>
       <div style={{ marginTop: '10px' }}>
-        <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} matchedRule={matchedRule} branchInfo={branchInfo} />
+        <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} matchedRule={matchedRule} branchDirectLabel={form.branchDirectLabel} branchIBLabel={form.branchIBLabel} />
       </div>
     </div>
   );
@@ -943,6 +982,8 @@ function InvoiceEntry({
     invoiceNum:   '',
     cpc:          '',
     branchNo:     '',
+    branchDirectLabel: '',  // "BRANCH CODE-COMPANY NAME" ของ branch ที่เลือก (หรือ HO ถ้ากด IB)
+    branchIBLabel:     '',  // "BRANCH CODE-COMPANY NAME" ของ branch ที่กด IB, หรือ "-" ถ้าไม่ได้กด IB
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
     dueDate:      batchConfig?.dueDate || '',
   });
@@ -1017,19 +1058,37 @@ function InvoiceEntry({
 
   const matchedRule = getMatchedRule(vendorInfo);
 
-  // ── lookup branch ที่เลือกไว้ใน branchNo เพื่อแสดง Branch Direct / Branch IB ──
-  const branchInfo = (() => {
-    const code = form.branchNo?.trim();
-    if (!code) return null;
-    return branchItems.find(b => String(b['Branch Code'] ?? '').trim() === code) || null;
-  })();
+  // ── เลือก branch จาก BranchSearchPopup ──
+  // ไม่กด IB → Branch Direct = ตัวเอง, Branch IB = "-"
+  // กด IB    → Branch IB = ตัวเอง, Branch Direct = HO ของ BU เดียวกัน
+  const handleSelectBranch = (item, meta = {}) => {
+    const ownLabel = formatBranchLabel(item);
+
+    if (meta.isIB) {
+      const ho = findHOBranch(branchItems, item['bu']);
+      setFormState(f => ({
+        ...f,
+        branchNo:          item['Branch Code'] || '',
+        branchIBLabel:     ownLabel,
+        branchDirectLabel: ho ? formatBranchLabel(ho) : '-',
+      }));
+    } else {
+      setFormState(f => ({
+        ...f,
+        branchNo:          item['Branch Code'] || '',
+        branchDirectLabel: ownLabel,
+        branchIBLabel:     '-',
+      }));
+    }
+    setShowBranchPopup(false);
+  };
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
       <BranchSearchPopup
         show={showBranchPopup}
         onClose={() => setShowBranchPopup(false)}
-        onSelect={(item) => { setField('branchNo', item['Branch Code'] || ''); setShowBranchPopup(false); }}
+        onSelect={handleSelectBranch}
         branchItems={branchItems}
         bu={batchConfig?.bu || ''}
         onSaveBranch={handleSaveBranch}
@@ -1043,7 +1102,6 @@ function InvoiceEntry({
           vendorInfo={vendorInfo}
           vendorLoading={false}
           matchedRule={matchedRule}
-          branchInfo={branchInfo}
           onBranchSearch={() => setShowBranchPopup(true)}
         />
         {/* TODO: Invoice lines section */}
