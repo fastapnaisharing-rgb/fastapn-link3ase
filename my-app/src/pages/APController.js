@@ -586,6 +586,57 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const handleMoneyBlur  = (key, val) => { if (val === '' || val === '.') { setLine1Field(key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLine1Field(key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
   const handleMoneyFocus = (key, val) => { setLine1Field(key, val.replace(/,/g, '')); };
 
+  // ── Auto-calculate desc & account ────────────────────────────────────────────
+useEffect(() => {
+  if (!line1.itemCode) {
+    setLine1(l => ({ ...l, desc: '', account: '' }));
+    return;
+  }
+
+  // lookup item
+  const itemData = itemcodeItems.find(
+    i => String(i.code ?? '').trim().toUpperCase() === line1.itemCode.trim().toUpperCase()
+  );
+  if (!itemData) return;
+
+  // ── ACCOUNT ──────────────────────────────────────────────────────────────
+  const rawSub  = String(itemData.sub ?? '').trim();
+  const subVal  = rawSub.toUpperCase() === 'SUB'
+    ? String(vendorInfo?.['Sub Acc'] ?? '').trim()
+    : rawSub;
+  const accountVal = [
+    String(itemData.cpc     ?? '').trim(),
+    String(itemData.account ?? '').trim(),
+    subVal,
+  ].filter(Boolean).join('-');
+
+  // ── DESC ─────────────────────────────────────────────────────────────────
+  const hasIB    = form?.branchIBLabel && form.branchIBLabel !== '-';
+  const ibPrefix = hasIB ? `${form?.branchNo ?? ''}-IB` : 'IB-ALL';
+  const descVal  = [
+    ibPrefix,
+    form?.period      ?? '',
+    String(itemData.description ?? '').trim(),
+    form?.backDesc1   ?? '',
+    form?.backDesc2   ?? '',
+    form?.backDesc3   ?? '',
+    hasIB ? (form?.branchIBLabel ?? '') : '',
+  ].filter(Boolean).join(' ');
+
+  setLine1(l => ({ ...l, account: accountVal, desc: descVal }));
+
+}, [
+  line1.itemCode,
+  form?.period,
+  form?.backDesc1,
+  form?.backDesc2,
+  form?.backDesc3,
+  form?.branchNo,
+  form?.branchIBLabel,
+  vendorInfo,
+  itemcodeItems,
+]);
+
   useEffect(() => {
     if (!show) return;
     const h = (e) => { if (e.key === 'Escape') onClose(); };
