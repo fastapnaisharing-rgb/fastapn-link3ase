@@ -7,44 +7,29 @@ import { useUserRole } from '../contexts/useUserRole';
 const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
 
 const BRANCH_EDIT = [
-  // [field key, label, grid span (out of 12)]
-  // row 1
   ['Branch Code',                           'Branch Code',        3],
   ['BU Code',                               'BU Code',            3],
   ['BU-Branch',                             'BU Branch',          3],
   ['cpc',                                   'CPC',                3],
-
-  // row 2
   ['Branch Direct',                         'Branch Direct',      4],
   ['Branch Allocate',                       'Branch Allocate',    4],
   ['Group-P',                               'Group-P',            4],
-
-  // row 3
   ['Company for Show in Report Display',    'Company for Report', 7],
   ['Simple Company',                        'Simple Company',     5],
-
-  // row 4
   ['BU-TaxID',                              'BU Tax ID',          4],
   ['Simple Brand Code',                     'Simple Brand Code',  4],
   ['%',                                     '%',                  2],
   ['DB(%)',                                 'DB(%)',              2],
-
-  // row 5
   ['bu',                                    'BU',                 3],
   ['status',                                'Status',             4],
   ['Inactive Date',                         'Inactive Date',      5],
-
-  // row 6
   ['Branch Address',                        'Branch Address',     12],
 ];
 const BRANCH_COMBO = ['Branch Direct', 'bu', 'Group-P', 'status'];
 
-// ── IB helpers ───────────────────────────────────────────────────────────────
-// format = "BRANCH CODE-COMPANY NAME"
 const formatBranchLabel = (item) =>
   `${item?.['Branch Code'] ?? ''}-${item?.['Company for Show in Report Display'] ?? ''}`;
 
-// HO branch ของ BU = company name มีคำว่า Head Office / สำนักงานใหญ่ / สนญ
 const isHeadOffice = (companyName) => {
   const n = String(companyName ?? '').toLowerCase();
   return n.includes('head office') || n.includes('สำนักงานใหญ่') || n.includes('สนญ');
@@ -56,7 +41,6 @@ const findHOBranch = (branchItems, bu) =>
     isHeadOffice(b['Company for Show in Report Display'])
   );
 
-// ── คำนวณขนาดจอ สำหรับ popup/layout ที่ responsive ──
 function useWindowSize() {
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   useEffect(() => {
@@ -207,17 +191,17 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BranchSearchPopup  (view: 'search' | 'edit' | 'new')
+// BranchSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
 function BranchSearchPopup({
   show, onClose, onSelect,
   branchItems = [], bu = '',
-  onSaveBranch,          // async ({ form, isEdit, editTarget }) => void
-  branchOptions = {},    // { 'Branch Direct': [...], bu: [...], 'Group-P': [...], status: [...] }
+  onSaveBranch,
+  branchOptions = {},
 }) {
   const [query,       setQuery]       = useState('');
   const [active,      setActive]      = useState(-1);
-  const [view,        setView]        = useState('search'); // 'search' | 'edit' | 'new'
+  const [view,        setView]        = useState('search');
   const [editTarget,  setEditTarget]  = useState(null);
   const [form,        setForm]        = useState({});
   const [formError,   setFormError]   = useState('');
@@ -228,7 +212,6 @@ function BranchSearchPopup({
   const inputRef = useRef(null);
   const listRef  = useRef(null);
 
-  // ── reset on open/close ──
   useEffect(() => {
     if (show) {
       setQuery(''); setActive(-1);
@@ -237,7 +220,6 @@ function BranchSearchPopup({
     }
   }, [show]);
 
-  // ── keyboard ──
   useEffect(() => {
     if (!show) return;
     const h = (e) => {
@@ -250,7 +232,6 @@ function BranchSearchPopup({
     return () => document.removeEventListener('keydown', h);
   }, [show, onClose, view]);
 
-  // ── scroll active row ──
   useEffect(() => {
     if (active < 0 || !listRef.current) return;
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
@@ -258,7 +239,6 @@ function BranchSearchPopup({
 
   if (!show) return null;
 
-  // ── filter ──
   const buFiltered = bu
     ? branchItems.filter(i => String(i['bu'] ?? '').toLowerCase() === bu.toLowerCase())
     : branchItems;
@@ -272,7 +252,6 @@ function BranchSearchPopup({
       )
     : buFiltered;
 
-  // ── sort ──
   const filtered = [...filtered0].sort((a, b) => {
     const va = String(a[sortField] ?? '');
     const vb = String(b[sortField] ?? '');
@@ -292,7 +271,6 @@ function BranchSearchPopup({
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active], { isIB: false }); }
   };
 
-  // ── open edit ──
   const handleOpenEdit = (item) => {
     const f = {};
     BRANCH_EDIT.forEach(([k]) => { f[k] = item[k] || ''; });
@@ -302,18 +280,16 @@ function BranchSearchPopup({
     setView('edit');
   };
 
-  // ── open new ──
   const handleOpenNew = () => {
     const f = {};
     BRANCH_EDIT.forEach(([k]) => { f[k] = ''; });
-    if (bu) f['bu'] = bu;   // pre-fill BU จาก batchConfig
+    if (bu) f['bu'] = bu;
     setEditTarget(null);
     setForm(f);
     setFormError('');
     setView('new');
   };
 
-  // ── back to search ──
   const handleBack = () => {
     setView('search');
     setEditTarget(null);
@@ -322,7 +298,6 @@ function BranchSearchPopup({
     setTimeout(() => inputRef.current?.focus(), 60);
   };
 
-  // ── validate ──
   const validateForm = (f) => {
     if (!f['Branch Code']?.trim())                                return 'กรุณากรอก Branch Code';
     if (f['status'] === 'Closed' && !f['Inactive Date'])          return 'กรุณากรอก Inactive Date เมื่อ Status เป็น Closed';
@@ -330,7 +305,6 @@ function BranchSearchPopup({
     return '';
   };
 
-  // ── save ──
   const handleSave = async () => {
     const err = validateForm(form);
     if (err) { setFormError(err); return; }
@@ -344,10 +318,8 @@ function BranchSearchPopup({
     setSaving(false);
   };
 
-  // ── setFormField ──
   const setField = (key, val) => { setForm(f => ({ ...f, [key]: val })); setFormError(''); };
 
-  // ── icons ──
   const IconIB = () => (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3m8 0h3a2 2 0 002-2v-3"/>
@@ -361,14 +333,10 @@ function BranchSearchPopup({
     </svg>
   );
 
-  // ════════════════════════════════════════════════════════
-  // RENDER: Form View (Edit / New) — same form, different mode
-  // ════════════════════════════════════════════════════════
   const renderFormView = () => {
     const isEdit = view === 'edit';
     return (
       <>
-        {/* Header */}
         <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
           <button onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>
             ← Back
@@ -385,15 +353,11 @@ function BranchSearchPopup({
             </div>
           </div>
         </div>
-
-        {/* Error banner */}
         {formError && (
           <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>
             ⚠️ {formError}
           </div>
         )}
-
-        {/* Form body — 12-column compact grid */}
         <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '10px 12px' }}>
             {BRANCH_EDIT.map(([key, label, span]) => {
@@ -405,7 +369,6 @@ function BranchSearchPopup({
                 (key === 'Inactive Date'  && form['status'] === 'Closed') ||
                 (key === 'Branch Allocate'&& form['status'] === 'Relocate');
               const hasErr = !!formError && isRequired && !form[key]?.trim();
-
               const baseInput = {
                 height: '30px', padding: '0 8px', fontSize: '12px',
                 borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%',
@@ -413,49 +376,31 @@ function BranchSearchPopup({
                 background: (isReadOnly || isDisabled) ? '#f5f5f5' : 'white',
                 color:      (isReadOnly || isDisabled) ? '#999'    : '#1a3a5c',
               };
-
               const opts = branchOptions[key] || [];
-
               return (
                 <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
                   <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>
                     {label}{isRequired && <span style={{ color: '#e24b4a' }}> *</span>}
                     {needInactive && <span style={{ fontSize: '10px', color: '#bbb' }}> (เฉพาะ Closed)</span>}
                   </label>
-
                   {key === 'Inactive Date' ? (
                     <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={baseInput} />
                   ) : BRANCH_COMBO.includes(key) ? (
-                    // inline datalist combobox
                     <>
-                      <input
-                        list={`combo-branch-${key}`}
-                        value={form[key] || ''}
-                        onChange={e => setField(key, e.target.value)}
-                        placeholder={`เลือก ${label}`}
-                        style={baseInput}
-                      />
+                      <input list={`combo-branch-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} placeholder={`เลือก ${label}`} style={baseInput} />
                       <datalist id={`combo-branch-${key}`}>
                         {opts.map((o, i) => <option key={i} value={o} />)}
                       </datalist>
                     </>
                   ) : (
-                    <input
-                      value={form[key] || ''}
-                      readOnly={isReadOnly}
-                      onChange={e => !isReadOnly && setField(key, e.target.value)}
-                      style={baseInput}
-                    />
+                    <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} style={baseInput} />
                   )}
                 </div>
               );
             })}
           </div>
         </div>
-
-        {/* Footer */}
         <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-          {/* updated_by/at — แสดงเฉพาะ Edit mode */}
           {isEdit && editTarget?.['updated_by'] ? (
             <span style={{ fontSize: '11px', color: '#bbb' }}>
               Updated by <strong style={{ color: '#888' }}>{editTarget['updated_by']}</strong>
@@ -475,12 +420,8 @@ function BranchSearchPopup({
     );
   };
 
-  // ════════════════════════════════════════════════════════
-  // RENDER: Search View (Table ปกติ)
-  // ════════════════════════════════════════════════════════
   const renderSearchView = () => (
     <>
-      {/* Header */}
       <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
         <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏪</div>
         <div style={{ flex: 1 }}>
@@ -492,8 +433,6 @@ function BranchSearchPopup({
         </div>
         <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
       </div>
-
-      {/* Search bar + Add */}
       <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
           <div style={{ position: 'relative', flex: 1 }}>
@@ -527,8 +466,6 @@ function BranchSearchPopup({
           ))}
         </div>
       </div>
-
-      {/* Table */}
       <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
         {filtered.length === 0 ? (
           <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
@@ -576,12 +513,10 @@ function BranchSearchPopup({
                     </td>
                     <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        {/* IB button — กด IB เพื่อใช้ branch นี้เป็น Branch IB และดึง HO ของ BU มาเป็น Branch Direct */}
                         <button title="Interbranch" onClick={e => { e.stopPropagation(); !isClosed && onSelect(item, { isIB: true }); }}
                           style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
                           <IconIB /> IB
                         </button>
-                        {/* Edit → สลับ view */}
                         <button title="Edit" onClick={e => { e.stopPropagation(); handleOpenEdit(item); }}
                           style={{ width: '56px', height: '28px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
                           <IconEdit /> Edit
@@ -595,8 +530,6 @@ function BranchSearchPopup({
           </table>
         )}
       </div>
-
-      {/* Footer */}
       <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
         <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} สาขา</span>
         <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
@@ -604,7 +537,6 @@ function BranchSearchPopup({
     </>
   );
 
-  // ── main render ──
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(2px)' }}
@@ -618,10 +550,10 @@ function BranchSearchPopup({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// InvoiceDetailPopup — popup ขนาดใหญ่ (เสมือนเปิดอีกหน้า) สำหรับ invoice lines
+// InvoiceDetailPopup  ✅ รับ vendorInfo เพิ่ม
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField }) {
-  const { width: winW, height: winH } = useWindowSize();
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
+  const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
 
@@ -634,9 +566,6 @@ function InvoiceDetailPopup({ show, onClose, form, setField }) {
 
   if (!show) return null;
 
-  // ── คำนวณขนาด popup ตามขนาดจอ ──
-  // มือถือ: เต็มจอ (ไม่มีขอบ/มุมโค้ง เหมือนเปิดหน้าใหม่)
-  // แท็บเล็ต/เดสก์ท็อป: popup ใหญ่ลอยกลางจอ ลดสัดส่วนลงตามพื้นที่ที่มี
   const popupStyle = isMobile
     ? { width: '100vw', height: '100vh', maxWidth: '100vw', maxHeight: '100vh', borderRadius: 0 }
     : isTablet
@@ -665,23 +594,51 @@ function InvoiceDetailPopup({ show, onClose, form, setField }) {
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px' : '18px 22px' }}>
-        {/* Header Detail — แบ่งเป็น 2 กล่อง 49% กลางเป็น gap */}
-        <div style={{ display: 'flex', gap: '2%', marginBottom: '14px' }}>
-          <div style={{ ...card, width: '49%', marginBottom: 0 }}>
-            <div style={cardHead}><span style={cardLabel}>Header Detail</span></div>
-            <div style={cardBody}>
-              <div style={{ fontSize: '11px', color: '#bbb', fontStyle: 'italic' }}>— coming soon —</div>
-            </div>
-          </div>
-          <div style={{ ...card, width: '49%', marginBottom: 0 }}>
-            <div style={cardHead}><span style={cardLabel}>Header Detail 2</span></div>
-            <div style={cardBody}>
-              <div style={{ fontSize: '11px', color: '#bbb', fontStyle: 'italic' }}>— coming soon —</div>
-            </div>
-          </div>
-        </div>
 
-          {/* Inv date / CPC / Invoice num — แถวเดียวกัน ระหว่าง Header Detail กับ Invoice lines */}
+          {/* ✅ Header Detail — 2 กล่อง 49% + gap */}
+          <div style={{ display: 'flex', gap: '2%', marginBottom: '14px' }}>
+
+            {/* กล่องซ้าย — ข้อมูล vendor จาก Invoice Entry */}
+            <div style={{ ...card, width: '49%', marginBottom: 0 }}>
+              <div style={cardHead}><span style={cardLabel}>Header Detail</span></div>
+              <div style={{ ...cardBody, display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                {[
+                  ['Vendor Code', vendorInfo?.['Supplier Number']],
+                  ['Vendor Site', vendorInfo?.['Supplier Site']],
+                  ['Tax ID',      vendorInfo?.['Tax ID']],
+                  ['No.',         vendorInfo?.['No.']],
+                  ['Address',     vendorInfo?.['Address']],
+                ].map(([label, val]) => (
+                  <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                    <span style={{ fontSize: '11px', color: '#999', width: '80px', flexShrink: 0, paddingTop: '1px' }}>
+                      {label}
+                    </span>
+                    <span style={{
+                      fontSize: '12px',
+                      color: val ? '#1a3a5c' : '#ccc',
+                      fontStyle: val ? 'normal' : 'italic',
+                      flex: 1,
+                      wordBreak: 'break-word',
+                      lineHeight: '1.5',
+                    }}>
+                      {val || '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* กล่องขวา — coming soon */}
+            <div style={{ ...card, width: '49%', marginBottom: 0 }}>
+              <div style={cardHead}><span style={cardLabel}>Header Detail 2</span></div>
+              <div style={cardBody}>
+                <div style={{ fontSize: '11px', color: '#bbb', fontStyle: 'italic' }}>— coming soon —</div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Inv date / CPC / Invoice num */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '130px' }}>
               <label style={fieldLabel}>Inv date</label>
@@ -705,7 +662,6 @@ function InvoiceDetailPopup({ show, onClose, form, setField }) {
             <div style={{ fontSize: '13px' }}>Invoice lines — coming soon</div>
           </div>
         </div>
-
 
         {/* Footer */}
         <div style={{ padding: isMobile ? '10px 14px' : '12px 22px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
@@ -821,7 +777,6 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchDirectL
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Notice</span><span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span></div>
         <div style={rowStyle}><span style={{ ...keyStyle, width: '52px' }}>Sub Acc</span><span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span></div>
       </div>
-      {/* ── แถวล่าง: Address (2 บรรทัด, กว้าง = Method+Paygroup+Par = 3/6) | Branch Direct + Branch IB (สแต็ก) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
         <div style={{ ...rowStyle, alignItems: 'flex-start', borderRight: '0.5px solid #f0f0f0' }}>
           <span style={keyStyle}>Address</span>
@@ -1048,7 +1003,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        {/* Supplier code — ขยายกว้างขึ้น */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
           <input type="text" value={form.supplierCode}
@@ -1057,7 +1011,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
             onKeyDown={e => { if (e.key === 'Enter') onSupplierBlur(form.supplierCode); }}
             style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
         </div>
-        {/* Branch no. — อยู่ซ้าย ติดกับ Supplier code */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Branch no.</label>
           <div style={{ position: 'relative' }}>
@@ -1072,8 +1025,6 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
             </button>
           </div>
         </div>
-
-        {/* กลุ่มขวา: GRT Status + Due date + Invoice Detail — ชิดขวาด้วยกัน */}
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : 'auto', flexWrap: 'wrap' }}>
           {fld('GRT Status',  'grt',        { readOnly: true, width: '80px'  })}
           {fld('Due date',    'dueDate',    { type: 'date',  width: '130px' })}
@@ -1097,8 +1048,8 @@ function InvoiceEntry({
   supplierItems = [], branchItems = [], accountItems = [], subAccItems = [],
   cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [],
   vendorRuleItems = [],
-  fetchCollection,   // ✅ รับจาก APController
-  userName = '',     // ✅ รับจาก APController
+  fetchCollection,
+  userName = '',
 }) {
   const [form, setFormState] = useState({
     supplierCode: '',
@@ -1106,13 +1057,13 @@ function InvoiceEntry({
     invoiceNum:   '',
     cpc:          '',
     branchNo:     '',
-    branchDirectLabel: '',  // "BRANCH CODE-COMPANY NAME" ของ branch ที่เลือก (หรือ HO ถ้ากด IB)
-    branchIBLabel:     '',  // "BRANCH CODE-COMPANY NAME" ของ branch ที่กด IB, หรือ "-" ถ้าไม่ได้กด IB
+    branchDirectLabel: '',
+    branchIBLabel:     '',
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
     dueDate:      batchConfig?.dueDate || '',
   });
-  const [vendorInfo,       setVendorInfo]       = useState(null);
-  const [showBranchPopup,  setShowBranchPopup]  = useState(false);
+  const [vendorInfo,        setVendorInfo]        = useState(null);
+  const [showBranchPopup,   setShowBranchPopup]   = useState(false);
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
 
   const setField = (key, val) => {
@@ -1120,7 +1071,6 @@ function InvoiceEntry({
     if (key === 'supplierCode' && !val) setVendorInfo(null);
   };
 
-  // ── build branchOptions for combobox datalist ──
   const branchOptions = {
     'Branch Direct': [...new Set(branchItems.map(b => b['Branch Direct']).filter(Boolean))],
     'bu':            [...new Set(branchItems.map(b => b['bu']).filter(Boolean))],
@@ -1154,41 +1104,22 @@ function InvoiceEntry({
     setVendorInfo(found || null);
   };
 
-  // ✅ Save branch: Insert หรือ Update ทีละ 1 แล้ว refresh cache
   const handleSaveBranch = async ({ form: branchForm, isEdit, editTarget }) => {
-    const meta = {
-      updated_by: userName,
-      updated_at: new Date().toISOString(),
-    };
-
+    const meta = { updated_by: userName, updated_at: new Date().toISOString() };
     if (isEdit) {
-      // ── Update ──
-      const { error } = await supabase
-        .from('branch_list')
-        .update({ ...branchForm, ...meta })
-        .eq('id', editTarget.id);
+      const { error } = await supabase.from('branch_list').update({ ...branchForm, ...meta }).eq('id', editTarget.id);
       if (error) throw error;
     } else {
-      // ── Insert ──
-      const { error } = await supabase
-        .from('branch_list')
-        .insert([{ ...branchForm, ...meta }]);
+      const { error } = await supabase.from('branch_list').insert([{ ...branchForm, ...meta }]);
       if (error) throw error;
     }
-
-    // ✅ Force refresh BranchList ใน DataCache
-    // → branchItems prop จะอัปทันทีผ่าน getCached ใน APController
     await fetchCollection('BranchList', true);
   };
 
   const matchedRule = getMatchedRule(vendorInfo);
 
-  // ── เลือก branch จาก BranchSearchPopup ──
-  // ไม่กด IB → Branch Direct = ตัวเอง, Branch IB = "-"
-  // กด IB    → Branch IB = ตัวเอง, Branch Direct = HO ของ BU เดียวกัน
   const handleSelectBranch = (item, meta = {}) => {
     const ownLabel = formatBranchLabel(item);
-
     if (meta.isIB) {
       const ho = findHOBranch(branchItems, item['bu']);
       setFormState(f => ({
@@ -1208,8 +1139,6 @@ function InvoiceEntry({
     setShowBranchPopup(false);
   };
 
-  // ── พิมพ์ Branch no. ตรงๆ (ไม่ผ่าน popup) ──
-  // onChange: ถ้าลบจนว่าง → เคลียร์ label ทั้งคู่ทันที
   const handleBranchNoChange = (val) => {
     setFormState(f => ({
       ...f,
@@ -1218,8 +1147,6 @@ function InvoiceEntry({
     }));
   };
 
-  // onBlur / Enter: lookup branch code ที่พิมพ์ → ตั้งค่าเหมือนเลือกแบบ "ไม่กด IB"
-  // ถ้าหาไม่เจอ → เคลียร์ label ทั้งคู่ (ไม่ auto error เผื่อกำลังพิมพ์ไม่เสร็จ)
   const handleBranchNoBlur = (code) => {
     const trimmed = code?.trim();
     if (!trimmed) {
@@ -1263,14 +1190,14 @@ function InvoiceEntry({
           onBranchNoBlur={handleBranchNoBlur}
           onInvoiceDetail={() => setShowInvoiceDetail(true)}
         />
-        {/* Invoice Detail popup — ขนาดใหญ่เหมือนเปิดอีกหน้า */}
+        {/* ✅ ส่ง vendorInfo เข้า InvoiceDetailPopup */}
         <InvoiceDetailPopup
           show={showInvoiceDetail}
           onClose={() => setShowInvoiceDetail(false)}
           form={form}
           setField={setField}
+          vendorInfo={vendorInfo}
         />
-        {/* TODO: Invoice lines section */}
       </div>
     </div>
   );
@@ -1362,7 +1289,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
   const { fetchCollection, getCached } = useDataCache();
-  const { userName, currentUser }      = useAuth(); // ✅ เพิ่ม
+  const { userName, currentUser }      = useAuth();
 
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
@@ -1422,8 +1349,8 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
             categoryItems={categoryItems}
             noticeItems={noticeItems}
             vendorRuleItems={vendorRuleItems}
-            fetchCollection={fetchCollection}                    // ✅ ส่งลงไป
-            userName={userName || currentUser?.email || ''}      // ✅ ส่งลงไป
+            fetchCollection={fetchCollection}
+            userName={userName || currentUser?.email || ''}
           />
         )}
         {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} />}
