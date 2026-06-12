@@ -56,6 +56,17 @@ const findHOBranch = (branchItems, bu) =>
     isHeadOffice(b['Company for Show in Report Display'])
   );
 
+// ── คำนวณขนาดจอ สำหรับ popup/layout ที่ responsive ──
+function useWindowSize() {
+  const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  useEffect(() => {
+    const handler = () => setSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return size;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BUSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
@@ -606,6 +617,70 @@ function BranchSearchPopup({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// InvoiceDetailPopup — popup ขนาดใหญ่ (เสมือนเปิดอีกหน้า) สำหรับ invoice lines
+// ─────────────────────────────────────────────────────────────────────────────
+function InvoiceDetailPopup({ show, onClose, form }) {
+  const { width: winW, height: winH } = useWindowSize();
+  const isMobile = winW < 768;
+  const isTablet = winW >= 768 && winW < 1200;
+
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
+
+  if (!show) return null;
+
+  // ── คำนวณขนาด popup ตามขนาดจอ ──
+  // มือถือ: เต็มจอ (ไม่มีขอบ/มุมโค้ง เหมือนเปิดหน้าใหม่)
+  // แท็บเล็ต/เดสก์ท็อป: popup ใหญ่ลอยกลางจอ ลดสัดส่วนลงตามพื้นที่ที่มี
+  const popupStyle = isMobile
+    ? { width: '100vw', height: '100vh', maxWidth: '100vw', maxHeight: '100vh', borderRadius: 0 }
+    : isTablet
+      ? { width: '96vw', maxWidth: '1200px', height: '92vh', maxHeight: '92vh', borderRadius: '14px' }
+      : { width: '98vw', maxWidth: '1400px', height: '95vh', maxHeight: '95vh', borderRadius: '14px' };
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, backdropFilter: 'blur(2px)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: 'white', ...popupStyle, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+        {/* Header */}
+        <div style={{ padding: isMobile ? '12px 14px' : '14px 22px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5', flexWrap: 'wrap' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>📋</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Invoice Detail</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: isMobile ? 'normal' : 'nowrap' }}>
+              Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.invoiceNum || '-'}</span>
+              {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
+        </div>
+
+        {/* Body — placeholder for invoice lines */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px' : '18px 22px' }}>
+          <div style={{ border: '1px dashed #dde', borderRadius: '10px', padding: isMobile ? '28px' : '48px', textAlign: 'center', color: '#bbb' }}>
+            <div style={{ fontSize: '32px', marginBottom: '10px' }}>🧾</div>
+            <div style={{ fontSize: '13px' }}>Invoice lines — coming soon</div>
+          </div>
+        </div>
+
+
+        {/* Footer */}
+        <div style={{ padding: isMobile ? '10px 14px' : '12px 22px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+          <button onClick={onClose} style={{ padding: '7px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Math.round(n).toLocaleString('th-TH');
 
@@ -913,7 +988,10 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, onBranchSearch, onBranchNoChange, onBranchNoBlur }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, onBranchSearch, onBranchNoChange, onBranchNoBlur, onInvoiceDetail }) {
+  const { width: winW } = useWindowSize();
+  const isMobile = winW < 768;
+
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -962,6 +1040,11 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         </div>
         {fld('GRT Status',  'grt',        { readOnly: true, width: '80px'  })}
         {fld('Due date',    'dueDate',    { type: 'date',  width: '130px' })}
+        <button onClick={onInvoiceDetail}
+          style={{ marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'center' : 'flex-start', height: '30px', padding: '0 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          Invoice Detail
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+        </button>
       </div>
       <div style={{ marginTop: '10px' }}>
         <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} matchedRule={matchedRule} branchDirectLabel={form.branchDirectLabel} branchIBLabel={form.branchIBLabel} />
@@ -992,6 +1075,7 @@ function InvoiceEntry({
   });
   const [vendorInfo,       setVendorInfo]       = useState(null);
   const [showBranchPopup,  setShowBranchPopup]  = useState(false);
+  const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
 
   const setField = (key, val) => {
     setFormState(f => ({ ...f, [key]: val }));
@@ -1139,6 +1223,13 @@ function InvoiceEntry({
           onBranchSearch={() => setShowBranchPopup(true)}
           onBranchNoChange={handleBranchNoChange}
           onBranchNoBlur={handleBranchNoBlur}
+          onInvoiceDetail={() => setShowInvoiceDetail(true)}
+        />
+        {/* Invoice Detail popup — ขนาดใหญ่เหมือนเปิดอีกหน้า */}
+        <InvoiceDetailPopup
+          show={showInvoiceDetail}
+          onClose={() => setShowInvoiceDetail(false)}
+          form={form}
         />
         {/* TODO: Invoice lines section */}
       </div>
