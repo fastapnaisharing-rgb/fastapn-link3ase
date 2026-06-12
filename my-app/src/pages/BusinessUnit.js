@@ -832,8 +832,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['THAI COMPANY NAME','Thai Company Name',4],
     ['ENGLISH COMPANY NAME','English Company Name',4],
     ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
-    ['SEGMENT3','Segment3',2],['AP GRT Control','AP GRT Control',2],
-    ['mt_Grt','GRT_Cus',2],['mt_Grn','GRN_Cus',2],
+    ['SEGMENT3','Segment3',1],['AP GRT Control','AP GRT Control',1],
+    ['mt_Grt','GRT_Cus',1],['mt_Grn','GRN_Cus',1],
   ];
 
   const renderInfoFormFields = () => {
