@@ -688,20 +688,20 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
               <input type="text" value={form?.grn || ''} onChange={e => setField('grn', e.target.value)}
                 style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '75px' }} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
               <label style={fieldLabel}>Back Description 1</label>
               <input type="text" value={form?.backDesc1 || ''} onChange={e => setField('backDesc1', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '120px' }} />
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
               <label style={fieldLabel}>Back Description 2</label>
               <input type="text" value={form?.backDesc2 || ''} onChange={e => setField('backDesc2', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '120px' }} />
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
               <label style={fieldLabel}>Back Description 3</label>
               <input type="text" value={form?.backDesc3 || ''} onChange={e => setField('backDesc3', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '120px' }} />
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>&nbsp;</label>
