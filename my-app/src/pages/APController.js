@@ -641,9 +641,10 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
 }
 
 // ── Vendor Info Panel ─────────────────────────────────────────────────────────
-function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
+function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchInfo }) {
   const v = vendorLoading ? null : vendorInfo;
   const r = matchedRule;
+  const b = branchInfo;
   const keyStyle = { fontSize: '10px', color: '#999', width: '72px', flexShrink: 0 };
   const valStyle = (hasVal) => ({ fontSize: '11px', color: hasVal ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 });
   const rowStyle = { display: 'flex', alignItems: 'center', padding: '4px 8px' };
@@ -671,9 +672,26 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule }) {
         <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Notice</span><span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span></div>
         <div style={rowStyle}><span style={{ ...keyStyle, width: '52px' }}>Sub Acc</span><span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span></div>
       </div>
-      <div style={rowStyle}>
-        <span style={keyStyle}>Address</span>
-        <span style={{ fontSize: '11px', color: v?.['Address'] ? '#1a3a5c' : '#ccc', flex: 1, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{v?.['Address'] || '—'}</span>
+      {/* ── แถวล่าง: Address (2 บรรทัด, กว้าง = Method+Paygroup+Par = 3/6) | Branch Direct + Branch IB (สแต็ก) ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+        <div style={{ ...rowStyle, alignItems: 'flex-start', borderRight: '0.5px solid #f0f0f0' }}>
+          <span style={keyStyle}>Address</span>
+          <span style={{
+            fontSize: '11px', color: v?.['Address'] ? '#1a3a5c' : '#ccc', flex: 1,
+            lineHeight: '1.5', whiteSpace: 'pre-wrap',
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          }} title={v?.['Address'] || ''}>{v?.['Address'] || '—'}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ ...rowStyle, flex: 1, borderBottom: '0.5px solid #f0f0f0' }}>
+            <span style={{ ...keyStyle, width: '88px' }}>Branch Direct</span>
+            <span style={valStyle(!!b?.['Branch Direct'])}>{b?.['Branch Direct'] || '—'}</span>
+          </div>
+          <div style={{ ...rowStyle, flex: 1 }}>
+            <span style={{ ...keyStyle, width: '88px' }}>Branch IB</span>
+            <span style={valStyle(!!b?.['BU-Branch'])}>{b?.['BU-Branch'] || '—'}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -856,7 +874,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, onBranchSearch }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, branchInfo, onBranchSearch }) {
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -904,7 +922,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         {fld('Due date',    'dueDate',    { type: 'date',  width: '130px' })}
       </div>
       <div style={{ marginTop: '10px' }}>
-        <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} matchedRule={matchedRule} />
+        <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} matchedRule={matchedRule} branchInfo={branchInfo} />
       </div>
     </div>
   );
@@ -999,6 +1017,13 @@ function InvoiceEntry({
 
   const matchedRule = getMatchedRule(vendorInfo);
 
+  // ── lookup branch ที่เลือกไว้ใน branchNo เพื่อแสดง Branch Direct / Branch IB ──
+  const branchInfo = (() => {
+    const code = form.branchNo?.trim();
+    if (!code) return null;
+    return branchItems.find(b => String(b['Branch Code'] ?? '').trim() === code) || null;
+  })();
+
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
       <BranchSearchPopup
@@ -1018,6 +1043,7 @@ function InvoiceEntry({
           vendorInfo={vendorInfo}
           vendorLoading={false}
           matchedRule={matchedRule}
+          branchInfo={branchInfo}
           onBranchSearch={() => setShowBranchPopup(true)}
         />
         {/* TODO: Invoice lines section */}
