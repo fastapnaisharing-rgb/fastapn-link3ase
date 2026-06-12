@@ -563,6 +563,23 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
   });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
 
+  const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
+  const handleMoneyChange = (key, val) => {
+    let v = val.replace(/[^0-9.]/g, '');
+    const firstDot = v.indexOf('.');
+    if (firstDot !== -1) v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+    setLine1Field(key, v);
+  };
+  const handleMoneyBlur = (key, val) => {
+    if (val === '' || val === '.') { setLine1Field(key, ''); return; }
+    const num = Math.round(parseFloat(val) * 100) / 100;
+    setLine1Field(key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  };
+  const handleMoneyFocus = (key, val) => {
+    const raw = val.replace(/,/g, '');
+    setLine1Field(key, raw);
+  };
+
   useEffect(() => {
     if (!show) return;
     const h = (e) => { if (e.key === 'Escape') onClose(); };
@@ -721,7 +738,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
               <colgroup>
-                {[3,8,9,8,6,6,9,21,10,10,10].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}
+                {[3,8,9,4,8,8,13,21,8,8,10].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}
               </colgroup>
               <thead>
                 <tr style={{ background: '#f8f9fa' }}>
@@ -748,9 +765,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
                     <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
                       {type === 'fixed' ? (
                         <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line1[key]}</div>
+                      ) : key === 'itemCode' ? (
+                        <div style={{ position: 'relative' }}>
+                          <input type="text" inputMode="numeric" maxLength={8} value={line1[key]} onChange={e => setLine1Field(key, e.target.value.replace(/\D/g, '').slice(0, 8))}
+                            style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+                          <button type="button" title="Search item code"
+                            style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                          </button>
+                        </div>
                       ) : (
-                        <input type="text" value={line1[key]} onChange={e => setLine1Field(key, e.target.value)}
-                          style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+                        <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line1[key]}
+                          onChange={e => MONEY_FIELDS.includes(key) ? handleMoneyChange(key, e.target.value) : setLine1Field(key, e.target.value)}
+                          onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line1[key]) : undefined}
+                          onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line1[key]) : undefined}
+                          style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
                       )}
                     </td>
                   ))}
