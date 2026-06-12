@@ -231,6 +231,7 @@ function MainApp() {
   const { currentUser, userRole, userName, logout, userPermissions } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
+  const hasAnyDocAccess = Object.values(userPermissions?.docAccess || {}).some(v => v === true);
 
 
 
@@ -416,7 +417,10 @@ function MainApp() {
       
       case 'itemcode':        return <ItemCodeList />;
 
-      case 'upload':          return <UploadGen />;
+      case 'upload':
+      return (isOwner || hasAnyDocAccess)
+        ? <UploadGen />
+        : <NoAccessPage />;
       case 'users':           return <UserManagement />;
       default:                return <PlaceholderPage title="AP Controller" icon="🧾" />;
     }

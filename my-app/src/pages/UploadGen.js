@@ -403,7 +403,10 @@ function DocumentCenter() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const canAccess = (folder) => {
-    if (isOwner || isAdmin) return true;
+    // Owner เข้าได้ทุกกล่องเสมอ
+    if (isOwner) return true;
+
+    // Admin / Editor / Viewer — ต้องมี override หรือ permission เท่านั้น
     const override = overrides.find(o => o.folder_key === folder.key);
     if (override) return override.allowed;
     return userRoleData?.permissions?.[folder.permKey] ?? false;
