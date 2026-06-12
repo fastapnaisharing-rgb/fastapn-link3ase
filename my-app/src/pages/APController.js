@@ -671,21 +671,22 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   });
 
   const fldStyle = { height: '28px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' };
+  const taStyle = { padding: '6px 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' };
 
-  // ── ฟิลด์สำหรับฟอร์ม New (2 คอลัมน์ ดูกระชับขึ้น) ──
+  // ── ฟิลด์สำหรับฟอร์ม New (3 คอลัมน์) ──
   const NEW_FIELDS = [
-    ['bu', 'BU', 1],
-    ['description', 'Description *', 2],
-    ['cpc', 'CPC', 1],
-    ['account', 'Account', 1],
-    ['sub', 'SUB', 1],
-    ['dis_g', 'Dis-G', 1],
-    ['i_and_g', 'I&G', 1],
-    ['value', 'VALUE', 1],
-    ['oth', 'OTH', 1],
-    ['spi1', 'SPI-1', 1],
-    ['spec_tx', 'SPEC-TX', 1],
-    ['keyword', 'Keyword', 1],
+    ['bu', 'BU', 3, 'text'],
+    ['description', 'Description *', 3, 'textarea2'],
+    ['cpc', 'CPC', 1, 'text'],
+    ['account', 'Account', 1, 'text'],
+    ['sub', 'SUB', 1, 'text'],
+    ['dis_g', 'Dis-G', 1, 'text'],
+    ['i_and_g', 'I&G', 1, 'text'],
+    ['value', 'VALUE', 1, 'text'],
+    ['oth', 'OTH', 1, 'text'],
+    ['spi1', 'SPI-1', 1, 'text'],
+    ['spec_tx', 'SPEC-TX', 1, 'text'],
+    ['keyword', 'Keyword', 3, 'textarea3'],
   ];
 
   return (
@@ -766,17 +767,24 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
         ) : (
           <>
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              <div style={{ maxWidth: '460px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px 12px' }}>
-                <div style={{ gridColumn: 'span 2' }}>
+              <div style={{ maxWidth: '520px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 12px' }}>
+                <div style={{ gridColumn: 'span 3' }}>
                   <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>Code (Auto)</label>
                   <input value={nextCode} disabled style={{ ...fldStyle, background: '#f5f5f5', color: '#999' }} />
                 </div>
-                {NEW_FIELDS.map(([key, label, span]) => {
+                {NEW_FIELDS.map(([key, label, span, type]) => {
                   const isCombo = ITEM_COMBO_FIELDS.includes(key);
                   return (
-                    <div key={key} style={{ gridColumn: span === 2 ? 'span 2' : 'span 1' }}>
+                    <div key={key} style={{ gridColumn: `span ${span}` }}>
                       <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>{label}</label>
-                      {isCombo ? (
+                      {type === 'textarea2' || type === 'textarea3' ? (
+                        <textarea
+                          rows={type === 'textarea3' ? 3 : 2}
+                          value={form[key] || ''}
+                          onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                          style={taStyle}
+                        />
+                      ) : isCombo ? (
                         <>
                           <input
                             list={`combo-itemcode-${key}`}

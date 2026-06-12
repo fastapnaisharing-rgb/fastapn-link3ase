@@ -200,6 +200,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [containerW, setContainerW] = useState(0);
   const syncScroll = () => { if (theadRef.current && tbodyRef.current) theadRef.current.scrollLeft = tbodyRef.current.scrollLeft; };
 
+  // ✅ Guards to prevent duplicate concurrent fetches (e.g. React StrictMode double-invoke)
+  const fetchInfoRef = useRef(false);
+  const fetchBranchRef = useRef(false);
+
   useEffect(() => {
     if (!containerRef.current) return;
     setContainerW(containerRef.current.getBoundingClientRect().width);
@@ -271,39 +275,51 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const branchTaxIds = useMemo(() => new Set(branches.map(b => b['BU-TaxID']).filter(Boolean)), [branches]);
 
-  // ✅ Chunked Loading
+  // ✅ Chunked Loading (guarded against duplicate concurrent calls)
   const fetchInfo = useCallback(async () => {
-    let from = 0;
-    const batchSize = 1000;
-    let isFirst = true;
-    while (true) {
-      const { data, error } = await supabase
-        .from('company_list')
-        .select('*')
-        .range(from, from + batchSize - 1);
-      if (error) { console.error('fetchInfo error:', error); break; }
-      if (isFirst) { setInfoItems(data || []); isFirst = false; }
-      else { setInfoItems(prev => [...prev, ...(data || [])]); }
-      if (!data || data.length < batchSize) break;
-      from += batchSize;
+    if (fetchInfoRef.current) return;
+    fetchInfoRef.current = true;
+    try {
+      let from = 0;
+      const batchSize = 1000;
+      let allData = [];
+      while (true) {
+        const { data, error } = await supabase
+          .from('company_list')
+          .select('*')
+          .range(from, from + batchSize - 1);
+        if (error) { console.error('fetchInfo error:', error); break; }
+        allData = [...allData, ...(data || [])];
+        if (!data || data.length < batchSize) break;
+        from += batchSize;
+      }
+      setInfoItems(allData);
+    } finally {
+      fetchInfoRef.current = false;
     }
   }, []);
 
-  // ✅ Chunked Loading
+  // ✅ Chunked Loading (guarded against duplicate concurrent calls)
   const fetchBranch = useCallback(async () => {
-    let from = 0;
-    const batchSize = 1000;
-    let isFirst = true;
-    while (true) {
-      const { data, error } = await supabase
-        .from('branch_list')
-        .select('*')
-        .range(from, from + batchSize - 1);
-      if (error) { console.error('fetchBranch error:', error); break; }
-      if (isFirst) { setBranches(data || []); isFirst = false; }
-      else { setBranches(prev => [...prev, ...(data || [])]); }
-      if (!data || data.length < batchSize) break;
-      from += batchSize;
+    if (fetchBranchRef.current) return;
+    fetchBranchRef.current = true;
+    try {
+      let from = 0;
+      const batchSize = 1000;
+      let allData = [];
+      while (true) {
+        const { data, error } = await supabase
+          .from('branch_list')
+          .select('*')
+          .range(from, from + batchSize - 1);
+        if (error) { console.error('fetchBranch error:', error); break; }
+        allData = [...allData, ...(data || [])];
+        if (!data || data.length < batchSize) break;
+        from += batchSize;
+      }
+      setBranches(allData);
+    } finally {
+      fetchBranchRef.current = false;
     }
   }, []);
 
