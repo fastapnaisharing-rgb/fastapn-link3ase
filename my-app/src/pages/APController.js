@@ -913,7 +913,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Invoice Header ────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, onBranchSearch }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoading, matchedRule, onBranchSearch, onBranchNoChange, onBranchNoBlur }) {
   const fld = (label, key, opts = {}) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: opts.width || 'auto' }}>
       <label style={{ fontSize: '11px', color: '#888' }}>
@@ -949,7 +949,10 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Branch no.</label>
           <div style={{ position: 'relative' }}>
-            <input type="text" value={form.branchNo} onChange={e => setField('branchNo', e.target.value)}
+            <input type="text" value={form.branchNo}
+              onChange={e => onBranchNoChange(e.target.value)}
+              onBlur={e => onBranchNoBlur(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') onBranchNoBlur(e.target.value); }}
               style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
             <button onClick={onBranchSearch}
               style={{ position: 'absolute', right: 0, top: 0, height: '30px', width: '28px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
@@ -1083,6 +1086,37 @@ function InvoiceEntry({
     setShowBranchPopup(false);
   };
 
+  // ── พิมพ์ Branch no. ตรงๆ (ไม่ผ่าน popup) ──
+  // onChange: ถ้าลบจนว่าง → เคลียร์ label ทั้งคู่ทันที
+  const handleBranchNoChange = (val) => {
+    setFormState(f => ({
+      ...f,
+      branchNo: val,
+      ...(val.trim() === '' ? { branchDirectLabel: '', branchIBLabel: '' } : {}),
+    }));
+  };
+
+  // onBlur / Enter: lookup branch code ที่พิมพ์ → ตั้งค่าเหมือนเลือกแบบ "ไม่กด IB"
+  // ถ้าหาไม่เจอ → เคลียร์ label ทั้งคู่ (ไม่ auto error เผื่อกำลังพิมพ์ไม่เสร็จ)
+  const handleBranchNoBlur = (code) => {
+    const trimmed = code?.trim();
+    if (!trimmed) {
+      setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' }));
+      return;
+    }
+    const found = branchItems.find(b => String(b['Branch Code'] ?? '').trim().toLowerCase() === trimmed.toLowerCase());
+    if (found) {
+      setFormState(f => ({
+        ...f,
+        branchNo:          found['Branch Code'] || trimmed,
+        branchDirectLabel: formatBranchLabel(found),
+        branchIBLabel:     '-',
+      }));
+    } else {
+      setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' }));
+    }
+  };
+
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
       <BranchSearchPopup
@@ -1103,6 +1137,8 @@ function InvoiceEntry({
           vendorLoading={false}
           matchedRule={matchedRule}
           onBranchSearch={() => setShowBranchPopup(true)}
+          onBranchNoChange={handleBranchNoChange}
+          onBranchNoBlur={handleBranchNoBlur}
         />
         {/* TODO: Invoice lines section */}
       </div>
