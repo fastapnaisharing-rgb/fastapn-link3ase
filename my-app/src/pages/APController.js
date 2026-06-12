@@ -652,7 +652,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
           </div>
 
           {/* Inv date / Invoice num / CPC / Period / Vat / WHT / GRT / GRN / Back Desc 1-3 */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', overflowX: 'auto', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', overflowX: 'auto', marginBottom: '14px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>Inv date</label>
               <input type="date" value={form?.invDate || ''} onChange={e => setField('invDate', e.target.value)}
@@ -703,14 +703,14 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
               <input type="text" value={form?.backDesc3 || ''} onChange={e => setField('backDesc3', e.target.value)}
                 style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '120px' }} />
             </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0, justifyContent: 'flex-end' }}>
-            <label style={fieldLabel}>&nbsp;</label>
-            <button
-              style={{ height: '30px', padding: '0 14px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}
-              onClick={() => {}}>
-              Contract
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>&nbsp;</label>
+              <button
+                style={{ height: '30px', padding: '0 14px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap', width: '150px', flexShrink: 0 }}
+                onClick={() => {}}>
+                Contract
+              </button>
+            </div>
           </div>
           <div style={{ border: '1px dashed #dde', borderRadius: '10px', padding: isMobile ? '28px' : '48px', textAlign: 'center', color: '#bbb' }}>
             <div style={{ fontSize: '32px', marginBottom: '10px' }}>🧾</div>
