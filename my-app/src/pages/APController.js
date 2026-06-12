@@ -558,7 +558,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
   const isTablet = winW >= 768 && winW < 1200;
 
   const [line1, setLine1] = useState({
-    hl: '', itemCode: '', amount: '', tax: '', taxWhtCode: '', account: '',
+    hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '',
     desc: '', vat: '', wht: '', total: '',
   });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
@@ -721,11 +721,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
               <colgroup>
-                {[5,10,9,8,8,9,21,10,10,10].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}
+                {[3,8,9,8,6,6,9,21,10,10,10].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}
               </colgroup>
               <thead>
                 <tr style={{ background: '#f8f9fa' }}>
-                  {['H/L','Item Code','Amount','Tax','Tax Code / Wht Code','Account','Description','Vat Amount','Wht Amount','Total'].map(h => (
+                  {['H/L','Item Code','Amount','Tax','Tax Code','Wht Code','Account','Description','Vat Amount','Wht Amount','Total'].map(h => (
                     <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
                   ))}
                 </tr>
@@ -733,11 +733,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
               <tbody>
                 <tr>
                   {[
-                    ['hl', 'select'],
+                    ['hl', 'fixed'],
                     ['itemCode', 'text'],
                     ['amount', 'text'],
                     ['tax', 'text'],
-                    ['taxWhtCode', 'text'],
+                    ['taxCode', 'text'],
+                    ['whtCode', 'text'],
                     ['account', 'text'],
                     ['desc', 'text'],
                     ['vat', 'text'],
@@ -745,13 +746,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
                     ['total', 'text'],
                   ].map(([key, type]) => (
                     <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
-                      {type === 'select' ? (
-                        <select value={line1[key]} onChange={e => setLine1Field(key, e.target.value)}
-                          style={{ width: '100%', height: '28px', padding: '0 4px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }}>
-                          <option value="">—</option>
-                          <option value="H">H</option>
-                          <option value="L">L</option>
-                        </select>
+                      {type === 'fixed' ? (
+                        <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line1[key]}</div>
                       ) : (
                         <input type="text" value={line1[key]} onChange={e => setLine1Field(key, e.target.value)}
                           style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
