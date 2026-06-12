@@ -712,9 +712,20 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
               </button>
             </div>
           </div>
-          <div style={{ border: '1px dashed #dde', borderRadius: '10px', padding: isMobile ? '28px' : '48px', textAlign: 'center', color: '#bbb' }}>
-            <div style={{ fontSize: '32px', marginBottom: '10px' }}>🧾</div>
-            <div style={{ fontSize: '13px' }}>Invoice lines — coming soon</div>
+          <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ background: '#f8f9fa' }}>
+                  {['Item Code','Amount','Tax Account','Description','Vat Amount','Wht Amount','Total'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+            </table>
+            <div style={{ padding: isMobile ? '28px' : '48px', textAlign: 'center', color: '#bbb' }}>
+              <div style={{ fontSize: '32px', marginBottom: '10px' }}>🧾</div>
+              <div style={{ fontSize: '13px' }}>Invoice lines — coming soon</div>
+            </div>
           </div>
         </div>
 
@@ -1050,7 +1061,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
         </select>
       ) : (
         <input type={opts.type || 'text'} value={form[key]} onChange={e => setField(key, e.target.value)} readOnly={opts.readOnly}
-          style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: opts.readOnly ? '0.5px solid #5DCAA5' : '0.5px solid #ddd', background: opts.readOnly ? '#E1F5EE' : 'white', color: opts.readOnly ? '#085041' : '#1a3a5c' }} />
+          style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: opts.readOnly ? '0.5px solid #5DCAA5' : '0.5px solid #ddd', background: opts.readOnly ? '#E1F5EE' : 'white', color: opts.readOnly ? '#085041' : '#1a3a5c', textAlign: opts.readOnly ? 'center' : 'left' }} />
       )}
     </div>
   );
