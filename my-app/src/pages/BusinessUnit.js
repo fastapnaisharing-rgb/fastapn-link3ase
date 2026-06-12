@@ -227,7 +227,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     { key: 'ENGLISH COMPANY NAME', label: 'English Company Name', w: 220 },
     { key: 'TAX ID', label: 'Tax ID', w: 130 },
     { key: 'PREPARE BY', label: 'Prepare By', w: 140 },
-    { key: 'DEPARTMENT', label: 'Department', w: 120 },
     { key: 'COMPANY CODE', label: 'Company Code', w: 120 },
     { key: 'VAT %', label: 'VAT %', w: 70 },
     { key: 'Last Rate (%)', label: 'Last Rate (%)', w: 90 },
