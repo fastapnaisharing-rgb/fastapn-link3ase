@@ -620,7 +620,7 @@ function BranchSearchPopup({
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup — popup ขนาดใหญ่ (เสมือนเปิดอีกหน้า) สำหรับ invoice lines
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form }) {
+function InvoiceDetailPopup({ show, onClose, form, setField }) {
   const { width: winW, height: winH } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -663,8 +663,27 @@ function InvoiceDetailPopup({ show, onClose, form }) {
           <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
         </div>
 
-        {/* Body — placeholder for invoice lines */}
+        {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px' : '18px 22px' }}>
+          {/* Inv date / Invoice num / CPC — ย้ายมาจาก Invoice header */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '130px' }}>
+              <label style={{ fontSize: '11px', color: '#888' }}>Inv date</label>
+              <input type="date" value={form?.invDate || ''} onChange={e => setField('invDate', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '150px' }}>
+              <label style={{ fontSize: '11px', color: '#888' }}>Invoice num</label>
+              <input type="text" value={form?.invoiceNum || ''} onChange={e => setField('invoiceNum', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '80px' }}>
+              <label style={{ fontSize: '11px', color: '#888' }}>CPC</label>
+              <input type="text" value={form?.cpc || ''} onChange={e => setField('cpc', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+            </div>
+          </div>
+
           <div style={{ border: '1px dashed #dde', borderRadius: '10px', padding: isMobile ? '28px' : '48px', textAlign: 'center', color: '#bbb' }}>
             <div style={{ fontSize: '32px', marginBottom: '10px' }}>🧾</div>
             <div style={{ fontSize: '13px' }}>Invoice lines — coming soon</div>
@@ -1013,17 +1032,16 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
+        {/* Supplier code — ขยายกว้างขึ้น */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 220px', minWidth: '180px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
           <input type="text" value={form.supplierCode}
             onChange={e => setField('supplierCode', e.target.value)}
             onBlur={() => onSupplierBlur(form.supplierCode)}
             onKeyDown={e => { if (e.key === 'Enter') onSupplierBlur(form.supplierCode); }}
-            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' }} />
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
         </div>
-        {fld('Inv date',    'invDate',    { type: 'date',  width: '130px' })}
-        {fld('Invoice num', 'invoiceNum', {                 width: '110px' })}
-        {fld('CPC',         'cpc',        {                 width: '60px'  })}
+        {/* Branch no. — อยู่ซ้าย ติดกับ Supplier code */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Branch no.</label>
           <div style={{ position: 'relative' }}>
@@ -1038,13 +1056,17 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
             </button>
           </div>
         </div>
-        {fld('GRT Status',  'grt',        { readOnly: true, width: '80px'  })}
-        {fld('Due date',    'dueDate',    { type: 'date',  width: '130px' })}
-        <button onClick={onInvoiceDetail}
-          style={{ marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'center' : 'flex-start', height: '30px', padding: '0 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-          Invoice Detail
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
-        </button>
+
+        {/* กลุ่มขวา: GRT Status + Due date + Invoice Detail — ชิดขวาด้วยกัน */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : 'auto', flexWrap: 'wrap' }}>
+          {fld('GRT Status',  'grt',        { readOnly: true, width: '80px'  })}
+          {fld('Due date',    'dueDate',    { type: 'date',  width: '130px' })}
+          <button onClick={onInvoiceDetail}
+            style={{ width: isMobile ? '100%' : 'auto', justifyContent: 'center', height: '30px', padding: '0 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Invoice Detail
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
       </div>
       <div style={{ marginTop: '10px' }}>
         <VendorInfoPanel vendorInfo={vendorInfo} vendorLoading={vendorLoading} matchedRule={matchedRule} branchDirectLabel={form.branchDirectLabel} branchIBLabel={form.branchIBLabel} />
@@ -1230,6 +1252,7 @@ function InvoiceEntry({
           show={showInvoiceDetail}
           onClose={() => setShowInvoiceDetail(false)}
           form={form}
+          setField={setField}
         />
         {/* TODO: Invoice lines section */}
       </div>
