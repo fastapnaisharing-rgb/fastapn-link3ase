@@ -211,7 +211,7 @@ function BranchSearchPopup({
   const [form,        setForm]        = useState({});
   const [formError,   setFormError]   = useState('');
   const [saving,      setSaving]      = useState(false);
-  const [sortField,   setSortField]   = useState('Branch Code');
+  const [sortField,   setSortField]   = useState('BU-Branch');
   const [sortDir,     setSortDir]     = useState('asc');
 
   const inputRef = useRef(null);
