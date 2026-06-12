@@ -652,21 +652,49 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
           </div>
 
           {/* Inv date / CPC / Invoice num */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '130px' }}>
+          {/* Inv date / Invoice num / CPC / Period / Vat / WHT / GRT / GRN */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', overflowX: 'auto', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>Inv date</label>
               <input type="date" value={form?.invDate || ''} onChange={e => setField('invDate', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '130px' }} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '80px' }}>
-              <label style={fieldLabel}>CPC</label>
-              <input type="text" value={form?.cpc || ''} onChange={e => setField('cpc', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 220px', minWidth: '220px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>Invoice num</label>
               <input type="text" value={form?.invoiceNum || ''} onChange={e => setField('invoiceNum', e.target.value)}
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '230px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>CPC</label>
+              <input type="text" value={form?.cpc || ''} onChange={e => setField('cpc', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '72px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>Period</label>
+              <select value={form?.period || 'Current'} onChange={e => setField('period', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '90px', appearance: 'auto', cursor: 'pointer' }}>
+                {PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>Vat</label>
+              <input type="text" value={form?.vat || ''} onChange={e => setField('vat', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '75px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>WHT</label>
+              <input type="text" value={form?.wht || ''} onChange={e => setField('wht', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '75px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>GRT</label>
+              <input type="text" value={form?.grtNum || ''} onChange={e => setField('grtNum', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '75px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>GRN</label>
+              <input type="text" value={form?.grn || ''} onChange={e => setField('grn', e.target.value)}
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '75px' }} />
             </div>
           </div>
 
@@ -1074,6 +1102,11 @@ function InvoiceEntry({
     branchIBLabel:     '',
     grt:          batchConfig?.buInfo?.['AP GRT Control'] || '',
     dueDate:      batchConfig?.dueDate || '',
+    period:      '',
+    vat:    '',
+    wht:    '',
+    grtNum: '',
+    grn:    '',
   });
   const [vendorInfo,        setVendorInfo]        = useState(null);
   const [showBranchPopup,   setShowBranchPopup]   = useState(false);
