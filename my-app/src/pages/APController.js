@@ -555,7 +555,9 @@ function BranchSearchPopup({
 // ─────────────────────────────────────────────────────────────────────────────
 // ItemCodeSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
-function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetchCollection, userName = '', currentUser }) {
+const ITEM_COMBO_FIELDS = ['dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
+
+function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '' }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(-1);
   const [view, setView] = useState('search');
@@ -583,8 +585,11 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   }, [active]);
 
   useEffect(() => {
-    if (show && view === 'new') computeNextCode();
-  }, [show, view]);
+    if (show && view === 'new') {
+      computeNextCode();
+      setForm(f => ({ ...f, bu: bu || '' }));
+    }
+  }, [show, view, bu]);
 
   const computeNextCode = async () => {
     let allCodes = [];
@@ -623,16 +628,28 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
 
   if (!show) return null;
 
+  // ── Filter ตาม BU: เฉพาะ FREE และ BU ปัจจุบันของ batch ──
+  const buLower = String(bu ?? '').toLowerCase();
+  const buFiltered = itemcodeItems.filter(i => {
+    const ib = String(i['bu'] ?? '').toLowerCase();
+    return ib === 'free' || (buLower && ib === buLower);
+  });
+
   const q = query.trim().toLowerCase();
-  const filtered = q
-    ? itemcodeItems.filter(i =>
+  const filtered0 = q
+    ? buFiltered.filter(i =>
         i['code']?.toLowerCase().includes(q) ||
         i['description']?.toLowerCase().includes(q) ||
         i['keyword']?.toLowerCase().includes(q) ||
         i['cpc']?.toLowerCase().includes(q) ||
         i['account']?.includes(q)
       )
-    : itemcodeItems;
+    : buFiltered;
+
+  // ── Sort by Code Ascending ──
+  const filtered = [...filtered0].sort((a, b) =>
+    String(a['code'] ?? '').localeCompare(String(b['code'] ?? ''), undefined, { numeric: true, sensitivity: 'base' })
+  );
 
   const handleKey = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
@@ -640,19 +657,41 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
 
+  // ── แสดงเฉพาะคอลัมน์ถึง Sub Acc ──
   const COLS = [
-    ['code','Code','90px'],['bu','BU','55px'],['description','Description',''],
-    ['cpc','CPC','65px'],['account','Account','85px'],['sub','SUB','55px'],
-    ['dis_g','Dis-G','55px'],['i_and_g','I&G','55px'],['value','VALUE','55px'],
-    ['oth','OTH','55px'],['spi1','SPI-1','55px'],['spec_tx','SPEC-TX','65px'],
+    ['code','Code','100px'],['bu','BU','60px'],['description','Description',''],
+    ['cpc','CPC','75px'],['account','Account','95px'],['sub','SUB','70px'],
   ];
 
+  // ── Unique options สำหรับ dropdown ในหน้า Add ──
+  const FIELD_OPTIONS = {};
+  ITEM_COMBO_FIELDS.forEach(key => {
+    FIELD_OPTIONS[key] = [...new Set(itemcodeItems.map(i => i[key]).filter(v => v !== undefined && v !== null && String(v).trim() !== ''))]
+      .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+  });
+
   const fldStyle = { height: '28px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' };
+
+  // ── ฟิลด์สำหรับฟอร์ม New (2 คอลัมน์ ดูกระชับขึ้น) ──
+  const NEW_FIELDS = [
+    ['bu', 'BU', 1],
+    ['description', 'Description *', 2],
+    ['cpc', 'CPC', 1],
+    ['account', 'Account', 1],
+    ['sub', 'SUB', 1],
+    ['dis_g', 'Dis-G', 1],
+    ['i_and_g', 'I&G', 1],
+    ['value', 'VALUE', 1],
+    ['oth', 'OTH', 1],
+    ['spi1', 'SPI-1', 1],
+    ['spec_tx', 'SPEC-TX', 1],
+    ['keyword', 'Keyword', 1],
+  ];
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300, backdropFilter: 'blur(2px)' }}
       onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ background: 'white', borderRadius: '14px', width: '95vw', maxWidth: '1200px', height: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: view === 'new' ? '94vw' : '95vw', maxWidth: view === 'new' ? '720px' : '900px', height: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
         <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
           {view === 'new' && (
             <button onClick={() => setView('search')} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>
@@ -661,7 +700,9 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{view === 'new' ? 'New Item Code' : 'Select Item Code'}</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
-              {view === 'new' ? `Code: ${nextCode}` : `${filtered.length} รายการ${query ? ` · ค้นหา "${query}"` : ''}`}
+              {view === 'new'
+                ? `Code: ${nextCode}`
+                : `${filtered.length} รายการ${query ? ` · ค้นหา "${query}"` : ''} · BU: FREE${bu ? `, ${bu}` : ''}`}
             </div>
           </div>
           <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
@@ -679,7 +720,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
                   {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
                     style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
                 </div>
-                <button onClick={() => { setView('new'); setForm(emptyForm); }}
+                <button onClick={() => { setView('new'); setForm({ ...emptyForm, bu: bu || '' }); }}
                   style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   Add Item
@@ -687,7 +728,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
               </div>
             </div>
             <div ref={listRef} style={{ overflowY: 'auto', overflowX: 'auto', flex: 1 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed', minWidth: '900px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed', minWidth: '640px' }}>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr>
                     {COLS.map(([key, label, w]) => (
@@ -718,24 +759,42 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
               </table>
             </div>
             <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-              <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {itemcodeItems.length} รายการ</span>
+              <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} รายการ</span>
               <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
             </div>
           </>
         ) : (
           <>
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-                <div>
+              <div style={{ maxWidth: '460px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px 12px' }}>
+                <div style={{ gridColumn: 'span 2' }}>
                   <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>Code (Auto)</label>
                   <input value={nextCode} disabled style={{ ...fldStyle, background: '#f5f5f5', color: '#999' }} />
                 </div>
-                {[['bu','BU'],['description','Description *'],['cpc','CPC'],['account','Account'],['sub','SUB'],['dis_g','Dis-G'],['i_and_g','I&G'],['value','VALUE'],['oth','OTH'],['spi1','SPI-1'],['spec_tx','SPEC-TX'],['keyword','Keyword']].map(([key, label]) => (
-                  <div key={key}>
-                    <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>{label}</label>
-                    <input value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} style={fldStyle} />
-                  </div>
-                ))}
+                {NEW_FIELDS.map(([key, label, span]) => {
+                  const isCombo = ITEM_COMBO_FIELDS.includes(key);
+                  return (
+                    <div key={key} style={{ gridColumn: span === 2 ? 'span 2' : 'span 1' }}>
+                      <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>{label}</label>
+                      {isCombo ? (
+                        <>
+                          <input
+                            list={`combo-itemcode-${key}`}
+                            value={form[key] || ''}
+                            onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                            placeholder="เลือกหรือพิมพ์ใหม่"
+                            style={fldStyle}
+                          />
+                          <datalist id={`combo-itemcode-${key}`}>
+                            {FIELD_OPTIONS[key].map((o, i) => <option key={i} value={o} />)}
+                          </datalist>
+                        </>
+                      ) : (
+                        <input value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} style={fldStyle} />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
             <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', flexShrink: 0, background: '#fafbfc' }}>
@@ -752,7 +811,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
 }
 
 
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser }) {
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '' }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -1002,6 +1061,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           fetchCollection={fetchCollection}
           userName={userName}
           currentUser={currentUser}
+          bu={bu}
         />
 
         {/* Footer */}
@@ -1551,6 +1611,7 @@ function InvoiceEntry({
           fetchCollection={fetchCollection}
           userName={userName}
           currentUser={currentUser}
+          bu={batchConfig?.bu || ''}
         />
       </div>
     </div>
