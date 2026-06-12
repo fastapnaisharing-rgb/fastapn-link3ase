@@ -665,13 +665,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField }) {
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px' : '18px 22px' }}>
-          {/* Header Detail — เว้นไว้สำหรับเนื้อหาที่จะเพิ่มต่อไป */}
-          <div style={{ ...card, marginBottom: '14px' }}>
+        {/* Header Detail — แบ่งเป็น 2 กล่อง 49% กลางเป็น gap */}
+        <div style={{ display: 'flex', gap: '2%', marginBottom: '14px' }}>
+          <div style={{ ...card, width: '49%', marginBottom: 0 }}>
             <div style={cardHead}><span style={cardLabel}>Header Detail</span></div>
             <div style={cardBody}>
               <div style={{ fontSize: '11px', color: '#bbb', fontStyle: 'italic' }}>— coming soon —</div>
             </div>
           </div>
+          <div style={{ ...card, width: '49%', marginBottom: 0 }}>
+            <div style={cardHead}><span style={cardLabel}>Header Detail 2</span></div>
+            <div style={cardBody}>
+              <div style={{ fontSize: '11px', color: '#bbb', fontStyle: 'italic' }}>— coming soon —</div>
+            </div>
+          </div>
+        </div>
 
           {/* Inv date / CPC / Invoice num — แถวเดียวกัน ระหว่าง Header Detail กับ Invoice lines */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
