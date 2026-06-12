@@ -29,6 +29,31 @@ const TABLE_MAP = {
   cpc_list:        'cpc_list',
 };
 
+// ✅ Defensive generic dedup, applied to EVERY collection.
+// Two rows are considered duplicates if all fields match EXCEPT
+// id / created_at / updated_at / updated_by. First occurrence wins.
+// Protects against duplicate rows in the DB (e.g. from past double-imports)
+// without modifying the database itself.
+const DEDUP_IGNORE_FIELDS = ['id', 'created_at', 'updated_at', 'updated_by'];
+
+const dedupRows = (collectionName, rows) => {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const seen = new Set();
+  const result = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') { result.push(row); continue; }
+    const keys = Object.keys(row).filter(k => !DEDUP_IGNORE_FIELDS.includes(k)).sort();
+    const signature = JSON.stringify(keys.map(k => row[k]));
+    if (seen.has(signature)) continue; // duplicate content, skip
+    seen.add(signature);
+    result.push(row);
+  }
+  if (result.length !== rows.length) {
+    console.warn(`[DataCache] Removed ${rows.length - result.length} duplicate row(s) from ${collectionName}`);
+  }
+  return result;
+};
+
 const loadFromStorage = () => {
   try {
     const cached = sessionStorage.getItem(STORAGE_KEY);
@@ -88,9 +113,10 @@ export function DataCacheProvider({ children }) {
         if (data.length < pageSize) break;
         from += pageSize;
       }
-      setCache(prev => ({ ...prev, [collectionName]: allData }));
+      const dedupedData = dedupRows(collectionName, allData);
+      setCache(prev => ({ ...prev, [collectionName]: dedupedData }));
       setLastFetch(prev => ({ ...prev, [collectionName]: Date.now() }));
-      return allData;
+      return dedupedData;
     } catch (err) {
       console.error(`Cache fetch error [${collectionName}]:`, err);
       return cache[collectionName] || [];

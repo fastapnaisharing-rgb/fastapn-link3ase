@@ -675,7 +675,6 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
 
   // ── ฟิลด์สำหรับฟอร์ม New (3 คอลัมน์) ──
   const NEW_FIELDS = [
-    ['bu', 'BU', 3, 'text'],
     ['description', 'Description *', 3, 'textarea2'],
     ['cpc', 'CPC', 1, 'text'],
     ['account', 'Account', 1, 'text'],
@@ -768,9 +767,15 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
           <>
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
               <div style={{ maxWidth: '520px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 12px' }}>
-                <div style={{ gridColumn: 'span 3' }}>
-                  <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>Code (Auto)</label>
-                  <input value={nextCode} disabled style={{ ...fldStyle, background: '#f5f5f5', color: '#999' }} />
+                <div style={{ gridColumn: 'span 3', display: 'flex', gap: '12px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>Code (Auto)</label>
+                    <input value={nextCode} disabled style={{ ...fldStyle, background: '#f5f5f5', color: '#999' }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>BU</label>
+                    <input value={form['bu'] || ''} onChange={e => setForm(f => ({ ...f, bu: e.target.value }))} style={fldStyle} />
+                  </div>
                 </div>
                 {NEW_FIELDS.map(([key, label, span, type]) => {
                   const isCombo = ITEM_COMBO_FIELDS.includes(key);
@@ -1035,7 +1040,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                         <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line1[key]}</div>
                       ) : key === 'itemCode' ? (
                         <div style={{ position: 'relative' }}>
-                          <input type="text" inputMode="numeric" maxLength={8} value={line1[key]} onChange={e => setLine1Field(key, e.target.value.replace(/\D/g, '').slice(0, 8))}
+                          <input type="text" maxLength={8} value={line1[key]} onChange={e => setLine1Field(key, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
                             style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
                           <button type="button" title="Search item code" onClick={() => setShowItemCodePopup(true)}
                             style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
