@@ -598,35 +598,48 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
           {/* ✅ Header Detail — 2 กล่อง 49% + gap */}
           <div style={{ display: 'flex', gap: '2%', marginBottom: '14px' }}>
 
-            {/* กล่องซ้าย — ข้อมูล vendor จาก Invoice Entry */}
-            <div style={{ ...card, width: '49%', marginBottom: 0 }}>
-              <div style={cardHead}><span style={cardLabel}>Header Detail</span></div>
-              <div style={{ ...cardBody, display: 'flex', flexDirection: 'column', gap: '7px' }}>
-                {[
-                  ['Vendor Code', vendorInfo?.['Supplier Number']],
-                  ['Vendor Site', vendorInfo?.['Supplier Site']],
-                  ['Tax ID',      vendorInfo?.['Tax ID']],
-                  ['No.',         vendorInfo?.['No.']],
-                  ['Address',     vendorInfo?.['Address']],
-                ].map(([label, val]) => (
-                  <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                    <span style={{ fontSize: '11px', color: '#999', width: '80px', flexShrink: 0, paddingTop: '1px' }}>
-                      {label}
-                    </span>
-                    <span style={{
-                      fontSize: '12px',
-                      color: val ? '#1a3a5c' : '#ccc',
-                      fontStyle: val ? 'normal' : 'italic',
-                      flex: 1,
-                      wordBreak: 'break-word',
-                      lineHeight: '1.5',
-                    }}>
-                      {val || '—'}
-                    </span>
-                  </div>
-                ))}
-              </div>
+        {/* กล่องซ้าย — ข้อมูล vendor จาก Invoice Entry */}
+        <div style={{ ...card, width: '49%', marginBottom: 0 }}>
+          {/* ✅ แทน cardHead ด้วย Vendor Name โดยตรง ไม่มี label HEADER DETAIL */}
+          <div style={{ ...cardHead, background: vendorInfo?.['Supplier Name'] ? '#f8f9fa' : '#fafbfc' }}>
+            <span style={{ fontSize: '12px', fontWeight: '600', color: vendorInfo?.['Supplier Name'] ? '#1a3a5c' : '#ccc', fontStyle: vendorInfo?.['Supplier Name'] ? 'normal' : 'italic' }}>
+              {vendorInfo?.['Supplier Name'] || '— ยังไม่ได้เลือก Supplier —'}
+            </span>
+          </div>
+          <div style={{ ...cardBody, display: 'flex', flexDirection: 'column', gap: '7px' }}>
+            {/* แถว 1: Vendor Code + Vendor Site */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {[['Vendor Code', vendorInfo?.['Supplier Number']], ['Vendor Site', vendorInfo?.['Supplier Site']]].map(([label, val]) => (
+                <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                  <span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0 }}>{label}</span>
+                  <span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontStyle: val ? 'normal' : 'italic', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val || '—'}</span>
+                </div>
+              ))}
             </div>
+            {/* แถว 2: Tax ID + No. */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {[['Tax ID', vendorInfo?.['Tax ID']], ['No.', vendorInfo?.['No.']]].map(([label, val]) => (
+                <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                  <span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0 }}>{label}</span>
+                  <span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontStyle: val ? 'normal' : 'italic', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val || '—'}</span>
+                </div>
+              ))}
+            </div>
+            {/* แถว 3: Address — 2 บรรทัด เต็มแถว */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+              <span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0, paddingTop: '1px' }}>Address</span>
+              <span style={{
+                fontSize: '12px',
+                color: vendorInfo?.['Address'] ? '#1a3a5c' : '#ccc',
+                fontStyle: vendorInfo?.['Address'] ? 'normal' : 'italic',
+                flex: 1, lineHeight: '1.6', wordBreak: 'break-word',
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }}>
+                {vendorInfo?.['Address'] || '—'}
+              </span>
+            </div>
+          </div>
+        </div>
 
             {/* กล่องขวา — coming soon */}
             <div style={{ ...card, width: '49%', marginBottom: 0 }}>
