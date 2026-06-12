@@ -552,7 +552,123 @@ function BranchSearchPopup({
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup  ✅ รับ vendorInfo เพิ่ม
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// ItemCodeSearchPopup
+// ─────────────────────────────────────────────────────────────────────────────
+function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [] }) {
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(-1);
+  const inputRef = useRef(null);
+  const listRef  = useRef(null);
+
+  useEffect(() => {
+    if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); }
+  }, [show]);
+
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
+
+  useEffect(() => {
+    if (active < 0 || !listRef.current) return;
+    listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+
+  if (!show) return null;
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? itemcodeItems.filter(i =>
+        i['code']?.toLowerCase().includes(q) ||
+        i['description']?.toLowerCase().includes(q) ||
+        i['keyword']?.toLowerCase().includes(q)
+      )
+    : itemcodeItems;
+
+  const handleKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
+    else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300, backdropFilter: 'blur(2px)' }}
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: '700px', maxWidth: '95vw', height: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+        <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🔖</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Item Code</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}</div>
+          </div>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+        <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
+          <div style={{ position: 'relative' }}>
+            <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
+              placeholder="ค้นหา Code, Description, Keyword..."
+              style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
+          </div>
+          <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
+            {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
+              <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
+                <span>{label}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+        <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
+              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Item Code{query ? ` "${query}"` : ''}</div>
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                <tr>
+                  {[['Code','110px'],['Description',''],['CPC','70px'],['Account','90px']].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item, i) => {
+                  const isAct = i === active;
+                  return (
+                    <tr key={item.id || i} data-row={i} onClick={() => onSelect(item)} onMouseEnter={() => setActive(i)}
+                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
+                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                        <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item.code || '-'}</span>
+                      </td>
+                      <td style={{ padding: '9px 12px', color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }}>{item.description || '-'}</td>
+                      <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item.cpc || '-'}</td>
+                      <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px', fontFamily: 'monospace' }}>{item.account || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {itemcodeItems.length} รายการ</span>
+          <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [] }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -562,6 +678,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
     desc: '', vat: '', wht: '', total: '',
   });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
+  const [showItemCodePopup, setShowItemCodePopup] = useState(false);
 
   const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
   const handleMoneyChange = (key, val) => {
@@ -769,7 +886,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
                         <div style={{ position: 'relative' }}>
                           <input type="text" inputMode="numeric" maxLength={8} value={line1[key]} onChange={e => setLine1Field(key, e.target.value.replace(/\D/g, '').slice(0, 8))}
                             style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-                          <button type="button" title="Search item code"
+                          <button type="button" title="Search item code" onClick={() => setShowItemCodePopup(true)}
                             style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                           </button>
@@ -792,6 +909,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo }) {
             </div>
           </div>
         </div>
+
+        <ItemCodeSearchPopup
+          show={showItemCodePopup}
+          onClose={() => setShowItemCodePopup(false)}
+          onSelect={(item) => { setLine1Field('itemCode', item.code || ''); setShowItemCodePopup(false); }}
+          itemcodeItems={itemcodeItems}
+        />
 
         {/* Footer */}
         <div style={{ padding: isMobile ? '10px 14px' : '12px 22px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
@@ -1335,6 +1459,7 @@ function InvoiceEntry({
           form={form}
           setField={setField}
           vendorInfo={vendorInfo}
+          itemcodeItems={itemcodeItems}
         />
       </div>
     </div>
