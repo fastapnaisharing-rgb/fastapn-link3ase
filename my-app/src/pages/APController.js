@@ -1033,7 +1033,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, vendorInfo, vendorLoadi
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         {/* Supplier code — ขยายกว้างขึ้น */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 220px', minWidth: '180px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '220px', maxWidth: '100%' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
           <input type="text" value={form.supplierCode}
             onChange={e => setField('supplierCode', e.target.value)}
