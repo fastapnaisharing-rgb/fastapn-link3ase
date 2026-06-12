@@ -26,9 +26,9 @@ function ComboBox({ value, onChange, options, placeholder }) {
   }, []);
   const filtered = [...new Set(options.filter(o => o && o !== '-' && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
   return (
-    <div ref={ref} style={{ position: 'relative', marginBottom: '8px' }}>
+    <div ref={ref} style={{ position: 'relative' }}>
       <input value={input} onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder={placeholder || ''}
-        style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', boxSizing: 'border-box' }} />
+        style={{ padding: '5px 8px', borderRadius: '5px', border: '0.5px solid #d0d0d0', fontSize: '12px', width: '100%', boxSizing: 'border-box', height: '30px' }} />
       {open && filtered.length > 0 && (
         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 1000, maxHeight: '180px', overflowY: 'auto' }}>
           {filtered.map((opt, i) => (
@@ -745,14 +745,13 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     thAction: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', fontWeight:'500' },
     td: { padding:'7px 10px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'0' },
     tdCenter: { padding:'6px 8px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', textAlign:'center' },
-    input: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #ddd', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box' },
-    inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
-    inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
+    input: { padding:'5px 8px', borderRadius:'5px', border:'0.5px solid #d0d0d0', fontSize:'12px', width:'100%', marginBottom:'0', boxSizing:'border-box', height:'30px', background:'white', color:'#222' },
+    inputDisabled: { padding:'5px 8px', borderRadius:'5px', border:'0.5px solid #e8e8e8', fontSize:'12px', width:'100%', marginBottom:'0', boxSizing:'border-box', background:'#f5f5f5', color:'#999', height:'30px' },
+    inputReadonly: { padding:'5px 8px', borderRadius:'5px', border:'0.5px solid #e8e8e8', fontSize:'12px', width:'100%', marginBottom:'0', boxSizing:'border-box', background:'#fafafa', color:'#333', height:'30px', display:'flex', alignItems:'center' },
     overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-    // ✅ modal ขนาดใหญ่ขึ้น + กำหนด height ชัดเจนให้ scroll ทำงาน
-    modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'860px', height:isMobile?'95vh':'90vh', display:'flex', flexDirection:'column' },
-    // ✅ modal ขนาดกลาง สำหรับ Info form (fields น้อยกว่า)
-    modalMd: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'720px', height:isMobile?'95vh':'90vh', display:'flex', flexDirection:'column' },
+    // ✅ modal — auto height, no scroll needed with compact layout
+    modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'900px', maxWidth:'96vw', display:'flex', flexDirection:'column' },
+    modalMd: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'700px', maxWidth:'96vw', display:'flex', flexDirection:'column' },
     pageBtn: (active,disabled) => ({ padding:'3px 7px', borderRadius:'5px', border:'0.5px solid #ddd', fontSize:'11px', cursor:disabled?'default':'pointer', background:active?'#1a3a5c':'white', color:disabled?'#ccc':active?'white':'#555', minWidth:'26px', textAlign:'center' }),
     iconBtn: (color,bg,border) => ({ background:bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
   };
@@ -764,56 +763,98 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     return`ทั้งหมด ${branches.length} รายการ${branchTaxFilter?` | Filter Tax ID: ${branchTaxFilter} (${filteredBranch.length} รายการ)`:branchSearch?` | ผลการค้นหา ${filteredBranch.length} รายการ`:''}${branchSelected.length>0?` | เลือกอยู่ ${branchSelected.length} รายการ`:''}`;
   };
 
-  // ✅ Branch form — 2-col grid + minHeight:0 เพื่อให้ scroll ทำงาน
-  const renderBranchFormFields = (form, setForm, error, setError, editMode=true) => (
-    <>
-      {error && <div style={{ background:'#FCEBEB', color:'#791F1F', padding:'8px 20px', fontSize:'12px', borderBottom:'1px solid #f7c1c1', flexShrink:0 }}>⚠️ {error}</div>}
-      <div style={{ padding:'16px 20px', overflowY:'auto', flex:1, minHeight:0 }}>
-        <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:'0 24px' }}>
-          {BRANCH_EDIT.map(([key,label]) => {
-            const isRequired = (key==='Inactive Date'&&form['status']==='Closed')||(key==='Branch Allocate'&&form['status']==='Relocate');
-            const hasError = error&&isRequired&&!form[key];
-            const isFullWidth = BRANCH_FULL_WIDTH.includes(key);
-            return (
-              <div key={key} style={{ marginBottom:'4px', gridColumn: isFullWidth && !isMobile ? 'span 2' : 'span 1' }}>
-                <label style={{ fontSize:'11px', color:hasError?'#e74c3c':'#888', display:'block', marginBottom:'2px' }}>{label}{isRequired&&<span style={{ color:'#e74c3c' }}> *</span>}</label>
-                {editMode?(
-                  key==='Inactive Date'?<input type="date" style={hasError?{...S.input,border:'1px solid #e74c3c'}:S.input} value={form[key]} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
-                  :BRANCH_COMBO.includes(key)?<ComboBox value={form[key]} onChange={val=>{setForm({...form,[key]:val});setError('');}} options={getBranchOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
-                  :<input style={hasError?{...S.input,border:'1px solid #e74c3c'}:S.input} value={form[key]} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
-                ):<div style={S.inputReadonly}>{key==='status'?statusBadge(form[key]):(form[key]||'-')}</div>}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </>
-  );
+  // ✅ Branch form — compact 4-col layout, one page no scroll
+  // Layout map: [key, label, colSpan]
+  const BRANCH_LAYOUT = isMobile ? [
+    ['Branch Code','Branch Code *',1],['Branch Direct','Branch Direct',1],
+    ['Branch Allocate','Branch Allocate',1],['BU Code','BU Code',1],
+    ['Company for Show in Report Display','Company for Report',2],
+    ['Simple Company','Simple Company',1],['BU-TaxID','BU Tax ID',1],
+    ['BU-Branch','BU Branch',1],['Simple Brand Code','Simple Brand Code',1],
+    ['%','%',1],['DB(%)','DB(%)',1],['cpc','CPC',1],
+    ['Branch Address','Branch Address',2],
+    ['Group-P','Group-P',1],['bu','BU',1],
+    ['status','Status',1],['Inactive Date','Inactive Date',1],
+  ] : [
+    ['Branch Code','Branch Code',1],['BU Code','BU Code',1],['BU-Branch','BU Branch',1],['cpc','CPC',1],
+    ['Branch Direct','Branch Direct',1],['Branch Allocate','Branch Allocate',1],['Group-P','Group-P',1],['bu','BU',1],
+    ['Company for Show in Report Display','Company for Report',2],['Simple Company','Simple Company',2],
+    ['BU-TaxID','BU Tax ID',2],['Simple Brand Code','Simple Brand Code',2],
+    ['%','%',1],['DB(%)','DB(%)',1],['status','Status',1],['Inactive Date','Inactive Date',1],
+    ['Branch Address','Branch Address',4],
+  ];
 
-  // ✅ Info form — 2-col grid + minHeight:0 เพื่อให้ scroll ทำงาน
-  const renderInfoFormFields = () => (
-    <div style={{ padding:'16px 20px', overflowY:'auto', flex:1, minHeight:0 }}>
-      <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:'0 24px' }}>
-        {INFO_EDIT.map(([key,label]) => {
-          const isFullWidth = INFO_FULL_WIDTH.includes(key);
-          return (
-            <div key={key} style={{ marginBottom:'4px', gridColumn: isFullWidth && !isMobile ? 'span 2' : 'span 1' }}>
-              <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
+  const renderBranchFormFields = (form, setForm, error, setError, editMode=true) => {
+    const cols = isMobile ? 2 : 4;
+    const fld = (key, label, span, isReq, hasErr) => (
+      <div key={key} style={{ gridColumn:`span ${span}` }}>
+        <label style={{ fontSize:'11px', color:hasErr?'#e74c3c':'#888', display:'block', marginBottom:'3px' }}>
+          {label}{isReq&&<span style={{ color:'#e74c3c' }}> *</span>}
+        </label>
+        {editMode?(
+          key==='Inactive Date'
+            ?<input type="date" style={hasErr?{...S.input,border:'0.5px solid #e74c3c'}:S.input} value={form[key]||''} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
+            :BRANCH_COMBO.includes(key)
+              ?<ComboBox value={form[key]||''} onChange={val=>{setForm({...form,[key]:val});setError('');}} options={getBranchOptions(key)} placeholder={`เลือก ${label.replace(' *','')}`}/>
+              :<input style={hasErr?{...S.input,border:'0.5px solid #e74c3c'}:S.input} value={form[key]||''} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
+        ):<div style={{...S.inputReadonly}}>{key==='status'?statusBadge(form[key]):(form[key]||'-')}</div>}
+      </div>
+    );
+    return (
+      <>
+        {error&&<div style={{ background:'#FCEBEB', color:'#791F1F', padding:'7px 16px', fontSize:'11px', borderBottom:'0.5px solid #f7c1c1', flexShrink:0 }}>⚠️ {error}</div>}
+        <div style={{ padding:'14px 16px 16px', overflow:'visible' }}>
+          <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:'10px 12px' }}>
+            {BRANCH_LAYOUT.map(([key, label, span]) => {
+              const isReq = (key==='Inactive Date'&&form['status']==='Closed')||(key==='Branch Allocate'&&form['status']==='Relocate');
+              const hasErr = !!(error&&isReq&&!form[key]);
+              return fld(key, label, Math.min(span, cols), isReq, hasErr);
+            })}
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  // ✅ Info form — compact 4-col layout, one page no scroll
+  const INFO_LAYOUT = isMobile ? [
+    ['bu','BU',1],['TAX ID','Tax ID',1],
+    ['THAI COMPANY NAME','Thai Company Name',2],
+    ['ENGLISH COMPANY NAME','English Company Name',2],
+    ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],
+    ['COMPANY CODE','Company Code',1],['BOOK','Book',1],
+    ['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
+    ['SEGMENT3','Segment3',1],['AP GRT Control','AP GRT Control',1],
+  ] : [
+    ['bu','BU',1],['TAX ID','Tax ID',1],['COMPANY CODE','Company Code',1],['BOOK','Book',1],
+    ['THAI COMPANY NAME','Thai Company Name',4],
+    ['ENGLISH COMPANY NAME','English Company Name',4],
+    ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
+    ['SEGMENT3','Segment3',2],['AP GRT Control','AP GRT Control',2],
+  ];
+
+  const renderInfoFormFields = () => {
+    const cols = isMobile ? 2 : 4;
+    return (
+      <div style={{ padding:'14px 16px 16px', overflow:'visible' }}>
+        <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:'10px 12px' }}>
+          {INFO_LAYOUT.map(([key, label, span]) => (
+            <div key={key} style={{ gridColumn:`span ${Math.min(span, cols)}` }}>
+              <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'3px' }}>{label}</label>
               {INFO_COMBO.includes(key)
-                ? <ComboBox value={infoForm[key]} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
-                : <input style={S.input} value={infoForm[key]} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
+                ?<ComboBox value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`เลือก ${label}`}/>
+                :<input style={S.input} value={infoForm[key]||''} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
               }
             </div>
-          );
-        })}
-        {/* Updated By กินเต็ม 2 col */}
-        <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2', marginBottom:'4px' }}>
-          <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>Updated By</label>
-          <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
+          ))}
+          <div style={{ gridColumn:`span ${cols}` }}>
+            <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'3px' }}>Updated By</label>
+            <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div style={S.container}>
@@ -982,8 +1023,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
             </div>
             {renderBranchFormFields(branchDetailForm,setBranchDetailForm,branchDetailError,setBranchDetailError,branchDetailEditMode)}
             {!branchDetailEditMode&&(
-              <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0', marginTop:'4px', flexShrink:0 }}>
-                <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
+              <div style={{ padding:'8px 16px 14px', borderTop:'0.5px solid #f0f0f0', flexShrink:0 }}>
+                <div style={{ display:'flex', gap:'16px', paddingTop:'8px' }}>
                   <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated By</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{branchDetailItem['updated_by']||'-'}</div></div>
                   <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated At</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(branchDetailItem['updated_at'])}</div></div>
                 </div>
