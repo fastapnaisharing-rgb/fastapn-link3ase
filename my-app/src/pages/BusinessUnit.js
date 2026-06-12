@@ -217,6 +217,9 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['COMPANY CODE','Company Code'],['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],
     ['BOOK','Book'],['SEGMENT3','Segment3'],['AP GRT Control','AP GRT Control']
   ];
+  // Fields that should span full width in Info form
+  const INFO_FULL_WIDTH = ['THAI COMPANY NAME','ENGLISH COMPANY NAME'];
+
   const INFO_COLUMNS = [
     { key: 'bu', label: 'BU', sortable: true, w: 70 },
     { key: 'THAI COMPANY NAME', label: 'Thai Company Name', sortable: true, w: 220 },
@@ -247,6 +250,9 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['Branch Address','Branch Address'],['Group-P','Group-P'],
     ['bu','BU'],['status','Status'],['Inactive Date','Inactive Date'],
   ];
+  // Fields that should span full width in Branch form
+  const BRANCH_FULL_WIDTH = ['Branch Address','Company for Show in Report Display'];
+
   const BRANCH_COLUMNS = [
     { key: 'Branch Code', label: 'Branch Code', sortable: true, w: 110 },
     { key: 'Branch Direct', label: 'Branch Direct', sortable: true, w: 120 },
@@ -316,37 +322,28 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
-  const dataFields = allFields.filter(f => !['updated_by', 'updated_at'].includes(f));
-  const existingMap = {};
-  existingItems.forEach(item => {
-    if (item[keyField]) existingMap[String(item[keyField]).trim()] = item;
-  });
-  const seenKeys = new Set();
-
-  return rawRows.map(row => {
-    const keyVal = String(row[keyField] ?? '').trim();
-    if (!keyVal || seenKeys.has(keyVal)) return { ...row, _status: 'duplicate', _changes: [] };
-    seenKeys.add(keyVal);
-    const existing = existingMap[keyVal];
-    if (!existing) return { ...row, _status: 'new', _changes: [] };
-
-    const changes = [];
-    dataFields.forEach(f => {
-      const newVal = String(row[f] ?? '').trim();
-      const oldVal = String(existing[f] ?? '').trim();
-      // ✅ ข้ามถ้าค่าใหม่ว่าง — ไม่นับเป็น change
-      if (newVal === '') return;
-      if (newVal !== oldVal) changes.push({ field: f, old: oldVal, new: newVal });
+    const dataFields = allFields.filter(f => !['updated_by', 'updated_at'].includes(f));
+    const existingMap = {};
+    existingItems.forEach(item => {
+      if (item[keyField]) existingMap[String(item[keyField]).trim()] = item;
     });
-
-    return {
-      ...row,
-      _status: changes.length > 0 ? 'update' : 'nochange',
-      _changes: changes,
-      _existingId: existing.id,
-    };
-  });
-};
+    const seenKeys = new Set();
+    return rawRows.map(row => {
+      const keyVal = String(row[keyField] ?? '').trim();
+      if (!keyVal || seenKeys.has(keyVal)) return { ...row, _status: 'duplicate', _changes: [] };
+      seenKeys.add(keyVal);
+      const existing = existingMap[keyVal];
+      if (!existing) return { ...row, _status: 'new', _changes: [] };
+      const changes = [];
+      dataFields.forEach(f => {
+        const newVal = String(row[f] ?? '').trim();
+        const oldVal = String(existing[f] ?? '').trim();
+        if (newVal === '') return;
+        if (newVal !== oldVal) changes.push({ field: f, old: oldVal, new: newVal });
+      });
+      return { ...row, _status: changes.length > 0 ? 'update' : 'nochange', _changes: changes, _existingId: existing.id };
+    });
+  };
 
   const exportToExcel = (data, fields, sheetName, filePrefix) => {
     const rows = data.map(item => { const row = {}; fields.forEach(f => { row[f] = item[f] || ''; }); return row; });
@@ -409,12 +406,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     try {
       const item = infoItems.find(i => i.id === id);
       const { error: binError } = await supabase.from('recycle_bin').insert([{
-        source_table: 'company_list',
-        source_id: id,
-        source_key: item?.['TAX ID'] || id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: new Date().toISOString()
+        source_table: 'company_list', source_id: id, source_key: item?.['TAX ID'] || id, data: item,
+        deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString()
       }]);
       if (binError) throw binError;
       const { error } = await supabase.from('company_list').delete().eq('id', id);
@@ -424,21 +417,14 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  // ✅ BulkDelete with Batch (company_list)
-    const handleInfoBulkDelete = async () => {
+  const handleInfoBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${infoSelected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = infoItems
-        .filter(i => infoSelected.includes(i.id))
-        .map(item => ({
-          source_table: 'company_list',
-          source_id: item.id,
-          source_key: item['TAX ID'] || item.id,
-          data: item,
-          deleted_by: userName || currentUser?.email || '',
-          deleted_at: now,
-        }));
+      const bins = infoItems.filter(i => infoSelected.includes(i.id)).map(item => ({
+        source_table: 'company_list', source_id: item.id, source_key: item['TAX ID'] || item.id,
+        data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now,
+      }));
       for (let i = 0; i < bins.length; i += 500) {
         const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
         if (error) throw error;
@@ -453,14 +439,14 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-    const handleInfoDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([INFO_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'CompanyList'); XLSX.writeFile(wb, 'CompanyList_Template.xlsx'); };
+  const handleInfoDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([INFO_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'CompanyList'); XLSX.writeFile(wb, 'CompanyList_Template.xlsx'); };
 
-    const handleInfoFileChange = (e) => {
-      const file = e.target.files[0]; if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (evt) => { const wb = XLSX.read(evt.target.result, { type: 'binary' }); const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }); setInfoPreviewRows(buildPreviewRows(rawRows, infoItems, INFO_KEY, INFO_FIELDS)); setShowInfoPreview(true); };
-      reader.readAsBinaryString(file); e.target.value = '';
-    };
+  const handleInfoFileChange = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => { const wb = XLSX.read(evt.target.result, { type: 'binary' }); const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }); setInfoPreviewRows(buildPreviewRows(rawRows, infoItems, INFO_KEY, INFO_FIELDS)); setShowInfoPreview(true); };
+    reader.readAsBinaryString(file); e.target.value = '';
+  };
 
   const handleInfoConfirmImport = async () => {
     setInfoImporting(true);
@@ -479,20 +465,13 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       for (const row of updateRows) {
         const existing = infoItems.find(i => i.id === row._existingId);
         const d = { ...existing };
-
         INFO_FIELDS.forEach(k => {
           if (k === 'updated_by') { d[k] = userName || currentUser?.email || ''; return; }
           if (k === 'updated_at') { d[k] = new Date().toISOString(); return; }
           const newVal = String(row[k] ?? '').trim();
           if (newVal !== '') d[k] = newVal;
         });
-
-        const { data: upd, error } = await supabase
-          .from('company_list')
-          .update(d)
-          .eq('id', row._existingId)
-          .select()
-          .single();
+        const { data: upd, error } = await supabase.from('company_list').update(d).eq('id', row._existingId).select().single();
         if (error) throw error;
         setInfoItems(prev => prev.map(i => i.id === row._existingId ? { ...i, ...upd } : i));
       }
@@ -534,12 +513,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     try {
       const item = branches.find(b => b.id === id);
       const { error: binError } = await supabase.from('recycle_bin').insert([{
-        source_table: 'branch_list',
-        source_id: id,
-        source_key: item?.['Branch Code'] || id,
-        data: item,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: new Date().toISOString()
+        source_table: 'branch_list', source_id: id, source_key: item?.['Branch Code'] || id, data: item,
+        deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString()
       }]);
       if (binError) throw binError;
       const { error } = await supabase.from('branch_list').delete().eq('id', id);
@@ -549,21 +524,14 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-  // ✅ BulkDelete with Batch (branch_list)
   const handleBranchBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${branchSelected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const bins = branches
-        .filter(b => branchSelected.includes(b.id))
-        .map(item => ({
-          source_table: 'branch_list',
-          source_id: item.id,
-          source_key: item['Branch Code'] || item.id,
-          data: item,
-          deleted_by: userName || currentUser?.email || '',
-          deleted_at: now,
-        }));
+      const bins = branches.filter(b => branchSelected.includes(b.id)).map(item => ({
+        source_table: 'branch_list', source_id: item.id, source_key: item['Branch Code'] || item.id,
+        data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now,
+      }));
       for (let i = 0; i < bins.length; i += 500) {
         const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
         if (error) throw error;
@@ -578,38 +546,30 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
-const currentTable = () => tab === 'info' ? 'company_list' : 'branch_list';
-const currentLabel = () => tab === 'info' ? 'Info' : 'Branch';
+  const currentTable = () => tab === 'info' ? 'company_list' : 'branch_list';
+  const currentLabel = () => tab === 'info' ? 'Info' : 'Branch';
 
-const handleOpenRecycleBin = async () => {
-  setShowRecycleBin(true);
-  setRecycleBinSelected([]);
-  setRecycleBinLoading(true);
-  try {
-    const { data, error } = await supabase
-      .from('recycle_bin')
-      .select('*')
-      .eq('source_table', currentTable())
-      .order('deleted_at', { ascending: false });
-    if (error) throw error;
-    setRecycleBinItems(data || []);
-  } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
-  setRecycleBinLoading(false);
-};
+  const handleOpenRecycleBin = async () => {
+    setShowRecycleBin(true); setRecycleBinSelected([]); setRecycleBinLoading(true);
+    try {
+      const { data, error } = await supabase.from('recycle_bin').select('*').eq('source_table', currentTable()).order('deleted_at', { ascending: false });
+      if (error) throw error;
+      setRecycleBinItems(data || []);
+    } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
+    setRecycleBinLoading(false);
+  };
 
-const handleRestore = async (binItem) => {
-  try {
-    const data = { ...binItem.data };
-    delete data.id;
-    const { error } = await supabase.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
-    if (error) throw error;
-    await supabase.from('recycle_bin').delete().eq('id', binItem.id);
-    setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-    if (binItem.source_table === 'company_list') await fetchInfo();
-    else await fetchBranch();
-    alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
-  } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
-};
+  const handleRestore = async (binItem) => {
+    try {
+      const data = { ...binItem.data }; delete data.id;
+      const { error } = await supabase.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
+      if (error) throw error;
+      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+      if (binItem.source_table === 'company_list') await fetchInfo(); else await fetchBranch();
+      alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
+    } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
+  };
 
   const handlePermanentDelete = async (binItem) => {
     if (!window.confirm(`ลบถาวร "${binItem.source_key}"? ไม่สามารถกู้คืนได้`)) return;
@@ -622,25 +582,19 @@ const handleRestore = async (binItem) => {
 
   const handleBulkRestoreBin = async () => {
     if (!recycleBinSelected.length) return;
-    setRecycleBinLoading2(true);
-    setRecycleBinProgress(0);
+    setRecycleBinLoading2(true); setRecycleBinProgress(0);
     try {
       const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
-      const total = targets.length;
-      let done = 0;
+      const total = targets.length; let done = 0;
       const grouped = {};
-      targets.forEach(item => {
-        if (!grouped[item.source_table]) grouped[item.source_table] = [];
-        grouped[item.source_table].push(item);
-      });
+      targets.forEach(item => { if (!grouped[item.source_table]) grouped[item.source_table] = []; grouped[item.source_table].push(item); });
       for (const [table, binItems] of Object.entries(grouped)) {
         for (let i = 0; i < binItems.length; i += 500) {
           const chunk = binItems.slice(i, i + 500);
           const rows = chunk.map(item => { const data = { ...item.data }; delete data.id; return { ...data, id: item.source_id }; });
           const { error } = await supabase.from(table).insert(rows);
           if (error) throw error;
-          done += chunk.length;
-          setRecycleBinProgress(Math.round((done / total) * 100));
+          done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
         }
       }
       const binIds = targets.map(b => b.id);
@@ -653,30 +607,23 @@ const handleRestore = async (binItem) => {
       await fetchInfo(); await fetchBranch();
       alert(`✅ Restore สำเร็จ ${total} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-    setRecycleBinLoading2(false);
-    setRecycleBinProgress(0);
+    setRecycleBinLoading2(false); setRecycleBinProgress(0);
   };
 
   const handleBulkPermanentDeleteBin = async () => {
     if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ? ไม่สามารถกู้คืนได้`)) return;
-    setRecycleBinLoading2(true);
-    setRecycleBinProgress(0);
+    setRecycleBinLoading2(true); setRecycleBinProgress(0);
     try {
       const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
-      const total = targets.length;
-      let done = 0;
+      const total = targets.length; let done = 0;
       const byTable = {};
-      targets.forEach(item => {
-        if (!byTable[item.source_table]) byTable[item.source_table] = [];
-        byTable[item.source_table].push(item.source_id);
-      });
+      targets.forEach(item => { if (!byTable[item.source_table]) byTable[item.source_table] = []; byTable[item.source_table].push(item.source_id); });
       for (const [table, ids] of Object.entries(byTable)) {
         for (let i = 0; i < ids.length; i += 500) {
           const chunk = ids.slice(i, i + 500);
           const { error } = await supabase.from(table).delete().in('id', chunk);
           if (error) throw error;
-          done += chunk.length;
-          setRecycleBinProgress(Math.round((done / total) * 100));
+          done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
         }
       }
       const binIds = targets.map(b => b.id);
@@ -688,8 +635,7 @@ const handleRestore = async (binItem) => {
       setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
       alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-    setRecycleBinLoading2(false);
-    setRecycleBinProgress(0);
+    setRecycleBinLoading2(false); setRecycleBinProgress(0);
   };
 
   const handleBranchDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([BRANCH_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'BranchList'); XLSX.writeFile(wb, 'BranchList_Template.xlsx'); };
@@ -716,26 +662,18 @@ const handleRestore = async (binItem) => {
         }
       }
       for (const row of updateRows) {
-          const existing = branches.find(b => b.id === row._existingId);
-          const d = { ...existing }; // เริ่มจากข้อมูลเดิมทั้งหมด
-
-          // ✅ Merge เฉพาะ field ที่ไฟล์มีค่า (ไม่ว่าง)
-          BRANCH_FIELDS.forEach(k => {
-            if (k === 'updated_by') { d[k] = userName || currentUser?.email || ''; return; }
-            if (k === 'updated_at') { d[k] = new Date().toISOString(); return; }
-            const newVal = String(row[k] ?? '').trim();
-            if (newVal !== '') d[k] = newVal; // Replace เฉพาะถ้ามีค่าใหม่
-          });
-
-          const { data: upd, error } = await supabase
-            .from('branch_list')
-            .update(d)
-            .eq('id', row._existingId)
-            .select()
-            .single();
-          if (error) throw error;
-          setBranches(prev => prev.map(b => b.id === row._existingId ? { ...b, ...upd } : b));
-        }
+        const existing = branches.find(b => b.id === row._existingId);
+        const d = { ...existing };
+        BRANCH_FIELDS.forEach(k => {
+          if (k === 'updated_by') { d[k] = userName || currentUser?.email || ''; return; }
+          if (k === 'updated_at') { d[k] = new Date().toISOString(); return; }
+          const newVal = String(row[k] ?? '').trim();
+          if (newVal !== '') d[k] = newVal;
+        });
+        const { data: upd, error } = await supabase.from('branch_list').update(d).eq('id', row._existingId).select().single();
+        if (error) throw error;
+        setBranches(prev => prev.map(b => b.id === row._existingId ? { ...b, ...upd } : b));
+      }
       setShowBranchPreview(false); setBranchPreviewRows([]);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
@@ -811,7 +749,10 @@ const handleRestore = async (binItem) => {
     inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
     inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
     overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-    modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'520px', maxHeight:'85vh', display:'flex', flexDirection:'column' },
+    // ✅ modal ขนาดใหญ่ขึ้น + กำหนด height ชัดเจนให้ scroll ทำงาน
+    modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'860px', height:isMobile?'95vh':'90vh', display:'flex', flexDirection:'column' },
+    // ✅ modal ขนาดกลาง สำหรับ Info form (fields น้อยกว่า)
+    modalMd: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'720px', height:isMobile?'95vh':'90vh', display:'flex', flexDirection:'column' },
     pageBtn: (active,disabled) => ({ padding:'3px 7px', borderRadius:'5px', border:'0.5px solid #ddd', fontSize:'11px', cursor:disabled?'default':'pointer', background:active?'#1a3a5c':'white', color:disabled?'#ccc':active?'white':'#555', minWidth:'26px', textAlign:'center' }),
     iconBtn: (color,bg,border) => ({ background:bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
   };
@@ -823,26 +764,55 @@ const handleRestore = async (binItem) => {
     return`ทั้งหมด ${branches.length} รายการ${branchTaxFilter?` | Filter Tax ID: ${branchTaxFilter} (${filteredBranch.length} รายการ)`:branchSearch?` | ผลการค้นหา ${filteredBranch.length} รายการ`:''}${branchSelected.length>0?` | เลือกอยู่ ${branchSelected.length} รายการ`:''}`;
   };
 
+  // ✅ Branch form — 2-col grid + minHeight:0 เพื่อให้ scroll ทำงาน
   const renderBranchFormFields = (form, setForm, error, setError, editMode=true) => (
     <>
-      {error && <div style={{ background:'#FCEBEB', color:'#791F1F', padding:'8px 20px', fontSize:'12px', borderBottom:'1px solid #f7c1c1' }}>⚠️ {error}</div>}
-      <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
-        {BRANCH_EDIT.map(([key,label]) => {
-          const isRequired = (key==='Inactive Date'&&form['status']==='Closed')||(key==='Branch Allocate'&&form['status']==='Relocate');
-          const hasError = error&&isRequired&&!form[key];
+      {error && <div style={{ background:'#FCEBEB', color:'#791F1F', padding:'8px 20px', fontSize:'12px', borderBottom:'1px solid #f7c1c1', flexShrink:0 }}>⚠️ {error}</div>}
+      <div style={{ padding:'16px 20px', overflowY:'auto', flex:1, minHeight:0 }}>
+        <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:'0 24px' }}>
+          {BRANCH_EDIT.map(([key,label]) => {
+            const isRequired = (key==='Inactive Date'&&form['status']==='Closed')||(key==='Branch Allocate'&&form['status']==='Relocate');
+            const hasError = error&&isRequired&&!form[key];
+            const isFullWidth = BRANCH_FULL_WIDTH.includes(key);
+            return (
+              <div key={key} style={{ marginBottom:'4px', gridColumn: isFullWidth && !isMobile ? 'span 2' : 'span 1' }}>
+                <label style={{ fontSize:'11px', color:hasError?'#e74c3c':'#888', display:'block', marginBottom:'2px' }}>{label}{isRequired&&<span style={{ color:'#e74c3c' }}> *</span>}</label>
+                {editMode?(
+                  key==='Inactive Date'?<input type="date" style={hasError?{...S.input,border:'1px solid #e74c3c'}:S.input} value={form[key]} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
+                  :BRANCH_COMBO.includes(key)?<ComboBox value={form[key]} onChange={val=>{setForm({...form,[key]:val});setError('');}} options={getBranchOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
+                  :<input style={hasError?{...S.input,border:'1px solid #e74c3c'}:S.input} value={form[key]} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
+                ):<div style={S.inputReadonly}>{key==='status'?statusBadge(form[key]):(form[key]||'-')}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+
+  // ✅ Info form — 2-col grid + minHeight:0 เพื่อให้ scroll ทำงาน
+  const renderInfoFormFields = () => (
+    <div style={{ padding:'16px 20px', overflowY:'auto', flex:1, minHeight:0 }}>
+      <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:'0 24px' }}>
+        {INFO_EDIT.map(([key,label]) => {
+          const isFullWidth = INFO_FULL_WIDTH.includes(key);
           return (
-            <div key={key} style={{ marginBottom:'4px' }}>
-              <label style={{ fontSize:'11px', color:hasError?'#e74c3c':'#888', display:'block', marginBottom:'2px' }}>{label}{isRequired&&<span style={{ color:'#e74c3c' }}> *</span>}</label>
-              {editMode?(
-                key==='Inactive Date'?<input type="date" style={hasError?{...S.input,border:'1px solid #e74c3c'}:S.input} value={form[key]} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
-                :BRANCH_COMBO.includes(key)?<ComboBox value={form[key]} onChange={val=>{setForm({...form,[key]:val});setError('');}} options={getBranchOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
-                :<input style={hasError?{...S.input,border:'1px solid #e74c3c'}:S.input} value={form[key]} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
-              ):<div style={S.inputReadonly}>{key==='status'?statusBadge(form[key]):(form[key]||'-')}</div>}
+            <div key={key} style={{ marginBottom:'4px', gridColumn: isFullWidth && !isMobile ? 'span 2' : 'span 1' }}>
+              <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
+              {INFO_COMBO.includes(key)
+                ? <ComboBox value={infoForm[key]} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
+                : <input style={S.input} value={infoForm[key]} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
+              }
             </div>
           );
         })}
+        {/* Updated By กินเต็ม 2 col */}
+        <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2', marginBottom:'4px' }}>
+          <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>Updated By</label>
+          <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
+        </div>
       </div>
-    </>
+    </div>
   );
 
   return (
@@ -881,10 +851,10 @@ const handleRestore = async (binItem) => {
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 0', margin:'4px 0', flexShrink:0, flexWrap:isMobile?'wrap':'nowrap', gap:isMobile?'6px':'0' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flex:isMobile?'1 1 100%':'1', minWidth:0 }}>
           {tab==='info'?(
-            <input placeholder={isMobile?'Search...':'Search...'} value={infoSearch} onChange={e=>setInfoSearch(e.target.value)} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+            <input placeholder='Search...' value={infoSearch} onChange={e=>setInfoSearch(e.target.value)} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
           ):(
             <>
-              <input placeholder={isMobile?'Search...':'Search...'} value={branchSearch} onChange={e=>{setBranchSearch(e.target.value);setBranchTaxFilter('');}} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+              <input placeholder='Search...' value={branchSearch} onChange={e=>{setBranchSearch(e.target.value);setBranchTaxFilter('');}} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
               {branchTaxFilter&&!isMobile&&(<span style={{ fontSize:'11px', background:'#e8f0fb', color:'#1a3a5c', padding:'3px 10px', borderRadius:'20px', display:'flex', alignItems:'center', gap:'4px', whiteSpace:'nowrap' }}>Tax ID: {isTablet?'...':branchTaxFilter}<span style={{ cursor:'pointer', fontWeight:'bold' }} onClick={()=>setBranchTaxFilter('')}>×</span></span>)}
             </>
           )}
@@ -974,196 +944,184 @@ const handleRestore = async (binItem) => {
         </div>
       )}
 
-      {showInfoForm&&(<div style={S.overlay}><div style={S.modal}>
-        <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-          <h3 style={{ fontSize:'15px', margin:0 }}>{infoEditId?'✏️ Edit Info':'+ New Info'}</h3>
-          <div style={{ display:'flex', gap:'8px' }}>
-            <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowInfoForm(false)}>Cancel</button>
-            <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleInfoSave}>Save</button>
-          </div>
-        </div>
-        <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
-          {INFO_EDIT.map(([key,label])=>(
-            <div key={key}>
-              <label style={{ fontSize:'12px', color:'#666' }}>{label}</label>
-              {INFO_COMBO.includes(key)
-                ? <ComboBox value={infoForm[key]} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`}/>
-                : <input style={S.input} value={infoForm[key]} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
-              }
-            </div>
-          ))}
-          <label style={{ fontSize:'12px', color:'#666' }}>Updated By</label>
-          <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
-        </div>
-      </div></div>)}
-
-      {showBranchDetail&&branchDetailItem&&(<div style={S.overlay}><div style={S.modal}>
-        <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-            <span style={{ fontSize:'14px', fontWeight:'500' }}>{branchDetailEditMode?'✏️ Edit Branch':`🔍 ${branchDetailItem['Branch Code']||'Branch Detail'}`}</span>
-            {!branchDetailEditMode&&isEditor&&<button onClick={()=>setBranchDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
-          </div>
-          <div style={{ display:'flex', gap:'8px' }}>
-            {branchDetailEditMode?(<><button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setBranchDetailEditMode(false);setBranchDetailError('');setBranchDetailForm(Object.fromEntries(BRANCH_EDIT.map(([k])=>[k,branchDetailItem[k]||''])));}}>Cancel</button><button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchDetailSave}>Save</button></>)
-            :<button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowBranchDetail(false)}>Close</button>}
-          </div>
-        </div>
-        {renderBranchFormFields(branchDetailForm,setBranchDetailForm,branchDetailError,setBranchDetailError,branchDetailEditMode)}
-        {!branchDetailEditMode&&(<div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0', marginTop:'4px' }}><div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}><div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated By</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{branchDetailItem['updated_by']||'-'}</div></div><div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated At</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(branchDetailItem['updated_at'])}</div></div></div></div>)}
-      </div></div>)}
-
-      {showBranchNew&&(<div style={S.overlay}><div style={S.modal}>
-        <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-          <h3 style={{ fontSize:'15px', margin:0 }}>+ New Branch</h3>
-          <div style={{ display:'flex', gap:'8px' }}>
-            <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setShowBranchNew(false);setBranchNewForm({});setBranchNewError('');}}>Cancel</button>
-            <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchNewSave}>Save</button>
-          </div>
-        </div>
-        {renderBranchFormFields(branchNewForm,setBranchNewForm,branchNewError,setBranchNewError,true)}
-      </div></div>)}
-
-      {showRateConfirm&&rateConfirmData&&(<div style={{...S.overlay,zIndex:1000}}>
-        <div style={{ background:'white', borderRadius:'12px', width:isMobile?'90vw':'420px', padding:'24px' }}>
-          <div style={{ fontSize:'24px', textAlign:'center', marginBottom:'8px' }}>⚠️</div>
-          <h3 style={{ fontSize:'15px', fontWeight:'600', textAlign:'center', marginBottom:'16px' }}>ยืนยันการเปลี่ยน VAT Rate</h3>
-          <div style={{ background:'#f8f9fa', borderRadius:'8px', padding:'16px', marginBottom:'16px' }}>
-            <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:'20px', marginBottom:'12px' }}>
-              <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate เดิม → Last Rate (%)</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#791F1F' }}>{rateConfirmData.oldRate}%</div></div>
-              <div style={{ fontSize:'22px', color:'#888' }}>→</div>
-              <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate ใหม่ → VAT %</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#27500A' }}>{rateConfirmData.newRate}%</div></div>
-            </div>
-            <div style={{ textAlign:'center', fontSize:'12px', color:'#555', borderTop:'0.5px solid #e8e8e8', paddingTop:'12px' }}>จะอัปเดต <strong style={{ color:'#1a3a5c' }}>{rateConfirmData.branchCount} สาขา</strong> ที่มี Tax ID: {rateConfirmData.taxId}</div>
-          </div>
-          <div style={{ display:'flex', gap:'8px' }}>
-            <button onClick={()=>{setShowRateConfirm(false);setRateConfirmData(null);}} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'1px solid #ddd', background:'white', fontSize:'13px', cursor:'pointer', color:'#555' }}>Cancel</button>
-            <button onClick={handleRateConfirm} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'none', background:'#1a3a5c', color:'white', fontSize:'13px', cursor:'pointer', fontWeight:'500' }}>✅ ยืนยัน อัปเดต {rateConfirmData.branchCount} สาขา</button>
-          </div>
-        </div>
-      </div>)}
-
-
-{/* ─── Recycle Bin Modal ─── */}
-{showRecycleBin && (
-  <div style={S.overlay}>
-    <div style={{ background:'white', borderRadius:'10px', width: isMobile?'95vw':'860px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
-
-      {/* Header */}
-      <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
-          <span style={{ fontSize:'15px', fontWeight:'500' }}>🗑️ Recycle Bin — {currentLabel()}</span>
-          <span style={{ fontSize:'11px', background:'#f5f5f5', color:'#888', padding:'2px 8px', borderRadius:'20px' }}>{recycleBinItems.length} รายการ</span>
-        </div>
-        <button onClick={()=>setShowRecycleBin(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'20px', lineHeight:1 }}>×</button>
-      </div>
-
-      {/* Bulk Toolbar */}
-      {recycleBinSelected.length > 0 && (
-        <div style={{ padding:'8px 16px', background:'#f8f9fa', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', gap:'8px', flexShrink:0, flexWrap:'wrap' }}>
-          <span style={{ fontSize:'12px', color:'#555' }}>เลือก {recycleBinSelected.length} รายการ</span>
-          {!recycleBinLoading2 ? (
-            <>
-              <button onClick={handleBulkRestoreBin}
-                style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #97C459', fontSize:'12px', cursor:'pointer', background:'#EAF3DE', color:'#27500A', fontWeight:'500' }}>
-                ♻️ Restore ทั้งหมด
-              </button>
-              <button onClick={handleBulkPermanentDeleteBin}
-                style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #f7c1c1', fontSize:'12px', cursor:'pointer', background:'#FCEBEB', color:'#791F1F', fontWeight:'500' }}>
-                🗑️ ลบถาวรทั้งหมด
-              </button>
-              <button onClick={() => setRecycleBinSelected([])}
-                style={{ padding:'4px 8px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', cursor:'pointer', background:'#f5f5f5', color:'#555' }}>
-                ✕ ยกเลิก
-              </button>
-            </>
-          ) : (
-            <div style={{ flex:1, maxWidth:'300px' }}>
-              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
-                <span style={{ fontSize:'11px', color:'#555' }}>กำลังดำเนินการ...</span>
-                <span style={{ fontSize:'11px', fontWeight:'500', color:'#1a3a5c' }}>{recycleBinProgress}%</span>
-              </div>
-              <div style={{ background:'#f0f0f0', borderRadius:'20px', height:'6px', overflow:'hidden' }}>
-                <div style={{ height:'100%', borderRadius:'20px', background:'linear-gradient(90deg, #5DCAA5, #1a3a5c)', width:`${recycleBinProgress}%`, transition:'width 0.3s ease' }}/>
+      {/* ─── Info Form Modal ─── */}
+      {showInfoForm&&(
+        <div style={S.overlay}>
+          <div style={S.modalMd}>
+            <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <h3 style={{ fontSize:'15px', margin:0 }}>{infoEditId?'✏️ Edit Info':'+ New Info'}</h3>
+              <div style={{ display:'flex', gap:'8px' }}>
+                <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowInfoForm(false)}>Cancel</button>
+                <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleInfoSave}>Save</button>
               </div>
             </div>
-          )}
+            {renderInfoFormFields()}
+          </div>
         </div>
       )}
 
-      {/* Table */}
-      <div style={{ overflowY:'auto', flex:1 }}>
-        {recycleBinLoading ? (
-          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>กำลังโหลด...</div>
-        ) : recycleBinItems.length === 0 ? (
-          <div style={{ padding:'48px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>
-            <div style={{ fontSize:'32px', marginBottom:'8px' }}>🗑️</div>
-            Recycle Bin ว่างเปล่า
+      {/* ─── Branch Detail Modal ─── */}
+      {showBranchDetail&&branchDetailItem&&(
+        <div style={S.overlay}>
+          <div style={S.modal}>
+            <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                <span style={{ fontSize:'14px', fontWeight:'500' }}>{branchDetailEditMode?'✏️ Edit Branch':`🔍 ${branchDetailItem['Branch Code']||'Branch Detail'}`}</span>
+                {!branchDetailEditMode&&isEditor&&<button onClick={()=>setBranchDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
+              </div>
+              <div style={{ display:'flex', gap:'8px' }}>
+                {branchDetailEditMode?(
+                  <>
+                    <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setBranchDetailEditMode(false);setBranchDetailError('');setBranchDetailForm(Object.fromEntries(BRANCH_EDIT.map(([k])=>[k,branchDetailItem[k]||''])));}}>Cancel</button>
+                    <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchDetailSave}>Save</button>
+                  </>
+                ):(
+                  <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setShowBranchDetail(false)}>Close</button>
+                )}
+              </div>
+            </div>
+            {renderBranchFormFields(branchDetailForm,setBranchDetailForm,branchDetailError,setBranchDetailError,branchDetailEditMode)}
+            {!branchDetailEditMode&&(
+              <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0', marginTop:'4px', flexShrink:0 }}>
+                <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
+                  <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated By</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{branchDetailItem['updated_by']||'-'}</div></div>
+                  <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Updated At</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(branchDetailItem['updated_at'])}</div></div>
+                </div>
+              </div>
+            )}
           </div>
-        ) : (
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
-            <thead>
-              <tr>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', width:'36px' }}>
-                  <input type="checkbox"
-                    checked={recycleBinItems.length > 0 && recycleBinSelected.length === recycleBinItems.length}
-                    onChange={() => setRecycleBinSelected(recycleBinSelected.length === recycleBinItems.length ? [] : recycleBinItems.map(i => i.id))}
-                  />
-                </th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>Key</th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>ลบโดย</th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>วันที่ลบ</th>
-                <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', fontWeight:'500', fontSize:'11px', width:'120px' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recycleBinItems.map(item => {
-                const isChecked = recycleBinSelected.includes(item.id);
-                const deletedAt = item.deleted_at ? new Date(item.deleted_at) : null;
-                const deletedAtStr = deletedAt ? `${String(deletedAt.getDate()).padStart(2,'0')}/${String(deletedAt.getMonth()+1).padStart(2,'0')}/${deletedAt.getFullYear()} ${String(deletedAt.getHours()).padStart(2,'0')}:${String(deletedAt.getMinutes()).padStart(2,'0')}` : '-';
-                return (
-                  <tr key={item.id} style={{ background: isChecked?'#f0f7ff':'white', borderBottom:'0.5px solid #f0f0f0' }}>
-                    <td style={{ padding:'8px 12px', textAlign:'center' }}>
-                      <input type="checkbox" checked={isChecked}
-                        onChange={() => setRecycleBinSelected(prev => prev.includes(item.id) ? prev.filter(s => s !== item.id) : [...prev, item.id])}
-                      />
-                    </td>
-                    <td style={{ padding:'9px 12px', fontWeight:'500', color:'#1a3a5c', fontSize:'12px' }}>{item.source_key}</td>
-                    <td style={{ padding:'9px 12px', color:'#555', fontSize:'11px' }}>{item.deleted_by || '-'}</td>
-                    <td style={{ padding:'9px 12px', color:'#888', fontSize:'11px', whiteSpace:'nowrap' }}>{deletedAtStr}</td>
-                    <td style={{ padding:'9px 12px', textAlign:'center' }}>
-                      <div style={{ display:'inline-flex', gap:'6px' }}>
-                        <button onClick={()=>handleRestore(item)} disabled={recycleBinLoading2}
-                          style={{ padding:'4px 12px', borderRadius:'5px', border:'none', background: recycleBinLoading2?'#f5f5f5':'#EAF3DE', color: recycleBinLoading2?'#aaa':'#27500A', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer', fontWeight:'500' }}>
-                          ♻️
-                        </button>
-                        <button onClick={()=>handlePermanentDelete(item)} disabled={recycleBinLoading2}
-                          style={{ padding:'4px 10px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background: recycleBinLoading2?'#f5f5f5':'#FCEBEB', color: recycleBinLoading2?'#aaa':'#791F1F', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer' }}>
-                          🗑️
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div style={{ padding:'10px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
-        <button onClick={()=>setShowRecycleBin(false)} style={{ padding:'6px 16px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Close</button>
-      </div>
-    </div>
-  </div>
-)}
+      {/* ─── New Branch Modal ─── */}
+      {showBranchNew&&(
+        <div style={S.overlay}>
+          <div style={S.modal}>
+            <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <h3 style={{ fontSize:'15px', margin:0 }}>+ New Branch</h3>
+              <div style={{ display:'flex', gap:'8px' }}>
+                <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>{setShowBranchNew(false);setBranchNewForm({});setBranchNewError('');}}>Cancel</button>
+                <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={handleBranchNewSave}>Save</button>
+              </div>
+            </div>
+            {renderBranchFormFields(branchNewForm,setBranchNewForm,branchNewError,setBranchNewError,true)}
+          </div>
+        </div>
+      )}
 
+      {/* ─── Rate Confirm Modal ─── */}
+      {showRateConfirm&&rateConfirmData&&(
+        <div style={{...S.overlay,zIndex:1000}}>
+          <div style={{ background:'white', borderRadius:'12px', width:isMobile?'90vw':'420px', padding:'24px' }}>
+            <div style={{ fontSize:'24px', textAlign:'center', marginBottom:'8px' }}>⚠️</div>
+            <h3 style={{ fontSize:'15px', fontWeight:'600', textAlign:'center', marginBottom:'16px' }}>ยืนยันการเปลี่ยน VAT Rate</h3>
+            <div style={{ background:'#f8f9fa', borderRadius:'8px', padding:'16px', marginBottom:'16px' }}>
+              <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:'20px', marginBottom:'12px' }}>
+                <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate เดิม → Last Rate (%)</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#791F1F' }}>{rateConfirmData.oldRate}%</div></div>
+                <div style={{ fontSize:'22px', color:'#888' }}>→</div>
+                <div style={{ textAlign:'center' }}><div style={{ fontSize:'11px', color:'#888', marginBottom:'4px' }}>Rate ใหม่ → VAT %</div><div style={{ fontSize:'22px', fontWeight:'600', color:'#27500A' }}>{rateConfirmData.newRate}%</div></div>
+              </div>
+              <div style={{ textAlign:'center', fontSize:'12px', color:'#555', borderTop:'0.5px solid #e8e8e8', paddingTop:'12px' }}>จะอัปเดต <strong style={{ color:'#1a3a5c' }}>{rateConfirmData.branchCount} สาขา</strong> ที่มี Tax ID: {rateConfirmData.taxId}</div>
+            </div>
+            <div style={{ display:'flex', gap:'8px' }}>
+              <button onClick={()=>{setShowRateConfirm(false);setRateConfirmData(null);}} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'1px solid #ddd', background:'white', fontSize:'13px', cursor:'pointer', color:'#555' }}>Cancel</button>
+              <button onClick={handleRateConfirm} style={{ flex:1, padding:'10px', borderRadius:'8px', border:'none', background:'#1a3a5c', color:'white', fontSize:'13px', cursor:'pointer', fontWeight:'500' }}>✅ ยืนยัน อัปเดต {rateConfirmData.branchCount} สาขา</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Recycle Bin Modal ─── */}
+      {showRecycleBin && (
+        <div style={S.overlay}>
+          <div style={{ background:'white', borderRadius:'10px', width: isMobile?'95vw':'860px', maxHeight:'85vh', display:'flex', flexDirection:'column' }}>
+            <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                <span style={{ fontSize:'15px', fontWeight:'500' }}>🗑️ Recycle Bin — {currentLabel()}</span>
+                <span style={{ fontSize:'11px', background:'#f5f5f5', color:'#888', padding:'2px 8px', borderRadius:'20px' }}>{recycleBinItems.length} รายการ</span>
+              </div>
+              <button onClick={()=>setShowRecycleBin(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'20px', lineHeight:1 }}>×</button>
+            </div>
+            {recycleBinSelected.length > 0 && (
+              <div style={{ padding:'8px 16px', background:'#f8f9fa', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', gap:'8px', flexShrink:0, flexWrap:'wrap' }}>
+                <span style={{ fontSize:'12px', color:'#555' }}>เลือก {recycleBinSelected.length} รายการ</span>
+                {!recycleBinLoading2 ? (
+                  <>
+                    <button onClick={handleBulkRestoreBin} style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #97C459', fontSize:'12px', cursor:'pointer', background:'#EAF3DE', color:'#27500A', fontWeight:'500' }}>♻️ Restore ทั้งหมด</button>
+                    <button onClick={handleBulkPermanentDeleteBin} style={{ padding:'4px 12px', borderRadius:'6px', border:'0.5px solid #f7c1c1', fontSize:'12px', cursor:'pointer', background:'#FCEBEB', color:'#791F1F', fontWeight:'500' }}>🗑️ ลบถาวรทั้งหมด</button>
+                    <button onClick={() => setRecycleBinSelected([])} style={{ padding:'4px 8px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', cursor:'pointer', background:'#f5f5f5', color:'#555' }}>✕ ยกเลิก</button>
+                  </>
+                ) : (
+                  <div style={{ flex:1, maxWidth:'300px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                      <span style={{ fontSize:'11px', color:'#555' }}>กำลังดำเนินการ...</span>
+                      <span style={{ fontSize:'11px', fontWeight:'500', color:'#1a3a5c' }}>{recycleBinProgress}%</span>
+                    </div>
+                    <div style={{ background:'#f0f0f0', borderRadius:'20px', height:'6px', overflow:'hidden' }}>
+                      <div style={{ height:'100%', borderRadius:'20px', background:'linear-gradient(90deg, #5DCAA5, #1a3a5c)', width:`${recycleBinProgress}%`, transition:'width 0.3s ease' }}/>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ overflowY:'auto', flex:1, minHeight:0 }}>
+              {recycleBinLoading ? (
+                <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>กำลังโหลด...</div>
+              ) : recycleBinItems.length === 0 ? (
+                <div style={{ padding:'48px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>
+                  <div style={{ fontSize:'32px', marginBottom:'8px' }}>🗑️</div>
+                  Recycle Bin ว่างเปล่า
+                </div>
+              ) : (
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', width:'36px' }}>
+                        <input type="checkbox" checked={recycleBinItems.length > 0 && recycleBinSelected.length === recycleBinItems.length} onChange={() => setRecycleBinSelected(recycleBinSelected.length === recycleBinItems.length ? [] : recycleBinItems.map(i => i.id))}/>
+                      </th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>Key</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px' }}>ลบโดย</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'left', fontWeight:'500', fontSize:'11px', whiteSpace:'nowrap' }}>วันที่ลบ</th>
+                      <th style={{ background:'#1a3a5c', color:'white', padding:'9px 12px', textAlign:'center', fontWeight:'500', fontSize:'11px', width:'120px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recycleBinItems.map(item => {
+                      const isChecked = recycleBinSelected.includes(item.id);
+                      const deletedAt = item.deleted_at ? new Date(item.deleted_at) : null;
+                      const deletedAtStr = deletedAt ? `${String(deletedAt.getDate()).padStart(2,'0')}/${String(deletedAt.getMonth()+1).padStart(2,'0')}/${deletedAt.getFullYear()} ${String(deletedAt.getHours()).padStart(2,'0')}:${String(deletedAt.getMinutes()).padStart(2,'0')}` : '-';
+                      return (
+                        <tr key={item.id} style={{ background: isChecked?'#f0f7ff':'white', borderBottom:'0.5px solid #f0f0f0' }}>
+                          <td style={{ padding:'8px 12px', textAlign:'center' }}>
+                            <input type="checkbox" checked={isChecked} onChange={() => setRecycleBinSelected(prev => prev.includes(item.id) ? prev.filter(s => s !== item.id) : [...prev, item.id])}/>
+                          </td>
+                          <td style={{ padding:'9px 12px', fontWeight:'500', color:'#1a3a5c', fontSize:'12px' }}>{item.source_key}</td>
+                          <td style={{ padding:'9px 12px', color:'#555', fontSize:'11px' }}>{item.deleted_by || '-'}</td>
+                          <td style={{ padding:'9px 12px', color:'#888', fontSize:'11px', whiteSpace:'nowrap' }}>{deletedAtStr}</td>
+                          <td style={{ padding:'9px 12px', textAlign:'center' }}>
+                            <div style={{ display:'inline-flex', gap:'6px' }}>
+                              <button onClick={()=>handleRestore(item)} disabled={recycleBinLoading2} style={{ padding:'4px 12px', borderRadius:'5px', border:'none', background: recycleBinLoading2?'#f5f5f5':'#EAF3DE', color: recycleBinLoading2?'#aaa':'#27500A', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer', fontWeight:'500' }}>♻️</button>
+                              <button onClick={()=>handlePermanentDelete(item)} disabled={recycleBinLoading2} style={{ padding:'4px 10px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background: recycleBinLoading2?'#f5f5f5':'#FCEBEB', color: recycleBinLoading2?'#aaa':'#791F1F', fontSize:'11px', cursor: recycleBinLoading2?'default':'pointer' }}>🗑️</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div style={{ padding:'10px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
+              <button onClick={()=>setShowRecycleBin(false)} style={{ padding:'6px 16px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ImportPreviewModal show={showInfoPreview} onClose={()=>{setShowInfoPreview(false);setInfoPreviewRows([]);}} onConfirm={handleInfoConfirmImport} importing={infoImporting} previewRows={infoPreviewRows} keyField={INFO_KEY} allFields={INFO_FIELDS} isMobile={isMobile}/>
       <ImportPreviewModal show={showBranchPreview} onClose={()=>{setShowBranchPreview(false);setBranchPreviewRows([]);}} onConfirm={handleBranchConfirmImport} importing={branchImporting} previewRows={branchPreviewRows} keyField={BRANCH_KEY} allFields={BRANCH_FIELDS} isMobile={isMobile}/>
     </div>
   );
 }
-
-
 
 export default BusinessUnit;

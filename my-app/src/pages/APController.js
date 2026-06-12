@@ -7,23 +7,35 @@ import { useUserRole } from '../contexts/useUserRole';
 const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
 
 const BRANCH_EDIT = [
-  ['Branch Code',                           'Branch Code'],
-  ['Branch Direct',                         'Branch Direct'],
-  ['Branch Allocate',                       'Branch Allocate'],
-  ['BU Code',                               'BU Code'],
-  ['Company for Show in Report Display',    'Company for Report'],
-  ['Simple Company',                        'Simple Company'],
-  ['BU-TaxID',                              'BU Tax ID'],
-  ['BU-Branch',                             'BU Branch'],
-  ['Simple Brand Code',                     'Simple Brand Code'],
-  ['%',                                     '%'],
-  ['DB(%)',                                 'DB(%)'],
-  ['cpc',                                   'CPC'],
-  ['Branch Address',                        'Branch Address'],
-  ['Group-P',                               'Group-P'],
-  ['bu',                                    'BU'],
-  ['status',                                'Status'],
-  ['Inactive Date',                         'Inactive Date'],
+  // [field key, label, grid span (out of 12)]
+  // row 1
+  ['Branch Code',                           'Branch Code',        3],
+  ['BU Code',                               'BU Code',            3],
+  ['BU-Branch',                             'BU Branch',          3],
+  ['cpc',                                   'CPC',                3],
+
+  // row 2
+  ['Branch Direct',                         'Branch Direct',      4],
+  ['Branch Allocate',                       'Branch Allocate',    4],
+  ['Group-P',                               'Group-P',            4],
+
+  // row 3
+  ['Company for Show in Report Display',    'Company for Report', 7],
+  ['Simple Company',                        'Simple Company',     5],
+
+  // row 4
+  ['BU-TaxID',                              'BU Tax ID',          4],
+  ['Simple Brand Code',                     'Simple Brand Code',  4],
+  ['%',                                     '%',                  2],
+  ['DB(%)',                                 'DB(%)',              2],
+
+  // row 5
+  ['bu',                                    'BU',                 3],
+  ['status',                                'Status',             4],
+  ['Inactive Date',                         'Inactive Date',      5],
+
+  // row 6
+  ['Branch Address',                        'Branch Address',     12],
 ];
 const BRANCH_COMBO = ['Branch Direct', 'bu', 'Group-P', 'status'];
 
@@ -340,12 +352,11 @@ function BranchSearchPopup({
           </div>
         )}
 
-        {/* Form body — 2 columns */}
+        {/* Form body — 12-column compact grid */}
         <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px' }}>
-            {BRANCH_EDIT.map(([key, label]) => {
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '10px 12px' }}>
+            {BRANCH_EDIT.map(([key, label, span]) => {
               const isReadOnly   = key === 'Branch Code' && isEdit;
-              const isFullWidth  = key === 'Branch Address';
               const needInactive = key === 'Inactive Date';
               const isDisabled   = needInactive && form['status'] !== 'Closed';
               const isRequired   =
@@ -365,7 +376,7 @@ function BranchSearchPopup({
               const opts = branchOptions[key] || [];
 
               return (
-                <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: isFullWidth ? 'span 2' : undefined }}>
+                <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
                   <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>
                     {label}{isRequired && <span style={{ color: '#e24b4a' }}> *</span>}
                     {needInactive && <span style={{ fontSize: '10px', color: '#bbb' }}> (เฉพาะ Closed)</span>}
