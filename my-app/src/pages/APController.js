@@ -1647,7 +1647,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     if (item?.auto_ib?.trim()) onResolveBranch(`${item.auto_ib.trim()}+`);
   };
 
-  // handleBackDesc1Blur — auto-find contract by serial_code or bdes1 contains val
+  // ── Back Description 1: ถ้าพิมพ์ตรงกับ Serial Code หรือ BDes1 ของสัญญาที่มี ──
+  // ── ของ vendor นี้อยู่แล้ว ให้ดึงสัญญามาใส่ทันที (เหมือนกดเลือกใน Contract popup)
+  // ── ถ้า vendor นี้ไม่มีสัญญาในระบบ จะไม่มีอะไร match จึงไม่เกิดผลใดๆ
   const handleBackDesc1Blur = async (val) => {
     if (!val?.trim()) return;
     const fullVendorCode = `${bu}-${form?.supplierCode || ''}`.toUpperCase();
@@ -2537,6 +2539,50 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
         <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} />
+      </div>
+
+      {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
+          <div style={{ display: 'flex' }}>
+            <div style={{ padding: '9px 14px', fontSize: '12px', cursor: 'default', borderBottom: '2px solid #1a3a5c', marginBottom: '-0.5px', color: '#1a3a5c', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              🧺 Batch Bucket
+              <span style={{ background: '#1a3a5c', color: 'white', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{invoices.length}</span>
+            </div>
+          </div>
+          <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending Invoices</span>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '18%' }} /><col style={{ width: '32%' }} /><col style={{ width: '16%' }} />
+            <col style={{ width: '18%' }} /><col style={{ width: '16%' }} />
+          </colgroup>
+          <thead>
+            <tr style={{ background: '#f8f9fa' }}>
+              {['Invoice No.','Vendor','Branch','Amount','Action'].map(h => (
+                <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.length === 0 ? (
+              <tr><td colSpan={5} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
+            ) : invoices.map((inv, i) => (
+              <tr key={inv.id || i} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600' }}>{inv.id || '-'}</td>
+                <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor || '-'}</td>
+                <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px' }}>{inv.branch || '-'}</td>
+                <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c' }}>{inv.net ? `฿${fmt(inv.net)}` : '—'}</td>
+                <td style={{ padding: '6px 9px' }}>
+                  <button onClick={() => setInvoices(list => list.filter((_, idx) => idx !== i))}
+                    style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
