@@ -646,12 +646,9 @@ const SUPPLIER_FIELDS = [
   ['First Part',      'First Part',             1, 'text'],
   ['Mid Part',        'Mid Part',               1, 'text'],
   ['Last Part',       'Last Part',              1, 'text'],
-  ['Invoice No.',     'Invoice No.',            1, 'text'],
+  ['Invoice No.',     'Invoice No.',            1, 'combo'],
   ['Digit',           'Digit',                  1, 'text'],
   ['Due',             'Due',                    1, 'text'],
-  ['Method',          'Method',                 1, 'text'],
-  ['Paygroup',        'Paygroup',               1, 'text'],
-  ['Par',             'Par',                    1, 'text'],
   // ── คำอธิบาย ─────────────────────────────────────────────────────────────
   ['NoticeDescrip',   'Notice Description',     3, 'textarea'],
   ['RuleDescrip',     'Rule Description',       3, 'textarea'],
@@ -798,50 +795,118 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
         )}
       </div>
       {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>⚠️ {formError}</div>}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {formError && false}
         {(() => {
-          const SECTIONS = [
-            { label: 'ข้อมูลหลัก',   keys: ['Code','BU Code','Supplier Site','Supplier Name','Supplier Number','Supplier Ref.','Tax-Type','Notice','Sub Acc'] },
-            { label: 'ข้อมูลติดต่อ', keys: ['Tax ID','No.','Contact','Email','Address'] },
-            { label: 'Coding',        keys: ['First Part','Mid Part','Last Part','Invoice No.','Digit','Due','Method','Paygroup','Par'] },
-            { label: 'คำอธิบาย',     keys: ['NoticeDescrip','RuleDescrip'] },
-          ];
-          return SECTIONS.map(sec => {
-            const secFields = SUPPLIER_FIELDS.filter(([k]) => sec.keys.includes(k));
-            if (!secFields.length) return null;
+          const lbl = (text, extra = {}) => (
+            <div style={{ padding: '6px 10px', fontSize: '11px', color: '#888', display: 'flex', alignItems: 'center', background: '#f8f9fa', whiteSpace: 'nowrap', borderRight: '0.5px solid #e8eaf0', ...extra }}>{text}</div>
+          );
+          const cell = (key, readOnly = false, opts = {}) => {
+            const isCodeRO = key === 'Code' && isEdit;
+            const ro = readOnly || isCodeRO;
+            const isRequired = SUPPLIER_FIELDS.find(([k]) => k === key)?.[1]?.includes('*');
+            const hasErr = !!formError && isRequired && !form[key]?.trim();
+            const s = { ...baseInput, background: 'transparent', border: hasErr ? '1px solid #e74c3c' : 'none', outline: 'none', width: '100%', height: '28px', color: ro ? '#999' : '#1a3a5c', ...opts };
+            return <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0' }}><input value={form[key] || ''} readOnly={ro} onChange={e => !ro && setField(key, e.target.value)} style={s} /></div>;
+          };
+          const combo = (key, extra = {}) => {
+            const opts = [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort();
             return (
-              <div key={sec.label} style={{ marginBottom: '14px' }}>
-                <div style={{ fontSize: '10px', fontWeight: '600', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', paddingBottom: '4px', borderBottom: '0.5px solid #f0f0f0' }}>{sec.label}</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px 14px' }}>
-                  {secFields.map(([key, label, span, type]) => {
-                    const isCodeReadOnly = key === 'Code' && isEdit;
-                    const isRequired     = label.includes('*');
-                    const hasErr = !!formError && isRequired && !form[key]?.trim();
-                    const inp = { ...baseInput, border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd', background: isCodeReadOnly ? '#f5f5f5' : 'white', color: isCodeReadOnly ? '#999' : '#1a3a5c' };
-                    const comboOpts = type === 'combo' ? [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort() : [];
-                    return (
-                      <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
-                        <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>{label}</label>
-                        {type === 'textarea' ? (
-                          <textarea rows={2} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
-                            style={{ ...inp, height: 'auto', padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' }} />
-                        ) : type === 'combo' ? (
-                          <><input list={`ssp-combo-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
-                            placeholder="พิมพ์หรือเลือก" style={inp} />
-                          <datalist id={`ssp-combo-${key}`}>{comboOpts.map((o, ci) => <option key={ci} value={o} />)}</datalist></>
-                        ) : type === 'readonly' ? (
-                          <input value={form[key] || ''} readOnly style={{ ...inp, background: '#f5f5f5', color: '#999', cursor: 'default' }} />
-                        ) : (
-                          <input value={form[key] || ''} readOnly={isCodeReadOnly}
-                            onChange={e => !isCodeReadOnly && setField(key, e.target.value)} style={inp} />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+              <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', ...extra }}>
+                <input list={`ssp-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} placeholder="เลือก" style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} />
+                <datalist id={`ssp-${key}`}>{opts.map((o, i) => <option key={i} value={o} />)}</datalist>
               </div>
             );
-          });
+          };
+          const row = (cols, extra = {}) => (
+            <div style={{ display: 'grid', gridTemplateColumns: cols, border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden', ...extra }} />
+          );
+          const ROW = (cols, children, extra = {}) => (
+            <div style={{ display: 'grid', gridTemplateColumns: cols, border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden', ...extra }}>
+              {children}
+            </div>
+          );
+          return (
+            <>
+              {/* Row 1: Code + Supplier Name */}
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 180px 110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Code' + (isEdit ? '' : ' *'))}
+                {cell('Code')}
+                {lbl('Supplier Name *')}
+                {(() => { const hasErr = !!formError && !form['Supplier Name']?.trim(); return <div style={{ padding: '4px 6px' }}><input value={form['Supplier Name'] || ''} onChange={e => setField('Supplier Name', e.target.value)} style={{ ...baseInput, background: 'transparent', border: hasErr ? '1px solid #e74c3c' : 'none', outline: 'none', width: '100%', height: '28px' }} /></div>; })()}
+              </div>
+
+              {/* Row 2: Supplier No. + Supplier Site + BU Code */}
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 180px 100px 1fr 80px 120px', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Supplier No.')}
+                {cell('Supplier Number')}
+                {lbl('Supplier Site')}
+                {combo('Supplier Site')}
+                {lbl('BU Code')}
+                <div style={{ padding: '4px 6px' }}><input value={form['BU Code'] || ''} readOnly style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px', color: '#999' }} /></div>
+              </div>
+
+              {/* Row 3: Tax ID + No. (Branch No.) + Tax-Type */}
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 90px 1fr 80px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Tax ID')}
+                {cell('Tax ID')}
+                {lbl('No.', { textAlign: 'center', justifyContent: 'center' })}
+                {cell('No.')}
+                {lbl('Tax-Type')}
+                {combo('Tax-Type')}
+              </div>
+
+              {/* Row 4+5: Invoice Rule section — headers + values */}
+              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 120px 80px 1fr 100px', borderBottom: '0.5px solid #e8eaf0' }}>
+                  {['Invoice Rule','First Part','Mid Part','Last Part','Digit','Notice','Due Date'].map((h, i) => (
+                    <div key={h} style={{ padding: '6px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', borderRight: i < 6 ? '0.5px solid #e8eaf0' : 'none', whiteSpace: 'nowrap' }}>{h}</div>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 120px 80px 1fr 100px' }}>
+                  {[
+                    (() => { const opts = [...new Set(buFiltered.map(i => String(i['Invoice No.'] || '')).filter(Boolean))].sort(); return <div key="invno" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input list="ssp-invno-val" value={form['Invoice No.'] || ''} onChange={e => setField('Invoice No.', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /><datalist id="ssp-invno-val">{opts.map((o, i) => <option key={i} value={o} />)}</datalist></div>; })(),
+                    <div key="fp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
+                    <div key="mp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
+                    <div key="lp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
+                    <div key="dig" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Digit'] || ''} onChange={e => setField('Digit', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
+                    (() => { const opts = [...new Set(buFiltered.map(i => String(i['Notice'] || '')).filter(Boolean))].sort(); return <div key="notice" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input list="ssp-notice-val" value={form['Notice'] || ''} onChange={e => setField('Notice', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /><datalist id="ssp-notice-val">{opts.map((o, i) => <option key={i} value={o} />)}</datalist></div>; })(),
+                    <div key="due" style={{ padding: '4px 6px' }}><input value={form['Due'] || ''} onChange={e => setField('Due', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
+                  ]}
+                </div>
+              </div>
+
+              {/* Row 6: Contact + Email */}
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 80px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Contact')}
+                {cell('Contact')}
+                {lbl('Email')}
+                <div style={{ padding: '4px 6px' }}><input value={form['Email'] || ''} onChange={e => setField('Email', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+              </div>
+
+              {/* Row 7: Sub Acc + Supplier Ref. */}
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Sub Acc')}
+                {cell('Sub Acc')}
+                {lbl('Supplier Ref.')}
+                <div style={{ padding: '4px 6px' }}><input value={form['Supplier Ref.'] || ''} onChange={e => setField('Supplier Ref.', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+              </div>
+
+              {/* Row 8: Address */}
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Address', { alignItems: 'flex-start', paddingTop: '8px' })}
+                <div style={{ padding: '4px 6px' }}><textarea rows={3} value={form['Address'] || ''} onChange={e => setField('Address', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', height: 'auto' }} /></div>
+              </div>
+
+              {/* Row 9: Rule Description + Notice Description */}
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 130px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Rule Description', { alignItems: 'flex-start', paddingTop: '8px' })}
+                <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><textarea rows={3} value={form['RuleDescrip'] || ''} onChange={e => setField('RuleDescrip', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', height: 'auto' }} /></div>
+                {lbl('Notice Description', { alignItems: 'flex-start', paddingTop: '8px' })}
+                <div style={{ padding: '4px 6px' }}><textarea rows={3} value={form['NoticeDescrip'] || ''} onChange={e => setField('NoticeDescrip', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', height: 'auto' }} /></div>
+              </div>
+            </>
+          );
         })()}
       </div>
       <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
