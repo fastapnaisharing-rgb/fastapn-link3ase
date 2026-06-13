@@ -1578,7 +1578,7 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '' }) {
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {} }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -1629,11 +1629,30 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       if (cc || bb) setField(key, [cc, bb].filter(Boolean).join(' '));
     });
     setShowContractPopup(false);
+    if (item?.auto_ib?.trim()) onResolveBranch(`${item.auto_ib.trim()}+`);
   };
 
-  // handleBackDesc1Blur — called by backDesc1 onBlur (was missing → ReferenceError)
-  const handleBackDesc1Blur = (val) => {
-    // placeholder — extend with real logic if needed
+  // handleBackDesc1Blur — auto-find contract by serial_code or bdes1 contains val
+  const handleBackDesc1Blur = async (val) => {
+    if (!val?.trim()) return;
+    const fullVendorCode = `${bu}-${form?.supplierCode || ''}`.toUpperCase();
+    if (!bu || !form?.supplierCode) return;
+    try {
+      const { data, error } = await supabase
+        .from('contract_list')
+        .select('*')
+        .ilike('vendor_code', fullVendorCode)
+        .limit(100);
+      if (error || !data?.length) return;
+      const search = val.trim().toLowerCase();
+      const match = data.find(item =>
+        String(item.serial_code || '').toLowerCase().includes(search) ||
+        String(item.bdes1 || '').toLowerCase().includes(search)
+      );
+      if (match) handleSelectContract(match);
+    } catch (e) {
+      console.error('handleBackDesc1Blur:', e);
+    }
   };
 
   // ── Auto-calculate ALL line fields ────────────────────────────────────────
@@ -2474,7 +2493,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} />
       </div>
     </div>
   );
