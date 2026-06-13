@@ -535,28 +535,76 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
           </>
         ) : (
           <>
-            <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              <div style={{ maxWidth: '520px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 12px' }}>
-                <div style={{ gridColumn: 'span 3', display: 'flex', gap: '12px' }}>
-                  <div style={{ flex: 1 }}><label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>Code (Auto)</label><input value={nextCode} disabled style={{ ...fldStyle, background: '#f5f5f5', color: '#999' }} /></div>
-                  <div style={{ flex: 1 }}><label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>BU</label><input value={form['bu'] || ''} onChange={e => setForm(f => ({ ...f, bu: e.target.value }))} style={fldStyle} /></div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+
+              {/* Row 1: Item Code + BU */}
+              <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 60px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{ padding: '6px 10px', fontSize: '11px', fontWeight: '500', color: '#888', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa' }}>Item Code</div>
+                <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}>
+                  <input value={nextCode} disabled style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', color: '#999', width: '100%' }} />
                 </div>
-                {NEW_FIELDS.map(([key, label, span, type]) => {
-                  const isCombo = ITEM_COMBO_FIELDS.includes(key);
-                  return (
-                    <div key={key} style={{ gridColumn: `span ${span}` }}>
-                      <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>{label}</label>
-                      {type === 'textarea2' || type === 'textarea3' ? (
-                        <textarea rows={type === 'textarea3' ? 3 : 2} value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} style={taStyle} />
-                      ) : isCombo ? (
-                        <><input list={`combo-itemcode-${key}`} value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder="เลือกหรือพิมพ์ใหม่" style={fldStyle} /><datalist id={`combo-itemcode-${key}`}>{FIELD_OPTIONS[key].map((o, i) => <option key={i} value={o} />)}</datalist></>
-                      ) : (
-                        <input value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} style={fldStyle} />
-                      )}
-                    </div>
-                  );
-                })}
+                <div style={{ padding: '6px 10px', fontSize: '11px', fontWeight: '500', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa' }}>BU</div>
+                <div style={{ padding: '4px 6px' }}>
+                  <input value={form['bu'] || ''} onChange={e => setForm(f => ({ ...f, bu: e.target.value }))} style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', width: '100%' }} />
+                </div>
               </div>
+
+              {/* Row 2: Description + Cpc + Account + Sub Acc */}
+              <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 55px 90px 70px 100px 70px 100px', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {[
+                  { label: 'Description', key: 'description', isLabel: false },
+                  null,
+                  { label: 'Cpc',     key: 'cpc',     isLabel: false },
+                  null,
+                  { label: 'Account', key: 'account', isLabel: false },
+                  null,
+                  { label: 'Sub Acc', key: 'sub',     isLabel: false },
+                  null,
+                ].reduce((acc, _, i, arr) => acc, null) || null}
+                <div style={{ padding: '6px 10px', fontSize: '11px', fontWeight: '500', color: '#888', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa' }}>Description</div>
+                <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}>
+                  <input value={form['description'] || ''} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', width: '100%' }} />
+                </div>
+                <div style={{ padding: '6px 6px', fontSize: '11px', fontWeight: '500', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa' }}>Cpc</div>
+                <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}>
+                  <input value={form['cpc'] || ''} onChange={e => setForm(f => ({ ...f, cpc: e.target.value }))} style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', width: '100%' }} />
+                </div>
+                <div style={{ padding: '6px 6px', fontSize: '11px', fontWeight: '500', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa' }}>Account</div>
+                <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}>
+                  <input value={form['account'] || ''} onChange={e => setForm(f => ({ ...f, account: e.target.value }))} style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', width: '100%' }} />
+                </div>
+                <div style={{ padding: '6px 6px', fontSize: '11px', fontWeight: '500', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa' }}>Sub Acc</div>
+                <div style={{ padding: '4px 6px' }}>
+                  <input value={form['sub'] || ''} onChange={e => setForm(f => ({ ...f, sub: e.target.value }))} style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', width: '100%' }} />
+                </div>
+              </div>
+
+              {/* Row 3+4: Combo headers + values */}
+              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', borderBottom: '0.5px solid #e8eaf0' }}>
+                  {['Dis-G','I & G','Value','OTH','SPI-1','SPEC-TX'].map((h, i) => (
+                    <div key={h} style={{ padding: '6px 8px', fontSize: '11px', fontWeight: '500', color: '#888', textAlign: 'center', background: '#f8f9fa', borderRight: i < 5 ? '0.5px solid #e8eaf0' : 'none' }}>{h}</div>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
+                  {[['dis_g'],['i_and_g'],['value'],['oth'],['spi1'],['spec_tx']].map(([key], i) => (
+                    <div key={key} style={{ padding: '4px 6px', borderRight: i < 5 ? '0.5px solid #e8eaf0' : 'none' }}>
+                      <input list={`combo-ic-${key}`} value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                        placeholder="-" style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', width: '100%', fontSize: '11px' }} />
+                      <datalist id={`combo-ic-${key}`}>{(FIELD_OPTIONS[key]||[]).map((o, oi) => <option key={oi} value={o} />)}</datalist>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Keyword */}
+              <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{ padding: '6px 10px', fontSize: '11px', fontWeight: '500', color: '#888', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa' }}>Keyword</div>
+                <div style={{ padding: '4px 6px' }}>
+                  <input value={form['keyword'] || ''} onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} style={{ ...fldStyle, background: 'transparent', border: 'none', outline: 'none', width: '100%' }} />
+                </div>
+              </div>
+
             </div>
             <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', flexShrink: 0, background: '#fafbfc' }}>
               <button onClick={() => setView('search')} style={{ padding: '7px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
