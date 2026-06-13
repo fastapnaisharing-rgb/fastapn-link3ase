@@ -1631,26 +1631,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     setShowContractPopup(false);
   };
 
-  // ── CT: ถ้า Item Code มี SPI-1 = CT แปลว่าต้องผูก Contract ────────────────
-  const currentItemData = itemcodeItems.find(
-    i => String(i.code ?? '').trim().toUpperCase() === String(line1.itemCode ?? '').trim().toUpperCase()
-  );
-  const requiresContract = String(currentItemData?.spi1 ?? '').toUpperCase().includes('CT');
-
-  // ── เลือกสัญญาจาก ContractPopup → ดึง CDes+BDes ใส่ Back Description 1/2/3 ─
-  // (อันไหนไม่มีข้อมูล ไม่ต้องใส่/ไม่แก้ของเดิม)
-  const handleSelectContract = (item) => {
-    const pairs = [
-      ['backDesc1', item?.cdes1, item?.bdes1],
-      ['backDesc2', item?.cdes2, item?.bdes2],
-      ['backDesc3', item?.cdes3, item?.bdes3],
-    ];
-    pairs.forEach(([key, c, b]) => {
-      const cc = String(c ?? '').trim();
-      const bb = String(b ?? '').trim();
-      if (cc || bb) setField(key, [cc, bb].filter(Boolean).join(' '));
-    });
-    setShowContractPopup(false);
+  // handleBackDesc1Blur — called by backDesc1 onBlur (was missing → ReferenceError)
+  const handleBackDesc1Blur = (val) => {
+    // placeholder — extend with real logic if needed
   };
 
   // ── Auto-calculate ALL line fields ────────────────────────────────────────
@@ -1920,6 +1903,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           onSelect={handleSelectContract}
           vendorCode={form?.supplierCode || ''}
           bu={bu}
+          fetchCollection={fetchCollection}
           userName={userName}
         />
         <ItemCodeSearchPopup
@@ -2104,8 +2088,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
   };
   const handleBuKeyDown = (e) => {
     if (e.key !== 'Enter') return;
-    const match = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
-    setBuInfo(match || infoItems.find(i => i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())) || null);
+    const val = e.target.value; // FIX: use event value, not stale `bu` closure
+    const match = infoItems.find(i => i['bu']?.toLowerCase() === val.trim().toLowerCase());
+    setBuInfo(match || infoItems.find(i => i['bu']?.toLowerCase().startsWith(val.trim().toLowerCase())) || null);
   };
 
   const inputBase = { width: '100%', height: '32px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', background: 'white', color: '#1a3a5c', outline: 'none', boxSizing: 'border-box' };
@@ -2338,6 +2323,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const resolveBranch = (input) => {
     if (!input?.trim()) {
       setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' }));
+      branchJustResolved.current = false;
       return;
     }
 
@@ -2421,6 +2407,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
     if (!branch) {
       setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' }));
+      branchJustResolved.current = false;
       return;
     }
 
