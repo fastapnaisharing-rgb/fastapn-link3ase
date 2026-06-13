@@ -1248,7 +1248,11 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
   const emptyForm = () => {
     const f = {};
     CONTRACT_FIELDS.forEach(([k]) => { f[k] = ''; });
-    f['vendor_code'] = vendorCode || '';
+    const vc = String(vendorCode || '').trim();
+    const buPrefix = String(bu || '').trim();
+    f['vendor_code'] = (vc && buPrefix && !vc.toUpperCase().startsWith(buPrefix.toUpperCase() + '-'))
+      ? `${buPrefix}-${vc}`
+      : vc;
     return f;
   };
 
@@ -1627,6 +1631,28 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     setShowContractPopup(false);
   };
 
+  // ── CT: ถ้า Item Code มี SPI-1 = CT แปลว่าต้องผูก Contract ────────────────
+  const currentItemData = itemcodeItems.find(
+    i => String(i.code ?? '').trim().toUpperCase() === String(line1.itemCode ?? '').trim().toUpperCase()
+  );
+  const requiresContract = String(currentItemData?.spi1 ?? '').toUpperCase().includes('CT');
+
+  // ── เลือกสัญญาจาก ContractPopup → ดึง CDes+BDes ใส่ Back Description 1/2/3 ─
+  // (อันไหนไม่มีข้อมูล ไม่ต้องใส่/ไม่แก้ของเดิม)
+  const handleSelectContract = (item) => {
+    const pairs = [
+      ['backDesc1', item?.cdes1, item?.bdes1],
+      ['backDesc2', item?.cdes2, item?.bdes2],
+      ['backDesc3', item?.cdes3, item?.bdes3],
+    ];
+    pairs.forEach(([key, c, b]) => {
+      const cc = String(c ?? '').trim();
+      const bb = String(b ?? '').trim();
+      if (cc || bb) setField(key, [cc, bb].filter(Boolean).join(' '));
+    });
+    setShowContractPopup(false);
+  };
+
   // ── Auto-calculate ALL line fields ────────────────────────────────────────
   useEffect(() => {
     if (!line1.itemCode) {
@@ -1818,6 +1844,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
                 <label style={fieldLabel}>{label}</label>
                 <input type="text" value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                  onBlur={key === 'backDesc1' ? (e) => handleBackDesc1Blur(e.target.value) : undefined}
                   onKeyDown={key === 'backDesc3' ? (e) => {
                     if (e.key === 'Tab') {
                       e.preventDefault();
