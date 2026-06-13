@@ -662,7 +662,7 @@ const SUPPLIER_FIELDS = [
   ['NoticeDescrip',   'Notice Description',     3, 'textarea'],
   ['RuleDescrip',     'Rule Description',       3, 'textarea'],
 ];
-const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V3','S1','S3','N1','N3'];
+const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
 
 function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', fetchCollection, userName = '' }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
@@ -1709,11 +1709,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
     const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
     const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
-    return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum) };
+    return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal };
   };
 
   useEffect(() => {
-    setLines(prev => prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form)));
+    setLines(prev => {
+      const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form));
+      const hasT = calculated.some(l => String(l.account || '').startsWith('116301'));
+      return calculated.map(l => ({
+        ...l,
+        taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode,
+      }));
+    });
   }, [
     lines.map(l => l.itemCode).join(','),
     lines.map(l => l.amount).join(','),
@@ -1901,7 +1908,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               </button>
                             </div>
                           ) : (
-                            <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
+                            <>
+                            {key === 'tax' && <datalist id={`tax-opts-${idx}`}>{TAX_TYPE_OPTS.map(o => <option key={o} value={o} />)}</datalist>}
+                            <input
+                              list={key === 'tax' ? `tax-opts-${idx}` : undefined}
+                              type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
                               ref={idx === 0 && key === 'amount' ? amountRef : undefined}
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? (idx === 0 ? handleMoneyChange(key, v) : setLineField(idx, key, v.replace(/[^0-9.]/g, ''))) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line[key]) : undefined}
@@ -1913,6 +1924,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 }
                               } : undefined}
                               style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
+                            </>
                           )}
                         </td>
                       ))}
