@@ -1361,11 +1361,17 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
 
       if (!rows.length) { setImportMsg('ไม่พบข้อมูล'); setImporting(false); return; }
 
-      for (let i = 0; i < rows.length; i += 100) {
-        const { error } = await supabase.from('contract_list').upsert(rows.slice(i, i + 100), { onConflict: 'vendor_code,serial_code', ignoreDuplicates: false });
+      // deduplicate — เก็บแถวสุดท้ายในกรณี key ซ้ำในไฟล์
+      const seen = new Map();
+      rows.forEach(r => { seen.set(`${r.vendor_code}||${r.serial_code}`, r); });
+      const unique = Array.from(seen.values());
+
+      for (let i = 0; i < unique.length; i += 100) {
+        const { error } = await supabase.from('contract_list').upsert(unique.slice(i, i + 100), { onConflict: 'vendor_code,serial_code', ignoreDuplicates: false });
         if (error) throw error;
       }
-      setImportMsg(`✅ Import สำเร็จ ${rows.length} รายการ`);
+      const dupCount = rows.length - unique.length;
+      setImportMsg(`✅ Import สำเร็จ ${unique.length} รายการ${dupCount > 0 ? ` (ข้ามซ้ำ ${dupCount} รายการ)` : ''}`);
       await loadItems();
     } catch (e) { setImportMsg('❌ ' + e.message); }
     setImporting(false);
