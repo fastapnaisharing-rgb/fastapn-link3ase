@@ -571,23 +571,61 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SupplierSearchPopup
+// SupplierSearchPopup — with Add/Edit form (Editor+ only)
 // ─────────────────────────────────────────────────────────────────────────────
-function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '' }) {
-  const [query, setQuery] = useState('');
-  const [active, setActive] = useState(-1);
+const SUPPLIER_FIELDS = [
+  ['Code',          'Code *',           1, 'code'],
+  ['bu',            'BU',               1, 'bu-readonly'],
+  ['Supplier Site', 'Supplier Site',    1, 'text'],
+  ['Supplier Name', 'Supplier Name (TH) *', 3, 'text'],
+  ['Supplier Name EN', 'Supplier Name (EN)', 3, 'text'],
+  ['Supplier Number','Supplier No.',    1, 'text'],
+  ['Tax ID',        'Tax ID',           1, 'text'],
+  ['Tax-Type',      'Tax-Type',         1, 'select'],
+  ['Notice',        'Notice',           1, 'text'],
+  ['Method',        'Method',           1, 'text'],
+  ['Paygroup',      'Paygroup',         1, 'text'],
+  ['Sub Acc',       'Sub Acc',          1, 'text'],
+  ['Par',           'Par',              1, 'text'],
+  ['No.',           'No.',              1, 'text'],
+  ['Address',       'Address',          3, 'textarea'],
+];
+const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V3','S1','S3','N1','N3'];
+
+function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', fetchCollection, userName = '' }) {
+  const { isOwner, isAdmin, isEditor } = useUserRole();
+  const canEdit = isOwner || isAdmin || isEditor;
+
+  const [query, setQuery]         = useState('');
+  const [active, setActive]       = useState(-1);
   const [sortField, setSortField] = useState('Code');
-  const [sortDir, setSortDir] = useState('asc');
+  const [sortDir, setSortDir]     = useState('asc');
+  const [view, setView]           = useState('search');
+  const [editTarget, setEditTarget] = useState(null);
+  const [form, setFormState]      = useState({});
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving]       = useState(false);
   const inputRef = useRef(null);
   const listRef  = useRef(null);
 
-  useEffect(() => { if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); } }, [show]);
+  const emptyForm = () => {
+    const f = {};
+    SUPPLIER_FIELDS.forEach(([key]) => { f[key] = ''; });
+    f['bu'] = bu || '';
+    return f;
+  };
+
+  useEffect(() => {
+    if (show) { setQuery(''); setActive(-1); setView('search'); setEditTarget(null); setFormState({}); setFormError(''); setTimeout(() => inputRef.current?.focus(), 60); }
+  }, [show]);
+
   useEffect(() => {
     if (!show) return;
-    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    const h = (e) => { if (e.key === 'Escape') { if (view === 'search') onClose(); else handleBack(); } };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [show, onClose]);
+  }, [show, onClose, view]);
+
   useEffect(() => {
     if (active < 0 || !listRef.current) return;
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
@@ -595,7 +633,6 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
 
   if (!show) return null;
 
-  // filter by BU
   const buLower = String(bu ?? '').toLowerCase();
   const buFiltered = buLower
     ? supplierItems.filter(i => String(i['Code'] ?? '').toLowerCase().startsWith(buLower + '-'))
@@ -607,7 +644,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
         String(i['Code'] ?? '').toLowerCase().includes(q) ||
         String(i['Supplier Name'] ?? '').toLowerCase().includes(q) ||
         String(i['Supplier Number'] ?? '').toLowerCase().includes(q) ||
-        String(i['TAX ID'] ?? '').toLowerCase().includes(q)
+        String(i['Tax ID'] ?? '').toLowerCase().includes(q)
       )
     : buFiltered;
 
@@ -617,134 +654,241 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     return sortDir === 'asc' ? cmp : -cmp;
   });
 
-  const handleSort = (field) => {
-    setActive(-1);
-    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortField(field); setSortDir('asc'); }
-  };
-
-  const handleKey = (e) => {
+  const handleSort = (field) => { setActive(-1); if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortField(field); setSortDir('asc'); } };
+  const handleKey  = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
 
+  const handleOpenNew = () => {
+    if (!canEdit) return;
+    setEditTarget(null); setFormState(emptyForm()); setFormError(''); setView('new');
+  };
+  const handleOpenEdit = (item) => {
+    if (!canEdit) return;
+    const f = emptyForm();
+    SUPPLIER_FIELDS.forEach(([key]) => { f[key] = item[key] || ''; });
+    f['bu'] = String(item['Code'] ?? '').split('-')[0] || bu || '';
+    setEditTarget(item); setFormState(f); setFormError(''); setView('edit');
+  };
+  const handleBack = () => { setView('search'); setEditTarget(null); setFormState({}); setFormError(''); setTimeout(() => inputRef.current?.focus(), 60); };
+
+  const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); setFormError(''); };
+
+  const validate = (f) => {
+    if (!f['Code']?.trim()) return 'กรุณากรอก Code';
+    if (!f['Supplier Name']?.trim()) return 'กรุณากรอก Supplier Name';
+    return '';
+  };
+
+  const handleSave = async () => {
+    if (!canEdit) return;
+    const err = validate(form); if (err) { setFormError(err); return; }
+    setSaving(true);
+    try {
+      const meta = { updated_by: userName, updated_at: new Date().toISOString() };
+      const payload = { ...form, ...meta };
+      if (view === 'edit' && editTarget?.id) {
+        const { error } = await supabase.from('supplier_list').update(payload).eq('id', editTarget.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('supplier_list').insert([payload]);
+        if (error) throw error;
+      }
+      if (fetchCollection) await fetchCollection('SupplierList', true);
+      handleBack();
+    } catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
+    setSaving(false);
+  };
+
   const COLS = [
     ['Code',            'Code',          '110px'],
-    ['bu',              'BU',            '60px'],
+    ['bu',              'BU',            '55px'],
     ['Supplier Name',   'Supplier Name', ''],
     ['Supplier Number', 'Supplier No.',  '110px'],
-    ['Supplier Site',   'Site',          '110px'],
-    ['Tax-Type',        'Tax-Type',      '80px'],
-    ['Notice',          'Notice',        '80px'],
+    ['Supplier Site',   'Site',          '100px'],
+    ['Tax-Type',        'Tax-Type',      '75px'],
+    ['Notice',          'Notice',        '75px'],
   ];
 
-  const sortKey = (col) => {
-    const map = { 'Code': 'Code', 'BU': 'bu', 'Supplier Name': 'Supplier Name', 'Supplier No.': 'Supplier Number', 'Site': 'Supplier Site', 'Tax-Type': 'Tax-Type', 'Notice': 'Notice' };
-    return map[col] || col;
-  };
+  const baseInput = { height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' };
+  const isEdit = view === 'edit';
+
+  const renderFormView = () => (
+    <>
+      <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+        <button onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>
+        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isEdit ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isEdit ? '✏️' : '➕'}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isEdit ? `Edit supplier — ${editTarget?.['Code'] || ''}` : 'New supplier'}</div>
+          <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || '-'}</span></div>
+        </div>
+        {isEdit && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#FCEBEB', color: '#791F1F', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', flexShrink: 0 }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            Editor+ only
+          </span>
+        )}
+      </div>
+      {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>⚠️ {formError}</div>}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 14px' }}>
+          {SUPPLIER_FIELDS.map(([key, label, span, type]) => {
+            const isCodeReadOnly = key === 'Code' && isEdit;
+            const isBuReadOnly   = key === 'bu';
+            const isRequired     = label.includes('*');
+            const hasErr = !!formError && isRequired && !form[key]?.trim();
+            const inp = { ...baseInput, border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd', background: (isCodeReadOnly || isBuReadOnly) ? '#f5f5f5' : 'white', color: (isCodeReadOnly || isBuReadOnly) ? '#999' : '#1a3a5c' };
+            return (
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
+                <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>{label}</label>
+                {type === 'textarea' ? (
+                  <textarea rows={2} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inp, height: 'auto', padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' }} />
+                ) : type === 'select' ? (
+                  <select value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={inp}>
+                    <option value="">— เลือก —</option>
+                    {TAX_TYPE_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input value={form[key] || ''} readOnly={isCodeReadOnly || isBuReadOnly}
+                    onChange={e => !isCodeReadOnly && !isBuReadOnly && setField(key, e.target.value)} style={inp} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+        {isEdit && editTarget?.updated_by ? (
+          <span style={{ fontSize: '11px', color: '#bbb' }}>Updated by <strong style={{ color: '#888' }}>{editTarget.updated_by}</strong>{editTarget.updated_at ? ` · ${new Date(editTarget.updated_at).toLocaleString('th-TH')}` : ''}</span>
+        ) : <span />}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={handleBack} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>← Back</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '💾 Save'}</button>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderSearchView = () => (
+    <>
+      <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏭</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Supplier</div>
+          <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
+            {filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}{bu ? ` · BU: ${bu.toUpperCase()}` : ''}
+          </div>
+        </div>
+        {canEdit && (
+          <button onClick={handleOpenNew} style={{ height: '32px', padding: '0 14px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add supplier
+          </button>
+        )}
+        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+      </div>
+      <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
+        <div style={{ position: 'relative' }}>
+          <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
+            placeholder="ค้นหา Code, Supplier Name, Supplier No., Tax ID..."
+            style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+            onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+          {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
+        </div>
+        <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
+          {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
+            <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
+              <span>{label}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
+            <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏭</div>
+            <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Supplier{query ? ` "${query}"` : ''}</div>
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed', minWidth: '800px' }}>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+              <tr>
+                {COLS.map(([field, label, w]) => (
+                  <th key={field} onClick={() => handleSort(field)}
+                    style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined, cursor: 'pointer', userSelect: 'none' }}>
+                    {label}{sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ↕'}
+                  </th>
+                ))}
+                {canEdit && <th style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: '70px', textAlign: 'center' }}>Action</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((item, i) => {
+                const isAct = i === active;
+                return (
+                  <tr key={item.id || i} data-row={i}
+                    onClick={() => onSelect(item)}
+                    onMouseEnter={() => setActive(i)}
+                    style={{ background: isAct ? '#eef3fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
+                    <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                      <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Code'] || '-'}</span>
+                    </td>
+                    <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>
+                      <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '4px', padding: '1px 6px', fontSize: '10px', fontWeight: '500' }}>{String(item['Code'] ?? '').split('-')[0] || '-'}</span>
+                    </td>
+                    <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item['Supplier Name'] || '-'}</div>
+                    </td>
+                    <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{item['Supplier Number'] || '-'}</td>
+                    <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap' }}>{item['Supplier Site'] || '-'}</td>
+                    <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                      {item['Tax-Type'] ? (
+                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '600', background: '#E6F1FB', color: '#0C447C' }}>{item['Tax-Type']}</span>
+                      ) : <span style={{ color: '#ddd' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                      {item['Notice'] ? (
+                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#FFF3CD', color: '#856404' }}>{item['Notice']}</span>
+                      ) : <span style={{ color: '#ddd' }}>—</span>}
+                    </td>
+                    {canEdit && (
+                      <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                        <button onClick={e => { e.stopPropagation(); handleOpenEdit(item); }}
+                          style={{ width: '54px', height: '26px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', fontSize: '10px', fontWeight: '500', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          Edit
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+        <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} รายการ</span>
+        <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+      </div>
+    </>
+  );
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1250, backdropFilter: 'blur(2px)' }}
-      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ background: 'white', borderRadius: '14px', width: '96vw', maxWidth: '1100px', height: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
-        {/* Header */}
-        <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏭</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Supplier</div>
-            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
-              {filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}
-              {bu ? ` · BU: ${bu.toUpperCase()}` : ''}
-            </div>
-          </div>
-          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
-        </div>
-        {/* Search */}
-        <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
-          <div style={{ position: 'relative' }}>
-            <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
-              placeholder="ค้นหา Code, Supplier Name, Supplier No., Tax ID..."
-              style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
-              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
-            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
-          </div>
-          <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
-            {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
-              <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
-                <span>{label}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-        {/* Table */}
-        <div ref={listRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
-              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏭</div>
-              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Supplier{query ? ` "${query}"` : ''}</div>
-            </div>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed', minWidth: '800px' }}>
-              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                <tr>
-                  {COLS.map(([field, label, w]) => (
-                    <th key={field} onClick={() => handleSort(field)}
-                      style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined, cursor: 'pointer', userSelect: 'none' }}>
-                      {label}{sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ↕'}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((item, i) => {
-                  const isAct = i === active;
-                  const code = String(item['Code'] ?? '').split('-').slice(1).join('-') || item['Code'] || '-';
-                  return (
-                    <tr key={item.id || i} data-row={i}
-                      onClick={() => onSelect(item)}
-                      onMouseEnter={() => setActive(i)}
-                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
-                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
-                        <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Code'] || '-'}</span>
-                      </td>
-                      <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>
-                        <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '4px', padding: '1px 6px', fontSize: '10px', fontWeight: '500' }}>{String(item['Code'] ?? '').split('-')[0] || '-'}</span>
-                      </td>
-                      <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        <div style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item['Supplier Name'] || '-'}</div>
-                      </td>
-                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{item['Supplier Number'] || '-'}</td>
-                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap' }}>{item['Supplier Site'] || '-'}</td>
-                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
-                        {item['Tax-Type'] ? (
-                          <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '600', background: '#E6F1FB', color: '#0C447C' }}>{item['Tax-Type']}</span>
-                        ) : <span style={{ color: '#ddd' }}>—</span>}
-                      </td>
-                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
-                        {item['Notice'] ? (
-                          <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#FFF3CD', color: '#856404' }}>{item['Notice']}</span>
-                        ) : <span style={{ color: '#ddd' }}>—</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-        {/* Footer */}
-        <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} รายการ</span>
-          <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
-        </div>
+      onMouseDown={e => { if (e.target === e.currentTarget && view === 'search') onClose(); }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: '96vw', maxWidth: '1100px', height: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+        {view === 'search' ? renderSearchView() : renderFormView()}
       </div>
     </div>
   );
 }
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
@@ -1307,7 +1451,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── InvoiceHeader ─────────────────────────────────────────────────────────────
-function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendorInfo, vendorLoading, matchedRule, onBranchSearch, onBranchNoChange, onBranchNoBlur, onInvoiceDetail }) {
+function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendorInfo, vendorLoading, matchedRule, onBranchSearch, onBranchNoChange, onBranchNoBlur, onBranchNoKeyDown, onInvoiceDetail }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
 
@@ -1334,7 +1478,9 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
             <input type="text" value={form.supplierCode}
               onChange={e => setField('supplierCode', e.target.value)}
               onBlur={() => onSupplierBlur(form.supplierCode)}
-              onKeyDown={e => { if (e.key === 'Enter') onSupplierBlur(form.supplierCode); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === 'Tab') onSupplierBlur(form.supplierCode);
+              }}
               style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
             <button onClick={onSupplierSearch} title="Search Supplier"
               style={{ position: 'absolute', right: 0, top: 0, height: '30px', width: '28px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
@@ -1345,7 +1491,13 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
           <label style={{ fontSize: '11px', color: '#888' }}>Branch no.</label>
           <div style={{ position: 'relative' }}>
-            <input type="text" value={form.branchNo} onChange={e => onBranchNoChange(e.target.value)} onBlur={e => onBranchNoBlur(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') onBranchNoBlur(e.target.value); }}
+            <input type="text" value={form.branchNo}
+              onChange={e => onBranchNoChange(e.target.value)}
+              onBlur={e => onBranchNoBlur(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); onBranchNoBlur(e.target.value); }
+                if (e.key === 'Tab') onBranchNoKeyDown(e);
+              }}
               style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
             <button onClick={onBranchSearch} style={{ position: 'absolute', right: 0, top: 0, height: '30px', width: '28px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -1416,13 +1568,99 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     setShowBranchPopup(false);
   };
 
-  const handleBranchNoChange = (val) => { setFormState(f => ({ ...f, branchNo: val, ...(val.trim() === '' ? { branchDirectLabel: '', branchIBLabel: '' } : {}) })); };
-  const handleBranchNoBlur = (code) => {
-    const trimmed = code?.trim();
-    if (!trimmed) { setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' })); return; }
-    const found = branchItems.find(b => String(b['Branch Code'] ?? '').trim().toLowerCase() === trimmed.toLowerCase());
-    if (found) { setFormState(f => ({ ...f, branchNo: found['Branch Code'] || trimmed, branchDirectLabel: formatBranchLabel(found), branchIBLabel: '-' })); }
-    else { setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' })); }
+  // ── Branch No. Smart Lookup ───────────────────────────────────────────────
+  const resolveBranch = (input) => {
+    if (!input?.trim()) {
+      setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' }));
+      return;
+    }
+
+    const raw     = input.trim();
+    const bu      = batchConfig?.bu || '';
+    const hasPlus = raw.includes('+');
+
+    // ดึง search term ออก — ลบ + และ BU prefix ออก เหลือเฉพาะตัวเลข/code
+    const cleaned = raw.replace(/\+/g, '').replace(new RegExp(`^${bu}-?`, 'i'), '').trim();
+
+    // ── findBranch: lookup หลายวิธีตามลำดับ ──────────────────────────────
+    const findBranch = (term) => {
+      const t = term.trim().toLowerCase();
+      if (!t) return null;
+
+      // 1. match Branch Code ตรงๆ (เช่น "MPS-056804")
+      let found = branchItems.find(b =>
+        String(b['Branch Code'] ?? '').toLowerCase() === t
+      );
+      if (found) return found;
+
+      // 2. เติม BU prefix → "{bu}-{term}" (เช่น "056804" → "MPS-056804")
+      if (bu) {
+        found = branchItems.find(b =>
+          String(b['Branch Code'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${t}`
+        );
+        if (found) return found;
+      }
+
+      // 3. pad ซ้ายครบ 5 หลัก + เติม BU (เช่น "804" → "MPS-00804", "1" → "MPS-00001")
+      if (/^\d+$/.test(t) && bu) {
+        const padded = t.padStart(5, '0');
+        found = branchItems.find(b =>
+          String(b['Branch Code'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${padded}`
+        );
+        if (found) return found;
+      }
+
+      // 4. contains ใน Branch Code หรือ Company Name
+      found = branchItems.find(b =>
+        String(b['Branch Code'] ?? '').toLowerCase().includes(t) ||
+        String(b['Company for Show in Report Display'] ?? '').toLowerCase().includes(t)
+      );
+      return found || null;
+    };
+
+    const branch = findBranch(cleaned);
+
+    if (!branch) {
+      setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' }));
+      return;
+    }
+
+    const branchCode = branch['Branch Code'] || raw.replace(/\+/g, '');
+    const label = formatBranchLabel(branch);
+
+    if (hasPlus) {
+      // ── IB mode: branchIB = branch ที่ match, branchDirect = HO ──────────
+      const ho      = findHOBranch(branchItems, branch['bu'] || bu);
+      const hoLabel = ho ? formatBranchLabel(ho) : '';
+      setFormState(f => ({
+        ...f,
+        branchNo:          branchCode,
+        branchIBLabel:     label,
+        branchDirectLabel: hoLabel,
+      }));
+    } else {
+      // ── Direct mode ──────────────────────────────────────────────────────
+      setFormState(f => ({
+        ...f,
+        branchNo:          branchCode,
+        branchDirectLabel: label,
+        branchIBLabel:     '-',
+      }));
+    }
+  };
+
+  const handleBranchNoChange = (val) => {
+    setFormState(f => ({
+      ...f,
+      branchNo: val,
+      ...(val.trim() === '' ? { branchDirectLabel: '', branchIBLabel: '' } : {}),
+    }));
+  };
+
+  // trigger: Blur, Enter, Tab
+  const handleBranchNoBlur    = (val) => resolveBranch(val);
+  const handleBranchNoKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === 'Tab') resolveBranch(e.target.value);
   };
 
   return (
@@ -1437,10 +1675,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         }}
         supplierItems={supplierItems}
         bu={batchConfig?.bu || ''}
+        fetchCollection={fetchCollection}
+        userName={userName || currentUser?.email || ''}
       />
       <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
       <div style={{ ...card, overflow: 'visible' }}>
-        <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
+        <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
         <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} />
       </div>
     </div>
