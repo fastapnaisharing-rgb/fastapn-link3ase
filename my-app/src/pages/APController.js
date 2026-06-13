@@ -1002,7 +1002,7 @@ function PeriodPicker({ value, onChange }) {
       </div>
 
       {open && (
-        <div style={{ position:'absolute', top:'100%', left:0, zIndex:2000, marginTop:'4px', background:'white', borderRadius:'10px', border:'0.5px solid #dde', boxShadow:'0 8px 24px rgba(26,58,92,0.12)', width:'270px', overflow:'hidden' }}>
+        <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:9999, background:'white', borderRadius:'10px', border:'0.5px solid #dde', boxShadow:'0 8px 24px rgba(26,58,92,0.12)', width:'270px', overflow:'visible' }}>
           <div style={{ padding:'8px 12px 4px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
             <button onClick={() => nav(-1)} style={{ width:'24px', height:'24px', borderRadius:'50%', border:'none', background:'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:'#888' }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
@@ -1266,8 +1266,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           </div>
 
           {/* Fields row */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', overflowX: 'auto', marginBottom: '14px', flexShrink: 0 }}>
-            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Inv.Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', overflowX: 'visible', overflowY: 'visible', marginBottom: '14px', flexShrink: 0, position: 'relative' }}>
+            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
                 <label style={fieldLabel}>{label}</label>
                 <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
