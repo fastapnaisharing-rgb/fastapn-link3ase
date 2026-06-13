@@ -1531,6 +1531,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const [showBranchPopup, setShowBranchPopup]     = useState(false);
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
   const [showSupplierPopup, setShowSupplierPopup] = useState(false); // ✅ supplier search
+  const branchJustResolved = useRef(false); // ✅ ป้องกัน blur ยิงซ้ำหลัง resolveBranch
 
   const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); if (key === 'supplierCode' && !val) setVendorInfo(null); };
 
@@ -1584,6 +1585,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
     console.log('[resolveBranch] raw:', raw, 'bu:', bu, 'hasPlus:', hasPlus);
+    branchJustResolved.current = false;
 
     // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
     // รองรับ: "MPS+00002" "MPS-00002" "+2" "2" "056802" "056802+"
@@ -1653,6 +1655,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const branchCode = branch['Branch Code'] || raw.replace(/\+/g, '');
     const label = formatBranchLabel(branch);
 
+    branchJustResolved.current = true;
     if (hasPlus) {
       // ── IB mode: branchIB = branch ที่ match, branchDirect = HO ──────────
       const ho      = findHOBranch(branchItems, branch['bu'] || bu);
@@ -1683,7 +1686,13 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   };
 
   // trigger: Blur, Enter, Tab
-  const handleBranchNoBlur    = (val) => resolveBranch(val);
+  const handleBranchNoBlur = (val) => {
+    if (branchJustResolved.current) {
+      branchJustResolved.current = false;
+      return;
+    }
+    resolveBranch(val);
+  };
   const handleBranchNoKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === 'Tab') resolveBranch(e.target.value);
   };
