@@ -575,24 +575,38 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
 // ─────────────────────────────────────────────────────────────────────────────
 // field layout ตรงกับ VendorMaster apcode tab
 // [key, label, gridSpan, type]  span คือ 3-column grid (max 3)
+// SUPPLIER_FIELDS ตรงกับ apcode tab ใน VendorMaster
+// [key, label, gridSpan(max3), type]  — section แบ่งด้วย 'section' type
 const SUPPLIER_FIELDS = [
-  ['Code',            'Code *',              1, 'code'],
-  ['BU Code',         'BU',                  1, 'text'],
-  ['Supplier Site',   'Supplier Site',        1, 'combo'],
-  ['Supplier Name',   'Supplier Name *',      3, 'text'],
-  ['Supplier Number', 'Supplier No.',         1, 'text'],
-  ['Tax ID',          'Tax ID',               1, 'text'],
-  ['No.',             'No.',                  1, 'text'],
-  ['Tax-Type',        'Tax-Type',             1, 'combo'],
-  ['Notice',          'Notice',               1, 'combo'],
-  ['Sub Acc',         'Sub Acc',              1, 'text'],
-  ['Method',          'Method',               1, 'text'],
-  ['Paygroup',        'Paygroup',             1, 'text'],
-  ['Par',             'Par',                  1, 'text'],
-  ['Due',             'Due',                  1, 'text'],
-  ['Digit',           'Digit',                1, 'text'],
-  ['Address',         'Address',              3, 'textarea'],
-  ['NoticeDescrip',   'Notice Description',   3, 'textarea'],
+  // ── ข้อมูลหลัก ──────────────────────────────────────────────────────────
+  ['Code',            'Code *',                1, 'code'],
+  ['BU Code',         'BU',                    1, 'readonly'],
+  ['Supplier Site',   'Supplier Site',          1, 'combo'],
+  ['Supplier Name',   'Supplier Name *',        3, 'text'],
+  ['Supplier Number', 'Supplier No.',           1, 'text'],
+  ['Supplier Ref.',   'Supplier Ref.',          1, 'text'],
+  ['Tax-Type',        'Tax-Type',               1, 'combo'],
+  ['Notice',          'Notice',                 1, 'combo'],
+  ['Sub Acc',         'Sub Acc',                1, 'text'],
+  // ── ข้อมูลติดต่อ ─────────────────────────────────────────────────────────
+  ['Tax ID',          'Tax ID',                 1, 'text'],
+  ['No.',             'No.',                    1, 'text'],
+  ['Contact',         'Contact',                1, 'text'],
+  ['Email',           'Email',                  1, 'text'],
+  ['Address',         'Address',                3, 'textarea'],
+  // ── Coding ───────────────────────────────────────────────────────────────
+  ['First Part',      'First Part',             1, 'text'],
+  ['Mid Part',        'Mid Part',               1, 'text'],
+  ['Last Part',       'Last Part',              1, 'text'],
+  ['Invoice No.',     'Invoice No.',            1, 'text'],
+  ['Digit',           'Digit',                  1, 'text'],
+  ['Due',             'Due',                    1, 'text'],
+  ['Method',          'Method',                 1, 'text'],
+  ['Paygroup',        'Paygroup',               1, 'text'],
+  ['Par',             'Par',                    1, 'text'],
+  // ── คำอธิบาย ─────────────────────────────────────────────────────────────
+  ['NoticeDescrip',   'Notice Description',     3, 'textarea'],
+  ['RuleDescrip',     'Rule Description',       3, 'textarea'],
 ];
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V3','S1','S3','N1','N3'];
 
@@ -737,32 +751,50 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       </div>
       {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>⚠️ {formError}</div>}
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 14px' }}>
-          {SUPPLIER_FIELDS.map(([key, label, span, type]) => {
-            const isCodeReadOnly = key === 'Code' && isEdit;
-            const isBuReadOnly   = key === 'BU Code';
-            const isRequired     = label.includes('*');
-            const hasErr = !!formError && isRequired && !form[key]?.trim();
-            const inp = { ...baseInput, border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd', background: (isCodeReadOnly || isBuReadOnly) ? '#f5f5f5' : 'white', color: (isCodeReadOnly || isBuReadOnly) ? '#999' : '#1a3a5c' };
-            const comboOpts = type === 'combo' ? [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort() : [];
+        {(() => {
+          const SECTIONS = [
+            { label: 'ข้อมูลหลัก',   keys: ['Code','BU Code','Supplier Site','Supplier Name','Supplier Number','Supplier Ref.','Tax-Type','Notice','Sub Acc'] },
+            { label: 'ข้อมูลติดต่อ', keys: ['Tax ID','No.','Contact','Email','Address'] },
+            { label: 'Coding',        keys: ['First Part','Mid Part','Last Part','Invoice No.','Digit','Due','Method','Paygroup','Par'] },
+            { label: 'คำอธิบาย',     keys: ['NoticeDescrip','RuleDescrip'] },
+          ];
+          return SECTIONS.map(sec => {
+            const secFields = SUPPLIER_FIELDS.filter(([k]) => sec.keys.includes(k));
+            if (!secFields.length) return null;
             return (
-              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
-                <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>{label}</label>
-                {type === 'textarea' ? (
-                  <textarea rows={2} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
-                    style={{ ...inp, height: 'auto', padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' }} />
-                ) : type === 'combo' ? (
-                  <><input list={`ssp-combo-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
-                    placeholder="พิมพ์หรือเลือก" style={inp} />
-                  <datalist id={`ssp-combo-${key}`}>{comboOpts.map((o, ci) => <option key={ci} value={o} />)}</datalist></>
-                ) : (
-                  <input value={form[key] || ''} readOnly={isCodeReadOnly || isBuReadOnly}
-                    onChange={e => !isCodeReadOnly && !isBuReadOnly && setField(key, e.target.value)} style={inp} />
-                )}
+              <div key={sec.label} style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: '10px', fontWeight: '600', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', paddingBottom: '4px', borderBottom: '0.5px solid #f0f0f0' }}>{sec.label}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px 14px' }}>
+                  {secFields.map(([key, label, span, type]) => {
+                    const isCodeReadOnly = key === 'Code' && isEdit;
+                    const isRequired     = label.includes('*');
+                    const hasErr = !!formError && isRequired && !form[key]?.trim();
+                    const inp = { ...baseInput, border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd', background: isCodeReadOnly ? '#f5f5f5' : 'white', color: isCodeReadOnly ? '#999' : '#1a3a5c' };
+                    const comboOpts = type === 'combo' ? [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort() : [];
+                    return (
+                      <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
+                        <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>{label}</label>
+                        {type === 'textarea' ? (
+                          <textarea rows={2} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
+                            style={{ ...inp, height: 'auto', padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' }} />
+                        ) : type === 'combo' ? (
+                          <><input list={`ssp-combo-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
+                            placeholder="พิมพ์หรือเลือก" style={inp} />
+                          <datalist id={`ssp-combo-${key}`}>{comboOpts.map((o, ci) => <option key={ci} value={o} />)}</datalist></>
+                        ) : type === 'readonly' ? (
+                          <input value={form[key] || ''} readOnly style={{ ...inp, background: '#f5f5f5', color: '#999', cursor: 'default' }} />
+                        ) : (
+                          <input value={form[key] || ''} readOnly={isCodeReadOnly}
+                            onChange={e => !isCodeReadOnly && setField(key, e.target.value)} style={inp} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
-          })}
-        </div>
+          });
+        })()}
       </div>
       <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
         {isEdit && editTarget?.updated_by ? (
@@ -900,7 +932,18 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
 // ─────────────────────────────────────────────────────────────────────────────
 const MO_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const DW_TH = ['อา','จ','อ','พ','พฤ','ศ','ส'];
-const fmtDt = (dt) => `${dt.getDate()} ${MO_TH[dt.getMonth()]} ${dt.getFullYear()}`;
+const fmtDt = (dt) => {
+  const d = String(dt.getDate()).padStart(2,'0');
+  const m = String(dt.getMonth()+1).padStart(2,'0');
+  const y = dt.getFullYear();
+  return `${d}/${m}/${y}`;
+};
+const fmtMo = (y, m) => {
+  const from = new Date(y, m, 1);
+  const to   = new Date(y, m+1, 0);
+  const pd = (n) => String(n).padStart(2,'0');
+  return `${pd(from.getDate())}/${pd(from.getMonth()+1)}/${from.getFullYear()} - ${pd(to.getDate())}/${pd(to.getMonth()+1)}/${to.getFullYear()}`;
+};
 
 function PeriodPicker({ value, onChange }) {
   const [open, setOpen]     = useState(false);
@@ -939,7 +982,7 @@ function PeriodPicker({ value, onChange }) {
 
   const fromLabel = () => {
     if (!d1) return 'From';
-    if (d1.mo) return `${MO_TH[d1.m]} ${d1.y}`;
+    if (d1.mo) return fmtMo(d1.y, d1.m);
     return fmtDt(d1.dt);
   };
   const toLabel = () => {
@@ -951,7 +994,7 @@ function PeriodPicker({ value, onChange }) {
   const applyVal = () => {
     if (!d1) return;
     const f = fromLabel(), t = toLabel();
-    onChange(t ? `${f} – ${t}` : f);
+    onChange(t ? `${f} - ${t}` : f);
     setOpen(false);
   };
 
@@ -1055,6 +1098,289 @@ function PeriodPicker({ value, onChange }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ContractPopup — Search / Add / Edit / Import contract_list
+// ─────────────────────────────────────────────────────────────────────────────
+const CONTRACT_FIELDS = [
+  ['vendor_code',   'Vendor Code *',      2, 'text'],
+  ['serial_code',   'Serial Code *',      2, 'text'],
+  ['cdes1',         'Label 1',            1, 'text'],
+  ['bdes1',         'Value 1',            1, 'text'],
+  ['cdes2',         'Label 2',            1, 'text'],
+  ['bdes2',         'Value 2',            1, 'text'],
+  ['cdes3',         'Label 3',            1, 'text'],
+  ['bdes3',         'Value 3',            1, 'text'],
+  ['contract_run',  'Contract Run *',     1, 'select'],
+  ['auto_ib',       'Auto IB',            1, 'text'],
+];
+const CONTRACT_RUN_OPTS = ['SC','D1','D2','D3','D4'];
+
+function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollection, userName = '' }) {
+  const { isOwner, isAdmin, isEditor } = useUserRole();
+  const canEdit = isOwner || isAdmin || isEditor;
+
+  const [view, setView]           = useState('search');
+  const [query, setQuery]         = useState('');
+  const [items, setItems]         = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [form, setFormState]      = useState({});
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving]       = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
+  const fileRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const emptyForm = () => {
+    const f = {};
+    CONTRACT_FIELDS.forEach(([k]) => { f[k] = ''; });
+    f['vendor_code'] = vendorCode || '';
+    f['bu']          = bu || '';
+    return f;
+  };
+
+  useEffect(() => {
+    if (show) { setQuery(''); setView('search'); setEditTarget(null); setFormState({}); setFormError(''); loadItems(); }
+  }, [show, vendorCode]);
+
+  const loadItems = async () => {
+    setLoading(true);
+    try {
+      let q = supabase.from('contract_list').select('*').order('vendor_code').order('serial_code');
+      if (vendorCode) q = q.eq('vendor_code', vendorCode);
+      else if (bu) q = q.eq('bu', bu);
+      const { data, error } = await q.limit(500);
+      if (error) throw error;
+      setItems(data || []);
+    } catch (e) { console.error('loadItems:', e); }
+    setLoading(false);
+  };
+
+  const filtered = query.trim()
+    ? items.filter(i =>
+        String(i.vendor_code || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(i.serial_code || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(i.bdes1 || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(i.bdes2 || '').toLowerCase().includes(query.toLowerCase())
+      )
+    : items;
+
+  const setField = (k, v) => { setFormState(f => ({ ...f, [k]: v })); setFormError(''); };
+
+  const validate = (f) => {
+    if (!f.vendor_code?.trim()) return 'กรุณากรอก Vendor Code';
+    if (!f.serial_code?.trim()) return 'กรุณากรอก Serial Code';
+    if (!f.contract_run?.trim()) return 'กรุณาเลือก Contract Run';
+    return '';
+  };
+
+  const handleSave = async () => {
+    if (!canEdit) return;
+    const err = validate(form); if (err) { setFormError(err); return; }
+    setSaving(true);
+    try {
+      const payload = { ...form, bu: String(form.vendor_code).split('-')[0] || bu, updated_by: userName, updated_at: new Date().toISOString() };
+      if (view === 'edit' && editTarget?.id) {
+        const { error } = await supabase.from('contract_list').update(payload).eq('id', editTarget.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('contract_list').insert([payload]);
+        if (error) throw error;
+      }
+      await loadItems();
+      setView('search');
+    } catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    const { error } = await supabase.from('contract_list').delete().eq('id', id);
+    if (!error) await loadItems();
+  };
+
+  const handleDownloadTemplate = () => {
+    const cols = ['vendor_code','serial_code','cdes1','bdes1','cdes2','bdes2','cdes3','bdes3','contract_run','auto_ib'];
+    const csv = cols.join(',') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'contract_template.csv'; a.click();
+  };
+
+  const handleImport = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setImporting(true); setImportMsg('');
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter(Boolean);
+      const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
+      const rows = lines.slice(1).map(line => {
+        const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g,''));
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+        obj.bu = String(obj.vendor_code || '').split('-')[0] || bu;
+        obj.updated_by = userName;
+        obj.updated_at = new Date().toISOString();
+        return obj;
+      }).filter(r => r.vendor_code && r.serial_code);
+      if (!rows.length) { setImportMsg('ไม่พบข้อมูล'); setImporting(false); return; }
+      for (let i = 0; i < rows.length; i += 100) {
+        const { error } = await supabase.from('contract_list').upsert(rows.slice(i, i+100), { onConflict: 'vendor_code,serial_code', ignoreDuplicates: false });
+        if (error) throw error;
+      }
+      setImportMsg(`✅ Import สำเร็จ ${rows.length} รายการ`);
+      await loadItems();
+    } catch (e) { setImportMsg('❌ ' + e.message); }
+    setImporting(false);
+    e.target.value = '';
+  };
+
+  const renderForm = () => {
+    const isEdit = view === 'edit';
+    const inp = { height:'30px', padding:'0 8px', fontSize:'12px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', boxSizing:'border-box', width:'100%' };
+    return (
+      <>
+        <div style={{ padding:'12px 18px', display:'flex', alignItems:'center', gap:'8px', borderBottom:'0.5px solid #f0f2f5', flexShrink:0 }}>
+          <button onClick={() => setView('search')} style={{ padding:'4px 10px', borderRadius:'6px', border:'0.5px solid #dde', background:'#f5f7fa', color:'#555', fontSize:'12px', cursor:'pointer' }}>← Back</button>
+          <div style={{ width:'28px', height:'28px', borderRadius:'7px', background: isEdit ? '#1a3a5c' : '#27500A', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'13px' }}>{isEdit ? '✏️' : '➕'}</div>
+          <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>{isEdit ? `Edit — ${editTarget?.serial_code || ''}` : 'New contract'}</div>
+          {isEdit && <span style={{ marginLeft:'auto', display:'inline-flex', alignItems:'center', gap:'4px', background:'#FCEBEB', color:'#791F1F', borderRadius:'5px', padding:'3px 8px', fontSize:'11px' }}>🔒 Editor+ only</span>}
+        </div>
+        {formError && <div style={{ padding:'6px 18px', background:'#FCEBEB', color:'#791F1F', fontSize:'11px', flexShrink:0 }}>⚠️ {formError}</div>}
+        <div style={{ flex:1, overflowY:'auto', padding:'14px 18px' }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px 12px' }}>
+            {CONTRACT_FIELDS.map(([key, label, span, type]) => {
+              const isReq = label.includes('*');
+              const hasErr = !!formError && isReq && !form[key]?.trim();
+              const s = { ...inp, border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd' };
+              return (
+                <div key={key} style={{ gridColumn:`span ${span}`, display:'flex', flexDirection:'column', gap:'3px' }}>
+                  <label style={{ fontSize:'11px', color: hasErr ? '#e74c3c' : '#888' }}>{label}</label>
+                  {type === 'select' ? (
+                    <select value={form[key]||''} onChange={e => setField(key, e.target.value)} style={s}>
+                      <option value="">— เลือก —</option>
+                      {CONTRACT_RUN_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input value={form[key]||''} onChange={e => setField(key, e.target.value)} style={s} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{ padding:'10px 18px', borderTop:'0.5px solid #f0f2f5', display:'flex', justifyContent:'flex-end', gap:'8px', flexShrink:0, background:'#fafbfc' }}>
+          <button onClick={() => setView('search')} style={{ padding:'6px 14px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#666', fontSize:'12px', cursor:'pointer' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding:'6px 16px', borderRadius:'6px', border:'none', background: saving ? '#aaa' : '#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '💾 Save'}</button>
+        </div>
+      </>
+    );
+  };
+
+  const renderSearch = () => (
+    <>
+      <div style={{ padding:'12px 18px', display:'flex', alignItems:'center', gap:'8px', borderBottom:'0.5px solid #f0f2f5', flexShrink:0 }}>
+        <div style={{ width:'28px', height:'28px', borderRadius:'7px', background:'#1a3a5c', display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>Contract / Serial Code</div>
+          <div style={{ fontSize:'11px', color:'#aaa' }}>{filtered.length} รายการ{vendorCode ? ` · ${vendorCode}` : bu ? ` · BU: ${bu}` : ''}</div>
+        </div>
+        {canEdit && (
+          <>
+            <button onClick={handleDownloadTemplate} style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#555', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
+              ⬇ Template
+            </button>
+            <button onClick={() => fileRef.current?.click()} disabled={importing} style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #5DCAA5', background:'#E1F5EE', color:'#085041', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
+              📂 Import
+            </button>
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" style={{ display:'none' }} onChange={handleImport} />
+            <button onClick={() => { setEditTarget(null); setFormState(emptyForm()); setFormError(''); setView('new'); }} style={{ height:'28px', padding:'0 12px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add
+            </button>
+          </>
+        )}
+        <button onClick={onClose} style={{ width:'26px', height:'26px', borderRadius:'50%', background:'#f5f5f5', border:'none', cursor:'pointer', color:'#888', fontSize:'15px', display:'flex', alignItems:'center', justifyContent:'center' }}>×</button>
+      </div>
+      {importMsg && <div style={{ padding:'6px 18px', background: importMsg.startsWith('✅') ? '#EAF3DE' : '#FCEBEB', color: importMsg.startsWith('✅') ? '#27500A' : '#791F1F', fontSize:'11px', flexShrink:0 }}>{importMsg}</div>}
+      <div style={{ padding:'8px 18px', borderBottom:'0.5px solid #f0f2f5', flexShrink:0 }}>
+        <div style={{ position:'relative' }}>
+          <svg style={{ position:'absolute', left:'10px', top:'50%', transform:'translateY(-50%)', color:'#aab', pointerEvents:'none' }} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="ค้นหา Vendor Code, Serial Code, ค่า..."
+            style={{ width:'100%', padding:'7px 32px', fontSize:'12px', border:'1px solid #e2e6ed', borderRadius:'7px', outline:'none', boxSizing:'border-box', color:'#1a3a5c' }}
+            onFocus={e => e.target.style.borderColor='#1a3a5c'} onBlur={e => e.target.style.borderColor='#e2e6ed'} />
+        </div>
+      </div>
+      <div style={{ flex:1, overflowY:'auto' }}>
+        {loading ? (
+          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>Loading...</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>ไม่พบข้อมูล{query ? ` "${query}"` : ''}</div>
+        ) : (
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' }}>
+            <colgroup>
+              <col style={{ width:'120px' }}/><col style={{ width:'130px' }}/><col/><col/><col style={{ width:'65px' }}/>{canEdit && <col style={{ width:'60px' }}/>}
+            </colgroup>
+            <thead style={{ position:'sticky', top:0, zIndex:1 }}>
+              <tr>
+                {['Vendor Code','Serial Code','Label / Value 1','Label / Value 2','Run',...(canEdit?['Action']:[])].map(h => (
+                  <th key={h} style={{ background:'#1a3a5c', color:'rgba(255,255,255,0.8)', padding:'8px 10px', textAlign: h==='Action'?'center':'left', fontSize:'10px', fontWeight:'600', letterSpacing:'0.04em', textTransform:'uppercase', whiteSpace:'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((item, i) => (
+                <tr key={item.id||i} style={{ borderBottom:'0.5px solid #f3f4f6', background:'white' }}>
+                  <td style={{ padding:'7px 10px', fontFamily:'monospace', fontSize:'11px', color:'#1a3a5c', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{item.vendor_code||'-'}</td>
+                  <td style={{ padding:'7px 10px', fontFamily:'monospace', fontSize:'11px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{item.serial_code||'-'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    {item.cdes1 && <span style={{ color:'#888', fontSize:'10px' }}>{item.cdes1}: </span>}{item.bdes1||'-'}
+                  </td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    {item.cdes2 && <span style={{ color:'#888', fontSize:'10px' }}>{item.cdes2}: </span>}{item.bdes2||'—'}
+                  </td>
+                  <td style={{ padding:'7px 10px' }}>
+                    <span style={{ background:'#E6F1FB', color:'#0C447C', borderRadius:'20px', padding:'2px 7px', fontSize:'10px', fontWeight:'500' }}>{item.contract_run||'-'}</span>
+                  </td>
+                  {canEdit && (
+                    <td style={{ padding:'6px 10px', textAlign:'center' }}>
+                      <div style={{ display:'inline-flex', gap:'4px' }}>
+                        <button onClick={() => { const f = emptyForm(); CONTRACT_FIELDS.forEach(([k]) => { f[k] = item[k] || ''; }); setEditTarget(item); setFormState(f); setFormError(''); setView('edit'); }}
+                          style={{ width:'26px', height:'24px', borderRadius:'5px', border:'0.5px solid #ddd', background:'#f5f5f5', color:'#555', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button onClick={() => handleDelete(item.id)}
+                          style={{ width:'26px', height:'24px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background:'#FCEBEB', color:'#791F1F', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div style={{ padding:'8px 18px', borderTop:'0.5px solid #f0f2f5', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0, background:'#fafbfc' }}>
+        <span style={{ fontSize:'11px', color:'#bbb' }}>{filtered.length} / {items.length} รายการ</span>
+        <button onClick={onClose} style={{ padding:'5px 14px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#666', fontSize:'11px', cursor:'pointer' }}>Close</button>
+      </div>
+    </>
+  );
+
+  if (!show) return null;
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(15,30,50,0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1400, backdropFilter:'blur(2px)' }}
+      onMouseDown={e => { if (e.target === e.currentTarget && view === 'search') onClose(); }}>
+      <div style={{ background:'white', borderRadius:'12px', width:'96vw', maxWidth:'900px', height:'82vh', display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 20px 60px rgba(26,58,92,0.22)' }}>
+        {view === 'search' ? renderSearch() : renderForm()}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
 function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '' }) {
@@ -1065,6 +1391,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [line1, setLine1] = useState({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
+  const [showContractPopup, setShowContractPopup]   = useState(false);
   const amountRef   = useRef(null); // ✅ auto focus หลังเลือก itemCode
   const itemCodeRef = useRef(null); // ✅ Tab จาก backDesc3
 
@@ -1289,7 +1616,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             ))}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>&nbsp;</label>
-              <button title="Contract" style={{ height: '30px', width: '56px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }} onClick={() => {}}>
+              <button title="Contract" style={{ height: '30px', width: '56px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }} onClick={() => setShowContractPopup(true)}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
                   <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
@@ -1302,7 +1629,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-                <colgroup>{[3,8,9,4,16,8,8,10,8,8,10].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+                <colgroup>{[3,8,8,4,18,10,10,14,6,6,8].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ background: '#f8f9fa' }}>
                     {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total'].map(h => (
@@ -1342,6 +1669,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           </div>
         </div>
 
+        <ContractPopup
+          show={showContractPopup}
+          onClose={() => setShowContractPopup(false)}
+          vendorCode={form?.supplierCode || ''}
+          bu={bu}
+          userName={userName}
+        />
         <ItemCodeSearchPopup
           show={showItemCodePopup} onClose={() => setShowItemCodePopup(false)}
           onSelect={(item) => {
