@@ -1601,8 +1601,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
     // ── findBranch: lookup ตามลำดับ เฉพาะ BU ──────────────────────────
     // โครงสร้าง Branch จริง:
-    //   Branch Code = '056802'      (ตัวเลขล้วน)
-    //   BU-Branch   = 'MPS-00001'   (BU-xxxxx)
+    //   Branch Code = '056802'   (ตัวเลขล้วน)
+    //   BU-Branch   = '00001'    (5 หลัก ไม่มี BU prefix)
     //   bu          = 'MPS'
     const findBranch = (term) => {
       const t = term.trim().toLowerCase();
@@ -1614,22 +1614,21 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       );
       if (found) return found;
 
-      // 2. match BU-Branch ตรงๆ เช่น "MPS-00001"
+      // 2. ตัวเลขล้วน → pad 5 หลัก → match BU-Branch
+      //    เช่น "2" → "00002", "00002" → "00002"
+      if (/^\d+$/.test(t)) {
+        const padded = t.padStart(5, '0');
+        found = buBranches.find(b =>
+          String(b['BU-Branch'] ?? '').toLowerCase() === padded
+        );
+        if (found) return found;
+      }
+
+      // 3. match BU-Branch ตรงๆ (กรณีใส่ครบ เช่น "00002")
       found = buBranches.find(b =>
         String(b['BU-Branch'] ?? '').toLowerCase() === t
       );
       if (found) return found;
-
-      // 3. ตัวเลขล้วน → pad 5 หลัก → match BU-Branch suffix
-      //    เช่น "1" → "00001" → match "MPS-00001"
-      //    เช่น "00001" → match "MPS-00001"
-      if (/^\d+$/.test(t)) {
-        const padded = t.padStart(5, '0');
-        found = buBranches.find(b =>
-          String(b['BU-Branch'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${padded}`
-        );
-        if (found) return found;
-      }
 
       // 4. contains ใน Branch Code หรือ Company Name (term >= 3 ตัว)
       if (t.length >= 3) {
