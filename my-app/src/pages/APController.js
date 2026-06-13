@@ -1261,7 +1261,7 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
     setLoading(true);
     try {
       let q = supabase.from('contract_list').select('*').order('vendor_code').order('serial_code');
-      if (vendorCode) q = q.eq('vendor_code', vendorCode);
+      if (vendorCode) q = q.ilike('vendor_code', `%${vendorCode}%`);
       else if (bu) q = q.eq('bu', bu);
       const { data, error } = await q.limit(500);
       if (error) throw error;
@@ -1275,7 +1275,10 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
         String(i.vendor_code || '').toLowerCase().includes(query.toLowerCase()) ||
         String(i.serial_code || '').toLowerCase().includes(query.toLowerCase()) ||
         String(i.bdes1 || '').toLowerCase().includes(query.toLowerCase()) ||
-        String(i.bdes2 || '').toLowerCase().includes(query.toLowerCase())
+        String(i.bdes2 || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(i.bdes3 || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(i.cdes3 || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(i.auto_ib || '').toLowerCase().includes(query.toLowerCase())
       )
     : items;
 
@@ -1405,11 +1408,18 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
         </div>
         {formError && <div style={{ padding:'6px 18px', background:'#FCEBEB', color:'#791F1F', fontSize:'11px', flexShrink:0 }}>⚠️ {formError}</div>}
         <div style={{ flex:1, overflowY:'auto', padding:'20px 24px', display:'flex', flexDirection:'column', gap:'14px' }}>
-          {/* Serial Code */}
-          <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
-            <label style={{ fontSize:'11px', color: formError && !form['serial_code']?.trim() ? '#e74c3c' : '#888', fontWeight:'500' }}>Serial Code <span style={{ color:'#e24b4a' }}>*</span></label>
-            <input value={form['serial_code']||''} onChange={e => setField('serial_code', e.target.value)}
-              style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border: formError && !form['serial_code']?.trim() ? '1px solid #e74c3c' : '0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+          {/* Vendor Code + Serial Code */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color: formError && !form['vendor_code']?.trim() ? '#e74c3c' : '#888', fontWeight:'500' }}>Vendor Code <span style={{ color:'#e24b4a' }}>*</span></label>
+              <input value={form['vendor_code']||''} onChange={e => setField('vendor_code', e.target.value)} readOnly={isEdit}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border: formError && !form['vendor_code']?.trim() ? '1px solid #e74c3c' : '0.5px solid #ddd', background: isEdit ? '#f5f5f5' : 'white', color: isEdit ? '#999' : '#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color: formError && !form['serial_code']?.trim() ? '#e74c3c' : '#888', fontWeight:'500' }}>Serial Code <span style={{ color:'#e24b4a' }}>*</span></label>
+              <input value={form['serial_code']||''} onChange={e => setField('serial_code', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border: formError && !form['serial_code']?.trim() ? '1px solid #e74c3c' : '0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
           </div>
 
           {/* CDes1 + BDes1 */}
@@ -1528,7 +1538,7 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
         ) : (
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' }}>
             <colgroup>
-              <col style={{ width:'90px' }}/><col/><col style={{ width:'90px' }}/><col/><col style={{ width:'90px' }}/><col/><col style={{ width:'80px' }}/>{canEdit && <col style={{ width:'56px' }}/>}
+              <col style={{ width:'68px' }}/><col/><col style={{ width:'68px' }}/><col/><col style={{ width:'68px' }}/><col/><col style={{ width:'90px' }}/>{canEdit && <col style={{ width:'56px' }}/>}
             </colgroup>
             <thead style={{ position:'sticky', top:0, zIndex:1 }}>
               <tr>
