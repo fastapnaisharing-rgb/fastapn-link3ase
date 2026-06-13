@@ -573,22 +573,26 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
 // ─────────────────────────────────────────────────────────────────────────────
 // SupplierSearchPopup — with Add/Edit form (Editor+ only)
 // ─────────────────────────────────────────────────────────────────────────────
+// field layout ตรงกับ VendorMaster apcode tab
+// [key, label, gridSpan, type]  span คือ 3-column grid (max 3)
 const SUPPLIER_FIELDS = [
-  ['Code',          'Code *',           1, 'code'],
-  ['bu',            'BU',               1, 'bu-readonly'],
-  ['Supplier Site', 'Supplier Site',    1, 'text'],
-  ['Supplier Name', 'Supplier Name (TH) *', 3, 'text'],
-  ['Supplier Name EN', 'Supplier Name (EN)', 3, 'text'],
-  ['Supplier Number','Supplier No.',    1, 'text'],
-  ['Tax ID',        'Tax ID',           1, 'text'],
-  ['Tax-Type',      'Tax-Type',         1, 'select'],
-  ['Notice',        'Notice',           1, 'text'],
-  ['Method',        'Method',           1, 'text'],
-  ['Paygroup',      'Paygroup',         1, 'text'],
-  ['Sub Acc',       'Sub Acc',          1, 'text'],
-  ['Par',           'Par',              1, 'text'],
-  ['No.',           'No.',              1, 'text'],
-  ['Address',       'Address',          3, 'textarea'],
+  ['Code',            'Code *',              1, 'code'],
+  ['BU Code',         'BU',                  1, 'text'],
+  ['Supplier Site',   'Supplier Site',        1, 'combo'],
+  ['Supplier Name',   'Supplier Name *',      3, 'text'],
+  ['Supplier Number', 'Supplier No.',         1, 'text'],
+  ['Tax ID',          'Tax ID',               1, 'text'],
+  ['No.',             'No.',                  1, 'text'],
+  ['Tax-Type',        'Tax-Type',             1, 'combo'],
+  ['Notice',          'Notice',               1, 'combo'],
+  ['Sub Acc',         'Sub Acc',              1, 'text'],
+  ['Method',          'Method',               1, 'text'],
+  ['Paygroup',        'Paygroup',             1, 'text'],
+  ['Par',             'Par',                  1, 'text'],
+  ['Due',             'Due',                  1, 'text'],
+  ['Digit',           'Digit',                1, 'text'],
+  ['Address',         'Address',              3, 'textarea'],
+  ['NoticeDescrip',   'Notice Description',   3, 'textarea'],
 ];
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V3','S1','S3','N1','N3'];
 
@@ -611,7 +615,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const emptyForm = () => {
     const f = {};
     SUPPLIER_FIELDS.forEach(([key]) => { f[key] = ''; });
-    f['bu'] = bu || '';
+    f['BU Code'] = bu || '';
     return f;
   };
 
@@ -669,7 +673,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     if (!canEdit) return;
     const f = emptyForm();
     SUPPLIER_FIELDS.forEach(([key]) => { f[key] = item[key] || ''; });
-    f['bu'] = String(item['Code'] ?? '').split('-')[0] || bu || '';
+    f['BU Code'] = item['BU Code'] || String(item['Code'] ?? '').split('-')[0] || bu || '';
     setEditTarget(item); setFormState(f); setFormError(''); setView('edit');
   };
   const handleBack = () => { setView('search'); setEditTarget(null); setFormState({}); setFormError(''); setTimeout(() => inputRef.current?.focus(), 60); };
@@ -678,7 +682,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
 
   const validate = (f) => {
     if (!f['Code']?.trim()) return 'กรุณากรอก Code';
-    if (!f['Supplier Name']?.trim()) return 'กรุณากรอก Supplier Name';
+    if (!f['Supplier Name']?.trim()) return 'กรุณากรอก Supplier Name (TH)';
     return '';
   };
 
@@ -736,20 +740,21 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 14px' }}>
           {SUPPLIER_FIELDS.map(([key, label, span, type]) => {
             const isCodeReadOnly = key === 'Code' && isEdit;
-            const isBuReadOnly   = key === 'bu';
+            const isBuReadOnly   = key === 'BU Code';
             const isRequired     = label.includes('*');
             const hasErr = !!formError && isRequired && !form[key]?.trim();
             const inp = { ...baseInput, border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd', background: (isCodeReadOnly || isBuReadOnly) ? '#f5f5f5' : 'white', color: (isCodeReadOnly || isBuReadOnly) ? '#999' : '#1a3a5c' };
+            const comboOpts = type === 'combo' ? [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort() : [];
             return (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
                 <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>{label}</label>
                 {type === 'textarea' ? (
-                  <textarea rows={2} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inp, height: 'auto', padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' }} />
-                ) : type === 'select' ? (
-                  <select value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={inp}>
-                    <option value="">— เลือก —</option>
-                    {TAX_TYPE_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
+                  <textarea rows={2} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
+                    style={{ ...inp, height: 'auto', padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' }} />
+                ) : type === 'combo' ? (
+                  <><input list={`ssp-combo-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)}
+                    placeholder="พิมพ์หรือเลือก" style={inp} />
+                  <datalist id={`ssp-combo-${key}`}>{comboOpts.map((o, ci) => <option key={ci} value={o} />)}</datalist></>
                 ) : (
                   <input value={form[key] || ''} readOnly={isCodeReadOnly || isBuReadOnly}
                     onChange={e => !isCodeReadOnly && !isBuReadOnly && setField(key, e.target.value)} style={inp} />
@@ -1579,43 +1584,56 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
 
-    // ดึง search term ออก — ลบ + และ BU prefix ออก เหลือเฉพาะตัวเลข/code
-    const cleaned = raw.replace(/\+/g, '').replace(new RegExp(`^${bu}-?`, 'i'), '').trim();
+    // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
+    const escapedBu = bu.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const cleaned = raw
+      .replace(/\+/g, '')
+      .replace(new RegExp('^' + escapedBu + '[-]?', 'i'), '')
+      .trim();
 
-    // ── findBranch: lookup หลายวิธีตามลำดับ ──────────────────────────────
+    // กรอง branchItems เฉพาะ BU ของ batch ก่อนเสมอ
+    const buBranches = bu
+      ? branchItems.filter(b => String(b['bu'] ?? '').toLowerCase() === bu.toLowerCase())
+      : branchItems;
+
+    // ── findBranch: lookup ตามลำดับ เฉพาะ BU ──────────────────────────
     const findBranch = (term) => {
       const t = term.trim().toLowerCase();
       if (!t) return null;
 
       // 1. match Branch Code ตรงๆ (เช่น "MPS-056804")
-      let found = branchItems.find(b =>
+      let found = buBranches.find(b =>
         String(b['Branch Code'] ?? '').toLowerCase() === t
       );
       if (found) return found;
 
       // 2. เติม BU prefix → "{bu}-{term}" (เช่น "056804" → "MPS-056804")
       if (bu) {
-        found = branchItems.find(b =>
+        found = buBranches.find(b =>
           String(b['Branch Code'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${t}`
         );
         if (found) return found;
       }
 
-      // 3. pad ซ้ายครบ 5 หลัก + เติม BU (เช่น "804" → "MPS-00804", "1" → "MPS-00001")
-      if (/^\d+$/.test(t) && bu) {
+      // 3. pad ซ้ายครบ 5 หลัก + เติม BU (เช่น "1" → "MPS-00001", "804" → "MPS-00804")
+      if (/^\d+$/.test(t)) {
         const padded = t.padStart(5, '0');
-        found = branchItems.find(b =>
+        found = buBranches.find(b =>
           String(b['Branch Code'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${padded}`
         );
         if (found) return found;
       }
 
-      // 4. contains ใน Branch Code หรือ Company Name
-      found = branchItems.find(b =>
-        String(b['Branch Code'] ?? '').toLowerCase().includes(t) ||
-        String(b['Company for Show in Report Display'] ?? '').toLowerCase().includes(t)
-      );
-      return found || null;
+      // 4. contains — term >= 3 ตัว เฉพาะ BU เดียวกัน
+      if (t.length >= 3) {
+        found = buBranches.find(b =>
+          String(b['Branch Code'] ?? '').toLowerCase().includes(t) ||
+          String(b['Company for Show in Report Display'] ?? '').toLowerCase().includes(t)
+        );
+        return found || null;
+      }
+
+      return null;
     };
 
     const branch = findBranch(cleaned);
