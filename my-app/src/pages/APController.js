@@ -1387,29 +1387,75 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
           <button onClick={() => setView('search')} style={{ padding:'4px 10px', borderRadius:'6px', border:'0.5px solid #dde', background:'#f5f7fa', color:'#555', fontSize:'12px', cursor:'pointer' }}>← Back</button>
           <div style={{ width:'28px', height:'28px', borderRadius:'7px', background: isEdit ? '#1a3a5c' : '#27500A', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'13px' }}>{isEdit ? '✏️' : '➕'}</div>
           <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>{isEdit ? `Edit — ${editTarget?.serial_code || ''}` : 'New contract'}</div>
+          <div style={{ fontSize:'11px', color:'#aaa', marginTop:'1px' }}>{form['vendor_code'] || vendorCode}</div>
           {isEdit && <span style={{ marginLeft:'auto', display:'inline-flex', alignItems:'center', gap:'4px', background:'#FCEBEB', color:'#791F1F', borderRadius:'5px', padding:'3px 8px', fontSize:'11px' }}>🔒 Editor+ only</span>}
         </div>
         {formError && <div style={{ padding:'6px 18px', background:'#FCEBEB', color:'#791F1F', fontSize:'11px', flexShrink:0 }}>⚠️ {formError}</div>}
-        <div style={{ flex:1, overflowY:'auto', padding:'14px 18px' }}>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px 12px' }}>
-            {CONTRACT_FIELDS.map(([key, label, span, type]) => {
-              const isReq = label.includes('*');
-              const hasErr = !!formError && isReq && !form[key]?.trim();
-              const s = { ...inp, border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd' };
-              return (
-                <div key={key} style={{ gridColumn:`span ${span}`, display:'flex', flexDirection:'column', gap:'3px' }}>
-                  <label style={{ fontSize:'11px', color: hasErr ? '#e74c3c' : '#888' }}>{label}</label>
-                  {type === 'select' ? (
-                    <select value={form[key]||''} onChange={e => setField(key, e.target.value)} style={s}>
-                      <option value="">— เลือก —</option>
-                      {CONTRACT_RUN_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  ) : (
-                    <input value={form[key]||''} onChange={e => setField(key, e.target.value)} style={s} />
-                  )}
-                </div>
-              );
-            })}
+        <div style={{ flex:1, overflowY:'auto', padding:'20px 24px', display:'flex', flexDirection:'column', gap:'14px' }}>
+          {/* Serial Code */}
+          <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+            <label style={{ fontSize:'11px', color: formError && !form['serial_code']?.trim() ? '#e74c3c' : '#888', fontWeight:'500' }}>Serial Code <span style={{ color:'#e24b4a' }}>*</span></label>
+            <input value={form['serial_code']||''} onChange={e => setField('serial_code', e.target.value)}
+              style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border: formError && !form['serial_code']?.trim() ? '1px solid #e74c3c' : '0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+          </div>
+
+          {/* CDes1 + BDes1 */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color:'#888', fontWeight:'500' }}>CDes1</label>
+              <input value={form['cdes1']||''} onChange={e => setField('cdes1', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color:'#888', fontWeight:'500' }}>BDes1</label>
+              <input value={form['bdes1']||''} onChange={e => setField('bdes1', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
+          </div>
+
+          {/* CDes2 + BDes2 */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color:'#888', fontWeight:'500' }}>CDes2</label>
+              <input value={form['cdes2']||''} onChange={e => setField('cdes2', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color:'#888', fontWeight:'500' }}>BDes2</label>
+              <input value={form['bdes2']||''} onChange={e => setField('bdes2', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
+          </div>
+
+          {/* CDes3 + BDes3 */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color:'#888', fontWeight:'500' }}>CDes3</label>
+              <input value={form['cdes3']||''} onChange={e => setField('cdes3', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color:'#888', fontWeight:'500' }}>BDes3</label>
+              <input value={form['bdes3']||''} onChange={e => setField('bdes3', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
+          </div>
+
+          {/* Contract Run + Auto IB */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color: formError && !form['contract_run']?.trim() ? '#e74c3c' : '#888', fontWeight:'500' }}>Contract Run <span style={{ color:'#e24b4a' }}>*</span></label>
+              <select value={form['contract_run']||''} onChange={e => setField('contract_run', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border: formError && !form['contract_run']?.trim() ? '1px solid #e74c3c' : '0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', cursor:'pointer' }}>
+                <option value="">— เลือก —</option>
+                {CONTRACT_RUN_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+              <label style={{ fontSize:'11px', color:'#888', fontWeight:'500' }}>Auto IB</label>
+              <input value={form['auto_ib']||''} onChange={e => setField('auto_ib', e.target.value)}
+                style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', width:'100%', boxSizing:'border-box' }} />
+            </div>
           </div>
         </div>
         <div style={{ padding:'10px 18px', borderTop:'0.5px solid #f0f2f5', display:'flex', justifyContent:'flex-end', gap:'8px', flexShrink:0, background:'#fafbfc' }}>
@@ -1463,38 +1509,35 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
         ) : (
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' }}>
             <colgroup>
-              <col style={{ width:'120px' }}/><col style={{ width:'130px' }}/><col/><col/><col style={{ width:'65px' }}/>{canEdit && <col style={{ width:'60px' }}/>}
+              <col style={{ width:'150px' }}/><col style={{ width:'55px' }}/><col style={{ width:'90px' }}/><col/><col style={{ width:'90px' }}/><col/>{canEdit && <col style={{ width:'56px' }}/>}
             </colgroup>
             <thead style={{ position:'sticky', top:0, zIndex:1 }}>
               <tr>
-                {['Vendor Code','Serial Code','Label / Value 1','Label / Value 2','Run',...(canEdit?['Action']:[])].map(h => (
-                  <th key={h} style={{ background:'#1a3a5c', color:'rgba(255,255,255,0.8)', padding:'8px 10px', textAlign: h==='Action'?'center':'left', fontSize:'10px', fontWeight:'600', letterSpacing:'0.04em', textTransform:'uppercase', whiteSpace:'nowrap' }}>{h}</th>
+                {['Serial Code','Run','CDes1','BDes1','CDes2','BDes2',...(canEdit?['Action']:[])].map(h => (
+                  <th key={h} style={{ background:'#1a3a5c', color:'rgba(255,255,255,0.8)', padding:'8px 10px', textAlign: h==='Action'||h==='Run'?'center':'left', fontSize:'10px', fontWeight:'600', letterSpacing:'0.04em', textTransform:'uppercase', whiteSpace:'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((item, i) => (
-                <tr key={item.id||i} style={{ borderBottom:'0.5px solid #f3f4f6', background:'white' }}>
-                  <td style={{ padding:'7px 10px', fontFamily:'monospace', fontSize:'11px', color:'#1a3a5c', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{item.vendor_code||'-'}</td>
-                  <td style={{ padding:'7px 10px', fontFamily:'monospace', fontSize:'11px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{item.serial_code||'-'}</td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                    {item.cdes1 && <span style={{ color:'#888', fontSize:'10px' }}>{item.cdes1}: </span>}{item.bdes1||'-'}
+                <tr key={item.id||i} style={{ borderBottom:'0.5px solid #f3f4f6', background: i%2===0?'white':'#fafbfc' }}>
+                  <td style={{ padding:'7px 10px', fontFamily:'monospace', fontSize:'11px', color:'#1a3a5c', fontWeight:'500', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{item.serial_code||'-'}</td>
+                  <td style={{ padding:'7px 10px', textAlign:'center' }}>
+                    <span style={{ background:'#E6F1FB', color:'#0C447C', borderRadius:'20px', padding:'2px 8px', fontSize:'10px', fontWeight:'500' }}>{item.contract_run||'-'}</span>
                   </td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                    {item.cdes2 && <span style={{ color:'#888', fontSize:'10px' }}>{item.cdes2}: </span>}{item.bdes2||'—'}
-                  </td>
-                  <td style={{ padding:'7px 10px' }}>
-                    <span style={{ background:'#E6F1FB', color:'#0C447C', borderRadius:'20px', padding:'2px 7px', fontSize:'10px', fontWeight:'500' }}>{item.contract_run||'-'}</span>
-                  </td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes1||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes1||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes2||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes2||'—'}</td>
                   {canEdit && (
                     <td style={{ padding:'6px 10px', textAlign:'center' }}>
                       <div style={{ display:'inline-flex', gap:'4px' }}>
                         <button onClick={() => { const f = emptyForm(); CONTRACT_FIELDS.forEach(([k]) => { f[k] = item[k] || ''; }); setEditTarget(item); setFormState(f); setFormError(''); setView('edit'); }}
-                          style={{ width:'26px', height:'24px', borderRadius:'5px', border:'0.5px solid #ddd', background:'#f5f5f5', color:'#555', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          style={{ width:'24px', height:'24px', borderRadius:'5px', border:'0.5px solid #ddd', background:'#f5f5f5', color:'#555', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
                         <button onClick={() => handleDelete(item.id)}
-                          style={{ width:'26px', height:'24px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background:'#FCEBEB', color:'#791F1F', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          style={{ width:'24px', height:'24px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background:'#FCEBEB', color:'#791F1F', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                         </button>
                       </div>
