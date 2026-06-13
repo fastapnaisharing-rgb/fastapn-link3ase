@@ -1660,104 +1660,50 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     }
   };
 
-  // ── Auto-calculate ALL line fields ────────────────────────────────────────
-  useEffect(() => {
-    if (!line1.itemCode) {
-      setLine1(l => ({ ...l, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' }));
-      return;
-    }
-    const itemData = itemcodeItems.find(
-      i => String(i.code ?? '').trim().toUpperCase() === line1.itemCode.trim().toUpperCase()
-    );
-    if (!itemData) return;
-
-    // ── ACCOUNT ──────────────────────────────────────────────────────────
+  // ── Auto-calculate ALL line fields (every row) ───────────────────────────
+  const calcLine = (line, itemcodeItems, vendorInfo, form) => {
+    if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
+    const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
+    if (!itemData) return line;
     const rawSub = String(itemData.sub ?? '').trim();
-    const subVal = rawSub.toUpperCase() === 'SUB'
-      ? String(vendorInfo?.['Sub Acc'] ?? '').trim()
-      : rawSub;
-    const accountVal = [
-      String(itemData.cpc     ?? '').trim(),
-      String(itemData.account ?? '').trim(),
-      subVal,
-    ].filter(Boolean).join('-');
-
-    // ── DESC ─────────────────────────────────────────────────────────────
-    const hasIB     = form?.branchIBLabel && form.branchIBLabel !== '-';
-    const isIBAll   = form?.branchIBLabel === 'IB-ALL';
-    const ibPrefix  = isIBAll
-      ? 'IB-ALL'
-      : hasIB
-        ? `${form?.branchNo ?? ''}-IB`
-        : '';
-    const ibLabel   = hasIB && !isIBAll
-      ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}`
-      : '';
-    const descVal   = [
-      ibPrefix,
-      form?.period    ?? '',
-      String(itemData.description ?? '').trim(),
-      form?.backDesc1 ?? '',
-      form?.backDesc2 ?? '',
-      form?.backDesc3 ?? '',
-      ibLabel,
-    ].filter(Boolean).join(' ');
-
-    // ── NOTICE parsing ────────────────────────────────────────────────────
-    const notices  = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
-    const hasITC   = notices.includes('ITC');
+    const subVal = rawSub.toUpperCase() === 'SUB' ? String(vendorInfo?.['Sub Acc'] ?? '').trim() : rawSub;
+    const accountVal = [String(itemData.cpc ?? '').trim(), String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
+    const hasIB = form?.branchIBLabel && form.branchIBLabel !== '-';
+    const isIBAll = form?.branchIBLabel === 'IB-ALL';
+    const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
+    const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
+    const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), form?.backDesc1 ?? '', form?.backDesc2 ?? '', form?.backDesc3 ?? '', ibLabel].filter(Boolean).join(' ');
+    const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
+    const hasITC = notices.includes('ITC');
     const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
-    const hasTC    = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
-
-    // ── SOURCE string priority: line.tax > invTax > spec_tx > Notice > Tax-Type
-    // line.tax ใช้เฉพาะ line นั้น (จัดการใน line-level override ด้านล่าง)
-    // invTax override ทั้ง invoice (ชนะ spec_tx และ vendor Tax-Type)
+    const hasTC = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
     let sourceStr = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
     if (hasTC || hasVITEM) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase();
     if (form?.invTax?.trim()) sourceStr = String(form.invTax).trim().toUpperCase();
-    // line.tax override เฉพาะ line (ชนะทุกอย่าง)
-    if (line1.tax?.trim()) sourceStr = String(line1.tax).trim().toUpperCase();
+    if (line.tax?.trim()) sourceStr = String(line.tax).trim().toUpperCase();
     const vatChar = sourceStr[0] ?? '';
     const whtChar = sourceStr[1] ?? '';
-
-    // ── BRANCH DIRECT CODE — ใช้จาก branchDirectLabel เสมอ ──────────────
     const branchDirectCode = String(form?.branchDirectLabel ?? '').split('-')[0].trim();
-
-    // ── TAX CODE & WHT CODE ───────────────────────────────────────────────
     const taxCodeVal = buildTaxCode(vatChar, branchDirectCode);
     const whtCodeVal = hasITC ? '' : buildWhtCode(whtChar, branchDirectCode);
+    const amountNum = parseFloat(String(line.amount).replace(/,/g, '')) || 0;
+    const vatNum = (vatChar === 'V' || vatChar === 'S') ? Math.round(amountNum * 0.07 * 100) / 100 : 0;
+    const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
+    const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
+    const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
+    return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum) };
+  };
 
-    // ── AMOUNTS ───────────────────────────────────────────────────────────
-    const amountNum = parseFloat(String(line1.amount).replace(/,/g, '')) || 0;
-    const vatNum    = (vatChar === 'V' || vatChar === 'S') ? Math.round(amountNum * 0.07 * 100) / 100 : 0;
-    const whtPct    = hasITC ? 0 : (parseFloat(whtChar) || 0);
-    const whtNum    = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
-    const totalNum  = Math.round((amountNum + vatNum) * 100) / 100;
-
-    setLine1(l => ({
-      ...l,
-      desc:    descVal,
-      account: accountVal,
-      taxCode: taxCodeVal,
-      whtCode: whtCodeVal,
-      vat:     fmt2(vatNum),
-      wht:     fmt2(whtNum),
-      total:   fmt2(totalNum),
-    }));
+  useEffect(() => {
+    setLines(prev => prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form)));
   }, [
-    line1.itemCode,
-    line1.amount,
-    line1.tax,
-    form?.period,
-    form?.invTax,
-    form?.backDesc1,
-    form?.backDesc2,
-    form?.backDesc3,
-    form?.branchNo,
-    form?.branchDirectLabel,
-    form?.branchIBLabel,
-    vendorInfo,
-    itemcodeItems,
+    lines.map(l => l.itemCode).join(','),
+    lines.map(l => l.amount).join(','),
+    lines.map(l => l.tax).join(','),
+    form?.period, form?.invTax,
+    form?.backDesc1, form?.backDesc2, form?.backDesc3,
+    form?.branchNo, form?.branchDirectLabel, form?.branchIBLabel,
+    vendorInfo, itemcodeItems,
   ]);
 
   useEffect(() => {
@@ -1833,8 +1779,30 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               </div>
             </div>
             <div style={{ ...card, width: '49%', marginBottom: 0 }}>
-              <div style={cardHead}><span style={cardLabel}>Header Detail 2</span></div>
-              <div style={cardBody}><div style={{ fontSize: '11px', color: '#bbb', fontStyle: 'italic' }}>— coming soon —</div></div>
+              <div style={cardHead}><span style={cardLabel}>Document Number</span></div>
+              <div style={{ ...cardBody, display: 'flex', flexDirection: 'column', gap: '0' }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', color: form?.invoiceNum ? '#1a3a5c' : '#ccc', fontStyle: form?.invoiceNum ? 'normal' : 'italic', marginBottom: '10px' }}>
+                  {form?.invoiceNum || '— ยังไม่ได้กรอก Invoice No. —'}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', border: '0.5px solid #e8eaf0', borderRadius: '7px', overflow: 'hidden' }}>
+                  <div style={{ padding: '7px 12px', borderRight: '0.5px solid #e8eaf0' }}>
+                    <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRN</div>
+                    <div style={{ fontSize: '12px', fontWeight: '500', color: form?.grn ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{form?.grn || '—'}</div>
+                  </div>
+                  <div style={{ padding: '7px 12px' }}>
+                    <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRT</div>
+                    <div style={{ fontSize: '12px', fontWeight: '500', color: form?.grtNum ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{form?.grtNum || '—'}</div>
+                  </div>
+                  <div style={{ padding: '7px 12px', borderTop: '0.5px solid #e8eaf0', borderRight: '0.5px solid #e8eaf0' }}>
+                    <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>Branch Direct</div>
+                    <div style={{ fontSize: '11px', fontWeight: '500', color: form?.branchDirectLabel ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{form?.branchDirectLabel || '—'}</div>
+                  </div>
+                  <div style={{ padding: '7px 12px', borderTop: '0.5px solid #e8eaf0' }}>
+                    <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>Branch IB</div>
+                    <div style={{ fontSize: '11px', fontWeight: '500', color: form?.branchIBLabel && form.branchIBLabel !== '-' ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(form?.branchIBLabel && form.branchIBLabel !== '-') ? form.branchIBLabel : '—'}</div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1917,7 +1885,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? (idx === 0 ? handleMoneyChange(key, v) : setLineField(idx, key, v.replace(/[^0-9.]/g, ''))) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line[key]) : undefined}
                               onBlur={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line[key]) : undefined}
-                              onKeyDown={key === 'total' ? (e) => {
+                              onKeyDown={(key === 'total' || key === 'amount') ? (e) => {
                                 if (e.key === 'Enter') {
                                   const l = lines[idx];
                                   if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLine();
@@ -1967,18 +1935,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               </div>
               <div style={{ flex: 1 }} />
               <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
-                <div style={{ padding: '8px 20px', borderRight: '0.5px solid #f0f2f5', textAlign: 'right' }}>
-                  <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>VAT</div>
-                  <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{fmt2(totalVat)}</div>
-                </div>
-                <div style={{ padding: '8px 20px', borderRight: '0.5px solid #f0f2f5', textAlign: 'right' }}>
-                  <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>WHT</div>
-                  <div style={{ fontSize: '13px', fontWeight: '500', color: totalWht < 0 ? '#A32D2D' : '#1a3a5c' }}>{fmt2(totalWht)}</div>
-                </div>
-                <div style={{ padding: '8px 20px', textAlign: 'right' }}>
-                  <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>Net total</div>
-                  <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{fmt2(totalNet)}</div>
-                </div>
+                {[['VAT', fmt2(totalVat), false], ['WHT', fmt2(totalWht), totalWht < 0], ['NET TOTAL', fmt2(totalNet), false]].map(([label, val, isDanger], i, arr) => (
+                  <div key={label} style={{ padding: '8px 24px', borderRight: i < arr.length - 1 ? '0.5px solid #f0f2f5' : 'none', textAlign: 'right', minWidth: '100px' }}>
+                    <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>{label}</div>
+                    <div style={{ fontSize: i === arr.length - 1 ? '14px' : '13px', fontWeight: '500', color: isDanger ? '#A32D2D' : '#1a3a5c' }}>{val}</div>
+                  </div>
+                ))}
               </div>
             </div>
           );
