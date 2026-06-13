@@ -1584,11 +1584,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
 
-    // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
-    const escapedBu = bu.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // ดึง search term — ลบ + ออก แล้วลบ BU prefix (ทั้งรูปแบบ "MPS-" และ "MPS")
+    // เช่น "MPS+00002" → "MPS00002" → ลบ "MPS" → "00002"
+    // เช่น "MPS-00002" → "MPS-00002" → ลบ "MPS-" → "00002"
     const cleaned = raw
       .replace(/\+/g, '')
-      .replace(new RegExp('^' + escapedBu + '[-]?', 'i'), '')
+      .replace(new RegExp('^' + bu.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-?', 'i'), '')
       .trim();
 
     // กรอง branchItems เฉพาะ BU ของ batch ก่อนเสมอ
@@ -1597,34 +1598,38 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       : branchItems;
 
     // ── findBranch: lookup ตามลำดับ เฉพาะ BU ──────────────────────────
+    // โครงสร้าง Branch จริง:
+    //   Branch Code = '056802'      (ตัวเลขล้วน)
+    //   BU-Branch   = 'MPS-00001'   (BU-xxxxx)
+    //   bu          = 'MPS'
     const findBranch = (term) => {
       const t = term.trim().toLowerCase();
       if (!t) return null;
 
-      // 1. match Branch Code ตรงๆ (เช่น "MPS-056804")
+      // 1. match Branch Code ตรงๆ เช่น "056802"
       let found = buBranches.find(b =>
         String(b['Branch Code'] ?? '').toLowerCase() === t
       );
       if (found) return found;
 
-      // 2. เติม BU prefix → "{bu}-{term}" (เช่น "056804" → "MPS-056804")
-      if (bu) {
-        found = buBranches.find(b =>
-          String(b['Branch Code'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${t}`
-        );
-        if (found) return found;
-      }
+      // 2. match BU-Branch ตรงๆ เช่น "MPS-00001"
+      found = buBranches.find(b =>
+        String(b['BU-Branch'] ?? '').toLowerCase() === t
+      );
+      if (found) return found;
 
-      // 3. pad ซ้ายครบ 5 หลัก + เติม BU (เช่น "1" → "MPS-00001", "804" → "MPS-00804")
+      // 3. ตัวเลขล้วน → pad 5 หลัก → match BU-Branch suffix
+      //    เช่น "1" → "00001" → match "MPS-00001"
+      //    เช่น "00001" → match "MPS-00001"
       if (/^\d+$/.test(t)) {
         const padded = t.padStart(5, '0');
         found = buBranches.find(b =>
-          String(b['Branch Code'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${padded}`
+          String(b['BU-Branch'] ?? '').toLowerCase() === `${bu.toLowerCase()}-${padded}`
         );
         if (found) return found;
       }
 
-      // 4. contains — term >= 3 ตัว เฉพาะ BU เดียวกัน
+      // 4. contains ใน Branch Code หรือ Company Name (term >= 3 ตัว)
       if (t.length >= 3) {
         found = buBranches.find(b =>
           String(b['Branch Code'] ?? '').toLowerCase().includes(t) ||
