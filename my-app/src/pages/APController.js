@@ -1228,7 +1228,7 @@ const CONTRACT_FIELDS = [
 ];
 const CONTRACT_RUN_OPTS = ['SC','D1','D2','D3','D4'];
 
-function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollection, userName = '' }) {
+function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetchCollection, userName = '' }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const canEdit = isOwner || isAdmin || isEditor;
 
@@ -1242,7 +1242,6 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
   const [saving, setSaving]       = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
-  const [csvEncoding, setCsvEncoding] = useState('windows-874'); // default: CSV ภาษาไทยจาก Excel
   const fileRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -1332,35 +1331,17 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
       const isExcel = /\.(xlsx|xls)$/i.test(file.name);
       let rawRows = [];
 
-      if (isExcel) {
-        // ── Excel ── (Excel เก็บ string เป็น Unicode อยู่แล้ว ไม่ต้องแปลง encoding)
-        const buf = await file.arrayBuffer();
-        const wb  = XLSX.read(buf, { type: 'array' });
-        rawRows   = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-      } else {
-        // ── CSV ── decode ตาม encoding ที่เลือก ป้องกัน mojibake ภาษาไทย ──
-        const buf   = await file.arrayBuffer();
-        let bytes   = new Uint8Array(buf);
-        // ตัด UTF-8 BOM ถ้ามี
-        if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
-          bytes = bytes.slice(3);
-        }
-        let text;
-        try {
-          text = new TextDecoder(csvEncoding, { fatal: false }).decode(bytes);
-        } catch {
-          text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-        }
-
-        const lines   = text.split(/\r?\n/).filter(Boolean);
-        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-        rawRows = lines.slice(1).map(line => {
-          const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-          const obj  = {};
-          headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
-          return obj;
-        });
+      if (!isExcel) {
+        setImportMsg('❌ รองรับเฉพาะไฟล์ .xlsx / .xls เท่านั้น — กรุณาบันทึกไฟล์เป็น Excel ก่อน import (ป้องกันปัญหาภาษาไทยเพี้ยน)');
+        setImporting(false);
+        e.target.value = '';
+        return;
       }
+
+      // ── Excel ── (Excel เก็บ string เป็น Unicode อยู่แล้ว ไม่มีปัญหา encoding ภาษาไทย)
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array' });
+      rawRows   = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
 
       const now  = new Date().toISOString();
       const rows = rawRows
@@ -1501,19 +1482,13 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
         </div>
         {canEdit && (
           <>
-            <select value={csvEncoding} onChange={e => setCsvEncoding(e.target.value)}
-              title="Encoding สำหรับไฟล์ CSV (ไม่มีผลกับ .xlsx/.xls)"
-              style={{ height:'28px', padding:'0 6px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#555', fontSize:'11px', cursor:'pointer' }}>
-              <option value="windows-874">CSV: TIS-620/Windows-874 (ไทย)</option>
-              <option value="utf-8">CSV: UTF-8</option>
-            </select>
             <button onClick={handleDownloadTemplate} style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#555', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
               ⬇ Template
             </button>
-            <button onClick={() => fileRef.current?.click()} disabled={importing} style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #5DCAA5', background:'#E1F5EE', color:'#085041', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
-              📂 Import
+            <button onClick={() => fileRef.current?.click()} disabled={importing} title="รองรับเฉพาะไฟล์ .xlsx / .xls" style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #5DCAA5', background:'#E1F5EE', color:'#085041', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
+              📂 Import (.xlsx)
             </button>
-            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" style={{ display:'none' }} onChange={handleImport} />
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleImport} />
             <button onClick={() => { setEditTarget(null); setFormState(emptyForm()); setFormError(''); setView('new'); }} style={{ height:'28px', padding:'0 12px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add
             </button>
@@ -1530,7 +1505,7 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
             onFocus={e => e.target.style.borderColor='#1a3a5c'} onBlur={e => e.target.style.borderColor='#e2e6ed'} />
         </div>
       </div>
-      <div style={{ flex:1, overflowY:'auto' }}>
+      <div style={{ flex:1, overflowY:'auto', overflowX:'auto' }}>
         {loading ? (
           <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>Loading...</div>
         ) : filtered.length === 0 ? (
@@ -1538,7 +1513,7 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
         ) : (
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' }}>
             <colgroup>
-              <col style={{ width:'68px' }}/><col/><col style={{ width:'68px' }}/><col/><col style={{ width:'68px' }}/><col/><col style={{ width:'90px' }}/>{canEdit && <col style={{ width:'56px' }}/>}
+              <col style={{ width:'8%' }}/><col style={{ width:'19%' }}/><col style={{ width:'8%' }}/><col style={{ width:'19%' }}/><col style={{ width:'8%' }}/><col style={{ width:'19%' }}/><col style={{ width:'11%' }}/>{canEdit && <col style={{ width:'8%' }}/>}
             </colgroup>
             <thead style={{ position:'sticky', top:0, zIndex:1 }}>
               <tr>
@@ -1549,7 +1524,8 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
             </thead>
             <tbody>
               {filtered.map((item, i) => (
-                <tr key={item.id||i} style={{ borderBottom:'0.5px solid #f3f4f6', background: i%2===0?'white':'#fafbfc' }}>
+                <tr key={item.id||i} onClick={() => onSelect && onSelect(item)}
+                  style={{ borderBottom:'0.5px solid #f3f4f6', background: i%2===0?'white':'#fafbfc', cursor: onSelect ? 'pointer' : 'default' }}>
                   <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes1||'—'}</td>
                   <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes1||'—'}</td>
                   <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes2||'—'}</td>
@@ -1560,11 +1536,11 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
                   {canEdit && (
                     <td style={{ padding:'6px 10px', textAlign:'center' }}>
                       <div style={{ display:'inline-flex', gap:'4px' }}>
-                        <button onClick={() => { const f = emptyForm(); CONTRACT_FIELDS.forEach(([k]) => { f[k] = item[k] || ''; }); setEditTarget(item); setFormState(f); setFormError(''); setView('edit'); }}
+                        <button onClick={(e) => { e.stopPropagation(); const f = emptyForm(); CONTRACT_FIELDS.forEach(([k]) => { f[k] = item[k] || ''; }); setEditTarget(item); setFormState(f); setFormError(''); setView('edit'); }}
                           style={{ width:'24px', height:'24px', borderRadius:'5px', border:'0.5px solid #ddd', background:'#f5f5f5', color:'#555', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
-                        <button onClick={() => handleDelete(item.id)}
+                        <button onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
                           style={{ width:'24px', height:'24px', borderRadius:'5px', border:'0.5px solid #f7c1c1', background:'#FCEBEB', color:'#791F1F', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                         </button>
@@ -1628,6 +1604,28 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     return `${branchDirectCode}-WHT${w}%`;
   };
   const fmt2 = (n) => n === 0 ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // ── CT: ถ้า Item Code มี SPI-1 = CT แปลว่าต้องผูก Contract ────────────────
+  const currentItemData = itemcodeItems.find(
+    i => String(i.code ?? '').trim().toUpperCase() === String(line1.itemCode ?? '').trim().toUpperCase()
+  );
+  const requiresContract = String(currentItemData?.spi1 ?? '').toUpperCase().includes('CT');
+
+  // ── เลือกสัญญาจาก ContractPopup → ดึง CDes+BDes ใส่ Back Description 1/2/3 ─
+  // (อันไหนไม่มีข้อมูล ไม่ต้องใส่/ไม่แก้ของเดิม)
+  const handleSelectContract = (item) => {
+    const pairs = [
+      ['backDesc1', item?.cdes1, item?.bdes1],
+      ['backDesc2', item?.cdes2, item?.bdes2],
+      ['backDesc3', item?.cdes3, item?.bdes3],
+    ];
+    pairs.forEach(([key, c, b]) => {
+      const cc = String(c ?? '').trim();
+      const bb = String(b ?? '').trim();
+      if (cc || bb) setField(key, [cc, bb].filter(Boolean).join(' '));
+    });
+    setShowContractPopup(false);
+  };
 
   // ── Auto-calculate ALL line fields ────────────────────────────────────────
   useEffect(() => {
@@ -1829,13 +1827,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   style={inputStyle('100%')} />
               </div>
             ))}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0, position: 'relative' }}>
               <label style={fieldLabel}>&nbsp;</label>
-              <button title="Contract" style={{ height: '30px', width: '56px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }} onClick={() => setShowContractPopup(true)}>
+              <button title={requiresContract ? 'Contract — Item นี้กำหนด SPI-1 = CT ต้องผูกสัญญา' : 'Contract'}
+                style={{ height: '30px', width: '56px', borderRadius: '6px', border: requiresContract ? '1px solid #e67e22' : '0.5px solid #c5d8f0', background: requiresContract ? '#FFF3E0' : '#eef4fb', color: requiresContract ? '#a35a00' : '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, position: 'relative' }}
+                onClick={() => setShowContractPopup(true)}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
                   <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
                 </svg>
+                {requiresContract && (
+                  <span style={{ position: 'absolute', top: '-6px', right: '-6px', background: '#e67e22', color: 'white', fontSize: '8px', fontWeight: '700', borderRadius: '8px', padding: '1px 4px', lineHeight: '1.2' }}>CT</span>
+                )}
               </button>
             </div>
           </div>
@@ -1844,7 +1847,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-                <colgroup>{[3,8,8,4,18,10,10,14,6,6,8].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+                <colgroup>{[3,7,9,3,21,11,10,12,8,8,8].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ background: '#f8f9fa' }}>
                     {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total'].map(h => (
@@ -1887,6 +1890,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         <ContractPopup
           show={showContractPopup}
           onClose={() => setShowContractPopup(false)}
+          onSelect={handleSelectContract}
           vendorCode={form?.supplierCode || ''}
           bu={bu}
           userName={userName}
