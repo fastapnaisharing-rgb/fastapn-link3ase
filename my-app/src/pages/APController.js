@@ -1584,7 +1584,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const raw     = input.trim();
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
-    console.log('[resolveBranch] raw:', raw, 'bu:', bu, 'hasPlus:', hasPlus);
     branchJustResolved.current = false;
 
     // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
