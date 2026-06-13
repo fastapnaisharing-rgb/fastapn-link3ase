@@ -1583,8 +1583,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
 
-  const [line1, setLine1] = useState({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
+  const emptyLine = (hl = 'L') => ({ hl, itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
+  const [lines, setLines] = useState([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+  const line1 = lines[0];
+  const setLine1 = (fn) => setLines(prev => { const next = [...prev]; next[0] = typeof fn === 'function' ? fn(prev[0]) : fn; return next; });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
+  const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
+  const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [showContractPopup, setShowContractPopup]   = useState(false);
   const amountRef   = useRef(null); // ✅ auto focus หลังเลือก itemCode
@@ -1876,7 +1881,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-                <colgroup>{[3,7,9,3,21,11,10,12,8,8,8].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+                <colgroup>{[3,7,9,5,21,10,9,12,8,8,8].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ background: '#f8f9fa' }}>
                     {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total'].map(h => (
@@ -1885,31 +1890,45 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    {[['hl','fixed'],['itemCode','text'],['amount','text'],['tax','text'],['desc','text'],['taxCode','text'],['whtCode','text'],['account','text'],['vat','text'],['wht','text'],['total','text']].map(([key, type]) => (
-                      <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
-                        {type === 'fixed' ? (
-                          <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line1[key]}</div>
-                        ) : key === 'itemCode' ? (
-                          <div style={{ position: 'relative' }}>
-                            <input type="text" maxLength={8} ref={itemCodeRef} value={line1[key]} onChange={e => setLine1Field(key, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
-                              style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-                            <button type="button" title="Search item code" onClick={() => setShowItemCodePopup(true)}
-                              style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                            </button>
-                          </div>
-                        ) : (
-                          <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line1[key]}
-                            ref={key === 'amount' ? amountRef : undefined}
-                            onChange={e => MONEY_FIELDS.includes(key) ? handleMoneyChange(key, e.target.value) : setLine1Field(key, e.target.value)}
-                            onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line1[key]) : undefined}
-                            onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line1[key]) : undefined}
-                            style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line1[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
-                        )}
-                      </td>
-                    ))}
-                  </tr>
+                  {lines.map((line, idx) => (
+                    <tr key={idx}>
+                      {[['hl','hl'],['itemCode','text'],['amount','text'],['tax','text'],['desc','text'],['taxCode','text'],['whtCode','text'],['account','text'],['vat','text'],['wht','text'],['total','text']].map(([key, type]) => (
+                        <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
+                          {key === 'hl' ? (
+                            idx === 0 ? (
+                              <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line.hl}</div>
+                            ) : (
+                              <input type="text" value={line.hl} onChange={e => setLineField(idx, 'hl', e.target.value.slice(0,1).toUpperCase())} maxLength={1}
+                                style={{ width: '100%', height: '28px', padding: '0 4px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'center' }} />
+                            )
+                          ) : key === 'itemCode' ? (
+                            <div style={{ position: 'relative' }}>
+                              <input type="text" maxLength={8} ref={idx === 0 ? itemCodeRef : undefined} value={line[key]}
+                                onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
+                                style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
+                              {idx === 0 && <button type="button" title="Search item code" onClick={() => setShowItemCodePopup(true)}
+                                style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                              </button>}
+                            </div>
+                          ) : (
+                            <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
+                              ref={idx === 0 && key === 'amount' ? amountRef : undefined}
+                              onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? (idx === 0 ? handleMoneyChange(key, v) : setLineField(idx, key, v.replace(/[^0-9.]/g, ''))) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
+                              onFocus={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line[key]) : undefined}
+                              onBlur={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line[key]) : undefined}
+                              onKeyDown={key === 'total' ? (e) => {
+                                if (e.key === 'Enter') {
+                                  const l = lines[idx];
+                                  if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLine();
+                                }
+                              } : undefined}
+                              style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1935,10 +1954,35 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
         />
 
-        {/* ── Footer ── */}
-        <div style={{ padding: isMobile ? '10px 14px' : '12px 22px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-          <button onClick={onClose} style={{ padding: '7px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Close</button>
-        </div>
+        {/* ── Footer: summary + Close ── */}
+        {(() => {
+          const totalVat = lines.reduce((s, l) => s + (parseFloat(String(l.vat).replace(/,/g,'')) || 0), 0);
+          const totalWht = lines.reduce((s, l) => s + (parseFloat(String(l.wht).replace(/,/g,'')) || 0), 0);
+          const totalNet = lines.reduce((s, l) => s + (parseFloat(String(l.total).replace(/,/g,'')) || 0), 0);
+          const fmt2 = (n) => n === 0 ? '0.00' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          return (
+            <div style={{ borderTop: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+              <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0 }}>
+                <button onClick={onClose} style={{ padding: '6px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Close</button>
+              </div>
+              <div style={{ flex: 1 }} />
+              <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
+                <div style={{ padding: '8px 20px', borderRight: '0.5px solid #f0f2f5', textAlign: 'right' }}>
+                  <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>VAT</div>
+                  <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{fmt2(totalVat)}</div>
+                </div>
+                <div style={{ padding: '8px 20px', borderRight: '0.5px solid #f0f2f5', textAlign: 'right' }}>
+                  <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>WHT</div>
+                  <div style={{ fontSize: '13px', fontWeight: '500', color: totalWht < 0 ? '#A32D2D' : '#1a3a5c' }}>{fmt2(totalWht)}</div>
+                </div>
+                <div style={{ padding: '8px 20px', textAlign: 'right' }}>
+                  <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>Net total</div>
+                  <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{fmt2(totalNet)}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
