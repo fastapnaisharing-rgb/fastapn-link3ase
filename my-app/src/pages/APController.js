@@ -1584,13 +1584,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
 
-    // ดึง search term — ลบ + ออก แล้วลบ BU prefix (ทั้งรูปแบบ "MPS-" และ "MPS")
-    // เช่น "MPS+00002" → "MPS00002" → ลบ "MPS" → "00002"
-    // เช่น "MPS-00002" → "MPS-00002" → ลบ "MPS-" → "00002"
-    const cleaned = raw
-      .replace(/\+/g, '')
-      .replace(new RegExp('^' + bu.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-?', 'i'), '')
-      .trim();
+    // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
+    // รองรับ: "MPS+00002" "MPS-00002" "+2" "2" "056802" "056802+"
+    const _noPlus = raw.replace(/\+/g, '').trim();
+    const _buLow  = bu.toLowerCase();
+    const cleaned = (_noPlus.toLowerCase().startsWith(_buLow + '-'))
+      ? _noPlus.slice(bu.length + 1).trim()
+      : (_noPlus.toLowerCase().startsWith(_buLow))
+        ? _noPlus.slice(bu.length).trim()
+        : _noPlus;
 
     // กรอง branchItems เฉพาะ BU ของ batch ก่อนเสมอ
     const buBranches = bu
