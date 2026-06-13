@@ -65,17 +65,9 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
     if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); }
   }, [show]);
 
-  const handleSubmit = () => {
-    // TODO: add submit logic here
-    onClose();
-  };
-
   useEffect(() => {
     if (!show) return;
-    const h = (e) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'Enter' && e.ctrlKey) handleSubmit();
-    };
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, [show, onClose]);
@@ -1731,9 +1723,17 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     vendorInfo, itemcodeItems,
   ]);
 
+  const handleSubmit = () => {
+    // TODO: add submit logic here
+    onClose();
+  };
+
   useEffect(() => {
     if (!show) return;
-    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    const h = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Enter' && e.ctrlKey) handleSubmit();
+    };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, [show, onClose]);
