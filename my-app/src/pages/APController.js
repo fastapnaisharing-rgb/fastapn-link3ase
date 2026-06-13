@@ -930,7 +930,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // ── Auto-calculate ALL line fields ────────────────────────────────────────
   useEffect(() => {
     if (!line1.itemCode) {
-      setLine1(l => ({ ...l, desc: '', account: '', taxCode: '', whtCode: '', tax: '', wht: '', total: '' }));
+      setLine1(l => ({ ...l, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' }));
       return;
     }
     const itemData = itemcodeItems.find(
@@ -950,12 +950,17 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     ].filter(Boolean).join('-');
 
     // ── DESC ─────────────────────────────────────────────────────────────
-    const hasIB    = form?.branchIBLabel && form.branchIBLabel !== '-';
-    const ibPrefix = hasIB ? `${form?.branchNo ?? ''}-IB` : 'IB-ALL';
-    const ibLabel  = hasIB
+    const hasIB     = form?.branchIBLabel && form.branchIBLabel !== '-';
+    const isIBAll   = form?.branchIBLabel === 'IB-ALL';
+    const ibPrefix  = isIBAll
+      ? 'IB-ALL'
+      : hasIB
+        ? `${form?.branchNo ?? ''}-IB`
+        : '';
+    const ibLabel   = hasIB && !isIBAll
       ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}`
       : '';
-    const descVal  = [
+    const descVal   = [
       ibPrefix,
       form?.period    ?? '',
       String(itemData.description ?? '').trim(),
@@ -971,13 +976,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
     const hasTC    = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
 
-    // ── SOURCE string (เช่น 'VN', 'V1', 'S3') ────────────────────────────
+    // ── SOURCE string priority: line.tax > invTax > spec_tx > Notice > Tax-Type
+    // line.tax ใช้เฉพาะ line นั้น (จัดการใน line-level override ด้านล่าง)
+    // invTax override ทั้ง invoice (ชนะ spec_tx และ vendor Tax-Type)
     let sourceStr = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
     if (hasTC || hasVITEM) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase();
+    if (form?.invTax?.trim()) sourceStr = String(form.invTax).trim().toUpperCase();
+    // line.tax override เฉพาะ line (ชนะทุกอย่าง)
+    if (line1.tax?.trim()) sourceStr = String(line1.tax).trim().toUpperCase();
     const vatChar = sourceStr[0] ?? '';
     const whtChar = sourceStr[1] ?? '';
 
-    // ── BRANCH DIRECT CODE ────────────────────────────────────────────────
+    // ── BRANCH DIRECT CODE — ใช้จาก branchDirectLabel เสมอ ──────────────
     const branchDirectCode = String(form?.branchDirectLabel ?? '').split('-')[0].trim();
 
     // ── TAX CODE & WHT CODE ───────────────────────────────────────────────
@@ -986,10 +996,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
     // ── AMOUNTS ───────────────────────────────────────────────────────────
     const amountNum = parseFloat(String(line1.amount).replace(/,/g, '')) || 0;
-    const taxNum    = (vatChar === 'V' || vatChar === 'S') ? Math.round(amountNum * 0.07 * 100) / 100 : 0;
+    const vatNum    = (vatChar === 'V' || vatChar === 'S') ? Math.round(amountNum * 0.07 * 100) / 100 : 0;
     const whtPct    = hasITC ? 0 : (parseFloat(whtChar) || 0);
     const whtNum    = Math.round(amountNum * (whtPct / 100) * 100) / 100;
-    const totalNum  = Math.round((amountNum + taxNum) * 100) / 100;
+    const totalNum  = Math.round((amountNum + vatNum) * 100) / 100;
 
     setLine1(l => ({
       ...l,
@@ -997,14 +1007,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       account: accountVal,
       taxCode: taxCodeVal,
       whtCode: whtCodeVal,
-      tax:     fmt2(taxNum),
+      vat:     fmt2(vatNum),
       wht:     fmt2(whtNum),
       total:   fmt2(totalNum),
     }));
   }, [
     line1.itemCode,
     line1.amount,
+    line1.tax,
     form?.period,
+    form?.invTax,
     form?.backDesc1,
     form?.backDesc2,
     form?.backDesc3,
@@ -1095,7 +1107,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
           {/* Fields row */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', overflowX: 'auto', marginBottom: '14px', flexShrink: 0 }}>
-            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Period','period','text','160px'],['Vat','vat','text','75px'],['WHT','wht','text','75px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
+            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Period','period','text','160px'],['Inv.Tax','invTax','text','80px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
                 <label style={fieldLabel}>{label}</label>
                 <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
@@ -1526,7 +1538,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 
 // ── InvoiceEntry ──────────────────────────────────────────────────────────────
 function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser }) {
-  const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', vat: '', wht: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
+  const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
   const [vendorInfo, setVendorInfo]               = useState(null);
   const [showBranchPopup, setShowBranchPopup]     = useState(false);
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
@@ -1584,6 +1596,19 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const raw     = input.trim();
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
+
+    // ── Special case: พิมพ์ "IB" → HO + IB-ALL ──────────────────────────
+    if (raw.trim().toUpperCase() === 'IB') {
+      const ho = findHOBranch(branchItems, bu);
+      setFormState(f => ({
+        ...f,
+        branchNo:          'IB',
+        branchDirectLabel: ho ? formatBranchLabel(ho) : '',
+        branchIBLabel:     'IB-ALL',
+      }));
+      branchJustResolved.current = true;
+      return;
+    }
     branchJustResolved.current = false;
 
     // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
