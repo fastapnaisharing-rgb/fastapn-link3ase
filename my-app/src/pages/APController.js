@@ -65,9 +65,17 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
     if (show) { setQuery(''); setActive(-1); setTimeout(() => inputRef.current?.focus(), 60); }
   }, [show]);
 
+  const handleSubmit = () => {
+    // TODO: add submit logic here
+    onClose();
+  };
+
   useEffect(() => {
     if (!show) return;
-    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    const h = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Enter' && e.ctrlKey) handleSubmit();
+    };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, [show, onClose]);
@@ -1592,8 +1600,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [showContractPopup, setShowContractPopup]   = useState(false);
-  const amountRef   = useRef(null); // ✅ auto focus หลังเลือก itemCode
-  const itemCodeRef = useRef(null); // ✅ Tab จาก backDesc3
+  const [activeLineIdx, setActiveLineIdx] = useState(0);
+  const amountRef   = useRef(null);
+  const itemCodeRef = useRef(null);
+  const lineItemCodeRefs = useRef([]);
+  const addLineAndFocus = () => {
+    setLines(prev => {
+      const next = [...prev, { hl: 'L', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
+      const newIdx = next.length - 1;
+      setTimeout(() => { lineItemCodeRefs.current[newIdx]?.focus(); }, 30);
+      return next;
+    });
+  };
 
   const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
   const handleMoneyChange = (key, val) => { let v = val.replace(/[^0-9.]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLine1Field(key, v); };
@@ -1871,13 +1889,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             )
                           ) : key === 'itemCode' ? (
                             <div style={{ position: 'relative' }}>
-                              <input type="text" maxLength={8} ref={idx === 0 ? itemCodeRef : undefined} value={line[key]}
+                              <input type="text" maxLength={8}
+                                ref={el => { lineItemCodeRefs.current[idx] = el; if (idx === 0) itemCodeRef.current = el; }}
+                                value={line[key]}
+                                onFocus={() => setActiveLineIdx(idx)}
                                 onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
                                 style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-                              {idx === 0 && <button type="button" title="Search item code" onClick={() => setShowItemCodePopup(true)}
+                              <button type="button" title="Search item code" onClick={() => { setActiveLineIdx(idx); setShowItemCodePopup(true); }}
                                 style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                              </button>}
+                              </button>
                             </div>
                           ) : (
                             <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
@@ -1885,10 +1906,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? (idx === 0 ? handleMoneyChange(key, v) : setLineField(idx, key, v.replace(/[^0-9.]/g, ''))) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line[key]) : undefined}
                               onBlur={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line[key]) : undefined}
-                              onKeyDown={(key === 'total' || key === 'amount') ? (e) => {
+                              onKeyDown={['total','amount','tax','desc'].includes(key) ? (e) => {
                                 if (e.key === 'Enter') {
                                   const l = lines[idx];
-                                  if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLine();
+                                  if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
                                 }
                               } : undefined}
                               style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
@@ -1915,9 +1936,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         <ItemCodeSearchPopup
           show={showItemCodePopup} onClose={() => setShowItemCodePopup(false)}
           onSelect={(item) => {
-            setLine1Field('itemCode', item.code || '');
+            if (activeLineIdx === 0) { setLine1Field('itemCode', item.code || ''); }
+            else { setLineField(activeLineIdx, 'itemCode', item.code || ''); }
             setShowItemCodePopup(false);
-            setTimeout(() => amountRef.current?.focus(), 50); // ✅ auto cursor to Amount
+            setTimeout(() => amountRef.current?.focus(), 50);
           }}
           itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
         />
@@ -1931,7 +1953,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           return (
             <div style={{ borderTop: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
               <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0 }}>
-                <button onClick={onClose} style={{ padding: '6px 18px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Close</button>
+                <button onClick={handleSubmit} title="Submit (Ctrl+Enter)" style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  Submit
+                  <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>
+                </button>
               </div>
               <div style={{ flex: 1 }} />
               <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
