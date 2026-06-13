@@ -1583,6 +1583,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const raw     = input.trim();
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
+    console.log('[resolveBranch] raw:', raw, 'bu:', bu, 'hasPlus:', hasPlus);
 
     // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
     // รองรับ: "MPS+00002" "MPS-00002" "+2" "2" "056802" "056802+"
