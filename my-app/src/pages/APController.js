@@ -896,6 +896,165 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PeriodPicker
+// ─────────────────────────────────────────────────────────────────────────────
+const MO_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+const DW_TH = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+const fmtDt = (dt) => `${dt.getDate()} ${MO_TH[dt.getMonth()]} ${dt.getFullYear()}`;
+
+function PeriodPicker({ value, onChange }) {
+  const [open, setOpen]     = useState(false);
+  const [vy, setVy]         = useState(new Date().getFullYear());
+  const [vm, setVm]         = useState(new Date().getMonth());
+  const [d1, setD1]         = useState(null);
+  const [d2, setD2]         = useState(null);
+  const [hov, setHov]       = useState(null);
+  const [moMode, setMoMode] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const nav = (dir) => {
+    if (moMode) { setVy(y => y + dir); }
+    else {
+      let nm = vm + dir, ny = vy;
+      if (nm < 0) { nm = 11; ny--; }
+      if (nm > 11) { nm = 0; ny++; }
+      setVm(nm); setVy(ny);
+    }
+  };
+
+  const pickDay = (d) => {
+    const dt = new Date(vy, vm, d);
+    if (!d1 || d1.mo || (d1 && d2)) { setD1({ dt, mo: false }); setD2(null); setHov(null); }
+    else { if (dt < d1.dt) { setD2(d1); setD1({ dt, mo: false }); } else setD2({ dt, mo: false }); setHov(null); }
+  };
+
+  const pickMo = (m) => { setD1({ mo: true, y: vy, m }); setD2(null); setHov(null); };
+
+  const fromLabel = () => {
+    if (!d1) return 'From';
+    if (d1.mo) return `${MO_TH[d1.m]} ${d1.y}`;
+    return fmtDt(d1.dt);
+  };
+  const toLabel = () => {
+    if (!d2 || d1?.mo) return null;
+    const [a, b] = d1.dt <= d2.dt ? [d1.dt, d2.dt] : [d2.dt, d1.dt];
+    return fmtDt(b);
+  };
+
+  const applyVal = () => {
+    if (!d1) return;
+    const f = fromLabel(), t = toLabel();
+    onChange(t ? `${f} – ${t}` : f);
+    setOpen(false);
+  };
+
+  const clearVal = () => { setD1(null); setD2(null); setHov(null); onChange(''); };
+
+  const today = new Date();
+  const first = new Date(vy, vm, 1).getDay();
+  const dim   = new Date(vy, vm + 1, 0).getDate();
+  const dipm  = new Date(vy, vm, 0).getDate();
+
+  const getDayCls = (d) => {
+    const dt = new Date(vy, vm, d);
+    let cls = '';
+    if (dt.toDateString() === today.toDateString()) cls += ' cal-today';
+    if (d1 && !d1.mo) {
+      const a = d1.dt, b = d2 ? d2.dt : hov;
+      const lo = b ? (a <= b ? a : b) : a, hi = b ? (a <= b ? b : a) : null;
+      const same = hi && lo.toDateString() === hi.toDateString();
+      if (lo && dt.toDateString() === lo.toDateString()) cls += same || !hi ? ' cal-single' : ' cal-start';
+      else if (hi && dt.toDateString() === hi.toDateString()) cls += ' cal-end';
+      else if (hi && dt > lo && dt < hi) cls += ' cal-range';
+    }
+    return cls;
+  };
+
+  const dayStyle = (cls) => {
+    const base = { width:'32px', height:'28px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'11px', cursor:'pointer', borderRadius:'5px', userSelect:'none', flexShrink:0 };
+    if (cls.includes('cal-single')) return { ...base, background:'#1a3a5c', color:'white' };
+    if (cls.includes('cal-start'))  return { ...base, background:'#1a3a5c', color:'white', borderRadius:'5px 0 0 5px' };
+    if (cls.includes('cal-end'))    return { ...base, background:'#1a3a5c', color:'white', borderRadius:'0 5px 5px 0' };
+    if (cls.includes('cal-range'))  return { ...base, background:'#E6F1FB', color:'#0C447C', borderRadius:'0' };
+    if (cls.includes('cal-today'))  return { ...base, fontWeight:'500', color:'#1a3a5c' };
+    return base;
+  };
+
+  const pillStyle = (empty) => ({ flex:1, height:'26px', display:'flex', alignItems:'center', padding:'0 8px', borderRadius:'5px', border:'0.5px solid #dde', fontSize:'11px', background: empty ? '#fafbfc' : 'white', color: empty ? '#bbb' : '#1a3a5c', minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' });
+
+  return (
+    <div ref={ref} style={{ position:'relative', display:'flex', flexDirection:'column', gap:'3px', flexShrink:0 }}>
+      <label style={{ fontSize:'11px', color:'#888' }}>Period</label>
+      <div style={{ display:'flex', alignItems:'center' }}>
+        <input type="text" value={value} onChange={e => onChange(e.target.value)}
+          style={{ height:'30px', padding:'0 8px', fontSize:'12px', borderRadius:'6px 0 0 6px', outline:'none', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', width:'190px', boxSizing:'border-box' }} />
+        <button onClick={() => setOpen(o => !o)} title="เลือกช่วงเวลา"
+          style={{ height:'30px', width:'28px', borderRadius:'0 6px 6px 0', border:'0.5px solid #ddd', borderLeft:'none', background:'#f5f7fa', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:'#888', flexShrink:0 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        </button>
+      </div>
+
+      {open && (
+        <div style={{ position:'absolute', top:'100%', left:0, zIndex:2000, marginTop:'4px', background:'white', borderRadius:'10px', border:'0.5px solid #dde', boxShadow:'0 8px 24px rgba(26,58,92,0.12)', width:'270px', overflow:'hidden' }}>
+          <div style={{ padding:'8px 12px 4px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <button onClick={() => nav(-1)} style={{ width:'24px', height:'24px', borderRadius:'50%', border:'none', background:'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:'#888' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <span onClick={() => setMoMode(m => !m)}
+              style={{ fontSize:'12px', fontWeight:'500', color: moMode ? '#0C447C' : '#1a3a5c', cursor:'pointer', padding:'2px 8px', borderRadius:'5px', background: moMode ? '#E6F1FB' : 'transparent' }}>
+              {moMode ? String(vy) : `${MO_TH[vm]} ${vy}`}
+            </span>
+            <button onClick={() => nav(1)} style={{ width:'24px', height:'24px', borderRadius:'50%', border:'none', background:'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:'#888' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
+
+          {moMode ? (
+            <div style={{ padding:'6px 12px 10px', display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'5px' }}>
+              {MO_TH.map((m, i) => {
+                const isSel = d1?.mo && d1.y === vy && d1.m === i;
+                return <div key={i} onClick={() => pickMo(i)}
+                  style={{ padding:'5px 4px', borderRadius:'5px', cursor:'pointer', fontSize:'11px', textAlign:'center', background: isSel ? '#1a3a5c' : 'transparent', color: isSel ? 'white' : '#1a3a5c' }}>{m}</div>;
+              })}
+            </div>
+          ) : (
+            <div style={{ padding:'0 10px 6px' }}>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(7, 32px)', gap:'1px', justifyContent:'center' }}>
+                {DW_TH.map(d => <div key={d} style={{ width:'32px', height:'20px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10px', color:'#bbb' }}>{d}</div>)}
+                {Array.from({length: first}, (_, i) => <div key={'p'+i} style={{ width:'32px', height:'28px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'11px', color:'#ddd' }}>{dipm - first + 1 + i}</div>)}
+                {Array.from({length: dim}, (_, i) => {
+                  const d = i + 1, cls = getDayCls(d);
+                  return <div key={d} onClick={() => pickDay(d)} onMouseEnter={() => { if (d1 && !d1.mo && !d2) setHov(new Date(vy, vm, d)); }}
+                    style={{ ...dayStyle(cls) }}>{d}</div>;
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{ padding:'6px 12px', borderTop:'0.5px solid #f0f2f5', display:'flex', alignItems:'center', gap:'6px' }}>
+            <div style={pillStyle(!d1)}>{fromLabel()}</div>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#bbb" strokeWidth="2"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+            <div style={pillStyle(!toLabel())}>{toLabel() || 'To'}</div>
+          </div>
+
+          <div style={{ padding:'6px 12px 10px', display:'flex', justifyContent:'flex-end', gap:'6px' }}>
+            <button onClick={clearVal} style={{ padding:'3px 10px', borderRadius:'5px', border:'0.5px solid #dde', background:'white', color:'#888', fontSize:'11px', cursor:'pointer' }}>Clear</button>
+            <button onClick={applyVal} style={{ padding:'3px 10px', borderRadius:'5px', border:'none', background:'#1a3a5c', color:'white', fontSize:'11px', cursor:'pointer', fontWeight:'500' }}>Apply</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
 function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '' }) {
@@ -906,7 +1065,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [line1, setLine1] = useState({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
-  const amountRef = useRef(null); // ✅ auto focus หลังเลือก itemCode
+  const amountRef   = useRef(null); // ✅ auto focus หลังเลือก itemCode
+  const itemCodeRef = useRef(null); // ✅ Tab จาก backDesc3
 
   const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
   const handleMoneyChange = (key, val) => { let v = val.replace(/[^0-9.]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLine1Field(key, v); };
@@ -998,7 +1158,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const amountNum = parseFloat(String(line1.amount).replace(/,/g, '')) || 0;
     const vatNum    = (vatChar === 'V' || vatChar === 'S') ? Math.round(amountNum * 0.07 * 100) / 100 : 0;
     const whtPct    = hasITC ? 0 : (parseFloat(whtChar) || 0);
-    const whtNum    = Math.round(amountNum * (whtPct / 100) * 100) / 100;
+    const whtNum    = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
     const totalNum  = Math.round((amountNum + vatNum) * 100) / 100;
 
     setLine1(l => ({
@@ -1107,16 +1267,24 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
           {/* Fields row */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', overflowX: 'auto', marginBottom: '14px', flexShrink: 0 }}>
-            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Period','period','text','160px'],['Inv.Tax','invTax','text','80px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
+            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Inv.Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
                 <label style={fieldLabel}>{label}</label>
                 <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
               </div>
             ))}
+            <PeriodPicker value={form?.period || ''} onChange={v => setField('period', v)} />
             {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
                 <label style={fieldLabel}>{label}</label>
-                <input type="text" value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle('100%')} />
+                <input type="text" value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                  onKeyDown={key === 'backDesc3' ? (e) => {
+                    if (e.key === 'Tab') {
+                      e.preventDefault();
+                      setTimeout(() => itemCodeRef.current?.focus(), 20);
+                    }
+                  } : undefined}
+                  style={inputStyle('100%')} />
               </div>
             ))}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
@@ -1134,23 +1302,23 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-                <colgroup>{[3,8,9,4,8,8,13,21,8,8,10].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+                <colgroup>{[3,8,9,4,16,8,8,10,8,8,10].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ background: '#f8f9fa' }}>
-                    {['H/L','Item Code','Amount','Tax','Tax Code','Wht Code','Account','Description','Vat Amount','Wht Amount','Total'].map(h => (
+                    {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total'].map(h => (
                       <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    {[['hl','fixed'],['itemCode','text'],['amount','text'],['tax','text'],['taxCode','text'],['whtCode','text'],['account','text'],['desc','text'],['vat','text'],['wht','text'],['total','text']].map(([key, type]) => (
+                    {[['hl','fixed'],['itemCode','text'],['amount','text'],['tax','text'],['desc','text'],['taxCode','text'],['whtCode','text'],['account','text'],['vat','text'],['wht','text'],['total','text']].map(([key, type]) => (
                       <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
                         {type === 'fixed' ? (
                           <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line1[key]}</div>
                         ) : key === 'itemCode' ? (
                           <div style={{ position: 'relative' }}>
-                            <input type="text" maxLength={8} value={line1[key]} onChange={e => setLine1Field(key, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                            <input type="text" maxLength={8} ref={itemCodeRef} value={line1[key]} onChange={e => setLine1Field(key, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
                               style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
                             <button type="button" title="Search item code" onClick={() => setShowItemCodePopup(true)}
                               style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
@@ -1163,7 +1331,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             onChange={e => MONEY_FIELDS.includes(key) ? handleMoneyChange(key, e.target.value) : setLine1Field(key, e.target.value)}
                             onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line1[key]) : undefined}
                             onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line1[key]) : undefined}
-                            style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
+                            style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line1[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
                         )}
                       </td>
                     ))}
