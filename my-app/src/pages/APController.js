@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase';
+import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
@@ -1248,7 +1249,6 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
     const f = {};
     CONTRACT_FIELDS.forEach(([k]) => { f[k] = ''; });
     f['vendor_code'] = vendorCode || '';
-    f['bu']          = bu || '';
     return f;
   };
 
@@ -1292,7 +1292,8 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
     const err = validate(form); if (err) { setFormError(err); return; }
     setSaving(true);
     try {
-      const payload = { ...form, bu: String(form.vendor_code).split('-')[0] || bu, updated_by: userName, updated_at: new Date().toISOString() };
+      const { bu: _bu, ...formWithoutBu } = form;
+      const payload = { ...formWithoutBu, updated_by: userName, updated_at: new Date().toISOString() };
       if (view === 'edit' && editTarget?.id) {
         const { error } = await supabase.from('contract_list').update(payload).eq('id', editTarget.id);
         if (error) throw error;
@@ -1314,30 +1315,54 @@ function ContractPopup({ show, onClose, vendorCode = '', bu = '', fetchCollectio
 
   const handleDownloadTemplate = () => {
     const cols = ['vendor_code','serial_code','cdes1','bdes1','cdes2','bdes2','cdes3','bdes3','contract_run','auto_ib'];
-    const csv = cols.join(',') + '\n';
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'contract_template.csv'; a.click();
+    const ws = XLSX.utils.aoa_to_sheet([cols]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'contract_template');
+    XLSX.writeFile(wb, 'contract_template.xlsx');
   };
 
   const handleImport = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setImporting(true); setImportMsg('');
     try {
-      const text = await file.text();
-      const lines = text.split('\n').filter(Boolean);
-      const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
-      const rows = lines.slice(1).map(line => {
-        const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g,''));
-        const obj = {};
-        headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
-        obj.bu = String(obj.vendor_code || '').split('-')[0] || bu;
-        obj.updated_by = userName;
-        obj.updated_at = new Date().toISOString();
-        return obj;
-      }).filter(r => r.vendor_code && r.serial_code);
+      const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+      let rawRows = [];
+
+      if (isExcel) {
+        // ── Excel ──────────────────────────────────────────────────────
+        const buf = await file.arrayBuffer();
+        const wb  = XLSX.read(buf, { type: 'array' });
+        rawRows   = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      } else {
+        // ── CSV ────────────────────────────────────────────────────────
+        const text    = await file.text();
+        const lines   = text.split('\n').filter(Boolean);
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        rawRows = lines.slice(1).map(line => {
+          const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+          const obj  = {};
+          headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+          return obj;
+        });
+      }
+
+      const now  = new Date().toISOString();
+      const rows = rawRows
+        .map(obj => {
+          const clean = {};
+          ['vendor_code','serial_code','cdes1','bdes1','cdes2','bdes2','cdes3','bdes3','contract_run','auto_ib'].forEach(k => {
+            clean[k] = String(obj[k] ?? '').trim();
+          });
+          clean.updated_by = userName;
+          clean.updated_at = now;
+          return clean;
+        })
+        .filter(r => r.vendor_code && r.serial_code);
+
       if (!rows.length) { setImportMsg('ไม่พบข้อมูล'); setImporting(false); return; }
+
       for (let i = 0; i < rows.length; i += 100) {
-        const { error } = await supabase.from('contract_list').upsert(rows.slice(i, i+100), { onConflict: 'vendor_code,serial_code', ignoreDuplicates: false });
+        const { error } = await supabase.from('contract_list').upsert(rows.slice(i, i + 100), { onConflict: 'vendor_code,serial_code', ignoreDuplicates: false });
         if (error) throw error;
       }
       setImportMsg(`✅ Import สำเร็จ ${rows.length} รายการ`);
