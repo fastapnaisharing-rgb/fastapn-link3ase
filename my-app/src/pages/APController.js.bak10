@@ -2383,7 +2383,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 }
 
 // ── InvoiceEntry ──────────────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
+function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
 
@@ -2493,12 +2493,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const grtGrnRef = useRef({ grt: nextGrtRunning, grn: nextGrnRunning });
   useEffect(() => { grtGrnRef.current = { grt: nextGrtRunning, grn: nextGrnRunning }; }, [nextGrtRunning, nextGrnRunning]);
   const lastSyncedGrtGrnRef = useRef({ grt: nextGrtRunning, grn: nextGrnRunning });
-
-  // ✅ แจ้ง running number ปัจจุบัน (optimistic) ขึ้นไปที่ APController
-  // เพื่อให้หน้า Batch Setup เห็นค่าล่าสุดทันทีหลัง Submit โดยไม่ต้องรอ DB sync
-  useEffect(() => {
-    if (onRunningChange && bu) onRunningChange(bu, { ap_grt: nextGrtRunning, ap_grn: nextGrnRunning });
-  }, [nextGrtRunning, nextGrnRunning, bu]);
 
   // ── presence: ตรวจว่ามี user อื่นทำงาน BU เดียวกันอยู่ไหม (ap_active_sessions) ──
   // มี -> sync GRT/GRN ทุก submit (real-time) / ไม่มี -> รอ sync รวดเดียวตอนออกจากหน้านี้
@@ -3005,8 +2999,6 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
   const [invoices, setInvoices]       = useState([]);
-  // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
-  const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
 
   useEffect(() => {
     fetchCollection('CompanyList'); fetchCollection('SupplierList'); fetchCollection('BranchList');
@@ -3014,15 +3006,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     fetchCollection('ItemcodeList'); fetchCollection('VendorCategory'); fetchCollection('NoticeList'); fetchCollection('VendorRule');
   }, []);
 
-  const infoItemsRaw    = getCached('CompanyList') || [];
-  // ✅ merge ค่า ap_grt/ap_grn ล่าสุด (optimistic) เข้ากับ CompanyList ก่อนส่งให้ BatchSetup
-  const infoItems       = runningOverride
-    ? infoItemsRaw.map(i => (
-        String(i['bu'] ?? '').toLowerCase() === String(runningOverride.bu ?? '').toLowerCase()
-          ? { ...i, ap_grt: runningOverride.ap_grt, ap_grn: runningOverride.ap_grn }
-          : i
-      ))
-    : infoItemsRaw;
+  const infoItems       = getCached('CompanyList');
   const supplierItems   = getCached('SupplierList');
   const branchItems     = getCached('BranchList');
   const accountItems    = getCached('AccountList');
@@ -3035,7 +3019,6 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
 
   const handleStart    = (config) => { setBatchConfig({ ...config, batchId: `${config.bu}-${config.receiveDate}-${Date.now()}` }); setStep(2); };
   const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
-  const handleRunningChange = (bu, vals) => { if (!bu) return; setRunningOverride({ bu, ...vals }); };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
@@ -3054,8 +3037,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}
             cpcItems={cpcItems} itemcodeItems={itemcodeItems} categoryItems={categoryItems} noticeItems={noticeItems}
             vendorRuleItems={vendorRuleItems} fetchCollection={fetchCollection}
-            userName={userName || currentUser?.email || ''} currentUser={currentUser}
-            onRunningChange={handleRunningChange} />
+            userName={userName || currentUser?.email || ''} currentUser={currentUser} />
         )}
         {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} />}
       </div>
