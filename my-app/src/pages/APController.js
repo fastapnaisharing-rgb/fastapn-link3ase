@@ -704,7 +704,7 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
 
 const recalcLines = (lines, itemcodeItems, vendorInfo, form) => {
   const calculated = lines.map(l => calcInvoiceLine(l, itemcodeItems, vendorInfo, form));
-  const hasT = calculated.some(l => l._accountRaw === '116301');
+  const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
   return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode }));
 };
 
@@ -1763,7 +1763,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   useEffect(() => {
     setLines(prev => {
       const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form));
-      const hasT = calculated.some(l => l._accountRaw === '116301');
+      const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
       return calculated.map(l => ({
         ...l,
         taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode,
