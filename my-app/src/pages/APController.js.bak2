@@ -1597,7 +1597,6 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const amountRef   = useRef(null);
   const itemCodeRef = useRef(null);
   const lineItemCodeRefs = useRef([]);
-  const lineAmountRefs   = useRef([]);
   const addLineAndFocus = () => {
     setLines(prev => {
       const next = [...prev, { hl: 'L', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
@@ -1948,7 +1947,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                           ) : (
                             <input
                               type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
-                              ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }) : undefined}
+                              ref={idx === 0 && key === 'amount' ? amountRef : undefined}
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? (idx === 0 ? handleMoneyChange(key, v) : setLineField(idx, key, v.replace(/[^0-9.]/g, ''))) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line[key]) : undefined}
                               onBlur={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line[key]) : undefined}
@@ -1985,7 +1984,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             if (activeLineIdx === 0) { setLine1Field('itemCode', item.code || ''); }
             else { setLineField(activeLineIdx, 'itemCode', item.code || ''); }
             setShowItemCodePopup(false);
-            setTimeout(() => lineAmountRefs.current[activeLineIdx]?.focus(), 50);
+            setTimeout(() => amountRef.current?.focus(), 50);
           }}
           itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
         />
