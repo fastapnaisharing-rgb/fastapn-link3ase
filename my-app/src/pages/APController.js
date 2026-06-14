@@ -1823,11 +1823,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', border: '0.5px solid #e8eaf0', borderRadius: '7px', overflow: 'hidden' }}>
                   <div style={{ padding: '7px 12px', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRN</div>
-                    <div style={{ fontSize: '12px', fontWeight: '500', color: form?.grn ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{form?.grn || '—'}</div>
+                    {(() => {
+                      const taxCode0 = String(lines[0]?.taxCode || '');
+                      const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+                      const val = isAutoGrt ? (isVat ? grnPreview : '-') : (form?.grn || '—');
+                      return <div style={{ fontSize: '12px', fontWeight: '500', color: (val !== '—' && val !== '-') ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
+                    })()}
                   </div>
                   <div style={{ padding: '7px 12px' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRT</div>
-                    <div style={{ fontSize: '12px', fontWeight: '500', color: form?.grtNum ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{form?.grtNum || '—'}</div>
+                    {(() => {
+                      const val = isAutoGrt ? grtPreview : (form?.grtNum || '—');
+                      return <div style={{ fontSize: '12px', fontWeight: '500', color: val !== '—' ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
+                    })()}
                   </div>
                   <div style={{ padding: '7px 12px', borderTop: '0.5px solid #e8eaf0', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>Branch Direct</div>
@@ -1844,26 +1852,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
           {/* Fields row */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', overflowX: 'visible', overflowY: 'visible', marginBottom: '14px', flexShrink: 0, position: 'relative' }}>
-            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => {
-              if (isAutoGrt && (key === 'grtNum' || key === 'grn')) {
-                const taxCode0 = String(lines[0]?.taxCode || '');
-                const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
-                const showVal = key === 'grtNum' ? grtPreview : (isVat ? grnPreview : '-');
-                return (
-                  <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
-                    <label style={fieldLabel}>{label}</label>
-                    <input type="text" value={showVal} readOnly title="Auto-generate (Lock)"
-                      style={{ ...inputStyle(w), background: '#f5f5f5', color: '#999', cursor: 'not-allowed' }} />
-                  </div>
-                );
-              }
-              return (
-                <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
-                  <label style={fieldLabel}>{label}</label>
-                  <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
-                </div>
-              );
-            })}
+            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+                <label style={fieldLabel}>{label}</label>
+                <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
+              </div>
+            ))}
             <PeriodPicker value={form?.period || ''} onChange={v => setField('period', v)} />
             {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>

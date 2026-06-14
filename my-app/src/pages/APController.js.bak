@@ -2165,6 +2165,15 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [showPopup, setShowPopup]       = useState(false);
   const [apGrtRunning, setApGrtRunning] = useState('0000');
   const [apGrnRunning, setApGrnRunning] = useState('0000');
+
+  // ── pre-fill running number จาก company_list.ap_grt/ap_grn ของ BU ที่เลือก ──
+  useEffect(() => {
+    if (buInfo) {
+      setApGrtRunning(String(buInfo.ap_grt ?? 0).padStart(4, '0'));
+      setApGrnRunning(String(buInfo.ap_grn ?? 0).padStart(4, '0'));
+    }
+  }, [buInfo]);
+
   const [historyTab, setHistoryTab]     = useState('mine');
   const [historyMine, setHistoryMine]   = useState([]);
   const [historyAll, setHistoryAll]     = useState([]);
@@ -2486,6 +2495,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const invoicesRef = useRef(invoices);
   useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
 
+  // ── ref เก็บ nextGrtRunning/nextGrnRunning ล่าสุด + ค่าที่เขียนลง DB ครั้งล่าสุด ──
+  const grtGrnRef = useRef({ grt: nextGrtRunning, grn: nextGrnRunning });
+  useEffect(() => { grtGrnRef.current = { grt: nextGrtRunning, grn: nextGrnRunning }; }, [nextGrtRunning, nextGrnRunning]);
+  const lastSyncedGrtGrnRef = useRef({ grt: nextGrtRunning, grn: nextGrnRunning });
+
+  // ── presence: ตรวจว่ามี user อื่นทำงาน BU เดียวกันอยู่ไหม (ap_active_sessions) ──
+  // มี -> sync GRT/GRN ทุก submit (real-time) / ไม่มี -> รอ sync รวดเดียวตอนออกจากหน้านี้
+  const realtimeSyncRef = useRef(false);
+
   // ── Sync รายการที่ยังไม่ขึ้น Supabase (bulk insert ครั้งเดียว) ────────────
   const syncingRef = useRef(false);
   const syncPendingToBucket = async () => {
@@ -2514,16 +2532,65 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
   };
 
+  // ── เขียนเลข running ล่าสุดกลับ company_list.ap_grt/ap_grn (เฉพาะตอน GRT Status = Auto) ──
+  // ค่าที่เขียนคือเลข "ถัดไปที่จะใช้" — กัน batch ถัดไปของ BU เดียวกัน gen เลขซ้ำ
+  const syncGrtGrnCounter = async (override = null) => {
+    if (!isAutoGrt || !batchConfig?.bu) return;
+    const { grt, grn } = override || grtGrnRef.current;
+    const last = lastSyncedGrtGrnRef.current;
+    if (grt === last.grt && grn === last.grn) return;
+    try {
+      const { error } = await supabase.from('company_list').update({ ap_grt: grt, ap_grn: grn }).eq('bu', batchConfig.bu);
+      if (error) throw error;
+      lastSyncedGrtGrnRef.current = { grt, grn };
+      if (fetchCollection) await fetchCollection('CompanyList', true);
+    } catch (e) {
+      console.error('syncGrtGrnCounter:', e);
+    }
+  };
+
+  // ── presence heartbeat: แจ้งตัวเอง + เช็คว่ามี session อื่นของ BU เดียวกันไหม ──
+  const heartbeat = async () => {
+    if (!batchConfig?.batchId || !batchConfig?.bu) return;
+    try {
+      await supabase.from('ap_active_sessions').upsert(
+        { bu: batchConfig.bu, batch_id: batchConfig.batchId, user_name: userName || currentUser?.email || '', last_seen: new Date().toISOString() },
+        { onConflict: 'batch_id' }
+      );
+      const cutoff = new Date(Date.now() - 60000).toISOString();
+      const { data, error } = await supabase.from('ap_active_sessions').select('batch_id').eq('bu', batchConfig.bu).neq('batch_id', batchConfig.batchId).gte('last_seen', cutoff);
+      if (error) throw error;
+      const wasRealtime = realtimeSyncRef.current;
+      realtimeSyncRef.current = !!(data && data.length);
+      if (isAutoGrt && !wasRealtime && realtimeSyncRef.current) {
+        // เพิ่งตรวจพบ user อื่นเข้ามาทำ BU เดียวกัน -> sync ค่าปัจจุบัน catch-up ทันที
+        syncGrtGrnCounter();
+      }
+    } catch (e) {
+      console.error('heartbeat:', e);
+    }
+  };
+
+  // ── ลบ session ของตัวเองตอนออกจากหน้านี้ ────────────────────────────────
+  const cleanupPresence = async () => {
+    if (!batchConfig?.batchId) return;
+    try { await supabase.from('ap_active_sessions').delete().eq('batch_id', batchConfig.batchId); }
+    catch (e) { console.error('cleanupPresence:', e); }
+  };
+
   // ── sync ทุก 30 วิ + ตอนซ่อนแท็บ + ครั้งสุดท้ายตอนออกจากหน้านี้ ───────────
   useEffect(() => {
     if (!bu || !me) return;
-    const interval = setInterval(() => { syncPendingToBucket(); }, 30000);
-    const onVisibility = () => { if (document.hidden) syncPendingToBucket(); };
+    heartbeat(); // เช็ค presence ทันทีตอนเข้าหน้านี้ ไม่ต้องรอ 30 วิแรก
+    const interval = setInterval(() => { syncPendingToBucket(); syncGrtGrnCounter(); heartbeat(); }, 30000);
+    const onVisibility = () => { if (document.hidden) { syncPendingToBucket(); syncGrtGrnCounter(); } };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
       syncPendingToBucket();
+      syncGrtGrnCounter();
+      cleanupPresence();
     };
   }, [bu, me]);
 
@@ -2581,6 +2648,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     });
     if (bumpGrt) setNextGrtRunning(n => n + 1);
     if (bumpGrn) setNextGrnRunning(n => n + 1);
+    // ── backup เลข running ที่ "ใช้ไปแล้ว" กลับ company_list ทันที — เฉพาะตอนมี user อื่น ──
+    // ทำงาน BU เดียวกันอยู่ (realtimeSyncRef) ถ้าไม่มี รอ sync รวดสุดท้ายตอนออกจากหน้านี้
+    if (isAutoGrt && realtimeSyncRef.current) {
+      syncGrtGrnCounter({
+        grt: bumpGrt ? nextGrtRunning + 1 : nextGrtRunning,
+        grn: bumpGrn ? nextGrnRunning + 1 : nextGrnRunning,
+      });
+    }
     setFormState(f => ({
       ...f,
       invoiceNum: '', invDate: '', invTax: '', grtNum: '', grn: '',
