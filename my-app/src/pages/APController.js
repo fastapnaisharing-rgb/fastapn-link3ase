@@ -618,7 +618,6 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   );
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SupplierSearchPopup — with Add/Edit form (Editor+ only)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -654,6 +653,60 @@ const SUPPLIER_FIELDS = [
   ['NoticeDescrip',   'Notice Description',     3, 'textarea'],
   ['RuleDescrip',     'Rule Description',       3, 'textarea'],
 ];
+
+const fmt2Val = (n) => n === 0 ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const buildTaxCodeVal = (vatChar, branchDirectCode) => {
+  const v = String(vatChar ?? '').trim().toUpperCase();
+  if (v === 'V') return `${branchDirectCode}-N VAT7%`;
+  if (v === 'S') return `${branchDirectCode}-N SVAT7%`;
+  return '';
+};
+const buildWhtCodeVal = (whtChar, branchDirectCode) => {
+  const w = String(whtChar ?? '').trim().toUpperCase();
+  if (w === 'N' || w === '') return '';
+  return `${branchDirectCode}-WHT${w}%`;
+};
+
+const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
+  if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
+  const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
+  if (!itemData) return line;
+  const rawSub = String(itemData.sub ?? '').trim();
+  const subVal = rawSub.toUpperCase() === 'SUB' ? String(vendorInfo?.['Sub Acc'] ?? '').trim() : rawSub;
+  const accountVal = [String(itemData.cpc ?? '').trim(), String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
+  const hasIB = form?.branchIBLabel && form.branchIBLabel !== '-';
+  const isIBAll = form?.branchIBLabel === 'IB-ALL';
+  const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
+  const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
+  const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), form?.backDesc1 ?? '', form?.backDesc2 ?? '', form?.backDesc3 ?? '', ibLabel].filter(Boolean).join(' ');
+  const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
+  const hasITC = notices.includes('ITC');
+  const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
+  const hasTC = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
+  let sourceStr = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
+  if (hasTC || hasVITEM) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase();
+  if (form?.invTax?.trim()) sourceStr = String(form.invTax).trim().toUpperCase();
+  if (line.tax?.trim()) sourceStr = String(line.tax).trim().toUpperCase();
+  const vatChar = sourceStr[0] ?? '';
+  const whtChar = sourceStr[1] ?? '';
+  const branchDirectCode = String(form?.branchDirectLabel ?? '').split('-')[0].trim();
+  const taxCodeVal = buildTaxCodeVal(vatChar, branchDirectCode);
+  const whtCodeVal = hasITC ? '' : buildWhtCodeVal(whtChar, branchDirectCode);
+  const amountNum = parseFloat(String(line.amount).replace(/,/g, '')) || 0;
+  const vatNum = (vatChar === 'V' || vatChar === 'S') ? Math.round(amountNum * 0.07 * 100) / 100 : 0;
+  const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
+  const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
+  const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
+  return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2Val(vatNum), wht: fmt2Val(whtNum), total: fmt2Val(totalNum), _taxCodeRaw: taxCodeVal };
+};
+
+const recalcLines = (lines, itemcodeItems, vendorInfo, form) => {
+  const calculated = lines.map(l => calcInvoiceLine(l, itemcodeItems, vendorInfo, form));
+  const hasT = calculated.some(l => String(l.account || '').startsWith('116301'));
+  return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode }));
+};
+
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
 
 function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', fetchCollection, userName = '' }) {
@@ -1038,8 +1091,6 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     </div>
   );
 }
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PeriodPicker
@@ -2029,6 +2080,243 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BucketItemPopup — View / Edit ของรายการใน Batch Bucket
+// ─────────────────────────────────────────────────────────────────────────────
+function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave }) {
+  const isView = mode === 'view';
+  const emptyLine = () => ({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
+
+  const [form, setForm]     = useState({});
+  const [lines, setLines]   = useState([emptyLine()]);
+  const [saving, setSaving] = useState(false);
+  const [showItemCodePopup, setShowItemCodePopup] = useState(false);
+  const [activeLineIdx, setActiveLineIdx] = useState(0);
+  const [taxDropdownIdx, setTaxDropdownIdx] = useState(null);
+
+  useEffect(() => {
+    if (show && invoice) {
+      setForm({ ...(invoice.form_data || {}) });
+      const ls = (invoice.lines && invoice.lines.length) ? invoice.lines.map(l => ({ ...l })) : [emptyLine()];
+      setLines(ls);
+    }
+  }, [show, invoice]);
+
+  const vendorInfo = supplierItems.find(s => {
+    const code = String(s['Code'] ?? '').trim().toLowerCase();
+    const sup  = String(form.supplierCode ?? '').trim().toLowerCase();
+    return code === sup || code === `${(bu || '').toLowerCase()}-${sup}`;
+  });
+
+  const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
+  const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
+  const addLine = () => setLines(prev => [...prev, emptyLine()]);
+  const removeLine = (idx) => setLines(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
+
+  const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
+  const handleMoneyChange = (idx, key, val) => { let v = val.replace(/[^0-9.]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLineField(idx, key, v); };
+  const handleMoneyBlur  = (idx, key, val) => { if (val === '' || val === '.') { setLineField(idx, key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
+  const handleMoneyFocus = (idx, key, val) => { setLineField(idx, key, val.replace(/,/g, '')); };
+
+  // recalc ทุกครั้งที่ itemCode/amount/tax/header เปลี่ยน (เฉพาะตอน edit)
+  useEffect(() => {
+    if (isView) return;
+    setLines(prev => recalcLines(prev, itemcodeItems, vendorInfo, form));
+  }, [
+    lines.map(l => l.itemCode).join(','),
+    lines.map(l => l.amount).join(','),
+    lines.map(l => l.tax).join(','),
+    form.period, form.invTax, form.backDesc1, form.backDesc2, form.backDesc3,
+    form.branchNo, form.branchDirectLabel, form.branchIBLabel,
+  ]);
+
+  if (!show || !invoice) return null;
+
+  const inputStyle = (w, disabled) => ({ height: '28px', padding: '0 8px', fontSize: '11px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: disabled ? '#f5f5f5' : 'white', color: disabled ? '#999' : '#1a3a5c', boxSizing: 'border-box', width: w || '100%' });
+
+  const handleSave = async () => {
+    if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) { alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
+    setSaving(true);
+    const ok = await onSave({ form_data: form, lines });
+    setSaving(false);
+    if (ok) onClose();
+  };
+
+  const totalVat = lines.reduce((s, l) => s + (parseFloat(String(l.vat).replace(/,/g, '')) || 0), 0);
+  const totalWht = lines.reduce((s, l) => s + (parseFloat(String(l.wht).replace(/,/g, '')) || 0), 0);
+  const totalNet = lines.reduce((s, l) => s + (parseFloat(String(l.total).replace(/,/g, '')) || 0), 0);
+  const fmtMoney = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500, backdropFilter: 'blur(2px)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: 'white', width: '98vw', maxWidth: '1400px', height: '92vh', borderRadius: '14px', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+
+        <div style={{ padding: '14px 22px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isView ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isView ? '👁' : '✏️'}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isView ? 'View Invoice' : 'Edit Invoice'}</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.invoiceNum || '-'}</span>
+              {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
+        </div>
+
+        <div style={{ flex: 1, overflow: 'hidden', padding: '18px 22px', display: 'flex', flexDirection: 'column' }}>
+
+          {/* Vendor + Document */}
+          <div style={{ display: 'flex', gap: '2%', marginBottom: '14px', flexShrink: 0 }}>
+            <div style={{ ...card, width: '49%', marginBottom: 0 }}>
+              <div style={cardHead}><span style={{ fontSize: '12px', fontWeight: '600', color: '#1a3a5c' }}>{vendorInfo?.['Supplier Name'] || form.supplierCode || '—'}</span></div>
+              <div style={{ ...cardBody, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {[['Vendor Code', vendorInfo?.['Supplier Number']], ['Vendor Site', vendorInfo?.['Supplier Site']], ['Tax ID', vendorInfo?.['Tax ID']], ['No.', vendorInfo?.['No.']]].map(([label, val]) => (
+                  <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc' }}>{val || '—'}</span></div>
+                ))}
+              </div>
+            </div>
+            <div style={{ ...card, width: '49%', marginBottom: 0 }}>
+              <div style={cardHead}><span style={cardLabel}>Document Number</span></div>
+              <div style={{ ...cardBody, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {[['GRT', form.grtNum], ['GRN', form.grn], ['Branch Direct', form.branchDirectLabel], ['Branch IB', form.branchIBLabel && form.branchIBLabel !== '-' ? form.branchIBLabel : '']].map(([label, val]) => (
+                  <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || '—'}</span></div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Editable header fields */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '14px', flexShrink: 0 }}>
+            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px']].map(([label, key, type, w]) => (
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <label style={fieldLabel}>{label}</label>
+                <input type={type} value={form[key] || ''} disabled={isView} onChange={e => setField(key, e.target.value)} style={inputStyle(w, isView)} />
+              </div>
+            ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              <label style={fieldLabel}>Period</label>
+              <input type="text" value={form.period || ''} disabled={isView} onChange={e => setField('period', e.target.value)} style={inputStyle('150px', isView)} />
+            </div>
+            {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 140px', minWidth: '140px' }}>
+                <label style={fieldLabel}>{label}</label>
+                <input type="text" value={form[key] || ''} disabled={isView} onChange={e => setField(key, e.target.value)} style={inputStyle('100%', isView)} />
+              </div>
+            ))}
+          </div>
+
+          {/* Lines table */}
+          <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
+                <colgroup>{(isView ? [3,7,9,5,21,10,9,12,8,8,8] : [3,7,9,5,19,10,9,11,8,8,8,4]).map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                  <tr style={{ background: '#f8f9fa' }}>
+                    {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total', ...(isView ? [] : [''])].map(h => (
+                      <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, idx) => (
+                    <tr key={idx}>
+                      {[['hl'],['itemCode'],['amount'],['tax'],['desc'],['taxCode'],['whtCode'],['account'],['vat'],['wht'],['total']].map(([key]) => (
+                        <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
+                          {key === 'hl' ? (
+                            <input type="text" value={line.hl} disabled={isView} maxLength={1} onChange={e => setLineField(idx, 'hl', e.target.value.slice(0,1).toUpperCase())}
+                              style={{ ...inputStyle('100%', isView), textAlign: 'center' }} />
+                          ) : key === 'itemCode' ? (
+                            <div style={{ position: 'relative' }}>
+                              <input type="text" maxLength={8} value={line[key]} disabled={isView}
+                                onChange={e => setLineField(idx, key, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                                style={{ ...inputStyle('100%', isView), paddingRight: isView ? '8px' : '24px' }} />
+                              {!isView && (
+                                <button type="button" onClick={() => { setActiveLineIdx(idx); setShowItemCodePopup(true); }}
+                                  style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                                </button>
+                              )}
+                            </div>
+                          ) : key === 'tax' ? (
+                            <div style={{ position: 'relative' }}>
+                              <input type="text" value={line[key]} disabled={isView}
+                                onChange={e => setLineField(idx, 'tax', e.target.value.toUpperCase())}
+                                onFocus={() => !isView && setTaxDropdownIdx(idx)}
+                                onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
+                                style={inputStyle('100%', isView)} />
+                              {taxDropdownIdx === idx && (
+                                <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 50, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
+                                  {TAX_TYPE_OPTS.map(o => (
+                                    <div key={o} onMouseDown={(e) => { e.preventDefault(); setLineField(idx, 'tax', o); setTaxDropdownIdx(null); }}
+                                      style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: line[key] === o ? '#eef3fb' : 'white', whiteSpace: 'nowrap' }}>{o}</div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]} disabled={isView}
+                              onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : setLineField(idx, key, v); }}
+                              onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
+                              onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
+                              style={{ ...inputStyle('100%', isView), color: key === 'wht' && line[key] ? '#A32D2D' : (isView ? '#999' : '#1a3a5c'), textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
+                          )}
+                        </td>
+                      ))}
+                      {!isView && (
+                        <td style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center' }}>
+                          <button onClick={() => removeLine(idx)} disabled={lines.length <= 1}
+                            style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: lines.length <= 1 ? '#f5f5f5' : '#FCEBEB', color: lines.length <= 1 ? '#ccc' : '#791F1F', cursor: lines.length <= 1 ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!isView && (
+              <div style={{ padding: '8px 10px', borderTop: '0.5px solid #f0f0f0' }}>
+                <button onClick={addLine} style={{ ...btnOutline, fontSize: '11px' }}>+ Add line</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!isView && (
+          <ItemCodeSearchPopup
+            show={showItemCodePopup} onClose={() => setShowItemCodePopup(false)}
+            onSelect={(item) => { setLineField(activeLineIdx, 'itemCode', item.code || ''); setShowItemCodePopup(false); }}
+            itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
+          />
+        )}
+
+        {/* Footer */}
+        <div style={{ borderTop: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+          <div style={{ padding: '8px 22px' }}>
+            {isView ? (
+              <button onClick={onClose} style={btnOutline}>Close</button>
+            ) : (
+              <button onClick={handleSave} disabled={saving} style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', cursor: saving ? 'default' : 'pointer', fontWeight: '500' }}>{saving ? 'Saving...' : '💾 Save'}</button>
+            )}
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
+            {[['VAT', fmtMoney(totalVat), false], ['WHT', fmtMoney(totalWht), totalWht < 0], ['NET TOTAL', fmtMoney(totalNet), false]].map(([label, val, isDanger], i, arr) => (
+              <div key={label} style={{ padding: '8px 24px', borderRight: i < arr.length - 1 ? '0.5px solid #f0f2f5' : 'none', textAlign: 'right', minWidth: '100px' }}>
+                <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>{label}</div>
+                <div style={{ fontSize: i === arr.length - 1 ? '14px' : '13px', fontWeight: '500', color: isDanger ? '#A32D2D' : '#1a3a5c' }}>{val}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Helpers & Shared styles ───────────────────────────────────────────────────
 const fmt = (n) => Math.round(n).toLocaleString('th-TH');
 const card      = { background: 'white', border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', marginBottom: '10px' };
@@ -2396,6 +2684,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const [showBranchPopup, setShowBranchPopup]     = useState(false);
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
   const [showSupplierPopup, setShowSupplierPopup] = useState(false); // ✅ supplier search
+  const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', index: -1 });
   const branchJustResolved = useRef(false); // ✅ ป้องกัน blur ยิงซ้ำหลัง resolveBranch
 
   const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); if (key === 'supplierCode' && !val) setVendorInfo(null); };
@@ -2604,6 +2893,40 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   // sync ขึ้น bucket_list รวมเป็นชุดตาม interval/trigger ด้านบน
   // เก็บ supplier/branch ไว้ (มักเป็น vendor เดียวกันหลายใบ) แต่ reset
   // invoice-specific fields เพื่อกรอกใบถัดไป
+  // ── บันทึกการแก้ไข invoice ใน Batch Bucket (เรียกจาก BucketItemPopup) ──
+  const handleSaveBucketItem = async ({ form_data, lines }) => {
+    const idx = bucketPopup.index;
+    if (idx < 0 || !invoices[idx]) return false;
+    const sumField = (key) => lines.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
+    const target = invoices[idx];
+    const updated = {
+      ...target,
+      branch_no:    form_data.branchNo || '',
+      branch_label: form_data.branchDirectLabel || '',
+      invoice_no:   form_data.invoiceNum || '',
+      inv_date:     form_data.invDate || null,
+      period:       form_data.period || '',
+      description:  lines[0]?.desc || '',
+      amount: sumField('amount'), vat: sumField('vat'), wht: sumField('wht'), net: sumField('total'),
+      form_data, lines,
+    };
+    if (target._synced && target.id) {
+      const { error } = await supabase.from('bucket_list').update({
+        branch_no: updated.branch_no, branch_label: updated.branch_label, invoice_no: updated.invoice_no,
+        inv_date: updated.inv_date, period: updated.period, description: updated.description,
+        amount: updated.amount, vat: updated.vat, wht: updated.wht, net: updated.net,
+        form_data: updated.form_data, lines: updated.lines,
+      }).eq('id', target.id);
+      if (error) { alert('บันทึกไม่สำเร็จ: ' + error.message); return false; }
+    }
+    setInvoices(prev => {
+      const next = prev.map((it, i) => i === idx ? updated : it);
+      saveLocalBucket(next);
+      return next;
+    });
+    return true;
+  };
+
   const handleSubmitInvoice = async (lines) => {
     const sumField = (key) => lines.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     const roleLabel = isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer';
@@ -2827,6 +3150,21 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         userName={userName || currentUser?.email || ''}
       />
       <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
+
+      <BucketItemPopup
+        show={bucketPopup.show}
+        mode={bucketPopup.mode}
+        invoice={bucketPopup.index >= 0 ? invoices[bucketPopup.index] : null}
+        onClose={() => setBucketPopup({ show: false, mode: 'view', index: -1 })}
+        itemcodeItems={itemcodeItems}
+        supplierItems={supplierItems}
+        bu={batchConfig?.bu || ''}
+        fetchCollection={fetchCollection}
+        userName={userName || currentUser?.email || ''}
+        currentUser={currentUser}
+        onSave={handleSaveBucketItem}
+      />
+      
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
         <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} />
@@ -2869,18 +3207,25 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
                 <td style={{ padding: '8px 9px', color: inv.wht < 0 ? '#A32D2D' : '#555', textAlign: 'right' }}>{inv.wht ? `฿${fmt(inv.wht)}` : '—'}</td>
                 <td style={{ padding: '8px 9px', fontWeight: '600', color: '#1a3a5c', textAlign: 'right' }}>{inv.net ? `฿${fmt(inv.net)}` : '—'}</td>
                 <td style={{ padding: '6px 9px' }}>
-                  <button onClick={async () => {
-                      if (inv._synced && inv.id) { await supabase.from('bucket_list').delete().eq('id', inv.id); }
-                      setInvoices(list => {
-                        const next = list.filter((_, idx) => idx !== i);
-                        saveLocalBucket(next);
-                        return next;
-                      });
-                    }}
-                    style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                  </button>
+                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                    <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', index: i })}
+                      style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button title="Edit" onClick={() => setBucketPopup({ show: true, mode: 'edit', index: i })}
+                      style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button onClick={async () => {
+                        if (inv._synced && inv.id) { await supabase.from('bucket_list').delete().eq('id', inv.id); }
+                        setInvoices(list => { const next = list.filter((_, idx2) => idx2 !== i); saveLocalBucket(next); return next; });
+                      }}
+                      style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                    </button>
+                  </div>
                 </td>
+
               </tr>
             ))}
           </tbody>
