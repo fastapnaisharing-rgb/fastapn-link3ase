@@ -2477,8 +2477,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
           };
           const grtNums = merged.map(inv => extractRunning(inv.form_data?.grtNum, batchConfig.grtPrefix)).filter(n => n !== null);
           const grnNums = merged.map(inv => extractRunning(inv.form_data?.grn, batchConfig.grnPrefix)).filter(n => n !== null);
-          if (grtNums.length) setNextGrtRunning(Math.max(...grtNums) + 1);
-          if (grnNums.length) setNextGrnRunning(Math.max(...grnNums) + 1);
+          if (grtNums.length) setNextGrtRunning(Math.max(...grtNums));
+          if (grnNums.length) setNextGrnRunning(Math.max(...grnNums));
         }
       } catch (e) { console.error('loadBucketList:', e); }
     })();
@@ -2526,15 +2526,21 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
   };
 
-  // ── เขียนเลข running ล่าสุดกลับ company_list.ap_grt/ap_grn (เฉพาะตอน GRT Status = Auto) ──
-  // ค่าที่เขียนคือเลข "ถัดไปที่จะใช้" — กัน batch ถัดไปของ BU เดียวกัน gen เลขซ้ำ
+  // ── เขียนเลข running ล่าสุดที่ใช้ไปแล้วกลับ company_list.ap_grt/ap_grn (เฉพาะตอน GRT Status = Auto) ──
+  // partial update — ส่งเฉพาะ ap_grt/ap_grn ที่ "เปลี่ยนจริง" เท่านั้น กันทับค่าของ
+  // session อื่น (BU เดียวกัน) ที่อาจ update อีกตัวไปแล้วก่อนหน้า
   const syncGrtGrnCounter = async (override = null) => {
     if (!isAutoGrt || !batchConfig?.bu) return;
     const { grt, grn } = override || grtGrnRef.current;
     const last = lastSyncedGrtGrnRef.current;
-    if (grt === last.grt && grn === last.grn) return;
+    const grtChanged = grt !== last.grt;
+    const grnChanged = grn !== last.grn;
+    if (!grtChanged && !grnChanged) return;
+    const payload = {};
+    if (grtChanged) payload.ap_grt = grt;
+    if (grnChanged) payload.ap_grn = grn;
     try {
-      const { error } = await supabase.from('company_list').update({ ap_grt: grt, ap_grn: grn }).eq('bu', batchConfig.bu);
+      const { error } = await supabase.from('company_list').update(payload).eq('bu', batchConfig.bu);
       if (error) throw error;
       lastSyncedGrtGrnRef.current = { grt, grn };
       if (fetchCollection) await fetchCollection('CompanyList', true);
@@ -2601,12 +2607,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     let grtNumVal = form.grtNum, grnVal = form.grn;
     let bumpGrt = false, bumpGrn = false;
     if (isAutoGrt) {
-      grtNumVal = `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning).padStart(4, '0')}`;
+      grtNumVal = `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4, '0')}`;
       bumpGrt = true;
       const taxCode0 = String(lines[0]?.taxCode || '');
       const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
       if (isVat) {
-        grnVal = `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning).padStart(4, '0')}`;
+        grnVal = `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4, '0')}`;
         bumpGrn = true;
       } else {
         grnVal = '';
@@ -2820,7 +2826,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning).padStart(4,'0')}` : ''} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}

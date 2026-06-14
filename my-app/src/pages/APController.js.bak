@@ -1823,11 +1823,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', border: '0.5px solid #e8eaf0', borderRadius: '7px', overflow: 'hidden' }}>
                   <div style={{ padding: '7px 12px', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRN</div>
-                    <div style={{ fontSize: '12px', fontWeight: '500', color: form?.grn ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{form?.grn || '—'}</div>
+                    {(() => {
+                      const taxCode0 = String(lines[0]?.taxCode || '');
+                      const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+                      const val = isAutoGrt ? (isVat ? grnPreview : '-') : (form?.grn || '—');
+                      return <div style={{ fontSize: '12px', fontWeight: '500', color: (val !== '—' && val !== '-') ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
+                    })()}
                   </div>
                   <div style={{ padding: '7px 12px' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRT</div>
-                    <div style={{ fontSize: '12px', fontWeight: '500', color: form?.grtNum ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{form?.grtNum || '—'}</div>
+                    {(() => {
+                      const val = isAutoGrt ? grtPreview : (form?.grtNum || '—');
+                      return <div style={{ fontSize: '12px', fontWeight: '500', color: val !== '—' ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
+                    })()}
                   </div>
                   <div style={{ padding: '7px 12px', borderTop: '0.5px solid #e8eaf0', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>Branch Direct</div>
@@ -1844,26 +1852,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
           {/* Fields row */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', overflowX: 'visible', overflowY: 'visible', marginBottom: '14px', flexShrink: 0, position: 'relative' }}>
-            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => {
-              if (isAutoGrt && (key === 'grtNum' || key === 'grn')) {
-                const taxCode0 = String(lines[0]?.taxCode || '');
-                const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
-                const showVal = key === 'grtNum' ? grtPreview : (isVat ? grnPreview : '-');
-                return (
-                  <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
-                    <label style={fieldLabel}>{label}</label>
-                    <input type="text" value={showVal} readOnly title="Auto-generate (Lock)"
-                      style={{ ...inputStyle(w), background: '#f5f5f5', color: '#999', cursor: 'not-allowed' }} />
-                  </div>
-                );
-              }
-              return (
-                <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
-                  <label style={fieldLabel}>{label}</label>
-                  <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
-                </div>
-              );
-            })}
+            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+                <label style={fieldLabel}>{label}</label>
+                <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
+              </div>
+            ))}
             <PeriodPicker value={form?.period || ''} onChange={v => setField('period', v)} />
             {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
@@ -2483,8 +2477,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
           };
           const grtNums = merged.map(inv => extractRunning(inv.form_data?.grtNum, batchConfig.grtPrefix)).filter(n => n !== null);
           const grnNums = merged.map(inv => extractRunning(inv.form_data?.grn, batchConfig.grnPrefix)).filter(n => n !== null);
-          if (grtNums.length) setNextGrtRunning(Math.max(...grtNums) + 1);
-          if (grnNums.length) setNextGrnRunning(Math.max(...grnNums) + 1);
+          if (grtNums.length) setNextGrtRunning(Math.max(...grtNums));
+          if (grnNums.length) setNextGrnRunning(Math.max(...grnNums));
         }
       } catch (e) { console.error('loadBucketList:', e); }
     })();
@@ -2607,12 +2601,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     let grtNumVal = form.grtNum, grnVal = form.grn;
     let bumpGrt = false, bumpGrn = false;
     if (isAutoGrt) {
-      grtNumVal = `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning).padStart(4, '0')}`;
+      grtNumVal = `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4, '0')}`;
       bumpGrt = true;
       const taxCode0 = String(lines[0]?.taxCode || '');
       const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
       if (isVat) {
-        grnVal = `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning).padStart(4, '0')}`;
+        grnVal = `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4, '0')}`;
         bumpGrn = true;
       } else {
         grnVal = '';
@@ -2826,7 +2820,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning).padStart(4,'0')}` : ''} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
