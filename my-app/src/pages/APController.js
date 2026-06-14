@@ -1608,9 +1608,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
-  const handleMoneyChange = (key, val) => { let v = val.replace(/[^0-9.]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLine1Field(key, v); };
-  const handleMoneyBlur  = (key, val) => { if (val === '' || val === '.') { setLine1Field(key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLine1Field(key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
-  const handleMoneyFocus = (key, val) => { setLine1Field(key, val.replace(/,/g, '')); };
+  const handleMoneyChange = (idx, key, val) => { let v = val.replace(/[^0-9.]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLineField(idx, key, v); };
+  const handleMoneyBlur  = (idx, key, val) => { if (val === '' || val === '.') { setLineField(idx, key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
+  const handleMoneyFocus = (idx, key, val) => { setLineField(idx, key, val.replace(/,/g, '')); };
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const buildTaxCode = (vatChar, branchDirectCode) => {
@@ -1822,19 +1822,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', border: '0.5px solid #e8eaf0', borderRadius: '7px', overflow: 'hidden' }}>
                   <div style={{ padding: '7px 12px', borderRight: '0.5px solid #e8eaf0' }}>
+                    <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRT</div>
+                    {(() => {
+                      const val = isAutoGrt ? grtPreview : (form?.grtNum || '—');
+                      return <div style={{ fontSize: '12px', fontWeight: '500', color: val !== '—' ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
+                    })()}
+                  </div>
+                  <div style={{ padding: '7px 12px' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRN</div>
                     {(() => {
                       const taxCode0 = String(lines[0]?.taxCode || '');
                       const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
                       const val = isAutoGrt ? (isVat ? grnPreview : '-') : (form?.grn || '—');
                       return <div style={{ fontSize: '12px', fontWeight: '500', color: (val !== '—' && val !== '-') ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
-                    })()}
-                  </div>
-                  <div style={{ padding: '7px 12px' }}>
-                    <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRT</div>
-                    {(() => {
-                      const val = isAutoGrt ? grtPreview : (form?.grtNum || '—');
-                      return <div style={{ fontSize: '12px', fontWeight: '500', color: val !== '—' ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
                     })()}
                   </div>
                   <div style={{ padding: '7px 12px', borderTop: '0.5px solid #e8eaf0', borderRight: '0.5px solid #e8eaf0' }}>
@@ -1957,9 +1957,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             <input
                               type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
                               ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }) : undefined}
-                              onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? (idx === 0 ? handleMoneyChange(key, v) : setLineField(idx, key, v.replace(/[^0-9.]/g, ''))) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
-                              onFocus={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(key, line[key]) : undefined}
-                              onBlur={idx === 0 && MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(key, line[key]) : undefined}
+                              onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
+                              onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
+                              onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
                               onKeyDown={['total','amount','desc'].includes(key) ? (e) => {
                                 if (e.key === 'Enter') {
                                   const l = lines[idx];
@@ -2648,14 +2648,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     });
     if (bumpGrt) setNextGrtRunning(n => n + 1);
     if (bumpGrn) setNextGrnRunning(n => n + 1);
-    // ── backup เลข running ที่ "ใช้ไปแล้ว" กลับ company_list ทันที — เฉพาะตอนมี user อื่น ──
-    // ทำงาน BU เดียวกันอยู่ (realtimeSyncRef) ถ้าไม่มี รอ sync รวดสุดท้ายตอนออกจากหน้านี้
-    if (isAutoGrt && realtimeSyncRef.current) {
-      syncGrtGrnCounter({
-        grt: bumpGrt ? nextGrtRunning + 1 : nextGrtRunning,
-        grn: bumpGrn ? nextGrnRunning + 1 : nextGrnRunning,
-      });
-    }
+    // ✅ ตอน Submit: update แค่ State (nextGrtRunning/nextGrnRunning) เท่านั้น
+    // ไม่เขียนกลับ company_list.ap_grt/ap_grn ที่นี่อีกต่อไป —
+    // การ sync เลข running (4 หลักล่าสุด) กลับ DB จะทำ "ตอนจบ Batch" เท่านั้น
+    // ผ่าน syncGrtGrnCounter() ที่ถูกเรียกจาก useEffect cleanup ด้านล่าง
+    // (เมื่อออกจากหน้า InvoiceEntry / เปลี่ยน step) และ interval 30s (safety-net)
     setFormState(f => ({
       ...f,
       invoiceNum: '', invDate: '', invTax: '', grtNum: '', grn: '',

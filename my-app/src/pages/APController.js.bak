@@ -2526,15 +2526,21 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
   };
 
-  // ── เขียนเลข running ล่าสุดกลับ company_list.ap_grt/ap_grn (เฉพาะตอน GRT Status = Auto) ──
-  // ค่าที่เขียนคือเลข "ถัดไปที่จะใช้" — กัน batch ถัดไปของ BU เดียวกัน gen เลขซ้ำ
+  // ── เขียนเลข running ล่าสุดที่ใช้ไปแล้วกลับ company_list.ap_grt/ap_grn (เฉพาะตอน GRT Status = Auto) ──
+  // partial update — ส่งเฉพาะ ap_grt/ap_grn ที่ "เปลี่ยนจริง" เท่านั้น กันทับค่าของ
+  // session อื่น (BU เดียวกัน) ที่อาจ update อีกตัวไปแล้วก่อนหน้า
   const syncGrtGrnCounter = async (override = null) => {
     if (!isAutoGrt || !batchConfig?.bu) return;
     const { grt, grn } = override || grtGrnRef.current;
     const last = lastSyncedGrtGrnRef.current;
-    if (grt === last.grt && grn === last.grn) return;
+    const grtChanged = grt !== last.grt;
+    const grnChanged = grn !== last.grn;
+    if (!grtChanged && !grnChanged) return;
+    const payload = {};
+    if (grtChanged) payload.ap_grt = grt;
+    if (grnChanged) payload.ap_grn = grn;
     try {
-      const { error } = await supabase.from('company_list').update({ ap_grt: grt, ap_grn: grn }).eq('bu', batchConfig.bu);
+      const { error } = await supabase.from('company_list').update(payload).eq('bu', batchConfig.bu);
       if (error) throw error;
       lastSyncedGrtGrnRef.current = { grt, grn };
       if (fetchCollection) await fetchCollection('CompanyList', true);
