@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../supabase';
-import { flushAllSync } from './syncRegistry';
 
 const AuthContext = createContext();
 
@@ -22,9 +21,6 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async () => {
-    // ── Auto Backup: sync ข้อมูล pending (Batch Bucket / GRT-GRN running) ──
-    // ── ขึ้น Supabase ให้เสร็จก่อน sign out ──────────────────────────────
-    await flushAllSync();
     sessionStorage.removeItem('fastapn_cache');
     sessionStorage.removeItem('fastapn_cache_time');
     await supabase.auth.signOut();

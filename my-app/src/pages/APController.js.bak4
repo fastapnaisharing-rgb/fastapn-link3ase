@@ -4,7 +4,6 @@ import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
-import { registerSyncFlush } from '../contexts/syncRegistry';
 
 const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
 
@@ -2875,35 +2874,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   };
 
   // ── sync ทุก 30 วิ + ตอนซ่อนแท็บ + ครั้งสุดท้ายตอนออกจากหน้านี้ ───────────
-  // ── Auto Backup: sync Batch Bucket + GRT/GRN counter ────────────────────
-  const autoBackup = () => { syncPendingToBucket(); syncGrtGrnCounter(); };
-
   useEffect(() => {
     if (!bu || !me) return;
     heartbeat(); // เช็ค presence ทันทีตอนเข้าหน้านี้ ไม่ต้องรอ 30 วิแรก
-    const interval = setInterval(() => { autoBackup(); heartbeat(); }, 30000);
-
-    // ── Auto Backup ทุก 15 นาที (เพิ่มเติมจาก interval 30 วิ ด้านบน) ──────
-    const backupInterval = setInterval(autoBackup, 15 * 60 * 1000);
-
-    const onVisibility = () => { if (document.hidden) autoBackup(); };
+    const interval = setInterval(() => { syncPendingToBucket(); syncGrtGrnCounter(); heartbeat(); }, 30000);
+    const onVisibility = () => { if (document.hidden) { syncPendingToBucket(); syncGrtGrnCounter(); } };
     document.addEventListener('visibilitychange', onVisibility);
-
-    // ── ปิดแท็บ/เบราว์เซอร์ — pagehide fire ก่อนปิดเสมอ (รวม mobile) ──────
-    window.addEventListener('pagehide', autoBackup);
-
-    // ── ลงทะเบียน flush สำหรับตอน logout (เรียกจาก AuthContext.logout) ───
-    const unregisterFlush = registerSyncFlush(async () => {
-      await syncPendingToBucket();
-      await syncGrtGrnCounter();
-    });
-
     return () => {
       clearInterval(interval);
-      clearInterval(backupInterval);
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide', autoBackup);
-      unregisterFlush();
       syncPendingToBucket();
       syncGrtGrnCounter();
       cleanupPresence();
