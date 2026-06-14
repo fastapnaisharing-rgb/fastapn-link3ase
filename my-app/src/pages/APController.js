@@ -698,12 +698,12 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
   const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
   const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
-  return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2Val(vatNum), wht: fmt2Val(whtNum), total: fmt2Val(totalNum), _taxCodeRaw: taxCodeVal };
+  return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2Val(vatNum), wht: fmt2Val(whtNum), total: fmt2Val(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
 };
 
 const recalcLines = (lines, itemcodeItems, vendorInfo, form) => {
   const calculated = lines.map(l => calcInvoiceLine(l, itemcodeItems, vendorInfo, form));
-  const hasT = calculated.some(l => String(l.account || '').startsWith('116301'));
+  const hasT = calculated.some(l => l._accountRaw === '116301');
   return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode }));
 };
 
@@ -1756,13 +1756,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
     const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
     const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
-    return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal };
+    return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
   };
 
   useEffect(() => {
     setLines(prev => {
       const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form));
-      const hasT = calculated.some(l => String(l.account || '').startsWith('116301'));
+      const hasT = calculated.some(l => l._accountRaw === '116301');
       return calculated.map(l => ({
         ...l,
         taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode,
