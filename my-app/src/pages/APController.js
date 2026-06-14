@@ -2409,7 +2409,10 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const matchedRule = getMatchedRule(vendorInfo);
 
   // ── localStorage helpers — buffer ระหว่างยังไม่ sync ขึ้น Supabase ──────
-  const bucketStorageKey = batchConfig?.batchId ? `ap_bucket_${batchConfig.batchId}` : null;
+  // key ผูกกับ bu + user (ไม่ใช่ batchId) เพราะ Bucket คือ "งานค้างของ user คนนี้ใน BU นี้"
+  const me = userName || currentUser?.email || '';
+  const bu = batchConfig?.bu || '';
+  const bucketStorageKey = (bu && me) ? `ap_bucket_${bu}_${me}` : null;
   const loadLocalBucket = () => {
     if (!bucketStorageKey) return [];
     try { return JSON.parse(localStorage.getItem(bucketStorageKey) || '[]'); } catch { return []; }
@@ -2419,15 +2422,22 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     try { localStorage.setItem(bucketStorageKey, JSON.stringify(list)); } catch (e) { console.error('saveLocalBucket:', e); }
   };
 
-  // ── โหลดตะกร้าตอนเปิด batch: ของที่ sync แล้ว (bucket_list) + ของที่ค้างใน localStorage ──
+  // ── โหลด Bucket: pending ทั้งหมดของ BU + user นี้ จาก bucket_list ────────
+  // (ไม่ filter ด้วย batch_id แล้ว ครอบคลุมของค้างจาก session ก่อนหน้าด้วย)
   useEffect(() => {
-    if (!batchConfig?.batchId) return;
+    if (!bu || !me) return;
     let active = true;
     (async () => {
       const local = loadLocalBucket();
       if (active && local.length) setInvoices(local);
       try {
-        const { data, error } = await supabase.from('bucket_list').select('*').eq('batch_id', batchConfig.batchId).order('created_at', { ascending: true });
+        const { data, error } = await supabase
+          .from('bucket_list')
+          .select('*')
+          .eq('bu', bu)
+          .eq('created_by', me)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: true });
         if (error || !active) return;
         const synced = (data || []).map(r => ({ ...r, _synced: true }));
         const pendingOnly = local.filter(l => !l._synced);
@@ -2437,7 +2447,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       } catch (e) { console.error('loadBucketList:', e); }
     })();
     return () => { active = false; };
-  }, [batchConfig?.batchId]);
+  }, [bu, me]);
 
   // ── ref เก็บ invoices ล่าสุด ให้ syncPendingToBucket อ่านได้โดยไม่ต้อง re-create interval ──
   const invoicesRef = useRef(invoices);
@@ -2471,9 +2481,9 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
   };
 
-  // ── sync ทุก 30 วิ + ตอนซ่อนแท็บ + ครั้งสุดท้ายตอนออกจาก batch นี้ ────────
+  // ── sync ทุก 30 วิ + ตอนซ่อนแท็บ + ครั้งสุดท้ายตอนออกจากหน้านี้ ───────────
   useEffect(() => {
-    if (!batchConfig?.batchId) return;
+    if (!bu || !me) return;
     const interval = setInterval(() => { syncPendingToBucket(); }, 30000);
     const onVisibility = () => { if (document.hidden) syncPendingToBucket(); };
     document.addEventListener('visibilitychange', onVisibility);
@@ -2482,7 +2492,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       document.removeEventListener('visibilitychange', onVisibility);
       syncPendingToBucket();
     };
-  }, [batchConfig?.batchId]);
+  }, [bu, me]);
 
   // ── Submit invoice ปัจจุบัน -> เก็บ local + localStorage ทันที (ไม่ยิง API) ──
   // sync ขึ้น bucket_list รวมเป็นชุดตาม interval/trigger ด้านบน
@@ -2751,13 +2761,31 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
 // ── GenerateExport ────────────────────────────────────────────────────────────
 function GenerateExport({ invoices, onNewBatch, onBack }) {
-  const [opts, setOpts]         = useState({ xlsx: true, txt: true, wht: false, vat: false });
-  const [exported, setExported] = useState(false);
+  const [opts, setOpts]           = useState({ xlsx: true, txt: true, wht: false, vat: false });
+  const [exported, setExported]   = useState(false);
+  const [exporting, setExporting] = useState(false);
   const toggleOpt = (k) => setOpts(o => ({ ...o, [k]: !o[k] }));
-  const subtotal = invoices.reduce((s, v) => s + v.raw, 0);
-  const vat      = Math.round(subtotal * 0.07);
-  const net      = invoices.reduce((s, v) => s + v.net, 0);
-  const doExport = () => { if (!invoices.length) { alert('No invoices in batch'); return; } setExported(true); };
+
+  const num = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+  const subtotal = invoices.reduce((s, v) => s + num(v.amount), 0);
+  const vat      = invoices.reduce((s, v) => s + num(v.vat), 0);
+  const net      = invoices.reduce((s, v) => s + num(v.net), 0);
+
+  const doExport = async () => {
+    if (!invoices.length) { alert('No invoices in batch'); return; }
+    setExporting(true);
+    try {
+      const ids = invoices.filter(inv => inv.id).map(inv => inv.id);
+      if (ids.length) {
+        const { error } = await supabase.from('bucket_list').update({ status: 'done' }).in('id', ids);
+        if (error) throw error;
+      }
+      setExported(true);
+    } catch (e) {
+      alert('Export ไม่สำเร็จ: ' + e.message);
+    }
+    setExporting(false);
+  };
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
@@ -2766,14 +2794,32 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>Summary</span></div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-              <thead><tr style={{ background: '#f8f9fa' }}>{[['Invoice No.','25%'],['Vendor','30%'],['GR Reference','22%'],['Net Amount','23%']].map(([h, w]) => (<th key={h} style={{ padding: '6px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', width: w }}>{h}</th>))}</tr></thead>
+              <thead>
+                <tr style={{ background: '#f8f9fa' }}>
+                  {[['Invoice No.','22%'],['Vendor','28%'],['Branch','15%'],['Amount','12%'],['VAT','11%'],['Net','12%']].map(([h, w]) => (
+                    <th key={h} style={{ padding: '6px 9px', textAlign: ['Amount','VAT','Net'].includes(h) ? 'right' : 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', width: w }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
               <tbody>
-                {invoices.length === 0 ? (<tr><td colSpan={4} style={{ textAlign: 'center', color: '#aaa', padding: '18px' }}>No invoices in batch</td></tr>)
-                : invoices.map(v => (<tr key={v.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}><td style={{ padding: '7px 9px', fontWeight: '500', color: '#1a3a5c' }}>{v.id}</td><td style={{ padding: '7px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.vendor}</td><td style={{ padding: '7px 9px', color: '#888' }}>{v.gr}</td><td style={{ padding: '7px 9px' }}>{exported ? <span style={bdgGreen}>Exported</span> : <span style={{ fontWeight: '500' }}>฿{fmt(v.net)}</span>}</td></tr>))}
+                {invoices.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: '#aaa', padding: '18px' }}>No invoices in batch</td></tr>
+                ) : invoices.map((v, i) => (
+                  <tr key={v.id || v._localId || i} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                    <td style={{ padding: '7px 9px', fontWeight: '500', color: '#1a3a5c' }}>{v.invoice_no || '-'}</td>
+                    <td style={{ padding: '7px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.vendor_name || '-'}</td>
+                    <td style={{ padding: '7px 9px', color: '#888' }}>{v.branch_no || '-'}</td>
+                    <td style={{ padding: '7px 9px', textAlign: 'right' }}>{v.amount ? `฿${fmt(num(v.amount))}` : '—'}</td>
+                    <td style={{ padding: '7px 9px', textAlign: 'right' }}>{v.vat ? `฿${fmt(num(v.vat))}` : '—'}</td>
+                    <td style={{ padding: '7px 9px', textAlign: 'right' }}>
+                      {exported ? <span style={bdgGreen}>Exported</span> : <span style={{ fontWeight: '500' }}>฿{fmt(num(v.net))}</span>}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             <div style={{ display: 'flex', borderTop: '0.5px solid #e8eaf0' }}>
-              {[['Invoices', invoices.length],['Subtotal', `฿${fmt(subtotal)}`],['VAT 7%', `฿${fmt(vat)}`],['Net Total', `฿${fmt(net)}`]].map(([label, val], i, arr) => (
+              {[['Invoices', invoices.length], ['Subtotal', `฿${fmt(subtotal)}`], ['VAT', `฿${fmt(vat)}`], ['Net Total', `฿${fmt(net)}`]].map(([label, val], i, arr) => (
                 <div key={label} style={{ flex: 1, padding: '9px', textAlign: 'center', borderRight: i < arr.length - 1 ? '0.5px solid #e8eaf0' : 'none' }}>
                   <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>{label}</div>
                   <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{val}</div>
@@ -2787,14 +2833,19 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
             <div style={cardHead}><span style={cardLabel}>Export options</span></div>
             <div style={{ padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {[['xlsx','Load file (.xlsx)'],['txt','AP Interface (.txt)'],['wht','WHT Certificate (.pdf)'],['vat','VAT Summary (.xlsx)']].map(([key, label]) => (
-                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}><input type="checkbox" checked={opts[key]} onChange={() => toggleOpt(key)} />{label}</label>
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={opts[key]} onChange={() => toggleOpt(key)} />{label}
+                </label>
               ))}
             </div>
           </div>
           <div style={card}>
             <div style={cardHead}><span style={cardLabel}>Actions</span></div>
             <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
-              <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', background: exported ? '#27500A' : '#1a3a5c' }} onClick={doExport}>{exported ? '✓ Exported' : '⬇ Generate & export'}</button>
+              <button disabled={exporting || exported} onClick={doExport}
+                style={{ ...btnPrimary, width: '100%', justifyContent: 'center', background: exported ? '#27500A' : '#1a3a5c', opacity: exporting ? 0.6 : 1, cursor: exporting || exported ? 'default' : 'pointer' }}>
+                {exported ? '✓ Exported' : exporting ? 'Exporting...' : '⬇ Generate & export'}
+              </button>
               <button style={{ ...btnOutline, width: '100%', justifyContent: 'center' }} onClick={onBack}>← Back to edit</button>
             </div>
           </div>
