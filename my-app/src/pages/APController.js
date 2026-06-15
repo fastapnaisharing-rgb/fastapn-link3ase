@@ -78,8 +78,9 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
         onChange={e => onChange(e.target.value)}
         onFocus={() => setOpen(true)}
         placeholder={placeholder}
-        style={{ height: '28px', padding: '0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }}
+        style={{ height: '28px', padding: '0 20px 0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }}
       />
+      <svg style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', color: '#bbb', pointerEvents: 'none' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
       {open && filtered.length > 0 && (
         <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 50, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '180px', overflowY: 'auto' }}>
           {filtered.map((o, i) => (
