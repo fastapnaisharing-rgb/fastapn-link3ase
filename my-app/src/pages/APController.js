@@ -54,6 +54,48 @@ function useWindowSize() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ComboInput — text input + custom dropdown (แทน <input list>+<datalist> ที่
+// ความกว้างของ dropdown ไม่ตรงกับ cell เพราะเป็น native browser behavior)
+// ─────────────────────────────────────────────────────────────────────────────
+function ComboInput({ value, onChange, options = [], placeholder = '' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const q = String(value || '').trim().toLowerCase();
+  const filtered = q ? options.filter(o => o.toLowerCase().includes(q)) : options;
+
+  return (
+    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+      <input
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        style={{ height: '28px', padding: '0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }}
+      />
+      {open && filtered.length > 0 && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 50, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '180px', overflowY: 'auto' }}>
+          {filtered.map((o, i) => (
+            <div key={i} onMouseDown={(e) => { e.preventDefault(); onChange(o); setOpen(false); }}
+              style={{ padding: '6px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', background: o === value ? '#eef3fb' : 'white' }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#eef3fb'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = o === value ? '#eef3fb' : 'white'; }}
+            >{o}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BUSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
 function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
@@ -868,8 +910,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
             const opts = [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort();
             return (
               <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', ...extra }}>
-                <input list={`ssp-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} placeholder="เลือก" style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} />
-                <datalist id={`ssp-${key}`}>{opts.map((o, i) => <option key={i} value={o} />)}</datalist>
+                <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={opts} placeholder="เลือก" />
               </div>
             );
           };
@@ -889,8 +930,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
             const cOpts = [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort();
             return (
               <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', background: '#FFF3CD', borderRight: '0.5px solid #e8eaf0', ...opts.cellStyle }}>
-                <input list={`ssp-y-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} placeholder="เลือก" style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} />
-                <datalist id={`ssp-y-${key}`}>{cOpts.map((o, i) => <option key={i} value={o} />)}</datalist>
+                <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={cOpts} placeholder="เลือก" />
               </div>
             );
           };
@@ -949,22 +989,28 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
 
               {/* Row 4+5: Invoice Rule section — headers + values */}
               {/* ── พื้นเขียวเมื่อ 'Invoice No.' ตรงกับ supplier รายอื่นใน BU นี้ (cache match) ── */}
+              {/* ── 6 คอลัมน์เท่ากัน — Digit + Due Date รวมอยู่ในคอลัมน์เดียวกัน (แบ่งซ้าย-ขวา) ── */}
               <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 120px 80px 1fr 100px', borderBottom: '0.5px solid #e8eaf0' }}>
-                  {['Invoice Rule','First Part','Mid Part','Last Part','Digit','Notice','Due Date'].map((h, i) => (
-                    <div key={h} style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', borderRight: i < 6 ? '0.5px solid #e8eaf0' : 'none', whiteSpace: 'nowrap' }}>{h}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', borderBottom: '0.5px solid #e8eaf0' }}>
+                  {['Invoice Rule','First Part','Mid Part','Last Part'].map((h) => (
+                    <div key={h} style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', borderRight: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</div>
                   ))}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderRight: '0.5px solid #e8eaf0' }}>
+                    <div style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', borderRight: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>Digit</div>
+                    <div style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', whiteSpace: 'nowrap' }}>Due Date</div>
+                  </div>
+                  <div style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', whiteSpace: 'nowrap' }}>Notice</div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 120px 80px 1fr 100px' }}>
-                  {[
-                    (() => { const opts = [...new Set(buFiltered.map(i => String(i['Invoice No.'] || '')).filter(Boolean))].sort(); return <div key="invno" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input list="ssp-invno-val" value={form['Invoice No.'] || ''} onChange={e => setField('Invoice No.', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /><datalist id="ssp-invno-val">{opts.map((o, i) => <option key={i} value={o} />)}</datalist></div>; })(),
-                    <div key="fp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
-                    <div key="mp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
-                    <div key="lp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
-                    <div key="dig" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Digit'] || ''} onChange={e => setField('Digit', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
-                    (() => { const opts = [...new Set(buFiltered.map(i => String(i['Notice'] || '')).filter(Boolean))].sort(); return <div key="notice" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input list="ssp-notice-val" value={form['Notice'] || ''} onChange={e => setField('Notice', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /><datalist id="ssp-notice-val">{opts.map((o, i) => <option key={i} value={o} />)}</datalist></div>; })(),
-                    <div key="due" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white' }}><input value={form['Due'] || ''} onChange={e => setField('Due', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>,
-                  ]}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
+                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Invoice No.'] || '')).filter(Boolean))].sort(); return <div key="invno" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => setField('Invoice No.', v)} options={opts} /></div>; })()}
+                  <div key="fp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  <div key="mp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  <div key="lp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  <div key="digdue" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}>
+                    <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Digit'] || ''} onChange={e => setField('Digit', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                    <div style={{ padding: '4px 6px' }}><input value={form['Due'] || ''} onChange={e => setField('Due', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  </div>
+                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Notice'] || '')).filter(Boolean))].sort(); return <div key="notice" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white' }}><ComboInput value={form['Notice'] || ''} onChange={v => setField('Notice', v)} options={opts} /></div>; })()}
                 </div>
               </div>
 
