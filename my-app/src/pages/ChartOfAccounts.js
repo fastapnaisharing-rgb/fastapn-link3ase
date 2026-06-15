@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
   import * as XLSX from 'xlsx';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
+  import { useDataCache } from '../contexts/DataCacheContext';
 
   function useWindowWidth() {
     const [width, setWidth] = useState(window.innerWidth);
@@ -224,6 +225,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
     const [tab, setTab] = useState(activeSubTab || 'costcenter');
     const { currentUser, userName } = useAuth();
     const { isOwner, isAdmin, isEditor } = useUserRole();
+    const { fetchCollection } = useDataCache();
     const screenWidth = useWindowWidth();
     const isMobile = screenWidth < 768;
     const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -268,20 +270,10 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
     const page = pageMap[tab] || 1;
     const tableName = (t) => SUPABASE_TABLE[TAB_CONFIG[t].collection];
 
-    const fetchTab = useCallback(async (t) => {
-      const tbl = SUPABASE_TABLE[TAB_CONFIG[t].collection];
-      let from = 0;
-      const batchSize = 1000;
-      let allData = [];
-      while (true) {
-        const { data, error } = await supabase.from(tbl).select('*').range(from, from + batchSize - 1);
-        if (error) { console.error('fetchTab error:', error); break; }
-        allData = [...allData, ...(data || [])];
-        if (!data || data.length < batchSize) break;
-        from += batchSize;
-      }
-      setDataMap(prev => ({ ...prev, [t]: allData }));
-    }, []);
+    const fetchTab = useCallback(async (t, forceRefresh = false) => {
+      const data = await fetchCollection(TAB_CONFIG[t].collection, forceRefresh);
+      setDataMap(prev => ({ ...prev, [t]: data }));
+    }, [fetchCollection]);
 
     useEffect(() => { fetchTab('costcenter'); fetchTab('account'); fetchTab('subaccount'); }, []);
     useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
@@ -438,7 +430,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
           }
           alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
         }
-        setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
+        setShowPreview(false); setPreviewRows([]); await fetchTab(tab, true);
       } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
       setImporting(false);
     };
@@ -449,7 +441,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         const data = buildRowData(form, cfg.fields);
         if (editId) { const { error } = await supabase.from(tbl).update(data).eq('id', editId); if (error) throw error; }
         else { const { error } = await supabase.from(tbl).insert([data]); if (error) throw error; }
-        setShowForm(false); setEditId(null); setForm({}); await fetchTab(tab);
+        setShowForm(false); setEditId(null); setForm({}); await fetchTab(tab, true);
       } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     };
 
@@ -470,7 +462,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         const { error: deleteError } = await supabase.from(tableName(tab)).delete().eq('id', id);
         if (deleteError) throw deleteError;
         setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
-        await fetchTab(tab);
+        await fetchTab(tab, true);
       } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
     };
 
@@ -497,7 +489,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         }
         // ลบ if (deleteError) throw deleteError; ออก
         setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-        await fetchTab(tab);
+        await fetchTab(tab, true);
         alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
       } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
     };
@@ -508,7 +500,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       try {
         const { error } = await supabase.from(tableName(tab)).update(buildRowData(detailForm, cfg.fields)).eq('id', detailItem.id);
         if (error) throw error;
-        setShowDetailModal(false); await fetchTab(tab);
+        setShowDetailModal(false); await fetchTab(tab, true);
       } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
     };
 
@@ -536,7 +528,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         if (error) throw error;
         await supabase.from('recycle_bin').delete().eq('id', binItem.id);
         setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-        await fetchTab(tab);
+        await fetchTab(tab, true);
         alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
       } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
     };
@@ -574,7 +566,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         }
         setRecycleBinSelected([]);
         setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
-        await fetchTab(tab);
+        await fetchTab(tab, true);
         alert(`✅ Restore สำเร็จ ${total} รายการ`);
       } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
       setRecycleBinLoading2(false); setRecycleBinProgress(0);
