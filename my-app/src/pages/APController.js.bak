@@ -751,73 +751,6 @@ const recalcLines = (lines, itemcodeItems, vendorInfo, form) => {
   return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode }));
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Invoice No. auto-generate — ประกอบเลข Invoice เต็มจาก running number ที่กรอก
-// ตาม Invoice Rule / First-Mid-Last Part / Digit ของ supplier
-// (อ้างอิง macro Option_InvoiceCal เดิม)
-// ─────────────────────────────────────────────────────────────────────────────
-const pad2 = (n) => String(n).padStart(2, '0');
-const invFmtYY       = (d) => pad2(d.getFullYear() % 100);
-const invFmtYYYY     = (d) => String(d.getFullYear());
-const invFmtMM       = (d) => pad2(d.getMonth() + 1);
-const invFmtDD       = (d) => pad2(d.getDate());
-const invFmtYYMM     = (d) => invFmtYY(d) + invFmtMM(d);
-const invFmtYYYYMM   = (d) => invFmtYYYY(d) + invFmtMM(d);
-const invFmtDDMMYYYY = (d) => invFmtDD(d) + invFmtMM(d) + invFmtYYYY(d);
-const invFmtYYMMDD   = (d) => invFmtYY(d) + invFmtMM(d) + invFmtDD(d);
-
-// pattern builders: (Fp, Mp, Lp, d, result) => string — ตาม Invoice No. rule code ของ supplier
-const INVOICE_PATTERN_BUILDERS = {
-  'AF-2Y2M':     (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYYMM(d)}${Mp}${r}`,
-  'AF-T2Y2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 43}${invFmtMM(d)}${Mp}${r}`,
-  'AF-TFY2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 543}${invFmtMM(d)}${Mp}${r}`,
-  'FY2M':        (Fp, Mp, Lp, d, r) => `${invFmtYYYYMM(d)}${Mp}${r}`,
-  '2D2MFY':      (Fp, Mp, Lp, d, r) => `${invFmtDDMMYYYY(d)}${Mp}${r}`,
-  'FY':          (Fp, Mp, Lp, d, r) => `${invFmtYYYY(d)}${Mp}${r}`,
-  'T2Y':         (Fp, Mp, Lp, d, r) => `${parseInt(invFmtYY(d), 10) + 43}${Mp}${r}`,
-  'AF-2M':       (Fp, Mp, Lp, d, r) => `${invFmtMM(d)}${Mp}${r}`,
-  'AF-T2Y':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 43}${Mp}${r}`,
-  'AF-TFY':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYYYY(d), 10) + 543}${Mp}${r}`,
-  'TFY':         (Fp, Mp, Lp, d, r) => `${parseInt(invFmtYYYY(d), 10) + 543}${Mp}${r}`,
-  'AF-FY2M':     (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYYYYMM(d)}${Mp}${r}`,
-  'AF-2Y':       (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYY(d)}${Mp}${r}`,
-  'AF-TFY|2M':   (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYYYY(d), 10) + 543}${Mp}${invFmtMM(d)}${Lp}${r}`,
-  'AF-FY|2M':    (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYYYY(d)}${Mp}${invFmtMM(d)}${Lp}${r}`,
-  'AF-2Y|2M':    (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYY(d)}${Mp}${invFmtMM(d)}${Lp}${r}`,
-  'AF-T2Y|2M':   (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 43}${Mp}${invFmtMM(d)}${Lp}${r}`,
-  'AF-YYMMDD-1': (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setDate(d2.getDate() - 1); return `${Fp}${invFmtYYMMDD(d2)}${Lp}${r}`; },
-  'AF-2YMM-1':   (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setMonth(d2.getMonth() - 1); return `${Fp}${invFmtYYMM(d2)}${Lp}${r}`; },
-};
-
-// typedNum   = เลขรันที่ user กรอกในช่อง Invoice num (กรอบแดง)
-// invDateStr = ค่าจาก input[type=date] ("YYYY-MM-DD")
-// vendorInfo = record จาก supplier_list (มี 'Invoice No.', 'First Part', 'Mid Part', 'Last Part', 'Digit')
-const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
-  const raw = String(typedNum ?? '').trim();
-  if (!raw) return '';
-
-  const Fp = String(vendorInfo?.['First Part'] ?? '').trim();
-  const Mp = String(vendorInfo?.['Mid Part'] ?? '').trim();
-  const Lp = String(vendorInfo?.['Last Part'] ?? '').trim();
-  const ruleCode = String(vendorInfo?.['Invoice No.'] ?? '').trim();
-  const digitRule = String(vendorInfo?.['Digit'] ?? '').trim().toUpperCase();
-
-  // "NDB" -> n หลัก ที่ supplier กำหนด (เช่น "4DB" -> 4)
-  const dm = digitRule.match(/^(\d{1,2})DB$/);
-  const n = dm ? parseInt(dm[1], 10) : 0;
-
-  // ── กรอกเกินจำนวนหลักที่กำหนด -> ใช้ค่าที่กรอกเป็น Invoice No. ตรงๆ ทั้งหมด ──
-  if (n > 0 && raw.length > n) return raw;
-
-  // ── pad เลขรันด้วย 0 ให้ครบ n หลัก (เฉพาะกรณีกรอกเป็นตัวเลขล้วน) ──────────
-  const result = (n > 0 && /^\d+$/.test(raw)) ? raw.padStart(n, '0') : raw;
-
-  const d = invDateStr ? new Date(`${invDateStr}T00:00:00`) : null;
-  const builder = INVOICE_PATTERN_BUILDERS[ruleCode];
-  if (!builder || !d || isNaN(d.getTime())) return `${Fp}${result}`;
-  return builder(Fp, Mp, Lp, d, result);
-};
-
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
 
 function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', fetchCollection, userName = '' }) {
@@ -907,9 +840,6 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const validate = (f) => {
     if (!f['Code']?.trim()) return 'กรุณากรอก Code';
     if (!f['Supplier Name']?.trim()) return 'กรุณากรอก Supplier Name (TH)';
-    if (!f['Supplier Number']?.trim()) return 'กรุณากรอก Supplier No.';
-    if (!f['Supplier Site']?.trim()) return 'กรุณากรอก Supplier Site';
-    if (!f['BU Code']?.trim()) return 'กรุณากรอก BU Code';
     return '';
   };
 
@@ -1058,29 +988,30 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 {combo('Tax-Type')}
               </div>
 
-              {/* Row 4+5: Invoice Rule section — headers + values (Format เดียวกับ Contact) */}
+              {/* Row 4+5: Invoice Rule section — headers + values */}
+              {/* ── พื้นเขียวเมื่อ 'Invoice No.' ตรงกับ supplier รายอื่นใน BU นี้ (cache match) ── */}
               {/* ── 6 คอลัมน์เท่ากัน — Digit + Due Date รวมอยู่ในคอลัมน์เดียวกัน (แบ่งซ้าย-ขวา) ── */}
               <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', borderBottom: '0.5px solid #e8eaf0' }}>
                   {['Invoice Rule','First Part','Mid Part','Last Part'].map((h) => (
-                    <div key={h} style={{ padding: '6px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', borderRight: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</div>
+                    <div key={h} style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', borderRight: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</div>
                   ))}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderRight: '0.5px solid #e8eaf0' }}>
-                    <div style={{ padding: '6px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', borderRight: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>Digit</div>
-                    <div style={{ padding: '6px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', whiteSpace: 'nowrap' }}>Due Date</div>
+                    <div style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', borderRight: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>Digit</div>
+                    <div style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', whiteSpace: 'nowrap' }}>Due Date</div>
                   </div>
-                  <div style={{ padding: '6px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', whiteSpace: 'nowrap' }}>Notice</div>
+                  <div style={{ padding: '6px 8px', fontSize: '11px', color: invoiceRuleMatch ? '#27500A' : '#888', background: invoiceRuleMatch ? '#EAF3DE' : '#f8f9fa', whiteSpace: 'nowrap' }}>Notice</div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
-                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Invoice No.'] || '')).filter(Boolean))].sort(); return <div key="invno" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => setField('Invoice No.', v)} options={opts} /></div>; })()}
-                  <div key="fp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
-                  <div key="mp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
-                  <div key="lp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
-                  <div key="digdue" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderRight: '0.5px solid #e8eaf0' }}>
+                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Invoice No.'] || '')).filter(Boolean))].sort(); return <div key="invno" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => setField('Invoice No.', v)} options={opts} /></div>; })()}
+                  <div key="fp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  <div key="mp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  <div key="lp" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  <div key="digdue" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: invoiceRuleMatch ? '#EAF3DE' : 'white', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Digit'] || ''} onChange={e => setField('Digit', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
                     <div style={{ padding: '4px 6px' }}><input value={form['Due'] || ''} onChange={e => setField('Due', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
                   </div>
-                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Notice'] || '')).filter(Boolean))].sort(); return <div key="notice" style={{ padding: '4px 6px' }}><ComboInput value={form['Notice'] || ''} onChange={v => setField('Notice', v)} options={opts} /></div>; })()}
+                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Notice'] || '')).filter(Boolean))].sort(); return <div key="notice" style={{ padding: '4px 6px', background: invoiceRuleMatch ? '#EAF3DE' : 'white' }}><ComboInput value={form['Notice'] || ''} onChange={v => setField('Notice', v)} options={opts} /></div>; })()}
                 </div>
               </div>
 
@@ -1976,7 +1907,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Invoice Detail</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: isMobile ? 'normal' : 'nowrap' }}>
               Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
-              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.invoiceNum || '-'}</span>
               {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
             </div>
           </div>
@@ -2022,14 +1953,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             <div style={{ ...card, width: '49%', marginBottom: 0 }}>
               <div style={cardHead}><span style={cardLabel}>Document Number</span></div>
               <div style={{ ...cardBody, display: 'flex', flexDirection: 'column', gap: '0' }}>
-                {(() => {
-                  const genInvoiceNo = buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo);
-                  return (
-                    <div style={{ fontSize: '14px', fontWeight: '600', color: genInvoiceNo ? '#1a3a5c' : '#ccc', fontStyle: genInvoiceNo ? 'normal' : 'italic', marginBottom: '10px' }}>
-                      {genInvoiceNo || '— ยังไม่ได้กรอก Invoice No. —'}
-                    </div>
-                  );
-                })()}
+                <div style={{ fontSize: '14px', fontWeight: '600', color: form?.invoiceNum ? '#1a3a5c' : '#ccc', fontStyle: form?.invoiceNum ? 'normal' : 'italic', marginBottom: '10px' }}>
+                  {form?.invoiceNum || '— ยังไม่ได้กรอก Invoice No. —'}
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', border: '0.5px solid #e8eaf0', borderRadius: '7px', overflow: 'hidden' }}>
                   <div style={{ padding: '7px 12px', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRT</div>
@@ -2296,8 +2222,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const handleSave = async () => {
     if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) { alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
     setSaving(true);
-    const invoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo);
-    const ok = await onSave({ form_data: form, lines, invoiceNo });
+    const ok = await onSave({ form_data: form, lines });
     setSaving(false);
     if (ok) onClose();
   };
@@ -2318,7 +2243,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isView ? 'View Invoice' : 'Edit Invoice'}</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
-              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.invoiceNum || '-'}</span>
               {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
             </div>
           </div>
@@ -3074,7 +2999,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   // เก็บ supplier/branch ไว้ (มักเป็น vendor เดียวกันหลายใบ) แต่ reset
   // invoice-specific fields เพื่อกรอกใบถัดไป
   // ── บันทึกการแก้ไข invoice ใน Batch Bucket (เรียกจาก BucketItemPopup) ──
-  const handleSaveBucketItem = async ({ form_data, lines, invoiceNo }) => {
+  const handleSaveBucketItem = async ({ form_data, lines }) => {
     const idx = bucketPopup.index;
     if (idx < 0 || !invoices[idx]) return false;
     const sumField = (key) => lines.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
@@ -3083,7 +3008,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       ...target,
       branch_no:    form_data.branchNo || '',
       branch_label: form_data.branchDirectLabel || '',
-      invoice_no:   invoiceNo || form_data.invoiceNum || '',
+      invoice_no:   form_data.invoiceNum || '',
       inv_date:     form_data.invDate || null,
       period:       form_data.period || '',
       description:  lines[0]?.desc || '',
@@ -3135,7 +3060,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       vendor_name:     vendorInfo?.['Supplier Name'] || '',
       branch_no:       form.branchNo || '',
       branch_label:    form.branchDirectLabel || '',
-      invoice_no:      buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) || '',
+      invoice_no:      form.invoiceNum || '',
       inv_date:        form.invDate || null,
       period:          form.period || '',
       description:     lines[0]?.desc || '',
