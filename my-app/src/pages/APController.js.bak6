@@ -1976,7 +1976,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Invoice Detail</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: isMobile ? 'normal' : 'nowrap' }}>
               Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
-              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{(buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-') + (form?.invoiceSuffix || '')}</span>
               {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
             </div>
           </div>
@@ -2296,7 +2296,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const handleSave = async () => {
     if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) { alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
     setSaving(true);
-    const invoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo);
+    const invoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) + (form.invoiceSuffix || '');
     const ok = await onSave({ form_data: form, lines, invoiceNo });
     setSaving(false);
     if (ok) onClose();
@@ -2318,7 +2318,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isView ? 'View Invoice' : 'Edit Invoice'}</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
-              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{(buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-') + (form?.invoiceSuffix || '')}</span>
               {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
             </div>
           </div>
