@@ -818,6 +818,17 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
   return builder(Fp, Mp, Lp, d, result);
 };
 
+// placeholder บอกจำนวน digit ที่ต้องกรอกในช่อง Invoice num ตาม Digit rule ของ supplier
+// "NDB" (Digit Back) -> กรอก N ตัวท้าย, "NDF" (Digit Front) -> กรอก N ตัวหน้า, "FULL"/อื่นๆ -> ไม่มี placeholder
+const getInvoiceNumPlaceholder = (vendorInfo) => {
+  const digitRule = String(vendorInfo?.['Digit'] ?? '').trim().toUpperCase();
+  const mb = digitRule.match(/^(\d{1,2})DB$/);
+  if (mb) return `กรอก ${mb[1]} ตัว (ส่วนท้าย)`;
+  const mf = digitRule.match(/^(\d{1,2})DF$/);
+  if (mf) return `กรอก ${mf[1]} ตัว (ส่วนหน้า)`;
+  return '';
+};
+
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
 
 function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', fetchCollection, userName = '' }) {
@@ -2065,7 +2076,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
                 <label style={fieldLabel}>{label}</label>
-                <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
+                <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                  placeholder={key === 'invoiceNum' ? getInvoiceNumPlaceholder(vendorInfo) : undefined}
+                  style={inputStyle(w)} />
               </div>
             ))}
             <PeriodPicker value={form?.period || ''} onChange={v => setField('period', v)} />
@@ -2352,7 +2365,9 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px']].map(([label, key, type, w]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                 <label style={fieldLabel}>{label}</label>
-                <input type={type} value={form[key] || ''} disabled={isView} onChange={e => setField(key, e.target.value)} style={inputStyle(w, isView)} />
+                <input type={type} value={form[key] || ''} disabled={isView} onChange={e => setField(key, e.target.value)}
+                  placeholder={key === 'invoiceNum' ? getInvoiceNumPlaceholder(vendorInfo) : undefined}
+                  style={inputStyle(w, isView)} />
               </div>
             ))}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
