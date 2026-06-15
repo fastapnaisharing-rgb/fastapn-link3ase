@@ -2845,6 +2845,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
   const [showSupplierPopup, setShowSupplierPopup] = useState(false); // ✅ supplier search
   const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', index: -1 });
+  const [selectedRows, setSelectedRows] = useState(new Set()); // ✅ Batch Bucket: เลือกแถวสำหรับ bulk delete
   const branchJustResolved = useRef(false); // ✅ ป้องกัน blur ยิงซ้ำหลัง resolveBranch
 
   const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); if (key === 'supplierCode' && !val) setVendorInfo(null); };
@@ -3105,6 +3106,23 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       return next;
     });
     return true;
+  };
+
+  // ✅ ลบรายการที่เลือกไว้ใน Batch Bucket (bulk delete) ────────────────────
+  const handleDeleteSelected = async () => {
+    if (!selectedRows.size) return;
+    if (!window.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือก?`)) return;
+    const toDelete = invoices.filter((inv, i) => selectedRows.has(inv.id || inv._localId || i));
+    const syncedIds = toDelete.filter(inv => inv._synced && inv.id).map(inv => inv.id);
+    if (syncedIds.length) {
+      await supabase.from('bucket_list').delete().in('id', syncedIds);
+    }
+    setInvoices(list => {
+      const next = list.filter((inv, i) => !selectedRows.has(inv.id || inv._localId || i));
+      saveLocalBucket(next);
+      return next;
+    });
+    setSelectedRows(new Set());
   };
 
   const handleSubmitInvoice = async (lines) => {
@@ -3380,16 +3398,29 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
               <span style={{ background: '#1a3a5c', color: 'white', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{invoices.length}</span>
             </div>
           </div>
-          <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending Invoices</span>
+          {selectedRows.size > 0 ? (
+            <button onClick={handleDeleteSelected}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+              Delete selected ({selectedRows.size})
+            </button>
+          ) : (
+            <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending Invoices</span>
+          )}
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
-            <col style={{ width: '14%' }} /><col style={{ width: '20%' }} /><col style={{ width: '10%' }} />
-            <col style={{ width: '12%' }} /><col style={{ width: '10%' }} /><col style={{ width: '10%' }} />
-            <col style={{ width: '12%' }} /><col style={{ width: '8%' }} />
+            <col style={{ width: '4%' }} />
+            <col style={{ width: '13%' }} /><col style={{ width: '19%' }} /><col style={{ width: '10%' }} />
+            <col style={{ width: '11%' }} /><col style={{ width: '10%' }} /><col style={{ width: '10%' }} />
+            <col style={{ width: '11%' }} /><col style={{ width: '8%' }} />
           </colgroup>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
+              <th style={{ padding: '7px 9px', borderBottom: '0.5px solid #e8eaf0', textAlign: 'center' }}>
+                <input type="checkbox" checked={invoices.length > 0 && selectedRows.size === invoices.length}
+                  onChange={() => setSelectedRows(prev => prev.size === invoices.length ? new Set() : new Set(invoices.map((inv, i) => inv.id || inv._localId || i)))} />
+              </th>
               {['Invoice No.','Vendor','Branch','Amount','Vat','Wht','Total','Action'].map(h => (
                 <th key={h} style={{ padding: '7px 9px', textAlign: ['Amount','Vat','Wht','Total'].includes(h) ? 'right' : 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
@@ -3397,9 +3428,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
           </thead>
           <tbody>
             {invoices.length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
-            ) : invoices.map((inv, i) => (
-              <tr key={inv.id || inv._localId || i} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
+            ) : invoices.map((inv, i) => {
+              const rowKey = inv.id || inv._localId || i;
+              return (
+              <tr key={rowKey} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                <td style={{ padding: '8px 9px', textAlign: 'center' }}>
+                  <input type="checkbox" checked={selectedRows.has(rowKey)}
+                    onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(rowKey) ? next.delete(rowKey) : next.add(rowKey); return next; })} />
+                </td>
                 <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600' }}>{inv.invoice_no || '-'}</td>
                 <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor_name || '-'}</td>
                 <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px' }}>{inv.branch_no || '-'}</td>
@@ -3420,6 +3457,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
                     <button onClick={async () => {
                         if (inv._synced && inv.id) { await supabase.from('bucket_list').delete().eq('id', inv.id); }
                         setInvoices(list => { const next = list.filter((_, idx2) => idx2 !== i); saveLocalBucket(next); return next; });
+                        setSelectedRows(prev => { const next = new Set(prev); next.delete(rowKey); return next; });
                       }}
                       style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
@@ -3428,7 +3466,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
                 </td>
 
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

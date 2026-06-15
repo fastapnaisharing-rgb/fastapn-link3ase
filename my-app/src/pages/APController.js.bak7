@@ -3108,55 +3108,76 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   };
 
   const handleSubmitInvoice = async (lines) => {
-    const sumField = (key) => lines.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
+    const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     const roleLabel = isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer';
 
-    // ── GRT/GRN: ถ้า GRT Status = Auto, gen เลข running ให้อัตโนมัติ ──────────
-    // GRT รันทุกใบ / GRN รันเฉพาะใบที่ Tax code เป็น VAT7% (ไม่ใช่ SVAT7%)
-    let grtNumVal = form.grtNum, grnVal = form.grn;
-    let bumpGrt = false, bumpGrn = false;
+    // ── แบ่ง lines เป็น Invoice แยกตาม H/L ────────────────────────────────────
+    // ทุกครั้งที่เจอ hl === 'H' = เริ่ม Invoice ใหม่ 1 ใบ
+    // L ที่ตามมาจะรวมเข้า Invoice ของ H ตัวล่าสุด จนกว่าจะเจอ H ตัวถัดไป
+    const groups = [];
+    lines.forEach(line => {
+      if (line.hl === 'H' || groups.length === 0) groups.push([line]);
+      else groups[groups.length - 1].push(line);
+    });
+
+    // ── GRT: gen 1 เลข ใช้ร่วมทุก Invoice ที่ split จาก submit นี้ (Auto เท่านั้น) ──
+    let grtNumVal = form.grtNum;
+    let bumpGrt = false;
     if (isAutoGrt) {
       grtNumVal = `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4, '0')}`;
       bumpGrt = true;
-      const taxCode0 = String(lines[0]?.taxCode || '');
-      const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
-      if (isVat) {
-        grnVal = `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4, '0')}`;
-        bumpGrn = true;
-      } else {
-        grnVal = '';
-      }
     }
 
-    const payload = {
-      batch_id:        batchConfig?.batchId || '',
-      bu:              batchConfig?.bu || '',
-      supplier_code:   form.supplierCode || '',
-      vendor_name:     vendorInfo?.['Supplier Name'] || '',
-      branch_no:       form.branchNo || '',
-      branch_label:    form.branchDirectLabel || '',
-      invoice_no:      buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) || '',
-      inv_date:        form.invDate || null,
-      period:          form.period || '',
-      description:     lines[0]?.desc || '',
-      amount:          sumField('amount'),
-      vat:             sumField('vat'),
-      wht:             sumField('wht'),
-      net:             sumField('total'),
-      form_data:       { ...form, grtNum: grtNumVal, grn: grnVal },
-      lines:           lines,
-      status:          'pending',
-      created_by:      userName || currentUser?.email || '',
-      created_by_role: roleLabel,
-    };
-    const localItem = { ...payload, _localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`, id: null, _synced: false };
+    // ── GRN: gen แยกเฉพาะ Invoice ที่ Tax Code = VAT7% (ไม่ใช่ SVAT7%) เรียงต่อกัน ──
+    const baseInvoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) || '';
+    let grnRunning = nextGrnRunning;
+    let grnBumpCount = 0;
+
+    const newItems = groups.map((groupLines, gi) => {
+      const taxCode0 = String(groupLines[0]?.taxCode || '');
+      const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+      let grnVal = '';
+      if (isAutoGrt && isVat) {
+        grnRunning += 1;
+        grnBumpCount += 1;
+        grnVal = `${batchConfig?.grnPrefix || ''}${String(grnRunning).padStart(4, '0')}`;
+      }
+      // group 0 = Invoice หลัก (invoice_no = base) / group 1,2,... = Invoice แยก (base + '/1','/2',...)
+      const invoiceSuffix = gi === 0 ? '' : `/${gi}`;
+      const invoiceNo = `${baseInvoiceNo}${invoiceSuffix}`;
+      return {
+        batch_id:        batchConfig?.batchId || '',
+        bu:              batchConfig?.bu || '',
+        supplier_code:   form.supplierCode || '',
+        vendor_name:     vendorInfo?.['Supplier Name'] || '',
+        branch_no:       form.branchNo || '',
+        branch_label:    form.branchDirectLabel || '',
+        invoice_no:      invoiceNo,
+        inv_date:        form.invDate || null,
+        period:          form.period || '',
+        description:     groupLines[0]?.desc || '',
+        amount:          sumField(groupLines, 'amount'),
+        vat:             sumField(groupLines, 'vat'),
+        wht:             sumField(groupLines, 'wht'),
+        net:             sumField(groupLines, 'total'),
+        form_data:       { ...form, grtNum: grtNumVal, grn: grnVal, invoiceSuffix },
+        lines:           groupLines,
+        status:          'pending',
+        created_by:      userName || currentUser?.email || '',
+        created_by_role: roleLabel,
+        _localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}-${gi}`,
+        id: null,
+        _synced: false,
+      };
+    });
+
     setInvoices(prev => {
-      const next = [...prev, localItem];
+      const next = [...prev, ...newItems];
       saveLocalBucket(next);
       return next;
     });
     if (bumpGrt) setNextGrtRunning(n => n + 1);
-    if (bumpGrn) setNextGrnRunning(n => n + 1);
+    if (grnBumpCount > 0) setNextGrnRunning(n => n + grnBumpCount);
     // ✅ ตอน Submit: update แค่ State (nextGrtRunning/nextGrnRunning) เท่านั้น
     // ไม่เขียนกลับ company_list.ap_grt/ap_grn ที่นี่อีกต่อไป —
     // การ sync เลข running (4 หลักล่าสุด) กลับ DB จะทำ "ตอนจบ Batch" เท่านั้น
