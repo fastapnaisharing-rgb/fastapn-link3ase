@@ -3,6 +3,7 @@ import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
+import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -110,6 +111,7 @@ function ItemCodeList() {
   const [containerW, setContainerW] = useState(0);
   const { currentUser, userName } = useAuth();
   const { isAdmin, isOwner } = useUserRole();
+  const { invalidate } = useDataCache();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -225,6 +227,7 @@ function ItemCodeList() {
     resetForm();
     fetchData();
     computeNextCode();
+    invalidate('ItemcodeList');
   };
 
   const handleEdit = (item) => {
@@ -265,6 +268,7 @@ function ItemCodeList() {
       if (error) throw error;
       setSelected(prev => prev.filter(s => s !== id));
       fetchData();
+      invalidate('ItemcodeList');
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -307,6 +311,7 @@ function ItemCodeList() {
 
       setSelected([]);
       fetchData();
+      invalidate('ItemcodeList');
       alert(`✅ ลบสำเร็จ ${rowsToDelete.length} รายการ`);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
@@ -374,6 +379,7 @@ function ItemCodeList() {
       setPreviewData([]);
       fetchData();
       computeNextCode();
+      invalidate('ItemcodeList');
       alert(`✅ Import สำเร็จ ${previewData.length} รายการ`);
     } catch (err) {
       alert('เกิดข้อผิดพลาด: ' + err.message);

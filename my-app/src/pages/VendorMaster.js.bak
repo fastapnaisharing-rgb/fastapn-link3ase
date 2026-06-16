@@ -398,7 +398,6 @@
     const [tab, setTab] = useState(activeSubTab || 'apcode');
     const { currentUser, userName, userPermissions } = useAuth();
     const { isAdmin, isEditor, isOwner } = useUserRole();
-    const { invalidate } = useDataCache();
     const canEdit = isAdmin || isEditor;
     const screenWidth = useWindowWidth();
     const isMobile = screenWidth < 768;
@@ -607,8 +606,6 @@
           if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) })); const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
         }
         setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
-        if (tab === 'apcode') invalidate('SupplierList');
-        if (tab === 'category') invalidate('VendorCategory');
         alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
       } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
       setImporting(false);
@@ -623,8 +620,6 @@
       setShowForm(false); setEditId(null); setForm({});
       await fetchTab(tab);
       if (tab === 'iecode') await refreshNextSyRunning();
-      if (tab === 'apcode') invalidate('SupplierList');
-      if (tab === 'category') invalidate('VendorCategory');
     };
 
     const handleDelete = async (id) => {
@@ -639,8 +634,6 @@
         setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
         await fetchTab(tab);
         if (tab === 'iecode') await refreshNextSyRunning();
-        if (tab === 'apcode') invalidate('SupplierList');
-        if (tab === 'category') invalidate('VendorCategory');
       } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
     };
 
@@ -656,8 +649,6 @@
         setSelectedMap(prev => ({ ...prev, [tab]: [] }));
         await fetchTab(tab);
         if (tab === 'iecode') await refreshNextSyRunning();
-        if (tab === 'apcode') invalidate('SupplierList');
-        if (tab === 'category') invalidate('VendorCategory');
         alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
       } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
     };
@@ -668,8 +659,6 @@
       const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
       if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
       setShowDetailModal(false); await fetchTab(tab);
-      if (tab === 'apcode') invalidate('SupplierList');
-      if (tab === 'category') invalidate('VendorCategory');
     };
 
     const handleOpenRecycleBin = async () => {
@@ -697,8 +686,6 @@
         setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
         const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => c.table === binItem.source_table)?.[0];
         if (tabKey) { await fetchTab(tabKey); if (tabKey === 'iecode') await refreshNextSyRunning(); }
-        if (tabKey === 'apcode') invalidate('SupplierList');
-        if (tabKey === 'category') invalidate('VendorCategory');
         alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
       } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
     };
@@ -733,8 +720,6 @@
         for (let i = 0; i < binIds.length; i += 500) { const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500)); if (error) throw error; }
         setRecycleBinSelected([]); setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
         await fetchTab(tab); if (tab === 'iecode') await refreshNextSyRunning();
-        if (tab === 'apcode') invalidate('SupplierList');
-        if (tab === 'category') invalidate('VendorCategory');
         alert(`✅ Restore สำเร็จ ${total} รายการ`);
       } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
       setRecycleBinLoading2(false); setRecycleBinProgress(0);
@@ -786,7 +771,6 @@
       }
       setShowRuleForm(false); setEditRuleId(null); setRuleForm({});
       fetchVendorRules();
-      invalidate('VendorRule');
     };
 
     const handleRuleDelete = async (id) => {
@@ -794,7 +778,6 @@
       const { error } = await supabase.from('Vendor_rule').delete().eq('id', id);
       if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
       fetchVendorRules();
-      invalidate('VendorRule');
     };
 
     const openRuleForm = (rule = null) => {
