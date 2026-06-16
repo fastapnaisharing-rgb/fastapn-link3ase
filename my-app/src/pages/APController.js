@@ -1072,15 +1072,15 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                   <div style={{ padding: '6px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', whiteSpace: 'nowrap' }}>Notice</div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
-                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Invoice No.'] || '')).filter(Boolean))].sort(); return <div key="invno" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => setField('Invoice No.', v)} options={opts} /></div>; })()}
+                  {(() => { const opts = getOpts('Invoice No.'); return <div key="invno" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => setField('Invoice No.', v)} options={opts} /></div>; })()}
                   <div key="fp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
                   <div key="mp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
                   <div key="lp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
                   <div key="digdue" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderRight: '0.5px solid #e8eaf0' }}>
-                    <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Digit'] || ''} onChange={e => setField('Digit', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                    <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Digit'] || ''} onChange={v => setField('Digit', v)} options={getOpts('Digit')} placeholder="-" /></div>
                     <div style={{ padding: '4px 6px' }}><input value={form['Due'] || ''} onChange={e => setField('Due', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
                   </div>
-                  {(() => { const opts = [...new Set(buFiltered.map(i => String(i['Notice'] || '')).filter(Boolean))].sort(); return <div key="notice" style={{ padding: '4px 6px' }}><ComboInput value={form['Notice'] || ''} onChange={v => setField('Notice', v)} options={opts} /></div>; })()}
+                  {(() => { const opts = getOpts('Notice'); return <div key="notice" style={{ padding: '4px 6px' }}><ComboInput value={form['Notice'] || ''} onChange={v => setField('Notice', v)} options={opts} /></div>; })()}
                 </div>
               </div>
 
