@@ -872,7 +872,8 @@ import { useDataCache } from '../contexts/DataCacheContext';
           { label: 'Rules & Config', keys: ['Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','Ofin Code','Simple Brand Code','Short Branch'] },
         ];
         return (
-          <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
+          <div style={{ overflowY:'auto', flex:1 }}>
+          <div style={{ padding:'16px 20px' }}>
             {sections.map(sec => (
               <div key={sec.label} style={{ marginBottom:'16px' }}>
                 <div style={{ fontSize:'10px', fontWeight:'600', color:'#888', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:'8px', borderBottom:'0.5px solid #f0f0f0', paddingBottom:'4px' }}>{sec.label}</div>
@@ -890,6 +891,7 @@ import { useDataCache } from '../contexts/DataCacheContext';
               </div>
             ))}
           </div>
+          </div>
         );
       }
       if (tab === 'apcode' || tab === 'iecode') {
@@ -906,7 +908,8 @@ import { useDataCache } from '../contexts/DataCacheContext';
           { label: 'คำอธิบาย', keys: ['NoticeDescrip','RuleDescrip'] },
         ];
         return (
-          <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
+          <div style={{ overflowY:'auto', flex:1 }}>
+          <div style={{ padding:'16px 20px' }}>
             {sections.map(sec => (
               <div key={sec.label} style={{ marginBottom:'16px' }}>
                 <div style={{ fontSize:'10px', fontWeight:'600', color:'#888', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:'8px', borderBottom:'0.5px solid #f0f0f0', paddingBottom:'4px' }}>{sec.label}</div>
@@ -925,16 +928,19 @@ import { useDataCache } from '../contexts/DataCacheContext';
               </div>
             ))}
           </div>
+          </div>
         );
       }
       return (
-        <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
+        <div style={{ overflowY:'auto', flex:1 }}>
+        <div style={{ padding:'16px 20px' }}>
           {cfg.edit.map(([key, label]) => (
             <div key={key} style={{ marginBottom:'4px' }}>
               <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
               {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={S.inputReadonly}>{key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}</div>}
             </div>
           ))}
+        </div>
         </div>
       );
     };
