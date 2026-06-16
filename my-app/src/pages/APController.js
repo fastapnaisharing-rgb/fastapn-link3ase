@@ -946,6 +946,11 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const baseInput = { height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' };
   const isEdit = view === 'edit';
 
+  // ── getOpts: ดึง unique non-empty values จาก AP-Code Cache ──────────
+  // ── ไม่ต้อง filter BU, ไม่ต้อง hardcode — ใช้ข้อมูลที่มีอยู่จริง ──
+  const getOpts = (key) =>
+    [...new Set(supplierItems.map(i => String(i[key] ?? '').trim()).filter(Boolean))].sort();
+
   const renderFormView = () => (
     <>
       <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
@@ -978,7 +983,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
             return <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0' }}><input value={form[key] || ''} readOnly={ro} onChange={e => !ro && setField(key, e.target.value)} style={s} /></div>;
           };
           const combo = (key, extra = {}) => {
-            const opts = [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort();
+            const opts = getOpts(key);
             return (
               <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', ...extra }}>
                 <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={opts} placeholder="เลือก" />
@@ -998,7 +1003,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
             );
           };
           const yCombo = (key, opts = {}) => {
-            const cOpts = [...new Set(buFiltered.map(i => String(i[key] || '')).filter(Boolean))].sort();
+            const cOpts = getOpts(key);
             return (
               <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', background: '#FFF3CD', borderRight: '0.5px solid #e8eaf0', ...opts.cellStyle }}>
                 <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={cOpts} placeholder="เลือก" />
