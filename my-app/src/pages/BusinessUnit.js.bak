@@ -3,7 +3,6 @@ import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
-import { useDataCache } from '../contexts/DataCacheContext';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -147,7 +146,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'info');
   const { currentUser, userName } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
-  const { fetchCollection, invalidate } = useDataCache();
   const screenWidth = useWindowWidth();
   const isMobile = screenWidth < 768;
   const isTablet = screenWidth >= 768 && screenWidth < 1200;
@@ -278,30 +276,52 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const branchTaxIds = useMemo(() => new Set(branches.map(b => b['BU-TaxID']).filter(Boolean)), [branches]);
 
   // ✅ Chunked Loading (guarded against duplicate concurrent calls)
-  const fetchInfo = useCallback(async (forceRefresh = false) => {
-    if (!forceRefresh && fetchInfoRef.current) return;
+  const fetchInfo = useCallback(async () => {
+    if (fetchInfoRef.current) return;
     fetchInfoRef.current = true;
     try {
-      if (forceRefresh) invalidate('CompanyList');
-      const data = await fetchCollection('CompanyList', forceRefresh);
-      setInfoItems(data);
+      let from = 0;
+      const batchSize = 1000;
+      let allData = [];
+      while (true) {
+        const { data, error } = await supabase
+          .from('company_list')
+          .select('*')
+          .range(from, from + batchSize - 1);
+        if (error) { console.error('fetchInfo error:', error); break; }
+        allData = [...allData, ...(data || [])];
+        if (!data || data.length < batchSize) break;
+        from += batchSize;
+      }
+      setInfoItems(allData);
     } finally {
       fetchInfoRef.current = false;
     }
-  }, [fetchCollection, invalidate]);
+  }, []);
 
   // ✅ Chunked Loading (guarded against duplicate concurrent calls)
-  const fetchBranch = useCallback(async (forceRefresh = false) => {
-    if (!forceRefresh && fetchBranchRef.current) return;
+  const fetchBranch = useCallback(async () => {
+    if (fetchBranchRef.current) return;
     fetchBranchRef.current = true;
     try {
-      if (forceRefresh) invalidate('BranchList');
-      const data = await fetchCollection('BranchList', forceRefresh);
-      setBranches(data);
+      let from = 0;
+      const batchSize = 1000;
+      let allData = [];
+      while (true) {
+        const { data, error } = await supabase
+          .from('branch_list')
+          .select('*')
+          .range(from, from + batchSize - 1);
+        if (error) { console.error('fetchBranch error:', error); break; }
+        allData = [...allData, ...(data || [])];
+        if (!data || data.length < batchSize) break;
+        from += batchSize;
+      }
+      setBranches(allData);
     } finally {
       fetchBranchRef.current = false;
     }
-  }, [fetchCollection, invalidate]);
+  }, []);
 
   useEffect(() => { fetchInfo(); fetchBranch(); }, []);
   useEffect(() => { if (activeSubTab) setTab(activeSubTab); }, [activeSubTab]);
@@ -367,7 +387,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       setInfoItems(prev => [...prev, inserted]);
     }
     setShowInfoForm(false); setInfoEditId(null); setInfoForm(emptyInfoForm());
-    await fetchInfo(true);
   };
 
   const handleInfoSave = async () => {
@@ -393,7 +412,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         setBranches(prev => prev.map(b => chunk.includes(b.id) ? { ...b, '%': rateConfirmData.newRate } : b));
       }
       setShowRateConfirm(false); setRateConfirmData(null);
-      await fetchInfo(true); await fetchBranch(true);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
@@ -412,7 +430,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       if (error) throw error;
       setInfoItems(prev => prev.filter(i => i.id !== id));
       setInfoSelected(p => p.filter(s => s !== id));
-      await fetchInfo(true);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -435,7 +452,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       }
       setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
       setInfoSelected([]);
-      await fetchInfo(true);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -476,7 +492,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         setInfoItems(prev => prev.map(i => i.id === row._existingId ? { ...i, ...upd } : i));
       }
       setShowInfoPreview(false); setInfoPreviewRows([]);
-      await fetchInfo(true);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setInfoImporting(false);
@@ -498,7 +513,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (error) { setBranchDetailError('บันทึกไม่สำเร็จ: ' + error.message); return; }
     setBranches(prev => prev.map(b => b.id === branchDetailItem.id ? { ...b, ...updated } : b));
     setShowBranchDetail(false);
-    await fetchBranch(true);
   };
 
   const handleBranchNewSave = async () => {
@@ -508,7 +522,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (error) { setBranchNewError('บันทึกไม่สำเร็จ: ' + error.message); return; }
     setBranches(prev => [...prev, inserted]);
     setShowBranchNew(false); setBranchNewForm({});
-    await fetchBranch(true);
   };
 
   const handleBranchDelete = async (id) => {
@@ -524,7 +537,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       if (error) throw error;
       setBranches(prev => prev.filter(b => b.id !== id));
       setBranchSelected(p => p.filter(s => s !== id));
-      await fetchBranch(true);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -547,7 +559,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       }
       setBranches(prev => prev.filter(b => !branchSelected.includes(b.id)));
       setBranchSelected([]);
-      await fetchBranch(true);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
@@ -571,7 +582,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       if (error) throw error;
       await supabase.from('recycle_bin').delete().eq('id', binItem.id);
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-      if (binItem.source_table === 'company_list') await fetchInfo(true); else await fetchBranch(true);
+      if (binItem.source_table === 'company_list') await fetchInfo(); else await fetchBranch();
       alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
     } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
   };
@@ -609,7 +620,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       }
       setRecycleBinSelected([]);
       setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
-      await fetchInfo(true); await fetchBranch(true);
+      await fetchInfo(); await fetchBranch();
       alert(`✅ Restore สำเร็จ ${total} รายการ`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setRecycleBinLoading2(false); setRecycleBinProgress(0);
@@ -680,7 +691,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         setBranches(prev => prev.map(b => b.id === row._existingId ? { ...b, ...upd } : b));
       }
       setShowBranchPreview(false); setBranchPreviewRows([]);
-      await fetchBranch(true);
       alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setBranchImporting(false);

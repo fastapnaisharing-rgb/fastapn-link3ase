@@ -1948,7 +1948,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     if (!show) return;
     const h = (e) => {
       if (e.key === 'Escape') onClose();
-      if (e.key === 'Enter' && e.ctrlKey) handleSubmit();
+      if (e.key === 'Enter'  && e.ctrlKey) handleSubmit();
+      // Ctrl+Delete → Clear form (lines + header fields)
+      if (e.key === 'Delete' && e.ctrlKey) {
+        e.preventDefault();
+        setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+        setField('invDate',    '');
+        setField('invoiceNum', '');
+        setField('invTax',     '');
+        setField('grtNum',     '');
+        setField('grn',        '');
+        setField('period',     '');
+        setField('backDesc1',  '');
+        setField('backDesc2',  '');
+        setField('backDesc3',  '');
+      }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
@@ -2130,6 +2144,14 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 value={line[key]}
                                 onFocus={() => setActiveLineIdx(idx)}
                                 onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
+                                onBlur={e => {
+                                  // auto-pad: "787" → "C0000787" (กรอกตัวเลข 1-7 หลัก ไม่มีตัวอักษรปน)
+                                  const raw = e.target.value.trim();
+                                  if (raw && /^\d{1,7}$/.test(raw)) {
+                                    const padded = 'C' + raw.padStart(7, '0');
+                                    idx === 0 ? setLine1Field(key, padded) : setLineField(idx, key, padded);
+                                  }
+                                }}
                                 style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
                               <button type="button" title="Search item code" onClick={() => { setActiveLineIdx(idx); setShowItemCodePopup(true); }}
                                 style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
@@ -2472,6 +2494,26 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             )}
           </div>
           <div style={{ flex: 1 }} />
+          {/* ── Clear form button — Ctrl+Del shortcut ── */}
+          <button
+            onClick={() => {
+            setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+            setField('invDate',    '');
+            setField('invoiceNum', '');
+            setField('invTax',     '');
+            setField('grtNum',     '');
+            setField('grn',        '');
+            setField('period',     '');
+            setField('backDesc1',  '');
+            setField('backDesc2',  '');
+            setField('backDesc3',  '');
+            }}
+            title="Clear form (Ctrl+Delete)"
+            style={{ alignSelf: 'center', marginRight: '5px', padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#7B1A1A', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            🗑 Clear
+            <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+Del</span>
+          </button>
           <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
             {[['VAT', fmtMoney(totalVat), false], ['WHT', fmtMoney(totalWht), totalWht < 0], ['NET TOTAL', fmtMoney(totalNet), false]].map(([label, val, isDanger], i, arr) => (
               <div key={label} style={{ padding: '8px 24px', borderRight: i < arr.length - 1 ? '0.5px solid #f0f2f5' : 'none', textAlign: 'right', minWidth: '100px' }}>
