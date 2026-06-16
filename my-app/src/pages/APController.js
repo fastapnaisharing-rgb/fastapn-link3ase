@@ -2223,6 +2223,15 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 </button>
               </div>
               <div style={{ flex: 1 }} />
+              {/* ── Clear form button — dark red, same size as Submit, gap 5px from VAT block ── */}
+              <button
+                onClick={() => {
+                  setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+                }}
+                style={{ alignSelf: 'center', marginRight: '5px', padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#7B1A1A', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                🗑 Clear
+              </button>
               <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
                 {[['VAT', fmt2(totalVat), false], ['WHT', fmt2(totalWht), totalWht < 0], ['NET TOTAL', fmt2(totalNet), false]].map(([label, val, isDanger], i, arr) => (
                   <div key={label} style={{ padding: '8px 24px', borderRight: i < arr.length - 1 ? '0.5px solid #f0f2f5' : 'none', textAlign: 'right', minWidth: '100px' }}>
