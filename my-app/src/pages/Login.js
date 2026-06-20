@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../supabase';
+import { db as supabase } from '../lib/db';
 
 function Login() {
   const [mode, setMode] = useState('login');
@@ -36,13 +36,10 @@ function Login() {
     setError(''); setLoading(true);
     try {
       // ✅ check maintenance mode ก่อน login
-      const { data: maintData } = await supabase
-        .from('system_settings')
-        .select('value')
-        .eq('key', 'maintenance_mode')
-        .single();
+      const maintRes = await fetch(`${process.env.REACT_APP_API_URL.replace('/api', '')}/api/public/maintenance`);
+      const maintSettings = await maintRes.json();
 
-      if (maintData?.value === 'true') {
+      if (maintSettings.maintenance_mode === 'true') {
         const resolvedEmail = await resolveEmail(emailOrUsername);
         const { data: roleData } = await supabase
           .from('user_roles')
@@ -50,12 +47,7 @@ function Login() {
           .eq('email', resolvedEmail)
           .single();
         if (roleData?.role !== 'Owner') {
-          const { data: msgData } = await supabase
-            .from('system_settings')
-            .select('value')
-            .eq('key', 'maintenance_message')
-            .single();
-          setError('🔧 ' + (msgData?.value || 'ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่'));
+          setError('🔧 ' + (maintSettings.maintenance_message || 'ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่'));
           setLoading(false);
           return;
         }

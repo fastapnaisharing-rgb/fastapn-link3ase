@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { supabase } from '../supabase';
+import { db as supabase } from '../lib/db';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
@@ -938,7 +938,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               </tr></thead>
             </table>
           </div>
-          <div ref={tbodyRef} style={S.tbodyWrap} onScroll={syncScroll}>
+          <div ref={tbodyRef} style={S.tbodyWrap} className="table-scroll" onScroll={syncScroll}>
             <table style={{...S.table, width:`${infoTotalW}px`}}>
               {renderColGroup(INFO_COLUMNS, true, infoActionW)}
               <tbody>

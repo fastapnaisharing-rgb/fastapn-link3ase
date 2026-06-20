@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import { db as supabase } from '../lib/db';
 import { useAuth } from './AuthContext';
 
 export function useUserRole() {

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../supabase';
+import { db as supabase } from '../lib/db';
 
 function Profile({ onClose }) {
   const { currentUser } = useAuth();

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '../supabase';
+import { db as supabase } from '../lib/db';
 import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -819,6 +819,9 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
 };
 
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
+const SUPPLIER_SITE_OPTS_DEFAULT = ['สำนักงานใหญ่','HQ','MAIN'];
+const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
+const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
 const SUPPLIER_SITE_OPTS_DEFAULT = ['สำนักงานใหญ่','HQ','MAIN'];
 const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
 const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
@@ -3046,6 +3049,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     } catch (e) {
       console.error('syncPendingToBucket:', e);
     } finally {
+      // ปลดล็อก _localId ที่ insert เสร็จแล้ว (ไม่ว่าสำเร็จหรือ error)
+      insertingIds.forEach(id => insertingIdsRef.current.delete(id));
       syncingRef.current = false;
     }
   };
@@ -3258,7 +3263,16 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     });
 
     setInvoices(prev => {
-      const next = [...prev, ...newItems];
+      // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
+      // เปรียบ invoice_no + branch_no + amount ของ item ใหม่กับที่มีอยู่แล้ว
+      const existingKeys = new Set(
+        prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${inv.amount}`)
+      );
+      const deduped = newItems.filter(
+        item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${item.amount}`)
+      );
+      if (!deduped.length) return prev;
+      const next = [...prev, ...deduped];
       saveLocalBucket(next);
       return next;
     });

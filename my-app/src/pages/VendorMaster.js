@@ -1,5 +1,6 @@
   import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-  import { supabase } from '../supabase';
+  import { db as supabase } from '../lib/db';
+  import { apiFetch } from '../api';
   import * as XLSX from 'xlsx';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
@@ -290,20 +291,14 @@ import { useDataCache } from '../contexts/DataCacheContext';
   }
 
   const computeNextSyRunning = async () => {
-    let allCodes = [];
-    let from = 0;
-    while (true) {
-      const { data } = await supabase.from('ie_code_list').select('"SY-Running"').range(from, from + 999);
-      if (!data || data.length === 0) break;
-      allCodes = [...allCodes, ...data.map(d => d['SY-Running'] || '')];
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-    const nums = allCodes.filter(c => /^P\d{7}$/.test(c)).map(c => parseInt(c.replace('P', ''), 10)).sort((a, b) => a - b);
-    if (!nums.length) return 'P0000001';
-    for (let i = 0; i < nums.length - 1; i++) { if (nums[i + 1] - nums[i] > 1) return `P${String(nums[i] + 1).padStart(7, '0')}`; }
-    return `P${String(nums[nums.length - 1] + 1).padStart(7, '0')}`;
-  };
+  const data = await apiFetch('/ie_code_list');
+  const allCodes = (data || []).map(d => d['SY-Running'] || '');
+  const nums = allCodes.filter(c => /^P\d{7}$/.test(c)).map(c => parseInt(c.replace('P', ''), 10)).sort((a, b) => a - b);
+  if (!nums.length) return 'P0000001';
+  for (let i = 0; i < nums.length - 1; i++) { if (nums[i + 1] - nums[i] > 1) return `P${String(nums[i] + 1).padStart(7, '0')}`; }
+  return `P${String(nums[nums.length - 1] + 1).padStart(7, '0')}`;
+};
+
 
   const getSyRunningPool = (existingCodes) => {
     const nums = existingCodes.filter(c => /^P\d{7}$/.test(c)).map(c => parseInt(c.replace('P', ''), 10)).sort((a, b) => a - b);
@@ -486,26 +481,24 @@ import { useDataCache } from '../contexts/DataCacheContext';
     };
 
     const fetchTab = useCallback(async (t) => {
-      let from = 0; const batchSize = 1000; let isFirst = true;
-      while (true) {
-        let query = supabase.from(TAB_CONFIG[t].table).select('*').range(from, from + batchSize - 1);
-        if (t !== 'iecode') query = query.or('deleted.is.null,deleted.eq.false');
-        const { data, error } = await query;
-        if (error) { console.error('fetchTab error:', error); break; }
-        if (isFirst) { setDataMap(prev => ({ ...prev, [t]: data || [] })); isFirst = false; }
-        else { setDataMap(prev => ({ ...prev, [t]: [...(prev[t] || []), ...(data || [])] })); }
-        if (!data || data.length < batchSize) break;
-        from += batchSize;
-      }
-    }, []);
+  try {
+    const data = await apiFetch(`/${TAB_CONFIG[t].table}`);
+    const rows = t !== 'iecode' ? (data || []).filter(row => row.deleted !== true) : (data || []);
+    setDataMap(prev => ({ ...prev, [t]: rows }));
+  } catch (err) { console.error('fetchTab error:', err); }
+}, []);
+
 
 
     const refreshNextSyRunning = useCallback(async () => { setNextSyRunning(await computeNextSyRunning()); }, []);
 
     const fetchVendorRules = useCallback(async () => {
-      const { data, error } = await supabase.from('Vendor_rule').select('*').order('id', { ascending: true });
-      if (!error) setVendorRules(data || []);
-    }, []);
+  try {
+    const data = await apiFetch('/Vendor_rule');
+    setVendorRules((data || []).slice().sort((a, b) => a.id - b.id));
+  } catch (err) { console.error('fetchVendorRules error:', err); }
+}, []);
+
 
     useEffect(() => {
       fetchTab('apcode'); fetchTab('smcode'); fetchTab('iecode'); fetchTab('category');
@@ -616,151 +609,154 @@ import { useDataCache } from '../contexts/DataCacheContext';
     };
 
     const handleNewSave = async () => {
-      const ts = getTimestamp(); const cuStr = cu();
-      let data = { ...form, username: cuStr, last_update: ts };
-      if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
-      if (editId) { const { error } = await supabase.from(cfg.table).update(data).eq('id', editId); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
-      else { const { error } = await supabase.from(cfg.table).insert([data]); if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; } }
-      setShowForm(false); setEditId(null); setForm({});
-      await fetchTab(tab);
-      if (tab === 'iecode') await refreshNextSyRunning();
-      if (tab === 'apcode') invalidate('SupplierList');
-      if (tab === 'category') invalidate('VendorCategory');
-    };
+  const ts = getTimestamp(); const cuStr = cu();
+  let data = { ...form, username: cuStr, last_update: ts };
+  if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
+  try {
+    if (editId) await apiFetch(`/${cfg.table}/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
+    else await apiFetch(`/${cfg.table}`, { method: 'POST', body: JSON.stringify(data) });
+  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); return; }
+  setShowForm(false); setEditId(null); setForm({});
+  await fetchTab(tab);
+  if (tab === 'iecode') await refreshNextSyRunning();
+  if (tab === 'apcode') invalidate('SupplierList');
+  if (tab === 'category') invalidate('VendorCategory');
+};
+
 
     const handleDelete = async (id) => {
-      if (!window.confirm('ต้องการลบรายการนี้?')) return;
-      const cuStr = cu(); const now = new Date().toISOString();
-      try {
-        const item = items.find(i => i.id === id);
-        const { error: binError } = await supabase.from('recycle_bin').insert([{ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key] || id, data: item, deleted_by: cuStr, deleted_at: now }]);
-        if (binError) throw binError;
-        if (tab === 'iecode') { const { error } = await supabase.from(cfg.table).delete().eq('id', id); if (error) throw error; }
-        else { const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cuStr, deleted_at: now }).eq('id', id); if (error) throw error; }
-        setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
-        await fetchTab(tab);
-        if (tab === 'iecode') await refreshNextSyRunning();
-        if (tab === 'apcode') invalidate('SupplierList');
-        if (tab === 'category') invalidate('VendorCategory');
-      } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
-    };
+  if (!window.confirm('ต้องการลบรายการนี้?')) return;
+  const cuStr = cu(); const now = new Date().toISOString();
+  try {
+    const item = items.find(i => i.id === id);
+    await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key] || id, data: item, deleted_by: cuStr, deleted_at: now }) });
+    if (tab === 'iecode') await apiFetch(`/${cfg.table}/${id}`, { method: 'DELETE' });
+    else await apiFetch(`/${cfg.table}/${id}`, { method: 'PUT', body: JSON.stringify({ deleted: true, deleted_by: cuStr, deleted_at: now }) });
+    setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
+    await fetchTab(tab);
+    if (tab === 'iecode') await refreshNextSyRunning();
+    if (tab === 'apcode') invalidate('SupplierList');
+    if (tab === 'category') invalidate('VendorCategory');
+  } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+};
+
 
     const handleBulkDelete = async () => {
-      if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-      const cuStr = cu(); const now = new Date().toISOString();
-      try {
-        const rows = items.filter(i => selected.includes(i.id));
-        const { error: insertError } = await supabase.from('recycle_bin').insert(rows.map(item => ({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: cuStr, deleted_at: now })));
-        if (insertError) throw insertError;
-        if (tab === 'iecode') { for (let i = 0; i < selected.length; i += 300) { const { error } = await supabase.from(cfg.table).delete().in('id', selected.slice(i, i + 300)); if (error) throw error; } }
-        else { for (let i = 0; i < selected.length; i += 300) { const { error } = await supabase.from(cfg.table).update({ deleted: true, deleted_by: cuStr, deleted_at: now }).in('id', selected.slice(i, i + 300)); if (error) throw error; } }
-        setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-        await fetchTab(tab);
-        if (tab === 'iecode') await refreshNextSyRunning();
-        if (tab === 'apcode') invalidate('SupplierList');
-        if (tab === 'category') invalidate('VendorCategory');
-        alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
-      } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
-    };
+  if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
+  const cuStr = cu(); const now = new Date().toISOString();
+  try {
+    const rows = items.filter(i => selected.includes(i.id));
+    for (const item of rows) {
+      await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: cuStr, deleted_at: now }) });
+    }
+    for (const id of selected) {
+      if (tab === 'iecode') await apiFetch(`/${cfg.table}/${id}`, { method: 'DELETE' });
+      else await apiFetch(`/${cfg.table}/${id}`, { method: 'PUT', body: JSON.stringify({ deleted: true, deleted_by: cuStr, deleted_at: now }) });
+    }
+    setSelectedMap(prev => ({ ...prev, [tab]: [] }));
+    await fetchTab(tab);
+    if (tab === 'iecode') await refreshNextSyRunning();
+    if (tab === 'apcode') invalidate('SupplierList');
+    if (tab === 'category') invalidate('VendorCategory');
+    alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
+  } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+};
+
 
     const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
     const handleDetailSave = async () => {
-      const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
-      const { error } = await supabase.from(cfg.table).update(data).eq('id', detailItem.id);
-      if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-      setShowDetailModal(false); await fetchTab(tab);
-      if (tab === 'apcode') invalidate('SupplierList');
-      if (tab === 'category') invalidate('VendorCategory');
-    };
+  const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
+  try {
+    await apiFetch(`/${cfg.table}/${detailItem.id}`, { method: 'PUT', body: JSON.stringify(data) });
+  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); return; }
+  setShowDetailModal(false); await fetchTab(tab);
+  if (tab === 'apcode') invalidate('SupplierList');
+  if (tab === 'category') invalidate('VendorCategory');
+};
+
 
     const handleOpenRecycleBin = async () => {
-      setShowRecycleBin(true); setRecycleBinSelected([]); setRecycleBinLoading(true);
-      try {
-        let from = 0; const batchSize = 1000; let allData = [];
-        while (true) {
-          const { data, error } = await supabase.from('recycle_bin').select('*').eq('source_table', cfg.table).order('deleted_at', { ascending: false }).range(from, from + batchSize - 1);
-          if (error) throw error;
-          allData = [...allData, ...(data || [])];
-          if (!data || data.length < batchSize) break;
-          from += batchSize;
-        }
-        setRecycleBinItems(allData);
-      } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
-      setRecycleBinLoading(false);
-    };
+  setShowRecycleBin(true); setRecycleBinSelected([]); setRecycleBinLoading(true);
+  try {
+    const data = await apiFetch(`/recycle_bin?eq_source_table=${cfg.table}&order=deleted_at.desc`);
+    setRecycleBinItems(data || []);
+  } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
+  setRecycleBinLoading(false);
+};
+
 
     const handleRestore = async (binItem) => {
-      try {
-        if (binItem.source_table === 'ie_code_list') { const data = { ...binItem.data }; delete data.id; const { error } = await supabase.from(binItem.source_table).insert([data]); if (error) throw error; }
-        else { const { error } = await supabase.from(binItem.source_table).update({ deleted: false, deleted_by: null, deleted_at: null }).eq('id', binItem.source_id); if (error) throw error; }
-        const { error: binError } = await supabase.from('recycle_bin').delete().eq('id', binItem.id);
-        if (binError) throw binError;
-        setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-        const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => c.table === binItem.source_table)?.[0];
-        if (tabKey) { await fetchTab(tabKey); if (tabKey === 'iecode') await refreshNextSyRunning(); }
-        if (tabKey === 'apcode') invalidate('SupplierList');
-        if (tabKey === 'category') invalidate('VendorCategory');
-        alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
-      } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
-    };
+  try {
+    if (binItem.source_table === 'ie_code_list') {
+      const data = { ...binItem.data }; delete data.id;
+      await apiFetch(`/${binItem.source_table}`, { method: 'POST', body: JSON.stringify(data) });
+    } else {
+      await apiFetch(`/${binItem.source_table}/${binItem.source_id}`, { method: 'PUT', body: JSON.stringify({ deleted: false, deleted_by: null, deleted_at: null }) });
+    }
+    await apiFetch(`/recycle_bin/${binItem.id}`, { method: 'DELETE' });
+    setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+    const tabKey = Object.entries(TAB_CONFIG).find(([, c]) => c.table === binItem.source_table)?.[0];
+    if (tabKey) { await fetchTab(tabKey); if (tabKey === 'iecode') await refreshNextSyRunning(); }
+    if (tabKey === 'apcode') invalidate('SupplierList');
+    if (tabKey === 'category') invalidate('VendorCategory');
+    alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
+  } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
+};
+
 
     const handlePermanentDelete = async (binItem) => {
-      if (!window.confirm(`ลบถาวร "${binItem.source_key}"?`)) return;
-      try {
-        if (binItem.source_table !== 'ie_code_list') { const { error } = await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id); if (error) throw error; }
-        const { error } = await supabase.from('recycle_bin').delete().eq('id', binItem.id);
-        if (error) throw error;
-        setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-      } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
-    };
+  if (!window.confirm(`ลบถาวร "${binItem.source_key}"?`)) return;
+  try {
+    if (binItem.source_table !== 'ie_code_list') await apiFetch(`/${binItem.source_table}/${binItem.source_id}`, { method: 'DELETE' });
+    await apiFetch(`/recycle_bin/${binItem.id}`, { method: 'DELETE' });
+    setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
+  } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
+};
+
 
     const handleBulkRestoreBin = async () => {
-      if (!recycleBinSelected.length) return;
-      setRecycleBinLoading2(true); setRecycleBinProgress(0);
-      try {
-        const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
-        const total = targets.length; let done = 0;
-        const grouped = {};
-        targets.forEach(item => { if (!grouped[item.source_table]) grouped[item.source_table] = []; grouped[item.source_table].push(item); });
-        for (const [table, binItems] of Object.entries(grouped)) {
-          for (let i = 0; i < binItems.length; i += 500) {
-            const chunk = binItems.slice(i, i + 500);
-            if (table === 'ie_code_list') { const rows = chunk.map(item => { const data = { ...item.data }; delete data.id; return data; }); const { error } = await supabase.from(table).insert(rows); if (error) throw error; }
-            else { const ids = chunk.map(b => b.source_id); const { error } = await supabase.from(table).update({ deleted: false, deleted_by: null, deleted_at: null }).in('id', ids); if (error) throw error; }
-            done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
-          }
-        }
-        const binIds = targets.map(b => b.id);
-        for (let i = 0; i < binIds.length; i += 500) { const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500)); if (error) throw error; }
-        setRecycleBinSelected([]); setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
-        await fetchTab(tab); if (tab === 'iecode') await refreshNextSyRunning();
-        if (tab === 'apcode') invalidate('SupplierList');
-        if (tab === 'category') invalidate('VendorCategory');
-        alert(`✅ Restore สำเร็จ ${total} รายการ`);
-      } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-      setRecycleBinLoading2(false); setRecycleBinProgress(0);
-    };
+  if (!recycleBinSelected.length) return;
+  setRecycleBinLoading2(true); setRecycleBinProgress(0);
+  try {
+    const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
+    const total = targets.length; let done = 0;
+    for (const item of targets) {
+      if (item.source_table === 'ie_code_list') {
+        const data = { ...item.data }; delete data.id;
+        await apiFetch(`/${item.source_table}`, { method: 'POST', body: JSON.stringify(data) });
+      } else {
+        await apiFetch(`/${item.source_table}/${item.source_id}`, { method: 'PUT', body: JSON.stringify({ deleted: false, deleted_by: null, deleted_at: null }) });
+      }
+      done++; setRecycleBinProgress(Math.round((done / total) * 100));
+    }
+    for (const b of targets) await apiFetch(`/recycle_bin/${b.id}`, { method: 'DELETE' });
+    setRecycleBinSelected([]); setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
+    await fetchTab(tab); if (tab === 'iecode') await refreshNextSyRunning();
+    if (tab === 'apcode') invalidate('SupplierList');
+    if (tab === 'category') invalidate('VendorCategory');
+    alert(`✅ Restore สำเร็จ ${total} รายการ`);
+  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+  setRecycleBinLoading2(false); setRecycleBinProgress(0);
+};
+
 
     const handleBulkPermanentDeleteBin = async () => {
-      if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ?`)) return;
-      setRecycleBinLoading2(true); setRecycleBinProgress(0);
-      try {
-        const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
-        const total = targets.length; let done = 0;
-        const nonIeTargets = targets.filter(b => b.source_table !== 'ie_code_list');
-        const byTable = {};
-        nonIeTargets.forEach(item => { if (!byTable[item.source_table]) byTable[item.source_table] = []; byTable[item.source_table].push(item.source_id); });
-        for (const [table, ids] of Object.entries(byTable)) {
-          for (let i = 0; i < ids.length; i += 500) { const { error } = await supabase.from(table).delete().in('id', ids.slice(i, i + 500)); if (error) throw error; done += ids.slice(i, i + 500).length; setRecycleBinProgress(Math.round((done / total) * 100)); }
-        }
-        done += targets.length - nonIeTargets.length; setRecycleBinProgress(Math.round((done / total) * 100));
-        const binIds = targets.map(b => b.id);
-        for (let i = 0; i < binIds.length; i += 500) { const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500)); if (error) throw error; }
-        setRecycleBinSelected([]); setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
-        alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
-      } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
-      setRecycleBinLoading2(false); setRecycleBinProgress(0);
-    };
+  if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ?`)) return;
+  setRecycleBinLoading2(true); setRecycleBinProgress(0);
+  try {
+    const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
+    const total = targets.length; let done = 0;
+    for (const item of targets) {
+      if (item.source_table !== 'ie_code_list') await apiFetch(`/${item.source_table}/${item.source_id}`, { method: 'DELETE' });
+      done++; setRecycleBinProgress(Math.round((done / total) * 100));
+    }
+    for (const b of targets) await apiFetch(`/recycle_bin/${b.id}`, { method: 'DELETE' });
+    setRecycleBinSelected([]); setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
+    alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
+  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+  setRecycleBinLoading2(false); setRecycleBinProgress(0);
+};
+
 
     const filtered = useMemo(() => cfg ? items
       .filter(i => cfg.fields.some(f => String(i[f] || '').toLowerCase().includes(search.toLowerCase())))
@@ -774,29 +770,29 @@ import { useDataCache } from '../contexts/DataCacheContext';
 
     // ─── Vendor Rule handlers ─────────────────────────────────────────────────────
     const handleRuleSave = async () => {
-      if (!ruleForm.item?.trim()) { alert('กรุณาระบุ Item'); return; }
-      const ts = getTimestamp();
-      const payload = { ...ruleForm, username: cu(), last_update: ts };
-      RULE_FIELDS.forEach(([k]) => { if (!String(payload[k] ?? '').trim()) payload[k] = null; });
-      if (editRuleId) {
-        const { error } = await supabase.from('Vendor_rule').update(payload).eq('id', editRuleId);
-        if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-      } else {
-        const { error } = await supabase.from('Vendor_rule').insert([payload]);
-        if (error) { alert('เกิดข้อผิดพลาด: ' + error.message); return; }
-      }
-      setShowRuleForm(false); setEditRuleId(null); setRuleForm({});
-      fetchVendorRules();
-      invalidate('VendorRule');
-    };
+  if (!ruleForm.item?.trim()) { alert('กรุณาระบุ Item'); return; }
+  const ts = getTimestamp();
+  const payload = { ...ruleForm, username: cu(), last_update: ts };
+  RULE_FIELDS.forEach(([k]) => { if (!String(payload[k] ?? '').trim()) payload[k] = null; });
+  try {
+    if (editRuleId) await apiFetch(`/Vendor_rule/${editRuleId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    else await apiFetch('/Vendor_rule', { method: 'POST', body: JSON.stringify(payload) });
+  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); return; }
+  setShowRuleForm(false); setEditRuleId(null); setRuleForm({});
+  fetchVendorRules();
+  invalidate('VendorRule');
+};
+
 
     const handleRuleDelete = async (id) => {
-      if (!window.confirm('ต้องการลบ rule นี้?')) return;
-      const { error } = await supabase.from('Vendor_rule').delete().eq('id', id);
-      if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return; }
-      fetchVendorRules();
-      invalidate('VendorRule');
-    };
+  if (!window.confirm('ต้องการลบ rule นี้?')) return;
+  try {
+    await apiFetch(`/Vendor_rule/${id}`, { method: 'DELETE' });
+  } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); return; }
+  fetchVendorRules();
+  invalidate('VendorRule');
+};
+
 
     const openRuleForm = (rule = null) => {
       setRuleForm(rule ? Object.fromEntries(RULE_FIELDS.map(([k]) => [k, rule[k] ?? ''])) : {});

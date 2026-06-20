@@ -11,7 +11,7 @@ import UserManagement from './pages/UserManagement';
 import APController from './pages/APController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
-import { supabase } from './supabase';
+import { db as supabase } from './lib/db';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);

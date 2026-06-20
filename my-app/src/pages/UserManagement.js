@@ -1,5 +1,6 @@
   import React, { useState, useEffect, useMemo } from 'react';
-  import { supabase } from '../supabase';
+  import { db as supabase } from '../lib/db';
+  import { supabase as _supabase } from '../supabase';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
 
@@ -428,37 +429,18 @@
       setBins(allData);
     };
       
-  useEffect(() => {
-    // โหลดครั้งแรก
+useEffect(() => {
+  fetchBins();
+  fetchBinCount();
+
+  // polling แทน realtime (refresh ทุก 30 วินาที)
+  const interval = setInterval(() => {
     fetchBins();
-    fetchBinCount(); // ✅ sync badge ด้วย
+    fetchBinCount();
+  }, 30000);
 
-    // ✅ realtime subscribe
-    const channel = supabase
-      .channel('recycle_bin_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'recycle_bin',
-        },
-        () => {
-          // ✅ debounce กันยิงถี่
-          clearTimeout(window._rbTimer);
-          window._rbTimer = setTimeout(() => {
-            fetchBins();
-            fetchBinCount();
-          }, 300);
-        }
-      )
-      .subscribe();
-
-    // ✅ cleanup (สำคัญมาก)
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+  return () => clearInterval(interval);
+}, []);
 
 
     const deletedByOptions = useMemo(() => [...new Set(bins.map(b => b.deleted_by).filter(Boolean))], [bins]);
@@ -988,11 +970,12 @@
       setLoading(true);
       try {
         if (newPassword) {
-          const { error: pwError } = await supabase.auth.updateUser({ password: newPassword });
+          const { error: pwError } = await _supabase.auth.updateUser({ password: newPassword })
           if (pwError) throw pwError;
         }
         if (email !== currentUser?.email) {
-          const { error: emailError } = await supabase.auth.updateUser({ email });
+          const { error: emailError } = await _supabase.auth.updateUser({ email });
+
           if (emailError) throw emailError;
         }
         const { error: roleError } = await supabase.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('email', currentUser?.email);
@@ -1168,7 +1151,7 @@
       setError('');
       try {
         const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
-        const { data: fnData, error: authError } = await supabase.functions.invoke('create-user', { body: { email: form.email, password: form.password } });
+        const { data: fnData, error: authError } = await _supabase.functions.invoke('create-user', { body: { email: form.email, password: form.password } });
         if (authError) throw authError;
         if (fnData?.error) throw new Error(fnData.error);
         const { error: roleError } = await supabase.from('user_roles').insert([{ email: form.email, username: form.username.trim().toLowerCase(), role: form.role, permissions: perms, updated_by: currentUser?.email, updated_at: new Date().toISOString() }]);
@@ -1179,7 +1162,7 @@
 
     const handleDelete = async () => {
       try {
-        const { data: fnData, error: fnError } = await supabase.functions.invoke('delete-user', { body: { email: deleteTarget.email } });
+        const { data: fnData, error: fnError } = await _supabase.functions.invoke('delete-user', { body: { email: deleteTarget.email } });
         if (fnError) throw fnError;
         if (fnData?.error) throw new Error(fnData.error);
         const { error: roleError } = await supabase.from('user_roles').delete().eq('id', deleteTarget.id);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { supabase } from '../supabase';
+import { db as supabase } from '../lib/db';
+import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
@@ -137,51 +138,34 @@ function ItemCodeList() {
 
   // ✅ ดึงข้อมูล active ทั้งหมด (loop ข้าม 1000-row limit)
   const fetchData = async () => {
-    let allData = [];
-    let from = 0;
-    const batchSize = 1000;
-    while (true) {
-      const { data, error } = await supabase
-        .from('itemcode_list')
-        .select('*')
-        .or('deleted.is.null,deleted.eq.false')
-        .range(from, from + batchSize - 1);
-      if (error) { console.error('fetchData error:', error); break; }
-      allData = [...allData, ...(data || [])];
-      if (!data || data.length < batchSize) break;
-      from += batchSize;
-    }
-    // ✅ map ตรงๆ ไม่ต้องแปลง field ที่ไม่มีใน schema
-    setItems(allData.map(item => ({ ...item, code: item.code || '' })));
+    try {
+      const data = await apiFetch('/itemcode_list');
+      const active = (data || []).filter(item => item.deleted !== true);
+      setItems(active.map(item => ({ ...item, code: item.code || '' })));
+    } catch (err) { console.error('fetchData error:', err); }
   };
+
 
   // ✅ คำนวณ Next Code จากทุก code รวม deleted เพื่อไม่ให้ซ้ำ
   const computeNextCode = async () => {
-    let allCodes = [];
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
-        .from('itemcode_list')
-        .select('code')
-        .range(from, from + 999);
-      if (!data || data.length === 0) break;
-      allCodes = [...allCodes, ...data.map(d => d.code || '')];
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-    const nums = allCodes
-      .filter(c => /^C\d{7}$/.test(c))
-      .map(c => parseInt(c.replace('C', ''), 10))
-      .sort((a, b) => a - b);
-    if (!nums.length) { setNextCode('C0000001'); return; }
-    for (let i = 0; i < nums.length - 1; i++) {
-      if (nums[i + 1] - nums[i] > 1) {
-        setNextCode(`C${String(nums[i] + 1).padStart(7, '0')}`);
-        return;
+    try {
+      const data = await apiFetch('/itemcode_list');
+      const allCodes = (data || []).map(d => d.code || '');
+      const nums = allCodes
+        .filter(c => /^C\d{7}$/.test(c))
+        .map(c => parseInt(c.replace('C', ''), 10))
+        .sort((a, b) => a - b);
+      if (!nums.length) { setNextCode('C0000001'); return; }
+      for (let i = 0; i < nums.length - 1; i++) {
+        if (nums[i + 1] - nums[i] > 1) {
+          setNextCode(`C${String(nums[i] + 1).padStart(7, '0')}`);
+          return;
+        }
       }
-    }
-    setNextCode(`C${String(nums[nums.length - 1] + 1).padStart(7, '0')}`);
+      setNextCode(`C${String(nums[nums.length - 1] + 1).padStart(7, '0')}`);
+    } catch (err) { console.error('computeNextCode error:', err); }
   };
+
 
   const getCodePool = (data) => {
     const nums = data
@@ -215,13 +199,13 @@ function ItemCodeList() {
       updated_by: userName || currentUser?.email || '',
       updated_at: now,
     };
-    if (editId) {
-      const { error } = await supabase.from('itemcode_list').update(data).eq('id', editId);
-      if (error) { alert('บันทึกไม่สำเร็จ: ' + error.message); return; }
-    } else {
-      const { error } = await supabase.from('itemcode_list').insert([{ ...data, code: nextCode }]);
-      if (error) { alert('บันทึกไม่สำเร็จ: ' + error.message); return; }
-    }
+    try {
+      if (editId) {
+        await apiFetch(`/itemcode_list/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
+      } else {
+        await apiFetch('/itemcode_list', { method: 'POST', body: JSON.stringify({ ...data, code: nextCode }) });
+      }
+    } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); return; }
     setShowForm(false);
     setEditId(null);
     resetForm();
@@ -229,6 +213,7 @@ function ItemCodeList() {
     computeNextCode();
     invalidate('ItemcodeList');
   };
+
 
   const handleEdit = (item) => {
     setForm({
@@ -254,59 +239,51 @@ function ItemCodeList() {
     try {
       const item = items.find(i => i.id === id);
       const now = new Date().toISOString();
-      await supabase.from('recycle_bin').insert([{
+      await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({
         source_table: 'itemcode_list',
         source_id: id,
         source_key: item?.code || id,
         data: item,
         deleted_by: userName || currentUser?.email || '',
         deleted_at: now,
-      }]);
-      const { error } = await supabase.from('itemcode_list')
-        .update({ deleted: true, deleted_by: userName || currentUser?.email || '', deleted_at: now })
-        .eq('id', id);
-      if (error) throw error;
+      })});
+      await apiFetch(`/itemcode_list/${id}`, { method: 'PUT', body: JSON.stringify({
+        deleted: true,
+        deleted_by: userName || currentUser?.email || '',
+        deleted_at: now,
+      })});
       setSelected(prev => prev.filter(s => s !== id));
       fetchData();
       invalidate('ItemcodeList');
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
 
+
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
     try {
       const now = new Date().toISOString();
-      const BATCH = 300; // ✅ เล็กลงเพื่อหลีกเลี่ยง URL length limit ของ Supabase
       const deletedBy = userName || currentUser?.email || '';
-
-      // ── ใช้ Set สำหรับ lookup O(1) แทน .includes() O(n) ──────────
       const selectedSet = new Set(selected);
       const rowsToDelete = items.filter(i => selectedSet.has(i.id));
 
-      // ── 1. Insert recycle_bin เป็น batch 100 ──────────────────────
-      const bins = rowsToDelete.map(item => ({
-        source_table: 'itemcode_list',
-        source_id:    item.id,
-        source_key:   item.code || item.id,
-        data:         item,
-        deleted_by:   deletedBy,
-        deleted_at:   now,
-      }));
-      for (let i = 0; i < bins.length; i += BATCH) {
-        const { error } = await supabase
-          .from('recycle_bin')
-          .insert(bins.slice(i, i + BATCH));
-        if (error) throw error;
+      for (const item of rowsToDelete) {
+        await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({
+          source_table: 'itemcode_list',
+          source_id: item.id,
+          source_key: item.code || item.id,
+          data: item,
+          deleted_by: deletedBy,
+          deleted_at: now,
+        })});
       }
 
-      // ── 2. Soft-delete itemcode_list เป็น batch 100 id ───────────
-      const ids = rowsToDelete.map(i => i.id);
-      for (let i = 0; i < ids.length; i += BATCH) {
-        const { error } = await supabase
-          .from('itemcode_list')
-          .update({ deleted: true, deleted_by: deletedBy, deleted_at: now })
-          .in('id', ids.slice(i, i + BATCH));
-        if (error) throw error;
+      for (const item of rowsToDelete) {
+        await apiFetch(`/itemcode_list/${item.id}`, { method: 'PUT', body: JSON.stringify({
+          deleted: true,
+          deleted_by: deletedBy,
+          deleted_at: now,
+        })});
       }
 
       setSelected([]);
@@ -315,6 +292,7 @@ function ItemCodeList() {
       alert(`✅ ลบสำเร็จ ${rowsToDelete.length} รายการ`);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
+
 
   // ✅ Template ตัด itemcode2 ออก
   const handleDownloadTemplate = () => {

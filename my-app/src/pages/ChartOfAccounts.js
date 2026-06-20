@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-  import { supabase } from '../supabase';
+  import { db as supabase } from '../lib/db';
   import * as XLSX from 'xlsx';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';

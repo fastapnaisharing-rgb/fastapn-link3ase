@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { supabase } from '../supabase';
+import { apiFetch } from '../api';
 
 const DataCacheContext = createContext(null);
 
@@ -29,11 +29,6 @@ const TABLE_MAP = {
   cpc_list:        'cpc_list',
 };
 
-// ✅ Defensive generic dedup, applied to EVERY collection.
-// Two rows are considered duplicates if all fields match EXCEPT
-// id / created_at / updated_at / updated_by. First occurrence wins.
-// Protects against duplicate rows in the DB (e.g. from past double-imports)
-// without modifying the database itself.
 const DEDUP_IGNORE_FIELDS = ['id', 'created_at', 'updated_at', 'updated_by'];
 
 const dedupRows = (collectionName, rows) => {
@@ -44,7 +39,7 @@ const dedupRows = (collectionName, rows) => {
     if (!row || typeof row !== 'object') { result.push(row); continue; }
     const keys = Object.keys(row).filter(k => !DEDUP_IGNORE_FIELDS.includes(k)).sort();
     const signature = JSON.stringify(keys.map(k => row[k]));
-    if (seen.has(signature)) continue; // duplicate content, skip
+    if (seen.has(signature)) continue;
     seen.add(signature);
     result.push(row);
   }
@@ -99,20 +94,8 @@ export function DataCacheProvider({ children }) {
     setLoading(prev => ({ ...prev, [collectionName]: true }));
     try {
       const tableName = TABLE_MAP[collectionName] || collectionName;
-      let allData = [];
-      let from = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase
-          .from(tableName)
-          .select('*')
-          .range(from, from + pageSize - 1);
-        if (error) throw error;
-        if (!data || data.length === 0) break;
-        allData = [...allData, ...data];
-        if (data.length < pageSize) break;
-        from += pageSize;
-      }
+      // backend ของเราคืนทั้งตารางในครั้งเดียว ไม่ต้อง paginate แบบที่ Supabase บังคับ
+      const allData = await apiFetch(`/${tableName}`);
       const dedupedData = dedupRows(collectionName, allData);
       setCache(prev => ({ ...prev, [collectionName]: dedupedData }));
       setLastFetch(prev => ({ ...prev, [collectionName]: Date.now() }));
@@ -125,7 +108,6 @@ export function DataCacheProvider({ children }) {
     }
   }, [cache, loading, isStale]);
 
-  // ล้าง cache ทั้งหมดของ collection นั้น (ใช้กรณี bulk import)
   const invalidate = useCallback((collectionName) => {
     setCache(prev => {
       const next = { ...prev };
@@ -139,7 +121,6 @@ export function DataCacheProvider({ children }) {
     return await fetchCollection(collectionName, true);
   }, [fetchCollection]);
 
-  // อัปเดต row เดียวใน cache (ไม่ต้อง API call เพิ่ม)
   const appendToCache = useCallback((collectionName, newItem) => {
     setCache(prev => ({
       ...prev,

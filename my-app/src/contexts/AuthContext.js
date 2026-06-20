@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import { supabase } from '../supabase'; // ← กลับไปใช้ Supabase จริงสำหรับ auth  
 import { flushAllSync } from './syncRegistry';
 
 const AuthContext = createContext();
