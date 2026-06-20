@@ -35,6 +35,24 @@ function Login() {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
+      // ✅ check maintenance mode ก่อน login
+      const maintRes = await fetch(`${process.env.REACT_APP_API_URL.replace('/api', '')}/api/public/maintenance`);
+      const maintSettings = await maintRes.json();
+
+      if (maintSettings.maintenance_mode === 'true') {
+        const resolvedEmail = await resolveEmail(emailOrUsername);
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('email', resolvedEmail)
+          .single();
+        if (roleData?.role !== 'Owner') {
+          setError('🔧 ' + (maintSettings.maintenance_message || 'ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่'));
+          setLoading(false);
+          return;
+        }
+      }
+
       const email = await resolveEmail(emailOrUsername);
       await login(email, password);
     } catch (err) {
