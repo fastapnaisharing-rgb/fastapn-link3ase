@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db as supabase } from '../lib/db';
 import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';
@@ -34,7 +34,7 @@ const formatBranchLabel = (item) =>
 
 const isHeadOffice = (companyName) => {
   const n = String(companyName ?? '').toLowerCase();
-  return n.includes('head office') || n.includes('เธชเธณเธเธฑเธเธเธฒเธเนเธซเธเน') || n.includes('เธชเธเธ');
+  return n.includes('head office') || n.includes('สำนักงานใหญ่') || n.includes('สนญ');
 };
 
 const findHOBranch = (branchItems, bu) =>
@@ -53,10 +53,10 @@ function useWindowSize() {
   return size;
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-// ComboInput โ€” text input + custom dropdown (เนเธ—เธ <input list>+<datalist> เธ—เธตเน
-// เธเธงเธฒเธกเธเธงเนเธฒเธเธเธญเธ dropdown เนเธกเนเธ•เธฃเธเธเธฑเธ cell เน€เธเธฃเธฒเธฐเน€เธเนเธ native browser behavior)
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
+// ComboInput — text input + custom dropdown (แทน <input list>+<datalist> ที่
+// ความกว้างของ dropdown ไม่ตรงกับ cell เพราะเป็น native browser behavior)
+// ─────────────────────────────────────────────────────────────────────────────
 function ComboInput({ value, onChange, options = [], placeholder = '' }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -96,9 +96,9 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
 // BUSearchPopup
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
 function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
   const [query, setQuery]   = useState('');
   const [active, setActive] = useState(-1);
@@ -154,14 +154,14 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
     >
       <div style={{ background: 'white', borderRadius: '14px', width: '700px', maxWidth: '95vw', height: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22), 0 4px 16px rgba(0,0,0,0.08)' }}>
         <div style={{ padding: '16px 20px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>๐ข</div>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏢</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Business Unit</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
-              {infoItems.length > 0 ? `${filtered.length} records${query ? ` ยท Search "${query}"` : ''}` : 'Loading...'}
+              {infoItems.length > 0 ? `${filtered.length} records${query ? ` · Search "${query}"` : ''}` : 'Loading...'}
             </div>
           </div>
-          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>ร—</button>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
         </div>
         <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
           <div style={{ position: 'relative' }}>
@@ -171,10 +171,10 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
               style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
               onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
             {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>ร—</button>}
+              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>}
           </div>
           <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
-            {[['โ‘โ“','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
+            {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
               <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
                 <span>{label}</span>
@@ -185,7 +185,7 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
         <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
           {filtered.length === 0 ? (
             <div style={{ padding: '56px', textAlign: 'center', color: '#ccc' }}>
-              <div style={{ fontSize: '36px', marginBottom: '10px' }}>๐”</div>
+              <div style={{ fontSize: '36px', marginBottom: '10px' }}>🔍</div>
               <div style={{ fontSize: '13px', color: '#aaa' }}>No BU found {query ? `"${query}"` : ''}</div>
             </div>
           ) : (
@@ -217,7 +217,7 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
                       <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
                         {item['AP GRT Control'] ? (
                           <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', fontWeight: '600', background: item['AP GRT Control'] === 'Auto' ? '#EAF3DE' : '#E6F1FB', color: item['AP GRT Control'] === 'Auto' ? '#27500A' : '#0C447C' }}>{item['AP GRT Control']}</span>
-                        ) : <span style={{ color: '#ddd' }}>โ€”</span>}
+                        ) : <span style={{ color: '#ddd' }}>—</span>}
                       </td>
                     </tr>
                   );
@@ -235,9 +235,9 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
 // BranchSearchPopup
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
 function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onSaveBranch, branchOptions = {} }) {
   const [query, setQuery]         = useState('');
   const [active, setActive]       = useState(-1);
@@ -295,16 +295,16 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
   const handleOpenNew  = () => { const f = {}; BRANCH_EDIT.forEach(([k]) => { f[k] = ''; }); if (bu) f['bu'] = bu; setEditTarget(null); setForm(f); setFormError(''); setView('new'); };
   const handleBack = () => { setView('search'); setEditTarget(null); setForm({}); setFormError(''); setTimeout(() => inputRef.current?.focus(), 60); };
   const validateForm = (f) => {
-    if (!f['Branch Code']?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Branch Code';
-    if (f['status'] === 'Closed' && !f['Inactive Date']) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Inactive Date เน€เธกเธทเนเธญ Status เน€เธเนเธ Closed';
-    if (f['status'] === 'Relocate' && !f['Branch Allocate']) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Branch Allocate เน€เธกเธทเนเธญ Status เน€เธเนเธ Relocate';
+    if (!f['Branch Code']?.trim()) return 'กรุณากรอก Branch Code';
+    if (f['status'] === 'Closed' && !f['Inactive Date']) return 'กรุณากรอก Inactive Date เมื่อ Status เป็น Closed';
+    if (f['status'] === 'Relocate' && !f['Branch Allocate']) return 'กรุณากรอก Branch Allocate เมื่อ Status เป็น Relocate';
     return '';
   };
   const handleSave = async () => {
     const err = validateForm(form); if (err) { setFormError(err); return; }
     setSaving(true);
     try { await onSaveBranch({ form, isEdit: view === 'edit', editTarget }); handleBack(); }
-    catch (e) { setFormError('เธเธฑเธเธ—เธถเธเนเธกเนเธชเธณเน€เธฃเนเธ: ' + e.message); }
+    catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
   const setField = (key, val) => { setForm(f => ({ ...f, [key]: val })); setFormError(''); };
@@ -317,14 +317,14 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
     return (
       <>
         <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-          <button onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>โ Back</button>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isEdit ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isEdit ? 'โ๏ธ' : 'โ•'}</div>
+          <button onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isEdit ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isEdit ? '✏️' : '➕'}</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isEdit ? `Edit branch โ€” ${editTarget?.['Branch Code'] || ''}` : 'New branch'}</div>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isEdit ? `Edit branch — ${editTarget?.['Branch Code'] || ''}` : 'New branch'}</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || '-'}</span></div>
           </div>
         </div>
-        {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>โ ๏ธ {formError}</div>}
+        {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>⚠️ {formError}</div>}
         <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '10px 12px' }}>
             {BRANCH_EDIT.map(([key, label, span]) => {
@@ -339,12 +339,12 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                 <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
                   <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>
                     {label}{isRequired && <span style={{ color: '#e24b4a' }}> *</span>}
-                    {needInactive && <span style={{ fontSize: '10px', color: '#bbb' }}> (เน€เธเธเธฒเธฐ Closed)</span>}
+                    {needInactive && <span style={{ fontSize: '10px', color: '#bbb' }}> (เฉพาะ Closed)</span>}
                   </label>
                   {key === 'Inactive Date' ? (
                     <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={baseInput} />
                   ) : BRANCH_COMBO.includes(key) ? (
-                    <><input list={`combo-branch-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} placeholder={`เน€เธฅเธทเธญเธ ${label}`} style={baseInput} /><datalist id={`combo-branch-${key}`}>{opts.map((o, i) => <option key={i} value={o} />)}</datalist></>
+                    <><input list={`combo-branch-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} placeholder={`เลือก ${label}`} style={baseInput} /><datalist id={`combo-branch-${key}`}>{opts.map((o, i) => <option key={i} value={o} />)}</datalist></>
                   ) : (
                     <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} style={baseInput} />
                   )}
@@ -355,11 +355,11 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
         </div>
         <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
           {isEdit && editTarget?.['updated_by'] ? (
-            <span style={{ fontSize: '11px', color: '#bbb' }}>Updated by <strong style={{ color: '#888' }}>{editTarget['updated_by']}</strong>{editTarget['updated_at'] ? ` ยท ${new Date(editTarget['updated_at']).toLocaleString('th-TH')}` : ''}</span>
+            <span style={{ fontSize: '11px', color: '#bbb' }}>Updated by <strong style={{ color: '#888' }}>{editTarget['updated_by']}</strong>{editTarget['updated_at'] ? ` · ${new Date(editTarget['updated_at']).toLocaleString('th-TH')}` : ''}</span>
           ) : <span />}
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleBack} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>โ Back to search</button>
-            <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '๐’พ Save'}</button>
+            <button onClick={handleBack} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>← Back to search</button>
+            <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '💾 Save'}</button>
           </div>
         </div>
       </>
@@ -369,28 +369,28 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
   const renderSearchView = () => (
     <>
       <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>๐ช</div>
+        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏪</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Branch</div>
-          <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || 'เธ—เธฑเนเธเธซเธกเธ”'}</span>{' ยท '}{filtered.length} เธชเธฒเธเธฒ</div>
+          <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || 'ทั้งหมด'}</span>{' · '}{filtered.length} สาขา</div>
         </div>
-        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>ร—</button>
+        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
       </div>
       <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
           <div style={{ position: 'relative', flex: 1 }}>
             <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey} placeholder="Branch code, เธเธทเนเธญเธชเธฒเธเธฒ..."
+            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey} placeholder="Branch code, ชื่อสาขา..."
               style={{ width: '100%', padding: '9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
               onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
-            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>ร—</button>}
+            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
           </div>
           <button onClick={handleOpenNew} style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add
           </button>
         </div>
         <div style={{ fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
-          {[['โ‘โ“','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
+          {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
             <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
               <span>{label}</span>
@@ -400,7 +400,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
       </div>
       <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
         {filtered.length === 0 ? (
-          <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}><div style={{ fontSize: '32px', marginBottom: '8px' }}>๐ช</div><div style={{ fontSize: '13px', color: '#aaa' }}>เนเธกเนเธเธเธชเธฒเธเธฒ{query ? ` "${query}"` : ''}</div></div>
+          <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}><div style={{ fontSize: '32px', marginBottom: '8px' }}>🏪</div><div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบสาขา{query ? ` "${query}"` : ''}</div></div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
@@ -408,7 +408,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                 {[['Branch Code','110px','Branch Code'],['Direct','120px','Branch Direct'],['Company Name','','Company for Show in Report Display'],['BU Branch','90px','BU-Branch'],['Status','80px','status'],['Action','128px',null]].map(([h, w, field]) => (
                   <th key={h} onClick={field ? () => handleSort(field) : undefined}
                     style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined, cursor: field ? 'pointer' : 'default', userSelect: 'none' }}>
-                    {h}{field ? (sortField === field ? (sortDir === 'asc' ? ' โ–ฒ' : ' โ–ผ') : ' โ•') : ''}
+                    {h}{field ? (sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
                   </th>
                 ))}
               </tr>
@@ -438,7 +438,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
         )}
       </div>
       <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-        <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} เธชเธฒเธเธฒ</span>
+        <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} สาขา</span>
         <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
       </div>
     </>
@@ -454,9 +454,9 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
 // ItemCodeSearchPopup
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
 const ITEM_COMBO_FIELDS = ['dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
 
 function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '' }) {
@@ -496,14 +496,14 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   };
 
   const handleSave = async () => {
-    if (!form.description?.trim()) { alert('เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Description'); return; }
+    if (!form.description?.trim()) { alert('กรุณากรอก Description'); return; }
     setSaving(true);
     try {
       const { error } = await supabase.from('itemcode_list').insert([{ ...form, code: nextCode, updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() }]);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
       setView('search'); setForm(emptyForm);
-    } catch (e) { alert('เธเธฑเธเธ—เธถเธเนเธกเนเธชเธณเน€เธฃเนเธ: ' + e.message); }
+    } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
 
@@ -534,13 +534,13 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: 'white', borderRadius: '14px', width: view === 'new' ? '94vw' : '95vw', maxWidth: view === 'new' ? '720px' : '900px', height: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
         <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-          {view === 'new' && <button onClick={() => setView('search')} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>โ Back</button>}
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>๐”–</div>
+          {view === 'new' && <button onClick={() => setView('search')} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>}
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🔖</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{view === 'new' ? 'New Item Code' : 'Select Item Code'}</div>
-            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{view === 'new' ? `Code: ${nextCode}` : `${filtered.length} เธฃเธฒเธขเธเธฒเธฃ${query ? ` ยท เธเนเธเธซเธฒ "${query}"` : ''} ยท BU: FREE${bu ? `, ${bu}` : ''}`}</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{view === 'new' ? `Code: ${nextCode}` : `${filtered.length} รายการ${query ? ` · ค้นหา "${query}"` : ''} · BU: FREE${bu ? `, ${bu}` : ''}`}</div>
           </div>
-          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>ร—</button>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
         {view === 'search' ? (
           <>
@@ -548,10 +548,10 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <div style={{ position: 'relative', flex: 1 }}>
                   <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                  <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey} placeholder="เธเนเธเธซเธฒ Code, Description, CPC, Account, Keyword..."
+                  <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey} placeholder="ค้นหา Code, Description, CPC, Account, Keyword..."
                     style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
                     onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
-                  {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>ร—</button>}
+                  {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
                 </div>
                 <button onClick={() => { setView('new'); setForm({ ...emptyForm, bu: bu || '' }); }} style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Item
@@ -564,7 +564,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
                   <tr>{COLS.map(([key, label, w]) => (<th key={key} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 10px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{label}</th>))}</tr>
                 </thead>
                 <tbody>
-                  {filtered.length === 0 ? (<tr><td colSpan={COLS.length} style={{ textAlign: 'center', color: '#aaa', padding: '48px', fontSize: '13px' }}>เนเธกเนเธเธ Item Code{query ? ` "${query}"` : ''}</td></tr>)
+                  {filtered.length === 0 ? (<tr><td colSpan={COLS.length} style={{ textAlign: 'center', color: '#aaa', padding: '48px', fontSize: '13px' }}>ไม่พบ Item Code{query ? ` "${query}"` : ''}</td></tr>)
                   : filtered.map((item, i) => { const isAct = i === active; return (
                     <tr key={item.id || i} data-row={i} onClick={() => onSelect(item)} onMouseEnter={() => setActive(i)} style={{ background: isAct ? '#eef3fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
                       {COLS.map(([key]) => (<td key={key} style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{key === 'code' ? <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '5px', padding: '2px 7px', fontSize: '11px', fontWeight: '600' }}>{item[key] || '-'}</span> : <span style={{ color: '#333' }}>{item[key] || '-'}</span>}</td>))}
@@ -574,7 +574,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
               </table>
             </div>
             <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-              <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} เธฃเธฒเธขเธเธฒเธฃ</span>
+              <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} รายการ</span>
               <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
             </div>
           </>
@@ -653,7 +653,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
             </div>
             <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', flexShrink: 0, background: '#fafbfc' }}>
               <button onClick={() => setView('search')} style={{ padding: '7px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '๐’พ Save'}</button>
+              <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '💾 Save'}</button>
             </div>
           </>
         )}
@@ -662,15 +662,15 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-// SupplierSearchPopup โ€” with Add/Edit form (Editor+ only)
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-// field layout เธ•เธฃเธเธเธฑเธ VendorMaster apcode tab
-// [key, label, gridSpan, type]  span เธเธทเธญ 3-column grid (max 3)
-// SUPPLIER_FIELDS เธ•เธฃเธเธเธฑเธ apcode tab เนเธ VendorMaster
-// [key, label, gridSpan(max3), type]  โ€” section เนเธเนเธเธ”เนเธงเธข 'section' type
+// ─────────────────────────────────────────────────────────────────────────────
+// SupplierSearchPopup — with Add/Edit form (Editor+ only)
+// ─────────────────────────────────────────────────────────────────────────────
+// field layout ตรงกับ VendorMaster apcode tab
+// [key, label, gridSpan, type]  span คือ 3-column grid (max 3)
+// SUPPLIER_FIELDS ตรงกับ apcode tab ใน VendorMaster
+// [key, label, gridSpan(max3), type]  — section แบ่งด้วย 'section' type
 const SUPPLIER_FIELDS = [
-  // โ”€โ”€ เธเนเธญเธกเธนเธฅเธซเธฅเธฑเธ โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── ข้อมูลหลัก ──────────────────────────────────────────────────────────
   ['Code',            'Code *',                1, 'code'],
   ['BU Code',         'BU',                    1, 'readonly'],
   ['Supplier Site',   'Supplier Site',          1, 'combo'],
@@ -680,20 +680,20 @@ const SUPPLIER_FIELDS = [
   ['Tax-Type',        'Tax-Type',               1, 'combo'],
   ['Notice',          'Notice',                 1, 'combo'],
   ['Sub Acc',         'Sub Acc',                1, 'text'],
-  // โ”€โ”€ เธเนเธญเธกเธนเธฅเธ•เธดเธ”เธ•เนเธญ โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── ข้อมูลติดต่อ ─────────────────────────────────────────────────────────
   ['Tax ID',          'Tax ID',                 1, 'text'],
   ['No.',             'No.',                    1, 'text'],
   ['Contact',         'Contact',                1, 'text'],
   ['Email',           'Email',                  1, 'text'],
   ['Address',         'Address',                3, 'textarea'],
-  // โ”€โ”€ Coding โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── Coding ───────────────────────────────────────────────────────────────
   ['First Part',      'First Part',             1, 'text'],
   ['Mid Part',        'Mid Part',               1, 'text'],
   ['Last Part',       'Last Part',              1, 'text'],
   ['Invoice No.',     'Invoice No.',            1, 'combo'],
   ['Digit',           'Digit',                  1, 'text'],
   ['Due',             'Due',                    1, 'text'],
-  // โ”€โ”€ เธเธณเธญเธเธดเธเธฒเธข โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── คำอธิบาย ─────────────────────────────────────────────────────────────
   ['NoticeDescrip',   'Notice Description',     3, 'textarea'],
   ['RuleDescrip',     'Rule Description',       3, 'textarea'],
 ];
@@ -722,7 +722,7 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   const hasIB = form?.branchIBLabel && form.branchIBLabel !== '-';
   const isIBAll = form?.branchIBLabel === 'IB-ALL';
   const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
-  const ibLabel = hasIB && !isIBAll ? `เธชเธฒเธเธฒ ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
+  const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
   const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), form?.backDesc1 ?? '', form?.backDesc2 ?? '', form?.backDesc3 ?? '', ibLabel].filter(Boolean).join(' ');
   const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
   const hasITC = notices.includes('ITC');
@@ -751,11 +751,11 @@ const recalcLines = (lines, itemcodeItems, vendorInfo, form) => {
   return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode }));
 };
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-// Invoice No. auto-generate โ€” เธเธฃเธฐเธเธญเธเน€เธฅเธ Invoice เน€เธ•เนเธกเธเธฒเธ running number เธ—เธตเนเธเธฃเธญเธ
-// เธ•เธฒเธก Invoice Rule / First-Mid-Last Part / Digit เธเธญเธ supplier
-// (เธญเนเธฒเธเธญเธดเธ macro Option_InvoiceCal เน€เธ”เธดเธก)
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
+// Invoice No. auto-generate — ประกอบเลข Invoice เต็มจาก running number ที่กรอก
+// ตาม Invoice Rule / First-Mid-Last Part / Digit ของ supplier
+// (อ้างอิง macro Option_InvoiceCal เดิม)
+// ─────────────────────────────────────────────────────────────────────────────
 const pad2 = (n) => String(n).padStart(2, '0');
 const invFmtYY       = (d) => pad2(d.getFullYear() % 100);
 const invFmtYYYY     = (d) => String(d.getFullYear());
@@ -766,7 +766,7 @@ const invFmtYYYYMM   = (d) => invFmtYYYY(d) + invFmtMM(d);
 const invFmtDDMMYYYY = (d) => invFmtDD(d) + invFmtMM(d) + invFmtYYYY(d);
 const invFmtYYMMDD   = (d) => invFmtYY(d) + invFmtMM(d) + invFmtDD(d);
 
-// pattern builders: (Fp, Mp, Lp, d, result) => string โ€” เธ•เธฒเธก Invoice No. rule code เธเธญเธ supplier
+// pattern builders: (Fp, Mp, Lp, d, result) => string — ตาม Invoice No. rule code ของ supplier
 const INVOICE_PATTERN_BUILDERS = {
   'AF-2Y2M':     (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYYMM(d)}${Mp}${r}`,
   'AF-T2Y2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 43}${invFmtMM(d)}${Mp}${r}`,
@@ -789,9 +789,9 @@ const INVOICE_PATTERN_BUILDERS = {
   'AF-2YMM-1':   (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setMonth(d2.getMonth() - 1); return `${Fp}${invFmtYYMM(d2)}${Lp}${r}`; },
 };
 
-// typedNum   = เน€เธฅเธเธฃเธฑเธเธ—เธตเน user เธเธฃเธญเธเนเธเธเนเธญเธ Invoice num (เธเธฃเธญเธเนเธ”เธ)
-// invDateStr = เธเนเธฒเธเธฒเธ input[type=date] ("YYYY-MM-DD")
-// vendorInfo = record เธเธฒเธ supplier_list (เธกเธต 'Invoice No.', 'First Part', 'Mid Part', 'Last Part', 'Digit')
+// typedNum   = เลขรันที่ user กรอกในช่อง Invoice num (กรอบแดง)
+// invDateStr = ค่าจาก input[type=date] ("YYYY-MM-DD")
+// vendorInfo = record จาก supplier_list (มี 'Invoice No.', 'First Part', 'Mid Part', 'Last Part', 'Digit')
 const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
   const raw = String(typedNum ?? '').trim();
   if (!raw) return '';
@@ -802,14 +802,14 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
   const ruleCode = String(vendorInfo?.['Invoice No.'] ?? '').trim();
   const digitRule = String(vendorInfo?.['Digit'] ?? '').trim().toUpperCase();
 
-  // "NDB" -> n เธซเธฅเธฑเธ เธ—เธตเน supplier เธเธณเธซเธเธ” (เน€เธเนเธ "4DB" -> 4)
+  // "NDB" -> n หลัก ที่ supplier กำหนด (เช่น "4DB" -> 4)
   const dm = digitRule.match(/^(\d{1,2})DB$/);
   const n = dm ? parseInt(dm[1], 10) : 0;
 
-  // โ”€โ”€ เธเธฃเธญเธเน€เธเธดเธเธเธณเธเธงเธเธซเธฅเธฑเธเธ—เธตเนเธเธณเธซเธเธ” -> เนเธเนเธเนเธฒเธ—เธตเนเธเธฃเธญเธเน€เธเนเธ Invoice No. เธ•เธฃเธเน เธ—เธฑเนเธเธซเธกเธ” โ”€โ”€
+  // ── กรอกเกินจำนวนหลักที่กำหนด -> ใช้ค่าที่กรอกเป็น Invoice No. ตรงๆ ทั้งหมด ──
   if (n > 0 && raw.length > n) return raw;
 
-  // โ”€โ”€ pad เน€เธฅเธเธฃเธฑเธเธ”เนเธงเธข 0 เนเธซเนเธเธฃเธ n เธซเธฅเธฑเธ (เน€เธเธเธฒเธฐเธเธฃเธ“เธตเธเธฃเธญเธเน€เธเนเธเธ•เธฑเธงเน€เธฅเธเธฅเนเธงเธ) โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── pad เลขรันด้วย 0 ให้ครบ n หลัก (เฉพาะกรณีกรอกเป็นตัวเลขล้วน) ──────────
   const result = (n > 0 && /^\d+$/.test(raw)) ? raw.padStart(n, '0') : raw;
 
   const d = invDateStr ? new Date(`${invDateStr}T00:00:00`) : null;
@@ -819,7 +819,7 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
 };
 
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
-const SUPPLIER_SITE_OPTS_DEFAULT = ['เธชเธณเธเธฑเธเธเธฒเธเนเธซเธเน','HQ','MAIN'];
+const SUPPLIER_SITE_OPTS_DEFAULT = ['สำนักงานใหญ่','HQ','MAIN'];
 const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
 const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
 
@@ -909,11 +909,11 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); setFormError(''); };
 
   const validate = (f) => {
-    if (!f['Code']?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Code';
-    if (!f['Supplier Name']?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Supplier Name (TH)';
-    if (!f['Supplier Number']?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Supplier No.';
-    if (!f['Supplier Site']?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Supplier Site';
-    if (!f['BU Code']?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ BU Code';
+    if (!f['Code']?.trim()) return 'กรุณากรอก Code';
+    if (!f['Supplier Name']?.trim()) return 'กรุณากรอก Supplier Name (TH)';
+    if (!f['Supplier Number']?.trim()) return 'กรุณากรอก Supplier No.';
+    if (!f['Supplier Site']?.trim()) return 'กรุณากรอก Supplier Site';
+    if (!f['BU Code']?.trim()) return 'กรุณากรอก BU Code';
     return '';
   };
 
@@ -933,7 +933,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       }
       if (fetchCollection) await fetchCollection('SupplierList', true);
       handleBack();
-    } catch (e) { setFormError('เธเธฑเธเธ—เธถเธเนเธกเนเธชเธณเน€เธฃเนเธ: ' + e.message); }
+    } catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
 
@@ -950,8 +950,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const baseInput = { height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' };
   const isEdit = view === 'edit';
 
-  // โ”€โ”€ getOpts: เธ”เธถเธ unique non-empty values เธเธฒเธ supplierItems เธ—เธฑเนเธเธซเธกเธ” (เนเธกเน filter BU) โ”€โ”€
-  // โ”€โ”€ merge เธเธฑเธ hardcoded defaults เธชเธณเธซเธฃเธฑเธ field เธ—เธตเนเธกเธต master list เธเธเธ—เธตเน โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── getOpts: ดึง unique non-empty values จาก supplierItems ทั้งหมด (ไม่ filter BU) ──
+  // ── merge กับ hardcoded defaults สำหรับ field ที่มี master list คงที่ ──────────────
   const getOpts = (key) => {
     const fromCache = supplierItems.map(i => String(i[key] ?? '').trim()).filter(Boolean);
     let defaults = [];
@@ -967,10 +967,10 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const renderFormView = () => (
     <>
       <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-        <button onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>โ Back</button>
-        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isEdit ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isEdit ? 'โ๏ธ' : 'โ•'}</div>
+        <button onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>
+        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isEdit ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isEdit ? '✏️' : '➕'}</div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isEdit ? `Edit supplier โ€” ${editTarget?.['Code'] || ''}` : 'New supplier'}</div>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isEdit ? `Edit supplier — ${editTarget?.['Code'] || ''}` : 'New supplier'}</div>
           <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || '-'}</span></div>
         </div>
         {isEdit && (
@@ -980,7 +980,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
           </span>
         )}
       </div>
-      {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>โ ๏ธ {formError}</div>}
+      {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>⚠️ {formError}</div>}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {formError && false}
         {(() => {
@@ -999,12 +999,12 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
             const opts = getOpts(key);
             return (
               <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', ...extra }}>
-                <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={opts} placeholder="เน€เธฅเธทเธญเธ" />
+                <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={opts} placeholder="เลือก" />
               </div>
             );
           };
-          // โ”€โ”€ yCell/yCombo/yStatic: เน€เธเธฅเธฅเนเธเธทเนเธเน€เธซเธฅเธทเธญเธ เธชเธณเธซเธฃเธฑเธ Row 1-2 โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-          // โ”€โ”€ (Code, Supplier Name, Supplier Number, Supplier Site, BU Code) โ”€
+          // ── yCell/yCombo/yStatic: เซลล์พื้นเหลือง สำหรับ Row 1-2 ──────────
+          // ── (Code, Supplier Name, Supplier Number, Supplier Site, BU Code) ─
           const yCell = (key, opts = {}) => {
             const ro = (key === 'Code' && isEdit) || opts.readOnly;
             const isRequired = SUPPLIER_FIELDS.find(([k]) => k === key)?.[1]?.includes('*');
@@ -1019,7 +1019,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
             const cOpts = getOpts(key);
             return (
               <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', background: '#FFF3CD', borderRight: '0.5px solid #e8eaf0', ...opts.cellStyle }}>
-                <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={cOpts} placeholder="เน€เธฅเธทเธญเธ" />
+                <ComboInput value={form[key] || ''} onChange={v => setField(key, v)} options={cOpts} placeholder="เลือก" />
               </div>
             );
           };
@@ -1028,8 +1028,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
               <input value={val} readOnly style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px', color: '#999' }} />
             </div>
           );
-          // โ”€โ”€ invoiceRuleMatch: true เน€เธกเธทเนเธญ 'Invoice No.' เธ—เธตเนเธเธฃเธญเธ เธ•เธฃเธเธเธฑเธ supplier โ”€โ”€
-          // โ”€โ”€ เธฃเธฒเธขเธญเธทเนเธเนเธ BU เธเธตเน (เธกเธตเธญเธขเธนเนเนเธ cache SupplierList เนเธฅเนเธง) โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+          // ── invoiceRuleMatch: true เมื่อ 'Invoice No.' ที่กรอก ตรงกับ supplier ──
+          // ── รายอื่นใน BU นี้ (มีอยู่ใน cache SupplierList แล้ว) ──────────────────
           const invoiceRuleMatch = !!form['Invoice No.']?.trim() && buFiltered.some(i => String(i['Invoice No.'] ?? '').trim().toLowerCase() === form['Invoice No.'].trim().toLowerCase());
           const row = (cols, extra = {}) => (
             <div style={{ display: 'grid', gridTemplateColumns: cols, border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden', ...extra }} />
@@ -1041,9 +1041,9 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
           );
           return (
             <>
-              {/* โ”€โ”€ Row 1-3: เนเธเน grid columns เน€เธ”เธตเธขเธงเธเธฑเธ '110px 1fr 110px 1fr 110px 1fr' โ”€โ”€โ”€โ”€ */}
-              {/* โ”€โ”€ เธ—เธณเนเธซเนเธเธญเธฅเธฑเธกเธเนเธเธญเธเธ—เธฑเนเธ 3 เนเธ–เธงเธ•เธฃเธเธเธฑเธเน€เธซเธกเธทเธญเธเธ•เธฒเธฃเธฒเธ โ€” Code / Supplier   โ”€โ”€โ”€โ”€ */}
-              {/* โ”€โ”€ Name / Supplier Number / Supplier Site / BU Code = เธเธทเนเธเน€เธซเธฅเธทเธญเธ  โ”€โ”€โ”€โ”€ */}
+              {/* ── Row 1-3: ใช้ grid columns เดียวกัน '110px 1fr 110px 1fr 110px 1fr' ──── */}
+              {/* ── ทำให้คอลัมน์ของทั้ง 3 แถวตรงกันเหมือนตาราง — Code / Supplier   ──── */}
+              {/* ── Name / Supplier Number / Supplier Site / BU Code = พื้นเหลือง  ──── */}
 
               {/* Row 1: Code + Supplier Name */}
               <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 110px 1fr 110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
@@ -1076,8 +1076,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 {combo('Tax-Type')}
               </div>
 
-              {/* Row 4+5: Invoice Rule section โ€” headers + values (Format เน€เธ”เธตเธขเธงเธเธฑเธ Contact) */}
-              {/* โ”€โ”€ 6 เธเธญเธฅเธฑเธกเธเนเน€เธ—เนเธฒเธเธฑเธ โ€” Digit + Due Date เธฃเธงเธกเธญเธขเธนเนเนเธเธเธญเธฅเธฑเธกเธเนเน€เธ”เธตเธขเธงเธเธฑเธ (เนเธเนเธเธเนเธฒเธข-เธเธงเธฒ) โ”€โ”€ */}
+              {/* Row 4+5: Invoice Rule section — headers + values (Format เดียวกับ Contact) */}
+              {/* ── 6 คอลัมน์เท่ากัน — Digit + Due Date รวมอยู่ในคอลัมน์เดียวกัน (แบ่งซ้าย-ขวา) ── */}
               <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', borderBottom: '0.5px solid #e8eaf0' }}>
                   {['Invoice Rule','First Part','Mid Part','Last Part'].map((h) => (
@@ -1137,11 +1137,11 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       </div>
       <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
         {isEdit && editTarget?.updated_by ? (
-          <span style={{ fontSize: '11px', color: '#bbb' }}>Updated by <strong style={{ color: '#888' }}>{editTarget.updated_by}</strong>{editTarget.updated_at ? ` ยท ${new Date(editTarget.updated_at).toLocaleString('th-TH')}` : ''}</span>
+          <span style={{ fontSize: '11px', color: '#bbb' }}>Updated by <strong style={{ color: '#888' }}>{editTarget.updated_by}</strong>{editTarget.updated_at ? ` · ${new Date(editTarget.updated_at).toLocaleString('th-TH')}` : ''}</span>
         ) : <span />}
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={handleBack} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>โ Back</button>
-          <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '๐’พ Save'}</button>
+          <button onClick={handleBack} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>← Back</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '💾 Save'}</button>
         </div>
       </div>
     </>
@@ -1150,11 +1150,11 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const renderSearchView = () => (
     <>
       <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>๐ญ</div>
+        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏭</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Supplier</div>
           <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>
-            {filtered.length} เธฃเธฒเธขเธเธฒเธฃ{query ? ` ยท เธเนเธเธซเธฒ "${query}"` : ''}{bu ? ` ยท BU: ${bu.toUpperCase()}` : ''}
+            {filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}{bu ? ` · BU: ${bu.toUpperCase()}` : ''}
           </div>
         </div>
         {canEdit && (
@@ -1162,20 +1162,20 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add supplier
           </button>
         )}
-        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>ร—</button>
+        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
       </div>
       <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
         <div style={{ position: 'relative' }}>
           <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
-            placeholder="เธเนเธเธซเธฒ Code, Supplier Name, Supplier No., Tax ID..."
+            placeholder="ค้นหา Code, Supplier Name, Supplier No., Tax ID..."
             style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
             onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
           {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
-            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>ร—</button>}
+            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
         </div>
         <div style={{ marginTop: '7px', fontSize: '11px', color: '#bbb', display: 'flex', gap: '12px' }}>
-          {[['โ‘โ“','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
+          {[['↑↓','Navigate'],['Enter','Select'],['Esc','Close']].map(([key, label]) => (
             <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <kbd style={{ background: '#f0f1f3', border: '0.5px solid #dde', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', color: '#666', fontFamily: 'monospace' }}>{key}</kbd>
               <span>{label}</span>
@@ -1186,8 +1186,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       <div ref={listRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
         {filtered.length === 0 ? (
           <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
-            <div style={{ fontSize: '32px', marginBottom: '8px' }}>๐ญ</div>
-            <div style={{ fontSize: '13px', color: '#aaa' }}>เนเธกเนเธเธ Supplier{query ? ` "${query}"` : ''}</div>
+            <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏭</div>
+            <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Supplier{query ? ` "${query}"` : ''}</div>
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed', minWidth: '800px' }}>
@@ -1196,7 +1196,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 {COLS.map(([field, label, w]) => (
                   <th key={field} onClick={() => handleSort(field)}
                     style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined, cursor: 'pointer', userSelect: 'none' }}>
-                    {label}{sortField === field ? (sortDir === 'asc' ? ' โ–ฒ' : ' โ–ผ') : ' โ•'}
+                    {label}{sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ↕'}
                   </th>
                 ))}
                 {canEdit && <th style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: '70px', textAlign: 'center' }}>Action</th>}
@@ -1224,12 +1224,12 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
                       {item['Tax-Type'] ? (
                         <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '600', background: '#E6F1FB', color: '#0C447C' }}>{item['Tax-Type']}</span>
-                      ) : <span style={{ color: '#ddd' }}>โ€”</span>}
+                      ) : <span style={{ color: '#ddd' }}>—</span>}
                     </td>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
                       {item['Notice'] ? (
                         <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#FFF3CD', color: '#856404' }}>{item['Notice']}</span>
-                      ) : <span style={{ color: '#ddd' }}>โ€”</span>}
+                      ) : <span style={{ color: '#ddd' }}>—</span>}
                     </td>
                     {canEdit && (
                       <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -1248,7 +1248,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
         )}
       </div>
       <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-        <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} เธฃเธฒเธขเธเธฒเธฃ</span>
+        <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} รายการ</span>
         <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
       </div>
     </>
@@ -1264,11 +1264,11 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
 // PeriodPicker
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-const MO_TH = ['เธก.เธ.','เธ.เธ.','เธกเธต.เธ.','เน€เธก.เธข.','เธ.เธ.','เธกเธด.เธข.','เธ.เธ.','เธช.เธ.','เธ.เธข.','เธ•.เธ.','เธ.เธข.','เธ.เธ.'];
-const DW_TH = ['เธญเธฒ','เธ','เธญ','เธ','เธเธค','เธจ','เธช'];
+// ─────────────────────────────────────────────────────────────────────────────
+const MO_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+const DW_TH = ['อา','จ','อ','พ','พฤ','ศ','ส'];
 const fmtDt = (dt) => {
   const d = String(dt.getDate()).padStart(2,'0');
   const m = String(dt.getMonth()+1).padStart(2,'0');
@@ -1375,7 +1375,7 @@ function PeriodPicker({ value, onChange }) {
       <div style={{ display:'flex', alignItems:'center' }}>
         <input type="text" value={value} onChange={e => onChange(e.target.value)}
           style={{ height:'30px', padding:'0 8px', fontSize:'12px', borderRadius:'6px 0 0 6px', outline:'none', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', width:'190px', boxSizing:'border-box' }} />
-        <button onClick={() => setOpen(o => !o)} title="เน€เธฅเธทเธญเธเธเนเธงเธเน€เธงเธฅเธฒ"
+        <button onClick={() => setOpen(o => !o)} title="เลือกช่วงเวลา"
           style={{ height:'30px', width:'28px', borderRadius:'0 6px 6px 0', border:'0.5px solid #ddd', borderLeft:'none', background:'#f5f7fa', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:'#888', flexShrink:0 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
         </button>
@@ -1434,9 +1434,9 @@ function PeriodPicker({ value, onChange }) {
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-// ContractPopup โ€” Search / Add / Edit / Import contract_list
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
+// ContractPopup — Search / Add / Edit / Import contract_list
+// ─────────────────────────────────────────────────────────────────────────────
 const CONTRACT_FIELDS = [
   ['vendor_code',   'Vendor Code *',      2, 'text'],
   ['serial_code',   'Serial Code *',      2, 'text'],
@@ -1511,9 +1511,9 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
   const setField = (k, v) => { setFormState(f => ({ ...f, [k]: v })); setFormError(''); };
 
   const validate = (f) => {
-    if (!f.vendor_code?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Vendor Code';
-    if (!f.serial_code?.trim()) return 'เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Serial Code';
-    if (!f.contract_run?.trim()) return 'เธเธฃเธธเธ“เธฒเน€เธฅเธทเธญเธ Contract Run';
+    if (!f.vendor_code?.trim()) return 'กรุณากรอก Vendor Code';
+    if (!f.serial_code?.trim()) return 'กรุณากรอก Serial Code';
+    if (!f.contract_run?.trim()) return 'กรุณาเลือก Contract Run';
     return '';
   };
 
@@ -1533,12 +1533,12 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
       }
       await loadItems();
       setView('search');
-    } catch (e) { setFormError('เธเธฑเธเธ—เธถเธเนเธกเนเธชเธณเน€เธฃเนเธ: ' + e.message); }
+    } catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('เธ•เนเธญเธเธเธฒเธฃเธฅเธเธฃเธฒเธขเธเธฒเธฃเธเธตเน?')) return;
+    if (!window.confirm('ต้องการลบรายการนี้?')) return;
     const { error } = await supabase.from('contract_list').delete().eq('id', id);
     if (!error) await loadItems();
   };
@@ -1559,13 +1559,13 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
       let rawRows = [];
 
       if (!isExcel) {
-        setImportMsg('โ เธฃเธญเธเธฃเธฑเธเน€เธเธเธฒเธฐเนเธเธฅเน .xlsx / .xls เน€เธ—เนเธฒเธเธฑเนเธ โ€” เธเธฃเธธเธ“เธฒเธเธฑเธเธ—เธถเธเนเธเธฅเนเน€เธเนเธ Excel เธเนเธญเธ import (เธเนเธญเธเธเธฑเธเธเธฑเธเธซเธฒเธ เธฒเธฉเธฒเนเธ—เธขเน€เธเธตเนเธขเธ)');
+        setImportMsg('❌ รองรับเฉพาะไฟล์ .xlsx / .xls เท่านั้น — กรุณาบันทึกไฟล์เป็น Excel ก่อน import (ป้องกันปัญหาภาษาไทยเพี้ยน)');
         setImporting(false);
         e.target.value = '';
         return;
       }
 
-      // โ”€โ”€ Excel โ”€โ”€ (Excel เน€เธเนเธ string เน€เธเนเธ Unicode เธญเธขเธนเนเนเธฅเนเธง เนเธกเนเธกเธตเธเธฑเธเธซเธฒ encoding เธ เธฒเธฉเธฒเนเธ—เธข)
+      // ── Excel ── (Excel เก็บ string เป็น Unicode อยู่แล้ว ไม่มีปัญหา encoding ภาษาไทย)
       const buf = await file.arrayBuffer();
       const wb  = XLSX.read(buf, { type: 'array' });
       rawRows   = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
@@ -1583,9 +1583,9 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
         })
         .filter(r => r.vendor_code && r.serial_code);
 
-      if (!rows.length) { setImportMsg('เนเธกเนเธเธเธเนเธญเธกเธนเธฅ'); setImporting(false); return; }
+      if (!rows.length) { setImportMsg('ไม่พบข้อมูล'); setImporting(false); return; }
 
-      // deduplicate โ€” เน€เธเนเธเนเธ–เธงเธชเธธเธ”เธ—เนเธฒเธขเนเธเธเธฃเธ“เธต key เธเนเธณเนเธเนเธเธฅเน
+      // deduplicate — เก็บแถวสุดท้ายในกรณี key ซ้ำในไฟล์
       const seen = new Map();
       rows.forEach(r => { seen.set(`${r.vendor_code}||${r.serial_code}`, r); });
       const unique = Array.from(seen.values());
@@ -1595,9 +1595,9 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
         if (error) throw error;
       }
       const dupCount = rows.length - unique.length;
-      setImportMsg(`โ… Import เธชเธณเน€เธฃเนเธ ${unique.length} เธฃเธฒเธขเธเธฒเธฃ${dupCount > 0 ? ` (เธเนเธฒเธกเธเนเธณ ${dupCount} เธฃเธฒเธขเธเธฒเธฃ)` : ''}`);
+      setImportMsg(`✅ Import สำเร็จ ${unique.length} รายการ${dupCount > 0 ? ` (ข้ามซ้ำ ${dupCount} รายการ)` : ''}`);
       await loadItems();
-    } catch (e) { setImportMsg('โ ' + e.message); }
+    } catch (e) { setImportMsg('❌ ' + e.message); }
     setImporting(false);
     e.target.value = '';
   };
@@ -1608,13 +1608,13 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
     return (
       <>
         <div style={{ padding:'12px 18px', display:'flex', alignItems:'center', gap:'8px', borderBottom:'0.5px solid #f0f2f5', flexShrink:0 }}>
-          <button onClick={() => setView('search')} style={{ padding:'4px 10px', borderRadius:'6px', border:'0.5px solid #dde', background:'#f5f7fa', color:'#555', fontSize:'12px', cursor:'pointer' }}>โ Back</button>
-          <div style={{ width:'28px', height:'28px', borderRadius:'7px', background: isEdit ? '#1a3a5c' : '#27500A', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'13px' }}>{isEdit ? 'โ๏ธ' : 'โ•'}</div>
-          <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>{isEdit ? `Edit โ€” ${editTarget?.serial_code || ''}` : 'New contract'}</div>
+          <button onClick={() => setView('search')} style={{ padding:'4px 10px', borderRadius:'6px', border:'0.5px solid #dde', background:'#f5f7fa', color:'#555', fontSize:'12px', cursor:'pointer' }}>← Back</button>
+          <div style={{ width:'28px', height:'28px', borderRadius:'7px', background: isEdit ? '#1a3a5c' : '#27500A', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'13px' }}>{isEdit ? '✏️' : '➕'}</div>
+          <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>{isEdit ? `Edit — ${editTarget?.serial_code || ''}` : 'New contract'}</div>
           <div style={{ fontSize:'11px', color:'#aaa', marginTop:'1px' }}>{form['vendor_code'] || vendorCode}</div>
-          {isEdit && <span style={{ marginLeft:'auto', display:'inline-flex', alignItems:'center', gap:'4px', background:'#FCEBEB', color:'#791F1F', borderRadius:'5px', padding:'3px 8px', fontSize:'11px' }}>๐”’ Editor+ only</span>}
+          {isEdit && <span style={{ marginLeft:'auto', display:'inline-flex', alignItems:'center', gap:'4px', background:'#FCEBEB', color:'#791F1F', borderRadius:'5px', padding:'3px 8px', fontSize:'11px' }}>🔒 Editor+ only</span>}
         </div>
-        {formError && <div style={{ padding:'6px 18px', background:'#FCEBEB', color:'#791F1F', fontSize:'11px', flexShrink:0 }}>โ ๏ธ {formError}</div>}
+        {formError && <div style={{ padding:'6px 18px', background:'#FCEBEB', color:'#791F1F', fontSize:'11px', flexShrink:0 }}>⚠️ {formError}</div>}
         <div style={{ flex:1, overflowY:'auto', padding:'20px 24px', display:'flex', flexDirection:'column', gap:'14px' }}>
           {/* Vendor Code + Serial Code */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
@@ -1678,7 +1678,7 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
               <label style={{ fontSize:'11px', color: formError && !form['contract_run']?.trim() ? '#e74c3c' : '#888', fontWeight:'500' }}>Contract Run <span style={{ color:'#e24b4a' }}>*</span></label>
               <select value={form['contract_run']||''} onChange={e => setField('contract_run', e.target.value)}
                 style={{ height:'34px', padding:'0 10px', fontSize:'13px', borderRadius:'7px', border: formError && !form['contract_run']?.trim() ? '1px solid #e74c3c' : '0.5px solid #ddd', background:'white', color:'#1a3a5c', outline:'none', cursor:'pointer' }}>
-                <option value="">โ€” เน€เธฅเธทเธญเธ โ€”</option>
+                <option value="">— เลือก —</option>
                 {CONTRACT_RUN_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
@@ -1691,7 +1691,7 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
         </div>
         <div style={{ padding:'10px 18px', borderTop:'0.5px solid #f0f2f5', display:'flex', justifyContent:'flex-end', gap:'8px', flexShrink:0, background:'#fafbfc' }}>
           <button onClick={() => setView('search')} style={{ padding:'6px 14px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#666', fontSize:'12px', cursor:'pointer' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving} style={{ padding:'6px 16px', borderRadius:'6px', border:'none', background: saving ? '#aaa' : '#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '๐’พ Save'}</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding:'6px 16px', borderRadius:'6px', border:'none', background: saving ? '#aaa' : '#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'Saving...' : '💾 Save'}</button>
         </div>
       </>
     );
@@ -1705,15 +1705,15 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
         </div>
         <div style={{ flex:1 }}>
           <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>Contract / Serial Code</div>
-          <div style={{ fontSize:'11px', color:'#aaa' }}>{filtered.length} เธฃเธฒเธขเธเธฒเธฃ{vendorCode ? ` ยท ${vendorCode}` : bu ? ` ยท BU: ${bu}` : ''}</div>
+          <div style={{ fontSize:'11px', color:'#aaa' }}>{filtered.length} รายการ{vendorCode ? ` · ${vendorCode}` : bu ? ` · BU: ${bu}` : ''}</div>
         </div>
         {canEdit && (
           <>
             <button onClick={handleDownloadTemplate} style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#555', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
-              โฌ Template
+              ⬇ Template
             </button>
-            <button onClick={() => fileRef.current?.click()} disabled={importing} title="เธฃเธญเธเธฃเธฑเธเน€เธเธเธฒเธฐเนเธเธฅเน .xlsx / .xls" style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #5DCAA5', background:'#E1F5EE', color:'#085041', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
-              ๐“ Import (.xlsx)
+            <button onClick={() => fileRef.current?.click()} disabled={importing} title="รองรับเฉพาะไฟล์ .xlsx / .xls" style={{ height:'28px', padding:'0 10px', borderRadius:'6px', border:'0.5px solid #5DCAA5', background:'#E1F5EE', color:'#085041', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
+              📂 Import (.xlsx)
             </button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleImport} />
             <button onClick={() => { setEditTarget(null); setFormState(emptyForm()); setFormError(''); setView('new'); }} style={{ height:'28px', padding:'0 12px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', fontSize:'11px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
@@ -1721,13 +1721,13 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
             </button>
           </>
         )}
-        <button onClick={onClose} style={{ width:'26px', height:'26px', borderRadius:'50%', background:'#f5f5f5', border:'none', cursor:'pointer', color:'#888', fontSize:'15px', display:'flex', alignItems:'center', justifyContent:'center' }}>ร—</button>
+        <button onClick={onClose} style={{ width:'26px', height:'26px', borderRadius:'50%', background:'#f5f5f5', border:'none', cursor:'pointer', color:'#888', fontSize:'15px', display:'flex', alignItems:'center', justifyContent:'center' }}>×</button>
       </div>
-      {importMsg && <div style={{ padding:'6px 18px', background: importMsg.startsWith('โ…') ? '#EAF3DE' : '#FCEBEB', color: importMsg.startsWith('โ…') ? '#27500A' : '#791F1F', fontSize:'11px', flexShrink:0 }}>{importMsg}</div>}
+      {importMsg && <div style={{ padding:'6px 18px', background: importMsg.startsWith('✅') ? '#EAF3DE' : '#FCEBEB', color: importMsg.startsWith('✅') ? '#27500A' : '#791F1F', fontSize:'11px', flexShrink:0 }}>{importMsg}</div>}
       <div style={{ padding:'8px 18px', borderBottom:'0.5px solid #f0f2f5', flexShrink:0 }}>
         <div style={{ position:'relative' }}>
           <svg style={{ position:'absolute', left:'10px', top:'50%', transform:'translateY(-50%)', color:'#aab', pointerEvents:'none' }} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="เธเนเธเธซเธฒ Vendor Code, Serial Code, เธเนเธฒ..."
+          <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="ค้นหา Vendor Code, Serial Code, ค่า..."
             style={{ width:'100%', padding:'7px 32px', fontSize:'12px', border:'1px solid #e2e6ed', borderRadius:'7px', outline:'none', boxSizing:'border-box', color:'#1a3a5c' }}
             onFocus={e => e.target.style.borderColor='#1a3a5c'} onBlur={e => e.target.style.borderColor='#e2e6ed'} />
         </div>
@@ -1736,7 +1736,7 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
         {loading ? (
           <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>Loading...</div>
         ) : filtered.length === 0 ? (
-          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>เนเธกเนเธเธเธเนเธญเธกเธนเธฅ{query ? ` "${query}"` : ''}</div>
+          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'12px' }}>ไม่พบข้อมูล{query ? ` "${query}"` : ''}</div>
         ) : (
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' }}>
             <colgroup>
@@ -1753,13 +1753,13 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
               {filtered.map((item, i) => (
                 <tr key={item.id||i} onClick={() => onSelect && onSelect(item)}
                   style={{ borderBottom:'0.5px solid #f3f4f6', background: i%2===0?'white':'#fafbfc', cursor: onSelect ? 'pointer' : 'default' }}>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes1||'โ€”'}</td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes1||'โ€”'}</td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes2||'โ€”'}</td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes2||'โ€”'}</td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes3||'โ€”'}</td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes3||'โ€”'}</td>
-                  <td style={{ padding:'7px 10px', fontSize:'11px', textAlign:'center', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.auto_ib||'โ€”'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes1||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes1||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes2||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes2||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', color:'#888', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.cdes3||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.bdes3||'—'}</td>
+                  <td style={{ padding:'7px 10px', fontSize:'11px', textAlign:'center', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.auto_ib||'—'}</td>
                   {canEdit && (
                     <td style={{ padding:'6px 10px', textAlign:'center' }}>
                       <div style={{ display:'inline-flex', gap:'4px' }}>
@@ -1781,7 +1781,7 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
         )}
       </div>
       <div style={{ padding:'8px 18px', borderTop:'0.5px solid #f0f2f5', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0, background:'#fafbfc' }}>
-        <span style={{ fontSize:'11px', color:'#bbb' }}>{filtered.length} / {items.length} เธฃเธฒเธขเธเธฒเธฃ</span>
+        <span style={{ fontSize:'11px', color:'#bbb' }}>{filtered.length} / {items.length} รายการ</span>
         <button onClick={onClose} style={{ padding:'5px 14px', borderRadius:'6px', border:'0.5px solid #dde', background:'white', color:'#666', fontSize:'11px', cursor:'pointer' }}>Close</button>
       </div>
     </>
@@ -1798,9 +1798,9 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-// InvoiceDetailPopup โ… PATCHED โ€” flex body, minHeight:0, no coming-soon
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
+// InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
+// ─────────────────────────────────────────────────────────────────────────────
 function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '' }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
@@ -1835,7 +1835,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const handleMoneyBlur  = (idx, key, val) => { if (val === '' || val === '.') { setLineField(idx, key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
   const handleMoneyFocus = (idx, key, val) => { setLineField(idx, key, val.replace(/,/g, '')); };
 
-  // โ”€โ”€ Helpers โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── Helpers ───────────────────────────────────────────────────────────────
   const buildTaxCode = (vatChar, branchDirectCode) => {
     const v = String(vatChar ?? '').trim().toUpperCase();
     if (v === 'V') return `${branchDirectCode}-N VAT7%`;
@@ -1849,14 +1849,14 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
   const fmt2 = (n) => n === 0 ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // โ”€โ”€ CT: เธ–เนเธฒ Item Code เธกเธต SPI-1 = CT เนเธเธฅเธงเนเธฒเธ•เนเธญเธเธเธนเธ Contract โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── CT: ถ้า Item Code มี SPI-1 = CT แปลว่าต้องผูก Contract ────────────────
   const currentItemData = itemcodeItems.find(
     i => String(i.code ?? '').trim().toUpperCase() === String(line1.itemCode ?? '').trim().toUpperCase()
   );
   const requiresContract = String(currentItemData?.spi1 ?? '').toUpperCase().includes('CT');
 
-  // โ”€โ”€ เน€เธฅเธทเธญเธเธชเธฑเธเธเธฒเธเธฒเธ ContractPopup โ’ เธ”เธถเธ CDes+BDes เนเธชเน Back Description 1/2/3 โ”€
-  // (เธญเธฑเธเนเธซเธเนเธกเนเธกเธตเธเนเธญเธกเธนเธฅ เนเธกเนเธ•เนเธญเธเนเธชเน/เนเธกเนเนเธเนเธเธญเธเน€เธ”เธดเธก)
+  // ── เลือกสัญญาจาก ContractPopup → ดึง CDes+BDes ใส่ Back Description 1/2/3 ─
+  // (อันไหนไม่มีข้อมูล ไม่ต้องใส่/ไม่แก้ของเดิม)
   const handleSelectContract = (item) => {
     const pairs = [
       ['backDesc1', item?.cdes1, item?.bdes1],
@@ -1872,9 +1872,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     if (item?.auto_ib?.trim()) onResolveBranch(`${item.auto_ib.trim()}+`);
   };
 
-  // โ”€โ”€ Back Description 1: เธ–เนเธฒเธเธดเธกเธเนเธ•เธฃเธเธเธฑเธ Serial Code เธซเธฃเธทเธญ BDes1 เธเธญเธเธชเธฑเธเธเธฒเธ—เธตเนเธกเธต โ”€โ”€
-  // โ”€โ”€ เธเธญเธ vendor เธเธตเนเธญเธขเธนเนเนเธฅเนเธง เนเธซเนเธ”เธถเธเธชเธฑเธเธเธฒเธกเธฒเนเธชเนเธ—เธฑเธเธ—เธต (เน€เธซเธกเธทเธญเธเธเธ”เน€เธฅเธทเธญเธเนเธ Contract popup)
-  // โ”€โ”€ เธ–เนเธฒ vendor เธเธตเนเนเธกเนเธกเธตเธชเธฑเธเธเธฒเนเธเธฃเธฐเธเธ เธเธฐเนเธกเนเธกเธตเธญเธฐเนเธฃ match เธเธถเธเนเธกเนเน€เธเธดเธ”เธเธฅเนเธ”เน
+  // ── Back Description 1: ถ้าพิมพ์ตรงกับ Serial Code หรือ BDes1 ของสัญญาที่มี ──
+  // ── ของ vendor นี้อยู่แล้ว ให้ดึงสัญญามาใส่ทันที (เหมือนกดเลือกใน Contract popup)
+  // ── ถ้า vendor นี้ไม่มีสัญญาในระบบ จะไม่มีอะไร match จึงไม่เกิดผลใดๆ
   const handleBackDesc1Blur = async (val) => {
     if (!val?.trim()) return;
     const fullVendorCode = `${bu}-${form?.supplierCode || ''}`.toUpperCase();
@@ -1897,7 +1897,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     }
   };
 
-  // โ”€โ”€ Auto-calculate ALL line fields (every row) โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── Auto-calculate ALL line fields (every row) ───────────────────────────
   const calcLine = (line, itemcodeItems, vendorInfo, form) => {
     if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
     const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
@@ -1908,7 +1908,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const hasIB = form?.branchIBLabel && form.branchIBLabel !== '-';
     const isIBAll = form?.branchIBLabel === 'IB-ALL';
     const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
-    const ibLabel = hasIB && !isIBAll ? `เธชเธฒเธเธฒ ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
+    const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
     const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), form?.backDesc1 ?? '', form?.backDesc2 ?? '', form?.backDesc3 ?? '', ibLabel].filter(Boolean).join(' ');
     const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
     const hasITC = notices.includes('ITC');
@@ -1952,7 +1952,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
   const handleSubmit = async () => {
     if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) {
-      alert('เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Item Code เนเธฅเธฐ Amount เธญเธขเนเธฒเธเธเนเธญเธข 1 เธเธฃเธฃเธ—เธฑเธ”');
+      alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
       return;
     }
     const ok = await onSubmitInvoice(lines);
@@ -1967,7 +1967,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const h = (e) => {
       if (e.key === 'Escape') onClose();
       if (e.key === 'Enter'  && e.ctrlKey) handleSubmit();
-      // Ctrl+Delete โ’ Clear form (lines + header fields)
+      // Ctrl+Delete → Clear form (lines + header fields)
       if (e.key === 'Delete' && e.ctrlKey) {
         e.preventDefault();
         setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
@@ -2001,21 +2001,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: 'white', ...popupStyle, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
 
-        {/* โ”€โ”€ Header โ”€โ”€ */}
+        {/* ── Header ── */}
         <div style={{ padding: isMobile ? '12px 14px' : '14px 22px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5', flexWrap: 'wrap' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>๐“</div>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>📋</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Invoice Detail</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: isMobile ? 'normal' : 'nowrap' }}>
               Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
-              {' ยท '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{(buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-') + (form?.invoiceSuffix || '')}</span>
-              {' ยท '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{(buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-') + (form?.invoiceSuffix || '')}</span>
+              {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
             </div>
           </div>
-          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>ร—</button>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
         </div>
 
-        {/* โ”€โ”€ Body โ… PATCHED: overflow:hidden + flex column โ”€โ”€ */}
+        {/* ── Body ✅ PATCHED: overflow:hidden + flex column ── */}
         <div style={{ flex: 1, overflow: 'hidden', padding: isMobile ? '12px 14px' : '18px 22px', display: 'flex', flexDirection: 'column' }}>
 
           {/* Header Detail boxes */}
@@ -2023,7 +2023,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             <div style={{ ...card, width: '49%', marginBottom: 0 }}>
               <div style={{ ...cardHead, background: vendorInfo?.['Supplier Name'] ? '#f8f9fa' : '#fafbfc' }}>
                 <span style={{ fontSize: '12px', fontWeight: '600', color: vendorInfo?.['Supplier Name'] ? '#1a3a5c' : '#ccc', fontStyle: vendorInfo?.['Supplier Name'] ? 'normal' : 'italic' }}>
-                  {vendorInfo?.['Supplier Name'] || 'โ€” เธขเธฑเธเนเธกเนเนเธ”เนเน€เธฅเธทเธญเธ Supplier โ€”'}
+                  {vendorInfo?.['Supplier Name'] || '— ยังไม่ได้เลือก Supplier —'}
                 </span>
               </div>
               <div style={{ ...cardBody, display: 'flex', flexDirection: 'column', gap: '7px' }}>
@@ -2031,7 +2031,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   {[['Vendor Code', vendorInfo?.['Supplier Number']], ['Vendor Site', vendorInfo?.['Supplier Site']]].map(([label, val]) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                       <span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0 }}>{label}</span>
-                      <span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontStyle: val ? 'normal' : 'italic', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val || 'โ€”'}</span>
+                      <span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontStyle: val ? 'normal' : 'italic', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val || '—'}</span>
                     </div>
                   ))}
                 </div>
@@ -2039,14 +2039,14 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   {[['Tax ID', vendorInfo?.['Tax ID']], ['No.', vendorInfo?.['No.']]].map(([label, val]) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                       <span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0 }}>{label}</span>
-                      <span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontStyle: val ? 'normal' : 'italic', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val || 'โ€”'}</span>
+                      <span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontStyle: val ? 'normal' : 'italic', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val || '—'}</span>
                     </div>
                   ))}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                   <span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0, paddingTop: '1px' }}>Address</span>
                   <span style={{ fontSize: '12px', color: vendorInfo?.['Address'] ? '#1a3a5c' : '#ccc', fontStyle: vendorInfo?.['Address'] ? 'normal' : 'italic', flex: 1, lineHeight: '1.6', wordBreak: 'break-word', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                    {vendorInfo?.['Address'] || 'โ€”'}
+                    {vendorInfo?.['Address'] || '—'}
                   </span>
                 </div>
               </div>
@@ -2058,7 +2058,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   const genInvoiceNo = buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo);
                   return (
                     <div style={{ fontSize: '14px', fontWeight: '600', color: genInvoiceNo ? '#1a3a5c' : '#ccc', fontStyle: genInvoiceNo ? 'normal' : 'italic', marginBottom: '10px' }}>
-                      {genInvoiceNo || 'โ€” เธขเธฑเธเนเธกเนเนเธ”เนเธเธฃเธญเธ Invoice No. โ€”'}
+                      {genInvoiceNo || '— ยังไม่ได้กรอก Invoice No. —'}
                     </div>
                   );
                 })()}
@@ -2066,8 +2066,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   <div style={{ padding: '7px 12px', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRT</div>
                     {(() => {
-                      const val = isAutoGrt ? grtPreview : (form?.grtNum || 'โ€”');
-                      return <div style={{ fontSize: '12px', fontWeight: '500', color: val !== 'โ€”' ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
+                      const val = isAutoGrt ? grtPreview : (form?.grtNum || '—');
+                      return <div style={{ fontSize: '12px', fontWeight: '500', color: val !== '—' ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
                     })()}
                   </div>
                   <div style={{ padding: '7px 12px' }}>
@@ -2075,17 +2075,17 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     {(() => {
                       const taxCode0 = String(lines[0]?.taxCode || '');
                       const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
-                      const val = isAutoGrt ? (isVat ? grnPreview : '-') : (form?.grn || 'โ€”');
-                      return <div style={{ fontSize: '12px', fontWeight: '500', color: (val !== 'โ€”' && val !== '-') ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
+                      const val = isAutoGrt ? (isVat ? grnPreview : '-') : (form?.grn || '—');
+                      return <div style={{ fontSize: '12px', fontWeight: '500', color: (val !== '—' && val !== '-') ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
                     })()}
                   </div>
                   <div style={{ padding: '7px 12px', borderTop: '0.5px solid #e8eaf0', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>Branch Direct</div>
-                    <div style={{ fontSize: '11px', fontWeight: '500', color: form?.branchDirectLabel ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{form?.branchDirectLabel || 'โ€”'}</div>
+                    <div style={{ fontSize: '11px', fontWeight: '500', color: form?.branchDirectLabel ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{form?.branchDirectLabel || '—'}</div>
                   </div>
                   <div style={{ padding: '7px 12px', borderTop: '0.5px solid #e8eaf0' }}>
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>Branch IB</div>
-                    <div style={{ fontSize: '11px', fontWeight: '500', color: form?.branchIBLabel && form.branchIBLabel !== '-' ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(form?.branchIBLabel && form.branchIBLabel !== '-') ? form.branchIBLabel : 'โ€”'}</div>
+                    <div style={{ fontSize: '11px', fontWeight: '500', color: form?.branchIBLabel && form.branchIBLabel !== '-' ? '#1a3a5c' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(form?.branchIBLabel && form.branchIBLabel !== '-') ? form.branchIBLabel : '—'}</div>
                   </div>
                 </div>
               </div>
@@ -2117,7 +2117,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             ))}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0, position: 'relative' }}>
               <label style={fieldLabel}>&nbsp;</label>
-              <button title={requiresContract ? 'Contract โ€” Item เธเธตเนเธเธณเธซเธเธ” SPI-1 = CT เธ•เนเธญเธเธเธนเธเธชเธฑเธเธเธฒ' : 'Contract'}
+              <button title={requiresContract ? 'Contract — Item นี้กำหนด SPI-1 = CT ต้องผูกสัญญา' : 'Contract'}
                 style={{ height: '30px', width: '56px', borderRadius: '6px', border: requiresContract ? '1px solid #e67e22' : '0.5px solid #c5d8f0', background: requiresContract ? '#FFF3E0' : '#eef4fb', color: requiresContract ? '#a35a00' : '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, position: 'relative' }}
                 onClick={() => setShowContractPopup(true)}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2131,7 +2131,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             </div>
           </div>
 
-          {/* โ… Invoice lines table โ€” flex:1 minHeight:0 เน€เธ•เนเธกเธเธทเนเธเธ—เธตเน */}
+          {/* ✅ Invoice lines table — flex:1 minHeight:0 เต็มพื้นที่ */}
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
@@ -2163,7 +2163,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onFocus={() => setActiveLineIdx(idx)}
                                 onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
                                 onBlur={e => {
-                                  // auto-pad: "787" โ’ "C0000787" (เธเธฃเธญเธเธ•เธฑเธงเน€เธฅเธ 1-7 เธซเธฅเธฑเธ เนเธกเนเธกเธตเธ•เธฑเธงเธญเธฑเธเธฉเธฃเธเธ)
+                                  // auto-pad: "787" → "C0000787" (กรอกตัวเลข 1-7 หลัก ไม่มีตัวอักษรปน)
                                   const raw = e.target.value.trim();
                                   if (raw && /^\d{1,7}$/.test(raw)) {
                                     const padded = 'C' + raw.padStart(7, '0');
@@ -2248,7 +2248,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
         />
 
-        {/* โ”€โ”€ Footer: summary + Close โ”€โ”€ */}
+        {/* ── Footer: summary + Close ── */}
         {(() => {
           const totalVat = lines.reduce((s, l) => s + (parseFloat(String(l.vat).replace(/,/g,'')) || 0), 0);
           const totalWht = lines.reduce((s, l) => s + (parseFloat(String(l.wht).replace(/,/g,'')) || 0), 0);
@@ -2259,18 +2259,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0 }}>
                 <button onClick={handleSubmit} title="Submit (Ctrl+Enter)" style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   Submit
-                  <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+โต</span>
+                  <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>
                 </button>
               </div>
               <div style={{ flex: 1 }} />
-              {/* โ”€โ”€ Clear form button โ€” dark red, same size as Submit, gap 5px from VAT block โ”€โ”€ */}
+              {/* ── Clear form button — dark red, same size as Submit, gap 5px from VAT block ── */}
               <button
                 onClick={() => {
                   setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
                 }}
                 style={{ alignSelf: 'center', marginRight: '5px', padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#7B1A1A', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
-                ๐—‘ Clear
+                🗑 Clear
               </button>
               <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
                 {[['VAT', fmt2(totalVat), false], ['WHT', fmt2(totalWht), totalWht < 0], ['NET TOTAL', fmt2(totalNet), false]].map(([label, val, isDanger], i, arr) => (
@@ -2288,9 +2288,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   );
 }
 
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-// BucketItemPopup โ€” View / Edit เธเธญเธเธฃเธฒเธขเธเธฒเธฃเนเธ Batch Bucket
-// โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ─────────────────────────────────────────────────────────────────────────────
+// BucketItemPopup — View / Edit ของรายการใน Batch Bucket
+// ─────────────────────────────────────────────────────────────────────────────
 function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave }) {
   const isView = mode === 'view';
   const emptyLine = () => ({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
@@ -2326,7 +2326,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const handleMoneyBlur  = (idx, key, val) => { if (val === '' || val === '.') { setLineField(idx, key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
   const handleMoneyFocus = (idx, key, val) => { setLineField(idx, key, val.replace(/,/g, '')); };
 
-  // recalc เธ—เธธเธเธเธฃเธฑเนเธเธ—เธตเน itemCode/amount/tax/header เน€เธเธฅเธตเนเธขเธ (เน€เธเธเธฒเธฐเธ•เธญเธ edit)
+  // recalc ทุกครั้งที่ itemCode/amount/tax/header เปลี่ยน (เฉพาะตอน edit)
   useEffect(() => {
     if (isView) return;
     setLines(prev => recalcLines(prev, itemcodeItems, vendorInfo, form));
@@ -2343,7 +2343,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const inputStyle = (w, disabled) => ({ height: '28px', padding: '0 8px', fontSize: '11px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: disabled ? '#f5f5f5' : 'white', color: disabled ? '#999' : '#1a3a5c', boxSizing: 'border-box', width: w || '100%' });
 
   const handleSave = async () => {
-    if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) { alert('เธเธฃเธธเธ“เธฒเธเธฃเธญเธ Item Code เนเธฅเธฐ Amount เธญเธขเนเธฒเธเธเนเธญเธข 1 เธเธฃเธฃเธ—เธฑเธ”'); return; }
+    if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) { alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
     setSaving(true);
     const invoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) + (form.invoiceSuffix || '');
     const ok = await onSave({ form_data: form, lines, invoiceNo });
@@ -2362,16 +2362,16 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
       <div style={{ background: 'white', width: '98vw', maxWidth: '1400px', height: '92vh', borderRadius: '14px', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
 
         <div style={{ padding: '14px 22px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isView ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isView ? '๐‘' : 'โ๏ธ'}</div>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isView ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isView ? '👁' : '✏️'}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isView ? 'View Invoice' : 'Edit Invoice'}</div>
             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Supplier: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.supplierCode || '-'}</span>
-              {' ยท '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{(buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-') + (form?.invoiceSuffix || '')}</span>
-              {' ยท '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
+              {' · '}Invoice no.: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{(buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || '-') + (form?.invoiceSuffix || '')}</span>
+              {' · '}Branch: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{form?.branchNo || '-'}</span>
             </div>
           </div>
-          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>ร—</button>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
         </div>
 
         <div style={{ flex: 1, overflow: 'hidden', padding: '18px 22px', display: 'flex', flexDirection: 'column' }}>
@@ -2379,10 +2379,10 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
           {/* Vendor + Document */}
           <div style={{ display: 'flex', gap: '2%', marginBottom: '14px', flexShrink: 0 }}>
             <div style={{ ...card, width: '49%', marginBottom: 0 }}>
-              <div style={cardHead}><span style={{ fontSize: '12px', fontWeight: '600', color: '#1a3a5c' }}>{vendorInfo?.['Supplier Name'] || form.supplierCode || 'โ€”'}</span></div>
+              <div style={cardHead}><span style={{ fontSize: '12px', fontWeight: '600', color: '#1a3a5c' }}>{vendorInfo?.['Supplier Name'] || form.supplierCode || '—'}</span></div>
               <div style={{ ...cardBody, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 {[['Vendor Code', vendorInfo?.['Supplier Number']], ['Vendor Site', vendorInfo?.['Supplier Site']], ['Tax ID', vendorInfo?.['Tax ID']], ['No.', vendorInfo?.['No.']]].map(([label, val]) => (
-                  <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc' }}>{val || 'โ€”'}</span></div>
+                  <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc' }}>{val || '—'}</span></div>
                 ))}
               </div>
             </div>
@@ -2390,7 +2390,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
               <div style={cardHead}><span style={cardLabel}>Document Number</span></div>
               <div style={{ ...cardBody, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 {[['GRT', form.grtNum], ['GRN', form.grn], ['Branch Direct', form.branchDirectLabel], ['Branch IB', form.branchIBLabel && form.branchIBLabel !== '-' ? form.branchIBLabel : '']].map(([label, val]) => (
-                  <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || 'โ€”'}</span></div>
+                  <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || '—'}</span></div>
                 ))}
               </div>
             </div>
@@ -2508,11 +2508,11 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             {isView ? (
               <button onClick={onClose} style={btnOutline}>Close</button>
             ) : (
-              <button onClick={handleSave} disabled={saving} style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', cursor: saving ? 'default' : 'pointer', fontWeight: '500' }}>{saving ? 'Saving...' : '๐’พ Save'}</button>
+              <button onClick={handleSave} disabled={saving} style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: saving ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', cursor: saving ? 'default' : 'pointer', fontWeight: '500' }}>{saving ? 'Saving...' : '💾 Save'}</button>
             )}
           </div>
           <div style={{ flex: 1 }} />
-          {/* โ”€โ”€ Clear form button โ€” Ctrl+Del shortcut โ”€โ”€ */}
+          {/* ── Clear form button — Ctrl+Del shortcut ── */}
           <button
             onClick={() => {
             setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
@@ -2529,7 +2529,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             title="Clear form (Ctrl+Delete)"
             style={{ alignSelf: 'center', marginRight: '5px', padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#7B1A1A', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}
           >
-            ๐—‘ Clear
+            🗑 Clear
             <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+Del</span>
           </button>
           <div style={{ display: 'flex', borderLeft: '0.5px solid #f0f2f5' }}>
@@ -2546,7 +2546,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   );
 }
 
-// โ”€โ”€ Helpers & Shared styles โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── Helpers & Shared styles ───────────────────────────────────────────────────
 const fmt = (n) => Math.round(n).toLocaleString('th-TH');
 const card      = { background: 'white', border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', marginBottom: '10px' };
 const cardHead  = { padding: '9px 14px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
@@ -2558,7 +2558,7 @@ const btnPrimary = { padding: '7px 16px', background: '#1a3a5c', color: 'white',
 const btnOutline = { padding: '5px 12px', background: 'white', color: '#555', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' };
 const bdgGreen   = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#EAF3DE', color: '#27500A' };
 
-// โ”€โ”€ StepBar โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── StepBar ───────────────────────────────────────────────────────────────────
 function StepBar({ step, onGo }) {
   const steps = [{ n: 1, label: 'Batch setup' }, { n: 2, label: 'Invoice entry' }, { n: 3, label: 'Generate & export' }];
   return (
@@ -2567,10 +2567,10 @@ function StepBar({ step, onGo }) {
         const isDone = s.n < step, isActive = s.n === step;
         return (
           <React.Fragment key={s.n}>
-            {i > 0 && <span style={{ color: '#ccc', margin: '0 12px', fontSize: '14px', userSelect: 'none' }}>โ€บ</span>}
+            {i > 0 && <span style={{ color: '#ccc', margin: '0 12px', fontSize: '14px', userSelect: 'none' }}>›</span>}
             <div onClick={() => s.n < step && onGo(s.n)} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 0', cursor: s.n < step ? 'pointer' : 'default' }}>
               <div style={{ width: '21px', height: '21px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0, background: isDone ? '#EAF3DE' : isActive ? '#1a3a5c' : 'transparent', border: isDone ? '1.5px solid #97C459' : isActive ? '1.5px solid #1a3a5c' : '1.5px solid #ddd', color: isDone ? '#27500A' : isActive ? 'white' : '#888' }}>
-                {isDone ? 'โ“' : s.n}
+                {isDone ? '✓' : s.n}
               </div>
               <span style={{ fontSize: '12px', fontWeight: isActive ? '500' : '400', color: isActive ? '#1a3a5c' : '#888' }}>{s.label}</span>
             </div>
@@ -2581,7 +2581,7 @@ function StepBar({ step, onGo }) {
   );
 }
 
-// โ”€โ”€ BuInfoPanel โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── BuInfoPanel ───────────────────────────────────────────────────────────────
 function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix, onApGrtRunningChange, onApGrnRunningChange }) {
   const rows = [['Company name', buInfo?.['THAI COMPANY NAME']], ['Tax ID', buInfo?.['TAX ID']], ['Company code', buInfo?.['COMPANY CODE']], ['Book', buInfo?.['BOOK']], ['Segment3', buInfo?.['SEGMENT3']], ['GRT status', buInfo?.['AP GRT Control']]];
   const infoRowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr' };
@@ -2590,7 +2590,7 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
       <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
-        {rows.map(([key, val], i) => (<div key={key} style={{ ...infoRowStyle, borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}><div style={keyStyle}>{key}</div><div style={valStyle(!!val)} title={val || ''}>{val || 'โ€”'}</div></div>))}
+        {rows.map(([key, val], i) => (<div key={key} style={{ ...infoRowStyle, borderBottom: i < rows.length - 1 ? '0.5px solid #f0f0f0' : 'none' }}><div style={keyStyle}>{key}</div><div style={valStyle(!!val)} title={val || ''}>{val || '—'}</div></div>))}
       </div>
       <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
         <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}><div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div></div>
@@ -2611,7 +2611,7 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
   );
 }
 
-// โ”€โ”€ VendorInfoPanel โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── VendorInfoPanel ───────────────────────────────────────────────────────────
 function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchDirectLabel, branchIBLabel }) {
   const v = vendorLoading ? null : vendorInfo;
   const r = matchedRule;
@@ -2624,35 +2624,35 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchDirectL
       {vendorLoading && <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, fontSize: '11px', color: '#888' }}>Loading...</div>}
       <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '4px 8px' }}><div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor Info</div></div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', ...divider }}>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Name</span><span style={valStyle(!!v?.['Supplier Name'])} title={v?.['Supplier Name'] || ''}>{v?.['Supplier Name'] || 'โ€”'}</span></div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Code</span><span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || 'โ€”'}</span></div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Site</span><span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || 'โ€”'}</span></div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Tax ID</span><span style={{ ...valStyle(!!v?.['Tax ID']), fontFamily: 'monospace' }}>{v?.['Tax ID'] || 'โ€”'}</span></div>
-        <div style={rowStyle}><span style={keyStyle}>No.</span><span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || 'โ€”'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Name</span><span style={valStyle(!!v?.['Supplier Name'])} title={v?.['Supplier Name'] || ''}>{v?.['Supplier Name'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Code</span><span style={valStyle(!!v?.['Supplier Number'])}>{v?.['Supplier Number'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Vendor Site</span><span style={valStyle(!!v?.['Supplier Site'])}>{v?.['Supplier Site'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={keyStyle}>Tax ID</span><span style={{ ...valStyle(!!v?.['Tax ID']), fontFamily: 'monospace' }}>{v?.['Tax ID'] || '—'}</span></div>
+        <div style={rowStyle}><span style={keyStyle}>No.</span><span style={valStyle(!!v?.['No.'])}>{v?.['No.'] || '—'}</span></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', ...divider }}>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Method</span><span style={valStyle(!!r?.Method)}>{r?.Method || 'โ€”'}</span></div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '62px' }}>Paygroup</span><span style={valStyle(!!r?.Paygroup)}>{r?.Paygroup || 'โ€”'}</span></div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '26px' }}>Par</span><span style={valStyle(!!r?.Par)}>{r?.Par || 'โ€”'}</span></div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '60px' }}>Tax-Type</span><span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || 'โ€”'}</span></div>
-        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Notice</span><span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || 'โ€”'}</span></div>
-        <div style={rowStyle}><span style={{ ...keyStyle, width: '52px' }}>Sub Acc</span><span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || 'โ€”'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Method</span><span style={valStyle(!!r?.Method)}>{r?.Method || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '62px' }}>Paygroup</span><span style={valStyle(!!r?.Paygroup)}>{r?.Paygroup || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '26px' }}>Par</span><span style={valStyle(!!r?.Par)}>{r?.Par || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '60px' }}>Tax-Type</span><span style={valStyle(!!v?.['Tax-Type'])}>{v?.['Tax-Type'] || '—'}</span></div>
+        <div style={{ ...rowStyle, borderRight: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '52px' }}>Notice</span><span style={valStyle(!!v?.['Notice'])}>{v?.['Notice'] || '—'}</span></div>
+        <div style={rowStyle}><span style={{ ...keyStyle, width: '52px' }}>Sub Acc</span><span style={valStyle(!!v?.['Sub Acc'])}>{v?.['Sub Acc'] || '—'}</span></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
         <div style={{ ...rowStyle, alignItems: 'flex-start', borderRight: '0.5px solid #f0f0f0' }}>
           <span style={keyStyle}>Address</span>
-          <span style={{ fontSize: '11px', color: v?.['Address'] ? '#1a3a5c' : '#ccc', flex: 1, lineHeight: '1.5', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={v?.['Address'] || ''}>{v?.['Address'] || 'โ€”'}</span>
+          <span style={{ fontSize: '11px', color: v?.['Address'] ? '#1a3a5c' : '#ccc', flex: 1, lineHeight: '1.5', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={v?.['Address'] || ''}>{v?.['Address'] || '—'}</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ ...rowStyle, flex: 1, borderBottom: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '88px' }}>Branch Direct</span><span style={valStyle(!!branchDirectLabel)}>{branchDirectLabel || 'โ€”'}</span></div>
-          <div style={{ ...rowStyle, flex: 1 }}><span style={{ ...keyStyle, width: '88px' }}>Branch IB</span><span style={valStyle(!!branchIBLabel)}>{branchIBLabel || 'โ€”'}</span></div>
+          <div style={{ ...rowStyle, flex: 1, borderBottom: '0.5px solid #f0f0f0' }}><span style={{ ...keyStyle, width: '88px' }}>Branch Direct</span><span style={valStyle(!!branchDirectLabel)}>{branchDirectLabel || '—'}</span></div>
+          <div style={{ ...rowStyle, flex: 1 }}><span style={{ ...keyStyle, width: '88px' }}>Branch IB</span><span style={valStyle(!!branchIBLabel)}>{branchIBLabel || '—'}</span></div>
         </div>
       </div>
     </div>
   );
 }
 
-// โ”€โ”€ BatchSetup โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── BatchSetup ────────────────────────────────────────────────────────────────
 function BatchSetup({ onStart, infoItems = [] }) {
   const today = new Date();
   const pad2  = (n) => String(n).padStart(2, '0');
@@ -2677,7 +2677,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [apGrtRunning, setApGrtRunning] = useState('0000');
   const [apGrnRunning, setApGrnRunning] = useState('0000');
 
-  // โ”€โ”€ pre-fill running number เธเธฒเธ company_list.ap_grt/ap_grn เธเธญเธ BU เธ—เธตเนเน€เธฅเธทเธญเธ โ”€โ”€
+  // ── pre-fill running number จาก company_list.ap_grt/ap_grn ของ BU ที่เลือก ──
   useEffect(() => {
     if (buInfo) {
       setApGrtRunning(String(buInfo.ap_grt ?? 0).padStart(4, '0'));
@@ -2742,7 +2742,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
                         onBlur={() => { if (!bu.trim()) return; const m = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase()); setBuInfo(m || infoItems.find(i => i['bu']?.toLowerCase().startsWith(bu.trim().toLowerCase())) || null); }}
                         placeholder="BU code..." style={{ ...inputBase, paddingRight: '36px' }} />
                       <button onClick={() => setShowPopup(true)} title="Open BU search popup"
-                        style={{ position: 'absolute', right: 0, top: 0, height: '32px', width: '32px', background: '#1a3a5c', border: 'none', borderRadius: '0 6px 6px 0', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px' }}>๐”</button>
+                        style={{ position: 'absolute', right: 0, top: 0, height: '32px', width: '32px', background: '#1a3a5c', border: 'none', borderRadius: '0 6px 6px 0', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px' }}>🔍</button>
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
@@ -2754,7 +2754,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>{PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}</select>
                   </div>
                 </div>
-                <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }} onClick={() => onStart({ bu: bu || '-', receiveDate, dueDate, period, apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT'), grnPrefix: getPrefix('GRN'), buInfo })}>โ–ถ Start Batch</button>
+                <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }} onClick={() => onStart({ bu: bu || '-', receiveDate, dueDate, period, apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT'), grnPrefix: getPrefix('GRN'), buInfo })}>▶ Start Batch</button>
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
@@ -2767,7 +2767,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
         <div style={card}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
             <div style={{ display: 'flex' }}>
-              {[{ key: 'mine', label: '๐‘ค My Jobs', count: historyMine.length }, ...(canSeeAll ? [{ key: 'all', label: '๐‘ฅ All Jobs', count: historyAll.length }] : [])].map(t => (
+              {[{ key: 'mine', label: '👤 My Jobs', count: historyMine.length }, ...(canSeeAll ? [{ key: 'all', label: '👥 All Jobs', count: historyAll.length }] : [])].map(t => (
                 <div key={t.key} onClick={() => setHistoryTab(t.key)}
                   style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: historyTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: historyTab === t.key ? '#1a3a5c' : '#888', fontWeight: historyTab === t.key ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   {t.label}<span style={{ background: historyTab === t.key ? '#1a3a5c' : '#e8e8e8', color: historyTab === t.key ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{t.count}</span>
@@ -2808,12 +2808,12 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     </td>
                     <td style={{ padding: '8px 9px', overflow: 'hidden' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{b.bu || '-'}</span></td>
                     <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rds}</td>
-                    <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.total_amount ? `เธฟ${Math.round(b.total_amount).toLocaleString('th-TH')}` : 'โ€”'}</td>
+                    <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}</td>
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
                         {b.file_url ? (
-                          <><a href={b.file_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500' }}>๐‘ View</a>
-                          <a href={b.file_url} download style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500' }}>โฌ Download</a></>
+                          <><a href={b.file_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500' }}>👁 View</a>
+                          <a href={b.file_url} download style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500' }}>⬇ Download</a></>
                         ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
                       </div>
                     </td>
@@ -2830,7 +2830,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
   );
 }
 
-// โ”€โ”€ InvoiceHeader โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── InvoiceHeader ─────────────────────────────────────────────────────────────
 function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendorInfo, vendorLoading, matchedRule, onBranchSearch, onBranchNoChange, onBranchNoBlur, onBranchNoKeyDown, onInvoiceDetail }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
@@ -2840,7 +2840,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
       <label style={{ fontSize: '11px', color: '#888', textAlign: 'center', whiteSpace: 'nowrap' }}>{label}{opts.required && <span style={{ color: '#e24b4a' }}> *</span>}</label>
       {opts.type === 'select' ? (
         <select value={form[key]} onChange={e => setField(key, e.target.value)} style={{ height: '30px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', background: 'white', color: '#1a3a5c' }}>
-          <option value="">โ€” select โ€”</option>{(opts.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+          <option value="">— select —</option>{(opts.options || []).map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : (
         <input type={opts.type || 'text'} value={form[key]} onChange={e => setField(key, e.target.value)} readOnly={opts.readOnly}
@@ -2899,23 +2899,23 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
   );
 }
 
-// โ”€โ”€ InvoiceEntry โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── InvoiceEntry ──────────────────────────────────────────────────────────────
 function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
 
-  // โ”€โ”€ GRT/GRN running number โ€” gen เธญเธฑเธ•เนเธเธกเธฑเธ•เธดเน€เธกเธทเนเธญ GRT Status = Auto โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-  // GRT: เธฃเธฑเธเธ—เธธเธ invoice / GRN: เธฃเธฑเธเน€เธเธเธฒเธฐ invoice เธ—เธตเน Tax code เน€เธเนเธ VAT7% (เนเธกเนเนเธเน SVAT7%)
+  // ── GRT/GRN running number — gen อัตโนมัติเมื่อ GRT Status = Auto ──────────
+  // GRT: รันทุก invoice / GRN: รันเฉพาะ invoice ที่ Tax code เป็น VAT7% (ไม่ใช่ SVAT7%)
   const isAutoGrt = (batchConfig?.buInfo?.['AP GRT Control'] || '') === 'Auto';
   const [nextGrtRunning, setNextGrtRunning] = useState(() => parseInt(batchConfig?.apGrtRunning || '0', 10) || 0);
   const [nextGrnRunning, setNextGrnRunning] = useState(() => parseInt(batchConfig?.apGrnRunning || '0', 10) || 0);
   const [vendorInfo, setVendorInfo]               = useState(null);
   const [showBranchPopup, setShowBranchPopup]     = useState(false);
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
-  const [showSupplierPopup, setShowSupplierPopup] = useState(false); // โ… supplier search
+  const [showSupplierPopup, setShowSupplierPopup] = useState(false); // ✅ supplier search
   const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', index: -1 });
-  const [selectedRows, setSelectedRows] = useState(new Set()); // โ… Batch Bucket: เน€เธฅเธทเธญเธเนเธ–เธงเธชเธณเธซเธฃเธฑเธ bulk delete
-  const branchJustResolved = useRef(false); // โ… เธเนเธญเธเธเธฑเธ blur เธขเธดเธเธเนเธณเธซเธฅเธฑเธ resolveBranch
+  const [selectedRows, setSelectedRows] = useState(new Set()); // ✅ Batch Bucket: เลือกแถวสำหรับ bulk delete
+  const branchJustResolved = useRef(false); // ✅ ป้องกัน blur ยิงซ้ำหลัง resolveBranch
 
   const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); if (key === 'supplierCode' && !val) setVendorInfo(null); };
 
@@ -2951,8 +2951,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
   const matchedRule = getMatchedRule(vendorInfo);
 
-  // โ”€โ”€ localStorage helpers โ€” buffer เธฃเธฐเธซเธงเนเธฒเธเธขเธฑเธเนเธกเน sync เธเธถเนเธ Supabase โ”€โ”€โ”€โ”€โ”€โ”€
-  // key เธเธนเธเธเธฑเธ bu + user (เนเธกเนเนเธเน batchId) เน€เธเธฃเธฒเธฐ Bucket เธเธทเธญ "เธเธฒเธเธเนเธฒเธเธเธญเธ user เธเธเธเธตเนเนเธ BU เธเธตเน"
+  // ── localStorage helpers — buffer ระหว่างยังไม่ sync ขึ้น Supabase ──────
+  // key ผูกกับ bu + user (ไม่ใช่ batchId) เพราะ Bucket คือ "งานค้างของ user คนนี้ใน BU นี้"
   const me = userName || currentUser?.email || '';
   const bu = batchConfig?.bu || '';
   const bucketStorageKey = (bu && me) ? `ap_bucket_${bu}_${me}` : null;
@@ -2965,8 +2965,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     try { localStorage.setItem(bucketStorageKey, JSON.stringify(list)); } catch (e) { console.error('saveLocalBucket:', e); }
   };
 
-  // โ”€โ”€ เนเธซเธฅเธ” Bucket: pending เธ—เธฑเนเธเธซเธกเธ”เธเธญเธ BU + user เธเธตเน เธเธฒเธ bucket_list โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-  // (เนเธกเน filter เธ”เนเธงเธข batch_id เนเธฅเนเธง เธเธฃเธญเธเธเธฅเธธเธกเธเธญเธเธเนเธฒเธเธเธฒเธ session เธเนเธญเธเธซเธเนเธฒเธ”เนเธงเธข)
+  // ── โหลด Bucket: pending ทั้งหมดของ BU + user นี้ จาก bucket_list ────────
+  // (ไม่ filter ด้วย batch_id แล้ว ครอบคลุมของค้างจาก session ก่อนหน้าด้วย)
   useEffect(() => {
     if (!bu || !me) return;
     let active = true;
@@ -2987,7 +2987,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         const merged = [...synced, ...pendingOnly];
         setInvoices(merged);
         saveLocalBucket(merged);
-        // โ”€โ”€ เธเธนเนเน€เธฅเธ running GRT/GRN เธ•เนเธญเธเธฒเธเธ—เธตเนเนเธเนเนเธเนเธฅเนเธงเนเธเธ•เธฐเธเธฃเนเธฒเธเธตเน (เน€เธเธทเนเธญ refresh) โ”€โ”€
+        // ── กู้เลข running GRT/GRN ต่อจากที่ใช้ไปแล้วในตะกร้านี้ (เผื่อ refresh) ──
         if (isAutoGrt) {
           const extractRunning = (val, prefix) => {
             if (!val || !prefix || !String(val).startsWith(prefix)) return null;
@@ -3004,26 +3004,26 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     return () => { active = false; };
   }, [bu, me]);
 
-  // โ”€โ”€ ref เน€เธเนเธ invoices เธฅเนเธฒเธชเธธเธ” เนเธซเน syncPendingToBucket เธญเนเธฒเธเนเธ”เนเนเธ”เธขเนเธกเนเธ•เนเธญเธ re-create interval โ”€โ”€
+  // ── ref เก็บ invoices ล่าสุด ให้ syncPendingToBucket อ่านได้โดยไม่ต้อง re-create interval ──
   const invoicesRef = useRef(invoices);
   useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
 
-  // โ”€โ”€ ref เน€เธเนเธ nextGrtRunning/nextGrnRunning เธฅเนเธฒเธชเธธเธ” + เธเนเธฒเธ—เธตเนเน€เธเธตเธขเธเธฅเธ DB เธเธฃเธฑเนเธเธฅเนเธฒเธชเธธเธ” โ”€โ”€
+  // ── ref เก็บ nextGrtRunning/nextGrnRunning ล่าสุด + ค่าที่เขียนลง DB ครั้งล่าสุด ──
   const grtGrnRef = useRef({ grt: nextGrtRunning, grn: nextGrnRunning });
   useEffect(() => { grtGrnRef.current = { grt: nextGrtRunning, grn: nextGrnRunning }; }, [nextGrtRunning, nextGrnRunning]);
   const lastSyncedGrtGrnRef = useRef({ grt: nextGrtRunning, grn: nextGrnRunning });
 
-  // โ… เนเธเนเธ running number เธเธฑเธเธเธธเธเธฑเธ (optimistic) เธเธถเนเธเนเธเธ—เธตเน APController
-  // เน€เธเธทเนเธญเนเธซเนเธซเธเนเธฒ Batch Setup เน€เธซเนเธเธเนเธฒเธฅเนเธฒเธชเธธเธ”เธ—เธฑเธเธ—เธตเธซเธฅเธฑเธ Submit เนเธ”เธขเนเธกเนเธ•เนเธญเธเธฃเธญ DB sync
+  // ✅ แจ้ง running number ปัจจุบัน (optimistic) ขึ้นไปที่ APController
+  // เพื่อให้หน้า Batch Setup เห็นค่าล่าสุดทันทีหลัง Submit โดยไม่ต้องรอ DB sync
   useEffect(() => {
     if (onRunningChange && bu) onRunningChange(bu, { ap_grt: nextGrtRunning, ap_grn: nextGrnRunning });
   }, [nextGrtRunning, nextGrnRunning, bu]);
 
-  // โ”€โ”€ presence: เธ•เธฃเธงเธเธงเนเธฒเธกเธต user เธญเธทเนเธเธ—เธณเธเธฒเธ BU เน€เธ”เธตเธขเธงเธเธฑเธเธญเธขเธนเนเนเธซเธก (ap_active_sessions) โ”€โ”€
-  // เธกเธต -> sync GRT/GRN เธ—เธธเธ submit (real-time) / เนเธกเนเธกเธต -> เธฃเธญ sync เธฃเธงเธ”เน€เธ”เธตเธขเธงเธ•เธญเธเธญเธญเธเธเธฒเธเธซเธเนเธฒเธเธตเน
+  // ── presence: ตรวจว่ามี user อื่นทำงาน BU เดียวกันอยู่ไหม (ap_active_sessions) ──
+  // มี -> sync GRT/GRN ทุก submit (real-time) / ไม่มี -> รอ sync รวดเดียวตอนออกจากหน้านี้
   const realtimeSyncRef = useRef(false);
 
-  // โ”€โ”€ Sync เธฃเธฒเธขเธเธฒเธฃเธ—เธตเนเธขเธฑเธเนเธกเนเธเธถเนเธ Supabase (bulk insert เธเธฃเธฑเนเธเน€เธ”เธตเธขเธง) โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── Sync รายการที่ยังไม่ขึ้น Supabase (bulk insert ครั้งเดียว) ────────────
   const syncingRef = useRef(false);
   const syncPendingToBucket = async () => {
     if (syncingRef.current) return;
@@ -3047,14 +3047,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     } catch (e) {
       console.error('syncPendingToBucket:', e);
     } finally {
-      // เธเธฅเธ”เธฅเนเธญเธ _localId เธ—เธตเน insert เน€เธชเธฃเนเธเนเธฅเนเธง (เนเธกเนเธงเนเธฒเธชเธณเน€เธฃเนเธเธซเธฃเธทเธญ error)
+      // ปลดล็อก _localId ที่ insert เสร็จแล้ว (ไม่ว่าสำเร็จหรือ error)
       syncingRef.current = false;
     }
   };
 
-  // โ”€โ”€ เน€เธเธตเธขเธเน€เธฅเธ running เธฅเนเธฒเธชเธธเธ”เธ—เธตเนเนเธเนเนเธเนเธฅเนเธงเธเธฅเธฑเธ company_list.ap_grt/ap_grn (เน€เธเธเธฒเธฐเธ•เธญเธ GRT Status = Auto) โ”€โ”€
-  // partial update โ€” เธชเนเธเน€เธเธเธฒเธฐ ap_grt/ap_grn เธ—เธตเน "เน€เธเธฅเธตเนเธขเธเธเธฃเธดเธ" เน€เธ—เนเธฒเธเธฑเนเธ เธเธฑเธเธ—เธฑเธเธเนเธฒเธเธญเธ
-  // session เธญเธทเนเธ (BU เน€เธ”เธตเธขเธงเธเธฑเธ) เธ—เธตเนเธญเธฒเธ update เธญเธตเธเธ•เธฑเธงเนเธเนเธฅเนเธงเธเนเธญเธเธซเธเนเธฒ
+  // ── เขียนเลข running ล่าสุดที่ใช้ไปแล้วกลับ company_list.ap_grt/ap_grn (เฉพาะตอน GRT Status = Auto) ──
+  // partial update — ส่งเฉพาะ ap_grt/ap_grn ที่ "เปลี่ยนจริง" เท่านั้น กันทับค่าของ
+  // session อื่น (BU เดียวกัน) ที่อาจ update อีกตัวไปแล้วก่อนหน้า
   const syncGrtGrnCounter = async (override = null) => {
     if (!isAutoGrt || !batchConfig?.bu) return;
     const { grt, grn } = override || grtGrnRef.current;
@@ -3075,7 +3075,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
   };
 
-  // โ”€โ”€ presence heartbeat: เนเธเนเธเธ•เธฑเธงเน€เธญเธ + เน€เธเนเธเธงเนเธฒเธกเธต session เธญเธทเนเธเธเธญเธ BU เน€เธ”เธตเธขเธงเธเธฑเธเนเธซเธก โ”€โ”€
+  // ── presence heartbeat: แจ้งตัวเอง + เช็คว่ามี session อื่นของ BU เดียวกันไหม ──
   const heartbeat = async () => {
     if (!batchConfig?.batchId || !batchConfig?.bu) return;
     try {
@@ -3089,7 +3089,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       const wasRealtime = realtimeSyncRef.current;
       realtimeSyncRef.current = !!(data && data.length);
       if (isAutoGrt && !wasRealtime && realtimeSyncRef.current) {
-        // เน€เธเธดเนเธเธ•เธฃเธงเธเธเธ user เธญเธทเนเธเน€เธเนเธฒเธกเธฒเธ—เธณ BU เน€เธ”เธตเธขเธงเธเธฑเธ -> sync เธเนเธฒเธเธฑเธเธเธธเธเธฑเธ catch-up เธ—เธฑเธเธ—เธต
+        // เพิ่งตรวจพบ user อื่นเข้ามาทำ BU เดียวกัน -> sync ค่าปัจจุบัน catch-up ทันที
         syncGrtGrnCounter();
       }
     } catch (e) {
@@ -3097,32 +3097,32 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
   };
 
-  // โ”€โ”€ เธฅเธ session เธเธญเธเธ•เธฑเธงเน€เธญเธเธ•เธญเธเธญเธญเธเธเธฒเธเธซเธเนเธฒเธเธตเน โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── ลบ session ของตัวเองตอนออกจากหน้านี้ ────────────────────────────────
   const cleanupPresence = async () => {
     if (!batchConfig?.batchId) return;
     try { await supabase.from('ap_active_sessions').delete().eq('batch_id', batchConfig.batchId); }
     catch (e) { console.error('cleanupPresence:', e); }
   };
 
-  // โ”€โ”€ sync เธ—เธธเธ 30 เธงเธด + เธ•เธญเธเธเนเธญเธเนเธ—เนเธ + เธเธฃเธฑเนเธเธชเธธเธ”เธ—เนเธฒเธขเธ•เธญเธเธญเธญเธเธเธฒเธเธซเธเนเธฒเธเธตเน โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-  // โ”€โ”€ Auto Backup: sync Batch Bucket + GRT/GRN counter โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── sync ทุก 30 วิ + ตอนซ่อนแท็บ + ครั้งสุดท้ายตอนออกจากหน้านี้ ───────────
+  // ── Auto Backup: sync Batch Bucket + GRT/GRN counter ────────────────────
   const autoBackup = () => { syncPendingToBucket(); syncGrtGrnCounter(); };
 
   useEffect(() => {
     if (!bu || !me) return;
-    heartbeat(); // เน€เธเนเธ presence เธ—เธฑเธเธ—เธตเธ•เธญเธเน€เธเนเธฒเธซเธเนเธฒเธเธตเน เนเธกเนเธ•เนเธญเธเธฃเธญ 30 เธงเธดเนเธฃเธ
+    heartbeat(); // เช็ค presence ทันทีตอนเข้าหน้านี้ ไม่ต้องรอ 30 วิแรก
     const interval = setInterval(() => { autoBackup(); heartbeat(); }, 30000);
 
-    // โ”€โ”€ Auto Backup เธ—เธธเธ 15 เธเธฒเธ—เธต (เน€เธเธดเนเธกเน€เธ•เธดเธกเธเธฒเธ interval 30 เธงเธด เธ”เนเธฒเธเธเธ) โ”€โ”€โ”€โ”€โ”€โ”€
+    // ── Auto Backup ทุก 15 นาที (เพิ่มเติมจาก interval 30 วิ ด้านบน) ──────
     const backupInterval = setInterval(autoBackup, 15 * 60 * 1000);
 
     const onVisibility = () => { if (document.hidden) autoBackup(); };
     document.addEventListener('visibilitychange', onVisibility);
 
-    // โ”€โ”€ เธเธดเธ”เนเธ—เนเธ/เน€เธเธฃเธฒเธงเนเน€เธเธญเธฃเน โ€” pagehide fire เธเนเธญเธเธเธดเธ”เน€เธชเธกเธญ (เธฃเธงเธก mobile) โ”€โ”€โ”€โ”€โ”€โ”€
+    // ── ปิดแท็บ/เบราว์เซอร์ — pagehide fire ก่อนปิดเสมอ (รวม mobile) ──────
     window.addEventListener('pagehide', autoBackup);
 
-    // โ”€โ”€ เธฅเธเธ—เธฐเน€เธเธตเธขเธ flush เธชเธณเธซเธฃเธฑเธเธ•เธญเธ logout (เน€เธฃเธตเธขเธเธเธฒเธ AuthContext.logout) โ”€โ”€โ”€
+    // ── ลงทะเบียน flush สำหรับตอน logout (เรียกจาก AuthContext.logout) ───
     const unregisterFlush = registerSyncFlush(async () => {
       await syncPendingToBucket();
       await syncGrtGrnCounter();
@@ -3140,11 +3140,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     };
   }, [bu, me]);
 
-  // โ”€โ”€ Submit invoice เธเธฑเธเธเธธเธเธฑเธ -> เน€เธเนเธ local + localStorage เธ—เธฑเธเธ—เธต (เนเธกเนเธขเธดเธ API) โ”€โ”€
-  // sync เธเธถเนเธ bucket_list เธฃเธงเธกเน€เธเนเธเธเธธเธ”เธ•เธฒเธก interval/trigger เธ”เนเธฒเธเธเธ
-  // เน€เธเนเธ supplier/branch เนเธงเน (เธกเธฑเธเน€เธเนเธ vendor เน€เธ”เธตเธขเธงเธเธฑเธเธซเธฅเธฒเธขเนเธ) เนเธ•เน reset
-  // invoice-specific fields เน€เธเธทเนเธญเธเธฃเธญเธเนเธเธ–เธฑเธ”เนเธ
-  // โ”€โ”€ เธเธฑเธเธ—เธถเธเธเธฒเธฃเนเธเนเนเธ invoice เนเธ Batch Bucket (เน€เธฃเธตเธขเธเธเธฒเธ BucketItemPopup) โ”€โ”€
+  // ── Submit invoice ปัจจุบัน -> เก็บ local + localStorage ทันที (ไม่ยิง API) ──
+  // sync ขึ้น bucket_list รวมเป็นชุดตาม interval/trigger ด้านบน
+  // เก็บ supplier/branch ไว้ (มักเป็น vendor เดียวกันหลายใบ) แต่ reset
+  // invoice-specific fields เพื่อกรอกใบถัดไป
+  // ── บันทึกการแก้ไข invoice ใน Batch Bucket (เรียกจาก BucketItemPopup) ──
   const handleSaveBucketItem = async ({ form_data, lines, invoiceNo }) => {
     const idx = bucketPopup.index;
     if (idx < 0 || !invoices[idx]) return false;
@@ -3168,7 +3168,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         amount: updated.amount, vat: updated.vat, wht: updated.wht, net: updated.net,
         form_data: updated.form_data, lines: updated.lines,
       }).eq('id', target.id);
-      if (error) { alert('เธเธฑเธเธ—เธถเธเนเธกเนเธชเธณเน€เธฃเนเธ: ' + error.message); return false; }
+      if (error) { alert('บันทึกไม่สำเร็จ: ' + error.message); return false; }
     }
     setInvoices(prev => {
       const next = prev.map((it, i) => i === idx ? updated : it);
@@ -3178,10 +3178,10 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     return true;
   };
 
-  // โ… เธฅเธเธฃเธฒเธขเธเธฒเธฃเธ—เธตเนเน€เธฅเธทเธญเธเนเธงเนเนเธ Batch Bucket (bulk delete) โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ✅ ลบรายการที่เลือกไว้ใน Batch Bucket (bulk delete) ────────────────────
   const handleDeleteSelected = async () => {
     if (!selectedRows.size) return;
-    if (!window.confirm(`เธ•เนเธญเธเธเธฒเธฃเธฅเธ ${selectedRows.size} เธฃเธฒเธขเธเธฒเธฃเธ—เธตเนเน€เธฅเธทเธญเธ?`)) return;
+    if (!window.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือก?`)) return;
     const toDelete = invoices.filter((inv, i) => selectedRows.has(inv.id || inv._localId || i));
     const syncedIds = toDelete.filter(inv => inv._synced && inv.id).map(inv => inv.id);
     if (syncedIds.length) {
@@ -3199,16 +3199,16 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     const roleLabel = isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer';
 
-    // โ”€โ”€ เนเธเนเธ lines เน€เธเนเธ Invoice เนเธขเธเธ•เธฒเธก H/L โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-    // เธ—เธธเธเธเธฃเธฑเนเธเธ—เธตเนเน€เธเธญ hl === 'H' = เน€เธฃเธดเนเธก Invoice เนเธซเธกเน 1 เนเธ
-    // L เธ—เธตเนเธ•เธฒเธกเธกเธฒเธเธฐเธฃเธงเธกเน€เธเนเธฒ Invoice เธเธญเธ H เธ•เธฑเธงเธฅเนเธฒเธชเธธเธ” เธเธเธเธงเนเธฒเธเธฐเน€เธเธญ H เธ•เธฑเธงเธ–เธฑเธ”เนเธ
+    // ── แบ่ง lines เป็น Invoice แยกตาม H/L ────────────────────────────────────
+    // ทุกครั้งที่เจอ hl === 'H' = เริ่ม Invoice ใหม่ 1 ใบ
+    // L ที่ตามมาจะรวมเข้า Invoice ของ H ตัวล่าสุด จนกว่าจะเจอ H ตัวถัดไป
     const groups = [];
     lines.forEach(line => {
       if (line.hl === 'H' || groups.length === 0) groups.push([line]);
       else groups[groups.length - 1].push(line);
     });
 
-    // โ”€โ”€ GRT: gen 1 เน€เธฅเธ เนเธเนเธฃเนเธงเธกเธ—เธธเธ Invoice เธ—เธตเน split เธเธฒเธ submit เธเธตเน (Auto เน€เธ—เนเธฒเธเธฑเนเธ) โ”€โ”€
+    // ── GRT: gen 1 เลข ใช้ร่วมทุก Invoice ที่ split จาก submit นี้ (Auto เท่านั้น) ──
     let grtNumVal = form.grtNum;
     let bumpGrt = false;
     if (isAutoGrt) {
@@ -3216,7 +3216,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       bumpGrt = true;
     }
 
-    // โ”€โ”€ GRN: gen เนเธขเธเน€เธเธเธฒเธฐ Invoice เธ—เธตเน Tax Code = VAT7% (เนเธกเนเนเธเน SVAT7%) เน€เธฃเธตเธขเธเธ•เนเธญเธเธฑเธ โ”€โ”€
+    // ── GRN: gen แยกเฉพาะ Invoice ที่ Tax Code = VAT7% (ไม่ใช่ SVAT7%) เรียงต่อกัน ──
     const baseInvoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) || '';
     let grnRunning = nextGrnRunning;
     let grnBumpCount = 0;
@@ -3230,7 +3230,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         grnBumpCount += 1;
         grnVal = `${batchConfig?.grnPrefix || ''}${String(grnRunning).padStart(4, '0')}`;
       }
-      // group 0 = Invoice เธซเธฅเธฑเธ (invoice_no = base) / group 1,2,... = Invoice เนเธขเธ (base + '/1','/2',...)
+      // group 0 = Invoice หลัก (invoice_no = base) / group 1,2,... = Invoice แยก (base + '/1','/2',...)
       const invoiceSuffix = gi === 0 ? '' : `/${gi}`;
       const invoiceNo = `${baseInvoiceNo}${invoiceSuffix}`;
       return {
@@ -3260,8 +3260,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     });
 
     setInvoices(prev => {
-      // โ”€โ”€ Dedup guard: เธเนเธญเธเธเธฑเธ user เธเธ” Submit เธเนเธณเน€เธฃเนเธง เน โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-      // เน€เธเธฃเธตเธขเธ invoice_no + branch_no + amount เธเธญเธ item เนเธซเธกเนเธเธฑเธเธ—เธตเนเธกเธตเธญเธขเธนเนเนเธฅเนเธง
+      // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
+      // เปรียบ invoice_no + branch_no + amount ของ item ใหม่กับที่มีอยู่แล้ว
       const existingKeys = new Set(
         prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${inv.amount}`)
       );
@@ -3275,11 +3275,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     });
     if (bumpGrt) setNextGrtRunning(n => n + 1);
     if (grnBumpCount > 0) setNextGrnRunning(n => n + grnBumpCount);
-    // โ… เธ•เธญเธ Submit: update เนเธเน State (nextGrtRunning/nextGrnRunning) เน€เธ—เนเธฒเธเธฑเนเธ
-    // เนเธกเนเน€เธเธตเธขเธเธเธฅเธฑเธ company_list.ap_grt/ap_grn เธ—เธตเนเธเธตเนเธญเธตเธเธ•เนเธญเนเธ โ€”
-    // เธเธฒเธฃ sync เน€เธฅเธ running (4 เธซเธฅเธฑเธเธฅเนเธฒเธชเธธเธ”) เธเธฅเธฑเธ DB เธเธฐเธ—เธณ "เธ•เธญเธเธเธ Batch" เน€เธ—เนเธฒเธเธฑเนเธ
-    // เธเนเธฒเธ syncGrtGrnCounter() เธ—เธตเนเธ–เธนเธเน€เธฃเธตเธขเธเธเธฒเธ useEffect cleanup เธ”เนเธฒเธเธฅเนเธฒเธ
-    // (เน€เธกเธทเนเธญเธญเธญเธเธเธฒเธเธซเธเนเธฒ InvoiceEntry / เน€เธเธฅเธตเนเธขเธ step) เนเธฅเธฐ interval 30s (safety-net)
+    // ✅ ตอน Submit: update แค่ State (nextGrtRunning/nextGrnRunning) เท่านั้น
+    // ไม่เขียนกลับ company_list.ap_grt/ap_grn ที่นี่อีกต่อไป —
+    // การ sync เลข running (4 หลักล่าสุด) กลับ DB จะทำ "ตอนจบ Batch" เท่านั้น
+    // ผ่าน syncGrtGrnCounter() ที่ถูกเรียกจาก useEffect cleanup ด้านล่าง
+    // (เมื่อออกจากหน้า InvoiceEntry / เปลี่ยน step) และ interval 30s (safety-net)
     setFormState(f => ({
       ...f,
       invoiceNum: '', invDate: '', invTax: '', grtNum: '', grn: '',
@@ -3295,7 +3295,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     setShowBranchPopup(false);
   };
 
-  // โ”€โ”€ Branch No. Smart Lookup โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+  // ── Branch No. Smart Lookup ───────────────────────────────────────────────
   const resolveBranch = (input) => {
     if (!input?.trim()) {
       setFormState(f => ({ ...f, branchDirectLabel: '', branchIBLabel: '' }));
@@ -3307,7 +3307,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const bu      = batchConfig?.bu || '';
     const hasPlus = raw.includes('+');
 
-    // โ”€โ”€ Special case: เธเธดเธกเธเน "IB" โ’ HO + IB-ALL โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+    // ── Special case: พิมพ์ "IB" → HO + IB-ALL ──────────────────────────
     if (raw.trim().toUpperCase() === 'IB') {
       const ho = findHOBranch(branchItems, bu);
       setFormState(f => ({
@@ -3321,8 +3321,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
     branchJustResolved.current = false;
 
-    // เธ”เธถเธ search term โ€” เธฅเธ + เธญเธญเธ เนเธฅเนเธงเธฅเธ BU prefix เธ–เนเธฒเธกเธต
-    // เธฃเธญเธเธฃเธฑเธ: "MPS+00002" "MPS-00002" "+2" "2" "056802" "056802+"
+    // ดึง search term — ลบ + ออก แล้วลบ BU prefix ถ้ามี
+    // รองรับ: "MPS+00002" "MPS-00002" "+2" "2" "056802" "056802+"
     const _noPlus = raw.replace(/\+/g, '').trim();
     const _buLow  = bu.toLowerCase();
     const cleaned = (_noPlus.toLowerCase().startsWith(_buLow + '-'))
@@ -3331,28 +3331,28 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         ? _noPlus.slice(bu.length).trim()
         : _noPlus;
 
-    // เธเธฃเธญเธ branchItems เน€เธเธเธฒเธฐ BU เธเธญเธ batch เธเนเธญเธเน€เธชเธกเธญ
+    // กรอง branchItems เฉพาะ BU ของ batch ก่อนเสมอ
     const buBranches = bu
       ? branchItems.filter(b => String(b['bu'] ?? '').toLowerCase() === bu.toLowerCase())
       : branchItems;
 
-    // โ”€โ”€ findBranch: lookup เธ•เธฒเธกเธฅเธณเธ”เธฑเธ เน€เธเธเธฒเธฐ BU โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
-    // เนเธเธฃเธเธชเธฃเนเธฒเธ Branch เธเธฃเธดเธ:
-    //   Branch Code = '056802'   (เธ•เธฑเธงเน€เธฅเธเธฅเนเธงเธ)
-    //   BU-Branch   = '00001'    (5 เธซเธฅเธฑเธ เนเธกเนเธกเธต BU prefix)
+    // ── findBranch: lookup ตามลำดับ เฉพาะ BU ──────────────────────────
+    // โครงสร้าง Branch จริง:
+    //   Branch Code = '056802'   (ตัวเลขล้วน)
+    //   BU-Branch   = '00001'    (5 หลัก ไม่มี BU prefix)
     //   bu          = 'MPS'
     const findBranch = (term) => {
       const t = term.trim().toLowerCase();
       if (!t) return null;
 
-      // 1. match Branch Code เธ•เธฃเธเน เน€เธเนเธ "056802"
+      // 1. match Branch Code ตรงๆ เช่น "056802"
       let found = buBranches.find(b =>
         String(b['Branch Code'] ?? '').toLowerCase() === t
       );
       if (found) return found;
 
-      // 2. เธ•เธฑเธงเน€เธฅเธเธฅเนเธงเธ โ’ pad 5 เธซเธฅเธฑเธ โ’ match BU-Branch
-      //    เน€เธเนเธ "2" โ’ "00002", "00002" โ’ "00002"
+      // 2. ตัวเลขล้วน → pad 5 หลัก → match BU-Branch
+      //    เช่น "2" → "00002", "00002" → "00002"
       if (/^\d+$/.test(t)) {
         const padded = t.padStart(5, '0');
         found = buBranches.find(b =>
@@ -3361,13 +3361,13 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         if (found) return found;
       }
 
-      // 3. match BU-Branch เธ•เธฃเธเน (เธเธฃเธ“เธตเนเธชเนเธเธฃเธ เน€เธเนเธ "00002")
+      // 3. match BU-Branch ตรงๆ (กรณีใส่ครบ เช่น "00002")
       found = buBranches.find(b =>
         String(b['BU-Branch'] ?? '').toLowerCase() === t
       );
       if (found) return found;
 
-      // 4. contains เนเธ Branch Code เธซเธฃเธทเธญ Company Name (term >= 3 เธ•เธฑเธง)
+      // 4. contains ใน Branch Code หรือ Company Name (term >= 3 ตัว)
       if (t.length >= 3) {
         found = buBranches.find(b =>
           String(b['Branch Code'] ?? '').toLowerCase().includes(t) ||
@@ -3392,7 +3392,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
     branchJustResolved.current = true;
     if (hasPlus) {
-      // โ”€โ”€ IB mode: branchIB = branch เธ—เธตเน match, branchDirect = HO โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+      // ── IB mode: branchIB = branch ที่ match, branchDirect = HO ──────────
       const ho      = findHOBranch(branchItems, branch['bu'] || bu);
       const hoLabel = ho ? formatBranchLabel(ho) : '';
       setFormState(f => ({
@@ -3402,7 +3402,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         branchDirectLabel: hoLabel,
       }));
     } else {
-      // โ”€โ”€ Direct mode โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+      // ── Direct mode ──────────────────────────────────────────────────────
       setFormState(f => ({
         ...f,
         branchNo:          branchCode,
@@ -3468,12 +3468,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} />
       </div>
 
-      {/* โ”€โ”€ Batch Bucket (เนเธเธฃเธ โ€” เธขเธฑเธเนเธกเนเธกเธต data เธเธฃเธดเธ เนเธเน invoices state) โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€ */}
+      {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
           <div style={{ display: 'flex' }}>
             <div style={{ padding: '9px 14px', fontSize: '12px', cursor: 'default', borderBottom: '2px solid #1a3a5c', marginBottom: '-0.5px', color: '#1a3a5c', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              ๐งบ Batch Bucket
+              🧺 Batch Bucket
               <span style={{ background: '#1a3a5c', color: 'white', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{invoices.length}</span>
             </div>
           </div>
@@ -3507,7 +3507,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
           </thead>
           <tbody>
             {invoices.length === 0 ? (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>เธขเธฑเธเนเธกเนเธกเธต Invoice เนเธเธ•เธฐเธเธฃเนเธฒ</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
             ) : invoices.map((inv, i) => {
               const rowKey = inv.id || inv._localId || i;
               return (
@@ -3519,10 +3519,10 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
                 <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600' }}>{inv.invoice_no || '-'}</td>
                 <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor_name || '-'}</td>
                 <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px' }}>{inv.branch_no || '-'}</td>
-                <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', textAlign: 'right' }}>{inv.amount ? `เธฟ${fmt(inv.amount)}` : 'โ€”'}</td>
-                <td style={{ padding: '8px 9px', color: '#555', textAlign: 'right' }}>{inv.vat ? `เธฟ${fmt(inv.vat)}` : 'โ€”'}</td>
-                <td style={{ padding: '8px 9px', color: inv.wht < 0 ? '#A32D2D' : '#555', textAlign: 'right' }}>{inv.wht ? `เธฟ${fmt(inv.wht)}` : 'โ€”'}</td>
-                <td style={{ padding: '8px 9px', fontWeight: '600', color: '#1a3a5c', textAlign: 'right' }}>{inv.net ? `เธฟ${fmt(inv.net)}` : 'โ€”'}</td>
+                <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', textAlign: 'right' }}>{inv.amount ? `฿${fmt(inv.amount)}` : '—'}</td>
+                <td style={{ padding: '8px 9px', color: '#555', textAlign: 'right' }}>{inv.vat ? `฿${fmt(inv.vat)}` : '—'}</td>
+                <td style={{ padding: '8px 9px', color: inv.wht < 0 ? '#A32D2D' : '#555', textAlign: 'right' }}>{inv.wht ? `฿${fmt(inv.wht)}` : '—'}</td>
+                <td style={{ padding: '8px 9px', fontWeight: '600', color: '#1a3a5c', textAlign: 'right' }}>{inv.net ? `฿${fmt(inv.net)}` : '—'}</td>
                 <td style={{ padding: '6px 9px' }}>
                   <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
                     <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', index: i })}
@@ -3554,7 +3554,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   );
 }
 
-// โ”€โ”€ GenerateExport โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── GenerateExport ────────────────────────────────────────────────────────────
 function GenerateExport({ invoices, onNewBatch, onBack }) {
   const [opts, setOpts]           = useState({ xlsx: true, txt: true, wht: false, vat: false });
   const [exported, setExported]   = useState(false);
@@ -3577,7 +3577,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
       }
       setExported(true);
     } catch (e) {
-      alert('Export เนเธกเนเธชเธณเน€เธฃเนเธ: ' + e.message);
+      alert('Export ไม่สำเร็จ: ' + e.message);
     }
     setExporting(false);
   };
@@ -3604,17 +3604,17 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
                     <td style={{ padding: '7px 9px', fontWeight: '500', color: '#1a3a5c' }}>{v.invoice_no || '-'}</td>
                     <td style={{ padding: '7px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.vendor_name || '-'}</td>
                     <td style={{ padding: '7px 9px', color: '#888' }}>{v.branch_no || '-'}</td>
-                    <td style={{ padding: '7px 9px', textAlign: 'right' }}>{v.amount ? `เธฟ${fmt(num(v.amount))}` : 'โ€”'}</td>
-                    <td style={{ padding: '7px 9px', textAlign: 'right' }}>{v.vat ? `เธฟ${fmt(num(v.vat))}` : 'โ€”'}</td>
+                    <td style={{ padding: '7px 9px', textAlign: 'right' }}>{v.amount ? `฿${fmt(num(v.amount))}` : '—'}</td>
+                    <td style={{ padding: '7px 9px', textAlign: 'right' }}>{v.vat ? `฿${fmt(num(v.vat))}` : '—'}</td>
                     <td style={{ padding: '7px 9px', textAlign: 'right' }}>
-                      {exported ? <span style={bdgGreen}>Exported</span> : <span style={{ fontWeight: '500' }}>เธฟ{fmt(num(v.net))}</span>}
+                      {exported ? <span style={bdgGreen}>Exported</span> : <span style={{ fontWeight: '500' }}>฿{fmt(num(v.net))}</span>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <div style={{ display: 'flex', borderTop: '0.5px solid #e8eaf0' }}>
-              {[['Invoices', invoices.length], ['Subtotal', `เธฟ${fmt(subtotal)}`], ['VAT', `เธฟ${fmt(vat)}`], ['Net Total', `เธฟ${fmt(net)}`]].map(([label, val], i, arr) => (
+              {[['Invoices', invoices.length], ['Subtotal', `฿${fmt(subtotal)}`], ['VAT', `฿${fmt(vat)}`], ['Net Total', `฿${fmt(net)}`]].map(([label, val], i, arr) => (
                 <div key={label} style={{ flex: 1, padding: '9px', textAlign: 'center', borderRight: i < arr.length - 1 ? '0.5px solid #e8eaf0' : 'none' }}>
                   <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>{label}</div>
                   <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{val}</div>
@@ -3639,17 +3639,17 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
             <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
               <button disabled={exporting || exported} onClick={doExport}
                 style={{ ...btnPrimary, width: '100%', justifyContent: 'center', background: exported ? '#27500A' : '#1a3a5c', opacity: exporting ? 0.6 : 1, cursor: exporting || exported ? 'default' : 'pointer' }}>
-                {exported ? 'โ“ Exported' : exporting ? 'Exporting...' : 'โฌ Generate & export'}
+                {exported ? '✓ Exported' : exporting ? 'Exporting...' : '⬇ Generate & export'}
               </button>
-              <button style={{ ...btnOutline, width: '100%', justifyContent: 'center' }} onClick={onBack}>โ Back to edit</button>
+              <button style={{ ...btnOutline, width: '100%', justifyContent: 'center' }} onClick={onBack}>← Back to edit</button>
             </div>
           </div>
           {exported && (
             <div style={card}>
               <div style={cardHead}><span style={cardLabel}>Generated files</span></div>
               <div style={{ padding: '10px 13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {opts.xlsx && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#27500A' }}>๐“</span><span style={{ flex: 1 }}>AP_LOAD.xlsx</span><span style={{ color: '#888', cursor: 'pointer' }}>โฌ</span></div>}
-                {opts.txt  && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#0C447C' }}>๐“</span><span style={{ flex: 1 }}>AP_INTERFACE.txt</span><span style={{ color: '#888', cursor: 'pointer' }}>โฌ</span></div>}
+                {opts.xlsx && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#27500A' }}>📊</span><span style={{ flex: 1 }}>AP_LOAD.xlsx</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span></div>}
+                {opts.txt  && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #e8eaf0', borderRadius: '6px' }}><span style={{ color: '#0C447C' }}>📄</span><span style={{ flex: 1 }}>AP_INTERFACE.txt</span><span style={{ color: '#888', cursor: 'pointer' }}>⬇</span></div>}
               </div>
             </div>
           )}
@@ -3662,14 +3662,14 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
   );
 }
 
-// โ”€โ”€ Root โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
+// ── Root ──────────────────────────────────────────────────────────────────────
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
   const { fetchCollection, getCached } = useDataCache();
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
   const [invoices, setInvoices]       = useState([]);
-  // โ… optimistic override เธเธญเธเน€เธฅเธ running GRT/GRN เธฅเนเธฒเธชเธธเธ” (เธญเธฑเธเน€เธ”เธ•เธเธฒเธ InvoiceEntry เธ—เธธเธเธเธฃเธฑเนเธเธ—เธตเน submit)
+  // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
 
   useEffect(() => {
@@ -3679,7 +3679,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   }, []);
 
   const infoItemsRaw    = getCached('CompanyList') || [];
-  // โ… merge เธเนเธฒ ap_grt/ap_grn เธฅเนเธฒเธชเธธเธ” (optimistic) เน€เธเนเธฒเธเธฑเธ CompanyList เธเนเธญเธเธชเนเธเนเธซเน BatchSetup
+  // ✅ merge ค่า ap_grt/ap_grn ล่าสุด (optimistic) เข้ากับ CompanyList ก่อนส่งให้ BatchSetup
   const infoItems       = runningOverride
     ? infoItemsRaw.map(i => (
         String(i['bu'] ?? '').toLowerCase() === String(runningOverride.bu ?? '').toLowerCase()
@@ -3704,7 +3704,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
       <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-        <span style={{ fontSize: '17px' }}>๐งพ</span>
+        <span style={{ fontSize: '17px' }}>🧾</span>
         <div>
           <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>AP Controller</div>
           <div style={{ fontSize: '11px', color: '#aaa' }}>Accounts Payable Invoice Management</div>
