@@ -3,6 +3,7 @@
   import { supabase as _supabase } from '../supabase';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
+  import DeployMonitor from './DeployMonitor';
 
   const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'];
 
@@ -1276,6 +1277,7 @@ useEffect(() => {
         {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
+        {tab === 'deploy' && isOwner && <DeployMonitor inline />}
 
         {showForm && (
           <div style={S.overlay}>

@@ -28,7 +28,7 @@ const STATUS_CONFIG = {
   idle:    { label: 'IDLE',      bg: '#161b22', color: '#8b949e', dot: '#8b949e', pulse: false },
 };
 
-export default function DeployMonitor({ onClose }) {
+export default function DeployMonitor({ onClose, inline = false }) {
   const [history, setHistory]       = useState([]);
   const [current, setCurrent]       = useState(null);
   const [selectedId, setSelectedId] = useState(null);
@@ -92,8 +92,8 @@ export default function DeployMonitor({ onClose }) {
   const sc = STATUS_CONFIG[statusKey] || STATUS_CONFIG.idle;
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}
-      onMouseDown={e => { if (e.target === e.currentTarget) onClose?.(); }}>
+    <div style={ inline ? { display:'flex', flex:1, height:'100%' } : { position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}
+    onMouseDown={e => { if (!inline && e.target === e.currentTarget) onClose?.(); }}>
       <div style={{ width:'900px', maxWidth:'96vw', height:'85vh', background:'#0d1117', borderRadius:'12px', display:'flex', flexDirection:'column', overflow:'hidden', border:'1px solid #30363d', boxShadow:'0 24px 64px rgba(0,0,0,0.6)', fontFamily:"'Consolas','Monaco','Courier New',monospace" }}>
 
         {/* Header */}

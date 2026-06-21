@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { db as supabase } from '../lib/db';
 import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';

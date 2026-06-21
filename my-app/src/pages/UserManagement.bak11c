@@ -1194,6 +1194,9 @@ useEffect(() => {
             {binCount > 0 && <span style={{ background: tab==='recycle'?'#1a3a5c':'#FCEBEB', color: tab==='recycle'?'white':'#791F1F', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{binCount}</span>}
           </button>
           <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>📋 Activity Log</button>
+          {isOwner && (
+            <button style={S.tabBtn(tab === 'deploy')} onClick={() => setTab('deploy')}>🚀 Deploy</button>
+          )}
         </div>
 
         {tab === 'users' && (
