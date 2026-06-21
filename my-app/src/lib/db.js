@@ -116,7 +116,14 @@ class QueryBuilder {
           const results = await Promise.all(this._bulkData.map(d => apiFetch(`/${this.table}`, { method: 'POST', body: JSON.stringify(d) })));
           return { data: results.map(r => r.data).filter(Boolean), error: results.find(r => r.error)?.error || null };
         }
-        return await apiFetch(`/${this.table}`, { method: 'POST', body: JSON.stringify(this._body) });
+        const result = await apiFetch(`/${this.table}`, { method: 'POST', body: JSON.stringify(this._body) });
+        // ✅ บังคับให้ data เป็น array เสมอ (ตรงกับพฤติกรรมของ Supabase client จริง)
+        // backend คืน object เดี่ยวตอน insert ทีละ 1 แถว — ถ้าไม่ normalize ตรงนี้
+        // โค้ดที่อ่าน data[0] จะได้ undefined แล้วเข้าใจผิดว่า insert ยังไม่สำเร็จ
+        if (result.data && !Array.isArray(result.data) && !this._single && !this._maybeSingle) {
+          result.data = [result.data];
+        }
+        return result;
       }
 
       if (this._method === 'PUT') {

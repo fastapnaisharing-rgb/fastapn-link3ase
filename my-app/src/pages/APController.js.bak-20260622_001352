@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { db as supabase } from '../lib/db';
 import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';
@@ -3031,27 +3031,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     if (!pending.length) return;
     syncingRef.current = true;
     try {
-      // Send local_id with each row and upsert on it instead of plain insert.
-      // This makes syncing idempotent - safe to call more than once for the
-      // same item - which fixes duplicate rows caused by a race condition
-      // where the page unloads/refreshes before the previous sync result
-      // (the _synced flag) is saved back to localStorage.
-      const payloads = pending.map(({ _localId, _synced, id, ...rest }) => ({
-        ...rest,
-        local_id: _localId,
-      }));
-      const { data, error } = await supabase
-        .from('bucket_list')
-        .upsert(payloads, { onConflict: 'local_id' })
-        .select();
+      const payloads = pending.map(({ _localId, _synced, id, ...rest }) => rest);
+      const { data, error } = await supabase.from('bucket_list').insert(payloads).select();
       if (error) throw error;
       setInvoices(prev => {
-        // Match results back by local_id instead of array index - safer if
-        // the backend ever returns rows in a different order than sent.
-        const byLocalId = new Map((data || []).map(r => [r.local_id, r]));
+        let di = 0;
         const next = prev.map(inv => {
           if (inv._synced) return inv;
-          const row = byLocalId.get(inv._localId);
+          const row = data?.[di]; di++;
           return row ? { ...row, _synced: true } : inv;
         });
         saveLocalBucket(next);
@@ -3060,6 +3047,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     } catch (e) {
       console.error('syncPendingToBucket:', e);
     } finally {
+      // ปลดล็อก _localId ที่ insert เสร็จแล้ว (ไม่ว่าสำเร็จหรือ error)
       syncingRef.current = false;
     }
   };
