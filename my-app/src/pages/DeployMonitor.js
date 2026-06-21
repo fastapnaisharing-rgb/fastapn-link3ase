@@ -11,24 +11,24 @@ function formatDuration(sec) {
 function formatTime(iso) {
   if (!iso) return '-';
   const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
-const LINE_COLOR = {
-  error:   '#FF6B6B',
-  warn:    '#FFD93D',
-  success: '#6BCB77',
-  info:    '#C9D1D9',
+const LINE_STYLE = {
+  error:   { color: 'var(--color-text-danger)' },
+  warn:    { color: 'var(--color-text-warning)' },
+  success: { color: 'var(--color-text-success)', fontWeight: '500' },
+  info:    { color: 'var(--color-text-primary)' },
 };
 
-const STATUS_CONFIG = {
-  running: { label: 'DEPLOYING', bg: '#1a3a5c', color: '#5DCAA5', dot: '#5DCAA5', pulse: true  },
-  success: { label: 'SUCCESS',   bg: '#0d2b1e', color: '#6BCB77', dot: '#6BCB77', pulse: false },
-  failed:  { label: 'FAILED',    bg: '#2b0d0d', color: '#FF6B6B', dot: '#FF6B6B', pulse: false },
-  idle:    { label: 'IDLE',      bg: '#161b22', color: '#8b949e', dot: '#8b949e', pulse: false },
+const STATUS = {
+  running: { label: 'DEPLOYING', bg: 'var(--color-background-info)',    color: 'var(--color-text-info)',    dot: 'var(--color-text-info)',    pulse: true  },
+  success: { label: 'SUCCESS',   bg: 'var(--color-background-success)', color: 'var(--color-text-success)', dot: 'var(--color-text-success)', pulse: false },
+  failed:  { label: 'FAILED',    bg: 'var(--color-background-danger)',  color: 'var(--color-text-danger)',  dot: 'var(--color-text-danger)',  pulse: false },
+  idle:    { label: 'IDLE',      bg: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', dot: 'var(--color-text-secondary)', pulse: false },
 };
 
-export default function DeployMonitor({ onClose, inline = false }) {
+export default function DeployMonitor({ inline = false, onClose }) {
   const [history, setHistory]       = useState([]);
   const [current, setCurrent]       = useState(null);
   const [selectedId, setSelectedId] = useState(null);
@@ -63,7 +63,7 @@ export default function DeployMonitor({ onClose, inline = false }) {
           setElapsed(0);
         }
         if (msg.type === 'log') {
-          setHistory(prev => prev.map(d => d.id === msg.deployId ? { ...d, lines: [...d.lines, msg.line] } : d));
+          setHistory(prev => prev.map(d => d.id === msg.deployId ? { ...d, lines: [...(d.lines||[]), msg.line] } : d));
           setCurrent(prev => prev?.id === msg.deployId ? { ...prev, lines: [...(prev.lines||[]), msg.line] } : prev);
           setTimeout(scrollBottom, 50);
         }
@@ -89,96 +89,108 @@ export default function DeployMonitor({ onClose, inline = false }) {
 
   const selectedDeploy = selectedId ? (history.find(d => d.id === selectedId) || current) : null;
   const statusKey = current ? 'running' : selectedDeploy?.status || 'idle';
-  const sc = STATUS_CONFIG[statusKey] || STATUS_CONFIG.idle;
+  const sc = STATUS[statusKey] || STATUS.idle;
 
-  return (
-    <div style={ inline ? { display:'flex', flex:1, height:'100%' } : { position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}
-    onMouseDown={e => { if (!inline && e.target === e.currentTarget) onClose?.(); }}>
-      <div style={{ width:'900px', maxWidth:'96vw', height:'85vh', background:'#0d1117', borderRadius:'12px', display:'flex', flexDirection:'column', overflow:'hidden', border:'1px solid #30363d', boxShadow:'0 24px 64px rgba(0,0,0,0.6)', fontFamily:"'Consolas','Monaco','Courier New',monospace" }}>
+  const content = (
+    <div style={{ padding: inline ? '16px 0 0' : '0' }}>
+      <style>{`@keyframes dm-pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
 
-        {/* Header */}
-        <div style={{ padding:'14px 20px', borderBottom:'1px solid #21262d', display:'flex', alignItems:'center', gap:'12px', flexShrink:0, background:'#161b22' }}>
-          <span style={{ fontSize:'15px', fontWeight:'600', color:'#e6edf3' }}>🚀 Deploy Monitor</span>
-          <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
-            <div style={{ width:'8px', height:'8px', borderRadius:'50%', background: connected?'#6BCB77':'#FF6B6B', boxShadow: connected?'0 0 6px #6BCB77':'none' }} />
-            <span style={{ fontSize:'11px', color: connected?'#6BCB77':'#FF6B6B' }}>{connected ? 'Connected' : 'Reconnecting...'}</span>
-          </div>
-          <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:'8px' }}>
-            {current && <span style={{ fontSize:'12px', color:'#8b949e' }}>⏱ {formatDuration(elapsed)}</span>}
-            <div style={{ display:'flex', alignItems:'center', gap:'6px', background:sc.bg, border:`1px solid ${sc.dot}33`, borderRadius:'20px', padding:'4px 12px' }}>
-              <div style={{ width:'7px', height:'7px', borderRadius:'50%', background:sc.dot, boxShadow: sc.pulse?`0 0 8px ${sc.dot}`:'none', animation: sc.pulse?'pulse 1.2s infinite':'none' }} />
-              <span style={{ fontSize:'11px', fontWeight:'600', color:sc.color, letterSpacing:'0.08em' }}>{sc.label}</span>
-            </div>
-            <button onClick={onClose} style={{ background:'none', border:'none', color:'#8b949e', cursor:'pointer', fontSize:'18px', lineHeight:1, padding:'2px 6px' }}>×</button>
-          </div>
+      {/* Top bar */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'14px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+          <span style={{ fontSize:'13px', fontWeight:'500', color:'var(--color-text-primary)' }}>Deploy Monitor</span>
+          <span style={{ display:'inline-flex', alignItems:'center', gap:'5px', background: connected ? 'var(--color-background-success)' : 'var(--color-background-danger)', color: connected ? 'var(--color-text-success)' : 'var(--color-text-danger)', fontSize:'11px', padding:'3px 10px', borderRadius:'20px', fontWeight:'500' }}>
+            <span style={{ width:'6px', height:'6px', borderRadius:'50%', background: connected ? 'var(--color-text-success)' : 'var(--color-text-danger)', display:'inline-block' }} />
+            {connected ? 'Connected' : 'Reconnecting...'}
+          </span>
+          {current && <span style={{ fontSize:'12px', color:'var(--color-text-secondary)' }}>⏱ {formatDuration(elapsed)}</span>}
         </div>
-
-        {/* Body */}
-        <div style={{ display:'flex', flex:1, overflow:'hidden' }}>
-
-          {/* History */}
-          <div style={{ width:'220px', flexShrink:0, borderRight:'1px solid #21262d', overflowY:'auto', background:'#161b22' }}>
-            <div style={{ padding:'10px 12px 6px', fontSize:'10px', color:'#8b949e', fontWeight:'600', letterSpacing:'0.08em', textTransform:'uppercase' }}>Deploy History</div>
-            {history.length === 0 && <div style={{ padding:'20px 12px', fontSize:'11px', color:'#484f58', textAlign:'center' }}>ยังไม่มี deploy</div>}
-            {history.map(d => {
-              const isSelected = selectedId === d.id;
-              const sc2 = STATUS_CONFIG[d.status] || STATUS_CONFIG.idle;
-              return (
-                <div key={d.id} onClick={() => setSelectedId(d.id)}
-                  style={{ padding:'10px 12px', cursor:'pointer', borderLeft: isSelected?`3px solid ${sc2.dot}`:'3px solid transparent', background: isSelected?'#1c2128':'transparent', borderBottom:'1px solid #21262d21' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'3px' }}>
-                    <div style={{ width:'6px', height:'6px', borderRadius:'50%', background:sc2.dot, flexShrink:0 }} />
-                    <span style={{ fontSize:'10px', color:sc2.color, fontWeight:'600' }}>{sc2.label}</span>
-                    {d.durationSec && <span style={{ fontSize:'10px', color:'#484f58', marginLeft:'auto' }}>{formatDuration(d.durationSec)}</span>}
-                  </div>
-                  <div style={{ fontSize:'10px', color:'#8b949e' }}>{formatTime(d.startedAt)}</div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Log viewer */}
-          <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-            {selectedDeploy ? (
-              <>
-                <div style={{ padding:'8px 16px', borderBottom:'1px solid #21262d', display:'flex', alignItems:'center', gap:'8px', flexShrink:0, background:'#161b22' }}>
-                  <span style={{ fontSize:'11px', color:'#8b949e' }}>Started: {formatTime(selectedDeploy.startedAt)}</span>
-                  {selectedDeploy.finishedAt && <>
-                    <span style={{ color:'#30363d' }}>·</span>
-                    <span style={{ fontSize:'11px', color:'#8b949e' }}>Finished: {formatTime(selectedDeploy.finishedAt)}</span>
-                    <span style={{ color:'#30363d' }}>·</span>
-                    <span style={{ fontSize:'11px', color:'#8b949e' }}>Duration: {formatDuration(selectedDeploy.durationSec)}</span>
-                  </>}
-                  <span style={{ marginLeft:'auto', fontSize:'10px', color:'#484f58' }}>{selectedDeploy.lines?.length||0} lines</span>
-                </div>
-                <div ref={logRef} style={{ flex:1, overflowY:'auto', padding:'12px 16px', background:'#0d1117', scrollbarWidth:'thin', scrollbarColor:'#30363d #0d1117' }}>
-                  {(selectedDeploy.lines||[]).map((line, i) => (
-                    <div key={i} style={{ display:'flex', gap:'12px', marginBottom:'2px', fontSize:'12px', lineHeight:'1.6' }}>
-                      <span style={{ color:'#484f58', flexShrink:0, fontSize:'10px', paddingTop:'2px' }}>{String(i+1).padStart(3,' ')}</span>
-                      <span style={{ color: LINE_COLOR[line.level]||'#C9D1D9', wordBreak:'break-all', whiteSpace:'pre-wrap' }}>{line.text}</span>
-                    </div>
-                  ))}
-                  {selectedDeploy.status === 'running' && (
-                    <div style={{ display:'flex', gap:'8px', alignItems:'center', marginTop:'8px' }}>
-                      <span style={{ color:'#5DCAA5', fontSize:'12px', animation:'blink 1s infinite' }}>▋</span>
-                      <span style={{ color:'#484f58', fontSize:'11px' }}>รอ output...</span>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:'12px' }}>
-                <div style={{ fontSize:'32px' }}>🚀</div>
-                <div style={{ fontSize:'13px', color:'#484f58' }}>เลือก deploy จากด้านซ้าย</div>
-              </div>
-            )}
-          </div>
+        <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+          <span style={{ background: sc.bg, color: sc.color, fontSize:'11px', padding:'3px 10px', borderRadius:'20px', fontWeight:'500', display:'inline-flex', alignItems:'center', gap:'5px' }}>
+            <span style={{ width:'6px', height:'6px', borderRadius:'50%', background: sc.dot, display:'inline-block', animation: sc.pulse ? 'dm-pulse 1.2s infinite' : 'none' }} />
+            {sc.label}
+          </span>
+          {!inline && onClose && (
+            <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--color-text-secondary)', fontSize:'18px', lineHeight:1, padding:'2px 4px' }}>×</button>
+          )}
         </div>
       </div>
-      <style>{`
-        @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
-        @keyframes blink  { 0%,100%{opacity:1}50%{opacity:0} }
-      `}</style>
+
+      {/* Main layout */}
+      <div style={{ display:'grid', gridTemplateColumns:'190px 1fr', gap:'12px', alignItems:'start' }}>
+
+        {/* Left: History */}
+        <div style={{ background:'var(--color-background-secondary)', border:'0.5px solid var(--color-border-tertiary)', borderRadius:'var(--border-radius-md)', overflow:'hidden' }}>
+          <div style={{ padding:'8px 12px', borderBottom:'0.5px solid var(--color-border-tertiary)' }}>
+            <span style={{ fontSize:'10px', fontWeight:'500', color:'var(--color-text-secondary)', textTransform:'uppercase', letterSpacing:'0.05em' }}>Deploy History</span>
+          </div>
+          {history.length === 0 && (
+            <div style={{ padding:'20px 12px', fontSize:'11px', color:'var(--color-text-secondary)', textAlign:'center' }}>ยังไม่มี deploy</div>
+          )}
+          {history.map((d, i) => {
+            const isSelected = selectedId === d.id;
+            const sc2 = STATUS[d.status] || STATUS.idle;
+            return (
+              <div key={d.id} onClick={() => setSelectedId(d.id)}
+                style={{ padding:'8px 12px', cursor:'pointer', borderLeft: isSelected ? `3px solid ${sc2.dot}` : '3px solid transparent', background: isSelected ? sc2.bg : 'transparent', borderBottom: i < history.length-1 ? '0.5px solid var(--color-border-tertiary)' : 'none' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:'5px', marginBottom:'2px' }}>
+                  <span style={{ width:'5px', height:'5px', borderRadius:'50%', background: sc2.dot, flexShrink:0 }} />
+                  <span style={{ fontSize:'10px', fontWeight:'500', color: sc2.color }}>{sc2.label}</span>
+                  {d.durationSec && <span style={{ fontSize:'10px', color:'var(--color-text-secondary)', marginLeft:'auto' }}>{formatDuration(d.durationSec)}</span>}
+                </div>
+                <div style={{ fontSize:'10px', color:'var(--color-text-secondary)' }}>{formatTime(d.startedAt)}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Right: Log viewer */}
+        <div style={{ background:'var(--color-background-secondary)', border:'0.5px solid var(--color-border-tertiary)', borderRadius:'var(--border-radius-md)', overflow:'hidden' }}>
+          {selectedDeploy ? (
+            <>
+              <div style={{ padding:'8px 14px', borderBottom:'0.5px solid var(--color-border-tertiary)', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
+                <span style={{ fontSize:'11px', color:'var(--color-text-secondary)' }}>Started: {formatTime(selectedDeploy.startedAt)}</span>
+                {selectedDeploy.finishedAt && <>
+                  <span style={{ color:'var(--color-border-tertiary)' }}>·</span>
+                  <span style={{ fontSize:'11px', color:'var(--color-text-secondary)' }}>Finished: {formatTime(selectedDeploy.finishedAt)}</span>
+                  <span style={{ color:'var(--color-border-tertiary)' }}>·</span>
+                  <span style={{ fontSize:'11px', color:'var(--color-text-secondary)' }}>Duration: {formatDuration(selectedDeploy.durationSec)}</span>
+                </>}
+                <span style={{ marginLeft:'auto', fontSize:'10px', color:'var(--color-text-secondary)' }}>{selectedDeploy.lines?.length || 0} lines</span>
+              </div>
+              <div ref={logRef} style={{ padding:'10px 14px', fontFamily:'var(--font-mono)', fontSize:'11px', lineHeight:'1.7', maxHeight:'400px', overflowY:'auto' }}>
+                {(selectedDeploy.lines || []).map((line, i) => (
+                  <div key={i} style={{ display:'flex', gap:'10px', marginBottom:'1px' }}>
+                    <span style={{ color:'var(--color-text-secondary)', minWidth:'24px', textAlign:'right', flexShrink:0, fontSize:'10px', paddingTop:'2px' }}>{i+1}</span>
+                    <span style={{ ...(LINE_STYLE[line.level] || LINE_STYLE.info), wordBreak:'break-all', whiteSpace:'pre-wrap' }}>{line.text}</span>
+                  </div>
+                ))}
+                {selectedDeploy.status === 'running' && (
+                  <div style={{ display:'flex', gap:'8px', alignItems:'center', marginTop:'6px' }}>
+                    <span style={{ color:'var(--color-text-info)', animation:'dm-pulse 1s infinite' }}>▋</span>
+                    <span style={{ fontSize:'11px', color:'var(--color-text-secondary)' }}>รอ output...</span>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div style={{ padding:'40px', textAlign:'center', color:'var(--color-text-secondary)', fontSize:'13px' }}>
+              เลือก deploy จากด้านซ้ายครับ
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (inline) return content;
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose?.(); }}>
+      <div style={{ width:'900px', maxWidth:'96vw', maxHeight:'85vh', background:'var(--color-background-primary)', borderRadius:'var(--border-radius-lg)', border:'0.5px solid var(--color-border-tertiary)', overflow:'auto', padding:'20px', boxShadow:'0 20px 60px rgba(0,0,0,0.15)' }}>
+        {content}
+      </div>
     </div>
   );
 }
