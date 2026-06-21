@@ -1277,7 +1277,11 @@ useEffect(() => {
         {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
-        {tab === 'deploy' && isOwner && <DeployMonitor inline />}
+        {tab === 'deploy' && isOwner && (
+          <div style={{ margin: '-12px -20px -20px', height: 'calc(100vh - 140px)', overflow: 'hidden' }}>
+            <DeployMonitor inline />
+          </div>
+        )}
 
         {showForm && (
           <div style={S.overlay}>
