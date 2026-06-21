@@ -166,6 +166,32 @@ function ItemCodeList() {
     } catch (err) { console.error('computeNextCode error:', err); }
   };
 
+  // ✅ รวม fetchData + computeNextCode เป็น fetch เดียว (เดิมยิง apiFetch('/itemcode_list') ซ้ำ 2 รอบ)
+  const loadItemsAndNextCode = async () => {
+    try {
+      const data = await apiFetch('/itemcode_list');
+      const all = data || [];
+
+      const active = all.filter(item => item.deleted !== true);
+      setItems(active.map(item => ({ ...item, code: item.code || '' })));
+
+      const allCodes = all.map(d => d.code || '');
+      const nums = allCodes
+        .filter(c => /^C\d{7}$/.test(c))
+        .map(c => parseInt(c.replace('C', ''), 10))
+        .sort((a, b) => a - b);
+      if (!nums.length) { setNextCode('C0000001'); return; }
+      for (let i = 0; i < nums.length - 1; i++) {
+        if (nums[i + 1] - nums[i] > 1) {
+          setNextCode(`C${String(nums[i] + 1).padStart(7, '0')}`);
+          return;
+        }
+      }
+      setNextCode(`C${String(nums[nums.length - 1] + 1).padStart(7, '0')}`);
+    } catch (err) { console.error('loadItemsAndNextCode error:', err); }
+  };
+
+
 
   const getCodePool = (data) => {
     const nums = data
@@ -183,7 +209,7 @@ function ItemCodeList() {
       : `C${String(max + (idx++ - gaps.length + 1)).padStart(7, '0')}`;
   };
 
-  useEffect(() => { fetchData(); computeNextCode(); }, []);
+  useEffect(() => { loadItemsAndNextCode(); }, []);
   useEffect(() => { setPage(1); }, [search]);
 
   const getOptions = (field) =>
@@ -199,20 +225,44 @@ function ItemCodeList() {
       updated_by: userName || currentUser?.email || '',
       updated_at: now,
     };
-    try {
-      if (editId) {
-        await apiFetch(`/itemcode_list/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
-      } else {
-        await apiFetch('/itemcode_list', { method: 'POST', body: JSON.stringify({ ...data, code: nextCode }) });
-      }
-    } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); return; }
+    const wasEdit = !!editId;
+    const prevItem = wasEdit ? items.find(i => i.id === editId) : null;
+    const tempId = wasEdit ? editId : `temp-${Date.now()}`;
+    const optimisticItem = wasEdit
+      ? { ...prevItem, ...data }
+      : { ...data, id: tempId, code: nextCode };
+
+    // ✅ อัปเดตหน้าจอทันที ไม่ต้องรอ backend
+    if (wasEdit) {
+      setItems(prev => prev.map(i => (i.id === editId ? optimisticItem : i)));
+    } else {
+      setItems(prev => [...prev, optimisticItem]);
+    }
     setShowForm(false);
     setEditId(null);
     resetForm();
-    fetchData();
-    computeNextCode();
-    invalidate('ItemcodeList');
+
+    try {
+      if (wasEdit) {
+        const updated = await apiFetch(`/itemcode_list/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
+        setItems(prev => prev.map(i => (i.id === editId ? { ...i, ...updated } : i)));
+      } else {
+        const created = await apiFetch('/itemcode_list', { method: 'POST', body: JSON.stringify({ ...data, code: nextCode }) });
+        setItems(prev => prev.map(i => (i.id === tempId ? created : i)));
+        computeNextCode(); // ดึง next code ใหม่เบื้องหลัง ไม่ block UI
+      }
+      invalidate('ItemcodeList');
+    } catch (err) {
+      // ❌ ย้อนกลับถ้า backend พัง
+      if (wasEdit) {
+        setItems(prev => prev.map(i => (i.id === editId ? prevItem : i)));
+      } else {
+        setItems(prev => prev.filter(i => i.id !== tempId));
+      }
+      alert('บันทึกไม่สำเร็จ: ' + err.message);
+    }
   };
+
 
 
   const handleEdit = (item) => {
@@ -236,37 +286,47 @@ function ItemCodeList() {
 
   const handleDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    const now = new Date().toISOString();
+    const deletedBy = userName || currentUser?.email || '';
+
+    // ✅ เอาออกจากหน้าจอทันที
+    setItems(prev => prev.filter(i => i.id !== id));
+    setSelected(prev => prev.filter(s => s !== id));
+
     try {
-      const item = items.find(i => i.id === id);
-      const now = new Date().toISOString();
       await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({
         source_table: 'itemcode_list',
         source_id: id,
-        source_key: item?.code || id,
+        source_key: item.code || id,
         data: item,
-        deleted_by: userName || currentUser?.email || '',
+        deleted_by: deletedBy,
         deleted_at: now,
       })});
-      await apiFetch(`/itemcode_list/${id}`, { method: 'PUT', body: JSON.stringify({
-        deleted: true,
-        deleted_by: userName || currentUser?.email || '',
-        deleted_at: now,
-      })});
-      setSelected(prev => prev.filter(s => s !== id));
-      fetchData();
+      await apiFetch(`/itemcode_list/${id}`, { method: 'DELETE' });
       invalidate('ItemcodeList');
-    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+    } catch (err) {
+      // ❌ ใส่กลับเข้าหน้าจอเหมือนเดิม
+      setItems(prev => [...prev, item]);
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
   };
+
 
 
   const handleBulkDelete = async () => {
     if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-    try {
-      const now = new Date().toISOString();
-      const deletedBy = userName || currentUser?.email || '';
-      const selectedSet = new Set(selected);
-      const rowsToDelete = items.filter(i => selectedSet.has(i.id));
+    const now = new Date().toISOString();
+    const deletedBy = userName || currentUser?.email || '';
+    const selectedSet = new Set(selected);
+    const rowsToDelete = items.filter(i => selectedSet.has(i.id));
 
+    // ✅ เอาออกจากหน้าจอทันที
+    setItems(prev => prev.filter(i => !selectedSet.has(i.id)));
+    setSelected([]);
+
+    try {
       for (const item of rowsToDelete) {
         await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({
           source_table: 'itemcode_list',
@@ -277,21 +337,18 @@ function ItemCodeList() {
           deleted_at: now,
         })});
       }
-
       for (const item of rowsToDelete) {
-        await apiFetch(`/itemcode_list/${item.id}`, { method: 'PUT', body: JSON.stringify({
-          deleted: true,
-          deleted_by: deletedBy,
-          deleted_at: now,
-        })});
+        await apiFetch(`/itemcode_list/${item.id}`, { method: 'DELETE' });
       }
-
-      setSelected([]);
-      fetchData();
       invalidate('ItemcodeList');
       alert(`✅ ลบสำเร็จ ${rowsToDelete.length} รายการ`);
-    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+    } catch (err) {
+      // ❌ ใส่กลับเข้าหน้าจอทั้งหมดเหมือนเดิม
+      setItems(prev => [...prev, ...rowsToDelete]);
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
   };
+
 
 
   // ✅ Template ตัด itemcode2 ออก
@@ -355,8 +412,7 @@ function ItemCodeList() {
 
       setShowPreview(false);
       setPreviewData([]);
-      fetchData();
-      computeNextCode();
+      loadItemsAndNextCode();
       invalidate('ItemcodeList');
       alert(`✅ Import สำเร็จ ${previewData.length} รายการ`);
     } catch (err) {

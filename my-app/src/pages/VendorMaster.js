@@ -290,13 +290,18 @@ import { useDataCache } from '../contexts/DataCacheContext';
     );
   }
 
-  const computeNextSyRunning = async () => {
-  const data = await apiFetch('/ie_code_list');
-  const allCodes = (data || []).map(d => d['SY-Running'] || '');
+  // ✅ แยก logic คำนวณออกมาเป็น pure function ไม่ fetch เอง — ใช้ซ้ำได้กับข้อมูลที่ fetch มาแล้ว
+const computeNextSyRunningFromList = (list) => {
+  const allCodes = (list || []).map(d => d['SY-Running'] || '');
   const nums = allCodes.filter(c => /^P\d{7}$/.test(c)).map(c => parseInt(c.replace('P', ''), 10)).sort((a, b) => a - b);
   if (!nums.length) return 'P0000001';
   for (let i = 0; i < nums.length - 1; i++) { if (nums[i + 1] - nums[i] > 1) return `P${String(nums[i] + 1).padStart(7, '0')}`; }
   return `P${String(nums[nums.length - 1] + 1).padStart(7, '0')}`;
+};
+
+const computeNextSyRunning = async () => {
+  const data = await apiFetch('/ie_code_list');
+  return computeNextSyRunningFromList(data);
 };
 
 
@@ -485,7 +490,8 @@ import { useDataCache } from '../contexts/DataCacheContext';
     const data = await apiFetch(`/${TAB_CONFIG[t].table}`);
     const rows = t !== 'iecode' ? (data || []).filter(row => row.deleted !== true) : (data || []);
     setDataMap(prev => ({ ...prev, [t]: rows }));
-  } catch (err) { console.error('fetchTab error:', err); }
+    return rows; // ✅ คืนค่าด้วย เพื่อให้ผู้เรียกใช้ต่อได้โดยไม่ fetch ซ้ำ
+  } catch (err) { console.error('fetchTab error:', err); return []; }
 }, []);
 
 
@@ -501,8 +507,9 @@ import { useDataCache } from '../contexts/DataCacheContext';
 
 
     useEffect(() => {
-      fetchTab('apcode'); fetchTab('smcode'); fetchTab('iecode'); fetchTab('category');
-      refreshNextSyRunning();
+      fetchTab('apcode'); fetchTab('smcode'); fetchTab('category');
+      // ✅ รวม fetchTab('iecode') + refreshNextSyRunning() เป็น fetch เดียว (เดิมยิงซ้ำ 2 รอบ)
+      fetchTab('iecode').then(rows => setNextSyRunning(computeNextSyRunningFromList(rows)));
       fetchVendorRules();
     }, []);
 
@@ -609,70 +616,125 @@ import { useDataCache } from '../contexts/DataCacheContext';
     };
 
     const handleNewSave = async () => {
-  const ts = getTimestamp(); const cuStr = cu();
-  let data = { ...form, username: cuStr, last_update: ts };
-  if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
-  try {
-    if (editId) await apiFetch(`/${cfg.table}/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
-    else await apiFetch(`/${cfg.table}`, { method: 'POST', body: JSON.stringify(data) });
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); return; }
-  setShowForm(false); setEditId(null); setForm({});
-  await fetchTab(tab);
-  if (tab === 'iecode') await refreshNextSyRunning();
-  if (tab === 'apcode') invalidate('SupplierList');
-  if (tab === 'category') invalidate('VendorCategory');
-};
+    const ts = getTimestamp(); const cuStr = cu();
+    let data = { ...form, username: cuStr, last_update: ts };
+    if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
+
+    const wasEdit = !!editId;
+    const prevItem = wasEdit ? items.find(i => i.id === editId) : null;
+    const tempId = wasEdit ? editId : `temp-${Date.now()}`;
+    const optimisticItem = wasEdit ? { ...prevItem, ...data } : { ...data, id: tempId };
+
+    // ✅ อัปเดตหน้าจอทันที ไม่ต้องรอ backend
+    setDataMap(prev => ({
+      ...prev,
+      [tab]: wasEdit
+        ? prev[tab].map(i => (i.id === editId ? optimisticItem : i))
+        : [...prev[tab], optimisticItem],
+    }));
+    setShowForm(false); setEditId(null); setForm({});
+
+    try {
+      if (wasEdit) {
+        const updated = await apiFetch(`/${cfg.table}/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
+        setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === editId ? { ...i, ...updated } : i)) }));
+      } else {
+        const created = await apiFetch(`/${cfg.table}`, { method: 'POST', body: JSON.stringify(data) });
+        setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === tempId ? created : i)) }));
+      }
+      if (tab === 'iecode') refreshNextSyRunning();
+      if (tab === 'apcode') invalidate('SupplierList');
+      if (tab === 'category') invalidate('VendorCategory');
+    } catch (err) {
+      // ❌ ย้อนกลับถ้า backend พัง
+      setDataMap(prev => ({
+        ...prev,
+        [tab]: wasEdit
+          ? prev[tab].map(i => (i.id === editId ? prevItem : i))
+          : prev[tab].filter(i => i.id !== tempId),
+      }));
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  };
+
 
 
     const handleDelete = async (id) => {
-  if (!window.confirm('ต้องการลบรายการนี้?')) return;
-  const cuStr = cu(); const now = new Date().toISOString();
-  try {
+    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    const cuStr = cu(); const now = new Date().toISOString();
     const item = items.find(i => i.id === id);
-    await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({ source_table: cfg.table, source_id: id, source_key: item?.[cfg.key] || id, data: item, deleted_by: cuStr, deleted_at: now }) });
-    if (tab === 'iecode') await apiFetch(`/${cfg.table}/${id}`, { method: 'DELETE' });
-    else await apiFetch(`/${cfg.table}/${id}`, { method: 'PUT', body: JSON.stringify({ deleted: true, deleted_by: cuStr, deleted_at: now }) });
+    if (!item) return;
+
+    // ✅ เอาออกจากหน้าจอทันที
+    setDataMap(prev => ({ ...prev, [tab]: prev[tab].filter(i => i.id !== id) }));
     setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
-    await fetchTab(tab);
-    if (tab === 'iecode') await refreshNextSyRunning();
-    if (tab === 'apcode') invalidate('SupplierList');
-    if (tab === 'category') invalidate('VendorCategory');
-  } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
-};
+
+    try {
+      await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({ source_table: cfg.table, source_id: id, source_key: item[cfg.key] || id, data: item, deleted_by: cuStr, deleted_at: now }) });
+      if (tab === 'iecode') await apiFetch(`/${cfg.table}/${id}`, { method: 'DELETE' });
+      else await apiFetch(`/${cfg.table}/${id}`, { method: 'PUT', body: JSON.stringify({ deleted: true, deleted_by: cuStr, deleted_at: now }) });
+      if (tab === 'apcode') invalidate('SupplierList');
+      if (tab === 'category') invalidate('VendorCategory');
+    } catch (err) {
+      // ❌ ใส่กลับเข้าหน้าจอเหมือนเดิม
+      setDataMap(prev => ({ ...prev, [tab]: [...prev[tab], item] }));
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
+  };
+
 
 
     const handleBulkDelete = async () => {
-  if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
-  const cuStr = cu(); const now = new Date().toISOString();
-  try {
-    const rows = items.filter(i => selected.includes(i.id));
-    for (const item of rows) {
-      await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: cuStr, deleted_at: now }) });
-    }
-    for (const id of selected) {
-      if (tab === 'iecode') await apiFetch(`/${cfg.table}/${id}`, { method: 'DELETE' });
-      else await apiFetch(`/${cfg.table}/${id}`, { method: 'PUT', body: JSON.stringify({ deleted: true, deleted_by: cuStr, deleted_at: now }) });
-    }
+    if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
+    const cuStr = cu(); const now = new Date().toISOString();
+    const selectedSet = new Set(selected);
+    const rowsToDelete = items.filter(i => selectedSet.has(i.id));
+
+    // ✅ เอาออกจากหน้าจอทันที
+    setDataMap(prev => ({ ...prev, [tab]: prev[tab].filter(i => !selectedSet.has(i.id)) }));
     setSelectedMap(prev => ({ ...prev, [tab]: [] }));
-    await fetchTab(tab);
-    if (tab === 'iecode') await refreshNextSyRunning();
-    if (tab === 'apcode') invalidate('SupplierList');
-    if (tab === 'category') invalidate('VendorCategory');
-    alert(`✅ ลบสำเร็จ ${selected.length} รายการ`);
-  } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
-};
+
+    try {
+      for (const item of rowsToDelete) {
+        await apiFetch('/recycle_bin', { method: 'POST', body: JSON.stringify({ source_table: cfg.table, source_id: item.id, source_key: item[cfg.key] || item.id, data: item, deleted_by: cuStr, deleted_at: now }) });
+      }
+      for (const item of rowsToDelete) {
+        if (tab === 'iecode') await apiFetch(`/${cfg.table}/${item.id}`, { method: 'DELETE' });
+        else await apiFetch(`/${cfg.table}/${item.id}`, { method: 'PUT', body: JSON.stringify({ deleted: true, deleted_by: cuStr, deleted_at: now }) });
+      }
+      if (tab === 'apcode') invalidate('SupplierList');
+      if (tab === 'category') invalidate('VendorCategory');
+      alert(`✅ ลบสำเร็จ ${rowsToDelete.length} รายการ`);
+    } catch (err) {
+      // ❌ ใส่กลับเข้าหน้าจอทั้งหมดเหมือนเดิม
+      setDataMap(prev => ({ ...prev, [tab]: [...prev[tab], ...rowsToDelete] }));
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
+  };
+
 
 
     const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
     const handleDetailSave = async () => {
-  const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
-  try {
-    await apiFetch(`/${cfg.table}/${detailItem.id}`, { method: 'PUT', body: JSON.stringify(data) });
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); return; }
-  setShowDetailModal(false); await fetchTab(tab);
-  if (tab === 'apcode') invalidate('SupplierList');
-  if (tab === 'category') invalidate('VendorCategory');
-};
+    const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
+    const prevItem = detailItem;
+
+    // ✅ อัปเดตหน้าจอทันที
+    setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === detailItem.id ? { ...i, ...data } : i)) }));
+    setShowDetailModal(false);
+
+    try {
+      const updated = await apiFetch(`/${cfg.table}/${detailItem.id}`, { method: 'PUT', body: JSON.stringify(data) });
+      setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === prevItem.id ? { ...i, ...updated } : i)) }));
+      if (tab === 'apcode') invalidate('SupplierList');
+      if (tab === 'category') invalidate('VendorCategory');
+    } catch (err) {
+      // ❌ ย้อนกลับ
+      setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === prevItem.id ? prevItem : i)) }));
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  };
+
 
 
     const handleOpenRecycleBin = async () => {
@@ -770,28 +832,61 @@ import { useDataCache } from '../contexts/DataCacheContext';
 
     // ─── Vendor Rule handlers ─────────────────────────────────────────────────────
     const handleRuleSave = async () => {
-  if (!ruleForm.item?.trim()) { alert('กรุณาระบุ Item'); return; }
-  const ts = getTimestamp();
-  const payload = { ...ruleForm, username: cu(), last_update: ts };
-  RULE_FIELDS.forEach(([k]) => { if (!String(payload[k] ?? '').trim()) payload[k] = null; });
-  try {
-    if (editRuleId) await apiFetch(`/Vendor_rule/${editRuleId}`, { method: 'PUT', body: JSON.stringify(payload) });
-    else await apiFetch('/Vendor_rule', { method: 'POST', body: JSON.stringify(payload) });
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); return; }
-  setShowRuleForm(false); setEditRuleId(null); setRuleForm({});
-  fetchVendorRules();
-  invalidate('VendorRule');
-};
+    if (!ruleForm.item?.trim()) { alert('กรุณาระบุ Item'); return; }
+    const ts = getTimestamp();
+    const payload = { ...ruleForm, username: cu(), last_update: ts };
+    RULE_FIELDS.forEach(([k]) => { if (!String(payload[k] ?? '').trim()) payload[k] = null; });
+
+    const wasEdit = !!editRuleId;
+    const prevRule = wasEdit ? vendorRules.find(r => r.id === editRuleId) : null;
+    const tempId = wasEdit ? editRuleId : `temp-${Date.now()}`;
+    const optimisticRule = wasEdit ? { ...prevRule, ...payload } : { ...payload, id: tempId };
+
+    // ✅ อัปเดตหน้าจอทันที
+    setVendorRules(prev => wasEdit
+      ? prev.map(r => (r.id === editRuleId ? optimisticRule : r))
+      : [...prev, optimisticRule]
+    );
+    setShowRuleForm(false); setEditRuleId(null); setRuleForm({});
+
+    try {
+      if (wasEdit) {
+        const updated = await apiFetch(`/Vendor_rule/${editRuleId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        setVendorRules(prev => prev.map(r => (r.id === editRuleId ? { ...r, ...updated } : r)));
+      } else {
+        const created = await apiFetch('/Vendor_rule', { method: 'POST', body: JSON.stringify(payload) });
+        setVendorRules(prev => prev.map(r => (r.id === tempId ? created : r)).sort((a, b) => a.id - b.id));
+      }
+      invalidate('VendorRule');
+    } catch (err) {
+      // ❌ ย้อนกลับ
+      setVendorRules(prev => wasEdit
+        ? prev.map(r => (r.id === editRuleId ? prevRule : r))
+        : prev.filter(r => r.id !== tempId)
+      );
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  };
+
 
 
     const handleRuleDelete = async (id) => {
-  if (!window.confirm('ต้องการลบ rule นี้?')) return;
-  try {
-    await apiFetch(`/Vendor_rule/${id}`, { method: 'DELETE' });
-  } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); return; }
-  fetchVendorRules();
-  invalidate('VendorRule');
-};
+    if (!window.confirm('ต้องการลบ rule นี้?')) return;
+    const prevRule = vendorRules.find(r => r.id === id);
+
+    // ✅ เอาออกจากหน้าจอทันที
+    setVendorRules(prev => prev.filter(r => r.id !== id));
+
+    try {
+      await apiFetch(`/Vendor_rule/${id}`, { method: 'DELETE' });
+      invalidate('VendorRule');
+    } catch (err) {
+      // ❌ ใส่กลับเข้าหน้าจอเหมือนเดิม
+      if (prevRule) setVendorRules(prev => [...prev, prevRule].sort((a, b) => a.id - b.id));
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
+  };
+
 
 
     const openRuleForm = (rule = null) => {
