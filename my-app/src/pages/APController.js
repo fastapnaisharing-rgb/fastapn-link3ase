@@ -953,7 +953,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   // ── getOpts: ดึง unique non-empty values จาก supplierItems ทั้งหมด (ไม่ filter BU) ──
   // ── merge กับ hardcoded defaults สำหรับ field ที่มี master list คงที่ ──────────────
   const getOpts = (key) => {
-    const fromCache = supplierItems.map(i => String(i[key] ?? '').trim()).filter(Boolean);
+    const allSuppliers = supplierItems.length > 0 ? supplierItems : (() => { try { return JSON.parse(sessionStorage.getItem('fastapn_cache'))?.SupplierList || []; } catch { return []; } })();
+    const fromCache = allSuppliers.map(i => String(i[key] ?? '').trim()).filter(Boolean);
     let defaults = [];
     if (key === 'Tax-Type')   defaults = TAX_TYPE_OPTS;
     if (key === 'Digit')      defaults = DIGIT_OPTS_DEFAULT;
