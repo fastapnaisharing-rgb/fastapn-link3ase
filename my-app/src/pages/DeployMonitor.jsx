@@ -137,7 +137,7 @@ export default function DeployMonitor({ inline = false, onClose }) {
   };
 
   const content = (
-    <div style={{ display:'flex', flexDirection:'column', height: inline ? 'calc(100vh - 160px)' : '100%', background:'white', borderRadius:'8px', overflow:'hidden', border:'0.5px solid #e0e0e0' }}>
+    <div style={{ display:'flex', flexDirection:'column', height: inline ? '100vh' : '100%', background:'white', borderRadius:'8px', overflow:'hidden', border:'0.5px solid #e0e0e0' }}>
       <style>{`@keyframes dm-pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
 
       {/* Header */}
