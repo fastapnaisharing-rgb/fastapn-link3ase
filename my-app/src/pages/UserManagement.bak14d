@@ -1277,8 +1277,6 @@ useEffect(() => {
         {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
-        {tab === 'deploy' && isOwner && (() => { document.body.style.overflow = 'hidden'; return null; })()}
-        {tab !== 'deploy' && (() => { document.body.style.overflow = ''; return null; })()}
         {tab === 'deploy' && isOwner && (
           <div style={{ position: 'fixed', top: '88px', left: '220px', right: 0, bottom: 0, zIndex: 10, overflow: 'hidden' }}>
             <DeployMonitor inline />
