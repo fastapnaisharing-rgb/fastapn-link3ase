@@ -3699,7 +3699,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
           : i
       ))
     : infoItemsRaw;
-  const supplierItems   = getCached('SupplierList') || [];
+  const supplierItems   = getCached('SupplierList');
   const branchItems     = getCached('BranchList');
   const accountItems    = getCached('AccountList');
   const subAccItems     = getCached('SubAccList');
