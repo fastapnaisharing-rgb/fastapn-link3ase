@@ -59,6 +59,8 @@ function useWindowSize() {
 // ─────────────────────────────────────────────────────────────────────────────
 function ComboInput({ value, onChange, options = [], placeholder = '' }) {
   const [open, setOpen] = useState(false);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
+  const inputRef = useRef(null);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -76,7 +78,7 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
       <input
         value={value || ''}
         onChange={e => onChange(e.target.value)}
-        onFocus={() => setOpen(true)}
+        onFocus={() => { if (inputRef.current) { const r = inputRef.current.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); } setOpen(true); }}
         placeholder={placeholder}
         style={{ height: '28px', padding: '0 20px 0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }}
       />
@@ -2192,7 +2194,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 }}
                                 style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
                               {taxDropdownIdx === idx && (
-                                <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 50, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
+                                <div style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
                                   {TAX_TYPE_OPTS.map(o => (
                                     <div key={o}
                                       onMouseDown={(e) => { e.preventDefault(); idx === 0 ? setLine1Field('tax', o) : setLineField(idx, 'tax', o); setTaxDropdownIdx(null); }}
