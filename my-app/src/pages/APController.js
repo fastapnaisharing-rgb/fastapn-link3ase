@@ -1802,9 +1802,149 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RealVendorPopup — เลือก Real Vendor จาก sm_code_list + กรอก Real Invoice No.
+// ─────────────────────────────────────────────────────────────────────────────
+function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [] }) {
+  const [query, setQuery]                 = useState('');
+  const [active, setActive]               = useState(-1);
+  const [realInvoiceNo, setRealInvoiceNo] = useState('');
+  const inputRef = useRef(null);
+  const listRef  = useRef(null);
+
+  useEffect(() => {
+    if (show) {
+      setQuery(''); setActive(-1); setRealInvoiceNo('');
+      setTimeout(() => inputRef.current?.focus(), 60);
+    }
+  }, [show]);
+
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
+
+  useEffect(() => {
+    if (active < 0 || !listRef.current) return;
+    listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+
+  if (!show) return null;
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? smCodeItems.filter(i =>
+        String(i['Short Name'] ?? '').toLowerCase().includes(q) ||
+        String(i['Company Name'] ?? '').toLowerCase().includes(q) ||
+        String(i['SM-Code'] ?? '').toLowerCase().includes(q)
+      )
+    : smCodeItems;
+
+  const handleKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
+    else if (e.key === 'Enter' && active >= 0 && filtered[active]) {
+      onSelect({ vendor: filtered[active], realInvoiceNo });
+    }
+  };
+
+  const handleSelect = (item) => { onSelect({ vendor: item, realInvoiceNo }); };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1600, backdropFilter: 'blur(2px)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: '760px', maxWidth: '95vw', height: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+
+        {/* Header */}
+        <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏢</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Real Vendor</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}</div>
+          </div>
+          <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+
+        {/* Search + Real Invoice No. */}
+        <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
+          <div style={{ position: 'relative', marginBottom: '8px' }}>
+            <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
+              placeholder="AT-Match, Company Name, SM-Code..."
+              style={{ width: '100%', padding: '9px 36px 9px 36px', fontSize: '13px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
+              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <label style={{ fontSize: '12px', color: '#555', fontWeight: '500', whiteSpace: 'nowrap', width: '110px' }}>Real Invoice No.</label>
+            <input value={realInvoiceNo} onChange={e => setRealInvoiceNo(e.target.value)}
+              placeholder="กรอกเลข Invoice ของ Real Vendor"
+              style={{ flex: 1, height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+          </div>
+        </div>
+
+        {/* Table */}
+        <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
+              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Vendor{query ? ` "${query}"` : ''}</div>
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                <tr>
+                  {[['SM-Code','100px'],['AT-Match','110px'],['Company Name',''],['Tax ID','130px'],['Branch','70px']].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item, i) => {
+                  const isAct = i === active;
+                  return (
+                    <tr key={item.id || i} data-row={i}
+                      onClick={() => handleSelect(item)}
+                      onMouseEnter={() => setActive(i)}
+                      style={{ background: isAct ? '#eef3fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
+                      <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
+                        <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['SM-Code'] || '-'}</span>
+                      </td>
+                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Short Name'] || '-'}</td>
+                      <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company Name'] || '-'}</td>
+                      <td style={{ padding: '9px 12px', color: '#778', fontFamily: 'monospace', fontSize: '11px' }}>{item['Tax ID'] || '-'}</td>
+                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{item['Branch'] || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
+          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {smCodeItems.length} รายการ</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+            {active >= 0 && filtered[active] && (
+              <button onClick={() => handleSelect(filtered[active])}
+                style={{ padding: '6px 16px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Select</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '' }) {
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '' }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -1818,8 +1958,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [showContractPopup, setShowContractPopup]   = useState(false);
+  const [showRealVendorPopup, setShowRealVendorPopup] = useState(false);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
   const [taxDropdownIdx, setTaxDropdownIdx] = useState(null);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const amountRef   = useRef(null);
   const itemCodeRef = useRef(null);
   const lineItemCodeRefs = useRef([]);
@@ -2132,6 +2274,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 )}
               </button>
             </div>
+            {/* ── Real Vendor button ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={{ fontSize: '11px', color: form?.realVendorName ? '#27500A' : '#aaa', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {form?.realVendorName || 'Real Vendor'}
+              </label>
+              <button
+                title="เลือก Real Vendor"
+                style={{ height: '30px', width: '80px', borderRadius: '6px', border: form?.realVendorName ? '1px solid #27500A' : '0.5px solid #c5d8f0', background: form?.realVendorName ? '#EAF3DE' : '#eef4fb', color: form?.realVendorName ? '#27500A' : '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '11px', fontWeight: '500' }}
+                onClick={() => setShowRealVendorPopup(true)}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                {form?.realVendorName ? 'แก้ไข' : 'เลือก'}
+              </button>
+            </div>
           </div>
 
           {/* ✅ Invoice lines table — flex:1 minHeight:0 เต็มพื้นที่ */}
@@ -2231,6 +2386,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           </div>
         </div>
 
+        <RealVendorPopup
+          show={showRealVendorPopup}
+          onClose={() => setShowRealVendorPopup(false)}
+          onSelect={({ vendor, realInvoiceNo }) => {
+            setField('realVendorCode',   vendor['SM-Code'] || '');
+            setField('realVendorName',   vendor['Company Name'] || '');
+            setField('realVendorTaxid',  vendor['Tax ID'] || '');
+            setField('realVendorBranch', vendor['Branch'] || '');
+            setField('realInvoiceNo',    realInvoiceNo || '');
+            setShowRealVendorPopup(false);
+          }}
+          smCodeItems={smCodeItems}
+        />
         <ContractPopup
           show={showContractPopup}
           onClose={() => setShowContractPopup(false)}
@@ -2417,6 +2585,31 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                 <input type="text" value={form[key] || ''} disabled={isView} onChange={e => setField(key, e.target.value)} style={inputStyle('100%', isView)} />
               </div>
             ))}
+            {/* ── Real Vendor fields ── */}
+            {(form.realVendorName || !isView) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 160px', minWidth: '120px' }}>
+                <label style={fieldLabel}>Real Vendor</label>
+                <input type="text" value={form.realVendorName || ''} disabled={isView} onChange={e => setField('realVendorName', e.target.value)} style={inputStyle('100%', isView)} placeholder="Company Name" />
+              </div>
+            )}
+            {(form.realVendorTaxid || !isView) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 130px' }}>
+                <label style={fieldLabel}>Tax ID</label>
+                <input type="text" value={form.realVendorTaxid || ''} disabled={isView} onChange={e => setField('realVendorTaxid', e.target.value)} style={inputStyle('100%', isView)} />
+              </div>
+            )}
+            {(form.realInvoiceNo || !isView) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 130px' }}>
+                <label style={fieldLabel}>Real Invoice No.</label>
+                <input type="text" value={form.realInvoiceNo || ''} disabled={isView} onChange={e => setField('realInvoiceNo', e.target.value)} style={inputStyle('100%', isView)} />
+              </div>
+            )}
+            {form.isVat && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 60px' }}>
+                <label style={fieldLabel}>VAT</label>
+                <div style={{ height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', fontSize: '11px', fontWeight: '600', background: form.isVat === 'Yes' ? '#EAF3DE' : '#f5f5f5', color: form.isVat === 'Yes' ? '#27500A' : '#999', border: '0.5px solid #e8eaf0' }}>{form.isVat}</div>
+              </div>
+            )}
           </div>
 
           {/* Lines table */}
@@ -2903,7 +3096,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 }
 
 // ── InvoiceEntry ──────────────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
+function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], smCodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
 
@@ -3263,7 +3456,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         vat:             sumField(groupLines, 'vat'),
         wht:             sumField(groupLines, 'wht'),
         net:             sumField(groupLines, 'total'),
-        form_data:       { ...form, grtNum: grtNumVal, grn: grnVal, invoiceSuffix },
+        form_data:       { ...form, grtNum: grtNumVal, grn: grnVal, invoiceSuffix, isVat: (String(groupLines[0]?.taxCode || '').includes('VAT7%') && !String(groupLines[0]?.taxCode || '').includes('SVAT7%')) ? 'Yes' : 'No' },
         lines:           groupLines,
         status:          'pending',
         created_by:      userName || currentUser?.email || '',
@@ -3480,7 +3673,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       
       <div style={{ ...card, overflow: 'visible' }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} smCodeItems={smCodeItems} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
@@ -3691,6 +3884,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     fetchCollection('CompanyList'); fetchCollection('SupplierList'); fetchCollection('BranchList');
     fetchCollection('AccountList'); fetchCollection('SubAccList');   fetchCollection('CpcList');
     fetchCollection('ItemcodeList'); fetchCollection('VendorCategory'); fetchCollection('NoticeList'); fetchCollection('VendorRule');
+    fetchCollection('SmCodeList');
   }, []);
 
   const infoItemsRaw    = getCached('CompanyList') || [];
@@ -3711,6 +3905,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   const categoryItems   = getCached('VendorCategory');
   const noticeItems     = getCached('NoticeList');
   const vendorRuleItems = getCached('VendorRule');
+  const smCodeItems     = getCached('SmCodeList') || [];
 
   const handleStart    = (config) => { setBatchConfig({ ...config, batchId: `${config.bu}-${config.receiveDate}-${Date.now()}` }); setStep(2); };
   const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
@@ -3732,7 +3927,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
           <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)}
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}
             cpcItems={cpcItems} itemcodeItems={itemcodeItems} categoryItems={categoryItems} noticeItems={noticeItems}
-            vendorRuleItems={vendorRuleItems} fetchCollection={fetchCollection}
+            vendorRuleItems={vendorRuleItems} smCodeItems={smCodeItems} fetchCollection={fetchCollection}
             userName={userName || currentUser?.email || ''} currentUser={currentUser}
             onRunningChange={handleRunningChange} />
         )}

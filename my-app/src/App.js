@@ -9,6 +9,7 @@ import VendorMaster from './pages/VendorMaster';
 import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
 import APController from './pages/APController';
+import VatController from './pages/VatController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db as supabase } from './lib/db';
@@ -46,7 +47,10 @@ function PlaceholderPage({ title, icon }) {
 // ✅ Maps activePage -> maintenance menu key (as set in System Console > Access Control)
 const PAGE_MAINTENANCE_MAP = {
   'ap-gr': 'ap-controller', 'ap-ocr': 'ap-controller', 'ap-form': 'ap-controller', 'ap-drafts': 'ap-controller',
-  'vat-controller': 'vat-controller',
+  'vat-incomplete-report': 'vat-controller',
+  'vat-amagno-reconcile': 'vat-controller',
+  'vat-popvat-report': 'vat-controller',
+  'vat-simple-input-report': 'vat-controller',
   'i-expense': 'i-expense',
   'gl-functional': 'gl-functional',
   'i-pro-interface': 'i-pro-interface',
@@ -237,9 +241,11 @@ function MainApp() {
 
   // ── Page groups ──────────────────────────────────────────────────────────────
   const AP_PAGES     = ['ap-gr', 'ap-ocr', 'ap-form', 'ap-drafts'];
+  const VAT_PAGES    = ['vat-incomplete-report', 'vat-amagno-reconcile', 'vat-popvat-report', 'vat-simple-input-report'];
   // [CHANGE 1] เพิ่ม 'condition-rule' เข้า MASTER_PAGES เพื่อให้ sidebar highlight ถูกต้อง
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category','condition-rule'];
   const isAPActive     = AP_PAGES.includes(activePage);
+  const isVATActive    = VAT_PAGES.includes(activePage);
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
@@ -340,6 +346,7 @@ function MainApp() {
   const handleMasterEnter  = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('master'); };
   const handleAPEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ap'); };
   const handleFlyoutEnter  = () => { clearCloseTimer(); };
+  const handleVATEnter     = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('vat'); };
   const handleMouseLeave   = () => { startCloseTimer(); };
   const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
 
@@ -389,7 +396,17 @@ function MainApp() {
         : <NoAccessPage />;
 
       // Functions (placeholder)
-      case 'vat-controller':  return (isOwner || userPermissions?.['VAT'])   ? <PlaceholderPage title="VAT Controller" icon="💹" />  : <NoAccessPage />;
+      case 'vat-incomplete-report':
+      case 'vat-amagno-reconcile':
+      case 'vat-popvat-report':
+      case 'vat-simple-input-report':
+        return (isOwner || userPermissions?.['VAT'])
+          ? <VatController
+              activeSubTab={activePage.replace('vat-', '')}
+              onSubTabChange={sub => setActivePage(`vat-${sub}`)}
+              flyoutOpen={openMenu === 'vat'}
+            />
+          : <NoAccessPage />;
       case 'i-expense':       return (isOwner || userPermissions?.['IE'])    ? <PlaceholderPage title="I-Expense" icon="💸" />       : <NoAccessPage />;
       case 'gl-functional':   return (isOwner || userPermissions?.['GL'])    ? <PlaceholderPage title="GL Functional" icon="📊" />   : <NoAccessPage />;
       case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
@@ -457,7 +474,7 @@ function MainApp() {
 
   const fpDiv = () => <div style={{ height: '0.5px', background: '#e8eaf0', margin: '4px 16px' }} />;
 
-  const flyoutOpen = openMenu === 'master' || openMenu === 'ap';
+  const flyoutOpen = openMenu === 'master' || openMenu === 'ap' || openMenu === 'vat';
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
@@ -492,8 +509,15 @@ function MainApp() {
               </div>
             )}
 
-            {/* Other function menus (skip ap-gr, handled above) */}
-            {FUNCTION_MENUS.filter(m => m.id !== 'ap-gr').map(m => navItem(m.id, m.icon, m.label))}
+            {/* Other function menus (skip ap-gr and vat-controller, handled separately) */}
+            {/* VAT Controller — flyout trigger */}
+            {(isOwner || (userPermissions?.['VAT'] && !maintenanceMenus.includes('vat-controller'))) && (
+              <div onClick={handleVATEnter} title={!sidebarExpanded ? 'VAT Controller' : ''}
+                style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isVATActive || openMenu === 'vat' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'vat' ? 'rgba(93,202,165,0.12)' : isVATActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isVATActive || openMenu === 'vat' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                {sidebarExpanded ? <><span>💹 VAT Controller</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>💹</span>}
+              </div>
+            )}
+            {FUNCTION_MENUS.filter(m => m.id !== 'ap-gr' && m.id !== 'vat-controller').map(m => navItem(m.id, m.icon, m.label))}
 
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
 
@@ -573,6 +597,25 @@ function MainApp() {
               {fpDiv()}
               {fpGroup('🗂️', 'จัดการ')}
               {fpSub('ap-drafts', '📄', 'Draft List')}
+            </div>
+          </div>
+        )}
+
+        {/* ── Flyout: VAT Controller ── */}
+        {openMenu === 'vat' && (
+          <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+              <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>💹 VAT Controller</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+              {fpGroup('⚙️', 'Operation')}
+              {fpSub('vat-incomplete-report',   '📋', 'Incomplete Report')}
+              {fpSub('vat-amagno-reconcile',    '🔄', 'Amagno Reconcile')}
+              {fpDiv()}
+              {fpGroup('📊', 'Results')}
+              {fpSub('vat-popvat-report',       '📊', 'Popvat Report')}
+              {fpSub('vat-simple-input-report', '📄', 'Simple Input Report')}
             </div>
           </div>
         )}
