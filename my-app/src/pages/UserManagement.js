@@ -1278,7 +1278,7 @@ useEffect(() => {
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
         {tab === 'deploy' && isOwner && (
-          <div style={{ position: 'fixed', top: '95px', left: '248px', right: 0, bottom: 0, zIndex: 10, overflow: 'hidden' }}>
+          <div style={{ position: 'fixed', top: '88px', left: '220px', right: 0, bottom: 0, zIndex: 10, overflow: 'hidden' }}>
             <DeployMonitor inline />
           </div>
         )}
