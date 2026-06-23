@@ -1,11 +1,8 @@
 // src/lib/db.js
-import { supabase as _supabase } from '../supabase';
-
 const API_URL = process.env.REACT_APP_API_URL;
 
 const apiFetch = async (path, options = {}) => {
-  const { data: { session } } = await _supabase.auth.getSession();
-  const token = session?.access_token;
+  const token = sessionStorage.getItem('fastapn_token');
 
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -117,9 +114,6 @@ class QueryBuilder {
           return { data: results.map(r => r.data).filter(Boolean), error: results.find(r => r.error)?.error || null };
         }
         const result = await apiFetch(`/${this.table}`, { method: 'POST', body: JSON.stringify(this._body) });
-        // ✅ บังคับให้ data เป็น array เสมอ (ตรงกับพฤติกรรมของ Supabase client จริง)
-        // backend คืน object เดี่ยวตอน insert ทีละ 1 แถว — ถ้าไม่ normalize ตรงนี้
-        // โค้ดที่อ่าน data[0] จะได้ undefined แล้วเข้าใจผิดว่า insert ยังไม่สำเร็จ
         if (result.data && !Array.isArray(result.data) && !this._single && !this._maybeSingle) {
           result.data = [result.data];
         }

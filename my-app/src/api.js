@@ -1,15 +1,13 @@
-import { supabase } from './supabase'; // ← ใช้ Supabase จริงสำหรับ auth
-
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
 export async function apiFetch(path, options = {}) {
-  const { data: { session } } = await supabase.auth.getSession();
+  const token = sessionStorage.getItem('fastapn_token');
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       ...options.headers,
-      Authorization: `Bearer ${session?.access_token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       'Content-Type': 'application/json',
     },
   });
