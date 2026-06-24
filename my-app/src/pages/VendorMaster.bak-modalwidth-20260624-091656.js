@@ -29,9 +29,9 @@ import { useDataCache } from '../contexts/DataCacheContext';
     }, []);
     const filtered = [...new Set(options.filter(o => o && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
     return (
-      <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+      <div ref={ref} style={{ position: 'relative', marginBottom: '8px', overflow: 'visible' }}>
         <input value={input} onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder={placeholder || ''}
-          style={{ height: '28px', padding: '0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }} />
+          style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', boxSizing: 'border-box' }} />
         {open && filtered.length > 0 && (
           <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, width: '100%', boxSizing: 'border-box', background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 9999, maxHeight: '180px', overflowY: 'auto' }}>
             {filtered.map((opt, i) => (
@@ -947,7 +947,7 @@ const computeNextSyRunning = async () => {
       inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
       inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
       overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='apcode'||tab==='iecode'?'1100px':'700px', maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'hidden' },
+      modal: { background:'white', borderRadius:'10px', width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'||tab==='iecode'?'660px':'500px', maxHeight:'85vh', display:'flex', flexDirection:'column', overflow:'visible' },
       iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
     };
 
