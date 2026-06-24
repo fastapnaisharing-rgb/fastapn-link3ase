@@ -30,7 +30,7 @@ function Login() {
 
   const { login } = useAuth();
 
-  // resolve username -> email via backend
+  // resolve username → email via backend
   const resolveEmail = async (input) => {
     const val = input.trim().toLowerCase();
     if (val.includes('@')) return val;
@@ -46,6 +46,7 @@ function Login() {
     try {
       const resolvedEmail = await resolveEmail(emailOrUsername);
       const result = await login(resolvedEmail, password);
+      // ถ้า login return must_change_password
       if (result?.must_change_password) {
         setChangeToken(result.token);
         setShowChangePassword(true);
@@ -65,22 +66,29 @@ function Login() {
     if (!input.includes('@')) { setError('กรุณากรอก Email ครับ (ไม่รองรับ Username)'); return; }
     setForgotLoading(true);
     try {
+      // 1. call backend เพื่อ generate OTP
       const res = await fetch(`${API}/api/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: input }),
       });
       const data = await res.json();
+
       if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+
+      // ถ้าไม่เจอ email — backend return ok: true แต่ไม่มี otp (ป้องกัน enumeration)
       if (!data.otp) {
         setSuccess('หากมี Email นี้ในระบบ จะได้รับ OTP ทาง Email ครับ');
         setShowForgot(false); setForgotInput('');
         setForgotLoading(false);
         return;
       }
+
+      // 2. ส่ง OTP ผ่าน EmailJS
       const expireTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('th-TH', {
         hour: '2-digit', minute: '2-digit'
       });
+
       const emailRes = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,7 +103,9 @@ function Login() {
           },
         }),
       });
+
       if (!emailRes.ok) throw new Error('ส่ง Email ไม่สำเร็จ กรุณาลองใหม่ครับ');
+
       setSuccess('ส่ง OTP ไปที่ Email แล้วครับ กรุณาตรวจสอบ Inbox แล้วใช้ OTP นั้น Login');
       setShowForgot(false); setForgotInput('');
     } catch (err) {
@@ -175,12 +185,15 @@ function Login() {
           <div style={S.logoText}>FAST<span style={{ color: '#5DCAA5' }}>APN</span></div>
           <div style={S.logoSub}>Link3ase · System</div>
         </div>
+
         <div style={S.tabs}>
           <button style={S.tab(mode === 'login')} onClick={() => switchMode('login')}>Login</button>
           <button style={S.tab(mode === 'signup')} onClick={() => switchMode('signup')}>Sign up</button>
         </div>
+
         {error && <div style={S.error}>{error}</div>}
         {success && <div style={S.success}>{success}</div>}
+
         {mode === 'login' ? (
           <form onSubmit={handleLogin}>
             <label style={S.label}>Email หรือ Username</label>
@@ -204,6 +217,7 @@ function Login() {
         )}
       </div>
 
+      {/* Modal: ลืม Password */}
       {showForgot && (
         <div style={S.overlay}>
           <div style={S.modal}>
@@ -222,6 +236,7 @@ function Login() {
         </div>
       )}
 
+      {/* Modal: บังคับเปลี่ยน Password */}
       {showChangePassword && (
         <div style={S.overlay}>
           <div style={S.modal}>
