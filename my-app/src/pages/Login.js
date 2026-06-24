@@ -1,33 +1,42 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db as supabase } from '../lib/db';
+
+const API = process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000';
+const EMAILJS_SERVICE_ID = 'service_yuwj8rv';
+const EMAILJS_TEMPLATE_ID = 'template_qngm4gh';
+const EMAILJS_PUBLIC_KEY = '15CbmTCQhpAihatXV';
 
 function Login() {
   const [mode, setMode] = useState('login');
   const [emailOrUsername, setEmailOrUsername] = useState('');
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [username, setUsername] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Forgot password
   const [showForgot, setShowForgot] = useState(false);
   const [forgotInput, setForgotInput] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
+
+  // Change password (must_change_password)
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [changeToken, setChangeToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [changeLoading, setChangeLoading] = useState(false);
+
   const { login } = useAuth();
 
+  // resolve username → email via backend
   const resolveEmail = async (input) => {
     const val = input.trim().toLowerCase();
     if (val.includes('@')) return val;
-    const { data } = await supabase
-      .from('user_roles')
-      .select('email')
-      .eq('username', val)
-      .single();
-    if (!data) throw new Error('ไม่พบ Username นี้ในระบบครับ');
+    const res = await fetch(`${API}/api/auth/resolve-username?username=${encodeURIComponent(val)}`);
+    const data = await res.json();
+    if (!data.email) throw new Error('ไม่พบ Username นี้ในระบบครับ');
     return data.email;
   };
 
@@ -35,8 +44,13 @@ function Login() {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
-      const email = await resolveEmail(emailOrUsername);
-      await login(email, password);
+      const resolvedEmail = await resolveEmail(emailOrUsername);
+      const result = await login(resolvedEmail, password);
+      // ถ้า login return must_change_password
+      if (result?.must_change_password) {
+        setChangeToken(result.token);
+        setShowChangePassword(true);
+      }
     } catch (err) {
       setError(err.message === 'ไม่พบ Username นี้ในระบบครับ'
         ? err.message
@@ -45,69 +59,90 @@ function Login() {
     setLoading(false);
   };
 
-  const handleSignup = async (e) => {
-    e.preventDefault();
-    setError('');
-    if (password !== confirmPassword) { setError('Password ไม่ตรงกันครับ'); return; }
-    if (password.length < 6) { setError('Password ต้องมีอย่างน้อย 6 ตัวอักษรครับ'); return; }
-    if (username.trim() === '') { setError('กรุณากรอก Username ครับ'); return; }
-    setLoading(true);
-    try {
-      const { data: existing } = await supabase
-        .from('user_roles')
-        .select('id')
-        .eq('username', username.trim().toLowerCase())
-        .single();
-      if (existing) { setError('Username นี้ถูกใช้งานแล้วครับ'); setLoading(false); return; }
-
-      const { error: authError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-      });
-      if (authError) throw authError;
-
-      const { error: roleError } = await supabase.from('user_roles').insert([{
-        email: email.trim(),
-        username: username.trim().toLowerCase(),
-        role: 'Viewer',
-        permissions: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false },
-        updated_by: 'signup',
-        updated_at: new Date().toISOString(),
-      }]);
-      if (roleError) throw roleError;
-
-      setSuccess('สมัครสมาชิกสำเร็จแล้วครับ! กรุณา Login');
-      setMode('login');
-      setEmailOrUsername(''); setEmail(''); setPassword(''); setConfirmPassword(''); setUsername('');
-    } catch (err) {
-      setError('เกิดข้อผิดพลาด: ' + err.message);
-    }
-    setLoading(false);
-  };
-
   const handleForgotPassword = async () => {
     setError('');
-    if (!forgotInput.trim()) { setError('กรุณากรอก Email หรือ Username ครับ'); return; }
+    if (!forgotInput.trim()) { setError('กรุณากรอก Email ครับ'); return; }
+    const input = forgotInput.trim().toLowerCase();
+    if (!input.includes('@')) { setError('กรุณากรอก Email ครับ (ไม่รองรับ Username)'); return; }
     setForgotLoading(true);
     try {
-      const resetEmail = await resolveEmail(forgotInput);
-      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: window.location.origin,
+      // 1. call backend เพื่อ generate OTP
+      const res = await fetch(`${API}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: input }),
       });
-      if (error) throw error;
-      setSuccess('ส่งลิงก์รีเซ็ต Password ไปที่ Email แล้วครับ กรุณาตรวจสอบ Inbox');
+      const data = await res.json();
+
+      if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+
+      // ถ้าไม่เจอ email — backend return ok: true แต่ไม่มี otp (ป้องกัน enumeration)
+      if (!data.otp) {
+        setSuccess('หากมี Email นี้ในระบบ จะได้รับ OTP ทาง Email ครับ');
+        setShowForgot(false); setForgotInput('');
+        setForgotLoading(false);
+        return;
+      }
+
+      // 2. ส่ง OTP ผ่าน EmailJS
+      const expireTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('th-TH', {
+        hour: '2-digit', minute: '2-digit'
+      });
+
+      const emailRes = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_id: EMAILJS_SERVICE_ID,
+          template_id: EMAILJS_TEMPLATE_ID,
+          user_id: EMAILJS_PUBLIC_KEY,
+          template_params: {
+            email: data.email,
+            passcode: data.otp,
+            time: expireTime,
+          },
+        }),
+      });
+
+      if (!emailRes.ok) throw new Error('ส่ง Email ไม่สำเร็จ กรุณาลองใหม่ครับ');
+
+      setSuccess('ส่ง OTP ไปที่ Email แล้วครับ กรุณาตรวจสอบ Inbox แล้วใช้ OTP นั้น Login');
       setShowForgot(false); setForgotInput('');
     } catch (err) {
-      setError(err.message === 'ไม่พบ Username นี้ในระบบครับ' ? err.message : 'ไม่พบ Email นี้ในระบบครับ');
+      setError(err.message);
     }
     setForgotLoading(false);
   };
 
+  const handleChangePassword = async () => {
+    setError('');
+    if (newPassword.length < 6) { setError('Password ต้องมีอย่างน้อย 6 ตัวอักษรครับ'); return; }
+    if (newPassword !== confirmNewPassword) { setError('Password ไม่ตรงกันครับ'); return; }
+    setChangeLoading(true);
+    try {
+      const res = await fetch(`${API}/api/auth/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${changeToken}`,
+        },
+        body: JSON.stringify({ newPassword }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+      setShowChangePassword(false);
+      setSuccess('เปลี่ยน Password สำเร็จแล้วครับ กรุณา Login ด้วย Password ใหม่');
+      setPassword(''); setEmailOrUsername('');
+    } catch (err) {
+      setError(err.message);
+    }
+    setChangeLoading(false);
+  };
+
   const switchMode = (m) => {
     setMode(m); setError(''); setSuccess('');
-    setEmailOrUsername(''); setEmail(''); setPassword('');
-    setConfirmPassword(''); setUsername('');
-    setShowPassword(false); setShowConfirmPassword(false);
+    setEmailOrUsername(''); setPassword('');
+    setShowPassword(false);
   };
 
   const EyeOpen = () => (
@@ -163,7 +198,7 @@ function Login() {
           <form onSubmit={handleLogin}>
             <label style={S.label}>Email หรือ Username</label>
             <input style={S.input} type="text" value={emailOrUsername} onChange={e => setEmailOrUsername(e.target.value)} placeholder="email@example.com หรือ username" required />
-            <label style={S.label}>Password</label>
+            <label style={S.label}>Password / OTP</label>
             <div style={{ position: 'relative', marginBottom: '8px' }}>
               <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
               <button type="button" onClick={() => setShowPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
@@ -176,42 +211,62 @@ function Login() {
             <button style={S.btn} type="submit" disabled={loading}>{loading ? 'กำลัง Login...' : 'Login'}</button>
           </form>
         ) : (
-          <form onSubmit={handleSignup}>
-            <label style={S.label}>Username</label>
-            <input style={S.input} type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="ตัวอักษร ตัวเลข ไม่มีช่องว่าง" required />
-            <label style={S.label}>Email</label>
-            <input style={S.input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" required />
-            <label style={S.label}>Password</label>
-            <div style={{ position: 'relative', marginBottom: '16px' }}>
-              <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" required />
-              <button type="button" onClick={() => setShowPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
-                {showPassword ? <EyeOpen /> : <EyeClosed />}
-              </button>
-            </div>
-            <label style={S.label}>Confirm Password</label>
-            <div style={{ position: 'relative', marginBottom: '16px' }}>
-              <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showConfirmPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password อีกครั้ง" required />
-              <button type="button" onClick={() => setShowConfirmPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
-                {showConfirmPassword ? <EyeOpen /> : <EyeClosed />}
-              </button>
-            </div>
-            <button style={S.btn} type="submit" disabled={loading}>{loading ? 'กำลังสมัคร...' : 'Sign up'}</button>
-          </form>
+          <div style={{ textAlign: 'center', padding: '20px 0', color: '#888', fontSize: '13px' }}>
+            กรุณาติดต่อ Admin เพื่อสร้าง Account ครับ
+          </div>
         )}
       </div>
 
+      {/* Modal: ลืม Password */}
       {showForgot && (
         <div style={S.overlay}>
           <div style={S.modal}>
             <h3 style={{ marginBottom: '8px', fontSize: '15px' }}>🔑 ลืม Password</h3>
-            <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>กรอก Email หรือ Username แล้วระบบจะส่งลิงก์รีเซ็ต Password ไปให้ครับ</p>
+            <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>กรอก Email แล้วระบบจะส่ง OTP ไปให้ครับ นำ OTP มา Login แทน Password ได้เลย</p>
             {error && <div style={S.error}>{error}</div>}
-            <label style={{ fontSize: '12px', color: '#666', display: 'block', marginBottom: '6px' }}>Email หรือ Username</label>
-            <input style={S.input} type="text" value={forgotInput} onChange={e => setForgotInput(e.target.value)} placeholder="email@example.com หรือ username" />
+            <label style={{ fontSize: '12px', color: '#666', display: 'block', marginBottom: '6px' }}>Email</label>
+            <input style={S.input} type="email" value={forgotInput} onChange={e => setForgotInput(e.target.value)} placeholder="email@example.com" />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
               <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#f0f0f0' }} onClick={() => { setShowForgot(false); setError(''); }}>Cancel</button>
               <button style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#1a3a5c', color: 'white' }} onClick={handleForgotPassword} disabled={forgotLoading}>
-                {forgotLoading ? 'กำลังส่ง...' : 'ส่ง Email'}
+                {forgotLoading ? 'กำลังส่ง...' : 'ส่ง OTP'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: บังคับเปลี่ยน Password */}
+      {showChangePassword && (
+        <div style={S.overlay}>
+          <div style={S.modal}>
+            <h3 style={{ marginBottom: '8px', fontSize: '15px' }}>🔒 ตั้ง Password ใหม่</h3>
+            <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>กรุณาตั้ง Password ใหม่ก่อนเข้าใช้งานระบบครับ</p>
+            {error && <div style={S.error}>{error}</div>}
+            <label style={{ fontSize: '12px', color: '#666', display: 'block', marginBottom: '6px' }}>Password ใหม่</label>
+            <div style={{ position: 'relative', marginBottom: '16px' }}>
+              <input
+                style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }}
+                type={showNewPassword ? 'text' : 'password'}
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                placeholder="อย่างน้อย 6 ตัวอักษร"
+              />
+              <button type="button" onClick={() => setShowNewPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
+                {showNewPassword ? <EyeOpen /> : <EyeClosed />}
+              </button>
+            </div>
+            <label style={{ fontSize: '12px', color: '#666', display: 'block', marginBottom: '6px' }}>ยืนยัน Password ใหม่</label>
+            <input
+              style={S.input}
+              type="password"
+              value={confirmNewPassword}
+              onChange={e => setConfirmNewPassword(e.target.value)}
+              placeholder="พิมพ์ Password อีกครั้ง"
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button style={{ padding: '8px 20px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: '#1a3a5c', color: 'white' }} onClick={handleChangePassword} disabled={changeLoading}>
+                {changeLoading ? 'กำลังบันทึก...' : 'บันทึก Password'}
               </button>
             </div>
           </div>
