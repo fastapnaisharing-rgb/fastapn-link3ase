@@ -476,7 +476,7 @@ const computeNextSyRunning = async () => {
     const selected = cfg ? (selectedMap[tab] || []) : [];
     const sort     = cfg ? (sortMap[tab] || { field: cfg.key, dir: 'asc' }) : {};
 
-    const getTimestamp = () => { const n = new Date(); return `${String(n.getDate()).padStart(2,'0')}/${String(n.getMonth()+1).padStart(2,'0')}/${n.getFullYear()} ${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`; };
+    const getTimestamp = () => new Date().toISOString();
     const getFileTimestamp = () => { const n = new Date(); return `${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}_${String(n.getHours()).padStart(2,'0')}${String(n.getMinutes()).padStart(2,'0')}`; };
     const formatLastUpdate = (val) => {
       if (!val || val === '-') return '-';
@@ -616,6 +616,15 @@ const computeNextSyRunning = async () => {
     };
 
     const handleNewSave = async () => {
+    // ── Validation: required fields ──
+    if (tab === 'apcode') {
+      const missing = ['Code','Supplier Name','Supplier Number','Supplier Site','BU Code'].filter(k => !form[k]?.trim());
+      if (missing.length) { alert(`กรุณากรอกข้อมูลให้ครบ:\n• ${missing.join('\n• ')}`); return; }
+    }
+    if (tab === 'iecode') {
+      const missing = ['IE-Code','Supplier Name','Supplier Number','Supplier Site','BU Code'].filter(k => !form[k]?.trim());
+      if (missing.length) { alert(`กรุณากรอกข้อมูลให้ครบ:\n• ${missing.join('\n• ')}`); return; }
+    }
     const ts = getTimestamp(); const cuStr = cu();
     let data = { ...form, username: cuStr, last_update: ts };
     if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
@@ -987,37 +996,154 @@ const computeNextSyRunning = async () => {
       }
       if (tab === 'apcode' || tab === 'iecode') {
         const isIe = tab === 'iecode';
-        const sections = isIe ? [
-          { label: 'ข้อมูลหลัก', keys: ['IE-Code','BU Code','Supplier Name','Supplier Number','Supplier Site','Tax-Type','Notice','Vendor Index','Sub Acc'] },
-          { label: 'Coding', keys: ['First Part','Mid Part','Last Part','Invoice No.','Digit','Due'] },
-          { label: 'ข้อมูลติดต่อ', keys: ['Tax ID','No.','Contact','Email','Address'] },
-          { label: 'คำอธิบาย', keys: ['NoticeDescrip','RuleDescrip'] },
-        ] : [
-          { label: 'ข้อมูลหลัก', keys: ['Code','BU Code','Supplier Name','Supplier Number','Supplier Site','Tax-Type','Notice','Supplier Ref.','Sub Acc'] },
-          { label: 'Coding', keys: ['First Part','Mid Part','Last Part','Invoice No.','Digit','Due'] },
-          { label: 'ข้อมูลติดต่อ', keys: ['Tax ID','No.','Contact','Email','Address'] },
-          { label: 'คำอธิบาย', keys: ['NoticeDescrip','RuleDescrip'] },
-        ];
+        const lbl = (text) => (
+          <div style={{ padding:'6px 10px', fontSize:'11px', color:'#888', display:'flex', alignItems:'center', background:'#f8f9fa', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0' }}>{text}</div>
+        );
+        const REQUIRED_KEYS = isIe
+          ? ['IE-Code','Supplier Name','Supplier Number','Supplier Site','BU Code']
+          : ['Code','Supplier Name','Supplier Number','Supplier Site','BU Code'];
+        const cellInput = (key) => {
+          const label = cfg.edit.find(([k]) => k === key)?.[1] || key;
+          const isCombo = cfg.combo.includes(key);
+          const isRequired = REQUIRED_KEYS.includes(key);
+          const isEmpty = editMode && isRequired && !formData[key]?.trim();
+          const cellBg = editMode && isRequired ? '#FFF3CD' : 'transparent';
+          const inputSt = { height:'28px', padding:'0 8px', fontSize:'12px', borderRadius:'0', outline:'none', border:'none', background:'transparent', color:'#1a3a5c', boxSizing:'border-box', width:'100%' };
+          return (
+            <div style={{ padding:'4px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', background: cellBg }}>
+              {editMode
+                ? isCombo
+                  ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`เลือก`} />
+                  : <input style={inputSt} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
+                : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%' }}>{formData[key]||'—'}</div>
+              }
+            </div>
+          );
+        };
+        const rowStyle = { display:'grid', border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'hidden', marginBottom:'6px' };
+        const codeKey = isIe ? 'IE-Code' : 'Code';
+        const codeLabel = isIe ? 'IE-Code' : 'Code *';
         return (
           <div style={{ overflowY:'auto', flex:1 }}>
-          <div style={{ padding:'16px 20px' }}>
-            {sections.map(sec => (
-              <div key={sec.label} style={{ marginBottom:'16px' }}>
-                <div style={{ fontSize:'10px', fontWeight:'600', color:'#888', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:'8px', borderBottom:'0.5px solid #f0f0f0', paddingBottom:'4px' }}>{sec.label}</div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
-                  {sec.keys.map(key => {
-                    const label = cfg.edit.find(([k]) => k === key)?.[1] || key;
-                    const fullWidth = ['Address','NoticeDescrip','RuleDescrip'].includes(key);
-                    return (
-                      <div key={key} style={{ marginBottom:'4px', gridColumn: fullWidth ? '1 / -1' : 'auto' }}>
-                        <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
-                        {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : fullWidth ? <textarea style={{ ...S.input, resize:'vertical', minHeight:'56px', fontFamily:'inherit' }} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={{ ...S.inputReadonly, whiteSpace: fullWidth ? 'pre-wrap' : 'nowrap', overflow:'hidden', textOverflow: fullWidth ? 'unset' : 'ellipsis' }}>{formData[key]||'-'}</div>}
-                      </div>
-                    );
-                  })}
+          <div style={{ padding:'16px 20px', display:'flex', flexDirection:'column', gap:'0' }}>
+
+            {/* Row 1: Code + Supplier Name */}
+            <div style={{ ...rowStyle, gridTemplateColumns:'110px 1fr 110px 1fr' }}>
+              {lbl(codeLabel)}
+              {cellInput(codeKey)}
+              {lbl('Supplier Name *')}
+              {cellInput('Supplier Name')}
+            </div>
+
+            {/* Row 2: Supplier No. + Supplier Site + BU Code */}
+            <div style={{ ...rowStyle, gridTemplateColumns:'110px 1fr 110px 1fr 110px 1fr' }}>
+              {lbl('Supplier No.')}
+              {cellInput('Supplier Number')}
+              {lbl('Supplier Site')}
+              {cellInput('Supplier Site')}
+              {lbl('BU Code')}
+              {cellInput('BU Code')}
+            </div>
+
+            {/* Row 3: Tax ID + Branch No. + Tax-Type */}
+            <div style={{ ...rowStyle, gridTemplateColumns:'110px 1fr 110px 1fr 110px 1fr' }}>
+              {lbl('Tax ID')}
+              {cellInput('Tax ID')}
+              {lbl('Branch No.')}
+              {cellInput('No.')}
+              {lbl('Tax-Type')}
+              {cellInput('Tax-Type')}
+            </div>
+
+            {/* Row 4: Invoice Rule section */}
+            <div style={{ border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'hidden', marginBottom:'6px' }}>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', borderBottom:'0.5px solid #e8eaf0' }}>
+                {['Invoice Rule','First Part','Mid Part','Last Part'].map((h,i) => (
+                  <div key={h} style={{ padding:'6px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa', borderRight:'0.5px solid #e8eaf0', whiteSpace:'nowrap' }}>{h}</div>
+                ))}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderRight:'0.5px solid #e8eaf0' }}>
+                  <div style={{ padding:'6px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa', borderRight:'0.5px solid #e8eaf0' }}>Digit</div>
+                  <div style={{ padding:'6px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa' }}>Due Date</div>
+                </div>
+                <div style={{ padding:'6px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa' }}>Notice</div>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)' }}>
+                {['Invoice No.','First Part','Mid Part','Last Part'].map((key,i) => (
+                  <div key={key} style={{ padding:'4px 6px', borderRight:'0.5px solid #e8eaf0' }}>
+                    {editMode
+                      ? cfg.combo.includes(key)
+                        ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder='-' />
+                        : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                      : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                    }
+                  </div>
+                ))}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderRight:'0.5px solid #e8eaf0' }}>
+                  {['Digit','Due'].map((key,i) => (
+                    <div key={key} style={{ padding:'4px 6px', borderRight: i===0 ? '0.5px solid #e8eaf0' : 'none' }}>
+                      {editMode
+                        ? cfg.combo.includes(key)
+                          ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder='-' />
+                          : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                        : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                      }
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding:'4px 6px' }}>
+                  {editMode
+                    ? <ComboBox value={formData['Notice']||''} onChange={val=>setFormData({...formData,'Notice':val})} options={getOptions('Notice')} placeholder='-' />
+                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData['Notice']||'—'}</div>
+                  }
                 </div>
               </div>
-            ))}
+            </div>
+
+            {/* Row 5: Contact + Email */}
+            <div style={{ ...rowStyle, gridTemplateColumns:'110px 1fr 110px 1fr' }}>
+              {lbl('Contact')}
+              {cellInput('Contact')}
+              {lbl('Email')}
+              {cellInput('Email')}
+            </div>
+
+            {/* Row 6: Sub Acc + Supplier Ref / Vendor Index */}
+            <div style={{ ...rowStyle, gridTemplateColumns:'110px 1fr 110px 1fr' }}>
+              {lbl('Sub Acc')}
+              {cellInput('Sub Acc')}
+              {lbl(isIe ? 'Vendor Index' : 'Supplier Ref.')}
+              {cellInput(isIe ? 'Vendor Index' : 'Supplier Ref.')}
+            </div>
+
+            {/* Row 7: Address */}
+            <div style={{ ...rowStyle, gridTemplateColumns:'110px 1fr' }}>
+              {lbl('Address')}
+              <div style={{ padding:'4px 6px' }}>
+                {editMode
+                  ? <textarea rows={3} value={formData['Address']||''} onChange={e=>setFormData({...formData,'Address':e.target.value})} style={{ width:'100%', padding:'6px 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
+                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{formData['Address']||'—'}</div>
+                }
+              </div>
+            </div>
+
+            {/* Row 8: Rule Description + Notice Description */}
+            <div style={{ ...rowStyle, gridTemplateColumns:'110px 1fr 110px 1fr' }}>
+              {lbl('Rule Desc.')}
+              <div style={{ padding:'4px 6px', borderRight:'0.5px solid #e8eaf0' }}>
+                {editMode
+                  ? <textarea rows={3} value={formData['RuleDescrip']||''} onChange={e=>setFormData({...formData,'RuleDescrip':e.target.value})} style={{ width:'100%', padding:'6px 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
+                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{formData['RuleDescrip']||'—'}</div>
+                }
+              </div>
+              {lbl('Notice Desc.')}
+              <div style={{ padding:'4px 6px' }}>
+                {editMode
+                  ? <textarea rows={3} value={formData['NoticeDescrip']||''} onChange={e=>setFormData({...formData,'NoticeDescrip':e.target.value})} style={{ width:'100%', padding:'6px 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
+                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{formData['NoticeDescrip']||'—'}</div>
+                }
+              </div>
+            </div>
+
           </div>
           </div>
         );

@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { db as supabase } from '../lib/db';
+import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -78,13 +79,13 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
       <input
         value={value || ''}
         onChange={e => onChange(e.target.value)}
-        onFocus={() => { if (inputRef.current) { const r = inputRef.current.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); } setOpen(true); }}
+        onFocus={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); }}
         placeholder={placeholder}
         style={{ height: '28px', padding: '0 20px 0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }}
       />
       <svg style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', color: '#bbb', pointerEvents: 'none' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
-      {open && options.length > 0 && (
-        <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, width: '100%', zIndex: 50, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '180px', overflowY: 'auto' }}>
+        {open && options.length > 0 && (
+          <div style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '180px', overflowY: 'auto' }}>
           {filtered.map((o, i) => (
             <div key={i} onMouseDown={(e) => { e.preventDefault(); onChange(o); setOpen(false); }}
               style={{ padding: '6px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: o === value ? '#eef3fb' : 'white' }}
@@ -1489,11 +1490,10 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
   const loadItems = async () => {
     setLoading(true);
     try {
-      let q = supabase.from('contract_list').select('*').order('vendor_code').order('serial_code');
-      if (vendorCode) q = q.ilike('vendor_code', `%${vendorCode}%`);
-      else if (bu) q = q.eq('bu', bu);
-      const { data, error } = await q.limit(500);
-      if (error) throw error;
+      const params = new URLSearchParams({ order: 'vendor_code.asc,serial_code.asc', limit: '500' });
+      if (vendorCode) params.set('ilike_vendor_code', vendorCode);
+      else if (bu) params.set('eq_bu', bu);
+      const data = await apiFetch(`/contract_list?${params.toString()}`);
       setItems(data || []);
     } catch (e) { console.error('loadItems:', e); }
     setLoading(false);
@@ -1528,11 +1528,9 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
       const { bu: _bu, ...formWithoutBu } = form;
       const payload = { ...formWithoutBu, updated_by: userName, updated_at: new Date().toISOString() };
       if (view === 'edit' && editTarget?.id) {
-        const { error } = await supabase.from('contract_list').update(payload).eq('id', editTarget.id);
-        if (error) throw error;
+        await apiFetch(`/contract_list/${editTarget.id}`, { method: 'PUT', body: JSON.stringify(payload) });
       } else {
-        const { error } = await supabase.from('contract_list').insert([payload]);
-        if (error) throw error;
+        await apiFetch(`/contract_list`, { method: 'POST', body: JSON.stringify(payload) });
       }
       await loadItems();
       setView('search');
@@ -1542,8 +1540,8 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
 
   const handleDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
-    const { error } = await supabase.from('contract_list').delete().eq('id', id);
-    if (!error) await loadItems();
+    await apiFetch(`/contract_list/${id}`, { method: 'DELETE' });
+    await loadItems();
   };
 
   const handleDownloadTemplate = () => {
@@ -1594,8 +1592,10 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
       const unique = Array.from(seen.values());
 
       for (let i = 0; i < unique.length; i += 100) {
-        const { error } = await supabase.from('contract_list').upsert(unique.slice(i, i + 100), { onConflict: 'vendor_code,serial_code', ignoreDuplicates: false });
-        if (error) throw error;
+        await apiFetch(`/contract_list/upsert?onConflict=vendor_code,serial_code`, {
+          method: 'POST',
+          body: JSON.stringify(unique.slice(i, i + 100)),
+        });
       }
       const dupCount = rows.length - unique.length;
       setImportMsg(`✅ Import สำเร็จ ${unique.length} รายการ${dupCount > 0 ? ` (ข้ามซ้ำ ${dupCount} รายการ)` : ''}`);
@@ -1832,14 +1832,16 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [] }) {
 
   if (!show) return null;
 
+  const inputOnly = smCodeItems.filter(i =>
+    String(i['Short Name'] ?? '').trim().toUpperCase() === 'INPUT'
+  );
   const q = query.trim().toLowerCase();
   const filtered = q
-    ? smCodeItems.filter(i =>
-        String(i['Short Name'] ?? '').toLowerCase().includes(q) ||
+    ? inputOnly.filter(i =>
         String(i['Company Name'] ?? '').toLowerCase().includes(q) ||
         String(i['SM-Code'] ?? '').toLowerCase().includes(q)
       )
-    : smCodeItems;
+    : inputOnly;
 
   const handleKey = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
@@ -1897,7 +1899,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [] }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
-                  {[['SM-Code','100px'],['AT-Match','110px'],['Company Name',''],['Tax ID','130px'],['Branch','70px']].map(([h, w]) => (
+                  {[['SM-Code','100px'],['Company Name',''],['Tax ID','130px'],['Branch','70px']].map(([h, w]) => (
                     <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
                   ))}
                 </tr>
@@ -1913,7 +1915,6 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [] }) {
                       <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
                         <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['SM-Code'] || '-'}</span>
                       </td>
-                      <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Short Name'] || '-'}</td>
                       <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company Name'] || '-'}</td>
                       <td style={{ padding: '9px 12px', color: '#778', fontFamily: 'monospace', fontSize: '11px' }}>{item['Tax ID'] || '-'}</td>
                       <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{item['Branch'] || '-'}</td>
@@ -1957,8 +1958,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
   const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
-  const [showContractPopup, setShowContractPopup]   = useState(false);
+  const [showContractPopup, setShowContractPopup]     = useState(false);
   const [showRealVendorPopup, setShowRealVendorPopup] = useState(false);
+  const [realVendorLineIdx, setRealVendorLineIdx]     = useState(-1); // index ของ line ที่กด Real Vendor
   const [activeLineIdx, setActiveLineIdx] = useState(0);
   const [taxDropdownIdx, setTaxDropdownIdx] = useState(null);
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
@@ -2260,6 +2262,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   style={inputStyle('100%')} />
               </div>
             ))}
+            {/* ── Contract button ── */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0, position: 'relative' }}>
               <label style={fieldLabel}>&nbsp;</label>
               <button title={requiresContract ? 'Contract — Item นี้กำหนด SPI-1 = CT ต้องผูกสัญญา' : 'Contract'}
@@ -2274,36 +2277,24 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 )}
               </button>
             </div>
-            {/* ── Real Vendor button ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
-              <label style={{ fontSize: '11px', color: form?.realVendorName ? '#27500A' : '#aaa', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {form?.realVendorName || 'Real Vendor'}
-              </label>
-              <button
-                title="เลือก Real Vendor"
-                style={{ height: '30px', width: '80px', borderRadius: '6px', border: form?.realVendorName ? '1px solid #27500A' : '0.5px solid #c5d8f0', background: form?.realVendorName ? '#EAF3DE' : '#eef4fb', color: form?.realVendorName ? '#27500A' : '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '11px', fontWeight: '500' }}
-                onClick={() => setShowRealVendorPopup(true)}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                {form?.realVendorName ? 'แก้ไข' : 'เลือก'}
-              </button>
-            </div>
           </div>
 
-          {/* ✅ Invoice lines table — flex:1 minHeight:0 เต็มพื้นที่ */}
+          {/* ✅ Invoice lines table */}
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-                <colgroup>{[3,7,9,5,21,10,9,12,8,8,8].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+                <colgroup>{[3,7,9,5,20,9,7,11,8,8,9,4].map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ background: '#f8f9fa' }}>
-                    {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total'].map(h => (
+                    {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total',''].map(h => (
                       <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {lines.map((line, idx) => (
-                    <tr key={idx}>
+                    <React.Fragment key={idx}>
+                    <tr>
                       {[['hl','hl'],['itemCode','text'],['amount','text'],['tax','text'],['desc','text'],['taxCode','text'],['whtCode','text'],['account','text'],['vat','text'],['wht','text'],['total','text']].map(([key, type]) => (
                         <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
                           {key === 'hl' ? (
@@ -2349,7 +2340,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 }}
                                 style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
                               {taxDropdownIdx === idx && (
-                                <div style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
+                                <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, width: '50px', minWidth: '50px', zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '170px', maxWidth: '50px', overflowY: 'auto' }}>
                                   {TAX_TYPE_OPTS.map(o => (
                                     <div key={o}
                                       onMouseDown={(e) => { e.preventDefault(); idx === 0 ? setLine1Field('tax', o) : setLineField(idx, 'tax', o); setTaxDropdownIdx(null); }}
@@ -2378,7 +2369,105 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                           )}
                         </td>
                       ))}
+                      {/* ── คอลัมน์ Real Vendor + Delete ── */}
+                      <td style={{ padding: '4px 2px 4px 0', borderBottom: '0.5px solid #f0f0f0', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '3px' }}>
+                          <button
+                            title="Real Vendor"
+                            onClick={() => {
+                              if (line.hl !== 'H') {
+                                idx === 0 ? setLine1Field('hl', 'H') : setLineField(idx, 'hl', 'H');
+                              }
+                              setRealVendorLineIdx(idx);
+                              setShowRealVendorPopup(true);
+                            }}
+                            style={{
+                              height: '26px', width: '26px', borderRadius: '6px',
+                              border: line.realVendorName ? '1px solid #97C459' : '0.5px solid #c5d8f0',
+                              background: line.realVendorName ? '#EAF3DE' : '#eef4fb',
+                              color: line.realVendorName ? '#27500A' : '#1a3a5c',
+                              cursor: (realVendorLineIdx >= 0 && realVendorLineIdx !== idx) ? 'not-allowed' : 'pointer',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              opacity: (realVendorLineIdx >= 0 && realVendorLineIdx !== idx) ? 0.35 : 1,
+                              pointerEvents: (realVendorLineIdx >= 0 && realVendorLineIdx !== idx) ? 'none' : 'auto',
+                              flexShrink: 0,
+                            }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                          </button>
+                          <button
+                            title="Delete row"
+                            disabled={lines.length <= 1}
+                            onClick={() => {
+                              if (lines.length <= 1) return;
+                              setLines(prev => {
+                                const next = prev.filter((_, i) => i !== idx);
+                                if (idx === 0 && next.length > 0) {
+                                  next[0] = { ...next[0], hl: 'H' };
+                                }
+                                return next;
+                              });
+                              if (realVendorLineIdx === idx) setRealVendorLineIdx(-1);
+                            }}
+                            style={{
+                              height: '26px', width: '26px', borderRadius: '6px',
+                              border: lines.length <= 1 ? '0.5px solid #e8eaf0' : '0.5px solid #f7c1c1',
+                              background: lines.length <= 1 ? '#f5f5f5' : '#FCEBEB',
+                              color: lines.length <= 1 ? '#ccc' : '#791F1F',
+                              cursor: lines.length <= 1 ? 'not-allowed' : 'pointer',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              flexShrink: 0,
+                            }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          </button>
+                        </div>
+                      </td>
                     </tr>
+                    {/* sub-row Real Vendor */}
+                    {line.realVendorName && (
+                      <tr style={{ background: '#f0faf5' }}>
+                        <td colSpan={12} style={{ padding: 0, borderBottom: '0.5px solid #97C459' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 2fr 1.5fr 0.6fr auto', gap: '8px', alignItems: 'end', padding: '6px 12px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Real Tax Invoice No.</span>
+                              <input type="text" value={line.realInvoiceNo || ''}
+                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Company Name</span>
+                              <input type="text" value={line.realVendorName || ''}
+                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorName', v) : setLineField(idx, 'realVendorName', v); }}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Tax ID</span>
+                              <input type="text" value={line.realVendorTaxid || ''}
+                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorTaxid', v) : setLineField(idx, 'realVendorTaxid', v); }}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'monospace' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Branch</span>
+                              <input type="text" value={line.realVendorBranch || ''}
+                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorBranch', v) : setLineField(idx, 'realVendorBranch', v); }}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', textAlign: 'center' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: 'transparent' }}>_</span>
+                              <button
+                                onClick={() => {
+                                  const clear = { realVendorCode: '', realVendorName: '', realVendorTaxid: '', realVendorBranch: '', realInvoiceNo: '', isVat: '' };
+                                  if (idx === 0) { Object.entries(clear).forEach(([k, v]) => setLine1Field(k, v)); }
+                                  else { setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], ...clear }; return next; }); }
+                                  setRealVendorLineIdx(-1);
+                                }}
+                                style={{ width: '26px', height: '26px', borderRadius: '50%', border: '0.5px solid #e8eaf0', background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                                title="ล้างค่า">×</button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -2388,13 +2477,27 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
         <RealVendorPopup
           show={showRealVendorPopup}
-          onClose={() => setShowRealVendorPopup(false)}
+          onClose={() => { setShowRealVendorPopup(false); }}
           onSelect={({ vendor, realInvoiceNo }) => {
-            setField('realVendorCode',   vendor['SM-Code'] || '');
-            setField('realVendorName',   vendor['Company Name'] || '');
-            setField('realVendorTaxid',  vendor['Tax ID'] || '');
-            setField('realVendorBranch', vendor['Branch'] || '');
-            setField('realInvoiceNo',    realInvoiceNo || '');
+            const taxCode0 = String(lines[realVendorLineIdx]?.taxCode || '');
+            const isVat = (taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%')) ? 'Yes' : 'No';
+            const rv = {
+              realVendorCode:   vendor['SM-Code'] || '',
+              realVendorName:   vendor['Company Name'] || '',
+              realVendorTaxid:  vendor['Tax ID'] || '',
+              realVendorBranch: vendor['Branch'] || '',
+              realInvoiceNo:    realInvoiceNo || '',
+              isVat,
+            };
+            if (realVendorLineIdx === 0) {
+              Object.entries(rv).forEach(([k, v]) => setLine1Field(k, v));
+            } else {
+              setLines(prev => {
+                const next = [...prev];
+                next[realVendorLineIdx] = { ...next[realVendorLineIdx], ...rv };
+                return next;
+              });
+            }
             setShowRealVendorPopup(false);
           }}
           smCodeItems={smCodeItems}
@@ -2652,7 +2755,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                                 onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
                                 style={inputStyle('100%', isView)} />
                               {taxDropdownIdx === idx && (
-                                <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 50, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
+                                <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
                                   {TAX_TYPE_OPTS.map(o => (
                                     <div key={o} onMouseDown={(e) => { e.preventDefault(); setLineField(idx, 'tax', o); setTaxDropdownIdx(null); }}
                                       style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: line[key] === o ? '#eef3fb' : 'white', whiteSpace: 'nowrap' }}>{o}</div>
@@ -3456,7 +3559,19 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         vat:             sumField(groupLines, 'vat'),
         wht:             sumField(groupLines, 'wht'),
         net:             sumField(groupLines, 'total'),
-        form_data:       { ...form, grtNum: grtNumVal, grn: grnVal, invoiceSuffix, isVat: (String(groupLines[0]?.taxCode || '').includes('VAT7%') && !String(groupLines[0]?.taxCode || '').includes('SVAT7%')) ? 'Yes' : 'No' },
+        form_data:       {
+          ...form,
+          grtNum: grtNumVal,
+          grn: grnVal,
+          invoiceSuffix,
+          // Real Vendor — ดึงจาก H line (groupLines[0]) ที่เลือกไว้
+          realVendorCode:   groupLines[0]?.realVendorCode   || '',
+          realVendorName:   groupLines[0]?.realVendorName   || '',
+          realVendorTaxid:  groupLines[0]?.realVendorTaxid  || '',
+          realVendorBranch: groupLines[0]?.realVendorBranch || '',
+          realInvoiceNo:    groupLines[0]?.realInvoiceNo    || '',
+          isVat:            groupLines[0]?.isVat            || '',
+        },
         lines:           groupLines,
         status:          'pending',
         created_by:      userName || currentUser?.email || '',

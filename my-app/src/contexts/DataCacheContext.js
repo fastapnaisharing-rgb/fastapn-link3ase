@@ -24,10 +24,43 @@ const TABLE_MAP = {
   supplier_list:   'supplier_list',
   vendor_category: 'vendor_category',
   VendorRule:       'Vendor_rule',
+  SmCodeList:       'sm_code_list',
+  ContractList:     'contract_list',
+  IeCodeList:       'ie_code_list',
+  sm_code_list:     'sm_code_list',
+  contract_list:    'contract_list',
+  ie_code_list:     'ie_code_list',
+  Vendor_rule:      'Vendor_rule',
+  user_roles:       'user_roles',
+  UserRoles:        'user_roles',
   notice_list:     'notice_list',
   sub_acc_list:    'sub_acc_list',
   cpc_list:        'cpc_list',
 };
+
+// ── TTL แยกตามประเภทข้อมูล ────────────────────────────────────────────────
+// Master data เปลี่ยนน้อย → cache นาน
+// Transaction data เปลี่ยนบ่อย → cache สั้น
+const CACHE_TTL_MAP = {
+  // Master data — 1 ชั่วโมง
+  SupplierList:   60 * 60 * 1000,
+  BranchList:     60 * 60 * 1000,
+  ItemcodeList:   60 * 60 * 1000,
+  SmCodeList:     60 * 60 * 1000,
+  VendorRule:     60 * 60 * 1000,
+  AccountList:    60 * 60 * 1000,
+  SubAccList:     60 * 60 * 1000,
+  CpcList:        60 * 60 * 1000,
+  IeCodeList:     60 * 60 * 1000,
+  VendorCategory: 60 * 60 * 1000,
+  ContractList:   60 * 60 * 1000,
+
+  // Config data — 30 นาที
+  CompanyList:    30 * 60 * 1000,
+  NoticeList:     30 * 60 * 1000,
+  UserRoles:      30 * 60 * 1000,
+};
+const DEFAULT_TTL = 15 * 60 * 1000; // 15 นาที สำหรับที่ไม่ได้ระบุ
 
 const DEDUP_IGNORE_FIELDS = ['id', 'created_at', 'updated_at', 'updated_by'];
 
@@ -73,8 +106,6 @@ export function DataCacheProvider({ children }) {
   const [loading, setLoading] = useState({});
   const [lastFetch, setLastFetch] = useState(initial.lastFetch);
 
-  const CACHE_TTL = 15 * 60 * 1000;
-
   useEffect(() => {
     saveToStorage(cache, lastFetch);
   }, [cache, lastFetch]);
@@ -82,7 +113,8 @@ export function DataCacheProvider({ children }) {
   const isStale = useCallback((collectionName) => {
     const last = lastFetch[collectionName];
     if (!last) return true;
-    return Date.now() - last > CACHE_TTL;
+    const ttl = CACHE_TTL_MAP[collectionName] || DEFAULT_TTL;
+    return Date.now() - last > ttl;
   }, [lastFetch]);
 
   const fetchCollection = useCallback(async (collectionName, forceRefresh = false) => {
@@ -94,7 +126,6 @@ export function DataCacheProvider({ children }) {
     setLoading(prev => ({ ...prev, [collectionName]: true }));
     try {
       const tableName = TABLE_MAP[collectionName] || collectionName;
-      // backend ของเราคืนทั้งตารางในครั้งเดียว ไม่ต้อง paginate แบบที่ Supabase บังคับ
       const allData = await apiFetch(`/${tableName}`);
       const dedupedData = dedupRows(collectionName, allData);
       setCache(prev => ({ ...prev, [collectionName]: dedupedData }));
