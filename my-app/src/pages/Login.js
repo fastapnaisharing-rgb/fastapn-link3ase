@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 const EMAILJS_SERVICE_ID = 'service_yuwj8rv';
-const EMAILJS_TEMPLATE_ID = 'template_qngm4gh';
+const EMAILJS_TEMPLATE_ID = 'template_pkr3hrc';
 const EMAILJS_PUBLIC_KEY = '15CbmTCQhpAihatXV';
 
 function Login() {
