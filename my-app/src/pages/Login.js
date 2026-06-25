@@ -28,7 +28,7 @@ function Login() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [changeLoading, setChangeLoading] = useState(false);
 
-  const { login } = useAuth();
+  const { login, completeLogin } = useAuth();
 
   // resolve username -> email via backend
   const resolveEmail = async (input) => {
@@ -120,9 +120,14 @@ function Login() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+      const meRes = await fetch(`${API}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${changeToken}` },
+      });
+      if (meRes.ok) {
+        const { user } = await meRes.json();
+        completeLogin(user);
+      }
       setShowChangePassword(false);
-      setSuccess('เปลี่ยน Password สำเร็จแล้วครับ กรุณา Login ด้วย Password ใหม่');
-      setPassword(''); setEmailOrUsername('');
     } catch (err) {
       setError(err.message);
     }

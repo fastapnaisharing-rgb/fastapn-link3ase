@@ -96,20 +96,24 @@ export function AuthProvider({ children }) {
   }, []);
 
   // ── login ─────────────────────────────────────────────────────────────────────
-  const login = async (email, password) => {
-    const res = await fetch(`${API_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Login failed');
+const login = async (email, password) => {
+  const res = await fetch(`${API_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Login failed');
 
-    sessionStorage.setItem(TOKEN_KEY, data.token);
+  sessionStorage.setItem(TOKEN_KEY, data.token);
+
+  if (!data.must_change_password) {
     setUserState(data.user);
     resetIdleTimer();
-    return data;
-  };
+  }
+
+  return data;
+};  
 
   // ── logout ────────────────────────────────────────────────────────────────────
   const logout = async () => {
