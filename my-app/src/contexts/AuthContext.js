@@ -115,6 +115,13 @@ const login = async (email, password) => {
   return data;
 };  
 
+  // ── completeLogin ─────────────────────────────────────────────────────────────
+  const completeLogin = (user) => {
+    setUserState(user);
+    resetIdleTimer();
+  };
+
+
   // ── logout ────────────────────────────────────────────────────────────────────
   const logout = async () => {
     await flushAllSync();
@@ -132,6 +139,7 @@ const login = async (email, password) => {
     authReady,
     login,
     logout,
+    completeLogin,
   };
 
   return (

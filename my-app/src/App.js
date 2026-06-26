@@ -14,6 +14,8 @@ import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db as supabase } from './lib/db';
 
+const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
   useEffect(() => {
@@ -137,15 +139,20 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
                 <span style={{ fontSize: '11px', fontWeight: '500', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>รออนุมัติ</span>
               </div>
               {pendingReqs.map(req => {
+                const isSignup = req.request_type === 'signup';
                 const folderLabel = DOC_FOLDER_LABELS[req.folder_key] || req.folder_key;
                 const initial = (req.requester_name || '?')[0].toUpperCase();
+                const title = isSignup
+                  ? `${req.requester_name} ขอสมัครเข้าใช้งานระบบ`
+                  : (isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`);
                 return (
                   <div key={req.id} style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', background: '#f8fbff' }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                      <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#e8f0fb', color: '#0C447C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
+                      <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: isSignup ? '#EAF3DE' : '#e8f0fb', color: isSignup ? '#27500A' : '#0C447C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', marginBottom: '2px' }}>
-                          {isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`}
+                          {isSignup && <span style={{ fontSize: '10px', background: '#EAF3DE', color: '#27500A', padding: '1px 6px', borderRadius: '20px', marginRight: '6px' }}>สมัครใหม่</span>}
+                          {title}
                         </div>
                         <div style={{ fontSize: '11px', color: '#888', marginBottom: isOwner ? '10px' : '0' }}>
                           {req.requester_name} · {formatTime(req.created_at)}
@@ -268,8 +275,12 @@ function MainApp() {
 
   const fetchRequests = async () => {
     try {
-      const { data } = await supabase.from('access_requests').select('*').order('created_at', { ascending: false });
-      setRequests(data || []);
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${API}/api/access_requests?order=created_at.desc`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setRequests(Array.isArray(data) ? data : []);
     } catch (err) { console.error('fetchRequests error:', err); }
   };
 
@@ -293,22 +304,44 @@ function MainApp() {
 
   const handleApprove = async (req) => {
     try {
-      await supabase.from('doc_access_override').upsert({
-        user_id: req.requester_id, folder_key: req.folder_key, allowed: true,
-        updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id,folder_key' });
-      await supabase.from('access_requests').update({
-        status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
-      }).eq('id', req.id);
+      const token = sessionStorage.getItem('fastapn_token');
+      if (req.request_type === 'signup') {
+        const res = await fetch(`${API}/api/auth/approve-signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ userId: req.ref_user_id, action: 'approve' }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+      } else {
+        await supabase.from('doc_access_override').upsert({
+          user_id: req.requester_id, folder_key: req.folder_key, allowed: true,
+          updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,folder_key' });
+        await supabase.from('access_requests').update({
+          status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
+        }).eq('id', req.id);
+      }
       fetchRequests();
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
   const handleReject = async (req) => {
     try {
-      await supabase.from('access_requests').update({
-        status: 'rejected', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
-      }).eq('id', req.id);
+      const token = sessionStorage.getItem('fastapn_token');
+      if (req.request_type === 'signup') {
+        const res = await fetch(`${API}/api/auth/approve-signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ userId: req.ref_user_id, action: 'reject' }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+      } else {
+        await supabase.from('access_requests').update({
+          status: 'rejected', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
+        }).eq('id', req.id);
+      }
       fetchRequests();
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };

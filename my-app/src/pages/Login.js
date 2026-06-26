@@ -28,6 +28,12 @@ function Login() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [changeLoading, setChangeLoading] = useState(false);
 
+  // Sign up
+  const [signupForm, setSignupForm] = useState({ username: '', email: '', password: '', confirmPassword: '' });
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showSignupConfirm, setShowSignupConfirm] = useState(false);
+  const [signupLoading, setSignupLoading] = useState(false);
+
   const { login, completeLogin } = useAuth();
 
   // resolve username -> email via backend
@@ -134,6 +140,34 @@ function Login() {
     setChangeLoading(false);
   };
 
+  const handleSignup = async () => {
+    setError('');
+    if (!signupForm.username.trim()) { setError('กรุณากรอก Username ครับ'); return; }
+    if (!signupForm.email.trim() || !signupForm.email.includes('@')) { setError('กรุณากรอก Email ให้ถูกต้องครับ'); return; }
+    if (signupForm.password.length < 6) { setError('Password ต้องมีอย่างน้อย 6 ตัวอักษรครับ'); return; }
+    if (signupForm.password !== signupForm.confirmPassword) { setError('Password ไม่ตรงกันครับ'); return; }
+    setSignupLoading(true);
+    try {
+      const res = await fetch(`${API}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: signupForm.username.trim().toLowerCase(),
+          email: signupForm.email.trim().toLowerCase(),
+          password: signupForm.password,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+      setSuccess('ส่งคำขอสำเร็จแล้วครับ รอ Owner Approve ก่อน Login ได้เลย');
+      setSignupForm({ username: '', email: '', password: '', confirmPassword: '' });
+      setMode('login');
+    } catch (err) {
+      setError(err.message);
+    }
+    setSignupLoading(false);
+  };
+
   const switchMode = (m) => {
     setMode(m); setError(''); setSuccess('');
     setEmailOrUsername(''); setPassword('');
@@ -203,8 +237,27 @@ function Login() {
             <button style={S.btn} type="submit" disabled={loading}>{loading ? 'กำลัง Login...' : 'Login'}</button>
           </form>
         ) : (
-          <div style={{ textAlign: 'center', padding: '20px 0', color: '#888', fontSize: '13px' }}>
-            กรุณาติดต่อ Admin เพื่อสร้าง Account ครับ
+          <div>
+            <label style={S.label}>Username</label>
+            <input style={S.input} type="text" value={signupForm.username} onChange={e => setSignupForm({...signupForm, username: e.target.value})} placeholder="username" />
+            <label style={S.label}>Email</label>
+            <input style={S.input} type="email" value={signupForm.email} onChange={e => setSignupForm({...signupForm, email: e.target.value})} placeholder="email@example.com" />
+            <label style={S.label}>Password</label>
+            <div style={{ position: 'relative', marginBottom: '16px' }}>
+              <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showSignupPassword ? 'text' : 'password'} value={signupForm.password} onChange={e => setSignupForm({...signupForm, password: e.target.value})} placeholder="อย่างน้อย 6 ตัวอักษร" />
+              <button type="button" onClick={() => setShowSignupPassword(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
+                {showSignupPassword ? <EyeOpen /> : <EyeClosed />}
+              </button>
+            </div>
+            <label style={S.label}>Confirm Password</label>
+            <div style={{ position: 'relative', marginBottom: '16px' }}>
+              <input style={{ ...S.input, marginBottom: 0, paddingRight: '40px' }} type={showSignupConfirm ? 'text' : 'password'} value={signupForm.confirmPassword} onChange={e => setSignupForm({...signupForm, confirmPassword: e.target.value})} placeholder="พิมพ์ Password อีกครั้ง" />
+              <button type="button" onClick={() => setShowSignupConfirm(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
+                {showSignupConfirm ? <EyeOpen /> : <EyeClosed />}
+              </button>
+            </div>
+            <button style={S.btn} onClick={handleSignup} disabled={signupLoading}>{signupLoading ? 'กำลังส่งคำขอ...' : 'Sign up'}</button>
+            <div style={{ textAlign: 'center', marginTop: '12px', fontSize: '12px', color: '#888' }}>หลัง Sign up รอ Owner Approve ก่อน Login ได้ครับ</div>
           </div>
         )}
       </div>
