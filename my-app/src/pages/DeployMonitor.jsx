@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-const WS_URL     = 'ws://10.101.87.126:9001';
-const HEALTH_URL = 'http://10.101.87.126:4000/health';
+const WEBHOOK_URL = 'http://10.101.87.126:9000';
+const HEALTH_URL  = 'http://10.101.87.126:4000/health';
+const POLL_MS     = 2000;
 
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
@@ -50,55 +51,47 @@ function Bar({ pct }) {
 }
 
 export default function DeployMonitor({ inline = false, onClose }) {
-  const [history, setHistory]     = useState([]);
-  const [current, setCurrent]     = useState(null);
+  const [history, setHistory]       = useState([]);
+  const [current, setCurrent]       = useState(null);
   const [selectedId, setSelectedId] = useState(null);
-  const [connected, setConnected] = useState(false);
-  const [elapsed, setElapsed]     = useState(0);
-  const [health, setHealth]       = useState(null);
+  const [connected, setConnected]   = useState(false);
+  const [elapsed, setElapsed]       = useState(0);
+  const [health, setHealth]         = useState(null);
+  const [deploying, setDeploying]   = useState(false);
   const logRef   = useRef(null);
-  const wsRef    = useRef(null);
   const timerRef = useRef(null);
 
   const scrollBottom = useCallback(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, []);
 
+  // Poll /status every 2s
   useEffect(() => {
-    const connect = () => {
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-      ws.onopen  = () => setConnected(true);
-      ws.onclose = () => { setConnected(false); setTimeout(connect, 3000); };
-      ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'init') {
-          setHistory(msg.history || []);
-          setCurrent(msg.current || null);
-          if (msg.current) setSelectedId(msg.current.id);
-          else if (msg.history?.length) setSelectedId(msg.history[0].id);
-        }
-        if (msg.type === 'deploy_start') {
-          setCurrent(msg.deploy);
-          setHistory(prev => [msg.deploy, ...prev.filter(d => d.id !== msg.deploy.id)].slice(0,20));
-          setSelectedId(msg.deploy.id);
-          setElapsed(0);
-        }
-        if (msg.type === 'log') {
-          setHistory(prev => prev.map(d => d.id === msg.deployId ? { ...d, lines:[...(d.lines||[]),msg.line] } : d));
-          setCurrent(prev => prev?.id === msg.deployId ? { ...prev, lines:[...(prev.lines||[]),msg.line] } : prev);
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch(`${WEBHOOK_URL}/status`);
+        const data = await r.json();
+        if (cancelled) return;
+        setConnected(true);
+        setHistory(data.history || []);
+        setCurrent(data.current || null);
+        if (data.current) {
+          setSelectedId(data.current.id);
           setTimeout(scrollBottom, 50);
+        } else if (!selectedId && data.history?.length) {
+          setSelectedId(data.history[0].id);
         }
-        if (msg.type === 'deploy_end') {
-          setCurrent(null);
-          setHistory(prev => prev.map(d => d.id === msg.deploy.id ? msg.deploy : d));
-        }
-      };
+      } catch {
+        if (!cancelled) setConnected(false);
+      }
     };
-    connect();
-    return () => { wsRef.current?.close(); clearInterval(timerRef.current); };
+    poll();
+    const iv = setInterval(poll, POLL_MS);
+    return () => { cancelled = true; clearInterval(iv); };
   }, [scrollBottom]);
 
+  // Elapsed timer
   useEffect(() => {
     clearInterval(timerRef.current);
     if (current?.status === 'running') {
@@ -109,6 +102,7 @@ export default function DeployMonitor({ inline = false, onClose }) {
     return () => clearInterval(timerRef.current);
   }, [current]);
 
+  // Poll /health every 30s
   useEffect(() => {
     const fetch_ = async () => {
       try { const r = await fetch(HEALTH_URL); setHealth(await r.json()); }
@@ -119,7 +113,17 @@ export default function DeployMonitor({ inline = false, onClose }) {
     return () => clearInterval(iv);
   }, []);
 
-  const selectedDeploy = selectedId ? (history.find(d => d.id === selectedId) || current) : null;
+  // Trigger deploy
+  const handleDeploy = async () => {
+    if (deploying || current) return;
+    setDeploying(true);
+    try {
+      await fetch(`${WEBHOOK_URL}/`, { method: 'POST' });
+    } catch { }
+    setDeploying(false);
+  };
+
+  const selectedDeploy = selectedId ? (history.find(d => d.id === selectedId) || current) : current || (history[0] || null);
   const statusKey = current ? 'running' : selectedDeploy?.status || 'idle';
   const sc = STATUS[statusKey] || STATUS.idle;
   const lines = selectedDeploy?.lines || [];
@@ -146,11 +150,17 @@ export default function DeployMonitor({ inline = false, onClose }) {
           <span style={{ fontSize:'12px', fontWeight:'500', color:'#1a3a5c' }}>Deploy Monitor</span>
           <span style={{ display:'inline-flex', alignItems:'center', gap:'4px', background: connected ? '#EAF3DE' : '#FCEBEB', color: connected ? '#0F6E56' : '#791F1F', fontSize:'10px', padding:'2px 8px', borderRadius:'20px', fontWeight:'500' }}>
             <span style={{ width:'5px', height:'5px', borderRadius:'50%', background: connected ? '#0F6E56' : '#c0392b', display:'inline-block' }} />
-            {connected ? 'Connected' : 'Reconnecting...'}
+            {connected ? 'Connected' : 'Disconnected'}
           </span>
           {current && <span style={{ fontSize:'11px', color:'#888' }}>⏱ {formatDuration(elapsed)}</span>}
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+          <button
+            onClick={handleDeploy}
+            disabled={!!current || deploying || !connected}
+            style={{ fontSize:'10px', padding:'3px 12px', borderRadius:'20px', border:'none', cursor: (current || deploying || !connected) ? 'not-allowed' : 'pointer', background: (current || deploying || !connected) ? '#e0e0e0' : '#185FA5', color: (current || deploying || !connected) ? '#aaa' : 'white', fontWeight:'500' }}>
+            {current ? 'Deploying...' : '🚀 Deploy'}
+          </button>
           <span style={{ background:sc.bg, color:sc.color, fontSize:'10px', padding:'2px 8px', borderRadius:'20px', fontWeight:'500', display:'inline-flex', alignItems:'center', gap:'4px' }}>
             <span style={{ width:'5px', height:'5px', borderRadius:'50%', background:sc.dot, display:'inline-block', animation: sc.pulse ? 'dm-pulse 1.2s infinite' : 'none' }} />
             {sc.label}
@@ -226,19 +236,16 @@ export default function DeployMonitor({ inline = false, onClose }) {
 
         {/* Col 3: Status Panel */}
         <div style={{ display:'flex', flexDirection:'column', background:'#f8f9fa', overflow:'hidden' }}>
-
           <div style={S.sectionLabel}><span style={S.sectionText}>Services</span></div>
 
-          {/* Webhook */}
           <div style={S.row}>
             <div style={S.rowTitle}>
               <div style={S.label}><Dot ok={connected} /><span style={S.name}>Webhook</span></div>
               <span style={{ fontSize:'9px', color: connected ? '#0F6E56' : '#c0392b' }}>{connected ? 'Connected' : 'Down'}</span>
             </div>
-            <div style={S.sub}>:9000 · :9001</div>
+            <div style={S.sub}>:9000</div>
           </div>
 
-          {/* Backend */}
           <div style={S.row}>
             <div style={S.rowTitle}>
               <div style={S.label}><Dot ok={!!health} /><span style={S.name}>Backend API</span></div>
@@ -247,7 +254,6 @@ export default function DeployMonitor({ inline = false, onClose }) {
             <div style={S.sub}>:4000{health ? ` · ${formatDuration(health.uptime)}` : ''}</div>
           </div>
 
-          {/* Database */}
           <div style={S.row}>
             <div style={S.rowTitle}>
               <div style={S.label}><Dot ok={health?.db?.status === 'ok'} /><span style={S.name}>Database</span></div>
@@ -258,7 +264,6 @@ export default function DeployMonitor({ inline = false, onClose }) {
             <div style={S.sub}>PostgreSQL 17</div>
           </div>
 
-          {/* Git */}
           <div style={S.row}>
             <div style={S.rowTitle}>
               <span style={S.name}>Git</span>
@@ -267,7 +272,6 @@ export default function DeployMonitor({ inline = false, onClose }) {
             <div style={{ fontSize:'9px', color:'#aaa', fontFamily:'monospace' }}>{health?.git?.commit || '-'} · {health?.git?.author || '-'}</div>
           </div>
 
-          {/* Last Deploy */}
           <div style={S.row}>
             <div style={S.rowTitle}>
               <div style={S.label}><Dot ok={history[0]?.status === 'success'} /><span style={S.name}>Last Deploy</span></div>
@@ -278,10 +282,8 @@ export default function DeployMonitor({ inline = false, onClose }) {
             <div style={S.sub}>{history[0] ? `${formatTime(history[0].startedAt)} · ${formatDuration(history[0].durationSec)}` : '-'}</div>
           </div>
 
-          {/* Resources */}
           <div style={{ ...S.sectionLabel, marginTop:'auto' }}><span style={S.sectionText}>Resources</span></div>
 
-          {/* RAM */}
           <div style={S.row}>
             <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'1px' }}>
               <span style={S.name}>RAM</span>
@@ -291,7 +293,6 @@ export default function DeployMonitor({ inline = false, onClose }) {
             <div style={S.sub}>{health ? `${health.ram.used} MB / ${health.ram.total} MB` : '-'}</div>
           </div>
 
-          {/* CPU */}
           <div style={{ ...S.row, flex:1, borderBottom:'none' }}>
             <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'1px' }}>
               <span style={S.name}>CPU</span>
@@ -300,7 +301,6 @@ export default function DeployMonitor({ inline = false, onClose }) {
             <Bar pct={health?.cpu?.pct} />
             <div style={S.sub}>Uptime: {health ? formatDuration(health.uptime) : '-'}</div>
           </div>
-
         </div>
       </div>
     </div>
