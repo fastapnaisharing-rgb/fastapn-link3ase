@@ -518,8 +518,7 @@ const computeNextSyRunning = async () => {
     useEffect(() => { if (tab === 'iecode') refreshNextSyRunning(); }, [tab]);
 
     const handleTabChange = (t) => { setTab(t); };
-    const getOptions = (field) => [...new Set(items.map(i => i[field] || '').filter(v => v))];
-
+    const getOptions = (field) => [...new Set((dataMap[tab] || []).map(i => i[field] || '').filter(v => v))];
 
     // ── ส่วนที่เหลือ (buildPreviewRows, exportToExcel, handlers, render) เหมือนเดิมทุกอย่าง ──
     const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {

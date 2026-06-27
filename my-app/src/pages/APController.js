@@ -9,6 +9,22 @@ import { registerSyncFlush } from '../contexts/syncRegistry';
 
 const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
 
+const buildDisGDesc = (disG, bd1, bd2, bd3) => {
+  const bParts = [bd1 || '', bd2 || '', bd3 || ''];
+  if (!disG?.trim()) return bParts.filter(Boolean).join(' ');
+  const cParts = disG.split('|');
+  const parts = cParts
+    .map((c, i) => {
+      const cVal = c.trim();
+      const bVal = bParts[i]?.trim() || '';
+      if (!cVal || cVal === '-' || cVal === '—') return null;
+      if (!bVal) return null; // ← เพิ่มบรรทัดนี้: BDes ว่าง → skip ทั้ง pair
+      return `${cVal} ${bVal}`;
+    })
+    .filter(Boolean);
+  return parts.join(' ');
+};
+
 const BRANCH_EDIT = [
   ['Branch Code',                           'Branch Code',        3],
   ['BU Code',                               'BU Code',            3],
@@ -510,7 +526,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   const [nextCode, setNextCode] = useState('');
   const [viewTarget, setViewTarget] = useState(null);
   const emptyForm = { bu: '', description: '', cpc: '', account: '', sub: '', dis_g: '', i_and_g: '', value: '', oth: '', spi1: '', spec_tx: '', keyword: '',
-    custom_item: '', blank_cell: '',
+    item: '',
     dis_g_desc: '', i_and_g_desc: '', value_desc: '', oth_desc: '', spi1_desc: '', spec_tx_desc: '' };
   const [form, setForm] = useState(emptyForm);
   const inputRef = useRef(null);
@@ -548,34 +564,34 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   }, [show, onClose, view]);
   useEffect(() => { if (active < 0 || !listRef.current) return; listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' }); }, [active]);
   useEffect(() => {
-    if (show && view === 'new') {
-      setNextCode('');
-      setForm({ ...emptyForm, bu: bu || '' });
-      computeNextCode();
-    }
-  }, [show, view, bu]);
-
-  useEffect(() => {
+    if (show && view === 'new') { computeNextCode(); setForm({ ...emptyForm, bu: bu || '' }); }
     if (show && (view === 'view' || view === 'edit') && viewTarget) {
       const f = { ...emptyForm };
-      Object.keys(f).forEach(k => { if (viewTarget[k] !== undefined) f[k] = String(viewTarget[k] ?? ''); });
+      Object.keys(f).forEach(k => { if (viewTarget[k] !== undefined) f[k] = viewTarget[k] || ''; });
       setForm(f);
     }
-  }, [show, view, viewTarget]);
+  }, [show, view, bu, viewTarget]);
+
+
+
 
   const computeNextCode = async () => {
-    let allCodes = [], from = 0;
-    while (true) {
-      const { data } = await supabase.from('itemcode_list').select('code').range(from, from + 999);
-      if (!data || data.length === 0) break;
-      allCodes = [...allCodes, ...data.map(d => d.code || '')];
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-    const nums = allCodes.filter(c => /^C\d{7}$/.test(c)).map(c => parseInt(c.replace('C', ''), 10)).sort((a, b) => a - b);
-    if (!nums.length) { setNextCode('C0000001'); return; }
-    for (let i = 0; i < nums.length - 1; i++) { if (nums[i + 1] - nums[i] > 1) { setNextCode(`C${String(nums[i] + 1).padStart(7, '0')}`); return; } }
-    setNextCode(`C${String(nums[nums.length - 1] + 1).padStart(7, '0')}`);
+    try {
+      const data = await apiFetch('/itemcode_list');
+      const allCodes = (data || []).map(d => d.code || '');
+      const nums = allCodes
+        .filter(c => /^C\d{7}$/.test(c))
+        .map(c => parseInt(c.replace('C', ''), 10))
+        .sort((a, b) => a - b);
+      if (!nums.length) { setNextCode('C0000001'); return; }
+      for (let i = 0; i < nums.length - 1; i++) {
+        if (nums[i + 1] - nums[i] > 1) {
+          setNextCode(`C${String(nums[i] + 1).padStart(7, '0')}`);
+          return;
+        }
+      }
+      setNextCode(`C${String(nums[nums.length - 1] + 1).padStart(7, '0')}`);
+    } catch (err) { console.error('computeNextCode error:', err); }
   };
 
   const handleSave = async () => {
@@ -596,11 +612,6 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     setSaving(false);
   };
 
-  const openForm = (item, mode) => {
-    setViewTarget(item);
-    setView(mode);
-  };
-
   const handleDelete = async (item) => {
     if (!window.confirm(`ต้องการลบ "${item.code} — ${item.description || ''}" ใช่หรือไม่?`)) return;
     try {
@@ -608,6 +619,11 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       if (error) throw error;
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
     } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
+  };
+
+  const openForm = (item, mode) => {
+    setViewTarget(item);
+    setView(mode);
   };
 
   if (!show) return null;
@@ -627,7 +643,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
 
-  const COLS = [['code','Code','100px'],['bu','BU','60px'],['description','Description',''],['cpc','CPC','75px'],['account','Account','95px'],['sub','SUB','70px'],['spec_tx','SPEC-TX','80px'],['_fav','★','36px'],['_action','Action','100px']];
+  const COLS = [['code','Code','100px'],['bu','BU','60px'],['description','Description',''],['cpc','CPC','75px'],['account','Account','95px'],['sub','SUB','70px'],['spec_tx','SPEC-TX','80px'],['_fav','★','36px'],['_action','','126px']];
   const FIELD_OPTIONS = {};
   ITEM_COMBO_FIELDS.forEach(key => { FIELD_OPTIONS[key] = [...new Set(itemcodeItems.map(i => i[key]).filter(v => v !== undefined && v !== null && String(v).trim() !== ''))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })); });
 
@@ -677,7 +693,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
           </div>
 
           {/* Row 2: Description | Cpc | Account | Sub Acc */}
-          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 50px 90px 70px 100px 70px 90px', border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr 60px 120px 80px 120px 80px 120px', border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
             <div style={LBL}>Description</div>
             <div style={{ ...cellY, borderRight: '0.5px solid #e8eaf0' }}>{inp('description')}</div>
             <div style={LBL}>Cpc</div>
@@ -695,20 +711,17 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
             ))}
           </div>
 
-          {/* Row 4: combo (input + datalist) 6 ช่อง */}
+          {/* Row 4: combo 6 ช่อง */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px' }}>
             {ITEM_COMBO_FIELDS.map((key) => (
-              <ICCombo key={key} value={form[key] ?? ''} options={FIELD_OPTIONS[key] || []}
-                readOnly={isReadOnly} onChange={v => setF(key, v)} />
+              <ICCombo key={key} value={form[key] ?? ''} options={FIELD_OPTIONS[key] || []} readOnly={isReadOnly} onChange={v => setF(key, v)} />
             ))}
           </div>
 
           {/* Row 5: Custom Item | Black Cell */}
-          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr 140px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
             <div style={LBL}>Custom Item</div>
-            <div style={{ background: 'white', borderRight: '0.5px solid #e8eaf0' }}>{inp('custom_item', { style: { background: 'white' } })}</div>
-            <div style={LBL}>Black Cell</div>
-            <div style={{ background: 'white' }}>{inp('blank_cell', { style: { background: 'white' } })}</div>
+            <div style={{ background: 'white' }}>{inp('item', { style: { background: 'white' } })}</div>
           </div>
 
           {/* Row 6-8: Description boxes (dis_g_desc ฯลฯ) */}
@@ -766,7 +779,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
                   {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
                 </div>
                 {canEdit && (
-                  <button onClick={() => { setNextCode(''); setForm({ ...emptyForm, bu: bu || '' }); computeNextCode(); setView('new'); }} style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  <button onClick={() => { setView('new'); setForm({ ...emptyForm, bu: bu || '' }); }} style={{ height: '36px', padding: '0 16px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Item
                   </button>
                 )}
@@ -810,6 +823,12 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
                                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                 </button>
                               )}
+                              {canDelete && (
+                                <button title="Delete" onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+                                  style={{ width: '28px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                                </button>
+                              )}
                             </div>
                           ) : key === 'code' ? (
                             <span style={{ background: isAct ? '#1a3a5c' : (favItems.includes(item) ? '#fff3cd' : '#f0f3f8'), color: isAct ? 'white' : '#1a3a5c', borderRadius: '5px', padding: '2px 7px', fontSize: '11px', fontWeight: '600' }}>{item[key] || '-'}</span>
@@ -834,6 +853,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     </div>
   );
 }
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -892,12 +912,16 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   if (!itemData) return line;
   const rawSub = String(itemData.sub ?? '').trim();
   const subVal = rawSub.toUpperCase() === 'SUB' ? String(vendorInfo?.['Sub Acc'] ?? '').trim() : rawSub;
-  const accountVal = [String(itemData.cpc ?? '').trim(), String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
+  const rawCpc = String(itemData.cpc ?? '').trim();
+  const spi1 = String(itemData.spi1 ?? '').trim().toUpperCase();
+  const effectiveCpc = form?.branchCpc?.trim()? form.branchCpc.trim(): (spi1 === 'C-CPC' && form?.headerCpc?.trim())? form.headerCpc.trim(): rawCpc;
+  const accountVal = [effectiveCpc, String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
   const hasIB = form?.branchIBLabel && form.branchIBLabel !== '-';
   const isIBAll = form?.branchIBLabel === 'IB-ALL';
   const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
   const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
-  const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), form?.backDesc1 ?? '', form?.backDesc2 ?? '', form?.backDesc3 ?? '', ibLabel].filter(Boolean).join(' ');
+  const disGDesc = buildDisGDesc(itemData?.dis_g, form?.backDesc1, form?.backDesc2, form?.backDesc3);
+  const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
   const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
   const hasITC = notices.includes('ITC');
   const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
@@ -998,7 +1022,7 @@ const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
 const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
 
 
-function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', fetchCollection, userName = '' }) {
+function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', bookFilter = '', fetchCollection, userName = '' }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const canEdit = isOwner || isAdmin || isEditor;
   const canDelete = isOwner || isAdmin;
@@ -1041,9 +1065,14 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   if (!show) return null;
 
   const buLower = String(bu ?? '').toLowerCase();
-  const buFiltered = buLower
-    ? supplierItems.filter(i => String(i['Code'] ?? '').toLowerCase().startsWith(buLower + '-'))
-    : supplierItems;
+  const buFiltered = bookFilter
+    ? supplierItems.filter(i => {
+        const prefix = String(i['Code'] ?? '').split('-')[0].toUpperCase();
+        return prefix === bookFilter.toUpperCase();
+      })
+    : buLower
+      ? supplierItems.filter(i => String(i['Code'] ?? '').toLowerCase().startsWith(buLower + '-'))
+      : supplierItems;
 
   const q = query.trim().toLowerCase();
   const filtered0 = q
@@ -2185,6 +2214,8 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
 // CalcPopup — mini calculator popup สำหรับ Amount field
 // ─────────────────────────────────────────────────────────────────────────────
 function CalcPopup({ show, anchorPos, initValue = '', onApply, onClose }) {
+  
+  
   const [display, setDisplay] = useState('0');
   const [history, setHistory] = useState('');
   const [operand, setOperand] = useState(null);
@@ -2393,6 +2424,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const itemCodeRef = useRef(null);
   const lineItemCodeRefs = useRef([]);
   const lineAmountRefs   = useRef([]);
+  const lineRealInvoiceRefs = useRef([]);
   const addLineAndFocus = () => {
     setLines(prev => {
       const next = [...prev, { hl: 'L', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
@@ -2403,8 +2435,42 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
-  const handleMoneyChange = (idx, key, val) => { let v = val.replace(/[^0-9.]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLineField(idx, key, v); };
-  const handleMoneyBlur  = (idx, key, val) => { if (val === '' || val === '.') { setLineField(idx, key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
+  const handleMoneyChange = (idx, key, val) => { let v = val.replace(/[^0-9.-]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLineField(idx, key, v); };
+  const handleMoneyBlur = (idx, key, val) => {
+    if (val === '' || val === '.') { setLineField(idx, key, ''); return; }
+    if (key === 'amount') {
+      const itemCode = lines[idx]?.itemCode?.trim();
+      const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCode?.toUpperCase());
+      const isVRV = String(itemData?.value ?? '').trim().toUpperCase() === 'V-RV';
+      if (isVRV) {
+        const vatAmount = parseFloat(val) || 0;
+        const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
+        const taxCode0 = lines[idx]?.taxCode || '';
+        const isVatLine = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+        const autoGrn = (isVatLine && isAutoGrt) ? grnPreview : '';
+        setLines(prev => {
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            hl: 'H', 
+            amount: amountExVat.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            realVendorName: 'กรมศุลกากร',
+            realVendorTaxid: '0',
+            realVendorBranch: '0',
+            realInvoiceNo: '',
+            realVendorCode: '',
+            realGrn: autoGrn,
+            isVat: isVatLine ? 'Yes' : 'No',
+          };
+          return next;
+          });
+          setTimeout(() => lineRealInvoiceRefs.current[idx]?.focus(), 150);  // ← ตรงนี้
+          return;
+      }
+    }
+    const num = Math.round(parseFloat(val) * 100) / 100;
+    setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  };
   const handleMoneyFocus = (idx, key, val) => { setLineField(idx, key, val.replace(/,/g, '')); };
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -2476,18 +2542,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     if (!itemData) return line;
     const rawSub = String(itemData.sub ?? '').trim();
     const subVal = rawSub.toUpperCase() === 'SUB' ? String(vendorInfo?.['Sub Acc'] ?? '').trim() : rawSub;
-    const accountVal = [String(itemData.cpc ?? '').trim(), String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
+    const rawCpc = String(itemData.cpc ?? '').trim();
+    const spi1 = String(itemData.spi1 ?? '').trim().toUpperCase();
+    const effectiveCpc = form?.branchCpc?.trim() ? form.branchCpc.trim(): (spi1 === 'C-CPC' && form?.headerCpc?.trim()) ? form.headerCpc.trim() : rawCpc;
+    const accountVal = [effectiveCpc, String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
     const hasIB = form?.branchIBLabel && form.branchIBLabel !== '-';
     const isIBAll = form?.branchIBLabel === 'IB-ALL';
     const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
     const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
-    const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), form?.backDesc1 ?? '', form?.backDesc2 ?? '', form?.backDesc3 ?? '', ibLabel].filter(Boolean).join(' ');
+    const disGDesc = buildDisGDesc(itemData?.dis_g, form?.backDesc1, form?.backDesc2, form?.backDesc3);
+    const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
     const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
-    const hasITC = notices.includes('ITC');
+    const hasITC   = notices.includes('ITC');
     const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
-    const hasTC = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
+    const hasTC    = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
     let sourceStr = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
-    if (hasTC || hasVITEM) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase();
+    if (hasTC || hasVITEM || hasITC) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase()
     if (form?.invTax?.trim()) sourceStr = String(form.invTax).trim().toUpperCase();
     if (line.tax?.trim()) sourceStr = String(line.tax).trim().toUpperCase();
     const vatChar = sourceStr[0] ?? '';
@@ -2519,7 +2589,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     form?.period, form?.invTax,
     form?.backDesc1, form?.backDesc2, form?.backDesc3,
     form?.branchNo, form?.branchDirectLabel, form?.branchIBLabel,
-    vendorInfo, itemcodeItems,
+    form?.headerCpc, form?.branchCpc,
+    vendorInfo, itemcodeItems?.length,
   ]);
 
   const handleSubmit = async () => {
@@ -2904,6 +2975,31 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Real Tax Invoice No.</span>
                               <input type="text" value={line.realInvoiceNo || ''}
+                                ref={el => lineRealInvoiceRefs.current[idx] = el}
+                                onKeyDown={e => {
+                                  if (e.key === 'Tab' && line.realInvoiceNo?.trim()) {
+                                    e.preventDefault();
+                                    const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
+                                    const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
+                                    const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    setLines(prev => {
+                                    const next = [...prev, {
+                                      hl: 'H',
+                                      itemCode: 'C0001564',
+                                      amount: negFormatted,
+                                      tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                    }, {
+                                      hl: 'L',
+                                      itemCode: 'C0001631',
+                                      amount: '',
+                                      tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                    }];
+                                    const newIdx = next.length - 1;
+                                    setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
+                                    return next;
+                                    });
+                                  }
+                                }}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                             </div>
@@ -2998,6 +3094,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               });
             }
             setShowRealVendorPopup(false);
+          
           }}
           smCodeItems={smCodeItems}
         />
@@ -3096,8 +3193,41 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const removeLine = (idx) => setLines(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
 
   const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
-  const handleMoneyChange = (idx, key, val) => { let v = val.replace(/[^0-9.]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLineField(idx, key, v); };
-  const handleMoneyBlur  = (idx, key, val) => { if (val === '' || val === '.') { setLineField(idx, key, ''); return; } const num = Math.round(parseFloat(val) * 100) / 100; setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); };
+  const handleMoneyChange = (idx, key, val) => { let v = val.replace(/[^0-9.-]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLineField(idx, key, v); };
+  const handleMoneyBlur = (idx, key, val) => {
+    if (val === '' || val === '.') { setLineField(idx, key, ''); return; }
+    if (key === 'amount') {
+      const itemCode = lines[idx]?.itemCode?.trim();
+      const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCode?.toUpperCase());
+      const isVRV = String(itemData?.value ?? '').trim().toUpperCase() === 'V-RV';
+      if (isVRV) {
+        const vatAmount = parseFloat(val) || 0;
+        const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
+        const taxCode0 = lines[idx]?.taxCode || '';
+        const isVatLine = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+        const autoGrn = '';
+        setLines(prev => {
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            hl: 'H', 
+            amount: amountExVat.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            realVendorName: 'กรมศุลกากร',
+            realVendorTaxid: '0',
+            realVendorBranch: '0',
+            realInvoiceNo: '',
+            realVendorCode: '',
+            realGrn: autoGrn,
+            isVat: isVatLine ? 'Yes' : 'No',
+          };
+          return next;
+        });
+        return;
+      }
+    }
+    const num = Math.round(parseFloat(val) * 100) / 100;
+    setLineField(idx, key, num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  };
   const handleMoneyFocus = (idx, key, val) => { setLineField(idx, key, val.replace(/,/g, '')); };
 
   // recalc ทุกครั้งที่ itemCode/amount/tax/header เปลี่ยน (เฉพาะตอน edit)
@@ -3683,6 +3813,24 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
             </button>
           </div>
         </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
+          <label style={{ fontSize: '11px', color: '#888' }}>CPC</label>
+          <input type="text" value={form.headerCpc || ''} onChange={e => setField('headerCpc', e.target.value)}
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '100px' }}>
+          <label style={{ fontSize: '11px', color: '#888' }}>Account</label>
+          <input type="text" value={form.headerAccount || ''} onChange={e => setField('headerAccount', e.target.value)}
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
+          <label style={{ fontSize: '11px', color: '#888' }}>SubAcc</label>
+          <input type="text" value={form.headerSubAcc || ''} onChange={e => setField('headerSubAcc', e.target.value)}
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+        </div>
+
+
+
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : 'auto', flexWrap: 'wrap' }}>
           {fld('GRT Status', 'grt',     { readOnly: true, width: '80px'  })}
           {fld('Due date',   'dueDate', { type: 'date',  width: '130px' })}
@@ -3734,10 +3882,23 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
   const lookupVendor = (code) => {
     if (!code?.trim()) { setVendorInfo(null); return; }
-    const bu = batchConfig?.bu || '', search = code.trim().toLowerCase();
+    const bu = batchConfig?.bu || '';
+    const book = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase();
+    const isGroupBook = !!book && book !== bu.toUpperCase();
+    const search = code.trim().toLowerCase();
     let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
-    if (found) { const codePrefix = String(found['Code'] ?? '').split('-')[0].toLowerCase(); if (bu && codePrefix !== bu.toLowerCase()) { setVendorInfo(null); return; } }
-    if (!found && bu) { const withPrefix = `${bu.toLowerCase()}-${search}`; found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === withPrefix); }
+    if (found) {
+      const codePrefix = String(found['Code'] ?? '').split('-')[0].toUpperCase();
+      const validPrefix = isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
+      if (!validPrefix) { setVendorInfo(null); return; }
+    }
+    if (!found) {
+      if (isGroupBook) {
+        found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${book.toLowerCase()}-${search}`);
+      } else if (bu) {
+        found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${bu.toLowerCase()}-${search}`);
+      }
+    }
     setVendorInfo(found || null);
   };
 
@@ -4115,12 +4276,17 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     return true;
   };
 
-  const handleSelectBranch = (item, meta = {}) => {
-    const ownLabel = formatBranchLabel(item);
-    if (meta.isIB) { const ho = findHOBranch(branchItems, item['bu']); setFormState(f => ({ ...f, branchNo: item['Branch Code'] || '', branchIBLabel: ownLabel, branchDirectLabel: ho ? formatBranchLabel(ho) : '-' })); }
-    else { setFormState(f => ({ ...f, branchNo: item['Branch Code'] || '', branchDirectLabel: ownLabel, branchIBLabel: '-' })); }
-    setShowBranchPopup(false);
-  };
+const handleSelectBranch = (item, meta = {}) => {
+  const ownLabel = formatBranchLabel(item);
+  const branchCpc = String(item['cpc'] ?? '').trim();
+  if (meta.isIB) {
+    const ho = findHOBranch(branchItems, item['bu']);
+    setFormState(f => ({ ...f, branchNo: item['Branch Code'] || '', branchIBLabel: ownLabel, branchDirectLabel: ho ? formatBranchLabel(ho) : '-', branchCpc, headerCpc: branchCpc }));
+  } else {
+    setFormState(f => ({ ...f, branchNo: item['Branch Code'] || '', branchDirectLabel: ownLabel, branchIBLabel: '-', branchCpc, headerCpc: branchCpc }));
+  }
+  setShowBranchPopup(false);
+};
 
   // ── Branch No. Smart Lookup ───────────────────────────────────────────────
   const resolveBranch = (input) => {
@@ -4271,6 +4437,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         }}
         supplierItems={supplierItems}
         bu={batchConfig?.bu || ''}
+        bookFilter={(() => { const b = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase(); return (b && b !== (batchConfig?.bu || '').toUpperCase()) ? b : ''; })()}
         fetchCollection={fetchCollection}
         userName={userName || currentUser?.email || ''}
       />

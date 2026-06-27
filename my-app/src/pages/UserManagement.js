@@ -1,6 +1,6 @@
   import React, { useState, useEffect, useMemo } from 'react';
   import { db as supabase } from '../lib/db';
-  import { supabase as _supabase } from '../supabase';
+  import { apiFetch } from '../api';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
   import DeployMonitor from './DeployMonitor';
@@ -941,7 +941,6 @@ useEffect(() => {
 
   function ProfileInline({ currentUser, userName }) {
     const [username, setUsername] = React.useState('');
-    const [email, setEmail] = React.useState(currentUser?.email || '');
     const [newPassword, setNewPassword] = React.useState('');
     const [confirmPassword, setConfirmPassword] = React.useState('');
     const [error, setError] = React.useState('');
@@ -971,13 +970,11 @@ useEffect(() => {
       setLoading(true);
       try {
         if (newPassword) {
-          const { error: pwError } = await _supabase.auth.updateUser({ password: newPassword })
-          if (pwError) throw pwError;
-        }
-        if (email !== currentUser?.email) {
-          const { error: emailError } = await _supabase.auth.updateUser({ email });
-
-          if (emailError) throw emailError;
+          const res = await apiFetch('/auth/change-password', {
+            method: 'POST',
+            body: JSON.stringify({ newPassword }),
+          });
+          if (!res?.ok) throw new Error(res?.error || 'เปลี่ยน password ไม่สำเร็จ');
         }
         const { error: roleError } = await supabase.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('email', currentUser?.email);
         if (roleError) throw roleError;
@@ -1018,7 +1015,8 @@ useEffect(() => {
           <label style={S.label}>Username</label>
           <input style={S.input} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" />
           <label style={S.label}>Email</label>
-          <input style={S.input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" />
+          <input style={{ ...S.input, background: '#f5f5f5', color: '#999', cursor: 'not-allowed', marginBottom: '0' }}
+            type="email" value={currentUser?.email || ''} disabled />
         </div>
         <div style={{ background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', padding: '16px 20px', marginBottom: '16px' }}>
           <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c', marginBottom: '12px' }}>เปลี่ยน Password</div>
@@ -1148,29 +1146,33 @@ useEffect(() => {
       setUsers(prev => { const updated = prev.map(u => u.id !== id ? u : { ...u, permissions: { ...(u.permissions||{}), [perm]: value } }); saveUser(updated.find(u => u.id === id)); return updated; });
     };
 
-    const handleAdd = async () => {
-      setError('');
-      try {
-        const perms = DEFAULT_PERMISSIONS[form.role] || DEFAULT_PERMISSIONS.Editor;
-        const { data: fnData, error: authError } = await _supabase.functions.invoke('create-user', { body: { email: form.email, password: form.password } });
-        if (authError) throw authError;
-        if (fnData?.error) throw new Error(fnData.error);
-        const { error: roleError } = await supabase.from('user_roles').insert([{ email: form.email, username: form.username.trim().toLowerCase(), role: form.role, permissions: perms, updated_by: currentUser?.email, updated_at: new Date().toISOString() }]);
-        if (roleError) throw roleError;
-        setShowForm(false); setForm({ email: '', password: '', username: '', role: 'Editor' }); fetchUsers();
-      } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
-    };
+  const handleAdd = async () => {
+    setError('');
+    try {
+      const result = await apiFetch('/auth/admin/create-user', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: form.username.trim().toLowerCase(),
+          email:    form.email,
+          password: form.password,
+          role:     form.role,
+        }),
+      });
+      if (!result?.ok) throw new Error(result?.error || 'สร้าง user ไม่สำเร็จ');
+      setShowForm(false); setForm({ email: '', password: '', username: '', role: 'Editor' }); fetchUsers();
+    } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
+  };
 
-    const handleDelete = async () => {
-      try {
-        const { data: fnData, error: fnError } = await _supabase.functions.invoke('delete-user', { body: { email: deleteTarget.email } });
-        if (fnError) throw fnError;
-        if (fnData?.error) throw new Error(fnData.error);
-        const { error: roleError } = await supabase.from('user_roles').delete().eq('id', deleteTarget.id);
-        if (roleError) throw roleError;
-        setDeleteTarget(null); fetchUsers();
-      } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
-    };
+  const handleDelete = async () => {
+    try {
+      const result = await apiFetch('/auth/admin/delete-user', {
+        method: 'DELETE',
+        body: JSON.stringify({ email: deleteTarget.email }),
+      });
+      if (!result?.ok) throw new Error(result?.error || 'ลบ user ไม่สำเร็จ');
+      setDeleteTarget(null); fetchUsers();
+    } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
+  };
 
     const roleColor = { Owner: '#27500A', Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888' };
     const roleBg = { Owner: '#EAF3DE', Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5' };
@@ -1315,7 +1317,7 @@ useEffect(() => {
             <div style={{ ...S.modal, width: '380px' }}>
               <h3 style={{ marginBottom: '12px', fontSize: '15px' }}>🗑️ ยืนยันการลบ</h3>
               <p style={{ fontSize: '13px', color: '#555', marginBottom: '16px' }}>ต้องการลบ <strong>{deleteTarget.username}</strong> ({deleteTarget.email}) ออกจากระบบใช่ไหมครับ?</p>
-              <div style={{ background: '#EAF3DE', border: '0.5px solid #97C459', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#27500A' }}>✅ ระบบจะลบออกจากทั้ง Supabase Auth และระบบพร้อมกันเลยครับ</div>
+              <div style={{ background: '#EAF3DE', border: '0.5px solid #97C459', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#27500A' }}>✅ ระบบจะลบ user ออกจากระบบทันทีครับ</div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                 <button style={{ ...S.btn, background: '#f0f0f0' }} onClick={() => setDeleteTarget(null)}>Cancel</button>
                 <button style={{ ...S.btn, background: '#c0392b', color: 'white' }} onClick={handleDelete}>ลบ</button>
