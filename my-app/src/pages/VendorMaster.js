@@ -20,10 +20,12 @@
   function ComboBox({ value, onChange, options, placeholder }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(value || '');
+  useEffect(() => { setInput(value || ''); }, [value]);
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 }); // ✅ เพิ่ม
   const ref = useRef(null);
   
   useEffect(() => { setInput(value || ''); }, [value]);
+ 
   useEffect(() => {
     const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', h);
@@ -36,6 +38,7 @@
       const rect = ref.current.getBoundingClientRect();
       setPos({ top: rect.bottom + window.scrollY, left: rect.left + window.scrollX, width: rect.width });
     }
+    setInput('');  // ✅ clear input ตอน focus เพื่อให้แสดง list ทั้งหมด
     setOpen(true);
   };
 
@@ -1051,18 +1054,17 @@ const computeNextSyRunning = async () => {
                 const ofinCode = (formData['Ofin Code'] || '').trim();
                 const foundBranch = ofinCode ? branchList.find(b => String(b['Branch Code'] || '').trim() === ofinCode) : null;
                 return (
-                  <div key={`c${i}`} style={{ padding:'4px 6px', display:'flex', alignItems:'center', justifyContent:'center', borderRight:br, background: c.bg || 'transparent' }}>
-                    {ofinCode
-                      ? foundBranch
-                        ? <span style={{ background:'#EAF3DE', color:'#27500A', padding:'2px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>✅ พบ</span>
-                        : <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'2px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>❌ ไม่พบ</span>
-                      : <span style={{ color:'#ccc', fontSize:'11px' }}>—</span>
-                    }
-                  </div>
+                  <div key={`c${i}`} style={{ 
+                    padding:'4px 6px', 
+                    borderRight:br, 
+                    background: ofinCode 
+                      ? foundBranch ? '#27AE60' : '#E74C3C'
+                      : c.bg || 'transparent'
+                  }} />
                 );
               }
               if (c.disabled) return (
-                <div key={`c${i}`} style={{ padding:'1px 6px', borderRight:br, background: c.bg || 'transparent' }}>
+                <div key={`c${i}`} style={{ padding:'1px 6px', borderRight:br,background: c.bg || 'transparent' }}>
                   <input disabled style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#ccc', width:'100%', boxSizing:'border-box' }} />
                 </div>
               );
@@ -1070,12 +1072,26 @@ const computeNextSyRunning = async () => {
               const isCombo = !c.noCombo && (cfg.combo.includes(key) || c.combo);
               const opts = c.opts || getOptions(key);
               return (
-                <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center', borderRight:br, overflow:'visible', background: c.bg || 'transparent' }}>
+                <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center',justifyContent: c.center ? 'center' : 'flex-start', borderRight:br, overflow:'visible', background: c.bg || 'transparent' }}>
                   {editMode
                     ? isCombo
-                      ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={opts} placeholder='เลือก' />
-                      : <input value={formData[key]||''} onChange={e=> c.onChangeFn ? c.onChangeFn(e.target.value) : setFormData({...formData,[key]:e.target.value})} style={{ height:'24px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%' }}>{formData[key]||'—'}</div>
+                      ? <ComboBox 
+                          value={formData[key]||''} 
+                          onChange={val => c.onChangeFn ? c.onChangeFn(val) : setFormData({...formData,[key]:val})} 
+                          options={opts} 
+                          placeholder='เลือก' 
+                        />
+                      : <input value={formData[key]||''} onChange={e=> c.onChangeFn ? c.onChangeFn(e.target.value) : setFormData({...formData,[key]:e.target.value})} 
+                          style={{ 
+                            height:'24px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', 
+                            background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box',
+                            textAlign: c.center ? 'center' : 'left'  // ✅ เพิ่มตรงนี้
+                          }} />
+                    : <div style={{ 
+                            fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', 
+                            textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%',
+                            textAlign: c.center ? 'center' : 'left'  // ✅ เพิ่มตรงนี้
+                          }}>{formData[key]||'—'}</div>
                   }
                 </div>
               );
@@ -1120,7 +1136,7 @@ const computeNextSyRunning = async () => {
           setFormData(prev => ({
             ...prev,
             'Ofin Code': val,
-            '_ofinSimpleName': found ? (found['Company for Show in Report Display'] || '') : '',
+            '_ofinSimpleName': found ? (found['Simple Brand Code'] || '') : '',
             'Short Branch':    found ? (found['BU-Branch'] || '') : '',
             'BU':              found ? (found['bu'] || '') : '',
             '_buCompanySimple': found ? (found['Simple Company'] || '') : '',
@@ -1130,8 +1146,44 @@ const computeNextSyRunning = async () => {
             '_buBranch':        found ? (found['BU-Branch'] || '') : '',
             '_buCompany':       found ? (found['Company for Show in Report Display'] || '') : '',
             '_branchCode':      found ? (found['Branch Code'] || '') : '',
+            '_groupP': found ? (found['Group-P'] || '') : '',
+            '_branchStatus': found ? (found['status'] || '') : '',
+
           }));
         };
+
+        
+      const handleATMatchChange = (val) => {
+        if (!val?.trim()) {
+          setFormData(prev => ({ ...prev, 'Short Name': val }));
+          return;
+        }
+        const found = (dataMap['smcode'] || []).find(i => String(i['Short Name'] || '').trim() === val.trim());
+        const isInput = val.trim().toUpperCase() === 'INPUT' || val.trim().toUpperCase() === 'IST36';
+        const isT36 = val.trim().toUpperCase() === 'T36';
+        const comPct = String(formData['_comPct'] || '').trim();
+        const isNotFull = comPct !== '' && comPct !== '100';
+        const subDr = found ? (found['Sub Acc_Dr'] || '') : '';
+        const isNot999 = subDr !== '' && subDr !== '999999';
+
+        setFormData(prev => ({
+          ...prev,
+          'Short Name': val,
+          'Expense Type': isNotFull
+            ? (getOptions('Expense Type').find(o => String(o).startsWith('63050000')) || '63050000-ค่าใช้จ่ายอื่นๆ')
+            : (isInput || isT36)
+              ? (getOptions('Expense Type').find(o => String(o).startsWith('63047000')) || '63047000-ค่าบริการอื่นๆ')
+              : isNot999
+                ? (getOptions('Expense Type').find(o => String(o).startsWith('61200201')) || '61200201-Commission Online - Others')
+                : prev['Expense Type'],
+          'CPC_Dr':      found ? (found['CPC_Dr'] || '') : prev['CPC_Dr'],
+          'Account_Dr':  found ? (found['Account_Dr'] || '') : prev['Account_Dr'],
+          'Sub Acc_Dr':  found ? (found['Sub Acc_Dr'] || '') : prev['Sub Acc_Dr'],
+          'CPC_Cr':      found ? (found['CPC_Cr'] || '') : prev['CPC_Cr'],
+          'Account_Dr2': found ? (found['Account_Dr2'] || '') : prev['Account_Dr2'],
+          'Sub Acc_Cr':  found ? (found['Sub Acc_Cr'] || '') : prev['Sub Acc_Cr'],
+        }));
+      };
 
         return (
           <div style={{ overflow:'visible', flex:1 }}>
@@ -1139,14 +1191,11 @@ const computeNextSyRunning = async () => {
 
             {/* Row 1: 1=Simple Code | 2=OFIN CODE | 3=Supplier Code | 4=Type | 5=Sub Type | 6=OFIN SIMPLE NAME | 7=Short Branch | 8=BU */}
             {smGrid([
-              { label:'Simple Code',      key:'SM-Code',           w:'100px' , bg:'#FFF9C4'  },
-              { label:'OFIN CODE', key:'Ofin Code', w:'90px', bg:'#FFF9C4', onChangeFn: handleOfinCodeChange },
-              { label:'Supplier Code',    key:'Supplier Code',     w:'150px', onChangeFn: handleSupplierCodeChange },
-              { label:'Type',     key:'_type',     w:'80px',  combo:true, opts:typeOptions },
-              { label:'Sub Type', key:'_sub_type', w:'110px', combo:true, opts:subTypeOptions },
-              { label:'OFIN SIMPLE NAME', key:'_ofinSimpleName', w:'1fr', bg:'#E6F1FB', noCombo:true },
-              { label:'Short Branch',     key:'Short Branch',      w:'95px' ,    bg:'#E6F1FB' },
-              { label:'BU',               key:'BU',                w:'70px' ,    bg:'#E6F1FB' },
+              { label:'Simple Code',   key:'SM-Code',       w:'1fr', bg:'#FFF9C4' },
+              { label:'OFIN CODE',     key:'Ofin Code',     w:'160px',  bg:'#FFF9C4', center:true, onChangeFn: handleOfinCodeChange },
+              { label:'Supplier Code', key:'Supplier Code', w:'180px', onChangeFn: handleSupplierCodeChange },
+              { label:'Type',          key:'_type',         w:'170px',  combo:true, opts:typeOptions },
+              { label:'Sub Type',      key:'_sub_type',     w:'180px', combo:true, opts:subTypeOptions },
             ])}
 
             {/* Vendor Category Status Badge */}
@@ -1162,9 +1211,9 @@ const computeNextSyRunning = async () => {
             {/* Row 2: Vendor Name | Tax ID | Branch No. | AT-Match */}
             {smGrid([
               { label:'Vendor Name', key:'Company Name',     w:'1fr'  , bg:'#FFF9C4'  },
-              { label:'Tax ID',      key:'Tax ID',           w:'200px' , bg:'#FFF9C4'  },
-              { label:'Branch No.',  key:'Branch',           w:'170px' , bg:'#FFF9C4'  },
-              { label:'AT-Match', key:'Short Name', w:'110px', combo:true, bg:'#FFF9C4', opts:[...new Set((dataMap['smcode']||[]).map(i=>i['Short Name']).filter(Boolean))] },
+              { label:'Tax ID',      key:'Tax ID',           w:'240px' , bg:'#FFF9C4'  },
+              { label:'Branch No.',  key:'Branch',           w:'180px' , bg:'#FFF9C4'  },
+              { label:'AT-Match', key:'Short Name', w:'110px', combo:true, bg:'#FFF9C4', opts:[...new Set((dataMap['smcode']||[]).map(i=>i['Short Name']).filter(Boolean))], onChangeFn: handleATMatchChange },
             ])}
 
             {/* Row 3: Debit / Credit Account */}
@@ -1177,8 +1226,8 @@ const computeNextSyRunning = async () => {
                       <div style={{ padding:'4px 8px', fontSize:'10px', color:'#888', background:'#f8f9fa', borderBottom:'0.5px solid #e8eaf0', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none', textAlign:'center', fontWeight:'500' }}>{lbl}</div>
                       <div style={{ padding:'3px 6px', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none' }}>
                         {editMode
-                          ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                          ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }} />
+                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' , textAlign:'center' }}>{formData[key]||'—'}</div>
                         }
                       </div>
                     </div>
@@ -1193,8 +1242,8 @@ const computeNextSyRunning = async () => {
                       <div style={{ padding:'4px 8px', fontSize:'10px', color:'#888', background:'#f8f9fa', borderBottom:'0.5px solid #e8eaf0', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none', textAlign:'center', fontWeight:'500' }}>{lbl}</div>
                       <div style={{ padding:'3px 6px', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none' }}>
                         {editMode
-                          ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                          ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }} />
+                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', textAlign:'center' }}>{formData[key]||'—'}</div>
                         }
                       </div>
                     </div>
@@ -1216,7 +1265,7 @@ const computeNextSyRunning = async () => {
                 <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', overflow:'visible' }}>
                   {editMode
                     ? cfg.combo.includes(key1)
-                      ? <ComboBox value={formData[key1]||''} onChange={val=>setFormData({...formData,[key1]:val})} options={getOptions(key1)} placeholder='เลือก' />
+                      ? <ComboBox key={`exp-${formData['Short Name']}-${formData[key1]||'empty'}`} value={formData[key1]||''} onChange={val=>setFormData({...formData,[key1]:val})} options={key1==='Expense Type' ? [...new Set(['63047000-ค่าบริการอื่นๆ',...getOptions(key1)])] : getOptions(key1)} placeholder='เลือก' />
                       : <input value={formData[key1]||''} onChange={e=>setFormData({...formData,[key1]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
                     : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{formData[key1]||'—'}</div>
                   }
@@ -1248,18 +1297,21 @@ const computeNextSyRunning = async () => {
 
             {/* Row M1: BU Company Simple | Tax ID BU | Com% | Spec% */}
             {smGrid([
-              { label:'BU Company Simple', disabled:true, w:'1fr'   ,    bg:'#E6F1FB'  },
-              { label:'Tax ID BU',         disabled:true, w:'1fr'   ,    bg:'#E6F1FB'  },
-              { label:'Com%',              disabled:true, w:'80px'  ,    bg:'#E6F1FB'  },
-              { label:'Spec%',             disabled:true, w:'80px' ,    bg:'#E6F1FB'   },
+              { label:'BU Company Simple', key:'_buCompanySimple', w:'1fr',   noCombo:true, bg:'#E6F1FB' , center:true},
+              { label:'Tax ID BU',         key:'_taxIdBu',         w:'180px',   noCombo:true, bg:'#E6F1FB' , center:true},
+              { label:'BU Branch',         key:'Short Branch',     w:'180px', noCombo:true, bg:'#E6F1FB' , center:true},
+              { label:'Com%',              key:'_comPct',          w:'90px',  noCombo:true, bg:'#E6F1FB' , center:true},
+              { label:'Spec%',             key:'_specPct',         w:'80px',  noCombo:true, bg:'#E6F1FB', center:true },
             ])}
 
             {/* Row M2: BU Branch | BU Company | Branch Code | Check Data */}
             {smGrid([
-              { label:'BU Branch',   disabled:true, w:'120px' ,    bg:'#E6F1FB' },
-              { label:'BU Company',  disabled:true, w:'1fr'  ,    bg:'#E6F1FB'  },
-              { label:'Branch Code', disabled:true, w:'190px',    bg:'#E6F1FB'  },
-              { label:'Check Data',  disabled:true, w:'110px',    bg:'#E6F1FB'  },
+              { label:'BU',              key:'BU',              w:'100px',  noCombo:true, bg:'#E6F1FB' , center:true},
+              { label:'Group-P',         key:'_groupP',         w:'100px', noCombo:true, bg:'#E6F1FB', center:true },
+              { label:'OFIN SIMPLE NAME',key:'_ofinSimpleName', w:'1fr',   noCombo:true, bg:'#E6F1FB' , center:true},
+              { label:'Branch Code',     key:'_branchCode',     w:'200px', noCombo:true, bg:'#E6F1FB' , center:true},
+              { label:'Status',          key:'_branchStatus',   w:'180px',  noCombo:true, bg:'#E6F1FB', center:true },
+              { label:'Check Data',      check:true,            w:'150px',               bg:'#E6F1FB' },
             ])}
 
           </div>
