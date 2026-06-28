@@ -350,7 +350,7 @@ const computeNextSyRunning = async () => {
     apcode: {
       label: 'AP-Code', icon: '🏭', table: 'supplier_list', key: 'Code',
       fields: ['Code','BU Code','Supplier Name','Supplier Number','Supplier Site','Tax-Type','Notice','Supplier Ref.','Sub Acc','First Part','Mid Part','Last Part','Invoice No.','Digit','Due','Tax ID','No.','Contact','Email','Address','NoticeDescrip','RuleDescrip','username','last_update'],
-      combo: ['BU Code','Supplier Site','Tax-Type','Notice','Invoice No.','Digit'],
+      combo: ['BU Code','Supplier Site','Tax-Type','Notice'],
       edit: [['Code','Code'],['BU Code','BU Code'],['Supplier Name','Supplier Name'],['Supplier Number','Supplier Number'],['Supplier Site','Supplier Site'],['Tax-Type','Tax-Type'],['Notice','Notice'],['Supplier Ref.','Supplier Ref.'],['Sub Acc','Sub Acc'],['First Part','First Part'],['Mid Part','Mid Part'],['Last Part','Last Part'],['Invoice No.','Invoice No.'],['Digit','Digit'],['Due','Due'],['Tax ID','Tax ID'],['No.','No.'],['Contact','Contact'],['Email','Email'],['Address','Address'],['NoticeDescrip','Notice Description'],['RuleDescrip','Rule Description']],
       columns: [
         { key: 'Code',            label: 'Code',          sortable: true, w: 130 },
@@ -392,7 +392,7 @@ const computeNextSyRunning = async () => {
     iecode: {
       label: 'IE-Code', icon: '💸', table: 'ie_code_list', key: 'IE-Code',
       fields: ['SY-Running','IE-Code','BU Code','Supplier Name','Supplier Number','Supplier Site','Tax-Type','Notice','Vendor Index','Sub Acc','First Part','Mid Part','Last Part','Invoice No.','Digit','Due','Tax ID','No.','Contact','Email','Address','NoticeDescrip','RuleDescrip','username','last_update'],
-      combo: ['BU Code','Supplier Site','Tax-Type','Notice','Invoice No.','Digit'],
+      combo: ['BU Code','Supplier Site','Tax-Type','Notice'],
       edit: [['IE-Code','IE-Code'],['BU Code','BU Code'],['Supplier Name','Supplier Name'],['Supplier Number','Supplier Number'],['Supplier Site','Supplier Site'],['Tax-Type','Tax-Type'],['Notice','Notice'],['Vendor Index','Vendor Index'],['Sub Acc','Sub Acc'],['First Part','First Part'],['Mid Part','Mid Part'],['Last Part','Last Part'],['Invoice No.','Invoice No.'],['Digit','Digit'],['Due','Due'],['Tax ID','Tax ID'],['No.','No.'],['Contact','Contact'],['Email','Email'],['Address','Address'],['NoticeDescrip','Notice Description'],['RuleDescrip','Rule Description']],
       columns: [
         { key: 'SY-Running',      label: 'SY-Running',    sortable: true, w: 100 },
@@ -1003,7 +1003,7 @@ const computeNextSyRunning = async () => {
           { label: 'Rules & Config', keys: ['Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','Ofin Code','Simple Brand Code','Short Branch'] },
         ];
         return (
-          <div style={{ overflow:'visible', flex:1 }}>
+          <div style={{ overflowY:'auto', flex:1 }}>
           <div style={{ padding:'16px 20px' }}>
             {sections.map(sec => (
               <div key={sec.label} style={{ marginBottom:'16px' }}>
@@ -1055,7 +1055,7 @@ const computeNextSyRunning = async () => {
         const codeKey = isIe ? 'IE-Code' : 'Code';
         const codeLabel = isIe ? 'IE-Code' : 'Code *';
         return (
-          <div style={{ overflow:'visible', flex:1 }}>
+          <div style={{ overflowY:'auto', flex:1 }}>
           <div style={{ padding:'16px 20px', display:'flex', flexDirection:'column', gap:'0' }}>
 
             {/* Row 1: Code + Supplier Name */}
@@ -1180,7 +1180,7 @@ const computeNextSyRunning = async () => {
         );
       }
       return (
-        <div style={{ overflow:'visible', flex:1 }}>
+        <div style={{ overflowY:'auto', flex:1 }}>
         <div style={{ padding:'16px 20px' }}>
           {cfg.edit.map(([key, label]) => (
             <div key={key} style={{ marginBottom:'4px' }}>

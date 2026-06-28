@@ -394,7 +394,9 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
           <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Branch</div>
           <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>BU: <span style={{ color: '#1a3a5c', fontWeight: '500' }}>{bu || 'ทั้งหมด'}</span>{' · '}{filtered.length} สาขา</div>
         </div>
-        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        <button onClick={() => setView('new')} style={{ height: '28px', padding: '0 12px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add
+      </button>
       </div>
       <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
@@ -643,7 +645,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
   };
 
-  const COLS = [['code','Code','100px'],['bu','BU','60px'],['description','Description',''],['cpc','CPC','75px'],['account','Account','95px'],['sub','SUB','70px'],['spec_tx','SPEC-TX','80px'],['_fav','★','36px'],['_action','','126px']];
+  const COLS = [['code','Code','100px'],['bu','BU','45px'],['description','Description','200px'],['cpc','CPC','55px'],['account','Account','80px'],['sub','SUB','55px'],['spec_tx','TX','55px'],['_fav','★','20px'],['_action','Action','126px']];
   const FIELD_OPTIONS = {};
   ITEM_COMBO_FIELDS.forEach(key => { FIELD_OPTIONS[key] = [...new Set(itemcodeItems.map(i => i[key]).filter(v => v !== undefined && v !== null && String(v).trim() !== ''))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })); });
 
@@ -1017,6 +1019,12 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
 };
 
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
+
+const VRV_MAPPING = {
+  'C0001474': { h: 'C0001564', l: 'C0001631' },
+  'C0001565': { h: 'C0001497', l: 'C0000674' },
+};
+
 const SUPPLIER_SITE_OPTS_DEFAULT = ['สำนักงานใหญ่','HQ','MAIN'];
 const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
 const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
@@ -2429,7 +2437,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     setLines(prev => {
       const next = [...prev, { hl: 'L', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
       const newIdx = next.length - 1;
-      setTimeout(() => { lineItemCodeRefs.current[newIdx]?.focus(); }, 30);
+      setTimeout(() => {
+        lineItemCodeRefs.current[newIdx]?.focus();
+        lineItemCodeRefs.current[newIdx]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }, 30);
       return next;
     });
   };
@@ -2659,7 +2670,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         </div>
 
         {/* ── Body ✅ PATCHED: overflow:hidden + flex column ── */}
-        <div style={{ flex: 1, overflow: 'hidden', padding: isMobile ? '12px 14px' : '18px 22px', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, padding: isMobile ? '12px 14px' : '18px 22px', display: 'flex', flexDirection: 'column' }}>
 
           {/* Header Detail boxes */}
           <div style={{ display: 'flex', gap: '2%', marginBottom: '14px', flexShrink: 0 }}>
@@ -2977,28 +2988,29 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               <input type="text" value={line.realInvoiceNo || ''}
                                 ref={el => lineRealInvoiceRefs.current[idx] = el}
                                 onKeyDown={e => {
-                                  if (e.key === 'Tab' && line.realInvoiceNo?.trim()) {
-                                    e.preventDefault();
-                                    const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
-                                    const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
-                                    const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                    setLines(prev => {
+                                if (e.key === 'Tab' && line.realInvoiceNo?.trim()) {
+                                  e.preventDefault();
+                                  const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
+                                  const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
+                                  const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                  const mapping = VRV_MAPPING[line.itemCode] || {};
+                                  setLines(prev => {
                                     const next = [...prev, {
                                       hl: 'H',
-                                      itemCode: 'C0001564',
+                                      itemCode: mapping.h || '',
                                       amount: negFormatted,
                                       tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
                                     }, {
                                       hl: 'L',
-                                      itemCode: 'C0001631',
+                                      itemCode: mapping.l || '',
                                       amount: '',
                                       tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
                                     }];
                                     const newIdx = next.length - 1;
                                     setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
                                     return next;
-                                    });
-                                  }
+                                  });
+                                }
                                 }}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
