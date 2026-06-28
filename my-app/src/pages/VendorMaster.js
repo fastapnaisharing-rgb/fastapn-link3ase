@@ -371,7 +371,7 @@ const computeNextSyRunning = async () => {
     smcode: {
       label: 'SM-Code', icon: '🔖', table: 'sm_code_list', key: 'SM-Code',
       fields: ['SM-Code','Company Name','Tax ID','Branch','Short Name','CPC_Dr','Account_Dr','Sub Acc_Dr','Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','CPC_Cr','Account_Dr2','Sub Acc_Cr','BU','Ofin Code','Simple Brand Code','Short Branch','Remark','Supplier Code','username','last_update'],
-      combo: ['BU','Short Name'],
+      combo: ['Short Name','Expense Type','Digit','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5'],
       edit: [['SM-Code','SM-Code'],['Company Name','Company Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Short Name','AT-Match (Short Name)'],['CPC_Dr','CPC Dr'],['Account_Dr','Account Dr'],['Sub Acc_Dr','Sub Acc Dr'],['CPC_Cr','CPC Cr'],['Account_Dr2','Account Cr'],['Sub Acc_Cr','Sub Acc Cr'],['Expense Type','Expense Type'],['First Part','First Part'],['Mid Part','Mid Part'],['Last Part','Last Part'],['Special Rule1','Rule1'],['Special Rule2','Rule2'],['Simple Rule3','Rule3'],['Special Rule4','Rule4'],['Special Rule5','Rule5'],['Digit','Digit'],['BU','BU'],['Ofin Code','Ofin Code'],['Simple Brand Code','Brand Code'],['Short Branch','Short Branch'],['Remark','Remark'],['Supplier Code','Supplier Code']],
       columns: [
         { key: 'SM-Code',        label: 'SM-Code',        sortable: true, w: 110 },
@@ -463,6 +463,7 @@ const computeNextSyRunning = async () => {
     const [recycleBinProgress, setRecycleBinProgress] = useState(0);
     const [recycleBinLoading2, setRecycleBinLoading2] = useState(false);
     const [nextSyRunning, setNextSyRunning] = useState('');
+    const [branchList, setBranchList] = useState([]);
 
     // ─── Vendor Rule state ────────────────────────────────────────────────────────
     const [vendorRules, setVendorRules]   = useState([]);
@@ -540,6 +541,8 @@ const computeNextSyRunning = async () => {
 
     useEffect(() => {
       fetchTab('apcode'); fetchTab('smcode'); fetchTab('category');
+      apiFetch('/branch_list').then(data => setBranchList(data || []));
+
       // ✅ รวม fetchTab('iecode') + refreshNextSyRunning() เป็น fetch เดียว (เดิมยิงซ้ำ 2 รอบ)
       fetchTab('iecode').then(rows => setNextSyRunning(computeNextSyRunningFromList(rows)));
       fetchVendorRules();
@@ -659,6 +662,38 @@ const computeNextSyRunning = async () => {
     const ts = getTimestamp(); const cuStr = cu();
     let data = { ...form, username: cuStr, last_update: ts };
     if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
+
+    const wasEditCheck = !!editId; // ใช้เช็คก่อน auto-create category
+
+    // ─── Auto-create vendor_category ถ้าไม่พบ Supplier Code ───────────────────
+    if (tab === 'smcode' && !wasEditCheck) {
+      const supplierCode = (data['Supplier Code'] || '').trim();
+      if (supplierCode) {
+        const categoryData = dataMap['category'] || [];
+        const exists = categoryData.find(i => String(i['Code'] || '').trim() === supplierCode);
+        if (!exists) {
+          try {
+            const catPayload = {
+              'Code': supplierCode,
+              'Supplier Name': data['Company Name'] || '',
+              'TAX ID': data['Tax ID'] || '',
+              'No.': data['Branch'] || '',
+              'TYPE': data['Expense Type'] || '',
+              'SUB TYPE': data['Special Rule1'] || '',
+              'BU': data['BU'] || '',
+              'username': cuStr,
+              'last_update': ts,
+            };
+            const created = await apiFetch('/vendor_category', { method: 'POST', body: JSON.stringify(catPayload) });
+            setDataMap(prev => ({ ...prev, category: [...(prev.category || []), created] }));
+            invalidate('VendorCategory');
+            console.log('✅ Auto-created vendor_category:', supplierCode);
+          } catch (err) {
+            console.warn('⚠️ Auto-create vendor_category failed:', err.message);
+          }
+        }
+      }
+    }
 
     const wasEdit = !!editId;
     const prevItem = wasEdit ? items.find(i => i.id === editId) : null;
@@ -978,7 +1013,7 @@ const computeNextSyRunning = async () => {
       inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
       inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
       overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'700px': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='apcode'||tab==='iecode'?'1100px':'700px', maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'hidden' },
+      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px':'700px', maxHeight:'95vh', display:'flex', flexDirection:'column', overflow:'hidden' },
       iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
     };
 
@@ -996,36 +1031,242 @@ const computeNextSyRunning = async () => {
 
     const renderFormFields = (formData, setFormData, editMode = true) => {
       if (tab === 'smcode') {
-        const sections = [
-          { label: 'ข้อมูลทั่วไป', keys: ['SM-Code','Company Name','Tax ID','Branch','Short Name','BU','Supplier Code','Remark'] },
-          { label: 'Debit', keys: ['CPC_Dr','Account_Dr','Sub Acc_Dr'] },
-          { label: 'Credit', keys: ['CPC_Cr','Account_Dr2','Sub Acc_Cr'] },
-          { label: 'Rules & Config', keys: ['Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','Ofin Code','Simple Brand Code','Short Branch'] },
-        ];
+        // ─── header-over-input row ───────────────────────────────────────────────
+        const smGrid = (cols) => (
+          <div style={{ display:'grid', gridTemplateColumns: cols.map(c => c.w || '1fr').join(' '), border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'visible', marginBottom:'6px' }}>
+            {/* header row */}
+            {cols.map((c, i) => {
+              const isLast = i === cols.length - 1;
+              const br = isLast ? 'none' : '0.5px solid #e8eaf0';
+              return (
+                <div key={`h${i}`} style={{ padding:'3px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa', fontWeight:'600', textAlign:'center', borderRight:br, borderBottom:'0.5px solid #e8eaf0', whiteSpace:'nowrap' }}>{c.label}</div>
+              );
+            })}
+            {/* input row */}
+            {cols.map((c, i) => {
+              const isLast = i === cols.length - 1;
+              const br = isLast ? 'none' : '0.5px solid #e8eaf0';
+              if (c.blank) return <div key={`c${i}`} style={{ borderRight:br, minHeight:'28px' }} />;
+              if (c.check) {
+                const ofinCode = (formData['Ofin Code'] || '').trim();
+                const foundBranch = ofinCode ? branchList.find(b => String(b['Branch Code'] || '').trim() === ofinCode) : null;
+                return (
+                  <div key={`c${i}`} style={{ padding:'4px 6px', display:'flex', alignItems:'center', justifyContent:'center', borderRight:br, background: c.bg || 'transparent' }}>
+                    {ofinCode
+                      ? foundBranch
+                        ? <span style={{ background:'#EAF3DE', color:'#27500A', padding:'2px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>✅ พบ</span>
+                        : <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'2px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'500' }}>❌ ไม่พบ</span>
+                      : <span style={{ color:'#ccc', fontSize:'11px' }}>—</span>
+                    }
+                  </div>
+                );
+              }
+              if (c.disabled) return (
+                <div key={`c${i}`} style={{ padding:'1px 6px', borderRight:br, background: c.bg || 'transparent' }}>
+                  <input disabled style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#ccc', width:'100%', boxSizing:'border-box' }} />
+                </div>
+              );
+              const key = c.key;
+              const isCombo = !c.noCombo && (cfg.combo.includes(key) || c.combo);
+              const opts = c.opts || getOptions(key);
+              return (
+                <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center', borderRight:br, overflow:'visible', background: c.bg || 'transparent' }}>
+                  {editMode
+                    ? isCombo
+                      ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={opts} placeholder='เลือก' />
+                      : <input value={formData[key]||''} onChange={e=> c.onChangeFn ? c.onChangeFn(e.target.value) : setFormData({...formData,[key]:e.target.value})} style={{ height:'24px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%' }}>{formData[key]||'—'}</div>
+                  }
+                </div>
+              );
+            })}
+          </div>
+        );
+
+        // Type/Sub Type options จาก vendor_category
+        const categoryData = dataMap['category'] || [];
+        const typeOptions = [...new Set(categoryData.map(i => i['TYPE']).filter(Boolean))];
+        const subTypeOptions = [...new Set(
+          categoryData
+            .filter(i => !formData['Expense Type'] || i['TYPE'] === formData['Expense Type'])
+            .map(i => i['SUB TYPE'])
+            .filter(Boolean)
+        )];
+
+        // ─── Auto-fill จาก Supplier Code → vendor_category ──────────────────────
+        const supplierCode = (formData['Supplier Code'] || '').trim();
+        const matchedVendor = supplierCode
+          ? categoryData.find(i => String(i['Code'] || '').trim() === supplierCode)
+          : null;
+        const handleSupplierCodeChange = (val) => {
+          const found = categoryData.find(i => String(i['Code'] || '').trim() === val.trim());
+          if (found) {
+            setFormData(prev => ({
+              ...prev,
+              'Supplier Code': val,
+              'Company Name': found['Supplier Name'] || prev['Company Name'],
+              'Tax ID': found['TAX ID'] || prev['Tax ID'],
+              'Branch': found['No.'] || prev['Branch'],
+              '_type': found['TYPE'] || '',
+              '_sub_type': found['SUB TYPE'] || '',
+            }));
+          } else {
+            setFormData(prev => ({ ...prev, 'Supplier Code': val }));
+          }
+        };
+
+        const handleOfinCodeChange = (val) => {
+          const found = branchList.find(b => String(b['Branch Code'] || '').trim() === val.trim());
+          setFormData(prev => ({
+            ...prev,
+            'Ofin Code': val,
+            '_ofinSimpleName': found ? (found['Company for Show in Report Display'] || '') : '',
+            'Short Branch':    found ? (found['BU-Branch'] || '') : '',
+            'BU':              found ? (found['bu'] || '') : '',
+            '_buCompanySimple': found ? (found['Simple Company'] || '') : '',
+            '_taxIdBu':         found ? (found['BU-TaxID'] || '') : '',
+            '_comPct':          found ? (found['%'] || '') : '',
+            '_specPct':         found ? (found['DB(%)'] || '') : '',
+            '_buBranch':        found ? (found['BU-Branch'] || '') : '',
+            '_buCompany':       found ? (found['Company for Show in Report Display'] || '') : '',
+            '_branchCode':      found ? (found['Branch Code'] || '') : '',
+          }));
+        };
+
         return (
           <div style={{ overflow:'visible', flex:1 }}>
-          <div style={{ padding:'16px 20px' }}>
-            {sections.map(sec => (
-              <div key={sec.label} style={{ marginBottom:'16px' }}>
-                <div style={{ fontSize:'10px', fontWeight:'600', color:'#888', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:'8px', borderBottom:'0.5px solid #f0f0f0', paddingBottom:'4px' }}>{sec.label}</div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
-                  {sec.keys.map(key => {
-                    const label = cfg.edit.find(([k]) => k === key)?.[1] || key;
-                    return (
-                      <div key={key} style={{ marginBottom:'4px' }}>
-                        <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
-                        {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={S.inputReadonly}>{formData[key]||'-'}</div>}
+          <div style={{ padding:'16px 20px', display:'flex', flexDirection:'column', gap:'0' }}>
+
+            {/* Row 1: 1=Simple Code | 2=OFIN CODE | 3=Supplier Code | 4=Type | 5=Sub Type | 6=OFIN SIMPLE NAME | 7=Short Branch | 8=BU */}
+            {smGrid([
+              { label:'Simple Code',      key:'SM-Code',           w:'100px' , bg:'#FFF9C4'  },
+              { label:'OFIN CODE', key:'Ofin Code', w:'90px', bg:'#FFF9C4', onChangeFn: handleOfinCodeChange },
+              { label:'Supplier Code',    key:'Supplier Code',     w:'150px', onChangeFn: handleSupplierCodeChange },
+              { label:'Type',     key:'_type',     w:'80px',  combo:true, opts:typeOptions },
+              { label:'Sub Type', key:'_sub_type', w:'110px', combo:true, opts:subTypeOptions },
+              { label:'OFIN SIMPLE NAME', key:'_ofinSimpleName', w:'1fr', bg:'#E6F1FB', noCombo:true },
+              { label:'Short Branch',     key:'Short Branch',      w:'95px' ,    bg:'#E6F1FB' },
+              { label:'BU',               key:'BU',                w:'70px' ,    bg:'#E6F1FB' },
+            ])}
+
+            {/* Vendor Category Status Badge */}
+            {supplierCode && (
+              <div style={{ marginBottom:'4px', display:'flex', alignItems:'center', gap:'8px' }}>
+                {matchedVendor
+                  ? <span style={{ fontSize:'11px', background:'#EAF3DE', color:'#27500A', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>✅ พบใน Vendor Category — {matchedVendor['TYPE']} / {matchedVendor['SUB TYPE']}</span>
+                  : <span style={{ fontSize:'11px', background:'#FCEBEB', color:'#791F1F', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>❌ ไม่พบใน Vendor Category</span>
+                }
+              </div>
+            )}
+
+            {/* Row 2: Vendor Name | Tax ID | Branch No. | AT-Match */}
+            {smGrid([
+              { label:'Vendor Name', key:'Company Name',     w:'1fr'  , bg:'#FFF9C4'  },
+              { label:'Tax ID',      key:'Tax ID',           w:'200px' , bg:'#FFF9C4'  },
+              { label:'Branch No.',  key:'Branch',           w:'170px' , bg:'#FFF9C4'  },
+              { label:'AT-Match', key:'Short Name', w:'110px', combo:true, bg:'#FFF9C4', opts:[...new Set((dataMap['smcode']||[]).map(i=>i['Short Name']).filter(Boolean))] },
+            ])}
+
+            {/* Row 3: Debit / Credit Account */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'visible', marginBottom:'6px' }}>
+              <div style={{ borderRight:'0.5px solid #e8eaf0' }}>
+                <div style={{ padding:'6px 10px', fontSize:'11px', color:'white', background:'#1a3a5c', fontWeight:'600', textAlign:'center', borderBottom:'0.5px solid #e8eaf0' }}>Debit Account</div>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr' }}>
+                  {[['CPC_Dr','CPC Dr'],['Account_Dr','Account Dr'],['Sub Acc_Dr','Sub Acc Dr']].map(([key,lbl],fi) => (
+                    <div key={key}>
+                      <div style={{ padding:'4px 8px', fontSize:'10px', color:'#888', background:'#f8f9fa', borderBottom:'0.5px solid #e8eaf0', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none', textAlign:'center', fontWeight:'500' }}>{lbl}</div>
+                      <div style={{ padding:'3px 6px', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none' }}>
+                        {editMode
+                          ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                        }
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ padding:'6px 10px', fontSize:'11px', color:'white', background:'#1a3a5c', fontWeight:'600', textAlign:'center', borderBottom:'0.5px solid #e8eaf0' }}>Credit Account</div>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr' }}>
+                  {[['CPC_Cr','CPC Cr'],['Account_Dr2','Account Cr'],['Sub Acc_Cr','Sub Acc Cr']].map(([key,lbl],fi) => (
+                    <div key={key}>
+                      <div style={{ padding:'4px 8px', fontSize:'10px', color:'#888', background:'#f8f9fa', borderBottom:'0.5px solid #e8eaf0', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none', textAlign:'center', fontWeight:'500' }}>{lbl}</div>
+                      <div style={{ padding:'3px 6px', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none' }}>
+                        {editMode
+                          ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                        }
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Rows 4-8: Rule pairs — label-left layout */}
+            {[
+              ['Expense Type','Expense Type','Special Rule1','Special Rule1'],
+              ['First Part',  'First Part',  'Special Rule2','Special Rule2'],
+              ['Mid Part',    'Mid Part',    'Simple Rule3', 'Simple Rule3' ],
+              ['Last Part',   'Last Part',   'Special Rule4','Special Rule4'],
+              ['Digit',       'Digit',       'Special Rule5','Special Rule5'],
+            ].map(([lbl1,key1,lbl2,key2]) => (
+              <div key={key1} style={{ display:'grid', gridTemplateColumns:'110px 1fr 110px 1fr', border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'visible', marginBottom:'6px' }}>
+                <div style={{ padding:'5px 10px', fontSize:'11px', color:'#888', background:'#f8f9fa', display:'flex', alignItems:'center', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0', fontWeight:'500' }}>{lbl1}</div>
+                <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', overflow:'visible' }}>
+                  {editMode
+                    ? cfg.combo.includes(key1)
+                      ? <ComboBox value={formData[key1]||''} onChange={val=>setFormData({...formData,[key1]:val})} options={getOptions(key1)} placeholder='เลือก' />
+                      : <input value={formData[key1]||''} onChange={e=>setFormData({...formData,[key1]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{formData[key1]||'—'}</div>
+                  }
+                </div>
+                <div style={{ padding:'5px 10px', fontSize:'11px', color:'#888', background:'#f8f9fa', display:'flex', alignItems:'center', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0', fontWeight:'500' }}>{lbl2}</div>
+                <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', overflow:'visible' }}>
+                  {editMode
+                    ? cfg.combo.includes(key2)
+                      ? <ComboBox value={formData[key2]||''} onChange={val=>setFormData({...formData,[key2]:val})} options={getOptions(key2)} placeholder='เลือก' />
+                      : <input value={formData[key2]||''} onChange={e=>setFormData({...formData,[key2]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{formData[key2]||'—'}</div>
+                  }
                 </div>
               </div>
             ))}
+
+            {/* Row 9: Remark | BlankCell — label-left layout */}
+            <div style={{ display:'grid', gridTemplateColumns:'110px 1fr 110px 1fr', border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'visible', marginBottom:'6px' }}>
+              <div style={{ padding:'5px 10px', fontSize:'11px', color:'#888', background:'#f8f9fa', display:'flex', alignItems:'center', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0', fontWeight:'500' }}>Remark</div>
+              <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', overflow:'visible' }}>
+                {editMode
+                  ? <input value={formData['Remark']||''} onChange={e=>setFormData({...formData,'Remark':e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
+                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{formData['Remark']||'—'}</div>
+                }
+              </div>
+              <div style={{ padding:'5px 10px', fontSize:'11px', color:'#888', background:'#f8f9fa', display:'flex', alignItems:'center', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0', fontWeight:'500' }}>BlankCell</div>
+              <div style={{ padding:'3px 6px' }} />
+            </div>
+
+            {/* Row M1: BU Company Simple | Tax ID BU | Com% | Spec% */}
+            {smGrid([
+              { label:'BU Company Simple', disabled:true, w:'1fr'   ,    bg:'#E6F1FB'  },
+              { label:'Tax ID BU',         disabled:true, w:'1fr'   ,    bg:'#E6F1FB'  },
+              { label:'Com%',              disabled:true, w:'80px'  ,    bg:'#E6F1FB'  },
+              { label:'Spec%',             disabled:true, w:'80px' ,    bg:'#E6F1FB'   },
+            ])}
+
+            {/* Row M2: BU Branch | BU Company | Branch Code | Check Data */}
+            {smGrid([
+              { label:'BU Branch',   disabled:true, w:'120px' ,    bg:'#E6F1FB' },
+              { label:'BU Company',  disabled:true, w:'1fr'  ,    bg:'#E6F1FB'  },
+              { label:'Branch Code', disabled:true, w:'190px',    bg:'#E6F1FB'  },
+              { label:'Check Data',  disabled:true, w:'110px',    bg:'#E6F1FB'  },
+            ])}
+
           </div>
           </div>
         );
       }
-      if (tab === 'apcode' || tab === 'iecode') {
+if (tab === 'apcode' || tab === 'iecode') {
         const isIe = tab === 'iecode';
         const lbl = (text) => (
           <div style={{ padding:'6px 10px', fontSize:'11px', color:'#888', display:'flex', alignItems:'center', background:'#f8f9fa', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0' }}>{text}</div>
@@ -1319,10 +1560,16 @@ const computeNextSyRunning = async () => {
               </div>
               {renderFormFields(form, setForm, true)}
               <div style={{ padding:'0 20px 16px' }}>
-                <label style={{ fontSize:'11px', color:'#888' }}>Username</label>
-                <input style={S.inputDisabled} value={cu()} disabled />
-                <label style={{ fontSize:'11px', color:'#888' }}>Last Update</label>
-                <input style={S.inputDisabled} value={getTimestamp()} disabled />
+                <div style={{ display:'flex', gap:'12px', alignItems:'center' }}>
+                  <div style={{ flex:1 }}>
+                    <label style={{ fontSize:'11px', color:'#888' }}>Username</label>
+                    <input style={S.inputDisabled} value={cu()} disabled />
+                  </div>
+                  <div style={{ flex:1 }}>
+                    <label style={{ fontSize:'11px', color:'#888' }}>Last Update</label>
+                    <input style={S.inputDisabled} value={getTimestamp()} disabled />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
