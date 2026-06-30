@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { db as supabase } from '../lib/db';
+import { db } from '../lib/db';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 
@@ -54,7 +54,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     setSaving(true);
     try {
       const ext = form.file_name.split('.').pop().toLowerCase();
-      const { error: err } = await supabase.from('doc_files').insert([{
+      const { error: err } = await db.from('doc_files').insert([{
         folder_key: folder.key,
         file_name: form.file_name.trim(),
         sharepoint_url: form.sharepoint_url.trim(),
@@ -144,7 +144,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
 
   const logActivity = async (action, target, detail = {}) => {
     try {
-      await supabase.from('activity_log').insert([{
+      await db.from('activity_log').insert([{
         user_email: currentUser?.email || '',
         username: userName || currentUser?.email || '',
         action,
@@ -158,7 +158,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data } = await db
         .from('doc_files')
         .select('*')
         .eq('folder_key', folder.key)
@@ -172,7 +172,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
 
   const handleDelete = async (file) => {
     try {
-      await supabase.from('doc_files').delete().eq('id', file.id);
+      await db.from('doc_files').delete().eq('id', file.id);
       await logActivity('delete_file', file.file_name, { folder: folder.key });
       setConfirmDelete(null);
       fetchFiles();
@@ -379,18 +379,18 @@ function DocumentCenter() {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const { data: roleData } = await supabase.from('user_roles').select('*').eq('email', currentUser.email).single();
+      const { data: roleData } = await db.from('user_roles').select('*').eq('email', currentUser.email).single();
       setUserRoleData(roleData);
       if (roleData?.id) {
         const [{ data: ovData }, { data: reqData }] = await Promise.all([
-          supabase.from('doc_access_override').select('*').eq('user_id', roleData.id),
-          supabase.from('access_requests').select('*').eq('requester_id', roleData.id),
+          db.from('doc_access_override').select('*').eq('user_id', roleData.id),
+          db.from('access_requests').select('*').eq('requester_id', roleData.id),
         ]);
         setOverrides(ovData || []);
         setRequests(reqData || []);
       }
       // fetch file counts per folder
-      const { data: countData } = await supabase.from('doc_files').select('folder_key');
+      const { data: countData } = await db.from('doc_files').select('folder_key');
       if (countData) {
         const counts = {};
         countData.forEach(r => { counts[r.folder_key] = (counts[r.folder_key] || 0) + 1; });
@@ -428,7 +428,7 @@ function DocumentCenter() {
     try {
       const existing = requests.find(r => r.folder_key === folder.key && r.status === 'pending');
       if (existing) { showToast('ส่ง request ไปแล้วครับ รออนุมัติอยู่', 'info'); return; }
-      const { error } = await supabase.from('access_requests').insert([{
+      const { error } = await db.from('access_requests').insert([{
         requester_id: userRoleData.id,
         requester_name: userName || currentUser?.email || '',
         folder_key: folder.key,

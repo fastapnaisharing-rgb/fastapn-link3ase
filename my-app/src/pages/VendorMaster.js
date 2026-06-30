@@ -1,5 +1,5 @@
   import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-  import { db as supabase } from '../lib/db';
+  import { db } from '../lib/db';
   import { apiFetch } from '../api';
   import * as XLSX from 'xlsx';
   import { useAuth } from '../contexts/AuthContext';
@@ -629,7 +629,7 @@ const computeNextSyRunning = async () => {
         if (tab === 'iecode') {
           let allCodesData = []; let from = 0;
           while (true) {
-            const { data } = await supabase.from('ie_code_list').select('"SY-Running"').range(from, from + 999);
+            const { data } = await db.from('ie_code_list').select('"SY-Running"').range(from, from + 999);
             if (!data || data.length === 0) break;
             allCodesData = [...allCodesData, ...data.map(d => d['SY-Running'] || '')];
             if (data.length < 1000) break;
@@ -637,13 +637,13 @@ const computeNextSyRunning = async () => {
           }
           const getNextSy = getSyRunningPool(allCodesData);
           const buildIePayload = (row) => { const d = {}; cfg.fields.forEach(k => { if (k === 'SY-Running') return; if (k === 'username') d[k] = cuStr; else if (k === 'last_update') d[k] = ts; else d[k] = String(row[k] ?? ''); }); return d; };
-          if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const payload = newRows.slice(i, i + 500).map(row => ({ 'SY-Running': getNextSy(), ...buildIePayload(row) })); const { error } = await supabase.from('ie_code_list').insert(payload); if (error) throw new Error(error.message); } }
-          if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i, i + 500).map(row => ({ id: row._existingId, ...buildIePayload(row) })); const { error } = await supabase.from('ie_code_list').upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
+          if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const payload = newRows.slice(i, i + 500).map(row => ({ 'SY-Running': getNextSy(), ...buildIePayload(row) })); const { error } = await db.from('ie_code_list').insert(payload); if (error) throw new Error(error.message); } }
+          if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i, i + 500).map(row => ({ id: row._existingId, ...buildIePayload(row) })); const { error } = await db.from('ie_code_list').upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
           await refreshNextSyRunning();
         } else {
           const buildPayload = (row) => { const d = {}; cfg.fields.forEach(k => { if (k === 'username') d[k] = cuStr; else if (k === 'last_update') d[k] = ts; else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') { const existing = items.find(i => i[cfg.key] === row[cfg.key]); d[k] = existing?.['Tax ID'] ?? String(row[k] ?? ''); } else d[k] = String(row[k] ?? ''); }); return d; };
-          if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const { error } = await supabase.from(cfg.table).insert(newRows.slice(i, i+500).map(buildPayload)); if (error) throw new Error(error.message); } }
-          if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) })); const { error } = await supabase.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
+          if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const { error } = await db.from(cfg.table).insert(newRows.slice(i, i+500).map(buildPayload)); if (error) throw new Error(error.message); } }
+          if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) })); const { error } = await db.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
         }
         setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
         if (tab === 'apcode') invalidate('SupplierList');

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { db as supabase } from '../lib/db';
+import { db } from '../lib/db';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
@@ -358,11 +358,11 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const doInfoSave = async (form) => {
     const data = { ...form, ...metaFields };
     if (infoEditId) {
-      const { data: updated, error } = await supabase.from('company_list').update(data).eq('id', infoEditId).select().single();
+      const { data: updated, error } = await db.from('company_list').update(data).eq('id', infoEditId).select().single();
       if (error) throw error;
       setInfoItems(prev => prev.map(i => i.id === infoEditId ? { ...i, ...updated } : i));
     } else {
-      const { data: inserted, error } = await supabase.from('company_list').insert([data]).select().single();
+      const { data: inserted, error } = await db.from('company_list').insert([data]).select().single();
       if (error) throw error;
       setInfoItems(prev => [...prev, inserted]);
     }
@@ -388,7 +388,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       const ids = rateConfirmData.affectedIds;
       for (let i = 0; i < ids.length; i += 500) {
         const chunk = ids.slice(i, i + 500);
-        const { error } = await supabase.from('branch_list').update({ '%': rateConfirmData.newRate, ...metaFields }).in('id', chunk);
+        const { error } = await db.from('branch_list').update({ '%': rateConfirmData.newRate, ...metaFields }).in('id', chunk);
         if (error) throw error;
         setBranches(prev => prev.map(b => chunk.includes(b.id) ? { ...b, '%': rateConfirmData.newRate } : b));
       }
@@ -403,12 +403,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = infoItems.find(i => i.id === id);
-      const { error: binError } = await supabase.from('recycle_bin').insert([{
+      const { error: binError } = await db.from('recycle_bin').insert([{
         source_table: 'company_list', source_id: id, source_key: item?.['TAX ID'] || id, data: item,
         deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString()
       }]);
       if (binError) throw binError;
-      const { error } = await supabase.from('company_list').delete().eq('id', id);
+      const { error } = await db.from('company_list').delete().eq('id', id);
       if (error) throw error;
       setInfoItems(prev => prev.filter(i => i.id !== id));
       setInfoSelected(p => p.filter(s => s !== id));
@@ -425,12 +425,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now,
       }));
       for (let i = 0; i < bins.length; i += 500) {
-        const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
+        const { error } = await db.from('recycle_bin').insert(bins.slice(i, i + 500));
         if (error) throw error;
       }
       for (let i = 0; i < infoSelected.length; i += 500) {
         const chunk = infoSelected.slice(i, i + 500);
-        const { error } = await supabase.from('company_list').delete().in('id', chunk);
+        const { error } = await db.from('company_list').delete().in('id', chunk);
         if (error) throw error;
       }
       setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
@@ -457,7 +457,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       if (newRows.length > 0) {
         const insertData = newRows.map(row => { const d = {}; INFO_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); }); return d; });
         for (let i = 0; i < insertData.length; i += 500) {
-          const { data: ins, error } = await supabase.from('company_list').insert(insertData.slice(i,i+500)).select();
+          const { data: ins, error } = await db.from('company_list').insert(insertData.slice(i,i+500)).select();
           if (error) throw error;
           setInfoItems(prev => [...prev, ...ins]);
         }
@@ -471,7 +471,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           const newVal = String(row[k] ?? '').trim();
           if (newVal !== '') d[k] = newVal;
         });
-        const { data: upd, error } = await supabase.from('company_list').update(d).eq('id', row._existingId).select().single();
+        const { data: upd, error } = await db.from('company_list').update(d).eq('id', row._existingId).select().single();
         if (error) throw error;
         setInfoItems(prev => prev.map(i => i.id === row._existingId ? { ...i, ...upd } : i));
       }
@@ -494,7 +494,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     const err = validateBranchForm(branchDetailForm);
     if (err) { setBranchDetailError(err); return; }
     const data = { ...branchDetailForm, ...metaFields };
-    const { data: updated, error } = await supabase.from('branch_list').update(data).eq('id', branchDetailItem.id).select().single();
+    const { data: updated, error } = await db.from('branch_list').update(data).eq('id', branchDetailItem.id).select().single();
     if (error) { setBranchDetailError('บันทึกไม่สำเร็จ: ' + error.message); return; }
     setBranches(prev => prev.map(b => b.id === branchDetailItem.id ? { ...b, ...updated } : b));
     setShowBranchDetail(false);
@@ -504,7 +504,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleBranchNewSave = async () => {
     const err = validateBranchForm(branchNewForm);
     if (err) { setBranchNewError(err); return; }
-    const { data: inserted, error } = await supabase.from('branch_list').insert([{ ...branchNewForm, ...metaFields }]).select().single();
+    const { data: inserted, error } = await db.from('branch_list').insert([{ ...branchNewForm, ...metaFields }]).select().single();
     if (error) { setBranchNewError('บันทึกไม่สำเร็จ: ' + error.message); return; }
     setBranches(prev => [...prev, inserted]);
     setShowBranchNew(false); setBranchNewForm({});
@@ -515,12 +515,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
     try {
       const item = branches.find(b => b.id === id);
-      const { error: binError } = await supabase.from('recycle_bin').insert([{
+      const { error: binError } = await db.from('recycle_bin').insert([{
         source_table: 'branch_list', source_id: id, source_key: item?.['Branch Code'] || id, data: item,
         deleted_by: userName || currentUser?.email || '', deleted_at: new Date().toISOString()
       }]);
       if (binError) throw binError;
-      const { error } = await supabase.from('branch_list').delete().eq('id', id);
+      const { error } = await db.from('branch_list').delete().eq('id', id);
       if (error) throw error;
       setBranches(prev => prev.filter(b => b.id !== id));
       setBranchSelected(p => p.filter(s => s !== id));
@@ -537,12 +537,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         data: item, deleted_by: userName || currentUser?.email || '', deleted_at: now,
       }));
       for (let i = 0; i < bins.length; i += 500) {
-        const { error } = await supabase.from('recycle_bin').insert(bins.slice(i, i + 500));
+        const { error } = await db.from('recycle_bin').insert(bins.slice(i, i + 500));
         if (error) throw error;
       }
       for (let i = 0; i < branchSelected.length; i += 500) {
         const chunk = branchSelected.slice(i, i + 500);
-        const { error } = await supabase.from('branch_list').delete().in('id', chunk);
+        const { error } = await db.from('branch_list').delete().in('id', chunk);
         if (error) throw error;
       }
       setBranches(prev => prev.filter(b => !branchSelected.includes(b.id)));
@@ -557,7 +557,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleOpenRecycleBin = async () => {
     setShowRecycleBin(true); setRecycleBinSelected([]); setRecycleBinLoading(true);
     try {
-      const { data, error } = await supabase.from('recycle_bin').select('*').eq('source_table', currentTable()).order('deleted_at', { ascending: false });
+      const { data, error } = await db.from('recycle_bin').select('*').eq('source_table', currentTable()).order('deleted_at', { ascending: false });
       if (error) throw error;
       setRecycleBinItems(data || []);
     } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
@@ -567,9 +567,9 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleRestore = async (binItem) => {
     try {
       const data = { ...binItem.data }; delete data.id;
-      const { error } = await supabase.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
+      const { error } = await db.from(binItem.source_table).insert([{ ...data, id: binItem.source_id }]);
       if (error) throw error;
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      await db.from('recycle_bin').delete().eq('id', binItem.id);
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
       if (binItem.source_table === 'company_list') await fetchInfo(true); else await fetchBranch(true);
       alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
@@ -579,8 +579,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handlePermanentDelete = async (binItem) => {
     if (!window.confirm(`ลบถาวร "${binItem.source_key}"? ไม่สามารถกู้คืนได้`)) return;
     try {
-      if (binItem.source_id) await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);
-      await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+      if (binItem.source_id) await db.from(binItem.source_table).delete().eq('id', binItem.source_id);
+      await db.from('recycle_bin').delete().eq('id', binItem.id);
       setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
     } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
   };
@@ -597,14 +597,14 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         for (let i = 0; i < binItems.length; i += 500) {
           const chunk = binItems.slice(i, i + 500);
           const rows = chunk.map(item => { const data = { ...item.data }; delete data.id; return { ...data, id: item.source_id }; });
-          const { error } = await supabase.from(table).insert(rows);
+          const { error } = await db.from(table).insert(rows);
           if (error) throw error;
           done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
         }
       }
       const binIds = targets.map(b => b.id);
       for (let i = 0; i < binIds.length; i += 500) {
-        const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+        const { error } = await db.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
         if (error) throw error;
       }
       setRecycleBinSelected([]);
@@ -626,14 +626,14 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       for (const [table, ids] of Object.entries(byTable)) {
         for (let i = 0; i < ids.length; i += 500) {
           const chunk = ids.slice(i, i + 500);
-          const { error } = await supabase.from(table).delete().in('id', chunk);
+          const { error } = await db.from(table).delete().in('id', chunk);
           if (error) throw error;
           done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
         }
       }
       const binIds = targets.map(b => b.id);
       for (let i = 0; i < binIds.length; i += 500) {
-        const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+        const { error } = await db.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
         if (error) throw error;
       }
       setRecycleBinSelected([]);
@@ -661,7 +661,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       if (newRows.length > 0) {
         const insertData = newRows.map(row => { const d = {}; BRANCH_FIELDS.forEach(k => { d[k] = k==='updated_by'?(userName||currentUser?.email||''):k==='updated_at'?new Date().toISOString():String(row[k]??''); }); return d; });
         for (let i = 0; i < insertData.length; i += 500) {
-          const { data: ins, error } = await supabase.from('branch_list').insert(insertData.slice(i,i+500)).select();
+          const { data: ins, error } = await db.from('branch_list').insert(insertData.slice(i,i+500)).select();
           if (error) throw error;
           setBranches(prev => [...prev, ...ins]);
         }
@@ -675,7 +675,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           const newVal = String(row[k] ?? '').trim();
           if (newVal !== '') d[k] = newVal;
         });
-        const { data: upd, error } = await supabase.from('branch_list').update(d).eq('id', row._existingId).select().single();
+        const { data: upd, error } = await db.from('branch_list').update(d).eq('id', row._existingId).select().single();
         if (error) throw error;
         setBranches(prev => prev.map(b => b.id === row._existingId ? { ...b, ...upd } : b));
       }

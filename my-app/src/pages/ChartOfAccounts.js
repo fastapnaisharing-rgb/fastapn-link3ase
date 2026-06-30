@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-  import { db as supabase } from '../lib/db';
+  import { db } from '../lib/db';
   import * as XLSX from 'xlsx';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
@@ -412,7 +412,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         const tbl = tableName(tab);
         if (tab === 'account') {
           const insertData = previewRows.map(row => buildRowData(row, cfg.fields));
-          for (let i = 0; i < insertData.length; i += 500) { const { error } = await supabase.from(tbl).insert(insertData.slice(i, i + 500)); if (error) throw error; }
+          for (let i = 0; i < insertData.length; i += 500) { const { error } = await db.from(tbl).insert(insertData.slice(i, i + 500)); if (error) throw error; }
           alert(`✅ Import สำเร็จ ${previewRows.length} รายการ`);
         } else {
           const toProcess = previewRows.filter(r => r._status === 'new' || r._status === 'update');
@@ -420,12 +420,12 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
           const updateRows = toProcess.filter(r => r._status === 'update');
           if (newRows.length > 0) {
             for (let i = 0; i < newRows.length; i += 500) {
-              const { error } = await supabase.from(tbl).insert(newRows.slice(i, i + 500).map(row => buildRowData(row, cfg.fields)));
+              const { error } = await db.from(tbl).insert(newRows.slice(i, i + 500).map(row => buildRowData(row, cfg.fields)));
               if (error) throw error;
             }
           }
           for (const row of updateRows) {
-            const { error } = await supabase.from(tbl).update(buildRowData(row, cfg.fields)).eq('id', row._existingId);
+            const { error } = await db.from(tbl).update(buildRowData(row, cfg.fields)).eq('id', row._existingId);
             if (error) throw error;
           }
           alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
@@ -439,8 +439,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       try {
         const tbl = tableName(tab);
         const data = buildRowData(form, cfg.fields);
-        if (editId) { const { error } = await supabase.from(tbl).update(data).eq('id', editId); if (error) throw error; }
-        else { const { error } = await supabase.from(tbl).insert([data]); if (error) throw error; }
+        if (editId) { const { error } = await db.from(tbl).update(data).eq('id', editId); if (error) throw error; }
+        else { const { error } = await db.from(tbl).insert([data]); if (error) throw error; }
         setShowForm(false); setEditId(null); setForm({}); await fetchTab(tab, true);
       } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     };
@@ -450,7 +450,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       try {
         const item = items.find(i => i.id === id);
         if (!item) throw new Error('Item not found');
-        const { error: insertError } = await supabase.from('recycle_bin').insert([{
+        const { error: insertError } = await db.from('recycle_bin').insert([{
           source_table: tableName(tab),
           source_id: item.id,
           source_key: item[cfg.key] || item.id,
@@ -459,7 +459,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
           deleted_at: new Date().toISOString()
         }]);
         if (insertError) throw insertError;
-        const { error: deleteError } = await supabase.from(tableName(tab)).delete().eq('id', id);
+        const { error: deleteError } = await db.from(tableName(tab)).delete().eq('id', id);
         if (deleteError) throw deleteError;
         setSelectedMap(prev => ({ ...prev, [tab]: prev[tab].filter(s => s !== id) }));
         await fetchTab(tab, true);
@@ -472,7 +472,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         const tbl = tableName(tab);
         const now = new Date().toISOString();
         const rowsToDelete = items.filter(i => selected.includes(i.id));
-        const { error: insertError } = await supabase.from('recycle_bin').insert(
+        const { error: insertError } = await db.from('recycle_bin').insert(
           rowsToDelete.map(item => ({
             source_table: tbl, source_id: item.id,
             source_key: item[cfg.key] || item.id,
@@ -484,7 +484,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         if (insertError) throw insertError;
         const ids = rowsToDelete.map(i => i.id);
         for (let i = 0; i < ids.length; i += 300) {
-          const { error: deleteError } = await supabase.from(tbl).delete().in('id', ids.slice(i, i + 300));
+          const { error: deleteError } = await db.from(tbl).delete().in('id', ids.slice(i, i + 300));
           if (deleteError) throw deleteError;
         }
         // ลบ if (deleteError) throw deleteError; ออก
@@ -498,7 +498,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 
     const handleDetailSave = async () => {
       try {
-        const { error } = await supabase.from(tableName(tab)).update(buildRowData(detailForm, cfg.fields)).eq('id', detailItem.id);
+        const { error } = await db.from(tableName(tab)).update(buildRowData(detailForm, cfg.fields)).eq('id', detailItem.id);
         if (error) throw error;
         setShowDetailModal(false); await fetchTab(tab, true);
       } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
@@ -509,7 +509,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       try {
         let from = 0; const batchSize = 1000; let allData = [];
         while (true) {
-          const { data, error } = await supabase.from('recycle_bin').select('*').eq('source_table', tableName(tab)).order('deleted_at', { ascending: false }).range(from, from + batchSize - 1);
+          const { data, error } = await db.from('recycle_bin').select('*').eq('source_table', tableName(tab)).order('deleted_at', { ascending: false }).range(from, from + batchSize - 1);
           if (error) throw error;
           allData = [...allData, ...(data || [])];
           if (!data || data.length < batchSize) break;
@@ -524,9 +524,9 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
       try {
         const data = { ...binItem.data };
         delete data.id;
-        const { error } = await supabase.from(binItem.source_table).insert([data]);
+        const { error } = await db.from(binItem.source_table).insert([data]);
         if (error) throw error;
-        await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+        await db.from('recycle_bin').delete().eq('id', binItem.id);
         setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
         await fetchTab(tab, true);
         alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
@@ -536,8 +536,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
     const handlePermanentDelete = async (binItem) => {
       if (!window.confirm(`ลบถาวร "${binItem.source_key}" ออกจากระบบ? ไม่สามารถกู้คืนได้`)) return;
       try {
-        if (binItem.source_id) await supabase.from(binItem.source_table).delete().eq('id', binItem.source_id);
-        await supabase.from('recycle_bin').delete().eq('id', binItem.id);
+        if (binItem.source_id) await db.from(binItem.source_table).delete().eq('id', binItem.source_id);
+        await db.from('recycle_bin').delete().eq('id', binItem.id);
         setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
       } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
     };
@@ -554,14 +554,14 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
           for (let i = 0; i < binItems.length; i += 500) {
             const chunk = binItems.slice(i, i + 500);
             const rows = chunk.map(item => { const d = { ...item.data }; delete d.id; return d; });
-            const { error } = await supabase.from(table).insert(rows);
+            const { error } = await db.from(table).insert(rows);
             if (error) throw error;
             done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
           }
         }
         const binIds = targets.map(b => b.id);
         for (let i = 0; i < binIds.length; i += 500) {
-          const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+          const { error } = await db.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
           if (error) throw error;
         }
         setRecycleBinSelected([]);
@@ -583,14 +583,14 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
         for (const [table, ids] of Object.entries(byTable)) {
           for (let i = 0; i < ids.length; i += 500) {
             const chunk = ids.slice(i, i + 500);
-            const { error } = await supabase.from(table).delete().in('id', chunk);
+            const { error } = await db.from(table).delete().in('id', chunk);
             if (error) throw error;
             done += chunk.length; setRecycleBinProgress(Math.round((done / total) * 100));
           }
         }
         const binIds = targets.map(b => b.id);
         for (let i = 0; i < binIds.length; i += 500) {
-          const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+          const { error } = await db.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
           if (error) throw error;
         }
         setRecycleBinSelected([]);

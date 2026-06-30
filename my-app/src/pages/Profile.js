@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db as supabase } from '../lib/db';
+import { db } from '../lib/db';
 
 function Profile({ onClose }) {
   const { currentUser } = useAuth();
@@ -19,7 +19,7 @@ function Profile({ onClose }) {
 
   React.useEffect(() => {
     const fetchUser = async () => {
-      const { data } = await supabase
+      const { data } = await db
         .from('user_roles')
         .select('username')
         .eq('email', currentUser?.email)
@@ -56,18 +56,18 @@ function Profile({ onClose }) {
     try {
       // เปลี่ยน Password
       if (newPassword) {
-        const { error: pwError } = await supabase.auth.updateUser({ password: newPassword });
+        const { error: pwError } = await db.auth.updateUser({ password: newPassword });
         if (pwError) throw pwError;
       }
 
       // เปลี่ยน Email
       if (email !== currentUser?.email) {
-        const { error: emailError } = await supabase.auth.updateUser({ email });
+        const { error: emailError } = await db.auth.updateUser({ email });
         if (emailError) throw emailError;
       }
 
       // อัปเดต Username ใน user_roles
-      const { error: roleError } = await supabase
+      const { error: roleError } = await db
         .from('user_roles')
         .update({ username: username.trim().toLowerCase() })
         .eq('email', currentUser?.email);

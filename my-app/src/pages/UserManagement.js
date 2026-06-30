@@ -1,5 +1,5 @@
   import React, { useState, useEffect, useMemo } from 'react';
-  import { db as supabase } from '../lib/db';
+  import { db } from '../lib/db';
   import { apiFetch } from '../api';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
@@ -80,7 +80,7 @@
     const [savingMsg, setSavingMsg] = useState(false);
 
     const fetchSettings = async () => {
-      const { data } = await supabase.from('system_settings').select('*');
+      const { data } = await db.from('system_settings').select('*');
       if (data) {
         const full = data.find(d => d.key === 'maintenance_mode');
         const msg = data.find(d => d.key === 'maintenance_message');
@@ -100,7 +100,7 @@
     useEffect(() => { fetchSettings(); }, []);
 
     const saveSetting = async (key, value) => {
-      await supabase.from('system_settings').upsert(
+      await db.from('system_settings').upsert(
         [{ key, value: String(value), updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() }],
         { onConflict: 'key' }
       );
@@ -222,7 +222,7 @@
     const [pendingChanges, setPendingChanges] = useState({});
 
     const fetchOverrides = async () => {
-      const { data } = await supabase.from('doc_access_override').select('*');
+      const { data } = await db.from('doc_access_override').select('*');
       setOverrides(data || []);
     };
 
@@ -277,7 +277,7 @@
           .filter(([k]) => k.endsWith(`_${folderKey}`))
           .map(([k, v]) => ({ userId: k.replace(`_${folderKey}`, ''), allowed: v }));
         for (const { userId, allowed } of folderChanges) {
-          const { error } = await supabase.from('doc_access_override').upsert({
+          const { error } = await db.from('doc_access_override').upsert({
             user_id: userId, folder_key: folderKey, allowed,
             updated_by: userName || currentUser?.email || '',
             updated_at: new Date().toISOString(),
@@ -417,7 +417,7 @@
       let from = 0;
       const pageSize = 1000;
       while (true) {
-        const { data, error } = await supabase
+        const { data, error } = await db
           .from('recycle_bin')
           .select('*')
           .order('deleted_at', { ascending: false })
@@ -477,11 +477,11 @@ useEffect(() => {
         delete data.deleted;
         delete data.deleted_by;
         delete data.deleted_at;
-        const { error } = await supabase
+        const { error } = await db
           .from(item.source_table)
           .insert([{ ...data, id: item.source_id }]);
         if (error) throw error;
-        await supabase.from('recycle_bin').delete().eq('id', item.id);
+        await db.from('recycle_bin').delete().eq('id', item.id);
         setSelected(prev => prev.filter(s => s !== item.id));
         fetchBins();
         fetchBinCount();
@@ -519,7 +519,7 @@ useEffect(() => {
               delete data.deleted_at;
               return { ...data, id: item.source_id };
             });
-            const { error } = await supabase.from(table).insert(rows);
+            const { error } = await db.from(table).insert(rows);
             if (error) throw error;
             done += chunk.length;
             setProgressDone(done);
@@ -528,7 +528,7 @@ useEffect(() => {
         }
         const binIds = targets.map(b => b.id);
         for (let i = 0; i < binIds.length; i += 500) {
-          const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+          const { error } = await db.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
           if (error) throw error;
         }
         setSelected([]);
@@ -548,9 +548,9 @@ useEffect(() => {
       try {
         // ข้าม delete source สำหรับ hard-delete tables
         if (!HARD_DELETE_TABLES.includes(item.source_table)) {
-          await supabase.from(item.source_table).delete().eq('id', item.source_id);
+          await db.from(item.source_table).delete().eq('id', item.source_id);
         }
-        await supabase.from('recycle_bin').delete().eq('id', item.id);
+        await db.from('recycle_bin').delete().eq('id', item.id);
         setConfirmDelete(null);
         setSelected(prev => prev.filter(s => s !== item.id));
         fetchBins();
@@ -585,7 +585,7 @@ useEffect(() => {
           setProgressLabel(`กำลังลบ ${TABLE_LABELS[table] || table}`);
           for (let i = 0; i < ids.length; i += BATCH) {
             const chunk = ids.slice(i, i + BATCH);
-            const { error } = await supabase.from(table).delete().in('id', chunk);
+            const { error } = await db.from(table).delete().in('id', chunk);
             if (error) throw error;
             done += chunk.length;
             setProgressDone(done);
@@ -594,7 +594,7 @@ useEffect(() => {
         }
         const binIds = targets.map(b => b.id);
         for (let i = 0; i < binIds.length; i += 500) {
-          const { error } = await supabase.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
+          const { error } = await db.from('recycle_bin').delete().in('id', binIds.slice(i, i + 500));
           if (error) throw error;
         }
         setSelected([]);
@@ -973,7 +973,7 @@ useEffect(() => {
 
     React.useEffect(() => {
       const fetchUser = async () => {
-        const { data } = await supabase.from('user_roles').select('username').eq('email', currentUser?.email).single();
+        const { data } = await db.from('user_roles').select('username').eq('email', currentUser?.email).single();
         if (data) { setCurrentUsername(data.username || ''); setUsername(data.username || ''); }
       };
       fetchUser();
@@ -997,7 +997,7 @@ useEffect(() => {
           });
           if (!res?.ok) throw new Error(res?.error || 'เปลี่ยน password ไม่สำเร็จ');
         }
-        const { error: roleError } = await supabase.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('email', currentUser?.email);
+        const { error: roleError } = await db.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('email', currentUser?.email);
         if (roleError) throw roleError;
         setSuccess('บันทึกข้อมูลสำเร็จแล้วครับ!');
         setNewPassword(''); setConfirmPassword('');
@@ -1099,13 +1099,13 @@ useEffect(() => {
 
     const fetchUsers = async () => {
       const ROLE_ORDER = { Owner: 1, Admin: 2, Editor: 3, Viewer: 4 };
-      const { data } = await supabase.from('user_roles').select('*');
+      const { data } = await db.from('user_roles').select('*');
       const sorted = (data || []).sort((a, b) => (ROLE_ORDER[a.role]||5) - (ROLE_ORDER[b.role]||5));
       setUsers(sorted);
     };
 
     const fetchBinCount = async () => {
-      const { count } = await supabase.from('recycle_bin').select('*', { count: 'exact', head: true });
+      const { count } = await db.from('recycle_bin').select('*', { count: 'exact', head: true });
       setBinCount(count || 0);
     };
 
@@ -1146,7 +1146,7 @@ useEffect(() => {
     }
 
     const saveUser = async (user) => {
-      const { error } = await supabase.from('user_roles').update({ role: user.role, permissions: user.permissions, updated_by: currentUser?.email }).eq('id', user.id);
+      const { error } = await db.from('user_roles').update({ role: user.role, permissions: user.permissions, updated_by: currentUser?.email }).eq('id', user.id);
       if (error) { setError('บันทึกไม่สำเร็จ: ' + error.message); return; }
       setSavedId(user.id);
       setTimeout(() => setSavedId(null), 2000);

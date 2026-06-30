@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { db as supabase } from '../lib/db';
+import { db } from '../lib/db';
 import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
 import { useDataCache } from '../contexts/DataCacheContext';
@@ -548,7 +548,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       const favs = Array.isArray(item.favorite_taxids) ? [...item.favorite_taxids] : [];
       const already = favs.includes(vendorTaxId);
       const newFavs = already ? favs.filter(t => t !== vendorTaxId) : [...favs, vendorTaxId];
-      const { error } = await supabase.from('itemcode_list').update({ favorite_taxids: newFavs }).eq('id', item.id);
+      const { error } = await db.from('itemcode_list').update({ favorite_taxids: newFavs }).eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
     } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
@@ -600,10 +600,10 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     try {
       const payload = { ...form, updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() };
       if (view === 'edit' && viewTarget?.id) {
-        const { error } = await supabase.from('itemcode_list').update(payload).eq('id', viewTarget.id);
+        const { error } = await db.from('itemcode_list').update(payload).eq('id', viewTarget.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('itemcode_list').insert([{ ...payload, code: nextCode }]);
+        const { error } = await db.from('itemcode_list').insert([{ ...payload, code: nextCode }]);
         if (error) throw error;
       }
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
@@ -615,7 +615,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   const handleDelete = async (item) => {
     if (!window.confirm(`ต้องการลบ "${item.code} — ${item.description || ''}" ใช่หรือไม่?`)) return;
     try {
-      const { error } = await supabase.from('itemcode_list').delete().eq('id', item.id);
+      const { error } = await db.from('itemcode_list').delete().eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
     } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
@@ -1143,10 +1143,10 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       const meta = { updated_by: userName, updated_at: new Date().toISOString() };
       const payload = { ...form, ...meta };
       if (view === 'edit' && editTarget?.id) {
-        const { error } = await supabase.from('supplier_list').update(payload).eq('id', editTarget.id);
+        const { error } = await db.from('supplier_list').update(payload).eq('id', editTarget.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('supplier_list').insert([payload]);
+        const { error } = await db.from('supplier_list').insert([payload]);
         if (error) throw error;
       }
       if (fetchCollection) await fetchCollection('SupplierList', true);
@@ -1158,7 +1158,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const handleDeleteSupplier = async (item) => {
     if (!window.confirm(`ต้องการลบ "${item['Code']} — ${item['Supplier Name'] || ''}" ใช่หรือไม่?`)) return;
     try {
-      const { error } = await supabase.from('supplier_list').delete().eq('id', item.id);
+      const { error } = await db.from('supplier_list').delete().eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('SupplierList', true);
     } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
@@ -2116,7 +2116,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       const favs = Array.isArray(item.favorite_taxids) ? [...item.favorite_taxids] : [];
       const already = favs.includes(vendorTaxId);
       const newFavs = already ? favs.filter(t => t !== vendorTaxId) : [...favs, vendorTaxId];
-      const { error } = await supabase.from('sm_code_list').update({ favorite_taxids: newFavs }).eq('id', item.id);
+      const { error } = await db.from('sm_code_list').update({ favorite_taxids: newFavs }).eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('SmCodeList', true);
     } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
@@ -2246,10 +2246,10 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
     try {
       const payload = { ...f, updated_by: userName, updated_at: new Date().toISOString() };
       if (editTarget?.id) {
-        const { error } = await supabase.from('sm_code_list').update(payload).eq('id', editTarget.id);
+        const { error } = await db.from('sm_code_list').update(payload).eq('id', editTarget.id);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from('sm_code_list').insert([payload]).select().single();
+        const { data, error } = await db.from('sm_code_list').insert([payload]).select().single();
         if (error) throw error;
         if (fetchCollection) await fetchCollection('SmCodeList', true);
         // auto-select record ใหม่
@@ -2265,7 +2265,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
   const handleSmDelete = async (item) => {
     if (!window.confirm(`ต้องการลบ "${item['SM-Code']} — ${item['Company Name'] || ''}" ใช่หรือไม่?`)) return;
     try {
-      const { error } = await supabase.from('sm_code_list').delete().eq('id', item.id);
+      const { error } = await db.from('sm_code_list').delete().eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('SmCodeList', true);
     } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
@@ -2996,7 +2996,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const fullVendorCode = `${bu}-${form?.supplierCode || ''}`.toUpperCase();
     if (!bu || !form?.supplierCode) return;
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('contract_list')
         .select('*')
         .ilike('vendor_code', fullVendorCode)
@@ -4109,9 +4109,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
     const load = async () => {
       setHistoryLoading(true);
       try {
-        const { data: mine } = await supabase.from('batch_list').select('*').eq('created_by', me).order('created_at', { ascending: false }).limit(100);
+        const { data: mine } = await db.from('batch_list').select('*').eq('created_by', me).order('created_at', { ascending: false }).limit(100);
         setHistoryMine(mine || []);
-        if (canSeeAll) { const { data: all } = await supabase.from('batch_list').select('*').order('created_at', { ascending: false }).limit(500); setHistoryAll(all || []); }
+        if (canSeeAll) { const { data: all } = await db.from('batch_list').select('*').order('created_at', { ascending: false }).limit(500); setHistoryAll(all || []); }
       } catch (e) { console.error('loadHistory:', e); }
       setHistoryLoading(false);
     };
@@ -4387,8 +4387,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
   const handleSaveBranch = async ({ form: branchForm, isEdit, editTarget }) => {
     const meta = { updated_by: userName, updated_at: new Date().toISOString() };
-    if (isEdit) { const { error } = await supabase.from('branch_list').update({ ...branchForm, ...meta }).eq('id', editTarget.id); if (error) throw error; }
-    else { const { error } = await supabase.from('branch_list').insert([{ ...branchForm, ...meta }]); if (error) throw error; }
+    if (isEdit) { const { error } = await db.from('branch_list').update({ ...branchForm, ...meta }).eq('id', editTarget.id); if (error) throw error; }
+    else { const { error } = await db.from('branch_list').insert([{ ...branchForm, ...meta }]); if (error) throw error; }
     await fetchCollection('BranchList', true);
   };
 
@@ -4418,7 +4418,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       const local = loadLocalBucket();
       if (active && local.length) setInvoices(local);
       try {
-        const { data, error } = await supabase
+        const { data, error } = await db
           .from('bucket_list')
           .select('*')
           .eq('bu', bu)
@@ -4490,7 +4490,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         ...rest,
         local_id: _localId,
       }));
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('bucket_list')
         .upsert(payloads, { onConflict: 'local_id' })
         .select();
@@ -4531,8 +4531,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     try {
       const buId = batchConfig?.buInfo?.id;
       const { error } = buId
-        ? await supabase.from('company_list').update(payload).eq('id', buId)
-        : await supabase.from('company_list').update(payload).eq('bu', buVal);
+        ? await db.from('company_list').update(payload).eq('id', buId)
+        : await db.from('company_list').update(payload).eq('bu', buVal);
       if (error) throw error;
       lastSyncedGrtGrnRef.current = { grt, grn };
       if (fetchCollection) await fetchCollection('CompanyList', true);
@@ -4545,12 +4545,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const heartbeat = async () => {
     if (!batchConfig?.batchId || !batchConfig?.bu) return;
     try {
-      await supabase.from('ap_active_sessions').upsert(
+      await db.from('ap_active_sessions').upsert(
         { bu: batchConfig.bu, batch_id: batchConfig.batchId, user_name: userName || currentUser?.email || '', last_seen: new Date().toISOString() },
         { onConflict: 'batch_id' }
       );
       const cutoff = new Date(Date.now() - 60000).toISOString();
-      const { data, error } = await supabase.from('ap_active_sessions').select('batch_id').eq('bu', batchConfig.bu).neq('batch_id', batchConfig.batchId).gte('last_seen', cutoff);
+      const { data, error } = await db.from('ap_active_sessions').select('batch_id').eq('bu', batchConfig.bu).neq('batch_id', batchConfig.batchId).gte('last_seen', cutoff);
       if (error) throw error;
       const wasRealtime = realtimeSyncRef.current;
       realtimeSyncRef.current = !!(data && data.length);
@@ -4566,7 +4566,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   // ── ลบ session ของตัวเองตอนออกจากหน้านี้ ────────────────────────────────
   const cleanupPresence = async () => {
     if (!batchConfig?.batchId) return;
-    try { await supabase.from('ap_active_sessions').delete().eq('batch_id', batchConfig.batchId); }
+    try { await db.from('ap_active_sessions').delete().eq('batch_id', batchConfig.batchId); }
     catch (e) { console.error('cleanupPresence:', e); }
   };
 
@@ -4628,7 +4628,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       form_data, lines,
     };
     if (target._synced && target.id) {
-      const { error } = await supabase.from('bucket_list').update({
+      const { error } = await db.from('bucket_list').update({
         branch_no: updated.branch_no, branch_label: updated.branch_label, invoice_no: updated.invoice_no,
         inv_date: updated.inv_date, period: updated.period, description: updated.description,
         amount: updated.amount, vat: updated.vat, wht: updated.wht, net: updated.net,
@@ -4651,7 +4651,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const toDelete = invoices.filter((inv, i) => selectedRows.has(inv.id || inv._localId || i));
     const syncedIds = toDelete.filter(inv => inv._synced && inv.id).map(inv => inv.id);
     if (syncedIds.length) {
-      await supabase.from('bucket_list').delete().in('id', syncedIds);
+      await db.from('bucket_list').delete().in('id', syncedIds);
     }
     setInvoices(list => {
       const next = list.filter((inv, i) => !selectedRows.has(inv.id || inv._localId || i));
@@ -4672,7 +4672,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
     // 2. update status = 'sent' + บันทึก sent_to ใน bucket_list
     if (syncedIds.length) {
-      const { error } = await supabase.from('bucket_list').update({
+      const { error } = await db.from('bucket_list').update({
         status: 'sent',
         sent_to_user_id: toUserId,
         sent_to_username: toUsername,
@@ -4726,7 +4726,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     if (!toRecall.length) return;
     const syncedIds = toRecall.filter(inv => inv._synced && inv.id).map(inv => inv.id);
     if (syncedIds.length) {
-      await supabase.from('bucket_list').update({
+      await db.from('bucket_list').update({
         status: 'pending', sent_to_user_id: null, sent_to_username: null,
       }).in('id', syncedIds);
     }
@@ -5131,7 +5131,7 @@ const handleSelectBranch = (item, meta = {}) => {
                       <button title="Recall — ดึงกลับ" onClick={async () => {
                           if (window.confirm('ดึง invoice กลับจาก ' + (inv.sent_to_username || 'ผู้รับ') + ' ใช่ไหม?')) {
                             if (inv._synced && inv.id) {
-                              await supabase.from('bucket_list').update({ status: 'pending', sent_to_user_id: null, sent_to_username: null }).eq('id', inv.id);
+                              await db.from('bucket_list').update({ status: 'pending', sent_to_user_id: null, sent_to_username: null }).eq('id', inv.id);
                             }
                             setInvoices(prev => { const next = prev.map((x, idx) => idx === i ? { ...x, status: 'pending', sent_to_username: null } : x); saveLocalBucket(next); return next; });
                           }
@@ -5151,7 +5151,7 @@ const handleSelectBranch = (item, meta = {}) => {
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </button>
                       <button onClick={async () => {
-                          if (inv._synced && inv.id) { await supabase.from('bucket_list').delete().eq('id', inv.id); }
+                          if (inv._synced && inv.id) { await db.from('bucket_list').delete().eq('id', inv.id); }
                           setInvoices(list => { const next = list.filter((_, idx2) => idx2 !== i); saveLocalBucket(next); return next; });
                           setSelectedRows(prev => { const next = new Set(prev); next.delete(rowKey); return next; });
                         }}
@@ -5190,7 +5190,7 @@ function GenerateExport({ invoices, onNewBatch, onBack }) {
     try {
       const ids = invoices.filter(inv => inv.id).map(inv => inv.id);
       if (ids.length) {
-        const { error } = await supabase.from('bucket_list').update({ status: 'done' }).in('id', ids);
+        const { error } = await db.from('bucket_list').update({ status: 'done' }).in('id', ids);
         if (error) throw error;
       }
       setExported(true);
@@ -5296,7 +5296,7 @@ function SendToModal({ show, onClose, onSend, selectedCount, totalAmount, curren
     setToUserId(''); setNote(''); setError('');
     const load = async () => {
       try {
-        const { data } = await supabase.from('user_roles').select('id, username, email, role').order('username');
+        const { data } = await db.from('user_roles').select('id, username, email, role').order('username');
         setUsers((data || []).filter(u => u.id !== currentUserId));
       } catch (e) { console.error('SendToModal load users:', e); }
     };

@@ -13,7 +13,7 @@ import APController from './pages/APController';
 import VatController from './pages/VatController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
-import { db as supabase } from './lib/db';
+import { db } from './lib/db';
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 
@@ -475,7 +475,7 @@ function MainApp() {
     if (!currentUser) return;
     const checkMaintenance = async () => {
       try {
-        const { data } = await supabase.from('system_settings').select('key, value').in('key', ['maintenance_mode', 'maintenance_menus']);
+        const { data } = await db.from('system_settings').select('key, value').in('key', ['maintenance_mode', 'maintenance_menus']);
         if (data) {
           const fullMode = data.find(d => d.key === 'maintenance_mode');
           const menusRow = data.find(d => d.key === 'maintenance_menus');
@@ -501,11 +501,11 @@ function MainApp() {
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
       } else {
-        await supabase.from('doc_access_override').upsert({
+        await db.from('doc_access_override').upsert({
           user_id: req.requester_id, folder_key: req.folder_key, allowed: true,
           updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,folder_key' });
-        await supabase.from('access_requests').update({
+        await db.from('access_requests').update({
           status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
         }).eq('id', req.id);
       }
@@ -525,7 +525,7 @@ function MainApp() {
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
       } else {
-        await supabase.from('access_requests').update({
+        await db.from('access_requests').update({
           status: 'rejected', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
         }).eq('id', req.id);
       }

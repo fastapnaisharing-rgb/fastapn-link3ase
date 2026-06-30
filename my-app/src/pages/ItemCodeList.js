@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { db as supabase } from '../lib/db';
+import { db } from '../lib/db';
 import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
@@ -379,7 +379,7 @@ function ItemCodeList() {
       let allCodesData = [];
       let from = 0;
       while (true) {
-        const { data } = await supabase.from('itemcode_list').select('code').range(from, from + 999);
+        const { data } = await db.from('itemcode_list').select('code').range(from, from + 999);
         if (!data || data.length === 0) break;
         allCodesData = [...allCodesData, ...data];
         if (data.length < 1000) break;
@@ -406,7 +406,7 @@ function ItemCodeList() {
           updated_by:  userName || currentUser?.email || '',  // ✅ ตรงกับ schema
           updated_at:  now,                                   // ✅ ตรงกับ schema
         }));
-        const { error } = await supabase.from('itemcode_list').insert(batch);
+        const { error } = await db.from('itemcode_list').insert(batch);
         if (error) throw error;
       }
 
