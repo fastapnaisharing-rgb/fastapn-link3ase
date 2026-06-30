@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataCacheProvider } from './contexts/DataCacheContext';
 import Login from './pages/Login';
+import Homepage from './pages/Homepage';
 import ItemCodeList from './pages/ItemCodeList';
 import BusinessUnit from './pages/BusinessUnit';
 import ChartOfAccounts from './pages/ChartOfAccounts';
@@ -140,11 +141,14 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
               </div>
               {pendingReqs.map(req => {
                 const isSignup = req.request_type === 'signup';
+                const isBatchTransfer = req.request_type === 'batch_transfer';
                 const folderLabel = DOC_FOLDER_LABELS[req.folder_key] || req.folder_key;
                 const initial = (req.requester_name || '?')[0].toUpperCase();
                 const title = isSignup
                   ? `${req.requester_name} ขอสมัครเข้าใช้งานระบบ`
-                  : (isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`);
+                  : isBatchTransfer
+                    ? `${req.requester_name} ส่ง Batch มาให้ (${(req.ref_batch_ids || []).length} invoices)`
+                    : (isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`);
                 return (
                   <div key={req.id} style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', background: '#f8fbff' }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
@@ -217,6 +221,151 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
   );
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IncomingToast — แจ้งเตือนเมื่อมี batch ส่งมาให้ (global, render ทุกหน้า)
+// ─────────────────────────────────────────────────────────────────────────────
+function IncomingToast({ request, currentUser, userName, onDismiss }) {
+  const [rejectNote, setRejectNote] = useState('');
+  const [showReject, setShowReject] = useState(false);
+  const [acting, setActing]         = useState(false);
+
+  if (!request) return null;
+
+  const fromName = request.requester_name || request.created_by || 'ผู้ส่ง';
+  const detail = typeof request.detail === 'string' ? (() => { try { return JSON.parse(request.detail || '{}'); } catch { return {}; } })() : (request.detail || {});
+  const ids = detail.ids || (request.id && !request._bucketToast ? [request.id] : []);
+  const note = detail.note || request.note || request.sent_note || '';
+
+  const handleAccept = async () => {
+    setActing(true);
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      // 1. update bucket_list → pending (โอน ownership ให้ผู้รับ) ใช้ PUT รายตัว
+      if (ids.length) {
+        await Promise.all(ids.map(id =>
+          fetch(`${API}/api/bucket_list/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              status: 'pending',
+              created_by: userName || currentUser?.email || '',
+              sent_to_user_id: null,
+              sent_to_username: null,
+              responded_at: new Date().toISOString(),
+            }),
+          })
+        ));
+      }
+      // 2. log BATCH_ACCEPT
+      await fetch(`${API}/api/activity_log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          username: userName || currentUser?.email || '',
+          module: 'AP',
+          action: 'BATCH_ACCEPT',
+          detail: JSON.stringify({ count: ids.length, ids, ref_log_id: request.id }),
+          received_by: request.username || '',
+        }),
+      });
+      // 3. mark responded ใน activity_log เดิม (ข้ามถ้าเป็น bucket toast)
+      if (!request._bucketToast) {
+        await fetch(`${API}/api/activity_log/${request.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ detail: JSON.stringify({ ...(typeof request.detail === 'string' ? JSON.parse(request.detail||'{}') : request.detail||{}), responded: true, responded_by: userName || currentUser?.email || '', responded_at: new Date().toISOString() }) }),
+        });
+      }
+      onDismiss('accepted');
+    } catch (e) { alert('รับไม่สำเร็จ: ' + e.message); }
+    setActing(false);
+  };
+
+  const handleReject = async () => {
+    setActing(true);
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      // 1. update bucket_list → rejected ใช้ PUT รายตัว
+      if (ids.length) {
+        await Promise.all(ids.map(id =>
+          fetch(`${API}/api/bucket_list/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              status: 'rejected',
+              reject_note: rejectNote || '',
+              responded_at: new Date().toISOString(),
+            }),
+          })
+        ));
+      }
+      // 2. log BATCH_REJECT
+      await fetch(`${API}/api/activity_log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          username: userName || currentUser?.email || '',
+          module: 'AP',
+          action: 'BATCH_REJECT',
+          detail: JSON.stringify({ count: ids.length, ids, note: rejectNote || '', ref_log_id: request.id }),
+          received_by: request.username || '',
+        }),
+      });
+      // 3. mark responded (ข้ามถ้าเป็น bucket toast)
+      if (!request._bucketToast) {
+        await fetch(`${API}/api/activity_log/${request.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ detail: JSON.stringify({ ...(typeof request.detail === 'string' ? JSON.parse(request.detail||'{}') : request.detail||{}), responded: true, reject_note: rejectNote || '', responded_by: userName || currentUser?.email || '', responded_at: new Date().toISOString() }) }),
+        });
+      }
+      onDismiss('rejected');
+    } catch (e) { alert('ปฏิเสธไม่สำเร็จ: ' + e.message); }
+    setActing(false);
+  };
+
+  return (
+    <div style={{ position: 'fixed', bottom: '24px', right: '24px', width: '320px', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '12px', boxShadow: '0 8px 24px rgba(26,58,92,0.18)', zIndex: 9999, overflow: 'hidden' }}>
+      <div style={{ background: '#1a3a5c', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '16px' }}>📦</span>
+        <span style={{ fontSize: '13px', fontWeight: '500', color: 'white', flex: 1 }}>มี Batch ส่งมาให้คุณ</span>
+        <button onClick={() => onDismiss('dismissed')} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}>×</button>
+      </div>
+      <div style={{ padding: '12px 14px' }}>
+        <div style={{ fontSize: '13px', color: '#1a3a5c', marginBottom: '4px' }}>
+          <strong>{fromName}</strong> ส่ง <strong>{ids.length} invoice{ids.length > 1 ? 's' : ''}</strong> มาให้
+        </div>
+        {note && <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px', fontStyle: 'italic' }}>"{note}"</div>}
+        {showReject ? (
+          <div style={{ marginTop: '8px' }}>
+            <textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} placeholder="เหตุผลที่ปฏิเสธ (ถ้ามี)"
+              style={{ width: '100%', height: '56px', padding: '6px 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '8px' }} />
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button onClick={() => setShowReject(false)} style={{ flex: 1, padding: '6px 0', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={handleReject} disabled={acting}
+                style={{ flex: 1, padding: '6px 0', borderRadius: '6px', border: 'none', background: acting ? '#aaa' : '#c0392b', color: 'white', fontSize: '12px', cursor: acting ? 'default' : 'pointer', fontWeight: '500' }}>
+                {acting ? '...' : '❌ ยืนยันปฏิเสธ'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+            <button onClick={handleAccept} disabled={acting}
+              style={{ flex: 1, padding: '7px 0', borderRadius: '6px', border: 'none', background: acting ? '#aaa' : '#0F6E56', color: 'white', fontSize: '12px', cursor: acting ? 'default' : 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+              ✅ {acting ? '...' : 'Accept'}
+            </button>
+            <button onClick={() => setShowReject(true)} disabled={acting}
+              style={{ flex: 1, padding: '7px 0', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', cursor: acting ? 'default' : 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+              ❌ Reject
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const getBuildVersion = () => {
   const ts = Number(process.env.REACT_APP_BUILD_TIME);
   const commit = process.env.REACT_APP_COMMIT_SHA?.slice(0, 7);
@@ -230,10 +379,11 @@ const getBuildVersion = () => {
 };
 
 function MainApp() {
-  const [activePage, setActivePage] = useState('ap-gr');
+  const [activePage, setActivePage] = useState('home');
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
+  const [incomingBatch, setIncomingBatch] = useState(null); // ✅ batch transfer notification
   const bellRef = React.useRef(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [openMenu, setOpenMenu] = useState(null);
@@ -280,7 +430,44 @@ function MainApp() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      setRequests(Array.isArray(data) ? data : []);
+      const all = Array.isArray(data) ? data : [];
+      setRequests(all.filter(r => r.request_type !== 'batch_transfer'));
+      // ── poll bucket_list ที่ส่งมาให้เรา (status=sent) ──
+      const myUsername = userName || currentUser?.email || '';
+      if (myUsername) {
+        const bucketRes = await fetch(
+          `${API}/api/bucket_list?eq_status=sent&eq_sent_to_username=${encodeURIComponent(myUsername)}&order=sent_at.desc&limit=10`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (bucketRes.ok) {
+          const buckets = await bucketRes.json();
+          const sentItems = Array.isArray(buckets) ? buckets : [];
+          if (sentItems.length > 0 && (!incomingBatch || incomingBatch._bucketToast)) {
+            // group by sent_at+sender เป็น 1 toast
+            const firstItem = sentItems[0];
+            const sameGroup = sentItems.filter(b =>
+              b.sent_to_username === firstItem.sent_to_username &&
+              b.created_by === firstItem.created_by
+            );
+            const toastData = {
+              id: `bucket-toast-${firstItem.sent_at || firstItem.id}`,
+              _bucketToast: true,
+              requester_name: firstItem.created_by || 'ผู้ส่ง',
+              note: firstItem.sent_note || '',
+              detail: JSON.stringify({
+                ids: sameGroup.map(b => b.id),
+                count: sameGroup.length,
+                note: firstItem.sent_note || '',
+              }),
+            };
+            if (!incomingBatch || incomingBatch.id !== toastData.id) {
+              setIncomingBatch(toastData);
+            }
+          } else if (sentItems.length === 0 && incomingBatch?._bucketToast) {
+            setIncomingBatch(null);
+          }
+        }
+      }
     } catch (err) { console.error('fetchRequests error:', err); }
   };
 
@@ -472,7 +659,9 @@ function MainApp() {
         ? <UploadGen />
         : <NoAccessPage />;
       case 'users':           return <UserManagement />;
-      default:                return <PlaceholderPage title="AP Controller" icon="🧾" />;
+      case 'home':
+      default:
+        return <Homepage />;
     }
   };
 
@@ -530,6 +719,9 @@ function MainApp() {
 
           {/* Nav */}
           <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            
+            {navItem('home', '🏠', 'Home')}
+
             {sidebarExpanded && (
               <div style={{ padding: '6px 16px', fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Functions</div>
             )}
@@ -694,6 +886,20 @@ function MainApp() {
           onApprove={handleApprove} onReject={handleReject}
           onClose={() => setShowBell(false)}
           onGoAccess={() => { selectPage('users'); setShowBell(false); }}
+        />
+      )}
+      {incomingBatch && (
+        <IncomingToast
+          request={incomingBatch}
+          currentUser={currentUser}
+          userName={userName}
+          onDismiss={(result) => {
+            setIncomingBatch(null);
+            if (result === 'accepted' || result === 'rejected') {
+              fetchRequests();
+              window.dispatchEvent(new CustomEvent('bucketAccepted', { detail: { result } }));
+            }
+          }}
         />
       )}
     </div>

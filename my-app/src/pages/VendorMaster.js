@@ -17,7 +17,7 @@
     return width;
   }
 
-  function ComboBox({ value, onChange, options, placeholder }) {
+  function ComboBox({ value, onChange, options, placeholder, center }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(value || '');
   useEffect(() => { setInput(value || ''); }, [value]);
@@ -53,7 +53,7 @@
         placeholder={placeholder || ''}
         style={{ height: '28px', padding: '0 8px', fontSize: '12px', outline: 'none', 
           border: 'none', background: 'transparent', color: '#1a3a5c', 
-          boxSizing: 'border-box', width: '100%' }} 
+          boxSizing: 'border-box', width: '100%', textAlign: center ? 'center' : 'left' }}
       />
       {open && filtered.length > 0 && (
         <div style={{ 
@@ -476,6 +476,7 @@ const computeNextSyRunning = async () => {
     const [ruleForm, setRuleForm]         = useState({});
 
     const fileRef      = useRef(null);
+    const simpleCodeRef = useRef(null);
     const theadRef     = useRef(null);
     const tbodyRef     = useRef(null);
     const containerRef = useRef(null);
@@ -654,6 +655,33 @@ const computeNextSyRunning = async () => {
 
     const handleNewSave = async () => {
     // ── Validation: required fields ──
+    if (tab === 'smcode') {
+      const missing = [];
+      if (!form['SM-Code']?.trim())      missing.push('Simple Code');
+      if (!form['Ofin Code']?.trim())    missing.push('OFIN CODE');
+      if (!form['Company Name']?.trim()) missing.push('Vendor Name');
+      if (!form['Tax ID']?.trim())       missing.push('Tax ID');
+      if (!form['Branch']?.trim())       missing.push('Branch No.');
+      if (!form['Short Name']?.trim())   missing.push('AT-Match');
+      if (!form['CPC_Dr']?.trim())       missing.push('CPC Dr');
+      if (!form['Account_Dr']?.trim())   missing.push('Account Dr');
+      if (!form['Sub Acc_Dr']?.trim())   missing.push('Sub Acc Dr');
+      if (!form['CPC_Cr']?.trim())       missing.push('CPC Cr');
+      if (!form['Account_Dr2']?.trim())  missing.push('Account Cr');
+      if (!form['Sub Acc_Cr']?.trim())   missing.push('Sub Acc Cr');
+      if (missing.length) { alert(`กรุณากรอกข้อมูลให้ครบถ้วนตาม Required Field`); return; }
+      // ← ตรงนี้ครับ หลัง missing check
+      if (!editId) {
+        const duplicate = (dataMap['smcode'] || []).find(
+          i => String(i['SM-Code'] || '').trim().toLowerCase() === form['SM-Code'].trim().toLowerCase()
+        );
+        if (duplicate) {
+          alert(`❌ Simple Code "${form['SM-Code']}" มีอยู่แล้วใน SM-Code List`);
+          return;
+        }
+      }
+    }
+
     if (tab === 'apcode') {
       const missing = ['Code','Supplier Name','Supplier Number','Supplier Site','BU Code'].filter(k => !form[k]?.trim());
       if (missing.length) { alert(`กรุณากรอกข้อมูลให้ครบ:\n• ${missing.join('\n• ')}`); return; }
@@ -1034,6 +1062,8 @@ const computeNextSyRunning = async () => {
 
     const renderFormFields = (formData, setFormData, editMode = true) => {
       if (tab === 'smcode') {
+
+        
         // ─── header-over-input row ───────────────────────────────────────────────
         const smGrid = (cols) => (
           <div style={{ display:'grid', gridTemplateColumns: cols.map(c => c.w || '1fr').join(' '), border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'visible', marginBottom:'6px' }}>
@@ -1075,17 +1105,20 @@ const computeNextSyRunning = async () => {
                 <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center',justifyContent: c.center ? 'center' : 'flex-start', borderRight:br, overflow:'visible', background: c.bg || 'transparent' }}>
                   {editMode
                     ? isCombo
-                      ? <ComboBox 
-                          value={formData[key]||''} 
-                          onChange={val => c.onChangeFn ? c.onChangeFn(val) : setFormData({...formData,[key]:val})} 
-                          options={opts} 
-                          placeholder='เลือก' 
-                        />
-                      : <input value={formData[key]||''} onChange={e=> c.onChangeFn ? c.onChangeFn(e.target.value) : setFormData({...formData,[key]:e.target.value})} 
+                    ? <ComboBox 
+                        value={formData[key]||''} 
+                        onChange={val => c.onChangeFn ? c.onChangeFn(val) : setFormData({...formData,[key]:val})} 
+                        options={opts} 
+                        placeholder='เลือก'
+                        center={c.center}
+                      />
+                      : <input 
+                          ref={key === 'SM-Code' ? simpleCodeRef : undefined}
+                          value={formData[key]||''} onChange={e=> c.onChangeFn ? c.onChangeFn(e.target.value) : setFormData({...formData,[key]:e.target.value})} 
                           style={{ 
                             height:'24px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', 
                             background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box',
-                            textAlign: c.center ? 'center' : 'left'  // ✅ เพิ่มตรงนี้
+                            textAlign: c.center ? 'center' : 'left'
                           }} />
                     : <div style={{ 
                             fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', 
@@ -1150,6 +1183,27 @@ const computeNextSyRunning = async () => {
             '_branchStatus': found ? (found['status'] || '') : '',
 
           }));
+          // re-trigger AT-Match calculation ด้วย comPct ใหม่
+          const currentATMatch = formData['Short Name'];
+          if (currentATMatch?.trim()) {
+            const comPct = found ? String(found['%'] || '').trim() : '';
+            const isNotFull = comPct !== '' && comPct !== '100';
+            const smFound = (dataMap['smcode'] || []).find(i => String(i['Short Name'] || '').trim() === currentATMatch.trim());
+            const subDr = smFound ? (smFound['Sub Acc_Dr'] || '') : '';
+            const isNot999 = subDr !== '' && subDr !== '999999';
+            const isInput = currentATMatch.trim().toUpperCase() === 'INPUT' || currentATMatch.trim().toUpperCase() === 'IST36';
+            const isT36 = currentATMatch.trim().toUpperCase() === 'T36';
+            const newExpenseType = isNotFull
+              ? (getOptions('Expense Type').find(o => String(o).startsWith('63050000')) || '63050000-ค่าใช้จ่ายอื่นๆ')
+              : (isInput || isT36)
+                ? (getOptions('Expense Type').find(o => String(o).startsWith('63047000')) || '63047000-ค่าบริการอื่นๆ')
+                : isNot999
+                  ? (getOptions('Expense Type').find(o => String(o).startsWith('61200201')) || '61200201-Commission Online - Others')
+                  : null;
+            if (newExpenseType) {
+              setFormData(prev => ({ ...prev, 'Expense Type': newExpenseType }));
+            }
+          }
         };
 
         
@@ -1193,20 +1247,26 @@ const computeNextSyRunning = async () => {
             {smGrid([
               { label:'Simple Code',   key:'SM-Code',       w:'1fr', bg:'#FFF9C4' },
               { label:'OFIN CODE',     key:'Ofin Code',     w:'160px',  bg:'#FFF9C4', center:true, onChangeFn: handleOfinCodeChange },
-              { label:'Supplier Code', key:'Supplier Code', w:'180px', onChangeFn: handleSupplierCodeChange },
-              { label:'Type',          key:'_type',         w:'170px',  combo:true, opts:typeOptions },
-              { label:'Sub Type',      key:'_sub_type',     w:'180px', combo:true, opts:subTypeOptions },
+              { label:'Supplier Code', key:'Supplier Code', w:'180px', onChangeFn: handleSupplierCodeChange , center:true  },
+              { label:'Type',          key:'_type',         w:'170px',  combo:true  , opts:typeOptions , center:true},
+              { label:'Sub Type',      key:'_sub_type',     w:'180px', combo:true , opts:subTypeOptions , center:true},
             ])}
 
-            {/* Vendor Category Status Badge */}
-            {supplierCode && (
+            {(formData['SM-Code']?.trim() || supplierCode) && (
               <div style={{ marginBottom:'4px', display:'flex', alignItems:'center', gap:'8px' }}>
-                {matchedVendor
-                  ? <span style={{ fontSize:'11px', background:'#EAF3DE', color:'#27500A', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>✅ พบใน Vendor Category — {matchedVendor['TYPE']} / {matchedVendor['SUB TYPE']}</span>
-                  : <span style={{ fontSize:'11px', background:'#FCEBEB', color:'#791F1F', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>❌ ไม่พบใน Vendor Category</span>
-                }
+                {formData['SM-Code']?.trim() && (
+                  (dataMap['smcode'] || []).find(i => String(i['SM-Code'] || '').trim().toLowerCase() === formData['SM-Code'].trim().toLowerCase() && i.id !== editId)
+                    ? <span style={{ fontSize:'11px', background:'#EAF3DE', color:'#27500A', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>✅ Simple Code found!!!</span>
+                    : <span style={{ fontSize:'11px', background:'#FCEBEB', color:'#791F1F', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>❌ Simple Code Notfound!!!</span>
+                )}
+                {supplierCode && (
+                  matchedVendor
+                    ? <span style={{ fontSize:'11px', background:'#EAF3DE', color:'#27500A', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>✅ Suppliercode found!!! — {matchedVendor['TYPE']} / {matchedVendor['SUB TYPE']}</span>
+                    : <span style={{ fontSize:'11px', background:'#FCEBEB', color:'#791F1F', padding:'2px 10px', borderRadius:'20px', fontWeight:'500' }}>❌ Suppliercode Notfound!!!</span>
+                )}
               </div>
             )}
+
 
             {/* Row 2: Vendor Name | Tax ID | Branch No. | AT-Match */}
             {smGrid([
@@ -1503,7 +1563,7 @@ if (tab === 'apcode' || tab === 'iecode') {
               <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
               <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
-              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={()=>{setForm(Object.fromEntries(cfg.edit.map(([k])=>[k,'']))); setEditId(null); setShowForm(true);}}>+ New</button>
+              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={()=>{setForm(Object.fromEntries(cfg.edit.map(([k])=>[k,'']))); setEditId(null); setShowForm(true); setTimeout(() => simpleCodeRef.current?.focus(), 100);}}>+ New</button>
             </div>
           )}
         </div>

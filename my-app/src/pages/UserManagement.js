@@ -815,6 +815,12 @@ useEffect(() => {
     const ACTION_LABELS = {
       login: { label: 'Login', bg: '#EAF3DE', color: '#27500A', icon: '🔑' },
       logout: { label: 'Logout', bg: '#f5f5f5', color: '#555', icon: '🚪' },
+      LOGIN: { label: 'Login', bg: '#EAF3DE', color: '#27500A', icon: '🔑' },
+      BATCH_SEND: { label: 'Batch Send', bg: '#E6F1FB', color: '#0C447C', icon: '📤' },
+      BATCH_ACCEPT: { label: 'Batch Accept', bg: '#EAF3DE', color: '#27500A', icon: '✅' },
+      BATCH_REJECT: { label: 'Batch Reject', bg: '#FCEBEB', color: '#791F1F', icon: '❌' },
+      ACCESS_APPROVE: { label: 'Access Approve', bg: '#EAF3DE', color: '#27500A', icon: '🔓' },
+      ACCESS_REJECT: { label: 'Access Reject', bg: '#FCEBEB', color: '#791F1F', icon: '🚫' },
       open_file: { label: 'เปิดไฟล์', bg: '#E6F1FB', color: '#0C447C', icon: '🔗' },
       download_file: { label: 'Download', bg: '#e8f0fb', color: '#1a3a5c', icon: '⬇️' },
       add_file: { label: 'เพิ่มไฟล์', bg: '#EAF3DE', color: '#27500A', icon: '➕' },
@@ -837,8 +843,8 @@ useEffect(() => {
     const fetchLogs = async () => {
       setLoading(true);
       try {
-        const { data } = await supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(500);
-        setLogs(data || []);
+        const data = await apiFetch('/activity_log?order=created_at.desc&limit=200');
+        setLogs(Array.isArray(data) ? data : []);
       } catch (err) { console.error(err); }
       setLoading(false);
     };
@@ -873,7 +879,12 @@ useEffect(() => {
           <span style={{ fontSize: '12px', color: '#888' }}>{filtered.length} รายการ</span>
           <select value={filterAction} onChange={e => setFilterAction(e.target.value)} style={S.filterSelect}>
             <option value="">Action ทั้งหมด</option>
-            {Object.entries(ACTION_LABELS).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+            <option value="BATCH_SEND">📤 Batch Send</option>
+            <option value="BATCH_ACCEPT">✅ Batch Accept</option>
+            <option value="BATCH_REJECT">❌ Batch Reject</option>
+            <option value="LOGIN">🔑 Login</option>
+            <option value="ACCESS_APPROVE">🔓 Access Approve</option>
+            <option value="ACCESS_REJECT">🚫 Access Reject</option>
           </select>
           <select value={filterUser} onChange={e => setFilterUser(e.target.value)} style={S.filterSelect}>
             <option value="">User ทั้งหมด</option>
@@ -896,10 +907,12 @@ useEffect(() => {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '700px' }}>
             <thead>
               <tr>
-                <th style={{ ...S.th, width: '140px' }}>เวลา</th>
-                <th style={{ ...S.th, width: '100px' }}>User</th>
+                <th style={{ ...S.th, width: '130px' }}>เวลา</th>
+                <th style={{ ...S.th, width: '90px' }}>User</th>
+                <th style={{ ...S.th, width: '80px' }}>Module</th>
                 <th style={{ ...S.th, width: '120px' }}>Action</th>
                 <th style={S.th}>รายละเอียด</th>
+                <th style={{ ...S.th, width: '100px' }}>Received</th>
               </tr>
             </thead>
             <tbody>
@@ -914,20 +927,28 @@ useEffect(() => {
                     <td style={{ ...S.td, color: '#888', fontSize: '11px' }}>{formatDate(log.created_at)}</td>
                     <td style={S.td}>
                       <div style={{ fontWeight: '500', color: '#1a3a5c' }}>{log.username || '—'}</div>
-                      <div style={{ fontSize: '10px', color: '#aaa' }}>{log.user_email || ''}</div>
+                    </td>
+                    <td style={S.td}>
+                      {log.module ? (
+                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#e8f0fb', color: '#0C447C', fontWeight: '500' }}>{log.module}</span>
+                      ) : <span style={{ color: '#ccc' }}>—</span>}
                     </td>
                     <td style={S.td}>
                       <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: actionInfo.bg, color: actionInfo.color, fontWeight: '500', whiteSpace: 'nowrap' }}>
                         {actionInfo.icon} {actionInfo.label}
                       </span>
                     </td>
-                    <td style={{ ...S.td, color: '#555' }}>
-                      <span>{log.target || '—'}</span>
-                      {log.detail && Object.keys(log.detail).length > 0 && (
-                        <span style={{ marginLeft: '8px', fontSize: '11px', color: '#aaa' }}>
-                          {log.detail.folder ? `📁 ${log.detail.folder}` : ''}
-                        </span>
-                      )}
+                    <td style={{ ...S.td, color: '#555', fontSize: '11px' }}>
+                      {(() => {
+                        const d = typeof log.detail === 'string' ? (() => { try { return JSON.parse(log.detail); } catch { return {}; } })() : (log.detail || {});
+                        if (d.count) return `${d.count} invoices${d.note ? ` · "${d.note}"` : ''}`;
+                        return log.target || '—';
+                      })()}
+                    </td>
+                    <td style={S.td}>
+                      {log.received_by ? (
+                        <span style={{ fontSize: '11px', color: '#0C447C', fontWeight: '500' }}>{log.received_by}</span>
+                      ) : <span style={{ color: '#ccc' }}>—</span>}
                     </td>
                   </tr>
                 );
