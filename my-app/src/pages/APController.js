@@ -2094,6 +2094,19 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
   const [query, setQuery]                 = useState('');
   const [active, setActive]               = useState(-1);
   const [realInvoiceNo, setRealInvoiceNo] = useState('');
+  const [manualVendor, setManualVendor] = useState({ realInvoiceNo: '', companyName: '', taxId: '', branch: '' });
+  const handleManualSubmit = () => {
+    if (!manualVendor.companyName?.trim() && !manualVendor.taxId?.trim() && !manualVendor.branch?.trim()) return;
+    onSelect({
+      vendor: {
+        'SM-Code': '',
+        'Company Name': manualVendor.companyName || '',
+        'Tax ID': manualVendor.taxId || '',
+        'Branch': manualVendor.branch || '',
+      },
+      realInvoiceNo: manualVendor.realInvoiceNo || '',
+    });
+  };
   const [view, setView]                   = useState('search');
   const [editTarget, setEditTarget]       = useState(null);
   const [smForm, setSmForm]               = useState({});
@@ -2174,11 +2187,19 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
     }
   };
 
+  // ── พิมพ์ระหว่างกรอก: เก็บค่าดิบตรงๆ ไม่ pad (ป้องกัน padding ระหว่างพิมพ์ก่อนพิมพ์เสร็จ) ──
   const handleSmOfinCodeChange = (val) => {
-    const found = branchItems.find(b => String(b['Branch Code'] || '').trim() === val.trim());
+    setSmForm(prev => ({ ...prev, 'Ofin Code': val }));
+  };
+
+  // ── lookup + normalize เป็น 6 หลัก: เรียกตอน blur/Tab หรือตอนโหลด record เก่าเข้าฟอร์ม ──
+  const lookupOfinCode = (val) => {
+    const raw = String(val || '').trim();
+    const normalized = /^\d+$/.test(raw) ? raw.padStart(6, '0') : raw;
+    const found = branchItems.find(b => String(b['Branch Code'] || '').trim() === normalized);
     setSmForm(prev => ({
       ...prev,
-      'Ofin Code':        val,
+      'Ofin Code':        normalized,
       '_ofinSimpleName':  found ? (found['Simple Brand Code'] || '') : '',
       'Short Branch':     found ? (found['BU-Branch'] || '') : '',
       'BU':               found ? (found['bu'] || '') : '',
@@ -2192,6 +2213,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       '_branchStatus':    found ? (found['status'] || '') : '',
     }));
   };
+  const handleSmOfinCodeBlur = (val) => { if (val?.trim()) lookupOfinCode(val); };
 
   const handleSmATMatchChange = (val) => {
     const found = (smCodeItems || []).find(i => String(i['Short Name'] || '').trim() === val.trim());
@@ -2320,6 +2342,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
                 ? <SmComboBox value={smForm[key] || ''} onChange={val => c.onChangeFn ? c.onChangeFn(val) : setSmForm(f => ({ ...f, [key]: val }))}
                     options={opts} center={c.center} />
                 : <input value={smForm[key] || ''} onChange={e => c.onChangeFn ? c.onChangeFn(e.target.value) : setSmForm(f => ({ ...f, [key]: e.target.value }))}
+                    onBlur={e => c.onBlurFn && c.onBlurFn(e.target.value)}
                     style={{ ...inpBase, textAlign: c.center ? 'center' : 'left' }} />
             }
           </div>
@@ -2356,7 +2379,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
           {/* Row 1: Simple Code | OFIN CODE | Supplier Code | Type | Sub Type — VendorMaster smGrid style */}
           {smGrid([
             { label: 'Simple Code',   key: 'SM-Code',       w: '1fr',   bg: '#FFF9C4' },
-            { label: 'OFIN CODE',     key: 'Ofin Code',     w: '160px', bg: '#FFF9C4', center: true, onChangeFn: handleSmOfinCodeChange },
+            { label: 'OFIN CODE',     key: 'Ofin Code',     w: '160px', bg: '#FFF9C4', center: true, onChangeFn: handleSmOfinCodeChange, onBlurFn: handleSmOfinCodeBlur },
             { label: 'Supplier Code', key: 'Supplier Code', w: '180px', onChangeFn: handleSmSupplierCodeChange, center: true },
             { label: 'Type',          key: '_type',         w: '170px', combo: true, opts: [...new Set((categoryItems || []).map(i => i['TYPE']).filter(Boolean))], center: true },
             { label: 'Sub Type',      key: '_sub_type',     w: '180px', combo: true, opts: [...new Set((categoryItems || []).filter(i => !smForm['_type'] || i['TYPE'] === smForm['_type']).map(i => i['SUB TYPE']).filter(Boolean))], center: true },
@@ -2570,7 +2593,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1600, backdropFilter: 'blur(2px)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget && !isFormView) onClose(); }}>
-      <div style={{ background: 'white', borderRadius: '14px', width: isFormView ? '96vw' : '760px', maxWidth: isFormView ? '1100px' : '95vw', height: isFormView ? '88vh' : '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)', transition: 'width 0.2s, max-width 0.2s' }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: '96vw', maxWidth: '1100px', height: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)', transition: 'width 0.2s, max-width 0.2s' }}>
 
         {isFormView ? renderSmForm() : (<>
         {/* Header */}
@@ -2587,9 +2610,9 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
           <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
 
-        {/* Search + Real Invoice No. */}
+        {/* Search + Manual Entry */}
         <div style={{ padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f0f2f5', flexShrink: 0 }}>
-          <div style={{ position: 'relative', marginBottom: '8px' }}>
+          <div style={{ position: 'relative', marginBottom: '10px' }}>
             <svg style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#aab', pointerEvents: 'none' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input ref={inputRef} value={query} onChange={e => { setQuery(e.target.value); setActive(-1); }} onKeyDown={handleKey}
               placeholder="AT-Match, Company Name, SM-Code..."
@@ -2598,12 +2621,43 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
             {query && <button onClick={() => { setQuery(''); setActive(-1); inputRef.current?.focus(); }}
               style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#e8eaf0', border: 'none', cursor: 'pointer', color: '#888', fontSize: '13px', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <label style={{ fontSize: '12px', color: '#555', fontWeight: '500', whiteSpace: 'nowrap', width: '110px' }}>Real Invoice No.</label>
-            <input value={realInvoiceNo} onChange={e => setRealInvoiceNo(e.target.value)}
-              placeholder="กรอกเลข Invoice ของ Real Vendor"
-              style={{ flex: 1, height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
-              onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+
+          {/* เส้นคั่น "หรือกรอกเอง" */}
+          <div style={{ borderTop: '0.5px dashed #ddd', position: 'relative', margin: '10px 0' }}>
+            <span style={{ position: 'absolute', top: '-8px', left: 0, background: '#fafbfc', paddingRight: '8px', fontSize: '10px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.04em' }}>หรือกรอกเอง</span>
+          </div>
+
+          {/* Manual entry: Real Tax Invoice No. | Company Name | Tax ID | Branch */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.8fr 1.2fr 0.8fr', gap: '8px' }}>
+            <div>
+              <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Real tax invoice no.</label>
+              <input value={manualVendor.realInvoiceNo} onChange={e => setManualVendor(m => ({ ...m, realInvoiceNo: e.target.value }))}
+                placeholder="1190-094459"
+                style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+                onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Company name</label>
+              <input value={manualVendor.companyName} onChange={e => setManualVendor(m => ({ ...m, companyName: e.target.value }))}
+                placeholder="PTT RETAIL MANAGEMENT CO.,LTD."
+                style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+                onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Tax ID</label>
+              <input value={manualVendor.taxId} onChange={e => setManualVendor(m => ({ ...m, taxId: e.target.value }))}
+                placeholder="0105537121254"
+                style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+                onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Branch</label>
+              <input value={manualVendor.branch} onChange={e => setManualVendor(m => ({ ...m, branch: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') handleManualSubmit(); }}
+                placeholder="00096"
+                style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+                onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            </div>
           </div>
         </div>
 
@@ -2618,8 +2672,8 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
-                  {[['SM-Code','100px'],['Company Name',''],['Tax ID','130px'],['Branch','70px'],['Action','100px']].map(([h, w]) => (
-                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                  {[['★','36px'],['SM-Code','100px'],['Company Name',''],['Tax ID','130px'],['Branch','70px'],['Supplier Code','130px'],['Action','100px']].map(([h, w]) => (
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: (h === 'Action' || h === '★') ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -2630,25 +2684,33 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
                   const showAllHeader = i === favItems.length && favItems.length > 0;
                   return (
                     <React.Fragment key={item.id || i}>
-                      {showFavHeader && <tr><td colSpan={5} style={{ padding: '5px 12px', fontSize: '10px', fontWeight: '600', color: '#e6a800', background: '#fffbf0', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '0.5px solid #f3e6a0' }}>★ Favorites ({favItems.length})</td></tr>}
-                      {showAllHeader && <tr><td colSpan={5} style={{ padding: '5px 12px', fontSize: '10px', fontWeight: '600', color: '#888', background: '#f8f9fa', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '0.5px solid #e8eaf0' }}>All Vendors ({restItems.length})</td></tr>}
+                      {showFavHeader && <tr><td colSpan={7} style={{ padding: '5px 12px', fontSize: '10px', fontWeight: '600', color: '#e6a800', background: '#fffbf0', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '0.5px solid #f3e6a0' }}>★ Favorites ({favItems.length})</td></tr>}
+                      {showAllHeader && <tr><td colSpan={7} style={{ padding: '5px 12px', fontSize: '10px', fontWeight: '600', color: '#888', background: '#f8f9fa', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '0.5px solid #e8eaf0' }}>All Vendors ({restItems.length})</td></tr>}
                       <tr data-row={i}
                         onClick={() => handleSelect(item)}
                         onMouseEnter={() => setActive(i)}
                         style={{ background: isAct ? '#eef3fb' : (favItems.includes(item) ? '#fffbf0' : 'white'), cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
+                        <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                          <button onClick={e => toggleFav(e, item)} disabled={favUpdating === item['SM-Code']}
+                            title={isFav(item) ? 'เอาออกจาก Favorite' : 'เพิ่มใน Favorite'}
+                            style={{ width: '22px', height: '22px', borderRadius: '5px', border: 'none', background: 'transparent', cursor: favUpdating === item['SM-Code'] ? 'wait' : 'pointer', fontSize: '14px', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isFav(item) ? '#e6a800' : '#ccc' }}>
+                            {isFav(item) ? '★' : '☆'}
+                          </button>
+                        </td>
                         <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
                           <span style={{ background: isAct ? '#1a3a5c' : (favItems.includes(item) ? '#fff3cd' : '#f0f3f8'), color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['SM-Code'] || '-'}</span>
                         </td>
                         <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company Name'] || '-'}</td>
                         <td style={{ padding: '9px 12px', color: '#778', fontFamily: 'monospace', fontSize: '11px' }}>{item['Tax ID'] || '-'}</td>
                         <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{item['Branch'] || '-'}</td>
+                        <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Supplier Code'] || '-'}</td>
                         <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'inline-flex', gap: '4px' }}>
-                            <button title="View" onClick={e => { e.stopPropagation(); setView('view'); setEditTarget(item); setSmForm({ ...smEmptyForm(), ...item }); setSmFormError(''); }}
+                            <button title="View" onClick={e => { e.stopPropagation(); setView('view'); setEditTarget(item); const _ofin = String(item['Ofin Code'] || '').trim(); const _ofinNorm = /^\d+$/.test(_ofin) ? _ofin.padStart(6, '0') : _ofin; setSmForm({ ...smEmptyForm(), ...item, 'Ofin Code': _ofinNorm }); setSmFormError(''); }}
                               style={{ width: '26px', height: '24px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
                             </button>
-                            <button title="Edit" onClick={e => { e.stopPropagation(); setView('edit'); setEditTarget(item); setSmForm({ ...smEmptyForm(), ...item }); setSmFormError(''); }}
+                            <button title="Edit" onClick={e => { e.stopPropagation(); setView('edit'); setEditTarget(item); const _ofin = String(item['Ofin Code'] || '').trim(); const _ofinNorm = /^\d+$/.test(_ofin) ? _ofin.padStart(6, '0') : _ofin; setSmForm({ ...smEmptyForm(), ...item, 'Ofin Code': _ofinNorm }); setSmFormError(''); }}
                               style={{ width: '26px', height: '24px', borderRadius: '5px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                             </button>
@@ -2668,10 +2730,10 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
         </div>
 
         {/* Footer */}
-        <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-          <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {smCodeItems.length} รายการ</span>
+        <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={handleManualSubmit} style={{ padding: '6px 16px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Submit</button>
             {active >= 0 && filtered[active] && (
               <button onClick={() => handleSelect(filtered[active])}
                 style={{ padding: '6px 16px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Select</button>
@@ -4394,7 +4456,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
 
   const matchedRule = getMatchedRule(vendorInfo);
 
-  // ── localStorage helpers — buffer ระหว่างยังไม่ sync ขึ้น Supabase ──────
+  // ── localStorage helpers — buffer ระหว่างยังไม่ sync ขึ้น Backend ──────
   // key ผูกกับ bu + user (ไม่ใช่ batchId) เพราะ Bucket คือ "งานค้างของ user คนนี้ใน BU นี้"
   const me = userName || currentUser?.email || '';
   const bu = batchConfig?.bu || '';
@@ -4473,7 +4535,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   // มี -> sync GRT/GRN ทุก submit (real-time) / ไม่มี -> รอ sync รวดเดียวตอนออกจากหน้านี้
   const realtimeSyncRef = useRef(false);
 
-  // ── Sync รายการที่ยังไม่ขึ้น Supabase (bulk insert ครั้งเดียว) ────────────
+  // ── Sync รายการที่ยังไม่ขึ้น Backend (bulk insert ครั้งเดียว) ────────────
   const syncingRef = useRef(false);
   const syncPendingToBucket = async () => {
     if (syncingRef.current) return;

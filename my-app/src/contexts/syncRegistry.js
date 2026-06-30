@@ -7,7 +7,7 @@
 // flush function ของตัวเองไว้ที่นี่ตอน mount แล้ว unregister ตอน unmount
 //
 // ตอน logout (AuthContext.logout) จะเรียก flushAllSync() เพื่อ sync ข้อมูล
-// ค้างทั้งหมดขึ้น Supabase ให้เสร็จก่อน sign out — โดยไม่ต้องให้ AuthContext
+// ค้างทั้งหมดขึ้น Backend ให้เสร็จก่อน sign out — โดยไม่ต้องให้ AuthContext
 // รู้จัก state ภายในของ component อื่นเลย
 // ─────────────────────────────────────────────────────────────────────────
 
