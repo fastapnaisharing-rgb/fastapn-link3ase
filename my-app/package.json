@@ -18,7 +18,7 @@
   },
   "scripts": {
     "prebuild": "node prebuild.js",
-    "start": "npx kill-port 3000 && react-scripts start",
+    "start": "npx kill-port 3000 && set CHOKIDAR_USEPOLLING=true && set CHOKIDAR_INTERVAL=500 && react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

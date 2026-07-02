@@ -2140,6 +2140,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
     if (show) {
       setQuery(''); setActive(-1); setRealInvoiceNo('');
       setView('search'); setEditTarget(null); setSmForm({}); setSmFormError('');
+      setSaving(false);
       setTimeout(() => inputRef.current?.focus(), 60);
     }
   }, [show]);
@@ -2266,7 +2267,13 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
 
     setSaving(true);
     try {
-      const payload = { ...f, updated_by: userName, updated_at: new Date().toISOString() };
+      // ── กรอง internal/UI-only fields ออก (ไม่ใช่ column จริงใน sm_code_list table) ──
+      // ── _type, _sub_type ฯลฯ = ขึ้นต้นด้วย _ (helper fields สำหรับ dropdown ภายใน) ──
+      // ── BlankCell = placeholder field เปล่าๆ ไว้จัด layout เฉยๆ ──────────────────
+      const EXCLUDE_FIELDS = ['BlankCell'];
+      const cleanedF = Object.fromEntries(Object.entries(f).filter(([k]) => !k.startsWith('_') && !EXCLUDE_FIELDS.includes(k)));
+      // sm_code_list table ใช้ column ชื่อ username/last_update (ไม่ใช่ updated_by/updated_at เหมือน table อื่น)
+      const payload = { ...cleanedF, username: userName, last_update: new Date().toISOString() };
       if (editTarget?.id) {
         const { error } = await db.from('sm_code_list').update(payload).eq('id', editTarget.id);
         if (error) throw error;
@@ -2275,6 +2282,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
         if (error) throw error;
         if (fetchCollection) await fetchCollection('SmCodeList', true);
         // auto-select record ใหม่
+        setSaving(false);
         onSelect({ vendor: data, realInvoiceNo: '' });
         return;
       }
@@ -2465,7 +2473,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
               <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', overflow:'visible' }}>
                 {isViewOnly
                   ? <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{smForm[key2]||'—'}</div>
-                  : ['Special Rule1','Special Rule2','Special Rule4','Special Rule5'].includes(key2)
+                  : ['Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5'].includes(key2)
                     ? smCombo(key2)
                     : <input value={smForm[key2]||''} onChange={e=>setSmForm(f=>({...f,[key2]:e.target.value}))} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
                 }
@@ -2632,21 +2640,21 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
             <div>
               <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Real tax invoice no.</label>
               <input value={manualVendor.realInvoiceNo} onChange={e => setManualVendor(m => ({ ...m, realInvoiceNo: e.target.value }))}
-                placeholder="1190-094459"
+                placeholder="กรอกเลข Invoice"
                 style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
                 onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
             </div>
             <div>
               <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Company name</label>
               <input value={manualVendor.companyName} onChange={e => setManualVendor(m => ({ ...m, companyName: e.target.value }))}
-                placeholder="PTT RETAIL MANAGEMENT CO.,LTD."
+                placeholder="กรอกชื่อบริษัท"
                 style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
                 onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
             </div>
             <div>
               <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Tax ID</label>
               <input value={manualVendor.taxId} onChange={e => setManualVendor(m => ({ ...m, taxId: e.target.value }))}
-                placeholder="0105537121254"
+                placeholder="กรอกเลข Tax ID"
                 style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
                 onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
             </div>
@@ -2654,7 +2662,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
               <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Branch</label>
               <input value={manualVendor.branch} onChange={e => setManualVendor(m => ({ ...m, branch: e.target.value }))}
                 onKeyDown={e => { if (e.key === 'Enter') handleManualSubmit(); }}
-                placeholder="00096"
+                placeholder="กรอกเลขสาขา"
                 style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
                 onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
             </div>
@@ -2734,10 +2742,6 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
             <button onClick={handleManualSubmit} style={{ padding: '6px 16px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Submit</button>
-            {active >= 0 && filtered[active] && (
-              <button onClick={() => handleSelect(filtered[active])}
-                style={{ padding: '6px 16px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Select</button>
-            )}
           </div>
         </div>
         </>)}
@@ -3706,7 +3710,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 // ─────────────────────────────────────────────────────────────────────────────
 // BucketItemPopup — View / Edit ของรายการใน Batch Bucket
 // ─────────────────────────────────────────────────────────────────────────────
-function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave }) {
+function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave }) {
   const isView = mode === 'view';
   const emptyLine = () => ({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
 
@@ -3730,6 +3734,21 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
     const sup  = String(form.supplierCode ?? '').trim().toLowerCase();
     return code === sup || code === `${(bu || '').toLowerCase()}-${sup}`;
   });
+
+  const matchedRule = (() => {
+    if (!vendorInfo?.['Notice']) return null;
+    const notices = vendorInfo['Notice'].split('|').map(n => n.trim()).filter(Boolean);
+    for (const notice of notices) {
+      const rule = (vendorRuleItems || []).find(r => String(r['item'] ?? '').trim().toLowerCase() === notice.toLowerCase());
+      if (rule) return rule;
+    }
+    return null;
+  })();
+
+  const derivedIsVat = lines.some(l => {
+    const tc = String(l.taxCode || '');
+    return tc.includes('VAT7%') && !tc.includes('SVAT7%');
+  }) ? 'Yes' : lines.some(l => String(l.taxCode || '').includes('SVAT7%')) ? 'SVAT' : 'No';
 
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
   const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
@@ -3841,52 +3860,93 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                   <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || '—'}</span></div>
                 ))}
               </div>
+              <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                {[['Method', matchedRule?.Method], ['Paygroup', matchedRule?.Paygroup], ['Par', matchedRule?.Par]].map(([label, val]) => (
+                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px', flex: 1 }}>
+                    <span style={{ fontSize: '11px', color: '#999' }}>{label}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '500', color: val ? '#1a3a5c' : '#ccc' }}>{val || '—'}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Editable header fields */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '14px', flexShrink: 0 }}>
-            {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['Tax','invTax','text','60px']].map(([label, key, type, w]) => (
-              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                <label style={fieldLabel}>{label}</label>
-                <input type={type} value={form[key] || ''} disabled={isView} onChange={e => setField(key, e.target.value)} style={inputStyle(w, isView)} />
+          {/* Real vendor card */}
+          {(form.realVendorName || form.realVendorTaxid || form.realInvoiceNo) && (
+            <div style={{ background: '#EAF3DE', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', flexShrink: 0 }}>
+              <div style={{ fontSize: '11px', color: '#27500A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: '600' }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Real vendor
               </div>
-            ))}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px 16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Company name</label>
+                  <input type="text" value={form.realVendorName || ''} disabled={isView} onChange={e => setField('realVendorName', e.target.value)} style={inputStyle('100%', isView)} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Tax ID</label>
+                  <input type="text" value={form.realVendorTaxid || ''} disabled={isView} onChange={e => setField('realVendorTaxid', e.target.value)} style={inputStyle('100%', isView)} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Branch</label>
+                  <input type="text" value={form.realVendorBranch || ''} disabled={isView} onChange={e => setField('realVendorBranch', e.target.value)} style={inputStyle('100%', isView)} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Real invoice no.</label>
+                  <input type="text" value={form.realInvoiceNo || ''} disabled={isView} onChange={e => setField('realInvoiceNo', e.target.value)} style={inputStyle('100%', isView)} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Editable header fields */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', marginBottom: '14px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 110px' }}>
+              <label style={fieldLabel}>Inv date</label>
+              <input type="date" value={form.invDate || ''} disabled={isView} onChange={e => setField('invDate', e.target.value)} style={inputStyle('100%', isView)} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 130px' }}>
+              <label style={fieldLabel}>Invoice num</label>
+              <input type="text" value={form.invoiceNum || ''} disabled={isView} onChange={e => setField('invoiceNum', e.target.value)} style={inputStyle('100%', isView)} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 90px' }}>
+              <label style={fieldLabel}>GRT</label>
+              <input type="text" value={form.grtNum || ''} disabled={isView} onChange={e => setField('grtNum', e.target.value)} style={inputStyle('100%', isView)} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 90px' }}>
+              <label style={fieldLabel}>GRN</label>
+              <input type="text" value={form.grn || ''} disabled={isView} onChange={e => setField('grn', e.target.value)} style={inputStyle('100%', isView)} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 60px' }}>
+              <label style={fieldLabel}>Tax</label>
+              <input type="text" value={form.invTax || ''} disabled={isView} onChange={e => setField('invTax', e.target.value)} style={inputStyle('100%', isView)} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px' }}>
               <label style={fieldLabel}>Period</label>
-              <input type="text" value={form.period || ''} disabled={isView} onChange={e => setField('period', e.target.value)} style={inputStyle('150px', isView)} />
+              <input type="text" value={form.period || ''} disabled={isView} onChange={e => setField('period', e.target.value)} style={inputStyle('100%', isView)} />
             </div>
             {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
-              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 140px', minWidth: '140px' }}>
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px' }}>
                 <label style={fieldLabel}>{label}</label>
                 <input type="text" value={form[key] || ''} disabled={isView} onChange={e => setField(key, e.target.value)} style={inputStyle('100%', isView)} />
               </div>
             ))}
-            {/* ── Real Vendor fields ── */}
-            {(form.realVendorName || !isView) && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 160px', minWidth: '120px' }}>
-                <label style={fieldLabel}>Real Vendor</label>
-                <input type="text" value={form.realVendorName || ''} disabled={isView} onChange={e => setField('realVendorName', e.target.value)} style={inputStyle('100%', isView)} placeholder="Company Name" />
-              </div>
-            )}
-            {(form.realVendorTaxid || !isView) && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 130px' }}>
-                <label style={fieldLabel}>Tax ID</label>
-                <input type="text" value={form.realVendorTaxid || ''} disabled={isView} onChange={e => setField('realVendorTaxid', e.target.value)} style={inputStyle('100%', isView)} />
-              </div>
-            )}
-            {(form.realInvoiceNo || !isView) && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 130px' }}>
-                <label style={fieldLabel}>Real Invoice No.</label>
-                <input type="text" value={form.realInvoiceNo || ''} disabled={isView} onChange={e => setField('realInvoiceNo', e.target.value)} style={inputStyle('100%', isView)} />
-              </div>
-            )}
-            {form.isVat && (
+            {derivedIsVat && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 60px' }}>
                 <label style={fieldLabel}>VAT</label>
-                <div style={{ height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', fontSize: '11px', fontWeight: '600', background: form.isVat === 'Yes' ? '#EAF3DE' : '#f5f5f5', color: form.isVat === 'Yes' ? '#27500A' : '#999', border: '0.5px solid #e8eaf0' }}>{form.isVat}</div>
+                <div style={{ height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', fontSize: '11px', fontWeight: '600', background: derivedIsVat === 'Yes' ? '#EAF3DE' : '#f0f0f0', color: derivedIsVat === 'Yes' ? '#27500A' : '#888', border: '0.5px solid #e8eaf0' }}>{derivedIsVat}</div>
               </div>
             )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 36px' }}>
+              <label style={{ ...fieldLabel, color: 'transparent' }}>_</label>
+              <button title="Contract" disabled={isView}
+                style={{ height: '28px', width: '36px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: isView ? '#f5f5f5' : '#eef4fb', color: isView ? '#ccc' : '#1a3a5c', cursor: isView ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Lines table */}
@@ -5083,6 +5143,7 @@ const handleSelectBranch = (item, meta = {}) => {
         onClose={() => setBucketPopup({ show: false, mode: 'view', index: -1 })}
         itemcodeItems={itemcodeItems}
         supplierItems={supplierItems}
+        vendorRuleItems={vendorRuleItems}
         bu={batchConfig?.bu || ''}
         fetchCollection={fetchCollection}
         userName={userName || currentUser?.email || ''}

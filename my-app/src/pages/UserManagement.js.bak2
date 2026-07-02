@@ -1137,10 +1137,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
       if (!res?.ok) throw new Error(res?.error || 'Close failed');
       localStorage.setItem('ap_period_status', 'closed');
       window.dispatchEvent(new CustomEvent('apPeriodClosed'));
-      // ── แก้บั๊ก: ใช้ res.prev_month จาก backend โดยตรง (เดือนที่เพิ่งปิดจริง) ──
-      // ── ไม่ใช้ monthLbl เพราะเป็นค่า state เก่าจาก render ก่อนหน้า (stale) ──
-      const closedMonthLbl = res.prev_month ? fmtMonth(res.prev_month) : monthLbl;
-      setSuccessMsg('Period ' + closedMonthLbl + ' closed');
+      setSuccessMsg('Period ' + monthLbl + ' closed');   // ← ใช้ monthLbl เก่า (stale)
       await fetchData();
     } catch (err) { setErrorMsg(err.message); }
     setClosing(false);

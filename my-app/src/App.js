@@ -699,7 +699,7 @@ function MainApp() {
   const flyoutOpen = openMenu === 'master' || openMenu === 'ap' || openMenu === 'vat';
 
   return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif', overflow: 'clip' }}>
 
       <div ref={sidebarRef} style={{ position: 'relative', zIndex: 30, display: 'flex', flexShrink: 0 }} onMouseLeave={handleMouseLeave}>
 
@@ -876,7 +876,7 @@ function MainApp() {
       </div>
 
       {/* ── Content area ── */}
-      <div style={{ flex: 1, overflow: 'hidden', background: '#f5f5f5', minWidth: 0, marginLeft: flyoutOpen ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
+      <div className="main-scroll" style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: flyoutOpen ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
         {renderPage()}
       </div>
 
