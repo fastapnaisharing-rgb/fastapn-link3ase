@@ -1,4 +1,4 @@
-  import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
   import { db } from '../lib/db';
   import { apiFetch } from '../api';
   import { useAuth } from '../contexts/AuthContext';
@@ -1075,6 +1075,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
   const [search, setSearch]         = React.useState('');
   const [page, setPage]             = React.useState(1);
   const [editVals, setEditVals]     = React.useState({});
+  const [confirmOverrideAll, setConfirmOverrideAll] = React.useState(false);
+  const [alphaFilter, setAlphaFilter] = React.useState('All');
   const PAGE_SIZE = 20;
 
   const fetchData = React.useCallback(async () => {
@@ -1126,9 +1128,55 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
   const curMonthPlus1 = (() => { const d = new Date(curMonth+'-01'); d.setMonth(d.getMonth()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })();
   const dl = getDeadline(curMonthPlus1);
   const dlStr     = dl ? pad2(dl.getDate())+'/'+pad2(dl.getMonth()+1)+'/'+dl.getFullYear() : '---';
+  const fmtFullDateEarly = (d) => { if (!d) return '---'; const mn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return pad2(d.getDate())+'-'+mn[d.getMonth()]+'-'+d.getFullYear(); };
+  const dlStrFull = dl ? fmtFullDateEarly(dl) : '---';
   const monthLbl  = fmtMonth(curMonth);
-  const sbMap     = { open:{l:'Open',bg:'#EAF3DE',c:'#27500A'}, 'pre-close':{l:'Pre-close',bg:'#E6F1FB',c:'#0C447C'}, closed:{l:'Closed',bg:'#f5f5f5',c:'#555'} };
-  const sb        = sbMap[curStatus] || sbMap['open'];
+  const fmtFullDate = (d) => { if (!d) return '---'; const mn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return pad2(d.getDate())+'-'+mn[d.getMonth()]+'-'+d.getFullYear(); };
+
+  // ── คำนวณ Timeline data สำหรับ Progress bar นับถอยหลังถึง Deadline ──
+  // ── สีแดงปรากฏก็ต่อเมื่อ "วันนี้" เข้าเขต 2 วันทำการสุดท้ายก่อน Deadline จริงๆ เท่านั้น ──
+  // ── ไม่ Mark ล่วงหน้าตายตัว เพราะสีแดงต้องสื่อสถานะปัจจุบันจริง ไม่ใช่การพยากรณ์อนาคต ──
+  const timelineData = React.useMemo(() => {
+    if (!dl) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const deadline = new Date(dl);
+    deadline.setHours(0, 0, 0, 0);
+
+    // ── จุดเริ่มต้นของ Timeline = วันถัดจาก Deadline ของ Previous Period ──
+    // ── เพราะช่วง 1-2 วันแรกของเดือนใหม่ยังถือเป็นช่วง "รอปิดเดือนก่อนหน้า" อยู่ ──
+    const prevDeadline = getDeadline(curMonth);
+    const startDate = prevDeadline ? new Date(prevDeadline) : new Date(curMonthPlus1 + '-01');
+    if (prevDeadline) startDate.setDate(startDate.getDate() + 1);
+    startDate.setHours(0, 0, 0, 0);
+
+    const totalDays = Math.round((deadline - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    const daysPassed = Math.max(0, Math.min(totalDays, Math.round((today - startDate) / (1000 * 60 * 60 * 24))));
+    const daysLeft = Math.max(0, Math.round((deadline - today) / (1000 * 60 * 60 * 24)));
+
+    // ── หาจุดเริ่มเขตแดง: นับถอยหลังจาก deadline ให้ครบ 2 วันทำการ (ข้ามเสาร์-อาทิตย์) ──
+    let d = new Date(deadline), workDayCount = 0, dangerStart = null;
+    while (workDayCount < 2) {
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) workDayCount++;
+      if (workDayCount === 2) { dangerStart = new Date(d); break; }
+      d.setDate(d.getDate() - 1);
+    }
+    const dangerZoneDays = dangerStart ? Math.round((deadline - dangerStart) / (1000 * 60 * 60 * 24)) + 1 : 2;
+
+    // ── เช็คว่าวันนี้เข้าเขตอันตรายจริงหรือยัง (ไม่ใช่แค่ index คำนวณล่วงหน้า) ──
+    const isTodayInDanger = dangerStart ? today >= dangerStart : false;
+
+    return { totalDays, daysPassed, daysLeft, dangerZoneDays, isTodayInDanger, startDate };
+  }, [dl, curMonth, curMonthPlus1]);
+
+  // ── เช็คว่ามี BU ใดถูก Override อยู่หรือไม่ ──
+  // ── ถ้ามี อย่างน้อย 1 BU → Card "Current" ต้องเปลี่ยน Label เป็น "Override" ──
+  // ── เพื่อให้ AP Controller รู้ว่าตอนนี้สามารถย้อน Received Date ได้ ──
+  const hasAnyOverride = buList.some(bu => bu.ap_period_mode === 'prev');
+  const displayCurrentStatus = hasAnyOverride ? 'reopen' : curStatus;
+  const sbMap     = { open:{l:'Open',bg:'#EAF3DE',c:'#27500A'}, 'pre-close':{l:'Pre-close',bg:'#FCEBEB',c:'#791F1F'}, closed:{l:'Closed',bg:'#f5f5f5',c:'#555'}, reopen:{l:'Reopen',bg:'#FFF3CD',c:'#856404'} };
+  const sb        = sbMap[displayCurrentStatus] || sbMap['open'];
 
   const handleClose = async () => {
     setClosing(true); setErrorMsg('');
@@ -1148,10 +1196,16 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
 
   const handleOverrideAll = async () => {
     try {
-      await Promise.all(buList.map(bu => apiFetch('/company_list/'+bu.id, { method:'PUT', body:JSON.stringify({ ap_period_mode:'prev' }) })));
-      setSuccessMsg('Override all BU to M-1 done');
+      const targetMode = hasAnyOverride ? 'current' : 'prev';
+      const res = await apiFetch('/ap/period/override/all', { method:'POST', body:JSON.stringify({ mode: targetMode }) });
+      if (!res?.ok) throw new Error(res?.error || 'Override all failed');
+      const msg = targetMode === 'prev'
+        ? 'Override all BU to M-1 done (' + res.bu_count + ' BU)'
+        : 'Reopen all BU to Current done (' + res.bu_count + ' BU)';
+      setSuccessMsg(msg);
       await fetchData();
     } catch (err) { setErrorMsg(err.message); }
+    setConfirmOverrideAll(false);
   };
 
   const handleOverrideBU = async (bu) => {
@@ -1174,13 +1228,16 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
 
   const filtered = React.useMemo(() => {
     const q = search.toLowerCase();
-    const list = buList.filter(bu => !q || (bu.bu||'').toLowerCase().includes(q) || (bu['THAI COMPANY NAME']||'').toLowerCase().includes(q));
+    let list = buList.filter(bu => !q || (bu.bu||'').toLowerCase().includes(q) || (bu['THAI COMPANY NAME']||'').toLowerCase().includes(q));
+    if (alphaFilter !== 'All') {
+      list = list.filter(bu => (bu.bu||'').toUpperCase().startsWith(alphaFilter));
+    }
     return [...list].sort((a, b) => {
       const aO = Number(a.ap_grt||0)+Number(a.ap_grn||0)+Number(a.ap_grt_prev||0)+Number(a.ap_grn_prev||0);
       const bO = Number(b.ap_grt||0)+Number(b.ap_grn||0)+Number(b.ap_grt_prev||0)+Number(b.ap_grn_prev||0);
       return bO !== aO ? bO-aO : (a.bu||'').localeCompare(b.bu||'');
     });
-  }, [buList, search]);
+  }, [buList, search, alphaFilter]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
@@ -1205,55 +1262,94 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         </div>
       )}
 
-      <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'10px', padding:'14px 18px', marginBottom:'12px', display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'16px', flexWrap:'wrap' }}>
-        <div>
-          <div style={{ fontSize:'11px', color:'#888', marginBottom:'5px' }}>AP Period Status</div>
-          <div style={{ display:'flex', gap:'16px', marginBottom:'6px', flexWrap:'wrap' }}>
-            <div>
-              <div style={{ fontSize:'10px', color:'#aaa', marginBottom:'2px' }}>Current</div>
-              <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
-                <span style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c' }}>{fmtMonth((() => { const d = new Date(curMonth+'-01'); d.setMonth(d.getMonth()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })())}</span>
-                <span style={{ fontSize:'10px', padding:'2px 8px', borderRadius:'20px', background: periodData?.ap_period_current_status==='open'?'#EAF3DE':'#E6F1FB', color: periodData?.ap_period_current_status==='open'?'#27500A':'#0C447C', fontWeight:'500' }}>{periodData?.ap_period_current_status||'open'}</span>
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize:'10px', color:'#aaa', marginBottom:'2px' }}>M-1</div>
-              <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
-                <span style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c' }}>{fmtMonth(curMonth)}</span>
-                <span style={{ fontSize:'10px', padding:'2px 8px', borderRadius:'20px', background: periodData?.ap_period_prev_status==='override'?'#FFF3CD':'#f5f5f5', color: periodData?.ap_period_prev_status==='override'?'#856404':'#555', fontWeight:'500' }}>{periodData?.ap_period_prev_status||'closed'}</span>
-              </div>
+      <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'12px', padding:'1.25rem 1.5rem', marginBottom:'12px' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', gap:'24px', marginBottom:'14px', flexWrap:'wrap' }}>
+          <div>
+            <div style={{ fontSize:'11px', color:'#888', marginBottom:'6px' }}>Current period</div>
+            <div style={{ fontSize:'20px', fontWeight:'500', color:'#1a3a5c', marginBottom:'2px' }}>{timelineData && timelineData.startDate ? fmtFullDate(timelineData.startDate) : '---'}</div>
+            <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+              <span style={{ fontSize:'12px', color:'#aaa' }}>{fmtMonth((() => { const d = new Date(curMonth+'-01'); d.setMonth(d.getMonth()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })())}</span>
+              <span style={{ fontSize:'11px', padding:'2px 9px', borderRadius:'20px', background: sb.bg, color: sb.c, fontWeight:'500' }}>{sb.l}</span>
             </div>
           </div>
-          <div style={{ fontSize:'12px', color:'#888', display:'flex', flexDirection:'column', gap:'3px' }}>
-            <span>Deadline: <strong style={{ color:'#1a3a5c' }}>{dlStr}</strong></span>
-            {isClosed && <span style={{ color:'#27500A' }}>Closed by {closedBy} at {fmtDate(closedAt)}</span>}
-            {!isClosed && <span style={{ color:'#856404' }}>Period not closed yet</span>}
+          <div style={{ textAlign:'right' }}>
+            <div style={{ fontSize:'11px', color:'#888', marginBottom:'6px' }}>Deadline</div>
+            <div style={{ fontSize:'20px', fontWeight:'500', color:'#1a3a5c', marginBottom:'4px' }}>{dlStrFull}</div>
+            {isClosed
+              ? <div style={{ fontSize:'12px', color:'#27500A' }}>Closed by {closedBy}</div>
+              : <div style={{ fontSize:'12px', color: timelineData && timelineData.isTodayInDanger ? '#791F1F' : '#856404' }}>
+                  {timelineData ? (timelineData.daysLeft <= 0 ? 'Deadline passed' : `${timelineData.daysLeft} day${timelineData.daysLeft === 1 ? '' : 's'} left`) : '---'}
+                </div>}
           </div>
         </div>
-        <div style={{ display:'flex', gap:'8px', alignItems:'center', flexShrink:0 }}>
-          {!isClosed && (isOwner || isAdmin) && (
-            <button onClick={handleClose} disabled={closing}
-              style={{ padding:'7px 14px', borderRadius:'8px', border:'none', background:closing?'#ccc':'#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor:closing?'default':'pointer' }}>
-              {closing ? 'Closing...' : 'Close Period'}
-            </button>
-          )}
-          {isOwner && (
-            <button onClick={handleOverrideAll}
-              style={{ padding:'7px 14px', borderRadius:'8px', border:'0.5px solid #7B3F00', background:'white', color:'#7B3F00', fontSize:'12px', cursor:'pointer' }}>
-              Override
-            </button>
-          )}
-          <button onClick={fetchData} style={{ padding:'7px 10px', borderRadius:'8px', border:'0.5px solid #ddd', background:'white', color:'#555', fontSize:'12px', cursor:'pointer' }}>Refresh</button>
+
+        {timelineData && !isClosed && (
+          <div style={{ marginBottom:'16px' }}>
+            <div style={{ display:'flex', gap:'3px' }}>
+              {Array.from({ length: timelineData.totalDays }, (_, i) => {
+                const isDone = i < timelineData.daysPassed;
+                const isDangerNow = timelineData.isTodayInDanger && i >= timelineData.totalDays - timelineData.dangerZoneDays;
+                const bg = isDangerNow ? '#E24B4A' : isDone ? '#FAC775' : '#eeede6';
+                return <div key={i} style={{ flex:1, height:'6px', borderRadius:'2px', background:bg }} />;
+              })}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', borderTop:'0.5px solid #f0f0f0', paddingTop:'14px', flexWrap:'wrap', gap:'12px' }}>
+          <div>
+            <div style={{ fontSize:'11px', color:'#888', marginBottom:'6px' }}>Previous period</div>
+            <div style={{ fontSize:'18px', fontWeight:'500', color:'#666', marginBottom:'2px' }}>{(() => { const d = getDeadline(curMonth); return d ? fmtFullDate(d) : '---'; })()}</div>
+            <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+              <span style={{ fontSize:'12px', color:'#aaa' }}>{fmtMonth(curMonth)}</span>
+              <span style={{ fontSize:'11px', padding:'2px 9px', borderRadius:'20px', background: hasAnyOverride?'#FFF3CD':'#f5f5f5', color: hasAnyOverride?'#856404':'#555', fontWeight:'500' }}>{hasAnyOverride ? 'Override' : 'Closed'}</span>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:'8px', alignItems:'center', flexShrink:0 }}>
+            {!isClosed && (isOwner || isAdmin) && (
+              <button onClick={handleClose} disabled={closing}
+                style={{ padding:'7px 14px', borderRadius:'8px', border:'none', background:closing?'#ccc':'#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor:closing?'default':'pointer' }}>
+                {closing ? 'Closing...' : 'Close period'}
+              </button>
+            )}
+            {isOwner && (
+              <button onClick={() => setConfirmOverrideAll(true)}
+                style={{
+                  padding:'7px 14px', borderRadius:'8px',
+                  border:'0.5px solid ' + (hasAnyOverride ? '#1a3a5c' : '#7B3F00'),
+                  background: hasAnyOverride ? '#1a3a5c' : 'white',
+                  color: hasAnyOverride ? 'white' : '#7B3F00',
+                  fontSize:'12px', cursor:'pointer'
+                }}>
+                {hasAnyOverride ? 'Reopen All' : 'Override All'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'10px', overflow:'hidden' }}>
-        <div style={{ padding:'10px 14px', borderBottom:'0.5px solid #f0f0f0', display:'flex', alignItems:'center', gap:'10px' }}>
+        <div style={{ padding:'10px 14px', borderBottom:'0.5px solid #f0f0f0', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' }}>
           <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Search BU or Company..."
-            style={{ padding:'5px 10px', border:'0.5px solid #ddd', borderRadius:'6px', fontSize:'12px', width:'200px' }} />
-          <span style={{ fontSize:'12px', color:'#888', marginLeft:'auto' }}>{filtered.length} / {buList.length} BU</span>
+            style={{ padding:'5px 10px', border:'0.5px solid #ddd', borderRadius:'6px', fontSize:'12px', width:'200px', flexShrink:0 }} />
+          <button onClick={() => { setAlphaFilter('All'); setPage(1); }}
+            style={{ padding:'3px 9px', borderRadius:'5px', border: alphaFilter==='All'?'0.5px solid #1a3a5c':'0.5px solid #ddd', background: alphaFilter==='All'?'#1a3a5c':'white', color: alphaFilter==='All'?'white':'#555', fontSize:'11px', cursor:'pointer', fontWeight:'500', flexShrink:0 }}>All</button>
+          {Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i)).map(letter => {
+            const hasMatch = buList.some(bu => (bu.bu||'').toUpperCase().startsWith(letter));
+            return (
+              <button key={letter} onClick={() => { setAlphaFilter(letter); setPage(1); }} disabled={!hasMatch}
+                style={{
+                  padding:'3px 8px', borderRadius:'5px', flexShrink:0,
+                  border: alphaFilter===letter?'0.5px solid #1a3a5c':'0.5px solid #ddd',
+                  background: alphaFilter===letter?'#1a3a5c':'white',
+                  color: alphaFilter===letter?'white':(hasMatch?'#555':'#ccc'),
+                  fontSize:'11px', cursor: hasMatch?'pointer':'default', opacity: hasMatch?1:0.5
+                }}>{letter}</button>
+            );
+          })}
+          <span style={{ fontSize:'12px', color:'#888', marginLeft:'auto', flexShrink:0 }}>{filtered.length} / {buList.length} BU</span>
           {totalPages > 1 && (
-            <div style={{ display:'flex', gap:'3px' }}>
+            <div style={{ display:'flex', gap:'3px', flexShrink:0 }}>
               {Array.from({ length: Math.min(totalPages,8) }, (_,i) => i+1).map(p => (
                 <button key={p} onClick={() => setPage(p)}
                   style={{ padding:'3px 7px', borderRadius:'5px', border: p===page?'0.5px solid #1a3a5c':'0.5px solid #ddd', background: p===page?'#1a3a5c':'white', color: p===page?'white':'#555', fontSize:'11px', cursor:'pointer' }}>{p}</button>
@@ -1263,7 +1359,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
           )}
         </div>
 
-        <div style={{ overflowX:'auto', maxHeight:'500px', overflowY:'auto' }}>
+        <div style={{ overflowX:'auto', maxHeight:'calc(100vh - 420px)', minHeight:'300px', overflowY:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px', minWidth:'900px' }}>
             <thead>
               <tr>
@@ -1290,6 +1386,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                 const grnOvr = Number(bu.ap_grn_prev||0);
                 const hasOvr = grtOvr > 0 || grnOvr > 0;
                 const isOvr  = bu.ap_period_mode === 'prev';
+                // ── ปุ่มมีแค่ 2 สถานะ: Override (ยังไม่กด) / Reopen (กดไปแล้ว) ──
+                // ── ไม่เกี่ยวกับ Deadline เลย — Deadline เป็นแค่ตัวกระตุ้นให้สังเกตเห็น ไม่ได้เปลี่ยนคำปุ่ม ──
                 const canEdit = isOwner;
                 const canOvr  = isOwner || isAdmin;
                 const bg = isOvr ? '#fff8f0' : (idx%2===0 ? 'white' : '#fafbfc');
@@ -1331,8 +1429,14 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                     <td style={TD()}>
                       {canOvr
                         ? <button onClick={() => handleOverrideBU(bu)}
-                            style={{ padding:'3px 10px', borderRadius:'5px', border:'0.5px solid '+(isOvr?'#1a3a5c':'#7B3F00'), background:isOvr?'#1a3a5c':'white', color:isOvr?'white':'#7B3F00', fontSize:'11px', cursor:'pointer' }}>
-                            {isOvr ? 'Current' : 'Override'}
+                            style={{
+                              padding:'3px 10px', borderRadius:'5px',
+                              border:'0.5px solid ' + (isOvr ? '#1a3a5c' : '#7B3F00'),
+                              background: isOvr ? '#1a3a5c' : 'white',
+                              color: isOvr ? 'white' : '#7B3F00',
+                              fontSize:'11px', cursor:'pointer'
+                            }}>
+                            {isOvr ? 'Reopen' : 'Override'}
                           </button>
                         : <span style={{ color:'#ccc' }}>---</span>}
                     </td>
@@ -1343,11 +1447,43 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
           </table>
         </div>
 
-        <div style={{ padding:'10px 14px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'space-between' }}>
+        <div style={{ padding:'10px 14px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'space-between', background:'white', borderRadius:'0 0 10px 10px', flexShrink:0 }}>
           <span style={{ fontSize:'11px', color:'#aaa' }}>Sort: Override first then A-Z</span>
           <span style={{ fontSize:'11px', color:'#aaa' }}>Override: M-1 only</span>
         </div>
       </div>
+
+      {confirmOverrideAll && (
+        <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
+          <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'420px' }}>
+            <h3 style={{ fontSize:'15px', marginBottom:'12px', color: hasAnyOverride ? '#1a3a5c' : '#7B3F00' }}>
+              {hasAnyOverride ? '↩ Reopen All BU' : '⚠️ Override All BU'}
+            </h3>
+            <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>
+              {hasAnyOverride
+                ? <>ต้องการให้ทุก BU (<strong>{buList.length} BU</strong>) กลับมาใช้เลขรันของเดือนปัจจุบันตามปกติหรือไม่?</>
+                : <>ต้องการให้ทุก BU (<strong>{buList.length} BU</strong>) ยืมใช้เลขรันของเดือน M-1 พร้อมกันหรือไม่?</>
+              }
+            </p>
+            <div style={{ background: hasAnyOverride ? '#E6F1FB' : '#FFF3CD', border: '0.5px solid ' + (hasAnyOverride ? '#0C447C' : '#ffc107'), borderRadius:'6px', padding:'10px 12px', marginBottom:'16px', fontSize:'12px', color: hasAnyOverride ? '#0C447C' : '#856404' }}>
+              {hasAnyOverride
+                ? '💡 BU ที่ยังทำงานไม่เสร็จก็จะถูกปิดโหมด Override ไปด้วย ควรตรวจสอบให้แน่ใจก่อน'
+                : '⚠️ การกระทำนี้กระทบทุก BU ในระบบพร้อมกัน ตรวจสอบให้แน่ใจก่อนดำเนินการ'
+              }
+            </div>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px' }}>
+              <button onClick={() => setConfirmOverrideAll(false)}
+                style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>
+                ยกเลิก
+              </button>
+              <button onClick={handleOverrideAll}
+                style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background: hasAnyOverride ? '#1a3a5c' : '#7B3F00', color:'white', fontSize:'13px', fontWeight:'500' }}>
+                {hasAnyOverride ? 'ยืนยัน Reopen All' : 'ยืนยัน Override All'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
