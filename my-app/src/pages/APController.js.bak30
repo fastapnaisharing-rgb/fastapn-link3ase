@@ -5340,7 +5340,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         const sc = String(fd.supplierCode ?? '').trim().toLowerCase();
         return c === sc || c === `${bu}-${sc}`;
       });
-      const vendorSite = vi?.['Supplier Site'] || '';
+      const vendorSite = vi?.['Vendor Site'] || vi?.['VendorSite'] || '';
       const branchCode = String(fd.branchDirectLabel || '').split('-')[0].trim();
       const derivedVat = lines.some(l => {
         const tc = String(l.taxCode || '');
