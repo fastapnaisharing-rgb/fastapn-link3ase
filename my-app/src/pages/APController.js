@@ -5593,7 +5593,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
           </thead>
           <tbody>
             <tr>
-              <td style={{ ...cellStyle, background: '#f0f0f0', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, fontFamily: 'var(--font-sans)', width: '36px' }}>1</td>
+              <td data-r={0} data-c={0} style={{ ...cellStyle, background: '#f0f0f0', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, fontFamily: 'var(--font-sans)', width: '36px' }}>1</td>
               {COL_LABELS.map((c, ci) => (
                 <td key={c}
                   data-r={0} data-c={ci}
@@ -5618,6 +5618,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
                   )}
                   <tr style={{ background: isH ? '#E6F1FB' : 'white' }}>
                     <td onClick={() => setSel({r1:ri+1,c1:0,r2:ri+1,c2:totalColCount-1})}
+                      data-r={ri + 1} data-c={0}
                       style={{ ...cellStyle, background: isH ? '#dbeafa' : '#f5f5f5', color: isH ? '#0C447C' : '#aaa', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, fontFamily: 'var(--font-sans)', width: '36px', cursor: 'pointer' }}>{rowNum}</td>
                     {row.data.slice(0, 30).map((val, ci) => (
                       <td key={ci}
@@ -5640,7 +5641,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
               const rNum = rows.length + i + 2;
               return (
                 <tr key={`pad-${i}`}>
-                  <td style={{ ...cellStyle, background: '#f5f5f5', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, fontFamily: 'var(--font-sans)', width: '36px' }}>{rNum}</td>
+                  <td data-r={rows.length + i + 1} data-c={0} style={{ ...cellStyle, background: '#f5f5f5', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, fontFamily: 'var(--font-sans)', width: '36px' }}>{rNum}</td>
                   {COL_LABELS.map((c, ci) => (
                     <td key={c}
                       data-r={rows.length + i + 1} data-c={ci}
