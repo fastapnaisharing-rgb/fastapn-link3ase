@@ -982,7 +982,10 @@ useEffect(() => {
                     <td style={{ ...S.td, color: '#555', fontSize: '11px' }}>
                       {(() => {
                         const d = typeof log.detail === 'string' ? (() => { try { return JSON.parse(log.detail); } catch { return {}; } })() : (log.detail || {});
-                        if (d.count) return `${d.count} invoices${d.note ? ` · "${d.note}"` : ''}`;
+                        if (d.count) {
+                          const unit = log.module === 'BACKEND_OPS' ? 'process' : 'invoices';
+                          return `${d.count} ${unit}${d.note ? ` · "${d.note}"` : ''}`;
+                        }
                         return log.target || '—';
                       })()}
                     </td>
