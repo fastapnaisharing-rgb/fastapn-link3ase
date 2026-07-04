@@ -5637,7 +5637,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
             {invoices.length === 0 && (
               <tr><td colSpan={31} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>No invoices</td></tr>
             )}
-            {Array.from({ length: Math.max(0, 100 - rows.length - 1) }).map((_, i) => {
+            {Array.from({ length: Math.max(0, 30 - rows.length - 1) }).map((_, i) => {
               const rNum = rows.length + i + 2;
               return (
                 <tr key={`pad-${i}`}>
