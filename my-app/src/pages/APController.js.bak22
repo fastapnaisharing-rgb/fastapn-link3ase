@@ -5452,12 +5452,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     const onKey = (e) => {
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && k === 'c') { e.preventDefault(); e.stopPropagation(); copySelection(); return; }
-      if ((e.ctrlKey || e.metaKey) && k === 'a') {
-        console.log('[CTRLA-DEBUG] fired. totalRowCount=', totalRowCount, 'totalColCount=', totalColCount, 'activeEl=', document.activeElement?.tagName, document.activeElement?.className);
-        e.preventDefault(); e.stopPropagation();
-        setSel({ r1: 0, c1: 0, r2: totalRowCount - 1, c2: totalColCount - 1 });
-        return;
-      }
+      if ((e.ctrlKey || e.metaKey) && k === 'a') { e.preventDefault(); e.stopPropagation(); setSel({ r1: 0, c1: 0, r2: totalRowCount - 1, c2: totalColCount - 1 }); return; }
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
         e.preventDefault();
         setSel(s => {

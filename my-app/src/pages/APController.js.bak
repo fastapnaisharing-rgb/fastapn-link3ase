@@ -5416,13 +5416,16 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   };
 
   const copySelection = React.useCallback(() => {
-    if (sel.r1 < 0) return;
+    alert('DEBUG: copySelection called, sel.r1=' + sel.r1);
+    if (sel.r1 < 0) { alert('DEBUG: sel.r1 < 0, return early'); return; }
     const allRows = [{ data: [bookLabel, ...Array(29).fill('')] }, ...rows];
     const r1=Math.min(sel.r1,sel.r2),r2=Math.max(sel.r1,sel.r2),c1=Math.min(sel.c1,sel.c2),c2=Math.max(sel.c1,sel.c2);
     const lines=[];
     for(let r=r1;r<=r2;r++){const row=allRows[r];if(!row)continue;const cells=[];for(let c=c1;c<=c2;c++)cells.push(String(row.data?.[c]??''));lines.push(cells.join(String.fromCharCode(9)));}
     const text = lines.join(String.fromCharCode(13,10));
-    fallbackCopy(text);
+    alert('DEBUG: text.length=' + text.length + ', preview=' + text.slice(0,80));
+    const okResult = fallbackCopy(text);
+    alert('DEBUG: execCommand ok=' + okResult);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [sel, rows, bookLabel]);
@@ -5439,6 +5442,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     try { ok = document.execCommand('copy'); } catch(e) { console.warn('copy failed', e); }
     document.body.removeChild(ta);
     if (!ok && navigator.clipboard) navigator.clipboard.writeText(text).catch(()=>{});
+    return ok;
   };
 
   const scrollRef = React.useRef(null);

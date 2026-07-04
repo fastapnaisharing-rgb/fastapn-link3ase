@@ -492,8 +492,7 @@ export function RAMDashboardTab() {
 
   const { ram, orphanCount, orphanRamMb, orphanSafety, topProcesses } = current;
   const { safeCount, watchingCount, safeRamMb, isEmergency } = orphanSafety;
-  const backendProc = topProcesses?.find(p => p.Name === 'node');
-  const backendRamMb = Math.round(backendProc?.RAM || 0);
+  const { backendRamMb } = current;
   const riskLabel = ram.pct >= 75 ? 'เกินเกณฑ์วิกฤต' : ram.pct >= 50 ? 'เข้าเกณฑ์เตือน' : 'ปกติ';
   const riskColor = ram.pct >= 75 ? '#791F1F' : ram.pct >= 50 ? '#856404' : '#27500A';
   const minutesAgo = Math.floor((Date.now() - lastRefresh) / 60000);
