@@ -5448,6 +5448,17 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   const totalRowCount = rows.length + 1;
   const totalColCount = 30;
 
+  // ── DIAGNOSTIC: capture-phase probe ติดครั้งเดียวตลอด session ──────────
+  React.useEffect(() => {
+    const probe = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        console.log('[CAPTURE-PROBE] Ctrl+A detected at', new Date().toISOString(), 'defaultPrevented(before)=', e.defaultPrevented, 'activeEl=', document.activeElement?.tagName, document.activeElement?.className, 'hasFocus=', document.hasFocus());
+      }
+    };
+    window.addEventListener('keydown', probe, true);
+    return () => window.removeEventListener('keydown', probe, true);
+  }, []);
+
   React.useEffect(() => {
     const onKey = (e) => {
       const k = e.key.toLowerCase();
@@ -5497,10 +5508,12 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     };
     window.addEventListener('mousemove', onResizeMove);
     const onCtxClose = (e) => { if (e.button !== 2) setCtxMenu(m => ({ ...m, show: false })); };
+    console.log('[LISTENER-LIFECYCLE] attach keydown. sel=', JSON.stringify(sel));
     window.addEventListener('keydown', onKey);
     window.addEventListener('mouseup', onUp);
     window.addEventListener('click', onCtxClose);
     return () => {
+      console.log('[LISTENER-LIFECYCLE] detach keydown');
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('click', onCtxClose);
@@ -5583,7 +5596,8 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
               <td style={{ ...cellStyle, background: '#f0f0f0', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, fontFamily: 'var(--font-sans)', width: '36px' }}>1</td>
               {COL_LABELS.map((c, ci) => (
                 <td key={c}
-                  onMouseDown={() => { setSel({ r1: 0, c1: ci, r2: 0, c2: ci }); setIsDragging(true); }}
+                  data-r={0} data-c={ci}
+                  onMouseDown={(e) => { if (e.button === 2) return; setSel({ r1: 0, c1: ci, r2: 0, c2: ci }); setIsDragging(true); }}
                   onMouseOver={(e) => handleMouseOver(0, ci, e)}
                   style={{ ...cellStyle, background: isSel(0, ci) ? '#c8dffe' : '#f8f9fa', color: '#aaa', outline: isSel(0, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
                   {ci === 0 ? bookLabel : ''}
@@ -5607,8 +5621,9 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
                       style={{ ...cellStyle, background: isH ? '#dbeafa' : '#f5f5f5', color: isH ? '#0C447C' : '#aaa', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, fontFamily: 'var(--font-sans)', width: '36px', cursor: 'pointer' }}>{rowNum}</td>
                     {row.data.slice(0, 30).map((val, ci) => (
                       <td key={ci}
-                        onMouseDown={(e) => { e.currentTarget.closest('[tabindex]')?.focus(); if(e.shiftKey&&sel.r1>=0){setSel(s=>({...s,r2:ri+1,c2:ci}));}else{setSel({r1:ri+1,c1:ci,r2:ri+1,c2:ci});setIsDragging(true);} }}
+                        onMouseDown={(e) => { if (e.button === 2) return; e.currentTarget.closest('[tabindex]')?.focus(); if(e.shiftKey&&sel.r1>=0){setSel(s=>({...s,r2:ri+1,c2:ci}));}else{setSel({r1:ri+1,c1:ci,r2:ri+1,c2:ci});setIsDragging(true);} }}
                         onMouseOver={(e) => handleMouseOver(ri + 1, ci, e)}
+                        data-r={ri + 1} data-c={ci}
                         data-active={sel.r1 === ri + 1 && sel.r2 === ri + 1 && sel.c1 === ci && sel.c2 === ci ? 'true' : undefined}
                         style={{ ...cellStyle, width: colWidths[COL_LABELS[ci]] || 90, minWidth: colWidths[COL_LABELS[ci]] || 90, color: isH ? '#0C447C' : '#333', background: isSel(ri + 1, ci) ? '#c8dffe' : undefined, outline: copied && isSel(ri + 1, ci) ? '2px dashed #1a7a1a' : isSel(ri + 1, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
                         {val === '' || val === null || val === undefined ? '' : String(val)}
@@ -5628,7 +5643,8 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
                   <td style={{ ...cellStyle, background: '#f5f5f5', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, fontFamily: 'var(--font-sans)', width: '36px' }}>{rNum}</td>
                   {COL_LABELS.map((c, ci) => (
                     <td key={c}
-                      onMouseDown={(e) => { e.currentTarget.closest('[tabindex]')?.focus(); setSel({ r1: rows.length + i + 1, c1: ci, r2: rows.length + i + 1, c2: ci }); setIsDragging(true); }}
+                      data-r={rows.length + i + 1} data-c={ci}
+                      onMouseDown={(e) => { if (e.button === 2) return; e.currentTarget.closest('[tabindex]')?.focus(); setSel({ r1: rows.length + i + 1, c1: ci, r2: rows.length + i + 1, c2: ci }); setIsDragging(true); }}
                       onMouseOver={(e) => handleMouseOver(rows.length + i + 1, ci, e)}
                       style={{ ...cellStyle, background: isSel(rows.length + i + 1, ci) ? '#c8dffe' : 'white', height: '22px', cursor: 'cell', outline: isSel(rows.length + i + 1, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px' }}></td>
                   ))}
