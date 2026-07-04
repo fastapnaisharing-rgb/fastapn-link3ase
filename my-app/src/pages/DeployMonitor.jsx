@@ -1,4 +1,6 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Chart from 'chart.js/auto';
 
 const WEBHOOK_URL = 'http://10.101.87.126:9000';
 const HEALTH_URL  = 'http://10.101.87.126:4000/health';
@@ -314,6 +316,301 @@ export default function DeployMonitor({ inline = false, onClose }) {
       <div style={{ width:'940px', maxWidth:'96vw', height:'90vh', display:'flex', flexDirection:'column' }}>
         {content}
       </div>
+    </div>
+  );
+}
+// ═══════════════════════════════════════════════════════════════
+// RAM Dashboard — แยกออกมาจาก DeployMonitor ตามที่ตกลงกันไว้
+// ═══════════════════════════════════════════════════════════════
+
+const API_BASE = 'http://10.101.87.126:4000/api';
+
+function authFetch(path, opts = {}) {
+  const token = sessionStorage.getItem('fastapn_token');
+  return fetch(`${API_BASE}${path}`, {
+    ...opts,
+    headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
+  }).then(r => r.json());
+}
+
+function RamDonut({ orphanRamMb, usedMb, totalMb, backendRamMb }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+
+    const otherMb = Math.max(0, usedMb - orphanRamMb - backendRamMb);
+    const freeMb = Math.max(0, totalMb - usedMb);
+
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(canvasRef.current, {
+      type: 'doughnut',
+      data: {
+        labels: ['powershell orphan', 'ระบบอื่น', 'backend', 'ว่าง'],
+        datasets: [{
+          data: [orphanRamMb, otherMb, backendRamMb, freeMb],
+          backgroundColor: ['#eda100', '#898781', '#008300', '#f1efe8'],
+          borderWidth: 3,
+          borderColor: '#fcfcfb',
+        }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '76%', plugins: { legend: { display: false } } },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [orphanRamMb, usedMb, totalMb, backendRamMb]);
+
+  return <canvas ref={canvasRef} />;
+}
+
+function RamLineChart({ history }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !history?.length) return;
+    const labels = history.map(h => formatTime(h.recorded_at));
+    const data = history.map(h => h.ram_pct);
+
+    const ctx = canvasRef.current.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 190);
+    gradient.addColorStop(0, 'rgba(237,161,0,0.25)');
+    gradient.addColorStop(1, 'rgba(237,161,0,0.0)');
+
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            data, borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 6, fill: true, backgroundColor: gradient, tension: 0.35,
+            segment: { borderColor: c => (c.p1.parsed.y >= 75 ? '#e24b4a' : '#eda100') },
+            pointHoverBackgroundColor: c => (c.parsed.y >= 75 ? '#e24b4a' : '#eda100'),
+          },
+          { data: labels.map(() => 75), borderColor: '#f0997b', borderWidth: 1, borderDash: [3, 4], pointRadius: 0, fill: false },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#fcfcfb', titleColor: '#0b0b0b', bodyColor: '#52514e', borderColor: '#e1e0d9', borderWidth: 1,
+            padding: 10, cornerRadius: 8, displayColors: false,
+            callbacks: { label: c => `RAM ${c.parsed.y}%`, afterLabel: c => (c.parsed.y >= 75 ? 'เกินเกณฑ์วิกฤต' : '') },
+          },
+        },
+        scales: {
+          y: { min: 0, max: 100, grid: { color: '#e1e0d9' }, ticks: { color: '#898781', font: { size: 11 }, callback: v => v + '%', stepSize: 25 } },
+          x: { grid: { display: false }, ticks: { color: '#898781', font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } },
+        },
+      },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [history]);
+
+  return <canvas ref={canvasRef} />;
+}
+
+export function RAMDashboardTab() {
+  const [current, setCurrent] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [analysis, setAnalysis] = useState(null);
+  const [expandedProc, setExpandedProc] = useState(null);
+  const [killLog, setKillLog] = useState([]);
+  const [confirmData, setConfirmData] = useState(null);
+  const [killing, setKilling] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [chartReady] = useState(true);
+
+ 
+  const fetchAll = useCallback(async () => {
+    try {
+      const [cur, hist, ana] = await Promise.all([
+        authFetch('/system/ram-current'),
+        authFetch('/system/ram-history?hours=24'),
+        authFetch('/system/ram-analysis'),
+      ]);
+      setCurrent(cur);
+      setHistory(hist);
+      setAnalysis(ana);
+      setLastRefresh(Date.now());
+    } catch (err) { console.error('RAM dashboard fetch error:', err); }
+  }, []);
+
+  const fetchKillLog = useCallback(async () => {
+    try {
+      const data = await authFetch('/activity_log?module=eq.BACKEND_OPS&action=eq.KILL_ORPHAN_PROCESS&order=created_at.desc&limit=5');
+      setKillLog(Array.isArray(data) ? data : []);
+    } catch (err) { console.error('kill log fetch error:', err); }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    fetchKillLog();
+    const interval = setInterval(fetchAll, 60000);
+    return () => clearInterval(interval);
+  }, [fetchAll, fetchKillLog]);
+
+  const handlePreviewKill = async () => {
+    try {
+      const data = await authFetch('/system/kill-orphans/preview', { method: 'POST' });
+      setConfirmData(data);
+    } catch (err) { console.error('preview kill error:', err); }
+  };
+
+  const handleConfirmKill = async () => {
+    if (!confirmData?.eligible?.length) return;
+    setKilling(true);
+    try {
+      const pids = confirmData.eligible.map(p => p.Id);
+      await authFetch('/system/kill-orphans/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pids }) });
+      setConfirmData(null);
+      await fetchAll();
+      await fetchKillLog();
+    } catch (err) { console.error('confirm kill error:', err); }
+    setKilling(false);
+  };
+
+  if (!current || !chartReady) {
+    return <div style={{ padding: '60px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>กำลังโหลดข้อมูล...</div>;
+  }
+
+  const { ram, orphanCount, orphanRamMb, topProcesses } = current;
+  const backendProc = topProcesses?.find(p => p.Name === 'node');
+  const backendRamMb = Math.round(backendProc?.RAM || 0);
+  const riskLabel = ram.pct >= 75 ? 'เกินเกณฑ์วิกฤต' : ram.pct >= 50 ? 'เข้าเกณฑ์เตือน' : 'ปกติ';
+  const riskColor = ram.pct >= 75 ? '#791F1F' : ram.pct >= 50 ? '#856404' : '#27500A';
+  const minutesAgo = Math.floor((Date.now() - lastRefresh) / 60000);
+
+  return (
+    <div style={{ padding: '20px 24px', overflowY: 'auto', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '18px' }}>🖥️</span>
+          <span style={{ fontSize: '15px', fontWeight: '500' }}>RAM monitor</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '12px', color: '#888' }}>อัปเดตล่าสุด {minutesAgo < 1 ? 'เมื่อสักครู่' : `${minutesAgo} นาทีที่แล้ว`}</span>
+          <button onClick={fetchAll} style={{ fontSize: '13px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', cursor: 'pointer' }}>รีเฟรช</button>
+          <button onClick={handlePreviewKill} style={{ fontSize: '13px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer' }}>เคลียร์ orphan process</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '28px', alignItems: 'start', marginBottom: '28px' }}>
+        <div style={{ position: 'relative', width: '172px', height: '172px', margin: '0 auto' }}>
+          <RamDonut orphanRamMb={orphanRamMb} usedMb={ram.used} totalMb={ram.total} backendRamMb={backendRamMb} />
+          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center' }}>
+            <p style={{ fontSize: '34px', fontWeight: '500', margin: 0, lineHeight: 1, color: riskColor }}>{ram.pct}<span style={{ fontSize: '16px' }}>%</span></p>
+            <p style={{ fontSize: '11px', color: '#888', margin: '4px 0 0' }}>{(ram.used / 1024).toFixed(1)} / {(ram.total / 1024).toFixed(1)} GB</p>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '9px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+              <span style={{ width: '9px', height: '9px', borderRadius: '2px', background: '#eda100', flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>powershell orphan</span>
+              <span style={{ fontSize: '12px', padding: '1px 7px', borderRadius: '20px', background: '#FFF3CD', color: '#856404' }}>{orphanCount} โปรเซส</span>
+              <span style={{ fontWeight: '500', minWidth: '66px', textAlign: 'right' }}>{orphanRamMb} MB</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+              <span style={{ width: '9px', height: '9px', borderRadius: '2px', background: '#008300', flexShrink: 0 }} />
+              <span style={{ flex: 1, color: '#555' }}>backend (ระบบของเราเอง)</span>
+              <span style={{ fontWeight: '500', minWidth: '66px', textAlign: 'right', color: '#555' }}>{backendRamMb} MB</span>
+            </div>
+          </div>
+
+          <div style={{ borderTop: '0.5px solid #e8e8e8', paddingTop: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <span style={{ fontSize: '12px', color: '#555' }}>ระดับความเสี่ยง</span>
+              <span style={{ fontSize: '12px', color: riskColor, fontWeight: '500' }}>{riskLabel}</span>
+            </div>
+            <div style={{ height: '6px', background: '#f0f0f0', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
+              <div style={{ width: `${Math.min(ram.pct, 100)}%`, height: '100%', background: 'linear-gradient(90deg, #eda100, #e24b4a)', borderRadius: '3px' }} />
+              <div style={{ position: 'absolute', left: '75%', top: '-2px', width: '1px', height: '10px', background: '#999' }} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>RAM ย้อนหลัง 24 ชั่วโมง</p>
+      <div style={{ position: 'relative', height: '190px', marginBottom: '24px' }}>
+        <RamLineChart history={history} />
+      </div>
+
+      {analysis?.hasAnomaly && (
+        <div style={{ background: '#FCEBEB', borderRadius: '12px', padding: '16px 20px', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+            <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: '#e24b4a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <span style={{ color: 'white', fontSize: '15px' }}>⚠️</span>
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '13px', fontWeight: '500', color: '#791F1F', margin: '0 0 3px' }}>RAM เพิ่มขึ้น {analysis.increase} เปอร์เซ็นต์ ใน {analysis.hoursSpan} ชั่วโมง</p>
+              <p style={{ fontSize: '12px', color: '#791F1F', margin: '0 0 10px', lineHeight: 1.5 }}>
+                ระหว่าง {formatTime(analysis.fromTime)} ถึง {formatTime(analysis.toTime)}
+                {analysis.topSuspect && <> — สาเหตุที่เป็นไปได้คือ <code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 5px', borderRadius: '4px', fontSize: '11px' }}>{analysis.topSuspect.name}</code> เพิ่มจาก {analysis.topSuspect.beforeRam} เป็น {analysis.topSuspect.afterRam} MB</>}
+              </p>
+              <button onClick={handlePreviewKill} style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '6px', border: 'none', background: '#e24b4a', color: 'white', cursor: 'pointer' }}>เคลียร์ orphan process</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>Process ที่ใช้ RAM สูงสุด</p>
+      <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '8px', overflow: 'hidden', marginBottom: '24px' }}>
+        {(topProcesses || []).slice(0, 6).map((p, i) => {
+          const isOrphanGroup = p.Name === 'powershell';
+          return (
+            <div key={i}>
+              <div
+                onClick={() => isOrphanGroup && setExpandedProc(expandedProc === i ? null : i)}
+                style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: i < topProcesses.length - 1 ? '0.5px solid #e8e8e8' : 'none', cursor: isOrphanGroup ? 'pointer' : 'default' }}>
+                {isOrphanGroup && <span style={{ fontSize: '13px', color: '#888', marginRight: '8px', transform: expandedProc === i ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s', display: 'inline-block' }}>&rsaquo;</span>}
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: isOrphanGroup ? '#eda100' : (p.Name === 'node' ? '#008300' : '#999'), marginRight: '10px', marginLeft: isOrphanGroup ? 0 : '21px', flexShrink: 0 }} />
+                <span style={{ flex: 1, fontSize: '13px' }}>{p.Name}{isOrphanGroup && <span style={{ color: '#888' }}> · {orphanCount} โปรเซส</span>}</span>
+                <span style={{ fontSize: '13px' }}>{p.RAM} MB</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>ประวัติการเคลียร์ orphan process</p>
+      <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '8px', overflow: 'hidden' }}>
+        {killLog.length === 0 && <div style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>ยังไม่มีประวัติการเคลียร์</div>}
+        {killLog.map((log, i) => {
+          const detail = typeof log.detail === 'string' ? JSON.parse(log.detail) : log.detail;
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: i < killLog.length - 1 ? '0.5px solid #e8e8e8' : 'none' }}>
+              <span style={{ width: '90px', fontSize: '12px', color: '#888', flexShrink: 0 }}>{formatTime(log.created_at)}</span>
+              <span style={{ flex: 1, fontSize: '13px' }}>{log.username}</span>
+              <span style={{ fontSize: '12px', color: '#888', marginRight: '12px' }}>{detail?.count || 0} process</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {confirmData && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
+          <div style={{ background: 'white', borderRadius: '10px', padding: '24px', width: '420px' }}>
+            <h3 style={{ fontSize: '15px', marginBottom: '12px', color: '#791F1F' }}>⚠️ ยืนยันเคลียร์ Orphan Process</h3>
+            <p style={{ fontSize: '13px', color: '#555', marginBottom: '12px' }}>
+              พบ PowerShell ที่ไม่มีหน้าต่างเปิดอยู่ อายุเกิน 24 ชม. จำนวน <strong>{confirmData.count} ตัว</strong> คิดเป็น RAM <strong>{confirmData.totalRamMb} MB</strong>
+            </p>
+            <div style={{ background: '#FFF3CD', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#856404' }}>
+              การกระทำนี้จะปิด Process เหล่านี้ทันที ไม่สามารถย้อนกลับได้
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button onClick={() => setConfirmData(null)} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: '#f0f0f0', color: '#555', fontSize: '13px' }}>ยกเลิก</button>
+              <button onClick={handleConfirmKill} disabled={killing} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: killing ? 'default' : 'pointer', background: killing ? '#ccc' : '#e24b4a', color: 'white', fontSize: '13px', fontWeight: '500' }}>
+                {killing ? 'กำลังเคลียร์...' : `ยืนยันเคลียร์ ${confirmData.count} ตัว`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

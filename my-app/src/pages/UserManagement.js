@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
   import { apiFetch } from '../api';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
-  import DeployMonitor from './DeployMonitor';
+  import DeployMonitor, { RAMDashboardTab } from './DeployMonitor';
 
   const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'];
 
@@ -215,11 +215,25 @@ import React, { useState, useEffect, useMemo } from 'react';
     );
   }
 
-  function AccessControlTab({ users, currentUser, userName }) {
+  // ─── System Settings Page (แสดงแค่ Maintenance — ย้ายมาจาก Access Control) ─────
+  function SystemSettingsPageTab({ currentUser, userName }) {
+    return (
+      <div style={{ paddingTop: '8px' }}>
+        <MaintenanceSection currentUser={currentUser} userName={userName} />
+        <div style={{ padding: '40px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+          ยังไม่มีการตั้งค่าเพิ่มเติมในส่วนนี้
+        </div>
+      </div>
+    );
+  }
+
+  function AccessControlTab({ users, currentUser, userName, isOwner }) {
     const [overrides, setOverrides] = useState([]);
     const [openFolder, setOpenFolder] = useState(null);
     const [saving, setSaving] = useState(false);
     const [pendingChanges, setPendingChanges] = useState({});
+    // ── Sub-tab: Document Access (Owner เท่านั้น) / AP Manual Panel (Owner + Admin ที่มี Permission Manual) ──
+    const [subTab, setSubTab] = useState(isOwner ? 'document' : 'apmanual');
 
     const fetchOverrides = async () => {
       try {
@@ -306,8 +320,25 @@ import React, { useState, useEffect, useMemo } from 'react';
     const nonOwnerUsers = users.filter(u => u.role !== 'Owner');
 
     return (
-      <div style={{ paddingTop: '8px' }}>
-        <MaintenanceSection currentUser={currentUser} userName={userName} />
+      <div>
+        <div style={{ display: 'flex', gap: '4px', borderBottom: '2px solid #e8e8e8', paddingTop: '8px', position: 'sticky', top: 0, background: 'white', zIndex: 5 }}>
+          {isOwner && (
+            <button onClick={() => setSubTab('document')}
+              style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab==='document'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: subTab==='document'?'500':'400', cursor: 'pointer', borderBottom: subTab==='document'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
+              Document access
+            </button>
+          )}
+          <button onClick={() => setSubTab('apmanual')}
+            style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab==='apmanual'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: subTab==='apmanual'?'500':'400', cursor: 'pointer', borderBottom: subTab==='apmanual'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
+            AP Manual Panel
+          </button>
+        </div>
+        <div style={{ paddingTop: '16px' }}>
+
+        {subTab === 'apmanual' && <SystemSettingsTab isOwner={isOwner} isAdmin={!isOwner} userName={userName} />}
+
+        {subTab === 'document' && isOwner && (
+        <>
         <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', margin: '12px 0 8px' }}>🔐 Document Center Access</div>
         <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
           Override สิทธิ์เข้าถึงแต่ละโฟลเดอร์ได้ — กด ⚙️ เพื่อตั้งค่า
@@ -399,6 +430,9 @@ import React, { useState, useEffect, useMemo } from 'react';
             </div>
           );
         })}
+        </>
+        )}
+        </div>
       </div>
     );
   }
@@ -623,8 +657,8 @@ useEffect(() => {
     };
 
     const S = {
-      th: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap' },
-      thCenter: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'center', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap' },
+      th: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2 },
+      thCenter: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'center', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2 },
       td: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' },
       tdCenter: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle', textAlign: 'center' },
       btn: (bg, color, border) => ({ padding: '3px 10px', borderRadius: '5px', border: `0.5px solid ${border||bg}`, fontSize: '11px', cursor: 'pointer', background: bg, color, fontWeight: '500' }),
@@ -632,8 +666,8 @@ useEffect(() => {
     };
 
     return (
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 180px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0', flexShrink: 0 }}>
           <span style={{ fontSize: '12px', color: '#888' }}>{filtered.length} รายการ</span>
           {selected.length > 0 && (
             <>
@@ -680,7 +714,7 @@ useEffect(() => {
           )}
         </div>
 
-        <div style={{ overflowX: 'auto', borderRadius: '0 0 8px 8px', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'auto', flex: 1, borderRadius: '0 0 8px 8px', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '800px' }}>
             <thead>
               <tr>
@@ -875,14 +909,14 @@ useEffect(() => {
     };
 
     const S = {
-      th: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap' },
+      th: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2 },
       td: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' },
       filterSelect: { padding: '5px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white' },
     };
 
     return (
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 8px', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0', marginBottom: '0' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 180px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 8px', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0', marginBottom: '0', flexShrink: 0 }}>
           <span style={{ fontSize: '12px', color: '#888' }}>{filtered.length} รายการ</span>
           <select value={filterAction} onChange={e => setFilterAction(e.target.value)} style={S.filterSelect}>
             <option value="">Action ทั้งหมด</option>
@@ -910,7 +944,7 @@ useEffect(() => {
           <button onClick={fetchLogs} style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: 'white', color: '#555', marginLeft: 'auto' }}>🔄 Refresh</button>
           {!isOwner && <span style={{ fontSize: '11px', color: '#888', background: '#f8f9fa', padding: '3px 8px', borderRadius: '20px' }}>📋 แสดงเฉพาะ Log ที่คุณมีสิทธิ์</span>}
         </div>
-        <div style={{ overflowX: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'auto', flex: 1, border: '0.5px solid #e8e8e8', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '700px' }}>
             <thead>
               <tr>
@@ -1151,7 +1185,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     startDate.setHours(0, 0, 0, 0);
 
     const totalDays = Math.round((deadline - startDate) / (1000 * 60 * 60 * 24)) + 1;
-    const daysPassed = Math.max(0, Math.min(totalDays, Math.round((today - startDate) / (1000 * 60 * 60 * 24))));
+    const daysPassed = Math.max(0, Math.min(totalDays, Math.round((today - startDate) / (1000 * 60 * 60 * 24)) + 1));
     const daysLeft = Math.max(0, Math.round((deadline - today) / (1000 * 60 * 60 * 24)));
 
     // ── หาจุดเริ่มเขตแดง: นับถอยหลังจาก deadline ให้ครบ 2 วันทำการ (ข้ามเสาร์-อาทิตย์) ──
@@ -1489,7 +1523,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
 }
 
 
-  function AdminView({ currentUser, userName, userRole, userPermissions, S }) {
+  function AdminView({ currentUser, userName, userRole, userPermissions, users, S }) {
     const [tab, setTab] = React.useState('profile');
     return (
       <div style={S.container}>
@@ -1499,12 +1533,12 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         <div style={{ borderBottom: '2px solid #e8e8e8', display: 'flex', marginBottom: '0' }}>
           <button style={S.tabBtn(tab === 'profile')} onClick={() => setTab('profile')}>👤 Profile</button>
           <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>📋 Activity Log</button>
-          <button style={S.tabBtn(tab === 'settings')} onClick={() => setTab('settings')}>⚙️ System Settings</button>
+          <button style={S.tabBtn(tab === 'access')} onClick={() => setTab('access')}>🔐 Access Control</button>
         </div>
         <div style={{ paddingTop: '16px' }}>
           {tab === 'profile' && <ProfileInline currentUser={currentUser} userName={userName} />}
           {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
-          {tab === 'settings' && <SystemSettingsTab isOwner={false} isAdmin={true} userName={userName} />}
+          {tab === 'access' && <AccessControlTab users={users || []} currentUser={currentUser} userName={userName} isOwner={false} />}
         </div>
       </div>
     );
@@ -1522,6 +1556,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Editor' });
     const [error, setError] = useState('');
     const [savedId, setSavedId] = useState(null);
+    const [backendOpsSubTab, setBackendOpsSubTab] = useState('deploy');
     const { currentUser, userName, userPermissions } = useAuth();
     const { isOwner } = useUserRole();
     const { userRole } = useAuth();
@@ -1560,7 +1595,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
       overlay: { position: 'fixed', top:0, left:0, right:0, bottom:0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
       modal: { background: 'white', borderRadius: '10px', padding: '24px', width: '420px', maxHeight: '90vh', overflowY: 'auto' },
       iconBtn: (color) => ({ background: 'none', border: 'none', cursor: 'pointer', color, padding: '4px 6px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center' }),
-      tabBtn: (active) => ({ padding: '8px 20px', fontSize: '13px', cursor: 'pointer', color: active ? '#1a3a5c' : '#888', borderBottom: active ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px', background: 'transparent', border: 'none', fontWeight: active ? '500' : '400', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }),
+      tabBtn: (active) => ({ padding: '8px 20px', fontSize: '13px', cursor: 'pointer', color: active ? '#1a3a5c' : '#888', borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderBottom: active ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px', background: 'transparent', fontWeight: active ? '500' : '400', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }),
     };
 
     const isAdmin = !isOwner && userRole === 'Admin';
@@ -1577,7 +1612,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     }
 
     if (isAdmin) {
-      return <AdminView currentUser={currentUser} userName={userName} userRole={userRole} userPermissions={userPermissions} S={S} />;
+      return <AdminView currentUser={currentUser} userName={userName} userRole={userRole} userPermissions={userPermissions} users={users} S={S} />;
     }
 
     const saveUser = async (user) => {
@@ -1654,9 +1689,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
           </button>
           <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>📋 Activity Log</button>
           {isOwner && (
-            <button style={S.tabBtn(tab === 'deploy')} onClick={() => setTab('deploy')}>🚀 Deploy</button>
+            <button style={S.tabBtn(tab === 'deploy')} onClick={() => setTab('deploy')}>🖥️ Backend Ops</button>
           )}
-          <button style={S.tabBtn(tab === 'settings')} onClick={() => setTab('settings')}>⚙️ System Settings</button>
+          {isOwner && (
+            <button style={S.tabBtn(tab === 'settings')} onClick={() => setTab('settings')}>⚙️ System Settings</button>
+          )}
         </div>
 
         {tab === 'users' && (
@@ -1733,15 +1770,28 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
           </div>
         )}
 
-        {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} />}
+        {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} isOwner={isOwner} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
-        {tab === 'settings' && <SystemSettingsTab isOwner={isOwner} isAdmin={isAdmin} userName={userName} />}
+        {tab === 'settings' && isOwner && <SystemSettingsPageTab currentUser={currentUser} userName={userName} />}
         {tab === 'deploy' && isOwner && (() => { document.body.style.overflow = 'hidden'; return null; })()}
         {tab !== 'deploy' && (() => { document.body.style.overflow = ''; return null; })()}
         {tab === 'deploy' && isOwner && (
-          <div style={{ position: 'fixed', top: '88px', left: '220px', right: 0, bottom: 0, zIndex: 10, overflow: 'hidden' }}>
-            <DeployMonitor inline />
+          <div style={{ position: 'fixed', top: '88px', left: '220px', right: 0, bottom: 0, zIndex: 10, overflow: 'hidden', background: 'white', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', gap: '4px', padding: '0 20px', borderBottom: '2px solid #e8e8e8', flexShrink: 0, position: 'relative', zIndex: 2, background: 'white' }}>
+              <button onClick={() => setBackendOpsSubTab('deploy')}
+                style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: backendOpsSubTab==='deploy'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: backendOpsSubTab==='deploy'?'500':'400', cursor: 'pointer', borderBottom: backendOpsSubTab==='deploy'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
+                Deploy Monitor
+              </button>
+              <button onClick={() => setBackendOpsSubTab('ram')}
+                style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: backendOpsSubTab==='ram'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: backendOpsSubTab==='ram'?'500':'400', cursor: 'pointer', borderBottom: backendOpsSubTab==='ram'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
+                RAM Dashboard
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              {backendOpsSubTab === 'deploy' && <DeployMonitor inline />}
+              {backendOpsSubTab === 'ram' && <RAMDashboardTab />}
+            </div>
           </div>
         )}
 

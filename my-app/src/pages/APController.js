@@ -5308,6 +5308,8 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
 
   const num = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
 
+  const fmtDate = (d) => { if (!d) return ''; const s = String(d).replace(/-/g, ''); return s.length === 8 ? s.slice(2) : s; };
+
   const getMatchedRule = (supplierCode) => {
     const vendorInfo = supplierItems.find(s => {
       const code = String(s['Code'] ?? '').trim().toLowerCase();
@@ -5328,75 +5330,195 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   const buildRows = () => {
     const rows = [];
     invoices.forEach((inv, idx) => {
-      const fd = inv.form_data || {};
+      const fd    = inv.form_data || {};
       const lines = inv.lines || [];
-      const rule = getMatchedRule(fd.supplierCode);
+      const rule  = getMatchedRule(fd.supplierCode);
+
+      const bu = String(batchConfig?.bu ?? '').toLowerCase();
+      const vi = supplierItems.find(s => {
+        const c  = String(s['Code'] ?? '').trim().toLowerCase();
+        const sc = String(fd.supplierCode ?? '').trim().toLowerCase();
+        return c === sc || c === `${bu}-${sc}`;
+      });
+      const vendorSite = vi?.['Vendor Site'] || vi?.['VendorSite'] || '';
       const branchCode = String(fd.branchDirectLabel || '').split('-')[0].trim();
-      const invDateRaw = fd.invDate || '';
-      // แปลง date เป็น serial หรือ string เพื่อแสดง
-      const invDateDisp = invDateRaw ? invDateRaw.replace(/-/g, '').slice(2) : '';
-      const dueDate  = invDateRaw ? (() => { try { const d = new Date(invDateRaw); d.setMonth(d.getMonth()+1); return String(d.getFullYear()).slice(2) + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0'); } catch(e){ return ''; } })() : '';
-      const recvDate = invDateRaw ? invDateDisp : '';
-      const derivedIsVat = lines.some(l => { const tc = String(l.taxCode||''); return tc.includes('VAT7%') && !tc.includes('SVAT7%'); }) ? 'Yes' : 'No';
-      const vendorCode = fd.supplierCode || '';
-      const vendorSite = (() => {
-        const vi = supplierItems.find(s => {
-          const code = String(s['Code']??'').trim().toLowerCase();
-          const sup  = String(vendorCode).trim().toLowerCase();
-          const bu   = String(batchConfig?.bu??'').toLowerCase();
-          return code === sup || code === `${bu}-${sup}`;
-        });
-        return vi?.['Vendor Site'] || vi?.['VendorSite'] || '';
-      })();
+      const derivedVat = lines.some(l => {
+        const tc = String(l.taxCode || '');
+        return tc.includes('VAT7%') && !tc.includes('SVAT7%');
+      }) ? 'Yes' : 'No';
+      const totalAmt = lines.reduce((s, l) => s + (parseFloat(String(l.amount || '').replace(/,/g, '')) || 0), 0);
 
-      // H row: 30 cols A–AD
-      const hRow = [
-        'H',                              // A
-        'APN',                            // B
-        vendorCode,                       // C
-        vendorSite,                       // D
-        invDateDisp,                      // E
-        inv.invoice_no || fd.invoiceNum || '', // F
-        num(fd.amount || lines.reduce((s,l)=>s+num(l.amount),0)), // G
-        fd.grtNum || '',                  // H
-        branchCode,                       // I
-        fd.backDesc1 || lines[0]?.description || '', // J
-        derivedIsVat,                     // K
-        rule?.Method || '',               // L
-        rule?.Paygroup || '',             // M
-        rule?.Par || '',                  // N
-        dueDate,                          // O
-        recvDate,                         // P
-        fd.grn || '',                     // Q
-        fd.realInvoiceNo || '',           // R
-        '', '', '', '', '', '', '',        // S-Y
-        'AP Manual',                      // Z
-        '',                               // AA
-        fd.realVendorName || '',          // AB
-        fd.realVendorTaxid || '',         // AC
-        fd.realVendorBranch || '',        // AD
-      ];
+      rows.push({ type: 'H', idx, data: [
+        'H',
+        'APN',
+        fd.supplierCode || '',
+        vendorSite,
+        fmtDate(fd.invDate),
+        inv.invoice_no || fd.invoiceNum || '',
+        totalAmt !== 0 ? totalAmt : '',
+        fd.grtNum || '',
+        branchCode,
+        lines.find(l => l.hl === 'H')?.desc || lines[0]?.desc || '',
+        derivedVat,
+        rule?.Method || '',
+        rule?.Paygroup || '',
+        rule?.Par || '',
+        '', '',
+        fd.grn || '',
+        fd.realInvoiceNo || '',
+        '', '', '', '', '', '', '',
+        'AP Manual', '',
+        fd.realVendorName || '',
+        fd.realVendorTaxid || '',
+        fd.realVendorBranch || '',
+      ]});
 
-      rows.push({ type: 'H', data: hRow, idx });
-
-      // L rows
       lines.forEach(line => {
-        const lRow = [
-          'L',                            // A
-          line.description || '',         // B
-          num(line.amount),               // C
-          line.taxCode || '',             // D
-          '',                             // E
-          line.cpc || '',                 // F
-          line.account || '',             // G
-          line.subAcc || '',              // H
-          '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', // I-AD
-        ];
-        rows.push({ type: 'L', data: lRow, idx });
+        const acct = String(line.account || '').split('-');
+        const lAmt = parseFloat(String(line.amount || '').replace(/,/g, '')) || '';
+        rows.push({ type: 'L', idx, data: [
+          'L',
+          line.desc || '',
+          lAmt,
+          line.taxCode || '',
+          '',
+          acct[0] || '',
+          acct[1] || '',
+          acct[2] || '',
+          '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+        ]});
       });
     });
     return rows;
   };
+
+  const rows = buildRows();
+
+  const COL_LABELS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','AA','AB','AC','AD'];
+  const [colWidths, setColWidths] = useState(() => Object.fromEntries(COL_LABELS.map((c,i) => [c, i === 0 ? 36 : i < 2 ? 180 : i < 5 ? 70 : 90])));
+  const [resizing, setResizing] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const resizeRef = React.useRef(null);
+  const [sel, setSel] = useState({ r1: -1, c1: -1, r2: -1, c2: -1 });
+  const [isDragging, setIsDragging] = useState(false);
+
+  const isSel = (ri, ci) => {
+    if (sel.r1 < 0) return false;
+    const r1=Math.min(sel.r1,sel.r2),r2=Math.max(sel.r1,sel.r2),c1=Math.min(sel.c1,sel.c2),c2=Math.max(sel.c1,sel.c2);
+    return ri>=r1&&ri<=r2&&ci>=c1&&ci<=c2;
+  };
+
+  const bookLabel = batchConfig?.bu ? `${batchConfig.bu} BOOK` : 'BOOK';
+  const cellStyle = {
+    padding: '3px 5px', borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0',
+    whiteSpace: 'nowrap', fontSize: '11px', fontFamily: 'monospace', maxWidth: '160px',
+    overflow: 'hidden', textOverflow: 'ellipsis',
+  };
+
+  const copySelection = React.useCallback(() => {
+    alert('DEBUG: copySelection called, sel.r1=' + sel.r1);
+    if (sel.r1 < 0) { alert('DEBUG: sel.r1 < 0, return early'); return; }
+    const allRows = [{ data: [bookLabel, ...Array(29).fill('')] }, ...rows];
+    const r1=Math.min(sel.r1,sel.r2),r2=Math.max(sel.r1,sel.r2),c1=Math.min(sel.c1,sel.c2),c2=Math.max(sel.c1,sel.c2);
+    const lines=[];
+    for(let r=r1;r<=r2;r++){const row=allRows[r];if(!row)continue;const cells=[];for(let c=c1;c<=c2;c++)cells.push(String(row.data?.[c]??''));lines.push(cells.join(String.fromCharCode(9)));}
+    const text = lines.join(String.fromCharCode(13,10));
+    alert('DEBUG: text.length=' + text.length + ', preview=' + text.slice(0,80));
+    const okResult = fallbackCopy(text);
+    alert('DEBUG: execCommand ok=' + okResult);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [sel, rows, bookLabel]);
+
+  const fallbackCopy = (text) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:0;z-index:-1';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.setSelectionRange(0, ta.value.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch(e) { console.warn('copy failed', e); }
+    document.body.removeChild(ta);
+    if (!ok && navigator.clipboard) navigator.clipboard.writeText(text).catch(()=>{});
+    return ok;
+  };
+
+  const scrollRef = React.useRef(null);
+  const [ctxMenu, setCtxMenu] = useState({ show: false, x: 0, y: 0 });
+
+  const totalRowCount = rows.length + 1;
+  const totalColCount = 30;
+
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); copySelection(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); setSel({ r1: 0, c1: 0, r2: totalRowCount - 1, c2: totalColCount - 1 }); return; }
+      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+        setSel(s => {
+          if (s.r1 < 0) return s;
+          let r = s.r1, c = s.c1;
+          if (e.key === 'ArrowUp') r = Math.max(0, r - 1);
+          if (e.key === 'ArrowDown') r = Math.min(totalRowCount - 1, r + 1);
+          if (e.key === 'ArrowLeft') c = Math.max(0, c - 1);
+          if (e.key === 'ArrowRight') c = Math.min(totalColCount - 1, c + 1);
+          return { r1: r, c1: c, r2: r, c2: c };
+        });
+        setTimeout(() => {
+          if (!scrollRef.current) return;
+          const cont = scrollRef.current;
+          const activeCell = cont.querySelector('[data-active="true"]');
+          if (activeCell) {
+            const cr = activeCell.getBoundingClientRect();
+            const pr = cont.getBoundingClientRect();
+            if (cr.right > pr.right - 10) cont.scrollLeft += cr.right - pr.right + 10;
+            else if (cr.left < pr.left + 46) cont.scrollLeft -= pr.left + 46 - cr.left;
+            if (cr.bottom > pr.bottom - 10) cont.scrollTop += cr.bottom - pr.bottom + 10;
+            else if (cr.top < pr.top + 10) cont.scrollTop -= pr.top + 10 - cr.top;
+          }
+        }, 0);
+      }
+      if (e.key === 'Escape') { setSel({ r1: -1, c1: -1, r2: -1, c2: -1 }); setCtxMenu(m => ({ ...m, show: false })); }
+    };
+    const onUp = (e) => {
+      if (e.button !== 2) setIsDragging(false);
+      if (resizeRef.current) { resizeRef.current = null; setResizing(null); }
+    };
+    const onResizeMove = (e) => {
+      if (!resizeRef.current) return;
+      const { col, startX, startW } = resizeRef.current;
+      const newW = Math.max(40, startW + e.clientX - startX);
+      setColWidths(w => ({ ...w, [col]: newW }));
+    };
+    window.addEventListener('mousemove', onResizeMove);
+    const onCtxClose = (e) => { if (e.button !== 2) setCtxMenu(m => ({ ...m, show: false })); };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('click', onCtxClose);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('click', onCtxClose);
+      window.removeEventListener('mousemove', onResizeMove);
+    };
+  }, [copySelection, totalRowCount]);
+
+  const handleMouseOver = React.useCallback((ri, ci, e) => {
+    if (!isDragging) return;
+    setSel(s => ({ ...s, r2: ri, c2: ci }));
+    if (scrollRef.current && e?.target) {
+      const el = e.target;
+      const cont = scrollRef.current;
+      const rect = el.getBoundingClientRect();
+      const contRect = cont.getBoundingClientRect();
+      if (rect.right > contRect.right - 20) cont.scrollLeft += 40;
+      else if (rect.left < contRect.left + 20) cont.scrollLeft -= 40;
+      if (rect.bottom > contRect.bottom - 20) cont.scrollTop += 30;
+      else if (rect.top < contRect.top + 20) cont.scrollTop -= 30;
+    }
+  }, [isDragging]);
 
   const doExport = async () => {
     if (!invoices.length) { alert('No invoices in batch'); return; }
@@ -5408,66 +5530,101 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         if (error) throw error;
       }
       setExported(true);
-    } catch (e) {
-      alert('Export ไม่สำเร็จ: ' + e.message);
-    }
+    } catch (e) { alert('Export failed: ' + e.message); }
     setExporting(false);
   };
 
-  const rows = buildRows();
-  const COL_LABELS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','AA','AB','AC','AD'];
-  const bookLabel = batchConfig?.bu ? `${batchConfig.bu} BOOK` : 'BOOK';
-
-  const cellStyle = {
-    padding: '3px 5px', borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0',
-    whiteSpace: 'nowrap', fontSize: '11px', fontFamily: 'monospace', maxWidth: '160px',
-    overflow: 'hidden', textOverflow: 'ellipsis',
-  };
-
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '14px 18px' }}>
-      {/* Action bar */}
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '14px 18px', outline: 'none' }}
+      tabIndex={-1}
+      onMouseLeave={() => setIsDragging(false)}
+      onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); copySelection(); }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); setSel({ r1: 0, c1: 0, r2: totalRowCount - 1, c2: totalColCount - 1 }); }
+        if (e.key === 'Escape') { setSel({ r1: -1, c1: -1, r2: -1, c2: -1 }); }
+        if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+          e.preventDefault();
+          setSel(s => {
+            if (s.r1 < 0) return s;
+            let r = s.r1, c = s.c1;
+            if (e.key === 'ArrowUp') r = Math.max(0, r - 1);
+            if (e.key === 'ArrowDown') r = Math.min(totalRowCount - 1, r + 1);
+            if (e.key === 'ArrowLeft') c = Math.max(0, c - 1);
+            if (e.key === 'ArrowRight') c = Math.min(totalColCount - 1, c + 1);
+            return { r1: r, c1: c, r2: r, c2: c };
+          });
+        }
+      }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexShrink: 0 }}>
-        <button style={btnOutline} onClick={onBack}>← Back to edit</button>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button disabled={exporting || exported} onClick={doExport}
-            style={{ ...btnPrimary, background: exported ? '#27500A' : '#1a3a5c', opacity: exporting ? 0.6 : 1, cursor: exporting || exported ? 'default' : 'pointer' }}>
-            {exported ? '✓ Exported' : exporting ? 'Exporting...' : '⬇ Generate & Export'}
-          </button>
-        </div>
+        <button style={btnOutline} onClick={onBack}>&#8592; Back to edit</button>
+        <button disabled={exporting || exported} onClick={doExport}
+          style={{ ...btnPrimary, background: exported ? '#27500A' : '#1a3a5c', opacity: exporting ? 0.6 : 1, cursor: exporting || exported ? 'default' : 'pointer' }}>
+          {exported ? 'Exported' : exporting ? 'Exporting...' : 'Generate & Export'}
+        </button>
       </div>
-
-      {/* Batch Preview table */}
-      <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
-        <table style={{ borderCollapse: 'collapse', fontSize: '11px', minWidth: '2400px', width: '100%' }}>
+      <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px', userSelect: 'none', position: 'relative' }}
+        onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ show: true, x: e.clientX, y: e.clientY }); }}
+        onMouseMove={(e) => {
+          if (!isDragging || !scrollRef.current) return;
+          const cont = scrollRef.current;
+          const rect = cont.getBoundingClientRect();
+          const ZONE = 40, SPEED = 15;
+          if (e.clientX > rect.right - ZONE) cont.scrollLeft += SPEED;
+          else if (e.clientX < rect.left + ZONE) cont.scrollLeft -= SPEED;
+          if (e.clientY > rect.bottom - ZONE) cont.scrollTop += SPEED;
+          else if (e.clientY < rect.top + ZONE) cont.scrollTop -= SPEED;
+        }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: '11px', width: '100%', minWidth: '2400px' }}>
           <thead>
             <tr>
-              {COL_LABELS.map(c => (
-                <th key={c} style={{ background: '#2c4a6e', color: 'rgba(255,255,255,0.5)', padding: '2px 5px', textAlign: 'center', fontSize: '9px', fontWeight: '400', borderRight: '0.5px solid rgba(255,255,255,0.08)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1 }}>{c}</th>
+              <th onClick={() => setSel({ r1: 0, c1: 0, r2: rows.length + 50, c2: 29 })}
+                style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.4)', padding: '2px 5px', textAlign: 'center', fontSize: '9px', borderRight: '0.5px solid rgba(255,255,255,0.15)', position: 'sticky', top: 0, left: 0, zIndex: 3, cursor: 'pointer', minWidth: '36px', width: '36px' }} title="Select all">
+                #
+              </th>
+              {COL_LABELS.map((c, ci) => (
+                <th key={c}
+                  onClick={(e) => { if(e.shiftKey && sel.c1>=0){ setSel(s=>({...s,c2:ci,r1:0,r2:totalRowCount-1})); } else { setSel({r1:0,c1:ci,r2:totalRowCount-1,c2:ci}); } }}
+                  style={{ background: sel.c1 <= ci && ci <= sel.c2 && sel.r1 === 0 && sel.r2 >= totalRowCount-1 ? '#1a3a5c' : '#2c4a6e', color: 'rgba(255,255,255,0.8)', padding: '2px 0 2px 5px', textAlign: 'center', fontSize: '9px', fontWeight: '400', borderRight: '0.5px solid rgba(255,255,255,0.08)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, cursor: 'pointer', position: 'relative', userSelect: 'none', width: colWidths[c] || 90, minWidth: colWidths[c] || 90 }}>
+                  {c}
+                  <div onMouseDown={(e) => { e.stopPropagation(); resizeRef.current = { col: c, startX: e.clientX, startW: colWidths[c] || 90 }; setResizing(c); }}
+                    style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '4px', cursor: 'col-resize', background: resizing === c ? 'rgba(255,255,255,0.5)' : 'transparent', zIndex: 2 }} />
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {/* Book header row */}
             <tr>
-              <td style={{ ...cellStyle, background: '#f8f9fa', color: '#aaa' }}>{bookLabel}</td>
-              {COL_LABELS.slice(1).map(c => <td key={c} style={{ ...cellStyle, background: '#f8f9fa' }}></td>)}
+              <td style={{ ...cellStyle, background: '#f0f0f0', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, fontFamily: 'var(--font-sans)', width: '36px' }}>1</td>
+              {COL_LABELS.map((c, ci) => (
+                <td key={c}
+                  onMouseDown={() => { setSel({ r1: 0, c1: ci, r2: 0, c2: ci }); setIsDragging(true); }}
+                  onMouseOver={(e) => handleMouseOver(0, ci, e)}
+                  style={{ ...cellStyle, background: isSel(0, ci) ? '#c8dffe' : '#f8f9fa', color: '#aaa', outline: isSel(0, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
+                  {ci === 0 ? bookLabel : ''}
+                </td>
+              ))}
             </tr>
-            {/* H/L rows */}
             {rows.map((row, ri) => {
               const isH = row.type === 'H';
-              const isFirst = ri === 0 || rows[ri - 1]?.idx !== row.idx;
-              const isFirstH = isH && isFirst;
+              const isFirstH = isH && (ri === 0 || rows[ri - 1]?.idx !== row.idx);
+              const rowNum = ri + 2;
               return (
                 <React.Fragment key={ri}>
                   {isFirstH && ri > 0 && (
                     <tr>
+                      <td style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none', position: 'sticky', left: 0 }}></td>
                       {COL_LABELS.map(c => <td key={c} style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td>)}
                     </tr>
                   )}
                   <tr style={{ background: isH ? '#E6F1FB' : 'white' }}>
-                    {row.data.map((val, ci) => (
-                      <td key={ci} style={{ ...cellStyle, color: isH ? '#0C447C' : '#333', textAlign: typeof val === 'number' && ci === 6 ? 'right' : 'left' }}>
+                    <td onClick={() => setSel({r1:ri+1,c1:0,r2:ri+1,c2:totalColCount-1})}
+                      style={{ ...cellStyle, background: isH ? '#dbeafa' : '#f5f5f5', color: isH ? '#0C447C' : '#aaa', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, fontFamily: 'var(--font-sans)', width: '36px', cursor: 'pointer' }}>{rowNum}</td>
+                    {row.data.slice(0, 30).map((val, ci) => (
+                      <td key={ci}
+                        onMouseDown={(e) => { e.currentTarget.closest('[tabindex]')?.focus(); if(e.shiftKey&&sel.r1>=0){setSel(s=>({...s,r2:ri+1,c2:ci}));}else{setSel({r1:ri+1,c1:ci,r2:ri+1,c2:ci});setIsDragging(true);} }}
+                        onMouseOver={(e) => handleMouseOver(ri + 1, ci, e)}
+                        data-active={sel.r1 === ri + 1 && sel.r2 === ri + 1 && sel.c1 === ci && sel.c2 === ci ? 'true' : undefined}
+                        style={{ ...cellStyle, width: colWidths[COL_LABELS[ci]] || 90, minWidth: colWidths[COL_LABELS[ci]] || 90, color: isH ? '#0C447C' : '#333', background: isSel(ri + 1, ci) ? '#c8dffe' : undefined, outline: copied && isSel(ri + 1, ci) ? '2px dashed #1a7a1a' : isSel(ri + 1, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
                         {val === '' || val === null || val === undefined ? '' : String(val)}
                       </td>
                     ))}
@@ -5476,13 +5633,43 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
               );
             })}
             {invoices.length === 0 && (
-              <tr><td colSpan={30} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>No invoices in batch</td></tr>
+              <tr><td colSpan={31} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>No invoices</td></tr>
             )}
+            {Array.from({ length: Math.max(0, 30 - rows.length - 1) }).map((_, i) => {
+              const rNum = rows.length + i + 2;
+              return (
+                <tr key={`pad-${i}`}>
+                  <td style={{ ...cellStyle, background: '#f5f5f5', color: '#aaa', textAlign: 'center', position: 'sticky', left: 0, fontFamily: 'var(--font-sans)', width: '36px' }}>{rNum}</td>
+                  {COL_LABELS.map((c, ci) => (
+                    <td key={c}
+                      onMouseDown={(e) => { e.currentTarget.closest('[tabindex]')?.focus(); setSel({ r1: rows.length + i + 1, c1: ci, r2: rows.length + i + 1, c2: ci }); setIsDragging(true); }}
+                      onMouseOver={(e) => handleMouseOver(rows.length + i + 1, ci, e)}
+                      style={{ ...cellStyle, background: isSel(rows.length + i + 1, ci) ? '#c8dffe' : 'white', height: '22px', cursor: 'cell', outline: isSel(rows.length + i + 1, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px' }}></td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
-
-      {/* New Batch */}
+      {ctxMenu.show && (
+        <div style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, background: 'white', border: '0.5px solid #e8eaf0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 999, minWidth: '160px', padding: '4px 0', fontSize: '12px' }}
+          onMouseDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}>
+          <div onClick={() => { copySelection(); setCtxMenu(m=>({...m,show:false})); }}
+            style={{ padding: '7px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: '#333' }}
+            onMouseEnter={e=>e.currentTarget.style.background='#f5f5f5'}
+            onMouseLeave={e=>e.currentTarget.style.background='white'}>
+            Copy (Ctrl+C)
+          </div>
+          <div onClick={() => { setSel({ r1: 0, c1: 0, r2: rows.length + 50, c2: 29 }); setCtxMenu(m=>({...m,show:false})); }}
+            style={{ padding: '7px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: '#333' }}
+            onMouseEnter={e=>e.currentTarget.style.background='#f5f5f5'}
+            onMouseLeave={e=>e.currentTarget.style.background='white'}>
+            Select All
+          </div>
+        </div>
+      )}
       {exported && (
         <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
           <button style={btnOutline} onClick={onNewBatch}>+ New Batch</button>
@@ -5491,6 +5678,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     </div>
   );
 }
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────

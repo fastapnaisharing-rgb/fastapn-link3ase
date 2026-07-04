@@ -92,7 +92,7 @@ const BellIcon = () => (
 
 const DOC_FOLDER_LABELS = { ap: 'AP Manual', vat: 'VAT Control', ie: 'I-Expense', gl: 'GL Report', ipro: 'I-Pro Interface' };
 
-function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess }) {
+function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead }) {
   const pendingCount = requests.filter(r => r.status === 'pending').length;
   const pendingReqs = requests.filter(r => r.status === 'pending');
   const handledReqs = requests.filter(r => r.status !== 'pending');
@@ -111,7 +111,16 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
     return left > 0 ? `หายใน ${left} ชม.` : 'กำลังจะหาย';
   };
 
-  const visibleRequests = isOwner ? requests : requests;
+  const visibleRequests = requests.filter(req => {
+    if (req.status === 'pending') return true; // Pending แสดงเสมอ ไม่มีวันหมดอายุ
+    if (!req.handled_at) return true; // กันกรณีไม่มี handled_at
+    const hoursSinceHandled = (Date.now() - new Date(req.handled_at).getTime()) / (1000*60*60);
+    return hoursSinceHandled < 24; // แสดงเฉพาะที่ยังไม่เกิน 24 ชม.
+  });
+
+  // ── แยก Notification ตาม category — AP Period กับ System Alert (RAM) แสดงคนละ Section ──
+  const apPeriodNotifs = (apNotifications || []).filter(n => n.category !== 'RAM_ANOMALY');
+  const ramNotifs = (apNotifications || []).filter(n => n.category === 'RAM_ANOMALY');
 
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
@@ -128,7 +137,7 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '20px', lineHeight: 1 }}>×</button>
         </div>
         <div style={{ overflowY: 'auto', flex: 1 }}>
-          {visibleRequests.length === 0 && (
+          {visibleRequests.length === 0 && apPeriodNotifs.length === 0 && ramNotifs.length === 0 && (
             <div style={{ padding: '48px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
               <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔔</div>
               ไม่มีการแจ้งเตือน
@@ -205,6 +214,55 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
                   </div>
                 );
               })}
+            </>
+          )}
+          {/* ── Section: AP Period Notifications (Close Period / Override) ── */}
+          {apPeriodNotifs.length > 0 && (
+            <>
+              <div style={{ padding: '6px 18px', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
+                <span style={{ fontSize: '11px', fontWeight: '500', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>AP Period</span>
+              </div>
+              {apPeriodNotifs.map(n => (
+                <div key={n.id} onClick={() => !n.is_read && onMarkApNotifRead(n.id)}
+                  style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', cursor: n.is_read ? 'default' : 'pointer', background: n.is_read ? 'white' : '#f0f7ff' }}>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#E6F1FB', color: '#0C447C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🔒</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                        {!n.is_read && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#1a3a5c', flexShrink: 0 }} />}
+                        <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{n.title}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>{n.message}</div>
+                      <div style={{ fontSize: '11px', color: '#aaa' }}>{formatTime(n.created_at)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ── Section: System Alert (RAM Anomaly) ── */}
+          {ramNotifs.length > 0 && (
+            <>
+              <div style={{ padding: '6px 18px', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
+                <span style={{ fontSize: '11px', fontWeight: '500', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>System Alert</span>
+              </div>
+              {ramNotifs.map(n => (
+                <div key={n.id} onClick={() => !n.is_read && onMarkApNotifRead(n.id)}
+                  style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', cursor: n.is_read ? 'default' : 'pointer', background: n.is_read ? 'white' : '#FCEBEB' }}>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#FCEBEB', color: '#791F1F', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>⚠️</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                        {!n.is_read && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#791F1F', flexShrink: 0 }} />}
+                        <span style={{ fontSize: '13px', fontWeight: '500', color: '#791F1F' }}>{n.title}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>{n.message}</div>
+                      <div style={{ fontSize: '11px', color: '#aaa' }}>{formatTime(n.created_at)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </>
           )}
         </div>
@@ -382,6 +440,7 @@ function MainApp() {
   const [activePage, setActivePage] = useState('home');
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
+  const [apNotifications, setApNotifications] = useState([]);
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
   const [incomingBatch, setIncomingBatch] = useState(null); // ✅ batch transfer notification
   const bellRef = React.useRef(null);
@@ -419,9 +478,34 @@ function MainApp() {
   useEffect(() => {
     if (!currentUser) return;
     fetchRequests();
-    const interval = setInterval(fetchRequests, 30000);
+    fetchApNotifications();
+    const interval = setInterval(() => { fetchRequests(); fetchApNotifications(); }, 30000);
     return () => clearInterval(interval);
   }, [currentUser]);
+
+  // ── ดึง AP Period Notifications (Close Period / Override) เฉพาะ User ที่มี Permission Manual ──
+  const fetchApNotifications = async () => {
+    if (!userPermissions?.Manual && !isOwner) return;
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${API}/api/ap/period/notifications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setApNotifications(Array.isArray(data) ? data : []);
+    } catch (err) { console.error('fetchApNotifications error:', err); }
+  };
+
+  const handleMarkApNotifRead = async (id) => {
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      await fetch(`${API}/api/ap/period/notifications/${id}/read`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setApNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    } catch (err) { console.error('markApNotifRead error:', err); }
+  };
 
   const fetchRequests = async () => {
     try {
@@ -553,6 +637,10 @@ function MainApp() {
   if (!currentUser) return <Login />;
 
   const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
+  // ── รวม Badge count จากทั้ง Access Request (pending) และ AP Period Notification (ยังไม่อ่าน) ──
+  const pendingRequestCount = requests.filter(r => r.status === 'pending').length;
+  const unreadApCount = apNotifications.filter(n => !n.is_read).length;
+  const totalBadgeCount = pendingRequestCount + unreadApCount;
   const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
   const handleProfileIconClick = () => { selectPage('users'); };
@@ -769,9 +857,9 @@ function MainApp() {
                     <button onClick={() => setShowBell(v => !v)}
                       style={{ background: showBell ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${showBell ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: showBell ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                       <BellIcon />
-                      {requests.filter(r => r.status === 'pending').length > 0 && (
+                      {totalBadgeCount > 0 && (
                         <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '16px', height: '16px', background: '#e74c3c', borderRadius: '50%', fontSize: '9px', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '500', border: '1.5px solid #1a3a5c' }}>
-                          {Math.min(requests.filter(r => r.status === 'pending').length, 9)}
+                          {Math.min(totalBadgeCount, 9)}
                         </span>
                       )}
                     </button>
@@ -790,7 +878,7 @@ function MainApp() {
                 <button onClick={() => setShowBell(v => !v)}
                   style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                   <BellIcon />
-                  {requests.filter(r => r.status === 'pending').length > 0 && (
+                  {totalBadgeCount > 0 && (
                     <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
                   )}
                 </button>
@@ -886,6 +974,8 @@ function MainApp() {
           onApprove={handleApprove} onReject={handleReject}
           onClose={() => setShowBell(false)}
           onGoAccess={() => { selectPage('users'); setShowBell(false); }}
+          apNotifications={apNotifications}
+          onMarkApNotifRead={handleMarkApNotifRead}
         />
       )}
       {incomingBatch && (
