@@ -5397,22 +5397,6 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
 
   const COL_LABELS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','AA','AB','AC','AD'];
   const [colWidths, setColWidths] = useState(() => Object.fromEntries(COL_LABELS.map((c,i) => [c, i === 0 ? 36 : i < 2 ? 180 : i < 5 ? 70 : 90])));
-
-  // ── Column Auto-fit: กว้างตามข้อมูลจริง, คอลัมน์ไม่มีข้อมูลเลยให้ width=5 ──
-  React.useEffect(() => {
-    const CHAR_W = 6.5, PAD = 16, MIN = 40, MAX = 220;
-    const widths = {};
-    COL_LABELS.forEach((c, ci) => {
-      let hasData = false, maxLen = c.length;
-      rows.forEach(r => {
-        const v = r.data?.[ci];
-        const s = (v === null || v === undefined) ? '' : String(v);
-        if (s.trim() !== '') { hasData = true; if (s.length > maxLen) maxLen = s.length; }
-      });
-      widths[c] = hasData ? Math.min(MAX, Math.max(MIN, Math.round(maxLen * CHAR_W + PAD))) : 5;
-    });
-    setColWidths(widths);
-  }, [invoices]);
   const [resizing, setResizing] = useState(null);
   const [copied, setCopied] = useState(false);
   const resizeRef = React.useRef(null);
