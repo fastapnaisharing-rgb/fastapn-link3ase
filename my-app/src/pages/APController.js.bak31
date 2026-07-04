@@ -5341,7 +5341,6 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         return c === sc || c === `${bu}-${sc}`;
       });
       const vendorSite = vi?.['Supplier Site'] || '';
-      const vendorCode = vi?.['Supplier Number'] || fd.supplierCode || '';
       const branchCode = String(fd.branchDirectLabel || '').split('-')[0].trim();
       const derivedVat = lines.some(l => {
         const tc = String(l.taxCode || '');
@@ -5352,7 +5351,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       rows.push({ type: 'H', idx, data: [
         'H',
         'APN',
-        vendorCode,
+        fd.supplierCode || '',
         vendorSite,
         fmtDate(fd.invDate),
         inv.invoice_no || fd.invoiceNum || '',
