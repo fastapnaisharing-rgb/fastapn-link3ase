@@ -2094,7 +2094,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
   const [query, setQuery]                 = useState('');
   const [active, setActive]               = useState(-1);
   const [realInvoiceNo, setRealInvoiceNo] = useState('');
-  const [manualVendor, setManualVendor] = useState({ realInvoiceNo: '', companyName: '', taxId: '', branch: '' });
+  const [manualVendor, setManualVendor] = useState({ realInvoiceNo: '', taxInvoiceDate: '', companyName: '', taxId: '', branch: '' });
   const handleManualSubmit = () => {
     if (!manualVendor.companyName?.trim() && !manualVendor.taxId?.trim() && !manualVendor.branch?.trim()) return;
     onSelect({
@@ -2105,6 +2105,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
         'Branch': manualVendor.branch || '',
       },
       realInvoiceNo: manualVendor.realInvoiceNo || '',
+      taxInvoiceDate: manualVendor.taxInvoiceDate || '',
     });
   };
   const [view, setView]                   = useState('search');
@@ -2636,11 +2637,17 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
           </div>
 
           {/* Manual entry: Real Tax Invoice No. | Company Name | Tax ID | Branch */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.8fr 1.2fr 0.8fr', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.6fr 1.1fr 0.7fr', gap: '8px' }}>
             <div>
               <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Real tax invoice no.</label>
               <input value={manualVendor.realInvoiceNo} onChange={e => setManualVendor(m => ({ ...m, realInvoiceNo: e.target.value }))}
                 placeholder="กรอกเลข Invoice"
+                style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
+                onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Tax Invoice Date</label>
+              <input type="date" value={manualVendor.taxInvoiceDate} onChange={e => setManualVendor(m => ({ ...m, taxInvoiceDate: e.target.value }))}
                 style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
                 onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
             </div>
@@ -3515,37 +3522,48 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     {line.realVendorName && (
                       <tr style={{ background: '#f0faf5' }}>
                         <td colSpan={12} style={{ padding: 0, borderBottom: '0.5px solid #97C459' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr 1.2fr 0.5fr 0.8fr auto', gap: '8px', alignItems: 'end', padding: '6px 12px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 2fr 1.2fr 0.5fr 0.8fr auto', gap: '8px', alignItems: 'end', padding: '6px 12px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Real Tax Invoice No.</span>
                               <input type="text" value={line.realInvoiceNo || ''}
                                 ref={el => lineRealInvoiceRefs.current[idx] = el}
+                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Tax Invoice Date</span>
+                              <input type="date" value={line.realVendorTaxDate || ''}
                                 onKeyDown={e => {
                                 if (e.key === 'Tab' && line.realInvoiceNo?.trim()) {
-                                  e.preventDefault();
-                                  const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
-                                  const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
-                                  const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                  const mapping = VRV_MAPPING[line.itemCode] || {};
-                                  setLines(prev => {
-                                    const next = [...prev, {
-                                      hl: 'H',
-                                      itemCode: mapping.h || '',
-                                      amount: negFormatted,
-                                      tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
-                                    }, {
-                                      hl: 'L',
-                                      itemCode: mapping.l || '',
-                                      amount: '',
-                                      tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
-                                    }];
-                                    const newIdx = next.length - 1;
-                                    setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
-                                    return next;
-                                  });
+                                  const itemCodeVrv = line.itemCode?.trim();
+                                  const itemDataVrv = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCodeVrv?.toUpperCase());
+                                  const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
+                                  if (isVRV) {
+                                    e.preventDefault();
+                                    const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
+                                    const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
+                                    const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    const mapping = VRV_MAPPING[line.itemCode] || {};
+                                    setLines(prev => {
+                                      const next = [...prev, {
+                                        hl: 'H',
+                                        itemCode: mapping.h || '',
+                                        amount: negFormatted,
+                                        tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                      }, {
+                                        hl: 'L',
+                                        itemCode: mapping.l || '',
+                                        amount: '',
+                                        tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                      }];
+                                      const newIdx = next.length - 1;
+                                      setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
+                                      return next;
+                                    });
+                                  }
                                 }
                                 }}
-                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
+                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorTaxDate', v) : setLineField(idx, 'realVendorTaxDate', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -3576,7 +3594,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               <span style={{ fontSize: '10px', color: 'transparent' }}>_</span>
                               <button
                                 onClick={() => {
-                                  const clear = { realVendorCode: '', realVendorName: '', realVendorTaxid: '', realVendorBranch: '', realInvoiceNo: '', realGrn: '', isVat: '' };
+                                  const clear = { realVendorCode: '', realVendorName: '', realVendorTaxid: '', realVendorBranch: '', realInvoiceNo: '', realVendorTaxDate: '', realGrn: '', isVat: '' };
                                   if (idx === 0) { Object.entries(clear).forEach(([k, v]) => setLine1Field(k, v)); }
                                   else { setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], ...clear }; return next; }); }
                                   setRealVendorLineIdx(-1);
@@ -3613,7 +3631,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           onClose={() => { setShowRealVendorPopup(false); }}
           fetchCollection={fetchCollection}
           vendorTaxId={vendorInfo?.['Tax ID'] || ''}
-          onSelect={({ vendor, realInvoiceNo }) => {
+          onSelect={({ vendor, realInvoiceNo, taxInvoiceDate }) => {
             const taxCode0 = String(lines[realVendorLineIdx]?.taxCode || '');
             const isVatBool = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
             const isVat = isVatBool ? 'Yes' : 'No';
@@ -3626,11 +3644,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               realVendorTaxid:  vendor['Tax ID'] || '',
               realVendorBranch: vendor['Branch'] || '',
               realInvoiceNo:    realInvoiceNo || '',
+              realVendorTaxDate: taxInvoiceDate || '',
               realGrn:          autoGrn,
               isVat,
             };
             if (realVendorLineIdx === 0) {
               Object.entries(rv).forEach(([k, v]) => setLine1Field(k, v));
+              // ── sync เข้า form ด้วย ให้ Real vendor card (header) อัปเดตทันที ไม่ต้องรอ save แล้วเปิดใหม่ ──
+              setField('realVendorName', rv.realVendorName);
+              setField('realVendorTaxid', rv.realVendorTaxid);
+              setField('realVendorBranch', rv.realVendorBranch);
+              setField('realInvoiceNo', rv.realInvoiceNo);
+              setField('realVendorTaxDate', rv.realVendorTaxDate);
             } else {
               setLines(prev => {
                 const next = [...prev];
@@ -3723,8 +3748,15 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
 
   useEffect(() => {
     if (show && invoice) {
-      setForm({ ...(invoice.form_data || {}) });
+      const fd = { ...(invoice.form_data || {}) };
       const ls = (invoice.lines && invoice.lines.length) ? invoice.lines.map(l => ({ ...l })) : [emptyLine()];
+      // ── sync GRN จาก realGrn ที่มีอยู่แล้วในบาง line มาเติม form.grn ──
+      // ── ถ้า form.grn ว่างเปล่า (ไม่สร้างเลขใหม่ ใช้ค่าที่มีอยู่แล้วเท่านั้น) ──
+      if (!fd.grn) {
+        const lineWithGrn = ls.find(l => String(l.realGrn || '').trim() !== '');
+        if (lineWithGrn) fd.grn = lineWithGrn.realGrn;
+      }
+      setForm(fd);
       setLines(ls);
     }
   }, [show, invoice]);
@@ -3867,6 +3899,11 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                     <span style={{ fontSize: '12px', fontWeight: '500', color: val ? '#1a3a5c' : '#ccc' }}>{val || '—'}</span>
                   </div>
                 ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flex: 1 }}>
+                  <span style={{ fontSize: '11px', color: '#999' }}>Due Date</span>
+                  <input type="date" value={form.dueDate || ''} disabled={isView} onChange={e => setField('dueDate', e.target.value)}
+                    style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', border: 'none', outline: 'none', background: 'transparent', padding: 0, width: '112px', cursor: isView ? 'default' : 'pointer' }} />
+                </div>
               </div>
             </div>
           </div>
@@ -3878,7 +3915,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 Real vendor
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px 16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px 16px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                   <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Company name</label>
                   <input type="text" value={form.realVendorName || ''} disabled={isView} onChange={e => setField('realVendorName', e.target.value)} style={inputStyle('100%', isView)} />
@@ -3894,6 +3931,10 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                   <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Real invoice no.</label>
                   <input type="text" value={form.realInvoiceNo || ''} disabled={isView} onChange={e => setField('realInvoiceNo', e.target.value)} style={inputStyle('100%', isView)} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Tax Invoice Date</label>
+                  <input type="date" value={form.realVendorTaxDate || ''} disabled={isView} onChange={e => setField('realVendorTaxDate', e.target.value)} style={inputStyle('100%', isView)} />
                 </div>
               </div>
             </div>
@@ -4192,12 +4233,29 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
   const [receiveDate, setReceiveDate] = useState(todayStr);
 
-  const getPrefix = (type) => {
-    const d = receiveDate ? new Date(receiveDate) : new Date();
+  const [globalPeriod, setGlobalPeriod] = useState(null);
+  useEffect(() => {
+    const load = async () => {
+      try { setGlobalPeriod(await apiFetch('/ap/period/status') || null); }
+      catch (e) { console.error('load period status:', e); }
+    };
+    load();
+  }, []);
+
+  const isOverride = (val) => val?.ap_period_mode === 'prev';
+  const getPrefix = (type, biArg) => {
+    const bi = biArg;
+    const override = isOverride(bi);
+    const patternKey = type === 'GRT' ? 'ap_grt_pattern' : 'ap_grn_pattern';
+    const pattern = bi?.[patternKey] || (type === 'GRT' ? 'Y92MM0' : 'Y91MM0');
+    const refMonthStr = override
+      ? bi?.ap_prev_month
+      : globalPeriod?.ap_period_month
+        ? (() => { const [yy, mm2] = globalPeriod.ap_period_month.split('-').map(Number); const dd = new Date(yy, mm2, 1); return `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,'0')}`; })()
+        : null;
+    const d = refMonthStr ? new Date(refMonthStr + '-01') : (receiveDate ? new Date(receiveDate) : new Date());
     const y = String(d.getFullYear()).slice(-1), mm = pad2(d.getMonth() + 1);
-    if (type === 'GRT') return `${y}92${mm}0`;
-    if (type === 'GRN') return `${y}91${mm}0`;
-    return '';
+    return pattern.replace('Y', y).replace('MM', mm);
   };
 
   const { userName, currentUser } = useAuth();
@@ -4210,13 +4268,79 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [apGrtRunning, setApGrtRunning] = useState('0000');
   const [apGrnRunning, setApGrnRunning] = useState('0000');
 
-  // ── pre-fill running number จาก company_list.ap_grt/ap_grn ของ BU ที่เลือก ──
+  // ── pre-fill running number ตาม Mode (Current ใช้ ap_grt/ap_grn, Override ใช้ ap_grt_prev/ap_grn_prev) ──
   useEffect(() => {
     if (buInfo) {
-      setApGrtRunning(String(buInfo.ap_grt ?? 0).padStart(4, '0'));
-      setApGrnRunning(String(buInfo.ap_grn ?? 0).padStart(4, '0'));
+      const override = isOverride(buInfo);
+      setApGrtRunning(String((override ? buInfo.ap_grt_prev : buInfo.ap_grt) ?? 0).padStart(4, '0'));
+      setApGrnRunning(String((override ? buInfo.ap_grn_prev : buInfo.ap_grn) ?? 0).padStart(4, '0'));
     }
   }, [buInfo]);
+
+  // ── สถานะ Blocked + Popup ขอปิด Period ──
+  const globalStatus = globalPeriod?.ap_period_current_status;
+  const diffDays = globalPeriod?.ap_period_diff_days;
+  const hasPendingCloseRequest = globalPeriod?.ap_period_has_pending_close_request;
+  const daysSinceDeadline = typeof diffDays === 'number' ? -diffDays : null;
+  const canSelfOverride = daysSinceDeadline !== null && daysSinceDeadline >= 0 && daysSinceDeadline <= 7;
+  const isBlocked = !isOverride(buInfo) && globalStatus === 'blocked';
+  const [showBlockedPopup, setShowBlockedPopup] = useState(false);
+  const [requestCloseLoading, setRequestCloseLoading] = useState(false);
+  const [selfOverrideLoading, setSelfOverrideLoading] = useState(false);
+
+  const endOfMonth = (ymStr) => {
+    if (!ymStr) return null;
+    const [yy, mm] = ymStr.split('-').map(Number);
+    const d = new Date(yy, mm, 0);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  };
+  // ── Pre-Close/Blocked: ล็อกตายตัวเป็นสิ้นเดือน Current เสมอ (แก้ไขไม่ได้) ──
+  const lockedReceiveDate = (globalStatus === 'pre-close' || globalStatus === 'blocked')
+    ? globalPeriod?.ap_period_current_end_date
+    : null;
+  const isReceiveDateLocked = !isOverride(buInfo) && !!lockedReceiveDate;
+
+  // ── Override: แก้ไขได้อิสระ แต่ Default ค่าตั้งต้นเป็นสิ้นเดือน Prev ให้เผื่อไว้ ──
+  useEffect(() => {
+    if (isOverride(buInfo)) {
+      const defaultOverrideDate = endOfMonth(buInfo?.ap_prev_month);
+      if (defaultOverrideDate) setReceiveDate(defaultOverrideDate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buInfo?.ap_period_mode]);
+  const showPeriodToggle = !!buInfo;
+  const canToggleOverride = isOverride(buInfo) || canSelfOverride;
+
+  useEffect(() => {
+    if (buInfo && isBlocked && !hasPendingCloseRequest) setShowBlockedPopup(true);
+  }, [buInfo, isBlocked, hasPendingCloseRequest]);
+
+  const handleRequestClose = async () => {
+    setRequestCloseLoading(true);
+    try { await apiFetch('/ap/period/request-close', { method: 'POST' }); setShowBlockedPopup(false); }
+    catch (e) { console.error('request-close:', e); }
+    setRequestCloseLoading(false);
+  };
+  const handleSelfOverride = async () => {
+    if (!bu) return;
+    setSelfOverrideLoading(true);
+    try {
+      await apiFetch('/ap/period/self-override', { method: 'POST', body: JSON.stringify({ bu }) });
+      const exact = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
+      if (exact) setBuInfo({ ...exact, ap_period_mode: 'prev' });
+    } catch (e) { console.error('self-override:', e); }
+    setSelfOverrideLoading(false);
+  };
+  const handleReopen = async () => {
+    if (!bu) return;
+    setSelfOverrideLoading(true);
+    try {
+      await apiFetch(`/ap/period/self-override/${bu}/reopen`, { method: 'POST' });
+      const exact = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
+      if (exact) setBuInfo({ ...exact, ap_period_mode: 'current' });
+    } catch (e) { console.error('reopen:', e); }
+    setSelfOverrideLoading(false);
+  };
 
   const [historyTab, setHistoryTab]     = useState('mine');
   const [historyMine, setHistoryMine]   = useState([]);
@@ -4279,19 +4403,41 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
-                    <div style={fieldWrap}><label style={fieldLabel}>Receive date</label><input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} style={inputBase} /></div>
+                    <div style={fieldWrap}>
+                      <label style={fieldLabel}>Receive date{isReceiveDateLocked && <span style={{ color: '#856404' }}> (ล็อก)</span>}</label>
+                      <input type="date" value={isReceiveDateLocked ? lockedReceiveDate : receiveDate} disabled={isReceiveDateLocked}
+                        onChange={e => setReceiveDate(e.target.value)} style={{ ...inputBase, ...(isReceiveDateLocked ? { background: '#f5f5f5', color: '#888' } : {}) }} />
+                    </div>
                     <div style={fieldWrap}><label style={fieldLabel}>Due date</label><input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} /></div>
                   </div>
                   <div style={fieldWrap}>
                     <label style={fieldLabel}>Period</label>
                     <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>{PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}</select>
                   </div>
+                  {showPeriodToggle && (
+                    <div style={fieldWrap}>
+                      <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', height: '32px', opacity: canToggleOverride ? 1 : 0.45 }}>
+                        <button onClick={handleReopen} disabled={!canToggleOverride || selfOverrideLoading || !isOverride(buInfo)}
+                          style={{ flex: 1, border: 'none', borderRadius: 0, fontSize: '12px', fontWeight: '500', cursor: (canToggleOverride && isOverride(buInfo) && !selfOverrideLoading) ? 'pointer' : 'not-allowed', background: 'transparent', color: '#1a3a5c' }}>
+                          Reopen
+                        </button>
+                        <button onClick={handleSelfOverride} disabled={!canToggleOverride || selfOverrideLoading || isOverride(buInfo)}
+                          style={{ flex: 1, border: 'none', borderLeft: '0.5px solid #ddd', borderRadius: 0, fontSize: '12px', fontWeight: '500', cursor: (canToggleOverride && !isOverride(buInfo) && !selfOverrideLoading) ? 'pointer' : 'not-allowed', background: isOverride(buInfo) ? '#eda100' : 'transparent', color: isOverride(buInfo) ? '#4a2f00' : '#1a3a5c' }}>
+                          {selfOverrideLoading ? '...' : 'Override'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center' }} onClick={() => onStart({ bu: bu || '-', receiveDate, dueDate, period, apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT'), grnPrefix: getPrefix('GRN'), buInfo })}>▶ Start Batch</button>
+                <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
+                  onClick={() => {
+                    if (isBlocked) { setShowBlockedPopup(true); return; }
+                    onStart({ bu: bu || '-', receiveDate: isReceiveDateLocked ? lockedReceiveDate : receiveDate, dueDate, period: isOverride(buInfo) ? 'Override' : 'Current', apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT', buInfo), grnPrefix: getPrefix('GRN', buInfo), buInfo });
+                  }}>▶ Start Batch</button>
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
-                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT')} grnPrefix={getPrefix('GRN')} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning)} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning)} />
+                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT', buInfo)} grnPrefix={getPrefix('GRN', buInfo)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning)} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning)} />
               </div>
             </div>
           </div>
@@ -4359,6 +4505,22 @@ function BatchSetup({ onStart, infoItems = [] }) {
           </table>
         </div>
       </div>
+      {showBlockedPopup && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
+          <div style={{ background: 'white', borderRadius: '10px', padding: '24px', width: '420px' }}>
+            <h3 style={{ fontSize: '15px', marginBottom: '12px', color: '#791F1F' }}>⚠️ ไม่สามารถเริ่ม Batch ได้</h3>
+            <p style={{ fontSize: '13px', color: '#555', marginBottom: '16px', lineHeight: 1.6 }}>
+              ตอนนี้เกิน Deadline ไปแล้ว และยังไม่มีการปิด Period<br/>คุณสามารถส่ง Request to Close Period ไปที่ผู้ดูแลระบบได้
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button onClick={() => setShowBlockedPopup(false)} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: '#f0f0f0', color: '#555', fontSize: '13px', cursor: 'pointer' }}>ปิด</button>
+              <button onClick={handleRequestClose} disabled={requestCloseLoading} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: requestCloseLoading ? '#ccc' : '#791F1F', color: 'white', fontSize: '13px', fontWeight: '500', cursor: requestCloseLoading ? 'default' : 'pointer' }}>
+                {requestCloseLoading ? 'กำลังส่ง...' : 'Request to Close Period'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -4464,7 +4626,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const [showBranchPopup, setShowBranchPopup]     = useState(false);
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
   const [showSupplierPopup, setShowSupplierPopup] = useState(false); // ✅ supplier search
-  const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', index: -1 });
+  const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', rowKey: null });
   const [selectedRows, setSelectedRows] = useState(new Set()); // ✅ Batch Bucket: เลือกแถวสำหรับ bulk delete
   const [showSendToModal, setShowSendToModal] = useState(false); // ✅ Send To modal
   const branchJustResolved = useRef(false); // ✅ ป้องกัน blur ยิงซ้ำหลัง resolveBranch
@@ -4734,10 +4896,9 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   // invoice-specific fields เพื่อกรอกใบถัดไป
   // ── บันทึกการแก้ไข invoice ใน Batch Bucket (เรียกจาก BucketItemPopup) ──
   const handleSaveBucketItem = async ({ form_data, lines, invoiceNo }) => {
-    const idx = bucketPopup.index;
-    if (idx < 0 || !invoices[idx]) return false;
+    const target = invoices.find((inv, i) => (inv.id || inv._localId || i) === bucketPopup.rowKey);
+    if (!target) return false;
     const sumField = (key) => lines.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
-    const target = invoices[idx];
     const updated = {
       ...target,
       branch_no:    form_data.branchNo || '',
@@ -4756,10 +4917,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         amount: updated.amount, vat: updated.vat, wht: updated.wht, net: updated.net,
         form_data: updated.form_data, lines: updated.lines,
       }).eq('id', target.id);
-      if (error) { alert('บันทึกไม่สำเร็จ: ' + error.message); return false; }
+      if (error) {
+        console.error('[SAVE-BUCKET-ERROR] full error object:', error, 'updated.form_data=', updated.form_data);
+        alert('บันทึกไม่สำเร็จ: ' + (error.message || error.hint || error.code || JSON.stringify(error)));
+        return false;
+      }
     }
     setInvoices(prev => {
-      const next = prev.map((it, i) => i === idx ? updated : it);
+      const next = prev.map((it, i) => (it.id || it._localId || i) === bucketPopup.rowKey ? updated : it);
       saveLocalBucket(next);
       return next;
     });
@@ -4864,6 +5029,28 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     setSelectedRows(new Set());
   };
 
+  // ── ขอเลข GRT/GRN ที่การันตีไม่ซ้ำจาก backend (transaction lock + เช็คซ้ำจริง) ──
+  // ── ถ้าเรียกไม่สำเร็จ fallback กลับไปคำนวณ local (กัน submit ล้มเหลวไปเลย) ────
+  const requestUniqueNumber = async (field, prefix, fallbackRunning) => {
+    const buId = batchConfig?.buInfo?.id;
+    if (!buId) {
+      console.warn('[GRT-GRN] ไม่มี buId — ใช้เลข local (ไม่ atomic, เสี่ยงซ้ำถ้ามีคนอื่นทำงาน BU เดียวกัน)');
+      const running = fallbackRunning + 1;
+      return { value: running, formatted: `${prefix}${String(running).padStart(4, '0')}` };
+    }
+    try {
+      const result = await apiFetch(`/company_list/${buId}/reserve-unique-number`, {
+        method: 'POST',
+        body: JSON.stringify({ field, prefix, bu: batchConfig?.bu || '', padLength: 4 }),
+      });
+      return result;
+    } catch (e) {
+      console.error('[GRT-GRN] reserve-unique-number ล้มเหลว, fallback เป็น local:', e);
+      const running = fallbackRunning + 1;
+      return { value: running, formatted: `${prefix}${String(running).padStart(4, '0')}` };
+    }
+  };
+
   const handleSubmitInvoice = async (lines) => {
     const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     const roleLabel = isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer';
@@ -4877,34 +5064,41 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       else groups[groups.length - 1].push(line);
     });
 
-    // ── GRT: gen 1 เลข ใช้ร่วมทุก Invoice ที่ split จาก submit นี้ (Auto เท่านั้น) ──
+    // ── GRT: ขอ 1 เลขจาก backend (การันตีไม่ซ้ำ) ใช้ร่วมทุก Invoice ที่ split จาก submit นี้ ──
     let grtNumVal = form.grtNum;
     let bumpGrt = false;
+    let grtRunningActual = nextGrtRunning;
     if (isAutoGrt) {
-      grtNumVal = `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4, '0')}`;
+      const res = await requestUniqueNumber('ap_grt', batchConfig?.grtPrefix || '', nextGrtRunning);
+      grtNumVal = res.formatted;
+      grtRunningActual = res.value;
       bumpGrt = true;
     }
 
-    // ── GRN: gen แยกเฉพาะ Invoice ที่ Tax Code = VAT7% (ไม่ใช่ SVAT7%) เรียงต่อกัน ──
+    // ── GRN: ขอเลขแยกทีละครั้งจาก backend เฉพาะ Invoice ที่ Tax Code = VAT7% ──────
     const baseInvoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) || '';
-    let grnRunning = nextGrnRunning;
+    let grnRunningActual = nextGrnRunning;
     let grnBumpCount = 0;
 
-    const newItems = groups.map((groupLines, gi) => {
+    const newItems = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const groupLines = groups[gi];
       const taxCode0 = String(groupLines[0]?.taxCode || '');
       const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
       let grnVal = '';
       if (isAutoGrt && isVat) {
-        grnRunning += 1;
+        const res = await requestUniqueNumber('ap_grn', batchConfig?.grnPrefix || '', grnRunningActual);
+        grnVal = res.formatted;
+        grnRunningActual = res.value;
         grnBumpCount += 1;
-        grnVal = `${batchConfig?.grnPrefix || ''}${String(grnRunning).padStart(4, '0')}`;
       }
       // group 0 = Invoice หลัก (invoice_no = base) / group 1,2,... = Invoice แยก (base + '/1','/2',...)
       const invoiceSuffix = gi === 0 ? '' : `/${gi}`;
       const invoiceNo = `${baseInvoiceNo}${invoiceSuffix}`;
-      return {
+      newItems.push({
         batch_id:        batchConfig?.batchId || '',
         bu:              batchConfig?.bu || '',
+        receive_date:    batchConfig?.receiveDate || null,
         supplier_code:   form.supplierCode || '',
         vendor_name:     vendorInfo?.['Supplier Name'] || '',
         branch_no:       form.branchNo || '',
@@ -4928,6 +5122,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
           realVendorTaxid:  groupLines[0]?.realVendorTaxid  || '',
           realVendorBranch: groupLines[0]?.realVendorBranch || '',
           realInvoiceNo:    groupLines[0]?.realInvoiceNo    || '',
+          realVendorTaxDate: groupLines[0]?.realVendorTaxDate || '',
           isVat:            groupLines[0]?.isVat            || '',
         },
         lines:           groupLines,
@@ -4937,8 +5132,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         _localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}-${gi}`,
         id: null,
         _synced: false,
-      };
-    });
+      });
+    }
 
     setInvoices(prev => {
       // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
@@ -4954,8 +5149,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       saveLocalBucket(next);
       return next;
     });
-    if (bumpGrt) setNextGrtRunning(n => n + 1);
-    if (grnBumpCount > 0) setNextGrnRunning(n => n + grnBumpCount);
+    if (bumpGrt) setNextGrtRunning(grtRunningActual);
+    if (grnBumpCount > 0) setNextGrnRunning(grnRunningActual);
     // ✅ ตอน Submit: update แค่ State (nextGrtRunning/nextGrnRunning) เท่านั้น
     // ไม่เขียนกลับ company_list.ap_grt/ap_grn ที่นี่อีกต่อไป —
     // การ sync เลข running (4 หลักล่าสุด) กลับ DB จะทำ "ตอนจบ Batch" เท่านั้น
@@ -5139,8 +5334,8 @@ const handleSelectBranch = (item, meta = {}) => {
       <BucketItemPopup
         show={bucketPopup.show}
         mode={bucketPopup.mode}
-        invoice={bucketPopup.index >= 0 ? invoices[bucketPopup.index] : null}
-        onClose={() => setBucketPopup({ show: false, mode: 'view', index: -1 })}
+        invoice={bucketPopup.rowKey != null ? invoices.find((inv, i) => (inv.id || inv._localId || i) === bucketPopup.rowKey) : null}
+        onClose={() => setBucketPopup({ show: false, mode: 'view', rowKey: null })}
         itemcodeItems={itemcodeItems}
         supplierItems={supplierItems}
         vendorRuleItems={vendorRuleItems}
@@ -5177,19 +5372,19 @@ const handleSelectBranch = (item, meta = {}) => {
             {selectedRows.size > 0 && (
               <>
                 <button onClick={handleDeleteSelected}
-                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: '90px', height: '30px', padding: '0 12px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                   Delete
                 </button>
                 <button onClick={() => setShowSendToModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: '90px', height: '30px', padding: '0 12px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                   Send to
                 </button>
                 {invoices.some((inv, i) => selectedRows.has(inv.id || inv._localId || i) && inv.status === 'sent') && (
                   <button onClick={handleRecallSelected}
-                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #e8eaf0', background: 'white', color: '#555', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: '90px', height: '30px', padding: '0 12px', borderRadius: '6px', border: '0.5px solid #e8eaf0', background: 'white', color: '#555', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
                     Recall
                   </button>
                 )}
@@ -5197,8 +5392,8 @@ const handleSelectBranch = (item, meta = {}) => {
               </>
             )}
             <button onClick={onNext} disabled={invoices.length === 0}
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '6px', border: 'none', background: invoices.length === 0 ? '#e0e0e0' : '#27500A', color: 'white', fontSize: '11px', fontWeight: '500', cursor: invoices.length === 0 ? 'default' : 'pointer' }}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '30px', padding: '0 16px', borderRadius: '6px', border: 'none', background: invoices.length === 0 ? '#e0e0e0' : '#27500A', color: 'white', fontSize: '12px', fontWeight: '500', cursor: invoices.length === 0 ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               Batch Preview
             </button>
           </div>
@@ -5217,14 +5412,31 @@ const handleSelectBranch = (item, meta = {}) => {
                   onChange={() => setSelectedRows(prev => prev.size === invoices.length ? new Set() : new Set(invoices.map((inv, i) => inv.id || inv._localId || i)))} />
               </th>
               {['Invoice No.','Vendor','Branch','Amount','Vat','Wht','Total','Status','Action'].map(h => (
-                <th key={h} style={{ padding: '7px 9px', textAlign: ['Amount','Vat','Wht','Total'].includes(h) ? 'right' : 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+                <th key={h} style={{ padding: '7px 9px', textAlign: 'center', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {invoices.length === 0 ? (
               <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
-            ) : invoices.map((inv, i) => {
+            ) : [...invoices].sort((a, b) => {
+              const getCreatedTime = (inv) => {
+                if (inv.created_at) return new Date(inv.created_at).getTime();
+                const m = String(inv._localId || '').match(/^local-(\d+)-/);
+                return m ? parseInt(m[1], 10) : 0;
+              };
+              // ── แยก base invoice no. ออกจาก suffix (/1, /2, ...) ──
+              // ── ไม่มี suffix ให้ถือเป็น 0 (มาก่อน /1, /2 เสมอ) ──────
+              const parseInvSuffix = (invNo) => {
+                const s = String(invNo || '');
+                const m = s.match(/^(.+)\/(\d+)$/);
+                if (m) return { base: m[1], suf: parseInt(m[2], 10) };
+                return { base: s, suf: 0 };
+              };
+              const pa = parseInvSuffix(a.invoice_no), pb = parseInvSuffix(b.invoice_no);
+              if (pa.base !== pb.base) return getCreatedTime(a) - getCreatedTime(b);
+              return pa.suf - pb.suf;
+            }).map((inv, i) => {
               const rowKey = inv.id || inv._localId || i;
               return (
               <tr key={rowKey} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
@@ -5248,12 +5460,16 @@ const handleSelectBranch = (item, meta = {}) => {
                     <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', background: '#FCEBEB', color: '#791F1F', fontWeight: '500', whiteSpace: 'nowrap' }}>
                       ❌ Rejected
                     </span>
+                  ) : inv.status === 'pending' ? (
+                    <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', background: '#E8EAF0', color: '#555', fontWeight: '500', whiteSpace: 'nowrap' }}>
+                      ⏳ Pending
+                    </span>
                   ) : null}
                 </td>
                 <td style={{ padding: '6px 9px' }}>
                   {inv.status === 'sent' ? (
                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                      <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', index: i })}
+                      <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', rowKey })}
                         style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
                       </button>
@@ -5271,11 +5487,11 @@ const handleSelectBranch = (item, meta = {}) => {
                     </div>
                   ) : (
                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                      <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', index: i })}
+                      <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', rowKey })}
                         style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
                       </button>
-                      <button title="Edit" onClick={() => setBucketPopup({ show: true, mode: 'edit', index: i })}
+                      <button title="Edit" onClick={() => setBucketPopup({ show: true, mode: 'edit', rowKey })}
                         style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </button>
@@ -5309,6 +5525,14 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   const num = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
 
   const fmtDate = (d) => { if (!d) return ''; const s = String(d).replace(/-/g, ''); return s.length === 8 ? s.slice(2) : s; };
+  // ── เฉพาะ column O (Due Date) / P (Tax Invoice Date) ต้องเป็น DDMMYY ──
+  const fmtDateDMY = (d) => {
+    if (!d) return '';
+    const s = String(d).replace(/-/g, '');
+    if (s.length !== 8) return s;
+    const y = s.slice(0, 4), m = s.slice(4, 6), day = s.slice(6, 8);
+    return day + m + y.slice(2);
+  };
 
   const getMatchedRule = (supplierCode) => {
     const vendorInfo = supplierItems.find(s => {
@@ -5329,7 +5553,26 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   // build rows: H row + L rows สำหรับแต่ละ invoice
   const buildRows = () => {
     const rows = [];
-    invoices.forEach((inv, idx) => {
+    // ── เรียง invoices ให้ตรงกับลำดับใน Batch Bucket (patch46+48) ──────────
+    // ── กลุ่ม invoice เดียวกัน: ไม่มี suffix ก่อน แล้ว /1 /2 ตามลำดับ ────────
+    // ── ระหว่าง invoice คนละใบ: เรียงตามเวลาที่สร้าง ────────────────────────
+    const getCreatedTimeForSort = (inv) => {
+      if (inv.created_at) return new Date(inv.created_at).getTime();
+      const m = String(inv._localId || '').match(/^local-(\d+)-/);
+      return m ? parseInt(m[1], 10) : 0;
+    };
+    const parseInvSuffixForSort = (invNo) => {
+      const s = String(invNo || '');
+      const m = s.match(/^(.+)\/(\d+)$/);
+      if (m) return { base: m[1], suf: parseInt(m[2], 10) };
+      return { base: s, suf: 0 };
+    };
+    const sortedInvoices = [...invoices].sort((a, b) => {
+      const pa = parseInvSuffixForSort(a.invoice_no), pb = parseInvSuffixForSort(b.invoice_no);
+      if (pa.base !== pb.base) return getCreatedTimeForSort(a) - getCreatedTimeForSort(b);
+      return pa.suf - pb.suf;
+    });
+    sortedInvoices.forEach((inv, idx) => {
       const fd    = inv.form_data || {};
       const lines = inv.lines || [];
       const rule  = getMatchedRule(fd.supplierCode);
@@ -5340,20 +5583,26 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         const sc = String(fd.supplierCode ?? '').trim().toLowerCase();
         return c === sc || c === `${bu}-${sc}`;
       });
-      const vendorSite = vi?.['Vendor Site'] || vi?.['VendorSite'] || '';
+      const vendorSite = vi?.['Supplier Site'] || '';
+      const vendorCode = vi?.['Supplier Number'] || fd.supplierCode || '';
       const branchCode = String(fd.branchDirectLabel || '').split('-')[0].trim();
       const derivedVat = lines.some(l => {
         const tc = String(l.taxCode || '');
         return tc.includes('VAT7%') && !tc.includes('SVAT7%');
       }) ? 'Yes' : 'No';
-      const totalAmt = lines.reduce((s, l) => s + (parseFloat(String(l.amount || '').replace(/,/g, '')) || 0), 0);
+      const totalAmt = lines.reduce((s, l) => s + (parseFloat(String(l.total || '').replace(/,/g, '')) || 0), 0);
+
+      const dueDateCol = fd.dueDate ? fmtDateDMY(fd.dueDate) : '';
+      const taxInvoiceDateCol = derivedVat === 'Yes'
+        ? (fd.realVendorTaxDate ? fmtDateDMY(fd.realVendorTaxDate) : fmtDateDMY(fd.invDate))
+        : '';
 
       rows.push({ type: 'H', idx, data: [
         'H',
         'APN',
-        fd.supplierCode || '',
+        vendorCode,
         vendorSite,
-        fmtDate(fd.invDate),
+        fmtDate(inv.receive_date || fd.invDate),
         inv.invoice_no || fd.invoiceNum || '',
         totalAmt !== 0 ? totalAmt : '',
         fd.grtNum || '',
@@ -5363,7 +5612,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         rule?.Method || '',
         rule?.Paygroup || '',
         rule?.Par || '',
-        '', '',
+        dueDateCol, taxInvoiceDateCol,
         fd.grn || '',
         fd.realInvoiceNo || '',
         '', '', '', '', '', '', '',
@@ -5396,11 +5645,28 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
 
   const COL_LABELS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','AA','AB','AC','AD'];
   const [colWidths, setColWidths] = useState(() => Object.fromEntries(COL_LABELS.map((c,i) => [c, i === 0 ? 36 : i < 2 ? 180 : i < 5 ? 70 : 90])));
+
+  // ── Column Auto-fit: กว้างตามข้อมูลจริง, คอลัมน์ไม่มีข้อมูลเลยให้ width=5 ──
+  React.useEffect(() => {
+    const CHAR_W = 6.5, PAD = 16, MIN = 40, MAX = 220;
+    const widths = {};
+    COL_LABELS.forEach((c, ci) => {
+      let hasData = false, maxLen = c.length;
+      rows.forEach(r => {
+        const v = r.data?.[ci];
+        const s = (v === null || v === undefined) ? '' : String(v);
+        if (s.trim() !== '') { hasData = true; if (s.length > maxLen) maxLen = s.length; }
+      });
+      widths[c] = hasData ? Math.min(MAX, Math.max(MIN, Math.round(maxLen * CHAR_W + PAD))) : 5;
+    });
+    setColWidths(widths);
+  }, [invoices]);
   const [resizing, setResizing] = useState(null);
   const [copied, setCopied] = useState(false);
   const resizeRef = React.useRef(null);
   const [sel, setSel] = useState({ r1: -1, c1: -1, r2: -1, c2: -1 });
   const [isDragging, setIsDragging] = useState(false);
+  const mousePosRef = React.useRef({ x: 0, y: 0 });
 
   const isSel = (ri, ci) => {
     if (sel.r1 < 0) return false;
@@ -5408,7 +5674,10 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     return ri>=r1&&ri<=r2&&ci>=c1&&ci<=c2;
   };
 
-  const bookLabel = batchConfig?.bu ? `${batchConfig.bu} BOOK` : 'BOOK';
+  const bookLabel = (() => {
+    const bookCode = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim() || batchConfig?.bu || '';
+    return bookCode ? `${bookCode} BOOK` : 'BOOK';
+  })();
   const cellStyle = {
     padding: '3px 5px', borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0',
     whiteSpace: 'nowrap', fontSize: '11px', fontFamily: 'monospace', maxWidth: '160px',
@@ -5459,12 +5728,18 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     return () => window.removeEventListener('keydown', probe, true);
   }, []);
 
+  // ── เก็บค่าล่าสุดไว้ใน ref เพื่อให้ useEffect ด้านล่าง attach listener ──
+  // ── ได้ "ครั้งเดียว" จริงๆ (deps ว่าง) ไม่ churn ทุกครั้งที่ sel เปลี่ยน ──
+  // ── (root cause ของ Ctrl+A ที่หายเป็นพักๆ แล้วกลับมาติดตอน remount) ──
+  const keyHandlerLatestRef = React.useRef({});
+  keyHandlerLatestRef.current = { copySelection, totalRowCount, totalColCount };
+
   React.useEffect(() => {
     const onKey = (e) => {
+      const { copySelection, totalRowCount, totalColCount } = keyHandlerLatestRef.current;
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && k === 'c') { e.preventDefault(); e.stopPropagation(); copySelection(); return; }
       if ((e.ctrlKey || e.metaKey) && k === 'a') {
-        console.log('[CTRLA-DEBUG] fired. totalRowCount=', totalRowCount, 'totalColCount=', totalColCount, 'activeEl=', document.activeElement?.tagName, document.activeElement?.className);
         e.preventDefault(); e.stopPropagation();
         setSel({ r1: 0, c1: 0, r2: totalRowCount - 1, c2: totalColCount - 1 });
         return;
@@ -5508,32 +5783,49 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     };
     window.addEventListener('mousemove', onResizeMove);
     const onCtxClose = (e) => { if (e.button !== 2) setCtxMenu(m => ({ ...m, show: false })); };
-    console.log('[LISTENER-LIFECYCLE] attach keydown. sel=', JSON.stringify(sel));
     window.addEventListener('keydown', onKey);
     window.addEventListener('mouseup', onUp);
     window.addEventListener('click', onCtxClose);
     return () => {
-      console.log('[LISTENER-LIFECYCLE] detach keydown');
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('click', onCtxClose);
       window.removeEventListener('mousemove', onResizeMove);
     };
-  }, [copySelection, totalRowCount]);
+  }, []); // ← deps ว่าง: attach ครั้งเดียวตลอด lifetime ของ component
 
-  const handleMouseOver = React.useCallback((ri, ci, e) => {
+  const handleMouseOver = React.useCallback((ri, ci) => {
     if (!isDragging) return;
     setSel(s => ({ ...s, r2: ri, c2: ci }));
-    if (scrollRef.current && e?.target) {
-      const el = e.target;
+  }, [isDragging]);
+
+  React.useEffect(() => {
+    if (!isDragging) return;
+    const ZONE = 40, SPEED = 12;
+    const tick = () => {
       const cont = scrollRef.current;
-      const rect = el.getBoundingClientRect();
-      const contRect = cont.getBoundingClientRect();
-      if (rect.right > contRect.right - 20) cont.scrollLeft += 40;
-      else if (rect.left < contRect.left + 20) cont.scrollLeft -= 40;
-      if (rect.bottom > contRect.bottom - 20) cont.scrollTop += 30;
-      else if (rect.top < contRect.top + 20) cont.scrollTop -= 30;
-    }
+      if (!cont) return;
+      const rect = cont.getBoundingClientRect();
+      const { x, y } = mousePosRef.current;
+      let scrolled = false;
+      if (x > rect.right - ZONE) { cont.scrollLeft += SPEED; scrolled = true; }
+      else if (x < rect.left + ZONE) { cont.scrollLeft -= SPEED; scrolled = true; }
+      if (y > rect.bottom - ZONE) { cont.scrollTop += SPEED; scrolled = true; }
+      else if (y < rect.top + ZONE) { cont.scrollTop -= SPEED; scrolled = true; }
+      // ── เนื้อหาเลื่อนใต้เมาส์ที่นิ่ง จะไม่มี onMouseOver ยิงเอง ──
+      // ── ต้องเช็คเองว่าใต้เมาส์ตอนนี้เป็นเซลล์ไหน แล้วขยาย selection ตาม ──
+      if (scrolled) {
+        const el = document.elementFromPoint(x, y);
+        const td = el?.closest('[data-r]');
+        if (td) {
+          const r = parseInt(td.getAttribute('data-r'), 10);
+          const c = parseInt(td.getAttribute('data-c'), 10);
+          if (!isNaN(r) && !isNaN(c)) setSel(s => (s.r2 === r && s.c2 === c) ? s : { ...s, r2: r, c2: c });
+        }
+      }
+    };
+    const id = setInterval(tick, 16);
+    return () => clearInterval(id);
   }, [isDragging]);
 
   const doExport = async () => {
@@ -5563,16 +5855,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       </div>
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px', userSelect: 'none', position: 'relative' }}
         onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ show: true, x: e.clientX, y: e.clientY }); }}
-        onMouseMove={(e) => {
-          if (!isDragging || !scrollRef.current) return;
-          const cont = scrollRef.current;
-          const rect = cont.getBoundingClientRect();
-          const ZONE = 40, SPEED = 15;
-          if (e.clientX > rect.right - ZONE) cont.scrollLeft += SPEED;
-          else if (e.clientX < rect.left + ZONE) cont.scrollLeft -= SPEED;
-          if (e.clientY > rect.bottom - ZONE) cont.scrollTop += SPEED;
-          else if (e.clientY < rect.top + ZONE) cont.scrollTop -= SPEED;
-        }}>
+        onMouseMove={(e) => { mousePosRef.current = { x: e.clientX, y: e.clientY }; }}>
         <table style={{ borderCollapse: 'collapse', fontSize: '11px', width: '100%', minWidth: '2400px' }}>
           <thead>
             <tr>
@@ -5637,7 +5920,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
             {invoices.length === 0 && (
               <tr><td colSpan={31} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>No invoices</td></tr>
             )}
-            {Array.from({ length: Math.max(0, 30 - rows.length - 1) }).map((_, i) => {
+            {Array.from({ length: Math.max(0, 100 - rows.length - 1) }).map((_, i) => {
               const rNum = rows.length + i + 2;
               return (
                 <tr key={`pad-${i}`}>
@@ -5760,6 +6043,187 @@ function SendToModal({ show, onClose, onSend, selectedCount, totalAmount, curren
             📤 {sending ? 'กำลังส่ง...' : 'ส่ง'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Invoice History — สำหรับหน้า "Draft List" (เปลี่ยนเป็น Invoice History) ──
+// ── ดึงจาก bucket_list (status='done') กรองตาม Receive Date + My/All ──────────
+export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false, isAdmin = false }) {
+  const canSeeAll = isOwner || isAdmin;
+  // ── mainTab: 'myjob' (≤7 วัน ของตัวเอง) / 'myhistory' (>7 วัน ของตัวเอง) ──
+  // ── / 'invoicehistory' (Admin·Owner เท่านั้น เห็นของทุกคน) ────────────────
+  const [mainTab, setMainTab] = React.useState('myjob');
+  const [subTab, setSubTab] = React.useState('recent'); // 'recent' | 'history' — ใช้เมื่อ mainTab==='invoicehistory'
+  const [rowsData, setRowsData] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
+  const [search, setSearch] = React.useState('');
+
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const sevenDaysAgoISO = new Date(Date.now() - SEVEN_DAYS_MS).toISOString();
+
+  const fetchHistory = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      let query = `/bucket_list?eq_status=done`;
+      const isAllUsers = mainTab === 'invoicehistory';
+      if (!isAllUsers) {
+        query += `&eq_created_by=${encodeURIComponent(userName || currentUser?.email || '')}`;
+      }
+      // ── ตัดสินว่า "เร็ว" (≤7 วัน) หรือ "เก่า" (>7 วัน) จาก mainTab/subTab ──
+      const isRecent = isAllUsers ? subTab === 'recent' : mainTab === 'myjob';
+      if (isRecent) query += `&gte_exported_at=${sevenDaysAgoISO}`;
+      else query += `&lt_exported_at=${sevenDaysAgoISO}`;
+      if (dateFrom) query += `&gte_receive_date=${dateFrom}`;
+      if (dateTo) query += `&lte_receive_date=${dateTo}`;
+      query += `&order=receive_date.desc`;
+      const data = await apiFetch(query);
+      setRowsData(Array.isArray(data) ? data : []);
+    } catch (e) { console.error('fetch invoice history:', e); }
+    setLoading(false);
+  }, [mainTab, subTab, dateFrom, dateTo, userName, currentUser, sevenDaysAgoISO]);
+
+  React.useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const [restoringId, setRestoringId] = React.useState(null);
+  const handleRestore = async (inv) => {
+    if (!window.confirm(`ต้องการ Restore invoice "${inv.invoice_no || '-'}" กลับไปที่ Batch Bucket ใช่ไหม?`)) return;
+    setRestoringId(inv.id);
+    try {
+      const { error } = await db.from('bucket_list')
+        .update({ status: 'pending', restored_at: new Date().toISOString() })
+        .eq('id', inv.id);
+      if (error) throw error;
+      setRowsData(prev => prev.filter(r => r.id !== inv.id));
+    } catch (e) {
+      console.error('restore invoice:', e);
+      alert('Restore ไม่สำเร็จ: ' + e.message);
+    }
+    setRestoringId(null);
+  };
+
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(50);
+  React.useEffect(() => { setPage(1); }, [mainTab, subTab, dateFrom, dateTo, search]);
+
+  const filtered = search.trim()
+    ? rowsData.filter(r =>
+        String(r.invoice_no || '').toLowerCase().includes(search.toLowerCase()) ||
+        String(r.vendor_name || '').toLowerCase().includes(search.toLowerCase()))
+    : rowsData;
+
+  const effectivePageSize = pageSize === 0 ? (filtered.length || 1) : pageSize;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
+  const paginated = pageSize === 0 ? filtered : filtered.slice((page - 1) * effectivePageSize, page * effectivePageSize);
+  const getPageWindow = () => {
+    const size = 5;
+    let start = Math.max(1, page - Math.floor(size / 2));
+    let end = Math.min(totalPages, start + size - 1);
+    if (end - start < size - 1) start = Math.max(1, end - size + 1);
+    const pages = [];
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  };
+  const pageBtnStyle = (active, disabled) => ({ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: disabled ? 'default' : 'pointer', background: active ? '#1a3a5c' : 'white', color: disabled ? '#ccc' : active ? 'white' : '#555', minWidth: '28px', textAlign: 'center' });
+
+  const p2 = (n) => String(n).padStart(2, '0');
+  const fmtD = (d) => d ? `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}` : '—';
+  const fmtDT = (d) => d ? `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}` : '—';
+  const fmtNum = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  return (
+    <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
+      <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px', color: '#1a3a5c' }}>📄 Invoice History</h2>
+      <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px' }}>รายการ Invoice ที่ Export ออกจากระบบแล้ว</div>
+
+      {/* ── แถวเดียว: Tab (ซ้าย) + Search (กลาง) + Pagination info (ขวา) — pattern เดียวกับ Chart of Accounts ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
+          <button onClick={() => setMainTab('myjob')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', background: mainTab === 'myjob' ? '#1a3a5c' : 'white', color: mainTab === 'myjob' ? 'white' : '#555', cursor: 'pointer' }}>👤 My Job</button>
+          <button onClick={() => setMainTab('myhistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'myhistory' ? '#1a3a5c' : 'white', color: mainTab === 'myhistory' ? 'white' : '#555', cursor: 'pointer' }}>🕓 My History</button>
+          {canSeeAll && (
+            <button onClick={() => setMainTab('invoicehistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'invoicehistory' ? '#1a3a5c' : 'white', color: mainTab === 'invoicehistory' ? 'white' : '#555', cursor: 'pointer' }}>👥 Invoice History</button>
+          )}
+        </div>
+        <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', width: '260px', flexShrink: 0 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} style={{ padding: '4px 6px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white', cursor: 'pointer' }}>
+            {[25, 50, 100, 200, 0].map(s => <option key={s} value={s}>{s === 0 ? 'ทั้งหมด' : s}</option>)}
+          </select>
+          <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>รายการ/หน้า</span>
+          <button style={pageBtnStyle(false, page === 1)} disabled={page === 1} onClick={() => setPage(1)}>«</button>
+          <button style={pageBtnStyle(false, page === 1)} disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
+          {getPageWindow().map(p => (
+            <button key={p} style={pageBtnStyle(p === page, false)} onClick={() => setPage(p)}>{p}</button>
+          ))}
+          <button style={pageBtnStyle(false, page >= totalPages)} disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>›</button>
+          <button style={pageBtnStyle(false, page >= totalPages)} disabled={page >= totalPages} onClick={() => setPage(totalPages)}>»</button>
+          <span style={{ fontSize: '12px', color: '#888', marginLeft: '2px', whiteSpace: 'nowrap' }}>{page} / {totalPages}</span>
+        </div>
+      </div>
+
+      {/* ── sub-tab ขีดเส้นใต้: Recent / History — โผล่แค่ตอนอยู่ tab Invoice History ── */}
+      {mainTab === 'invoicehistory' && (
+        <div style={{ display: 'flex', gap: '18px', marginBottom: '12px', borderBottom: '0.5px solid #e8eaf0' }}>
+          {[{ key: 'recent', label: 'Recent (≤7 วัน)' }, { key: 'history', label: 'History (>7 วัน)' }].map(t => (
+            <button key={t.key} onClick={() => setSubTab(t.key)}
+              style={{ padding: '8px 2px', fontSize: '12px', cursor: 'pointer', border: 'none', background: 'transparent', borderBottom: subTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: subTab === t.key ? '#1a3a5c' : '#888', fontWeight: subTab === t.key ? '500' : '400' }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: '12px', color: '#888' }}>Receive Date</span>
+        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+        <span style={{ fontSize: '12px', color: '#888' }}>ถึง</span>
+        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+          <thead>
+            <tr style={{ background: '#f8f9fa' }}>
+              {['Invoice No.', 'BU', 'Vendor', 'Branch', 'Receive Date', 'Exported At', 'Amount', 'Vat', 'Total', ...(mainTab === 'invoicehistory' ? ['Created By'] : []), 'Action'].map(h => (
+                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>Loading...</td></tr>
+            ) : paginated.length === 0 ? (
+              <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>ไม่มี Invoice ใน History</td></tr>
+            ) : paginated.map(inv => {
+              const rd = inv.receive_date ? new Date(inv.receive_date) : null;
+              const ea = inv.exported_at ? new Date(inv.exported_at) : null;
+              return (
+                <tr key={inv.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                  <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#1a3a5c', fontWeight: 600 }}>{inv.invoice_no || '-'}</td>
+                  <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{inv.bu || '-'}</span></td>
+                  <td style={{ padding: '8px 10px' }}>{inv.vendor_name || '-'}</td>
+                  <td style={{ padding: '8px 10px' }}>{inv.branch_no || '-'}</td>
+                  <td style={{ padding: '8px 10px' }}>{fmtD(rd)}</td>
+                  <td style={{ padding: '8px 10px', color: '#888' }}>{fmtDT(ea)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmtNum(inv.amount)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmtNum(inv.vat)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(inv.net)}</td>
+                  {mainTab === 'invoicehistory' && <td style={{ padding: '8px 10px', color: '#666' }}>{inv.created_by || '-'}</td>}
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                    <button onClick={() => handleRestore(inv)} disabled={restoringId === inv.id}
+                      style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: restoringId === inv.id ? '#f0f0f0' : '#eef4fb', color: '#1a3a5c', cursor: restoringId === inv.id ? 'default' : 'pointer' }}>
+                      {restoringId === inv.id ? '...' : '↩ Restore'}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

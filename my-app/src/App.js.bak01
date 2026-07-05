@@ -9,7 +9,7 @@ import ChartOfAccounts from './pages/ChartOfAccounts';
 import VendorMaster from './pages/VendorMaster';
 import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
-import APController, { InvoiceHistoryPage } from './pages/APController';
+import APController from './pages/APController';
 import VatController from './pages/VatController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
@@ -700,7 +700,7 @@ function MainApp() {
 
     case 'ap-drafts':
       return (isEditor || userPermissions?.['Manual'])
-        ? <InvoiceHistoryPage currentUser={currentUser} userName={userName} isOwner={isOwner} isAdmin={isAdmin} />
+        ? <PlaceholderPage title="Draft List" icon="📄" />
         : <NoAccessPage />;
 
       // Functions (placeholder)
@@ -909,7 +909,7 @@ function MainApp() {
               {fpSub('ap-form', '📝', 'Purchase Order')}
               {fpDiv()}
               {fpGroup('🗂️', 'จัดการ')}
-              {fpSub('ap-drafts', '📄', 'Invoice History')}
+              {fpSub('ap-drafts', '📄', 'Draft List')}
             </div>
           </div>
         )}
