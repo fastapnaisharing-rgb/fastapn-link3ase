@@ -1212,7 +1212,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
   // ── เพื่อให้ AP Controller รู้ว่าตอนนี้สามารถย้อน Received Date ได้ ──
   const hasAnyOverride = buList.some(bu => bu.ap_period_mode === 'prev');
   const displayCurrentStatus = hasAnyOverride ? 'reopen' : curStatus;
-  const sbMap     = { open:{l:'Open',bg:'#EAF3DE',c:'#27500A'}, 'pre-close':{l:'Pre-close',bg:'#FCEBEB',c:'#791F1F'}, closed:{l:'Closed',bg:'#f5f5f5',c:'#555'}, reopen:{l:'Reopen',bg:'#FFF3CD',c:'#856404'} };
+  const sbMap     = { open:{l:'Open',bg:'#EAF3DE',c:'#27500A'}, 'pre-close':{l:'Pre-close',bg:'#FCEBEB',c:'#791F1F'}, blocked:{l:'Pre-close',bg:'#FCEBEB',c:'#791F1F'}, closed:{l:'Closed',bg:'#f5f5f5',c:'#555'}, reopen:{l:'Reopen',bg:'#FFF3CD',c:'#856404'} };
   const sb        = sbMap[displayCurrentStatus] || sbMap['open'];
 
   const handleClose = async () => {

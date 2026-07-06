@@ -4233,26 +4233,45 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
   const [receiveDate, setReceiveDate] = useState(todayStr);
 
-  const [globalPeriod, setGlobalPeriod] = useState(null);
-  useEffect(() => {
-    const load = async () => {
-      try { setGlobalPeriod(await apiFetch('/ap/period/status') || null); }
-      catch (e) { console.error('load period status:', e); }
-    };
-    load();
-  }, []);
-
   const isOverride = (val) => val?.ap_period_mode === 'prev';
+
+  // ── คำนวณเดือน Current จาก ap_bu_period_month (Mirror ของ system_settings.ap_period_month) ──
+  // ── หมายเหตุ: ap_prev_month เป็นคนละ Field กัน ใช้เฉพาะตอน Override เท่านั้น (ดูใน getPrefix) ──
+  const getCurrentMonthStr = (bi) => {
+    const periodMonth = bi?.ap_bu_period_month;
+    if (!periodMonth) return null;
+    const [yy, mm] = periodMonth.split('-').map(Number);
+    const d = new Date(yy, mm, 1); // เดือนถัดจาก ap_bu_period_month (M-1) = Current
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  };
+
+  const endOfMonth = (ymStr) => {
+    if (!ymStr) return null;
+    const [yy, mm] = ymStr.split('-').map(Number);
+    const d = new Date(yy, mm, 0);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  };
+
+  // ── คำนวณ Deadline (2 วันทำการหลังสิ้นเดือน Current) — Logic เดียวกับ apPeriod.js ฝั่ง Backend ──
+  const getDeadline = (bi) => {
+    const periodMonth = bi?.ap_bu_period_month;
+    if (!periodMonth) return null;
+    const [yy, mm] = periodMonth.split('-').map(Number);
+    let d = new Date(yy, mm + 1, 1), cnt = 0, dl = null;
+    while (cnt < 2) {
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) { cnt++; if (cnt === 2) dl = new Date(d); }
+      if (cnt < 2) d.setDate(d.getDate() + 1);
+    }
+    return dl;
+  };
+
   const getPrefix = (type, biArg) => {
     const bi = biArg;
     const override = isOverride(bi);
     const patternKey = type === 'GRT' ? 'ap_grt_pattern' : 'ap_grn_pattern';
     const pattern = bi?.[patternKey] || (type === 'GRT' ? 'Y92MM0' : 'Y91MM0');
-    const refMonthStr = override
-      ? bi?.ap_prev_month
-      : globalPeriod?.ap_period_month
-        ? (() => { const [yy, mm2] = globalPeriod.ap_period_month.split('-').map(Number); const dd = new Date(yy, mm2, 1); return `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,'0')}`; })()
-        : null;
+    const refMonthStr = override ? bi?.ap_prev_month : getCurrentMonthStr(bi);
     const d = refMonthStr ? new Date(refMonthStr + '-01') : (receiveDate ? new Date(receiveDate) : new Date());
     const y = String(d.getFullYear()).slice(-1), mm = pad2(d.getMonth() + 1);
     return pattern.replace('Y', y).replace('MM', mm);
@@ -4262,7 +4281,6 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const { isOwner, isAdmin }      = useUserRole();
   const [bu, setBu]                     = useState('');
   const [dueDate, setDueDate]           = useState('');
-  const [period, setPeriod]             = useState('Current');
   const [buInfo, setBuInfo]             = useState(null);
   const [showPopup, setShowPopup]       = useState(false);
   const [apGrtRunning, setApGrtRunning] = useState('0000');
@@ -4277,28 +4295,59 @@ function BatchSetup({ onStart, infoItems = [] }) {
     }
   }, [buInfo]);
 
-  // ── สถานะ Blocked + Popup ขอปิด Period ──
-  const globalStatus = globalPeriod?.ap_period_current_status;
-  const diffDays = globalPeriod?.ap_period_diff_days;
-  const hasPendingCloseRequest = globalPeriod?.ap_period_has_pending_close_request;
-  const daysSinceDeadline = typeof diffDays === 'number' ? -diffDays : null;
+  // ── กัน Popup Blocked เด้งซ้ำ — ดึงจาก Endpoint เล็กๆ แยก ใช้ได้ทุก User ไม่ต้องมี Permission Manual ──
+  const [hasPendingCloseRequest, setHasPendingCloseRequest] = useState(false);
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const r = await apiFetch('/ap/period/pending-close');
+        setHasPendingCloseRequest(!!r?.hasPendingCloseRequest);
+      } catch (e) { console.error('load pending-close:', e); }
+    };
+    load();
+  }, []);
+
+  // ── Force Refresh CompanyList ทันทีที่เปิดหน้านี้ — ไม่พึ่ง Cache TTL เลย ──
+  // ── Pattern เดียวกับ BusinessUnit.js/ChartOfAccounts.js เพราะ ap_bu_period_status ──
+  // ── เปลี่ยนได้จาก Cron ทุก 5 นาที ต้องมั่นใจว่าเห็นสถานะล่าสุดทุกครั้งที่เข้าหน้า Batch Setup ──
+  const { fetchCollection } = useDataCache();
+  useEffect(() => {
+    fetchCollection('CompanyList', true).catch(e => console.error('force refresh CompanyList:', e));
+  }, []);
+
+  // ── Global Representative: ใช้ตอนยังไม่กรอก BU เพื่อโชว์ Period/Receive Date ที่ถูกต้อง ──
+  // ── ทุก BU ที่ไม่ได้ Override จะมี ap_bu_period_status เดียวกันหมด (Cron Sync พร้อมกันทีเดียว) ──
+  const globalRepresentative = infoItems.find(i => i.ap_period_mode !== 'prev') || infoItems[0] || null;
+  const effectiveBuInfo = buInfo || globalRepresentative;
+
+  // ── สถานะ Blocked + Popup ขอปิด Period — อ่านจาก ap_bu_period_status ตรงๆ ไม่ต้องพึ่ง Global API ──
+  const buStatus = effectiveBuInfo?.ap_bu_period_status || 'Current';
+  const deadline = getDeadline(effectiveBuInfo);
+  const daysSinceDeadline = deadline ? Math.floor((new Date() - deadline) / (1000 * 60 * 60 * 24)) : null;
   const canSelfOverride = daysSinceDeadline !== null && daysSinceDeadline >= 0 && daysSinceDeadline <= 7;
-  const isBlocked = !isOverride(buInfo) && globalStatus === 'blocked';
+  const isBlocked = buStatus === 'Blocked';
   const [showBlockedPopup, setShowBlockedPopup] = useState(false);
   const [requestCloseLoading, setRequestCloseLoading] = useState(false);
   const [selfOverrideLoading, setSelfOverrideLoading] = useState(false);
 
-  const endOfMonth = (ymStr) => {
-    if (!ymStr) return null;
-    const [yy, mm] = ymStr.split('-').map(Number);
-    const d = new Date(yy, mm, 0);
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  };
   // ── Pre-Close/Blocked: ล็อกตายตัวเป็นสิ้นเดือน Current เสมอ (แก้ไขไม่ได้) ──
-  const lockedReceiveDate = (globalStatus === 'pre-close' || globalStatus === 'blocked')
-    ? globalPeriod?.ap_period_current_end_date
+  const lockedReceiveDate = (buStatus === 'Pre-close' || buStatus === 'Blocked')
+    ? endOfMonth(getCurrentMonthStr(effectiveBuInfo))
     : null;
-  const isReceiveDateLocked = !isOverride(buInfo) && !!lockedReceiveDate;
+
+  // ── Period Dropdown: แก้ไขเองได้ปกติ แค่ Default ค่าเริ่มต้นตามสถานะจริง ──
+  const [period, setPeriod] = useState('Current');
+  useEffect(() => {
+    setPeriod((buStatus === 'Pre-close' || buStatus === 'Blocked') ? 'Pre-Close' : 'Current');
+  }, [buStatus]);
+
+  // ── Receive Date: ไม่ล็อก แก้ไขได้อิสระเสมอ แค่ Default ตามสถานะจริง ──
+  // ── Pre-close/Blocked = สิ้นเดือน Current, Current/Open = วันนี้ ──
+  useEffect(() => {
+    if (isOverride(buInfo)) return; // Override มี useEffect ของตัวเองจัดการอยู่แล้ว
+    setReceiveDate(lockedReceiveDate || todayStr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buStatus, effectiveBuInfo]);
 
   // ── Override: แก้ไขได้อิสระ แต่ Default ค่าตั้งต้นเป็นสิ้นเดือน Prev ให้เผื่อไว้ ──
   useEffect(() => {
@@ -4320,6 +4369,20 @@ function BatchSetup({ onStart, infoItems = [] }) {
     catch (e) { console.error('request-close:', e); }
     setRequestCloseLoading(false);
   };
+  // ── Owner/Admin ปิด Period ได้เองทันที ไม่ต้องส่ง Request ขอใคร ──
+  const handleCloseDirectly = async () => {
+    setRequestCloseLoading(true);
+    try {
+      const res = await apiFetch('/ap/period/close', { method: 'POST' });
+      if (res?.error) throw new Error(res.error);
+      await fetchCollection('CompanyList', true);
+      setShowBlockedPopup(false);
+    } catch (e) {
+      console.error('close-period:', e);
+      alert('ปิด Period ไม่สำเร็จ: ' + e.message);
+    }
+    setRequestCloseLoading(false);
+  };
   const handleSelfOverride = async () => {
     if (!bu) return;
     setSelfOverrideLoading(true);
@@ -4337,6 +4400,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
       await apiFetch(`/ap/period/self-override/${bu}/reopen`, { method: 'POST' });
       const exact = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
       if (exact) setBuInfo({ ...exact, ap_period_mode: 'current' });
+      setReceiveDate(todayStr); // ── กลับเป็น Current แล้ว Default Receive Date ต้องเป็นวันนี้ ──
     } catch (e) { console.error('reopen:', e); }
     setSelfOverrideLoading(false);
   };
@@ -4403,9 +4467,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
                     <div style={fieldWrap}>
-                      <label style={fieldLabel}>Receive date{isReceiveDateLocked && <span style={{ color: '#856404' }}> (ล็อก)</span>}</label>
-                      <input type="date" value={isReceiveDateLocked ? lockedReceiveDate : receiveDate} disabled={isReceiveDateLocked}
-                        onChange={e => setReceiveDate(e.target.value)} style={{ ...inputBase, ...(isReceiveDateLocked ? { background: '#f5f5f5', color: '#888' } : {}) }} />
+                      <label style={fieldLabel}>Receive date</label>
+                      <input type="date" value={receiveDate}
+                        onChange={e => setReceiveDate(e.target.value)} style={{ ...inputBase }} />
                     </div>
                     <div style={fieldWrap}><label style={fieldLabel}>Due date</label><input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} /></div>
                   </div>
@@ -4431,7 +4495,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
                 <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
                   onClick={() => {
                     if (isBlocked) { setShowBlockedPopup(true); return; }
-                    onStart({ bu: bu || '-', receiveDate: isReceiveDateLocked ? lockedReceiveDate : receiveDate, dueDate, period: isOverride(buInfo) ? 'Override' : 'Current', apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT', buInfo), grnPrefix: getPrefix('GRN', buInfo), buInfo });
+                    onStart({ bu: bu || '-', receiveDate, dueDate, period: isOverride(buInfo) ? 'Override' : 'Current', apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT', buInfo), grnPrefix: getPrefix('GRN', buInfo), buInfo });
                   }}>▶ Start Batch</button>
               </div>
               <div>
@@ -4509,13 +4573,21 @@ function BatchSetup({ onStart, infoItems = [] }) {
           <div style={{ background: 'white', borderRadius: '10px', padding: '24px', width: '420px' }}>
             <h3 style={{ fontSize: '15px', marginBottom: '12px', color: '#791F1F' }}>⚠️ ไม่สามารถเริ่ม Batch ได้</h3>
             <p style={{ fontSize: '13px', color: '#555', marginBottom: '16px', lineHeight: 1.6 }}>
-              ตอนนี้เกิน Deadline ไปแล้ว และยังไม่มีการปิด Period<br/>คุณสามารถส่ง Request to Close Period ไปที่ผู้ดูแลระบบได้
+              {(isOwner || isAdmin)
+                ? <>ตอนนี้เกิน Deadline ไปแล้ว คุณมีสิทธิ์ปิด Period ได้เลย</>
+                : <>ตอนนี้เกิน Deadline ไปแล้ว และยังไม่มีการปิด Period<br/>คุณสามารถส่ง Request to Close Period ไปที่ผู้ดูแลระบบได้</>}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button onClick={() => setShowBlockedPopup(false)} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: '#f0f0f0', color: '#555', fontSize: '13px', cursor: 'pointer' }}>ปิด</button>
-              <button onClick={handleRequestClose} disabled={requestCloseLoading} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: requestCloseLoading ? '#ccc' : '#791F1F', color: 'white', fontSize: '13px', fontWeight: '500', cursor: requestCloseLoading ? 'default' : 'pointer' }}>
-                {requestCloseLoading ? 'กำลังส่ง...' : 'Request to Close Period'}
-              </button>
+              {(isOwner || isAdmin) ? (
+                <button onClick={handleCloseDirectly} disabled={requestCloseLoading} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: requestCloseLoading ? '#ccc' : '#1a3a5c', color: 'white', fontSize: '13px', fontWeight: '500', cursor: requestCloseLoading ? 'default' : 'pointer' }}>
+                  {requestCloseLoading ? 'กำลังปิด...' : 'Close Period'}
+                </button>
+              ) : (
+                <button onClick={handleRequestClose} disabled={requestCloseLoading} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: requestCloseLoading ? '#ccc' : '#791F1F', color: 'white', fontSize: '13px', fontWeight: '500', cursor: requestCloseLoading ? 'default' : 'pointer' }}>
+                  {requestCloseLoading ? 'กำลังส่ง...' : 'Request to Close Period'}
+                </button>
+              )}
             </div>
           </div>
         </div>

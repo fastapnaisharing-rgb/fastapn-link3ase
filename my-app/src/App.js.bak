@@ -637,10 +637,6 @@ function MainApp() {
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
-        // ── กัน Bug ค้างเกิน 24 ชม.: Signup ก็ต้อง Set handled_at ด้วย ไม่ใช่พึ่ง Backend อย่างเดียว ──
-        await db.from('access_requests').update({
-          status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
-        }).eq('id', req.id);
       } else {
         await db.from('doc_access_override').upsert({
           user_id: req.requester_id, folder_key: req.folder_key, allowed: true,
@@ -665,10 +661,6 @@ function MainApp() {
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
-        // ── กัน Bug ค้างเกิน 24 ชม.: Signup ก็ต้อง Set handled_at ด้วย ไม่ใช่พึ่ง Backend อย่างเดียว ──
-        await db.from('access_requests').update({
-          status: 'rejected', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
-        }).eq('id', req.id);
       } else {
         await db.from('access_requests').update({
           status: 'rejected', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),

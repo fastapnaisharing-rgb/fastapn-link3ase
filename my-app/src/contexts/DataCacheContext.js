@@ -56,7 +56,7 @@ const CACHE_TTL_MAP = {
   ContractList:   60 * 60 * 1000,
 
   // Config data — 30 นาที
-  CompanyList:    30 * 60 * 1000,
+  CompanyList:    2 * 60 * 1000,  // ← ลดจาก 30 นาที เพราะ ap_bu_period_status เปลี่ยนจาก Cron ทุก 5 นาที
   NoticeList:     30 * 60 * 1000,
   UserRoles:      30 * 60 * 1000,
 };
