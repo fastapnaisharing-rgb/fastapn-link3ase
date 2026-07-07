@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { DataCacheProvider } from './contexts/DataCacheContext';
+import { DataCacheProvider, useDataCache } from './contexts/DataCacheContext';
 import Login from './pages/Login';
 import Homepage from './pages/Homepage';
 import ItemCodeList from './pages/ItemCodeList';
@@ -92,10 +92,16 @@ const BellIcon = () => (
 
 const DOC_FOLDER_LABELS = { ap: 'AP Manual', vat: 'VAT Control', ie: 'I-Expense', gl: 'GL Report', ipro: 'I-Pro Interface' };
 
-function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe }) {
+function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe, onClosePeriod }) {
   const pendingCount = requests.filter(r => r.status === 'pending').length;
   const pendingReqs = requests.filter(r => r.status === 'pending');
-  const handledReqs = requests.filter(r => r.status !== 'pending');
+  // ── แก้ Bug: เดิมไม่มี Filter 24 ชม. เลย ทำให้ Request เก่าค้างอยู่ตลอดไป ──
+  const handledReqs = requests.filter(r => {
+    if (r.status === 'pending') return false;
+    if (!r.handled_at) return true; // กันกรณีไม่มี handled_at (Bug เดิม) ให้โชว์ไปก่อน
+    const hoursSinceHandled = (Date.now() - new Date(r.handled_at).getTime()) / (1000 * 60 * 60);
+    return hoursSinceHandled < 24;
+  });
 
   const formatTime = (ts) => {
     if (!ts) return '';
@@ -234,7 +240,13 @@ function BellModal({ requests, isOwner, onApprove, onReject, onClose, onGoAccess
                         <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{n.title}</span>
                       </div>
                       <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>{n.message}</div>
-                      <div style={{ fontSize: '11px', color: '#aaa' }}>{formatTime(n.created_at)}</div>
+                      <div style={{ fontSize: '11px', color: '#aaa', marginBottom: n.category === 'AP_PERIOD_REQUEST' && (isOwner || isAdmin) ? '8px' : '0' }}>{formatTime(n.created_at)}</div>
+                      {n.category === 'AP_PERIOD_REQUEST' && (isOwner || isAdmin) && (
+                        <button onClick={(e) => { e.stopPropagation(); onClosePeriod(n.id); }}
+                          style={{ fontSize: '12px', padding: '6px 16px', borderRadius: '6px', border: 'none', background: '#791F1F', color: 'white', fontWeight: '500', cursor: 'pointer' }}>
+                          ปิด Period
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -464,6 +476,7 @@ const getBuildVersion = () => {
 };
 
 function MainApp() {
+  const { fetchCollection } = useDataCache(); // ── ใช้ Force Refresh Cache หลัง Action ที่กระทบ CompanyList ──
   const [activePage, setActivePage] = useState('home');
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
@@ -557,6 +570,25 @@ function MainApp() {
       showToast('success', `เคลียร์สำเร็จ ${data.killedCount} โปรแกรม — RAM ตอนนี้ ${data.ramAfter?.pct ?? '-'}%`);
     } catch (err) {
       showToast('error', 'เคลียร์ไม่สำเร็จ: ' + err.message);
+    }
+  };
+
+  // ── กด "ปิด Period" ในกระดิ่ง (Owner/Admin เท่านั้น) — ลบออกจาก List ทันที กันกดซ้ำ ──
+  const handleClosePeriodFromBell = async (notifId) => {
+    setApNotifications(prev => prev.filter(n => n.id !== notifId));
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${API}/api/ap/period/close`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      // ── Force Refresh ให้หน้า AP Controller เห็นสถานะใหม่ทันที ไม่ต้อง Refresh หน้าเว็บเอง ──
+      await fetchCollection('CompanyList', true);
+      showToast('success', 'ปิด Period สำเร็จ');
+    } catch (err) {
+      showToast('error', 'ปิด Period ไม่สำเร็จ: ' + err.message);
     }
   };
 
@@ -1031,13 +1063,14 @@ function MainApp() {
 
       {showBell && (
         <BellModal
-          requests={requests} isOwner={isOwner}
+          requests={requests} isOwner={isOwner} isAdmin={isAdmin}
           onApprove={handleApprove} onReject={handleReject}
           onClose={() => setShowBell(false)}
           onGoAccess={() => { selectPage('users'); setShowBell(false); }}
           apNotifications={apNotifications}
           onMarkApNotifRead={handleMarkApNotifRead}
           onClearOrphanSafe={handleClearOrphanSafe}
+          onClosePeriod={handleClosePeriodFromBell}
         />
       )}
       {toast && (

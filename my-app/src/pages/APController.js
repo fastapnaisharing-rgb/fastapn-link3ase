@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 import { registerSyncFlush } from '../contexts/syncRegistry';
 
-const PERIOD_OPTIONS = ['Current', 'Pre-Close'];
+const PERIOD_OPTIONS = ['Current', 'Pre-Close', 'Override'];
 
 const buildDisGDesc = (disG, bd1, bd2, bd3) => {
   const bParts = [bd1 || '', bd2 || '', bd3 || ''];
@@ -4156,6 +4156,14 @@ function StepBar({ step, onGo }) {
 }
 
 // ── BuInfoPanel ───────────────────────────────────────────────────────────────
+// ── อ่านจำนวนหลักจาก ap_digit ('4DG' -> 4, '5DG' -> 5) Default 4 ถ้าอ่านไม่ได้ ──
+// ── อยู่ระดับบนสุดของไฟล์ ให้ทุก Component เรียกใช้ร่วมกันได้ (BatchSetup + BuInfoPanel) ──
+function getDigitCount(bi) {
+  const raw = String(bi?.ap_digit || '4DG').toUpperCase().replace(/[^0-9]/g, '');
+  const n = parseInt(raw, 10);
+  return (n >= 1 && n <= 10) ? n : 4;
+}
+
 function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix, onApGrtRunningChange, onApGrnRunningChange }) {
   const rows = [['Company name', buInfo?.['THAI COMPANY NAME']], ['Tax ID', buInfo?.['TAX ID']], ['Company code', buInfo?.['COMPANY CODE']], ['Book', buInfo?.['BOOK']], ['Segment3', buInfo?.['SEGMENT3']], ['GRT status', buInfo?.['AP GRT Control']]];
   const infoRowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr' };
@@ -4174,7 +4182,7 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
               <div style={{ fontSize: '10px', color, fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>{label}</div>
               <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
                 <span style={{ padding: '0 7px', fontSize: '11px', color, background: bg, borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>{prefix}</span>
-                <input type="text" inputMode="numeric" value={val} onChange={e => onChange(e.target.value)} maxLength={4} placeholder="0000"
+                <input type="text" inputMode="numeric" value={val} onChange={e => onChange(e.target.value)} maxLength={getDigitCount(buInfo)} placeholder={"0".repeat(getDigitCount(buInfo))}
                   style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color, textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }} />
               </div>
             </div>
@@ -4266,6 +4274,31 @@ function BatchSetup({ onStart, infoItems = [] }) {
     return dl;
   };
 
+  // ── Deadline สำหรับ Override โดยเฉพาะ — อิง ap_prev_month ตรงๆ ไม่ต้อง +1 เดือน ──
+  // ── เพราะ ap_prev_month คือเดือนที่เพิ่งปิด/รอ Override อยู่แล้วในตัว ──
+  // ── ไม่ใช้ ap_bu_period_month เหมือน getDeadline เพราะตัวนั้นขยับทันทีหลังปิด Period ──
+  // ── ทำให้ Override หาย ทั้งที่ยังอยู่ในช่วง 7 วันจาก Deadline เดิมจริงๆ ──
+  const getOverrideDeadline = (bi) => {
+    const prevMonth = bi?.ap_prev_month;
+    if (!prevMonth) return null;
+    const [yy, mm] = prevMonth.split('-').map(Number);
+    let d = new Date(yy, mm, 1), cnt = 0, dl = null;
+    while (cnt < 2) {
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) { cnt++; if (cnt === 2) dl = new Date(d); }
+      if (cnt < 2) d.setDate(d.getDate() + 1);
+    }
+    return dl;
+  };
+
+  // ── ค่า Running ที่ระบบควรจะ Auto ให้ (ค่าที่เก็บไว้ + 1) — ใช้เทียบตอน Submit ──
+  // ── getDigitCount ใช้ตัว Module-level ด้านบนสุดของไฟล์ ──
+  const getExpectedRunning = (bi, field) => {
+    const dc = getDigitCount(bi);
+    const raw = parseInt(bi?.[field] ?? 0, 10) || 0;
+    return String(raw + 1).padStart(dc, '0');
+  };
+
   const getPrefix = (type, biArg) => {
     const bi = biArg;
     const override = isOverride(bi);
@@ -4287,11 +4320,13 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [apGrnRunning, setApGrnRunning] = useState('0000');
 
   // ── pre-fill running number ตาม Mode (Current ใช้ ap_grt/ap_grn, Override ใช้ ap_grt_prev/ap_grn_prev) ──
+  // ── Digit-aware ตาม ap_digit ของ BU (4DG/5DG ฯลฯ) ──
   useEffect(() => {
     if (buInfo) {
       const override = isOverride(buInfo);
-      setApGrtRunning(String((override ? buInfo.ap_grt_prev : buInfo.ap_grt) ?? 0).padStart(4, '0'));
-      setApGrnRunning(String((override ? buInfo.ap_grn_prev : buInfo.ap_grn) ?? 0).padStart(4, '0'));
+      const dc = getDigitCount(buInfo);
+      setApGrtRunning(String((override ? buInfo.ap_grt_prev : buInfo.ap_grt) ?? 0).padStart(dc, '0'));
+      setApGrnRunning(String((override ? buInfo.ap_grn_prev : buInfo.ap_grn) ?? 0).padStart(dc, '0'));
     }
   }, [buInfo]);
 
@@ -4322,9 +4357,10 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
   // ── สถานะ Blocked + Popup ขอปิด Period — อ่านจาก ap_bu_period_status ตรงๆ ไม่ต้องพึ่ง Global API ──
   const buStatus = effectiveBuInfo?.ap_bu_period_status || 'Current';
-  const deadline = getDeadline(effectiveBuInfo);
-  const daysSinceDeadline = deadline ? Math.floor((new Date() - deadline) / (1000 * 60 * 60 * 24)) : null;
-  const canSelfOverride = daysSinceDeadline !== null && daysSinceDeadline >= 0 && daysSinceDeadline <= 7;
+  const deadline = getDeadline(effectiveBuInfo); // ใช้กับ Pre-close/Blocked Lock เท่านั้น
+  const overrideDeadline = getOverrideDeadline(buInfo); // ── Override ใช้ Deadline คนละตัว อิง ap_prev_month ──
+  const daysSinceOverrideDeadline = overrideDeadline ? Math.floor((new Date() - overrideDeadline) / (1000 * 60 * 60 * 24)) : null;
+  const canSelfOverride = daysSinceOverrideDeadline !== null && daysSinceOverrideDeadline >= 0 && daysSinceOverrideDeadline <= 7;
   const isBlocked = buStatus === 'Blocked';
   const [showBlockedPopup, setShowBlockedPopup] = useState(false);
   const [requestCloseLoading, setRequestCloseLoading] = useState(false);
@@ -4336,10 +4372,17 @@ function BatchSetup({ onStart, infoItems = [] }) {
     : null;
 
   // ── Period Dropdown: แก้ไขเองได้ปกติ แค่ Default ค่าเริ่มต้นตามสถานะจริง ──
+  // ── เช็ค Override ก่อนเสมอ เพราะสำคัญกว่า Pre-close/Blocked/Current ──
   const [period, setPeriod] = useState('Current');
   useEffect(() => {
-    setPeriod((buStatus === 'Pre-close' || buStatus === 'Blocked') ? 'Pre-Close' : 'Current');
-  }, [buStatus]);
+    if (isOverride(buInfo)) {
+      setPeriod('Override');
+    } else if (buStatus === 'Pre-close' || buStatus === 'Blocked') {
+      setPeriod('Pre-Close');
+    } else {
+      setPeriod('Current');
+    }
+  }, [buStatus, buInfo]);
 
   // ── Receive Date: ไม่ล็อก แก้ไขได้อิสระเสมอ แค่ Default ตามสถานะจริง ──
   // ── Pre-close/Blocked = สิ้นเดือน Current, Current/Open = วันนี้ ──
@@ -4387,21 +4430,29 @@ function BatchSetup({ onStart, infoItems = [] }) {
     if (!bu) return;
     setSelfOverrideLoading(true);
     try {
-      await apiFetch('/ap/period/self-override', { method: 'POST', body: JSON.stringify({ bu }) });
+      const res = await apiFetch('/ap/period/self-override', { method: 'POST', body: JSON.stringify({ bu }) });
+      if (res?.error) throw new Error(res.error);
       const exact = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
       if (exact) setBuInfo({ ...exact, ap_period_mode: 'prev' });
-    } catch (e) { console.error('self-override:', e); }
+    } catch (e) {
+      console.error('self-override:', e);
+      alert('Override ไม่สำเร็จ: ' + (e.message || 'เกิดข้อผิดพลาด'));
+    }
     setSelfOverrideLoading(false);
   };
   const handleReopen = async () => {
     if (!bu) return;
     setSelfOverrideLoading(true);
     try {
-      await apiFetch(`/ap/period/self-override/${bu}/reopen`, { method: 'POST' });
+      const res = await apiFetch(`/ap/period/self-override/${bu}/reopen`, { method: 'POST' });
+      if (res?.error) throw new Error(res.error);
       const exact = infoItems.find(i => i['bu']?.toLowerCase() === bu.trim().toLowerCase());
       if (exact) setBuInfo({ ...exact, ap_period_mode: 'current' });
       setReceiveDate(todayStr); // ── กลับเป็น Current แล้ว Default Receive Date ต้องเป็นวันนี้ ──
-    } catch (e) { console.error('reopen:', e); }
+    } catch (e) {
+      console.error('reopen:', e);
+      alert('Reopen ไม่สำเร็จ: ' + (e.message || 'เกิดข้อผิดพลาด'));
+    }
     setSelfOverrideLoading(false);
   };
 
@@ -4412,7 +4463,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const canSeeAll = isOwner || isAdmin;
   const me = userName || currentUser?.email || '';
 
-  const handleRunningChange = (val, setter) => { const num = val.replace(/\D/g, '').slice(0, 4); setter(num.padStart(4, '0')); };
+  const handleRunningChange = (val, setter, digitCount) => { const dc = digitCount || 4; const num = val.replace(/\D/g, '').slice(0, dc); setter(num.padStart(dc, '0')); };
 
   useEffect(() => {
     const load = async () => {
@@ -4476,17 +4527,17 @@ function BatchSetup({ onStart, infoItems = [] }) {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
                     <div style={fieldWrap}>
                       <label style={fieldLabel}>Period</label>
-                      <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputBase, appearance: 'auto', cursor: 'pointer' }}>{PERIOD_OPTIONS.map(o => <option key={o}>{o}</option>)}</select>
+                      <div style={{ ...inputBase, display: 'flex', alignItems: 'center', background: '#fafafa', color: '#1a3a5c', cursor: 'default', userSelect: 'none' }}>{period}</div>
                     </div>
                     <div style={fieldWrap}>
                       <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', height: '32px', marginTop: '18px', opacity: canToggleOverride ? 1 : 0.45 }}>
                         <button onClick={handleReopen} disabled={!canToggleOverride || selfOverrideLoading || !isOverride(buInfo)}
-                          style={{ flex: 1, border: 'none', borderRadius: 0, fontSize: '12px', fontWeight: '500', cursor: (canToggleOverride && isOverride(buInfo) && !selfOverrideLoading) ? 'pointer' : 'not-allowed', background: 'transparent', color: '#1a3a5c' }}>
-                          Reopen
+                          style={{ flex: 1, border: 'none', borderRadius: 0, fontSize: '12px', fontWeight: '500', cursor: (canToggleOverride && isOverride(buInfo) && !selfOverrideLoading) ? 'pointer' : 'not-allowed', background: isOverride(buInfo) ? '#eda100' : 'transparent', color: isOverride(buInfo) ? '#4a2f00' : '#1a3a5c' }}>
+                          {selfOverrideLoading ? '...' : 'Reopen'}
                         </button>
                         <button onClick={handleSelfOverride} disabled={!canToggleOverride || selfOverrideLoading || isOverride(buInfo)}
-                          style={{ flex: 1, border: 'none', borderLeft: '0.5px solid #ddd', borderRadius: 0, fontSize: '12px', fontWeight: '500', cursor: (canToggleOverride && !isOverride(buInfo) && !selfOverrideLoading) ? 'pointer' : 'not-allowed', background: isOverride(buInfo) ? '#eda100' : 'transparent', color: isOverride(buInfo) ? '#4a2f00' : '#1a3a5c' }}>
-                          {selfOverrideLoading ? '...' : 'Override'}
+                          style={{ flex: 1, border: 'none', borderLeft: '0.5px solid #ddd', borderRadius: 0, fontSize: '12px', fontWeight: '500', cursor: (canToggleOverride && !isOverride(buInfo) && !selfOverrideLoading) ? 'pointer' : 'not-allowed', background: isOverride(buInfo) ? 'transparent' : '#eda100', color: isOverride(buInfo) ? '#1a3a5c' : '#4a2f00' }}>
+                          Override
                         </button>
                       </div>
                     </div>
@@ -4500,7 +4551,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
-                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT', buInfo)} grnPrefix={getPrefix('GRN', buInfo)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning)} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning)} />
+                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT', buInfo)} grnPrefix={getPrefix('GRN', buInfo)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} />
               </div>
             </div>
           </div>
@@ -6160,6 +6211,25 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   React.useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
   const [restoringId, setRestoringId] = React.useState(null);
+  const [selectedRows, setSelectedRows] = React.useState(new Set());
+  const [deletingHistory, setDeletingHistory] = React.useState(false);
+  const handleDeleteHistorySelected = async () => {
+    if (!selectedRows.size) return;
+    if (!window.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือกออกจาก Invoice History ถาวรใช่ไหม?`)) return;
+    setDeletingHistory(true);
+    try {
+      const ids = Array.from(selectedRows);
+      const { error } = await db.from('bucket_list').delete().in('id', ids);
+      if (error) throw error;
+      setRowsData(prev => prev.filter(r => !selectedRows.has(r.id)));
+      setSelectedRows(new Set());
+    } catch (e) {
+      console.error('delete invoice history:', e);
+      alert('ลบไม่สำเร็จ: ' + e.message);
+    }
+    setDeletingHistory(false);
+  };
+
   const handleRestore = async (inv) => {
     if (!window.confirm(`ต้องการ Restore invoice "${inv.invoice_no || '-'}" กลับไปที่ Batch Bucket ใช่ไหม?`)) return;
     setRestoringId(inv.id);
@@ -6242,6 +6312,12 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          {canSeeAll && selectedRows.size > 0 && (
+            <button onClick={handleDeleteHistorySelected} disabled={deletingHistory}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '11px', fontWeight: '500', cursor: deletingHistory ? 'default' : 'pointer' }}>
+              🗑 {deletingHistory ? 'กำลังลบ...' : `Delete (${selectedRows.size})`}
+            </button>
+          )}
           <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} style={{ padding: '4px 6px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white', cursor: 'pointer' }}>
             {[25, 50, 100, 200, 0].map(s => <option key={s} value={s}>{s === 0 ? 'ทั้งหมด' : s}</option>)}
           </select>
@@ -6261,6 +6337,18 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
+              {canSeeAll && (
+                <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0', width: '32px' }}>
+                  <input type="checkbox"
+                    checked={paginated.length > 0 && paginated.every(r => selectedRows.has(r.id))}
+                    onChange={() => setSelectedRows(prev => {
+                      const allSelected = paginated.length > 0 && paginated.every(r => prev.has(r.id));
+                      const next = new Set(prev);
+                      paginated.forEach(r => { allSelected ? next.delete(r.id) : next.add(r.id); });
+                      return next;
+                    })} />
+                </th>
+              )}
               {['Invoice No.', 'BU', 'Vendor', 'Branch', 'Receive Date', 'Exported At', 'Amount', 'Vat', 'Total', ...(mainTab === 'invoicehistory' ? ['Created By'] : []), 'Action'].map(h => (
                 <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
@@ -6268,14 +6356,20 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>Loading...</td></tr>
+              <tr><td colSpan={canSeeAll ? 12 : 11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>Loading...</td></tr>
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>ไม่มี Invoice ใน History</td></tr>
+              <tr><td colSpan={canSeeAll ? 12 : 11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>ไม่มี Invoice ใน History</td></tr>
             ) : paginated.map(inv => {
               const rd = inv.receive_date ? new Date(inv.receive_date) : null;
               const ea = inv.exported_at ? new Date(inv.exported_at) : null;
               return (
                 <tr key={inv.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                  {canSeeAll && (
+                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                      <input type="checkbox" checked={selectedRows.has(inv.id)}
+                        onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(inv.id) ? next.delete(inv.id) : next.add(inv.id); return next; })} />
+                    </td>
+                  )}
                   <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#1a3a5c', fontWeight: 600 }}>{inv.invoice_no || '-'}</td>
                   <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{inv.bu || '-'}</span></td>
                   <td style={{ padding: '8px 10px' }}>{inv.vendor_name || '-'}</td>

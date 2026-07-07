@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
@@ -35,21 +35,6 @@ function Login() {
   const [signupLoading, setSignupLoading] = useState(false);
 
   const { login, completeLogin } = useAuth();
-
-  // ── Maintenance banner: ดึงสถานะ + ข้อความจริงจาก backend ──────────────
-  const [maintenanceOn, setMaintenanceOn] = useState(false);
-  const [maintenanceMsg, setMaintenanceMsg] = useState('');
-  useEffect(() => {
-    const checkMaintenance = async () => {
-      try {
-        const res = await fetch(`${API}/api/public/maintenance`);
-        const data = await res.json();
-        setMaintenanceOn(String(data.maintenance_mode).toLowerCase() === 'true');
-        setMaintenanceMsg(data.maintenance_message || '');
-      } catch (e) { console.error('check maintenance:', e); }
-    };
-    checkMaintenance();
-  }, []);
 
   // resolve username -> email via backend
   const resolveEmail = async (input) => {
@@ -222,17 +207,6 @@ function Login() {
   };
 
   return (
-    <>
-      {maintenanceOn && (
-        <>
-          <style>{`@keyframes fastapnMarquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }`}</style>
-          <div style={{ background: '#FAC775', color: '#412402', overflow: 'hidden', whiteSpace: 'nowrap', height: '32px', display: 'flex', alignItems: 'center' }}>
-            <div style={{ display: 'inline-block', paddingLeft: '100%', animation: 'fastapnMarquee 18s linear infinite', fontSize: '13px', fontWeight: 500 }}>
-              ⚠️ {maintenanceMsg || 'ระบบกำลังปิดปรับปรุงบางส่วน อาจใช้งานบางเมนูไม่ได้ชั่วคราว'}
-            </div>
-          </div>
-        </>
-      )}
     <div style={S.page}>
       <div style={S.card}>
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: 'linear-gradient(90deg, #1a3a5c, #5DCAA5)' }} />
@@ -342,7 +316,6 @@ function Login() {
         </div>
       )}
     </div>
-    </>
   );
 }
 

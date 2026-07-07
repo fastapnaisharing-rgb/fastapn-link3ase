@@ -121,7 +121,9 @@ export function DataCacheProvider({ children }) {
     if (!forceRefresh && cache[collectionName] && !isStale(collectionName)) {
       return cache[collectionName];
     }
-    if (loading[collectionName]) return cache[collectionName] || [];
+    // ── forceRefresh ต้องไม่โดน Loading Flag บล็อก ไม่งั้นถ้ามี Fetch อื่นชนพอดี ──
+    // ── จะคืน Cache เก่ากลับไปเงียบๆ ทั้งที่ตั้งใจสั่ง Force Refresh ──
+    if (!forceRefresh && loading[collectionName]) return cache[collectionName] || [];
 
     setLoading(prev => ({ ...prev, [collectionName]: true }));
     try {
