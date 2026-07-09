@@ -11,7 +11,7 @@
  */
 import React, { useState, useEffect, useCallback } from "react";
 
-const API_BASE = "/api/ocr";
+const API_BASE = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '') + '/api/ocr';
 
 function getAuthToken() {
   return sessionStorage.getItem("fastapn_token");
