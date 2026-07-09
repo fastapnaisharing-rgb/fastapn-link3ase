@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
   import DeployMonitor, { RAMDashboardTab } from './DeployMonitor';
+  import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
 
   const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'];
 
@@ -63,18 +64,12 @@ import React, { useState, useEffect, useMemo } from 'react';
     );
   }
 
-  const FUNCTION_MENU_LIST = [
-    { id: 'ap-controller',   icon: '🧾', label: 'AP Controller',   color: '#E6F1FB' },
-    { id: 'vat-controller',  icon: '💹', label: 'VAT Controller',  color: '#EAF3DE' },
-    { id: 'i-expense',       icon: '💸', label: 'I-Expense',       color: '#FAEEDA' },
-    { id: 'gl-functional',   icon: '📊', label: 'GL Functional',   color: '#EEEDFE' },
-    { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface', color: '#FAECE7' },
-  ];
+  // ── FUNCTION_MENU_LIST ย้ายไป import MAINTENANCE_MENU_GROUPS จาก ────────
+  // ── ../menuConfig แทนแล้ว (data-driven, sync กับ Flyout ใน App.js) ──────
 
   function MaintenanceSection({ currentUser, userName }) {
     const [fullMaintenance, setFullMaintenance] = useState(false);
     const [maintenanceMsg, setMaintenanceMsg] = useState('ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่');
-    const [selectiveMaintenance, setSelectiveMaintenance] = useState(false);
     const [maintenanceMenus, setMaintenanceMenus] = useState([]);
     const [confirmFull, setConfirmFull] = useState(false);
     const [savingMsg, setSavingMsg] = useState(false);
@@ -88,16 +83,32 @@ import React, { useState, useEffect, useMemo } from 'react';
         if (full) setFullMaintenance(full.value === 'true');
         if (msg) setMaintenanceMsg(msg.value || '');
         if (menus) {
-          try {
-            const parsed = JSON.parse(menus.value || '[]');
-            setMaintenanceMenus(parsed);
-            setSelectiveMaintenance(parsed.length > 0);
-          } catch { setMaintenanceMenus([]); }
+          try { setMaintenanceMenus(JSON.parse(menus.value || '[]')); }
+          catch { setMaintenanceMenus([]); }
         }
       }
     };
 
     useEffect(() => { fetchSettings(); }, []);
+
+    // ── Active-user count: ดึงจาก menu_active_sessions (heartbeat จาก App.js) ──
+    const [activeCounts, setActiveCounts] = useState({});
+    const fetchActiveCounts = async () => {
+      try {
+        const cutoff = new Date(Date.now() - 60000).toISOString();
+        const data = await apiFetch(`/menu_active_sessions?gte_last_seen=${cutoff}`);
+        const counts = {};
+        (Array.isArray(data) ? data : []).forEach(row => {
+          counts[row.menu_id] = (counts[row.menu_id] || 0) + 1;
+        });
+        setActiveCounts(counts);
+      } catch (e) { console.error('fetch active sessions:', e); }
+    };
+    useEffect(() => {
+      fetchActiveCounts();
+      const interval = setInterval(fetchActiveCounts, 15000);
+      return () => clearInterval(interval);
+    }, []);
 
     const saveSetting = async (key, value) => {
       await db.from('system_settings').upsert(
@@ -111,15 +122,20 @@ import React, { useState, useEffect, useMemo } from 'react';
       else { saveSetting('maintenance_mode', 'false'); setFullMaintenance(false); }
     };
 
-    const handleSelectiveToggle = async (newVal) => {
-      setSelectiveMaintenance(newVal);
-      if (!newVal) { setMaintenanceMenus([]); await saveSetting('maintenance_menus', '[]'); }
+    const handleItemToggle = async (itemId) => {
+      const newMenus = maintenanceMenus.includes(itemId)
+        ? maintenanceMenus.filter(m => m !== itemId)
+        : [...maintenanceMenus, itemId];
+      setMaintenanceMenus(newMenus);
+      await saveSetting('maintenance_menus', JSON.stringify(newMenus));
     };
 
-    const handleMenuToggle = async (menuId) => {
-      const newMenus = maintenanceMenus.includes(menuId)
-        ? maintenanceMenus.filter(m => m !== menuId)
-        : [...maintenanceMenus, menuId];
+    // ── Toggle เมนูหลัก: ปิด/เปิด item ย่อยทั้งกลุ่มพร้อมกันทีเดียว ──────────
+    const handleGroupToggle = async (group, closeAll) => {
+      const itemIds = group.items.map(it => it.id);
+      const newMenus = closeAll
+        ? Array.from(new Set([...maintenanceMenus, ...itemIds]))
+        : maintenanceMenus.filter(m => !itemIds.includes(m));
       setMaintenanceMenus(newMenus);
       await saveSetting('maintenance_menus', JSON.stringify(newMenus));
     };
@@ -159,42 +175,59 @@ import React, { useState, useEffect, useMemo } from 'react';
             </div>
           )}
         </div>
-        <div style={{ background: 'white', border: `0.5px solid ${selectiveMaintenance ? '#ffc107' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: selectiveMaintenance ? '12px' : '0' }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', marginBottom: '2px' }}>⚙️ Selective Maintenance</div>
-              <div style={{ fontSize: '11px', color: '#888' }}>
-                {selectiveMaintenance ? `ปิด ${maintenanceMenus.length} Function — คนอื่นยังใช้งานส่วนอื่นได้` : 'ปิดเฉพาะบาง Function — ไม่ต้อง Logout ใคร'}
-              </div>
-            </div>
-            <ToggleSwitch value={selectiveMaintenance} onChange={handleSelectiveToggle} color="#856404" />
+        <div style={{ background: 'white', border: '0.5px solid #e8e8e8', borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
+          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', marginBottom: '2px' }}>⚙️ Selective Maintenance</div>
+          <div style={{ fontSize: '11px', color: maintenanceMenus.length > 0 ? '#856404' : '#888', marginBottom: '12px' }}>
+            {maintenanceMenus.length > 0 ? `ปิดอยู่ ${maintenanceMenus.length} รายการ` : 'ปิดทั้งเมนูหรือเฉพาะเมนูย่อยก็ได้ — คนอื่นยังใช้งานส่วนที่เหลือได้ปกติ'}
           </div>
-          {selectiveMaintenance && (
-            <div style={{ borderTop: '0.5px solid #f5f5f5', paddingTop: '10px' }}>
-              <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Tick เพื่อปิดชั่วคราว — save อัตโนมัติ:</div>
-              {FUNCTION_MENU_LIST.map(menu => {
-                const isOff = maintenanceMenus.includes(menu.id);
-                return (
-                  <div key={menu.id} onClick={() => handleMenuToggle(menu.id)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 8px', borderRadius: '6px', cursor: 'pointer', background: isOff ? '#fffdf0' : 'transparent', marginBottom: '2px' }}
-                    onMouseEnter={e => { if (!isOff) e.currentTarget.style.background = '#f8f9fa'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = isOff ? '#fffdf0' : 'transparent'; }}>
-                    <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: `1.5px solid ${isOff ? '#e74c3c' : '#ddd'}`, background: isOff ? '#e74c3c' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      {isOff && <span style={{ color: 'white', fontSize: '11px', lineHeight: 1 }}>✓</span>}
-                    </div>
-                    <div style={{ width: '26px', height: '26px', borderRadius: '6px', background: isOff ? '#f5f5f5' : menu.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', flexShrink: 0 }}>{menu.icon}</div>
-                    <div style={{ flex: 1 }}>
-                      <span style={{ fontSize: '12px', color: isOff ? '#888' : '#333', textDecoration: isOff ? 'line-through' : 'none' }}>{menu.label}</span>
-                      {isOff && <span style={{ marginLeft: '8px', fontSize: '10px', padding: '1px 6px', borderRadius: '20px', background: '#FFF3CD', color: '#856404' }}>🔧 Maintain</span>}
-                    </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {MAINTENANCE_MENU_GROUPS.map(group => {
+              const hasMultiple = group.items.length > 1;
+              const allClosed = group.items.every(it => maintenanceMenus.includes(it.id));
+              return (
+                <div key={group.id} style={{ border: `0.5px solid ${allClosed ? '#ffc107' : '#e8eaf0'}`, borderRadius: '8px', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', background: allClosed ? '#fffdf0' : '#f8f9fa' }}>
+                    <span style={{ fontSize: '15px' }}>{group.icon}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '500', flex: 1, color: '#1a3a5c' }}>{group.label}</span>
+                    {(() => {
+                      const groupActive = group.items.reduce((s, it) => s + (activeCounts[it.id] || 0), 0);
+                      return groupActive > 0 ? (
+                        <span style={{ fontSize: '10px', background: '#FFF3CD', color: '#856404', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap' }}>👥 {groupActive} คนใช้อยู่</span>
+                      ) : (
+                        <span style={{ fontSize: '10px', background: '#EAF3DE', color: '#27500A', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap' }}>✓ ว่าง</span>
+                      );
+                    })()}
+                    {hasMultiple && <span style={{ fontSize: '10px', color: '#888' }}>ปิดทั้งเมนู</span>}
+                    <ToggleSwitch value={allClosed} onChange={v => handleGroupToggle(group, v)} color="#856404" />
                   </div>
-                );
-              })}
-              <div style={{ fontSize: '11px', color: '#aaa', marginTop: '6px', paddingTop: '6px', borderTop: '0.5px solid #f5f5f5' }}>
-                💡 Menu ที่ปิดจะซ่อนใน Sidebar ทันที — ไม่ต้อง Logout ใคร
-              </div>
-            </div>
-          )}
+                  {hasMultiple && (
+                    <div style={{ padding: '4px 0' }}>
+                      {group.items.map(it => {
+                        const isOff = maintenanceMenus.includes(it.id);
+                        return (
+                          <div key={it.id} onClick={() => handleItemToggle(it.id)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 12px 6px 20px', cursor: 'pointer', background: isOff ? '#fffdf0' : 'transparent' }}
+                            onMouseEnter={e => { if (!isOff) e.currentTarget.style.background = '#f8f9fa'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = isOff ? '#fffdf0' : 'transparent'; }}>
+                            <div style={{ width: '14px', height: '14px', borderRadius: '4px', border: `1.5px solid ${isOff ? '#e74c3c' : '#ddd'}`, background: isOff ? '#e74c3c' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {isOff && <span style={{ color: 'white', fontSize: '10px', lineHeight: 1 }}>✓</span>}
+                            </div>
+                            <span style={{ fontSize: '12px', color: isOff ? '#888' : '#333', textDecoration: isOff ? 'line-through' : 'none', flex: 1 }}>{it.icon} {it.label}</span>
+                            {activeCounts[it.id] > 0 && (
+                              <span style={{ fontSize: '10px', background: '#FFF3CD', color: '#856404', padding: '1px 7px', borderRadius: '20px', whiteSpace: 'nowrap' }}>👥 {activeCounts[it.id]}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: '11px', color: '#aaa', marginTop: '10px', paddingTop: '8px', borderTop: '0.5px solid #f5f5f5' }}>
+            💡 เมนูย่อยใหม่ในระบบจะโผล่ที่นี่เอง — ปิดเมนูย่อยไม่กระทบเมนูหลัก (เมนูหลักยังอยู่ใน Sidebar เสมอ) ไม่ต้อง Logout ใคร
+          </div>
         </div>
         {confirmFull && (
           <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataCacheProvider, useDataCache } from './contexts/DataCacheContext';
 import Login from './pages/Login';
@@ -10,6 +10,7 @@ import VendorMaster from './pages/VendorMaster';
 import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
 import APController, { InvoiceHistoryPage } from './pages/APController';
+import APScanOCR from './pages/APScanOCR';
 import VatController from './pages/VatController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
@@ -783,7 +784,7 @@ function MainApp() {
 
     case 'ap-ocr':
       return (isEditor || userPermissions?.['Manual'])
-        ? <PlaceholderPage title="Scan OCR" icon="🔍" />
+        ? <APScanOCR />
         : <NoAccessPage />;
 
     case 'ap-form':

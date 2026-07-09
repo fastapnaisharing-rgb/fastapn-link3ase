@@ -875,8 +875,8 @@ const SUPPLIER_FIELDS = [
   ['Notice',          'Notice',                 1, 'combo'],
   ['Sub Acc',         'Sub Acc',                1, 'text'],
   // ── ข้อมูลติดต่อ ─────────────────────────────────────────────────────────
-  ['Tax ID',          'Tax ID',                 1, 'text'],
-  ['No.',             'No.',                    1, 'text'],
+  ['Tax ID',          'Tax ID *',               1, 'text'],
+  ['No.',             'Branch No. *',           1, 'text'],
   ['Contact',         'Contact',                1, 'text'],
   ['Email',           'Email',                  1, 'text'],
   ['Address',         'Address',                3, 'textarea'],
@@ -1132,6 +1132,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     if (!f['Supplier Number']?.trim()) return 'กรุณากรอก Supplier No.';
     if (!f['Supplier Site']?.trim()) return 'กรุณากรอก Supplier Site';
     if (!f['BU Code']?.trim()) return 'กรุณากรอก BU Code';
+    if (!f['Tax ID']?.trim()) return 'กรุณากรอก Tax ID';
+    if (!f['No.']?.trim()) return 'กรุณากรอก Branch No.';
     return '';
   };
 
@@ -1301,12 +1303,12 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 {yStatic(form['BU Code'] || '')}
               </div>
 
-              {/* Row 3: Tax ID + Branch No. + Tax-Type */}
+              {/* Row 3: Tax ID + Branch No. + Tax-Type — Tax ID/Branch No. = พื้นเหลือง (Required) */}
               <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 110px 1fr 110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
-                {lbl('Tax ID')}
-                {cell('Tax ID')}
-                {lbl('Branch No.')}
-                {cell('No.')}
+                {lbl('Tax ID *')}
+                {yCell('Tax ID')}
+                {lbl('Branch No. *')}
+                {yCell('No.')}
                 {lbl('Tax-Type')}
                 {combo('Tax-Type')}
               </div>
@@ -4460,6 +4462,62 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [historyMine, setHistoryMine]   = useState([]);
   const [historyAll, setHistoryAll]     = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // ── Report to ผู้ตรวจ (จาก Batch List หลังมีไฟล์แล้ว) — โหลด User ที่มี Permission Manual ──
+  const [reportReviewers, setReportReviewers] = useState([]);
+  const [reportPickerId, setReportPickerId] = useState(null);
+  const [reportPickerValue, setReportPickerValue] = useState('');
+  const [reportSending, setReportSending] = useState(false);
+  useEffect(() => {
+    apiFetch('/user_roles').then(list => {
+      const isManual = (u) => {
+        const v = u?.Manual ?? u?.manual ?? u?.MANUAL;
+        return v === true || v === 'Yes' || v === 'yes' || v === 1 || v === '1';
+      };
+      setReportReviewers((list || []).filter(isManual));
+    }).catch(() => {});
+  }, []);
+
+  // ── View/Download ไฟล์ — ต้องแนบ Token ไป Fetch เป็น Blob (a href ธรรมดาส่ง Token ไม่ได้) ──
+  const handleFileAction = async (fileId, mode) => {
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const res = await fetch(`${apiBase}/api/file-storage/${fileId}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'โหลดไฟล์ไม่สำเร็จ');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      if (mode === 'view') {
+        window.open(url, '_blank');
+      } else {
+        const a = document.createElement('a');
+        a.href = url; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
+      }
+      setTimeout(() => window.URL.revokeObjectURL(url), 10000);
+    } catch (e) { alert('เกิดข้อผิดพลาด: ' + e.message); }
+  };
+
+  // ── Report to ผู้ตรวจ — เรียกหลังมีไฟล์แล้วเท่านั้น (แยกจาก Generate) ──
+  const handleReportTo = async (fileId) => {
+    if (!reportPickerValue) return;
+    setReportSending(true);
+    try {
+      const res = await apiFetch(`/file-storage/${fileId}/report-to`, {
+        method: 'POST',
+        body: JSON.stringify({ reportTo: reportPickerValue }),
+      });
+      if (res?.error) throw new Error(res.error);
+      setReportPickerId(null);
+      setReportPickerValue('');
+      alert('ส่งตรวจสำเร็จ');
+    } catch (e) { alert('ส่งตรวจไม่สำเร็จ: ' + e.message); }
+    setReportSending(false);
+  };
   const canSeeAll = isOwner || isAdmin;
   const me = userName || currentUser?.email || '';
 
@@ -4605,12 +4663,38 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
                         {b.file_url ? (
-                          <><a href={b.file_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', textDecoration: 'none', fontWeight: '500' }}>👁 View</a>
-                          <a href={b.file_url} download style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', textDecoration: 'none', fontWeight: '500' }}>⬇ Download</a></>
+                          <>
+                            <button onClick={() => handleFileAction(b.file_url, 'view')} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>👁 View</button>
+                            <button onClick={() => handleFileAction(b.file_url, 'download')} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>⬇ Download</button>
+                          </>
                         ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
                       </div>
                     </td>
-                    <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}><span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>{st.label}</span></td>
+                    <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>{st.label}</span>
+                        {b.status === 'done' && b.file_url && (
+                          reportPickerId === b.id ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <select value={reportPickerValue} onChange={e => setReportPickerValue(e.target.value)}
+                                style={{ fontSize: '10px', padding: '2px 4px', borderRadius: '4px', border: '0.5px solid #ddd' }}>
+                                <option value="">-- เลือกผู้ตรวจ --</option>
+                                {reportReviewers.map(u => (
+                                  <option key={u.username || u.email} value={u.username || u.email}>{u.username || u.email}</option>
+                                ))}
+                              </select>
+                              <button onClick={() => handleReportTo(b.file_url)} disabled={!reportPickerValue || reportSending}
+                                style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', border: 'none', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>ส่ง</button>
+                              <button onClick={() => { setReportPickerId(null); setReportPickerValue(''); }}
+                                style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', border: 'none', background: '#f0f0f0', color: '#666', cursor: 'pointer' }}>✕</button>
+                            </span>
+                          ) : (
+                            <button onClick={() => { setReportPickerId(b.id); setReportPickerValue(''); }}
+                              style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', cursor: 'pointer' }}>📤 Report</button>
+                          )
+                        )}
+                      </div>
+                    </td>
                     {historyTab === 'all' && <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.created_by || '-'}</td>}
                   </tr>
                 );
@@ -5643,6 +5727,21 @@ const handleSelectBranch = (item, meta = {}) => {
 function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, supplierItems = [], vendorRuleItems = [] }) {
   const [exported, setExported]   = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [showCompleteBanner, setShowCompleteBanner] = useState(false);
+
+  // ── Report to ผู้ตรวจ: โหลดรายชื่อ User ที่มี Permission Manual ──
+  const [reviewers, setReviewers] = useState([]);
+  const [reportTo, setReportTo] = useState('');
+  React.useEffect(() => {
+    apiFetch('/user_roles').then(list => {
+      // ── เช็คหลาย Case กันพลาด (ไม่มั่นใจชื่อ Column ที่แน่นอน) ──
+      const isManual = (u) => {
+        const v = u?.Manual ?? u?.manual ?? u?.MANUAL;
+        return v === true || v === 'Yes' || v === 'yes' || v === 1 || v === '1';
+      };
+      setReviewers((list || []).filter(isManual));
+    }).catch(() => {});
+  }, []);
 
   const num = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
 
@@ -5959,7 +6058,24 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         const { error } = await db.from('bucket_list').update({ status: 'done', exported_at: new Date().toISOString() }).in('id', ids);
         if (error) throw error;
       }
+
+      // ── สร้างไฟล์ Excel จริง เก็บลง Server + Report to ผู้ตรวจ (ถ้าเลือกไว้) ──
+      const excelRows = rows.map(r => r.data);
+      const genRes = await apiFetch('/file-storage/generate', {
+        method: 'POST',
+        body: JSON.stringify({
+          module: 'ap-export',
+          bu: batchConfig.bu,
+          refId: batchConfig.batchId,
+          rows: excelRows,
+        }),
+      });
+      if (genRes?.error) throw new Error(genRes.error);
+
       setExported(true);
+      setShowCompleteBanner(true);
+      // ── หน่วง 2 วิให้เห็น Banner ก่อน แล้ว Auto กลับ Batch Setup ──
+      setTimeout(() => { onNewBatch(); }, 2000);
     } catch (e) { alert('Export failed: ' + e.message); }
     setExporting(false);
   };
@@ -5975,6 +6091,11 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
           {exported ? 'Exported' : exporting ? 'Exporting...' : 'Generate & Export'}
         </button>
       </div>
+      {showCompleteBanner && (
+        <div style={{ position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, background: '#EAF3DE', color: '#27500A', padding: '12px 24px', borderRadius: '8px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}>
+          ✓ Export Complete — {invoices.length} ใบ
+        </div>
+      )}
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px', userSelect: 'none', position: 'relative' }}
         onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ show: true, x: e.clientX, y: e.clientY }); }}
         onMouseMove={(e) => { mousePosRef.current = { x: e.clientX, y: e.clientY }; }}>
@@ -6462,5 +6583,3 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
     </div>
   );
 }
-
-
