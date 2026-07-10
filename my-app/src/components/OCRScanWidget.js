@@ -27,6 +27,17 @@ async function apiFetch(url, options = {}) {
   return res.json();
 }
 
+// img tag ส่ง Authorization header ตรงๆ ไม่ได้ ต้อง fetch เป็น blob แล้วสร้าง object URL แทน
+async function fetchImageBlobUrl(pageId) {
+  const token = getAuthToken();
+  const res = await fetch(`${API_BASE}/page-image/${pageId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 const SET_STATUS_LABEL = {
   pending: "รอคิว",
   processing: "กำลังประมวลผล...",
@@ -93,13 +104,24 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
     return () => clearInterval(interval);
   }, [phase, poll]);
 
-  // ---------------- ดูผล OCR ของชุดที่เลือก ----------------
+  // ---------------- ดูผล OCR ของชุดที่เลือก (พร้อมโหลดรูปภาพ) ----------------
   const handleViewResult = async (setId) => {
     setPreviewSetId(setId);
     setPreviewResult(null);
     try {
       const data = await apiFetch(`${API_BASE}/result/${setId}`);
-      setPreviewResult(data);
+      // โหลดรูปภาพของแต่ละหน้าเป็น blob URL
+      const pagesWithImages = await Promise.all(
+        data.pages.map(async (p) => {
+          try {
+            const imageUrl = await fetchImageBlobUrl(p.id);
+            return { ...p, imageUrl };
+          } catch (e) {
+            return { ...p, imageUrl: null };
+          }
+        })
+      );
+      setPreviewResult({ ...data, pages: pagesWithImages });
     } catch (err) {
       setError(err.message);
     }
@@ -187,28 +209,54 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
         </div>
       )}
 
-      {/* Preview ผล OCR ดิบๆ ของชุดที่เลือก */}
+      {/* Preview ผล OCR — Side by Side (รูปภาพ + ข้อความ) */}
       {previewSetId && (
         <div style={{ marginTop: 20, padding: 16, border: "1px solid #ddd", borderRadius: 8, background: "#fafafa" }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
             <strong>ผล OCR — ชุด {previewSetId.slice(0, 8)}...</strong>
             <button onClick={() => setPreviewSetId(null)}>ปิด</button>
           </div>
           {!previewResult && <p>กำลังโหลด...</p>}
-          {previewResult && (
-            <div style={{ marginTop: 10, maxHeight: 300, overflowY: "auto", fontSize: 13 }}>
-              {previewResult.pages.map((p) => (
-                <div key={p.page_number} style={{ marginBottom: 10 }}>
-                  <em style={{ color: "#888" }}>หน้า {p.page_number}</em>
-                  {(p.raw_ocr_result || []).map((t, idx) => (
-                    <div key={idx}>
-                      [{(t.confidence * 100).toFixed(0)}%] {t.text}
-                    </div>
-                  ))}
-                </div>
-              ))}
+          {previewResult && previewResult.pages.map((p) => (
+            <div
+              key={p.page_number}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+                marginBottom: 16,
+                paddingBottom: 16,
+                borderBottom: "1px solid #e0e0e0",
+              }}
+            >
+              {/* ซ้าย: รูปภาพต้นฉบับ */}
+              <div>
+                <p style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>หน้า {p.page_number} — ต้นฉบับ</p>
+                {p.imageUrl ? (
+                  <img
+                    src={p.imageUrl}
+                    alt={`invoice page ${p.page_number}`}
+                    style={{ width: "100%", border: "1px solid #ddd", borderRadius: 6 }}
+                  />
+                ) : (
+                  <p style={{ color: "#d9534f", fontSize: 12 }}>โหลดรูปไม่สำเร็จ</p>
+                )}
+              </div>
+
+              {/* ขวา: ข้อความที่ OCR อ่านได้ */}
+              <div style={{ fontSize: 13, maxHeight: 400, overflowY: "auto" }}>
+                <p style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>ข้อความที่อ่านได้</p>
+                {(p.raw_ocr_result || []).map((t, idx) => (
+                  <div key={idx} style={{ marginBottom: 2 }}>
+                    <span style={{ color: t.confidence >= 0.9 ? "#3c763d" : t.confidence >= 0.7 ? "#8a6d3b" : "#a94442" }}>
+                      [{(t.confidence * 100).toFixed(0)}%]
+                    </span>{" "}
+                    {t.text}
+                  </div>
+                ))}
+              </div>
             </div>
-          )}
+          ))}
         </div>
       )}
     </div>
