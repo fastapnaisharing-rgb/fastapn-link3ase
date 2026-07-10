@@ -45,6 +45,67 @@ const SET_STATUS_LABEL = {
   approved: "อนุมัติแล้ว",
 };
 
+// ---------------- ส่วน Monitor: รายการ Batch ทั้งหมดที่เคย Upload ----------------
+function BatchHistory({ onSelectBatch }) {
+  const [batches, setBatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadBatches = useCallback(async () => {
+    try {
+      const data = await apiFetch(`${API_BASE}/batches`);
+      setBatches(data.batches);
+    } catch (err) {
+      console.error("load batches error:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBatches();
+    const interval = setInterval(loadBatches, 5000); // อัพเดตทุก 5 วิ เผื่อมี Batch กำลังทำงานอยู่
+    return () => clearInterval(interval);
+  }, [loadBatches]);
+
+  if (loading) return <p style={{ color: "#888", marginTop: 24 }}>กำลังโหลดประวัติ...</p>;
+  if (batches.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <p style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>ไฟล์ที่เคยอัพโหลด</p>
+      {batches.map((b) => {
+        const isProcessing = b.pages_done < b.total_pages;
+        return (
+          <div
+            key={b.batch_id}
+            onClick={() => onSelectBatch(b.batch_id)}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "10px 14px",
+              border: "1px solid #ddd",
+              borderRadius: 6,
+              marginBottom: 8,
+              cursor: "pointer",
+              background: isProcessing ? "#fff8ec" : "#fff",
+            }}
+          >
+            <span>
+              {b.source_file_name || "(ไม่ทราบชื่อไฟล์)"} — {b.pages_done}/{b.total_pages} หน้า
+            </span>
+            <span style={{ fontSize: 12, color: "#888" }}>
+              {b.sets_ready > 0 && <span style={{ color: "#3c763d" }}>พร้อมตรวจ {b.sets_ready} • </span>}
+              {b.sets_approved > 0 && <span>อนุมัติแล้ว {b.sets_approved} • </span>}
+              {isProcessing ? "กำลังทำงาน..." : "เสร็จสมบูรณ์"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToReview }) {
   const [batchId, setBatchId] = useState(null);
   const [phase, setPhase] = useState("upload"); // upload | processing
@@ -53,6 +114,27 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   const [error, setError] = useState(null);
   const [previewSetId, setPreviewSetId] = useState(null);
   const [previewResult, setPreviewResult] = useState(null);
+  const [batchHistory, setBatchHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+
+  // ---------------- โหลดรายการ Batch เก่าทั้งหมดตอนเปิดหน้า (Monitor) ----------------
+  const loadBatchHistory = useCallback(async () => {
+    try {
+      const data = await apiFetch(`${API_BASE}/batches`);
+      setBatchHistory(data.batches || []);
+    } catch (err) {
+      console.error("load batch history error:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBatchHistory();
+    // รีเฟรชรายการ Batch เก่าทุก 10 วินาที (เผื่อ Batch ที่กำลังทำอยู่มีความคืบหน้าเพิ่ม)
+    const interval = setInterval(loadBatchHistory, 10000);
+    return () => clearInterval(interval);
+  }, [loadBatchHistory]);
 
   // ---------------- Upload ----------------
   const handleFileChange = async (e) => {
@@ -148,6 +230,15 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
           {uploading && <p>กำลังอัพโหลด + แยกหน้า...</p>}
           {error && <p style={{ color: "#d9534f" }}>เกิดข้อผิดพลาด: {error}</p>}
         </div>
+      )}
+
+      {phase === "upload" && (
+        <BatchHistory
+          onSelectBatch={(selectedBatchId) => {
+            setBatchId(selectedBatchId);
+            setPhase("processing");
+          }}
+        />
       )}
 
       {phase === "processing" && (

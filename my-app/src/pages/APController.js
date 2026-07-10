@@ -4463,6 +4463,23 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [historyAll, setHistoryAll]     = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // ── ลบแถวใน Batch History (batch_list) — ใช้ล้าง Batch ทดสอบ/ค้าง Processing ──
+  const [deletingBatchRowId, setDeletingBatchRowId] = useState(null);
+  const handleDeleteBatchRow = async (b) => {
+    if (!window.confirm(`ต้องการลบ Batch "${b.batch_id || b.id}" ออกจาก Batch History ถาวรใช่ไหม?`)) return;
+    setDeletingBatchRowId(b.id);
+    try {
+      const { error } = await db.from('batch_list').delete().eq('id', b.id);
+      if (error) throw error;
+      setHistoryMine(prev => prev.filter(x => x.id !== b.id));
+      setHistoryAll(prev => prev.filter(x => x.id !== b.id));
+    } catch (e) {
+      console.error('delete batch_list row:', e);
+      alert('ลบไม่สำเร็จ: ' + e.message);
+    }
+    setDeletingBatchRowId(null);
+  };
+
   // ── Report to ผู้ตรวจ (จาก Batch List หลังมีไฟล์แล้ว) — โหลด User ที่มี Permission Manual ──
   const [reportReviewers, setReportReviewers] = useState([]);
   const [reportPickerId, setReportPickerId] = useState(null);
@@ -4629,22 +4646,22 @@ function BatchSetup({ onStart, infoItems = [] }) {
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: '24%' }} /><col style={{ width: '10%' }} /><col style={{ width: '11%' }} />
-              <col style={{ width: '12%' }} /><col style={{ width: historyTab === 'all' ? '20%' : '33%' }} />
-              <col style={{ width: '10%' }} />{historyTab === 'all' && <col style={{ width: '13%' }} />}
+              <col style={{ width: '22%' }} /><col style={{ width: '9%' }} /><col style={{ width: '10%' }} />
+              <col style={{ width: '11%' }} /><col style={{ width: historyTab === 'all' ? '18%' : '31%' }} />
+              <col style={{ width: '9%' }} /><col style={{ width: '8%' }} />{historyTab === 'all' && <col style={{ width: '13%' }} />}
             </colgroup>
             <thead>
               <tr style={{ background: '#f8f9fa' }}>
-                {['Batch Name','Business Unit','Receive Date','Total Amount','Attachment','Status',...(historyTab === 'all' ? ['Created By'] : [])].map(h => (
-                  <th key={h} style={{ padding: '7px 9px', textAlign: 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+                {['Batch Name','Business Unit','Receive Date','Total Amount','Attachment','Status','Action',...(historyTab === 'all' ? ['Created By'] : [])].map(h => (
+                  <th key={h} style={{ padding: '7px 9px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {historyLoading ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
+                <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}</td></tr>
+                <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
                 const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
@@ -4694,6 +4711,12 @@ function BatchSetup({ onStart, infoItems = [] }) {
                           )
                         )}
                       </div>
+                    </td>
+                    <td style={{ padding: '8px 9px', textAlign: 'center' }}>
+                      <button onClick={() => handleDeleteBatchRow(b)} disabled={deletingBatchRowId === b.id} title="ลบ Batch นี้ออกจาก History"
+                        style={{ width: '26px', height: '26px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: deletingBatchRowId === b.id ? '#f0f0f0' : '#FCEBEB', color: '#791F1F', fontSize: '13px', cursor: deletingBatchRowId === b.id ? 'default' : 'pointer' }}>
+                        {deletingBatchRowId === b.id ? '···' : '🗑'}
+                      </button>
                     </td>
                     {historyTab === 'all' && <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.created_by || '-'}</td>}
                   </tr>
@@ -5724,10 +5747,11 @@ const handleSelectBranch = (item, meta = {}) => {
 }
 
 // ── GenerateExport (Batch Preview) ───────────────────────────────────────────
-function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, supplierItems = [], vendorRuleItems = [] }) {
+function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, supplierItems = [], vendorRuleItems = [], userName = '', currentUser }) {
   const [exported, setExported]   = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
+  const [batchName, setBatchName] = useState('');
 
   // ── Report to ผู้ตรวจ: โหลดรายชื่อ User ที่มี Permission Manual ──
   const [reviewers, setReviewers] = useState([]);
@@ -6051,26 +6075,49 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
 
   const doExport = async () => {
     if (!invoices.length) { alert('No invoices in batch'); return; }
+    const newBatchId = batchName.trim();
+    if (!newBatchId) { alert('กรุณาตั้งชื่อ Batch ก่อน Export'); return; }
     setExporting(true);
     try {
-      const ids = invoices.filter(inv => inv.id).map(inv => inv.id);
-      if (ids.length) {
-        const { error } = await db.from('bucket_list').update({ status: 'done', exported_at: new Date().toISOString() }).in('id', ids);
-        if (error) throw error;
-      }
+      // ── สร้าง batch_list ก่อน (Tracking ใหม่ของ Batch History แยกจาก Batch Bucket) ──
+      // ── เช็คชื่อซ้ำไปในตัว เพราะ batch_id เป็น Unique — ถ้าซ้ำจะ Error ตรงนี้ก่อนแตะข้อมูลอื่น ──
+      const { error: insErr } = await db.from('batch_list').insert([{
+        batch_id: newBatchId,
+        bu: batchConfig.bu,
+        receive_date: batchConfig.receiveDate,
+        status: 'processing',
+        created_by: userName || currentUser?.email || '',
+      }]);
+      if (insErr) throw new Error('ตั้งชื่อ Batch ไม่สำเร็จ (อาจซ้ำกับ Batch ที่มีอยู่แล้ว): ' + insErr.message);
+
+      // ── Rename Invoice ทุกใบจาก Draft ID (ตอน Start) → Batch Name จริง + Mark done ──
+      const oldDraftId = batchConfig.batchId;
+      const { error: renameErr } = await db.from('bucket_list')
+        .update({ batch_id: newBatchId, status: 'done', exported_at: new Date().toISOString() })
+        .eq('batch_id', oldDraftId);
+      if (renameErr) throw renameErr;
 
       // ── สร้างไฟล์ Excel จริง เก็บลง Server + Report to ผู้ตรวจ (ถ้าเลือกไว้) ──
-      const excelRows = rows.map(r => r.data);
+      // ── เพิ่มแถว bookLabel (เช่น "CDS BOOK") นำหน้าเหมือนที่โชว์ใน Batch Preview ──
+      // ── (ก่อนหน้านี้ Export ใช้แค่ rows เฉยๆ เลยไม่มีแถวนี้ทั้งที่ Preview มี) ──
+      const excelRows = [[bookLabel, ...Array(29).fill('')], ...rows.map(r => r.data)];
       const genRes = await apiFetch('/file-storage/generate', {
         method: 'POST',
         body: JSON.stringify({
           module: 'ap-export',
           bu: batchConfig.bu,
-          refId: batchConfig.batchId,
+          refId: newBatchId,
           rows: excelRows,
         }),
       });
       if (genRes?.error) throw new Error(genRes.error);
+
+      // ── ปิดงาน batch_list: status=done + total_amount ให้ My Jobs/All Jobs แสดงถูก ──
+      const totalAmount = invoices.reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0);
+      const { error: doneErr } = await db.from('batch_list')
+        .update({ status: 'done', total_amount: totalAmount })
+        .eq('batch_id', newBatchId);
+      if (doneErr) console.error('[batch_list done update]', doneErr);
 
       setExported(true);
       setShowCompleteBanner(true);
@@ -6084,8 +6131,10 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '14px 18px', outline: 'none' }}
       tabIndex={-1}
       onMouseLeave={() => setIsDragging(false)}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexShrink: 0, gap: '10px' }}>
         <button style={btnOutline} onClick={onBack}>&#8592; Back to edit</button>
+        <input value={batchName} onChange={e => setBatchName(e.target.value)} placeholder="ตั้งชื่อ Batch ก่อน Export..." disabled={exporting || exported}
+          style={{ flex: 1, maxWidth: '320px', height: '34px', padding: '0 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none' }} />
         <button disabled={exporting || exported} onClick={doExport}
           style={{ ...btnPrimary, background: exported ? '#27500A' : '#1a3a5c', opacity: exporting ? 0.6 : 1, cursor: exporting || exported ? 'default' : 'pointer' }}>
           {exported ? 'Exported' : exporting ? 'Exporting...' : 'Generate & Export'}
@@ -6367,6 +6416,119 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
     setRestoringId(null);
   };
 
+  // ── Bulk Restore — เหมือน Bulk Delete แต่คืนสถานะ pending แทนการลบถาวร ──
+  const [restoringSelected, setRestoringSelected] = React.useState(false);
+  const handleRestoreSelected = async () => {
+    if (!selectedRows.size) return;
+    if (!window.confirm(`ต้องการ Restore ${selectedRows.size} รายการที่เลือก กลับไปที่ Batch Bucket ใช่ไหม?`)) return;
+    setRestoringSelected(true);
+    try {
+      const ids = Array.from(selectedRows);
+      const { error } = await db.from('bucket_list')
+        .update({ status: 'pending', restored_at: new Date().toISOString() })
+        .in('id', ids);
+      if (error) throw error;
+      setRowsData(prev => prev.filter(r => !selectedRows.has(r.id)));
+      setSelectedRows(new Set());
+    } catch (e) {
+      console.error('restore selected:', e);
+      alert('Restore ไม่สำเร็จ: ' + e.message);
+    }
+    setRestoringSelected(false);
+  };
+
+  // ── ลบทีละแถว (Owner/Admin เท่านั้น — เหมือนสิทธิ์ Bulk Delete) ──────────
+  const [deletingOneId, setDeletingOneId] = React.useState(null);
+  const handleDeleteOne = async (inv) => {
+    if (!window.confirm(`ต้องการลบ Invoice "${inv.invoice_no || '-'}" ออกจาก Invoice History ถาวรใช่ไหม?`)) return;
+    setDeletingOneId(inv.id);
+    try {
+      const { error } = await db.from('bucket_list').delete().eq('id', inv.id);
+      if (error) throw error;
+      setRowsData(prev => prev.filter(r => r.id !== inv.id));
+      setSelectedRows(prev => { const next = new Set(prev); next.delete(inv.id); return next; });
+    } catch (e) {
+      console.error('delete one invoice history:', e);
+      alert('ลบไม่สำเร็จ: ' + e.message);
+    }
+    setDeletingOneId(null);
+  };
+
+  // ── View — เปิด Popup ดูรายละเอียด Invoice แบบ Read-only ─────────────────
+  const [viewingInvoice, setViewingInvoice] = React.useState(null);
+
+  // ── Restore ทั้ง Batch — คืนสถานะ pending ให้ทุก Invoice ใน Batch นั้น ──
+  const [restoringBatchId, setRestoringBatchId] = React.useState(null);
+  const handleRestoreBatch = async (g) => {
+    const ids = g.items.map(i => i.id);
+    if (!ids.length) return;
+    if (!window.confirm(`ต้องการ Restore ทั้ง Batch "${g.batch_id}" (${ids.length} ใบ) กลับไปที่ Batch Bucket ใช่ไหม?`)) return;
+    setRestoringBatchId(g.batch_id);
+    try {
+      const { error } = await db.from('bucket_list').update({ status: 'pending', restored_at: new Date().toISOString() }).in('id', ids);
+      if (error) throw error;
+      // ── ไม่มี Invoice สถานะ done เหลือใน Batch นี้แล้ว → ลบแถว batch_list ทิ้งด้วย ──
+      if (g.batch_id) {
+        const { error: bErr } = await db.from('batch_list').delete().eq('batch_id', g.batch_id);
+        if (bErr) console.error('[batch_list delete on restore]', bErr);
+      }
+      setRowsData(prev => prev.filter(r => !ids.includes(r.id)));
+      setSelectedRows(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
+    } catch (e) {
+      console.error('restore batch:', e);
+      alert('Restore ไม่สำเร็จ: ' + e.message);
+    }
+    setRestoringBatchId(null);
+  };
+
+  // ── ลบทั้ง Batch ถาวร (Owner/Admin เท่านั้น) ──────────────────────────────
+  const [deletingBatchId, setDeletingBatchId] = React.useState(null);
+  const handleDeleteBatch = async (g) => {
+    const ids = g.items.map(i => i.id);
+    if (!ids.length) return;
+    if (!window.confirm(`ต้องการลบ Batch "${g.batch_id}" (${ids.length} ใบ) ออกจาก Invoice History ถาวรใช่ไหม?`)) return;
+    setDeletingBatchId(g.batch_id);
+    try {
+      const { error } = await db.from('bucket_list').delete().in('id', ids);
+      if (error) throw error;
+      // ── ลบแถว batch_list ของ Batch นี้ทิ้งด้วย เพราะไม่มี Invoice เหลืออยู่แล้ว ──
+      if (g.batch_id) {
+        const { error: bErr } = await db.from('batch_list').delete().eq('batch_id', g.batch_id);
+        if (bErr) console.error('[batch_list delete on delete]', bErr);
+      }
+      setRowsData(prev => prev.filter(r => !ids.includes(r.id)));
+      setSelectedRows(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
+    } catch (e) {
+      console.error('delete batch:', e);
+      alert('ลบไม่สำเร็จ: ' + e.message);
+    }
+    setDeletingBatchId(null);
+  };
+
+  // ── Download ไฟล์ Excel ของทั้ง Batch — หา file_url จาก batch_list ด้วย batch_id ──
+  const [downloadingBatchId, setDownloadingBatchId] = React.useState(null);
+  const handleDownloadBatch = async (g) => {
+    if (!g.batch_id) return;
+    setDownloadingBatchId(g.batch_id);
+    try {
+      const { data, error } = await db.from('batch_list').select('file_url').eq('batch_id', g.batch_id).single();
+      if (error) throw error;
+      if (!data?.file_url) { alert('ยังไม่มีไฟล์สำหรับ Batch นี้'); setDownloadingBatchId(null); return; }
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const res = await fetch(`${apiBase}/api/file-storage/${data.file_url}/download`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'โหลดไฟล์ไม่สำเร็จ'); }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 10000);
+    } catch (e) {
+      console.error('download batch:', e);
+      alert('เกิดข้อผิดพลาด: ' + e.message);
+    }
+    setDownloadingBatchId(null);
+  };
+
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(50);
   React.useEffect(() => { setPage(1); }, [mainTab, subTab, dateFrom, dateTo, search]);
@@ -6374,12 +6536,33 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   const filtered = search.trim()
     ? rowsData.filter(r =>
         String(r.invoice_no || '').toLowerCase().includes(search.toLowerCase()) ||
-        String(r.vendor_name || '').toLowerCase().includes(search.toLowerCase()))
+        String(r.vendor_name || '').toLowerCase().includes(search.toLowerCase()) ||
+        String(r.batch_id || '').toLowerCase().includes(search.toLowerCase()))
     : rowsData;
 
-  const effectivePageSize = pageSize === 0 ? (filtered.length || 1) : pageSize;
-  const totalPages = Math.max(1, Math.ceil(filtered.length / effectivePageSize));
-  const paginated = pageSize === 0 ? filtered : filtered.slice((page - 1) * effectivePageSize, page * effectivePageSize);
+  // ── Group Invoice ตาม batch_id — ทุก Invoice ที่ Export ออกมาเป็น Batch อยู่แล้ว ──
+  const [expandedBatches, setExpandedBatches] = React.useState(new Set());
+  const groups = (() => {
+    const map = new Map();
+    filtered.forEach(r => {
+      const key = r.batch_id || '(ไม่มี Batch)';
+      if (!map.has(key)) map.set(key, { batch_id: r.batch_id || '', bu: r.bu, receive_date: r.receive_date, exported_at: r.exported_at, items: [] });
+      map.get(key).items.push(r);
+    });
+    return Array.from(map.values()).map(g => ({
+      ...g,
+      count: g.items.length,
+      totalAmount: g.items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0),
+      totalVat: g.items.reduce((s, i) => s + (parseFloat(i.vat) || 0), 0),
+      totalNet: g.items.reduce((s, i) => s + (parseFloat(i.net) || 0), 0),
+    })).sort((a, b) => new Date(b.receive_date || 0) - new Date(a.receive_date || 0));
+  })();
+
+  // ── Pagination นับตาม Batch (ไม่ใช่ Invoice) — กันไม่ให้ Batch ถูกตัดครึ่งข้ามหน้า ──
+  const effectivePageSize = pageSize === 0 ? (groups.length || 1) : pageSize;
+  const totalPages = Math.max(1, Math.ceil(groups.length / effectivePageSize));
+  const paginatedGroups = pageSize === 0 ? groups : groups.slice((page - 1) * effectivePageSize, page * effectivePageSize);
+  const visibleIds = paginatedGroups.flatMap(g => g.items.map(i => i.id));
   const getPageWindow = () => {
     const size = 5;
     let start = Math.max(1, page - Math.floor(size / 2));
@@ -6434,6 +6617,12 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
           {canSeeAll && selectedRows.size > 0 && (
+            <button onClick={handleRestoreSelected} disabled={restoringSelected}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', fontWeight: '500', cursor: restoringSelected ? 'default' : 'pointer' }}>
+              ↩ {restoringSelected ? 'กำลัง Restore...' : `Restore (${selectedRows.size})`}
+            </button>
+          )}
+          {canSeeAll && selectedRows.size > 0 && (
             <button onClick={handleDeleteHistorySelected} disabled={deletingHistory}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '11px', fontWeight: '500', cursor: deletingHistory ? 'default' : 'pointer' }}>
               🗑 {deletingHistory ? 'กำลังลบ...' : `Delete (${selectedRows.size})`}
@@ -6455,64 +6644,194 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
+          <colgroup>
+            {canSeeAll && <col style={{ width: '32px' }} />}
+            <col style={{ width: '190px' }} />
+            <col style={{ width: '110px' }} />
+            <col />
+            <col style={{ width: '60px' }} />
+            <col style={{ width: '100px' }} />
+            <col style={{ width: '90px' }} />
+            <col style={{ width: '80px' }} />
+            <col style={{ width: '90px' }} />
+            <col style={{ width: '110px' }} />
+            <col style={{ width: '140px' }} />
+            {mainTab === 'invoicehistory' && <col style={{ width: '100px' }} />}
+          </colgroup>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
               {canSeeAll && (
-                <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0', width: '32px' }}>
+                <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0' }}>
                   <input type="checkbox"
-                    checked={paginated.length > 0 && paginated.every(r => selectedRows.has(r.id))}
+                    checked={visibleIds.length > 0 && visibleIds.every(id => selectedRows.has(id))}
                     onChange={() => setSelectedRows(prev => {
-                      const allSelected = paginated.length > 0 && paginated.every(r => prev.has(r.id));
+                      const allSelected = visibleIds.length > 0 && visibleIds.every(id => prev.has(id));
                       const next = new Set(prev);
-                      paginated.forEach(r => { allSelected ? next.delete(r.id) : next.add(r.id); });
+                      visibleIds.forEach(id => { allSelected ? next.delete(id) : next.add(id); });
                       return next;
                     })} />
                 </th>
               )}
-              {['Invoice No.', 'BU', 'Vendor', 'Branch', 'Receive Date', 'Exported At', 'Amount', 'Vat', 'Total', ...(mainTab === 'invoicehistory' ? ['Created By'] : []), 'Action'].map(h => (
-                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{h}</th>
+              {['Batch name', 'Invoice', 'Vendor', 'BU', 'Receive date', 'Amount', 'Vat', 'Total', 'Action', 'Exported at', ...(mainTab === 'invoicehistory' ? ['Created by'] : [])].map(h => (
+                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr><td colSpan={canSeeAll ? 12 : 11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>Loading...</td></tr>
-            ) : paginated.length === 0 ? (
-              <tr><td colSpan={canSeeAll ? 12 : 11} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>ไม่มี Invoice ใน History</td></tr>
-            ) : paginated.map(inv => {
-              const rd = inv.receive_date ? new Date(inv.receive_date) : null;
-              const ea = inv.exported_at ? new Date(inv.exported_at) : null;
-              return (
-                <tr key={inv.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
-                  {canSeeAll && (
-                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                      <input type="checkbox" checked={selectedRows.has(inv.id)}
-                        onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(inv.id) ? next.delete(inv.id) : next.add(inv.id); return next; })} />
-                    </td>
-                  )}
-                  <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#1a3a5c', fontWeight: 600 }}>{inv.invoice_no || '-'}</td>
-                  <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{inv.bu || '-'}</span></td>
-                  <td style={{ padding: '8px 10px' }}>{inv.vendor_name || '-'}</td>
-                  <td style={{ padding: '8px 10px' }}>{inv.branch_no || '-'}</td>
-                  <td style={{ padding: '8px 10px' }}>{fmtD(rd)}</td>
-                  <td style={{ padding: '8px 10px', color: '#888' }}>{fmtDT(ea)}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmtNum(inv.amount)}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmtNum(inv.vat)}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(inv.net)}</td>
-                  {mainTab === 'invoicehistory' && <td style={{ padding: '8px 10px', color: '#666' }}>{inv.created_by || '-'}</td>}
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <button onClick={() => handleRestore(inv)} disabled={restoringId === inv.id}
-                      style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: restoringId === inv.id ? '#f0f0f0' : '#eef4fb', color: '#1a3a5c', cursor: restoringId === inv.id ? 'default' : 'pointer' }}>
-                      {restoringId === inv.id ? '...' : '↩ Restore'}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
+            {(() => {
+              const colCount = (canSeeAll ? 1 : 0) + 10 + (mainTab === 'invoicehistory' ? 1 : 0);
+              if (loading) return <tr><td colSpan={colCount} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>Loading...</td></tr>;
+              if (paginatedGroups.length === 0) return <tr><td colSpan={colCount} style={{ textAlign: 'center', color: '#aaa', padding: '24px' }}>ไม่มี Invoice ใน History</td></tr>;
+              return paginatedGroups.map(g => {
+                const isOpen = expandedBatches.has(g.batch_id);
+                const rd = g.receive_date ? new Date(g.receive_date) : null;
+                const ea = g.exported_at ? new Date(g.exported_at) : null;
+                const groupItemIds = g.items.map(i => i.id);
+                const groupAllSelected = groupItemIds.length > 0 && groupItemIds.every(id => selectedRows.has(id));
+                return (
+                  <React.Fragment key={g.batch_id || g.items[0]?.id}>
+                    {/* ── Batch header — คลิกเพื่อกาง/หด, Action = Restore/Download/Delete ทั้ง Batch ── */}
+                    <tr style={{ background: '#eef4fb', cursor: 'pointer', borderBottom: '0.5px solid #d5e3f5' }}
+                      onClick={() => setExpandedBatches(prev => { const next = new Set(prev); next.has(g.batch_id) ? next.delete(g.batch_id) : next.add(g.batch_id); return next; })}>
+                      {canSeeAll && (
+                        <td style={{ padding: '8px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={groupAllSelected}
+                            onChange={() => setSelectedRows(prev => { const next = new Set(prev); groupItemIds.forEach(id => { groupAllSelected ? next.delete(id) : next.add(id); }); return next; })} />
+                        </td>
+                      )}
+                      <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#1a3a5c', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={g.batch_id || ''}>
+                        <span style={{ display: 'inline-block', marginRight: '6px', transition: 'transform .12s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
+                        {g.batch_id || '(ไม่มี Batch)'}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}></td>
+                      <td style={{ padding: '8px 10px' }}></td>
+                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{g.bu || '-'}</span></td>
+                      <td style={{ padding: '8px 10px' }}>{fmtD(rd)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalAmount)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalVat)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalNet)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                          <button onClick={e => { e.stopPropagation(); handleRestoreBatch(g); }} disabled={restoringBatchId === g.batch_id} title="Restore ทั้ง Batch"
+                            style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #c5d8f0', background: restoringBatchId === g.batch_id ? '#f0f0f0' : '#eef4fb', color: '#1a3a5c', fontSize: '15px', cursor: restoringBatchId === g.batch_id ? 'default' : 'pointer' }}>
+                            {restoringBatchId === g.batch_id ? '···' : '↩'}
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); handleDownloadBatch(g); }} disabled={downloadingBatchId === g.batch_id} title="Download ไฟล์ทั้ง Batch"
+                            style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #ddd', background: downloadingBatchId === g.batch_id ? '#f0f0f0' : '#f8f9fa', color: '#555', fontSize: '15px', cursor: downloadingBatchId === g.batch_id ? 'default' : 'pointer' }}>
+                            {downloadingBatchId === g.batch_id ? '···' : '⬇'}
+                          </button>
+                          {canSeeAll && (
+                            <button onClick={e => { e.stopPropagation(); handleDeleteBatch(g); }} disabled={deletingBatchId === g.batch_id} title="ลบทั้ง Batch"
+                              style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #f7c1c1', background: deletingBatchId === g.batch_id ? '#f0f0f0' : '#FCEBEB', color: '#791F1F', fontSize: '15px', cursor: deletingBatchId === g.batch_id ? 'default' : 'pointer' }}>
+                              {deletingBatchId === g.batch_id ? '···' : '🗑'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ padding: '8px 10px', color: '#888' }}>{fmtDT(ea)}</td>
+                      {mainTab === 'invoicehistory' && <td style={{ padding: '8px 10px' }}></td>}
+                    </tr>
+                    {/* ── Invoice ข้างใน Batch — โชว์เมื่อกางเท่านั้น, มี Batch name/Receive Date ซ้ำในแถวด้วย ── */}
+                    {isOpen && g.items.map(inv => {
+                      const invRd = inv.receive_date ? new Date(inv.receive_date) : null;
+                      const invEa = inv.exported_at ? new Date(inv.exported_at) : null;
+                      return (
+                        <tr key={inv.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                          {canSeeAll && (
+                            <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                              <input type="checkbox" checked={selectedRows.has(inv.id)}
+                                onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(inv.id) ? next.delete(inv.id) : next.add(inv.id); return next; })} />
+                            </td>
+                          )}
+                          <td style={{ padding: '6px 10px', fontSize: '11px', color: '#aaa' }}>{g.batch_id || '-'}</td>
+                          <td style={{ padding: '6px 10px 6px 26px', fontFamily: 'monospace', color: '#1a3a5c', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.invoice_no || '-'}</td>
+                          <td style={{ padding: '6px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor_name || '-'}</td>
+                          <td style={{ padding: '6px 10px', color: '#666' }}>{inv.bu || '-'}</td>
+                          <td style={{ padding: '6px 10px' }}>{fmtD(invRd)}</td>
+                          <td style={{ padding: '6px 10px', textAlign: 'right' }}>{fmtNum(inv.amount)}</td>
+                          <td style={{ padding: '6px 10px', textAlign: 'right' }}>{fmtNum(inv.vat)}</td>
+                          <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(inv.net)}</td>
+                          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                              <button onClick={() => handleRestore(inv)} disabled={restoringId === inv.id} title="Restore"
+                                style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #c5d8f0', background: restoringId === inv.id ? '#f0f0f0' : '#eef4fb', color: '#1a3a5c', fontSize: '15px', cursor: restoringId === inv.id ? 'default' : 'pointer' }}>
+                                {restoringId === inv.id ? '···' : '↩'}
+                              </button>
+                              <button onClick={() => setViewingInvoice(inv)} title="View"
+                                style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '15px', cursor: 'pointer' }}>
+                                👁
+                              </button>
+                              {canSeeAll && (
+                                <button onClick={() => handleDeleteOne(inv)} disabled={deletingOneId === inv.id} title="Delete"
+                                  style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #f7c1c1', background: deletingOneId === inv.id ? '#f0f0f0' : '#FCEBEB', color: '#791F1F', fontSize: '15px', cursor: deletingOneId === inv.id ? 'default' : 'pointer' }}>
+                                  {deletingOneId === inv.id ? '···' : '🗑'}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ padding: '6px 10px', color: '#888' }}>{fmtDT(invEa)}</td>
+                          {mainTab === 'invoicehistory' && <td style={{ padding: '6px 10px', color: '#666' }}>{inv.created_by || '-'}</td>}
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                );
+              });
+            })()}
           </tbody>
         </table>
       </div>
+
+      {/* ── View Modal: ดูรายละเอียด Invoice แบบ Read-only ──────────────────── */}
+      {viewingInvoice && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setViewingInvoice(null)}>
+          <div style={{ background: 'white', borderRadius: '10px', width: '640px', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto', padding: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1a3a5c' }}>📄 {viewingInvoice.invoice_no || '-'}</div>
+              <button onClick={() => setViewingInvoice(null)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999', lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: '12px', marginBottom: '14px', color: '#333' }}>
+              <div><span style={{ color: '#888' }}>Batch Name: </span><span style={{ fontFamily: 'monospace', color: '#1a3a5c' }}>{viewingInvoice.batch_id || '-'}</span></div>
+              <div><span style={{ color: '#888' }}>BU: </span>{viewingInvoice.bu || '-'}</div>
+              <div><span style={{ color: '#888' }}>Vendor: </span>{viewingInvoice.vendor_name || '-'}</div>
+              <div><span style={{ color: '#888' }}>Branch: </span>{viewingInvoice.branch_no || '-'}</div>
+              <div><span style={{ color: '#888' }}>Receive Date: </span>{fmtD(viewingInvoice.receive_date ? new Date(viewingInvoice.receive_date) : null)}</div>
+              <div><span style={{ color: '#888' }}>Exported At: </span>{fmtDT(viewingInvoice.exported_at ? new Date(viewingInvoice.exported_at) : null)}</div>
+              <div><span style={{ color: '#888' }}>Created By: </span>{viewingInvoice.created_by || '-'}</div>
+            </div>
+            {Array.isArray(viewingInvoice.lines) && viewingInvoice.lines.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '14px' }}>
+                <thead>
+                  <tr style={{ background: '#f8f9fa' }}>
+                    {['Description', 'Amount', 'Vat', 'WHT', 'Total'].map(h => (
+                      <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Description' ? 'left' : 'right', color: '#888', fontWeight: 500, borderBottom: '0.5px solid #e8eaf0' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewingInvoice.lines.map((l, i) => (
+                    <tr key={i} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                      <td style={{ padding: '6px 8px' }}>{l.desc || '-'}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtNum(l.amount)}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtNum(l.vat)}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtNum(l.wht)}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(l.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '18px', fontSize: '12px', paddingTop: '8px', borderTop: '0.5px solid #e8eaf0' }}>
+              <div>Amount: <strong>{fmtNum(viewingInvoice.amount)}</strong></div>
+              <div>Vat: <strong>{fmtNum(viewingInvoice.vat)}</strong></div>
+              <div>Total: <strong style={{ color: '#1a3a5c' }}>{fmtNum(viewingInvoice.net)}</strong></div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -6554,7 +6873,17 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   const vendorRuleItems = getCached('VendorRule');
   const smCodeItems     = getCached('SmCodeList') || [];
 
-  const handleStart    = (config) => { setBatchConfig({ ...config, batchId: `${config.bu}-${config.receiveDate}-${Date.now()}` }); setStep(2); };
+  // ── ID ภายในสำหรับผูก Invoice ใน bucket_list ระหว่าง Step 2 เท่านั้น (ไม่โชว์ User) ──
+  // ── batch_list จะถูกสร้างจริงตอน Export (Step 3) พร้อม Batch Name ที่ User พิมพ์เอง ──
+  // ── เพราะ Batch Bucket (Step 1-2) กับ Batch History (หลัง Export) เป็นคนละขั้นตอนกัน ──
+  const handleStart = (config) => {
+    const now = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}-${p2(now.getHours())}${p2(now.getMinutes())}${p2(now.getSeconds())}`;
+    const draftBatchId = `draft-${config.bu}-${stamp}`;
+    setBatchConfig({ ...config, batchId: draftBatchId });
+    setStep(2);
+  };
   const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
   const handleRunningChange = (bu, vals) => { if (!bu) return; setRunningOverride({ bu, ...vals }); };
 
@@ -6578,7 +6907,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
             userName={userName || currentUser?.email || ''} currentUser={currentUser}
             onRunningChange={handleRunningChange} />
         )}
-        {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} batchConfig={batchConfig} supplierItems={supplierItems} vendorRuleItems={vendorRuleItems} />}
+        {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} batchConfig={batchConfig} supplierItems={supplierItems} vendorRuleItems={vendorRuleItems} userName={userName || currentUser?.email || ''} currentUser={currentUser} />}
       </div>
     </div>
   );
