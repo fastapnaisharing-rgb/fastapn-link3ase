@@ -1,12 +1,9 @@
 /**
- * OCRScanWidget.js
+ * OCRScanWidget.js (v2 — Batch-based)
  * ================================================================
- * Component ใช้ร่วมกันได้ทุกเมนู (AP, VAT, ...) ผ่าน prop documentType
- * ไม่มีฟอร์มกรอก Invoice ของตัวเอง — แค่ Upload + Queue + แสดงผล OCR ดิบ
- * แล้วส่ง setId ต่อให้หน้าอื่น (เช่น APController.js) ไปกรอกฟอร์มจริง
- *
- * วิธีใช้:
- *   <OCRScanWidget documentType="ap_invoice" onReadyToReview={(setId) => {...}} />
+ * รองรับ Flow ใหม่: Upload 1 ไฟล์ = 1 Batch ที่อาจแบ่งเป็นหลาย "ชุด" (Set)
+ * แต่ละชุดจะ ready_for_review ทยอยออกมาเรื่อยๆ ไม่ต้องรอทั้งไฟล์เสร็จ
+ * (Concept: "เสร็จชุดไหน ปล่อยชุดนั้นออกมาเลย")
  * ================================================================
  */
 import React, { useState, useEffect, useCallback } from "react";
@@ -30,13 +27,21 @@ async function apiFetch(url, options = {}) {
   return res.json();
 }
 
+const SET_STATUS_LABEL = {
+  pending: "รอคิว",
+  processing: "กำลังประมวลผล...",
+  ready_for_review: "พร้อมตรวจสอบ",
+  approved: "อนุมัติแล้ว",
+};
+
 export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToReview }) {
-  const [setId, setSetId] = useState(null);
-  const [phase, setPhase] = useState("upload"); // upload | processing | ready
+  const [batchId, setBatchId] = useState(null);
+  const [phase, setPhase] = useState("upload"); // upload | processing
   const [uploading, setUploading] = useState(false);
-  const [status, setStatus] = useState(null);
-  const [queuePosition, setQueuePosition] = useState(null);
+  const [batchStatus, setBatchStatus] = useState(null); // { batch, pageProgress, sets }
   const [error, setError] = useState(null);
+  const [previewSetId, setPreviewSetId] = useState(null);
+  const [previewResult, setPreviewResult] = useState(null);
 
   // ---------------- Upload ----------------
   const handleFileChange = async (e) => {
@@ -61,7 +66,7 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
         throw new Error(body.error || `HTTP ${res.status}`);
       }
       const data = await res.json();
-      setSetId(data.setId);
+      setBatchId(data.batchId);
       setPhase("processing");
     } catch (err) {
       setError(err.message);
@@ -70,25 +75,16 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
     }
   };
 
-  // ---------------- Poll สถานะ ----------------
+  // ---------------- Poll สถานะ Batch ----------------
   const poll = useCallback(async () => {
-    if (!setId) return;
+    if (!batchId) return;
     try {
-      const data = await apiFetch(`${API_BASE}/status/${setId}`);
-      setStatus(data);
-
-      if (data.set.status === "ready_for_review") {
-        setPhase("ready");
-        return;
-      }
-      if (data.set.status === "pending") {
-        const posData = await apiFetch(`${API_BASE}/queue-position/${setId}`);
-        setQueuePosition(posData.queuePosition);
-      }
+      const data = await apiFetch(`${API_BASE}/batch-status/${batchId}`);
+      setBatchStatus(data);
     } catch (err) {
-      console.error("poll status error:", err);
+      console.error("poll batch-status error:", err);
     }
-  }, [setId]);
+  }, [batchId]);
 
   useEffect(() => {
     if (phase !== "processing") return;
@@ -97,73 +93,123 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
     return () => clearInterval(interval);
   }, [phase, poll]);
 
-  // ---------------- ไป Review ----------------
-  const handleGoReview = () => {
-    if (onReadyToReview) onReadyToReview(setId);
+  // ---------------- ดูผล OCR ของชุดที่เลือก ----------------
+  const handleViewResult = async (setId) => {
+    setPreviewSetId(setId);
+    setPreviewResult(null);
+    try {
+      const data = await apiFetch(`${API_BASE}/result/${setId}`);
+      setPreviewResult(data);
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   const handleReset = () => {
-    setSetId(null);
+    setBatchId(null);
     setPhase("upload");
-    setStatus(null);
-    setQueuePosition(null);
+    setBatchStatus(null);
     setError(null);
+    setPreviewSetId(null);
+    setPreviewResult(null);
   };
 
+  const donePages = batchStatus?.pageProgress?.done ?? 0;
+  const totalPages = batchStatus?.pageProgress?.total ?? 0;
+  const sets = batchStatus?.sets ?? [];
+
   return (
-    <div style={{ maxWidth: 500, margin: "2rem auto", textAlign: "center" }}>
+    <div style={{ maxWidth: 700, margin: "2rem auto" }}>
       {phase === "upload" && (
-        <div style={{ padding: "2rem", border: "2px dashed #ccc", borderRadius: 8 }}>
-          <input
-            type="file"
-            accept="application/pdf"
-            onChange={handleFileChange}
-            disabled={uploading}
-          />
+        <div style={{ padding: "2rem", border: "2px dashed #ccc", borderRadius: 8, textAlign: "center" }}>
+          <input type="file" accept="application/pdf" onChange={handleFileChange} disabled={uploading} />
           {uploading && <p>กำลังอัพโหลด + แยกหน้า...</p>}
           {error && <p style={{ color: "#d9534f" }}>เกิดข้อผิดพลาด: {error}</p>}
         </div>
       )}
 
-      {phase === "processing" && status && (
-        <div style={{ padding: "1.5rem", background: "#f5f5f5", borderRadius: 8 }}>
-          <p>กำลังประมวลผล OCR...</p>
-          <p>
-            {status.pages.filter((p) => p.status === "done").length} / {status.pages.length} หน้า
-          </p>
-          {queuePosition != null && queuePosition > 0 && (
-            <p>อยู่คิวลำดับที่ {queuePosition}</p>
-          )}
-        </div>
-      )}
+      {phase === "processing" && (
+        <div>
+          <div style={{ padding: "1rem 1.5rem", background: "#f5f5f5", borderRadius: 8, marginBottom: 16 }}>
+            <p style={{ margin: 0 }}>
+              ประมวลผล OCR แล้ว {donePages} / {totalPages} หน้า — พบ {sets.length} ชุดเอกสาร
+            </p>
+            <div style={{ width: "100%", background: "#ddd", borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
+              <div
+                style={{
+                  width: `${totalPages ? (donePages / totalPages) * 100 : 0}%`,
+                  background: "#5cb85c",
+                  height: 8,
+                  transition: "width 0.3s",
+                }}
+              />
+            </div>
+          </div>
 
-      {phase === "ready" && (
-        <div style={{ padding: "1.5rem", background: "#eaf6ea", borderRadius: 8 }}>
-          <p style={{ color: "#3c763d" }}>OCR เสร็จแล้ว พร้อมตรวจสอบ</p>
-          <button
-            onClick={handleGoReview}
-            style={{
-              marginTop: 12,
-              padding: "10px 24px",
-              background: "#5cb85c",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-            }}
-          >
-            ไปกรอกฟอร์ม / ตรวจสอบ
+          {/* รายการชุดที่ทยอย ready ออกมา */}
+          <div>
+            {sets.length === 0 && <p style={{ color: "#888" }}>ยังไม่มีชุดเอกสารเสร็จ รอสักครู่...</p>}
+            {sets.map((s, i) => (
+              <div
+                key={s.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "10px 14px",
+                  border: "1px solid #ddd",
+                  borderRadius: 6,
+                  marginBottom: 8,
+                  background: s.status === "ready_for_review" ? "#eaf6ea" : "#fff",
+                }}
+              >
+                <span>
+                  ชุดที่ {i + 1} — {s.total_pages} หน้า —{" "}
+                  <strong>{SET_STATUS_LABEL[s.status] || s.status}</strong>
+                </span>
+                {s.status === "ready_for_review" && (
+                  <div>
+                    <button onClick={() => handleViewResult(s.id)} style={{ marginRight: 8 }}>
+                      ดูผล OCR
+                    </button>
+                    {onReadyToReview && (
+                      <button onClick={() => onReadyToReview(s.id)}>ไปกรอกฟอร์ม</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <button onClick={handleReset} style={{ marginTop: 16, background: "none", border: "none", color: "#888", cursor: "pointer" }}>
+            ยกเลิก / อัพโหลดใหม่
           </button>
         </div>
       )}
 
-      {phase !== "upload" && (
-        <button
-          onClick={handleReset}
-          style={{ marginTop: 12, background: "none", border: "none", color: "#888", cursor: "pointer" }}
-        >
-          ยกเลิก / อัพโหลดใหม่
-        </button>
+      {/* Preview ผล OCR ดิบๆ ของชุดที่เลือก */}
+      {previewSetId && (
+        <div style={{ marginTop: 20, padding: 16, border: "1px solid #ddd", borderRadius: 8, background: "#fafafa" }}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <strong>ผล OCR — ชุด {previewSetId.slice(0, 8)}...</strong>
+            <button onClick={() => setPreviewSetId(null)}>ปิด</button>
+          </div>
+          {!previewResult && <p>กำลังโหลด...</p>}
+          {previewResult && (
+            <div style={{ marginTop: 10, maxHeight: 300, overflowY: "auto", fontSize: 13 }}>
+              {previewResult.pages.map((p) => (
+                <div key={p.page_number} style={{ marginBottom: 10 }}>
+                  <em style={{ color: "#888" }}>หน้า {p.page_number}</em>
+                  {(p.raw_ocr_result || []).map((t, idx) => (
+                    <div key={idx}>
+                      [{(t.confidence * 100).toFixed(0)}%] {t.text}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
