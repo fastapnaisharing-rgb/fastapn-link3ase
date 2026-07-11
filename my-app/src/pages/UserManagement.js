@@ -1652,11 +1652,17 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     }
 
     const saveUser = async (user) => {
-      const { error } = await db.from('user_roles').update({ role: user.role, permissions: user.permissions, updated_by: currentUser?.email }).eq('id', user.id);
+      const { error } = await db.from('user_roles').update({ role: user.role, permissions: user.permissions, system_prefix: user.system_prefix || null, updated_by: currentUser?.email }).eq('id', user.id);
       if (error) { setError('บันทึกไม่สำเร็จ: ' + error.message); return; }
       setSavedId(user.id);
       setTimeout(() => setSavedId(null), 2000);
     };
+
+    // ── System Prefix — Owner แก้ Prefix ของแต่ละ User ได้ตรงนี้ (ใช้ประกอบ Batch Name ตอน Export) ──
+    const handlePrefixInput = (id, value) => {
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, system_prefix: value.toUpperCase() } : u));
+    };
+    const handlePrefixBlur = (user) => { saveUser(user); };
 
     const handleRoleChange = (id, newRole) => {
       setUsers(prev => {
@@ -1757,6 +1763,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                   <tr>
                     <th style={S.thLeft}>Username</th>
                     <th style={S.thLeft}>Email</th>
+                    <th style={S.th}>Prefix</th>
                     <th style={S.th}>Role</th>
                     {PERMISSIONS.map(p => <th key={p} style={S.th}>{p}</th>)}
                     <th style={S.th}>Action</th>
@@ -1777,6 +1784,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                           </div>
                         </td>
                         <td style={S.tdLeft}>{u.email}</td>
+                        <td style={S.td}>
+                          <input value={u.system_prefix || ''} onChange={e => handlePrefixInput(u.id, e.target.value)} onBlur={() => handlePrefixBlur(u)}
+                            placeholder="เช่น KN" maxLength={10}
+                            style={{ width: '70px', padding: '4px 6px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', textAlign: 'center', textTransform: 'uppercase', fontFamily: 'monospace' }} />
+                        </td>
                         <td style={S.td}>
                           {canChangeRole ? (
                             <select value={u.role||'Editor'} onChange={e => handleRoleChange(u.id, e.target.value)}

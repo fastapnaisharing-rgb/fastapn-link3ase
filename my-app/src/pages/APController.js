@@ -4496,10 +4496,16 @@ function BatchSetup({ onStart, infoItems = [] }) {
   }, []);
 
   // ── View/Download ไฟล์ — ต้องแนบ Token ไป Fetch เป็น Blob (a href ธรรมดาส่ง Token ไม่ได้) ──
-  const handleFileAction = async (fileId, mode) => {
+  // ── View = Parse ด้วย SheetJS แสดง Preview ในแอปเลย (ไม่ใช่ให้ Browser เปิด ซึ่งจะ Download ไฟล์ .xls แทน) ──
+  // ── Download = ตั้ง a.download เป็นชื่อไฟล์จริงเสมอ (ก่อนหน้านี้ปล่อยว่าง เลยได้ชื่อเป็น UUID) ──
+  const [filePreview, setFilePreview] = useState(null); // { fileId, fileName, rows: [[...]] }
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [savingPreview, setSavingPreview] = useState(false);
+  const handleFileAction = async (fileId, mode, suggestedFileName) => {
     try {
       const token = sessionStorage.getItem('fastapn_token');
       const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      if (mode === 'view') setPreviewLoading(true);
       const res = await fetch(`${apiBase}/api/file-storage/${fileId}/download`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -4507,28 +4513,189 @@ function BatchSetup({ onStart, infoItems = [] }) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'โหลดไฟล์ไม่สำเร็จ');
       }
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
       if (mode === 'view') {
-        window.open(url, '_blank');
+        const arrayBuffer = await res.arrayBuffer();
+        const wb = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        setFilePreview({ fileId, fileName: suggestedFileName || 'preview.xls', rows });
       } else {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
+        a.href = url; a.download = suggestedFileName || ''; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => window.URL.revokeObjectURL(url), 10000);
       }
-      setTimeout(() => window.URL.revokeObjectURL(url), 10000);
     } catch (e) { alert('เกิดข้อผิดพลาด: ' + e.message); }
+    setPreviewLoading(false);
   };
 
+  // ── บันทึกที่แก้ใน Preview ทับไฟล์เดิมบน Server (Re-generate .xls จาก rows ที่แก้แล้ว) ──
+  const handleSavePreview = async () => {
+    if (!filePreview?.fileId) { alert('ไม่พบไฟล์สำหรับบันทึก'); return; }
+    setSavingPreview(true);
+    try {
+      const res = await apiFetch(`/file-storage/${filePreview.fileId}/update`, {
+        method: 'POST',
+        body: JSON.stringify({ rows: filePreview.rows }),
+      });
+      if (res?.error) throw new Error(res.error);
+      alert('บันทึกทับไฟล์เดิมสำเร็จ');
+    } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
+    setSavingPreview(false);
+  };
+
+  // ── ความสามารถให้เหมือน Batch Preview: Selection ลากได้, Copy (Ctrl+C), Resize คอลัมน์, Keyboard Nav ──
+  const [pvSel, setPvSel] = useState({ r1: -1, c1: -1, r2: -1, c2: -1 });
+  const [pvDragging, setPvDragging] = useState(false);
+  const [pvColWidths, setPvColWidths] = useState({});
+  const [pvCtxMenu, setPvCtxMenu] = useState({ show: false, x: 0, y: 0 });
+  const [pvCopied, setPvCopied] = useState(false);
+  const [pvEditingCell, setPvEditingCell] = useState(null); // { r, c }
+  const pvResizeRef = useRef(null);
+  const pvScrollRef = useRef(null);
+  const [pvResizing, setPvResizing] = useState(null);
+  const pvMousePosRef = useRef({ x: 0, y: 0 });
+  const pvFrozenRef = useRef(null);
+  const pvSyncingRef = useRef(false);
+
+  const pvColCount = filePreview ? Math.max(1, ...filePreview.rows.map(r => r.length)) : 0;
+  const pvPadCount = filePreview ? Math.max(0, 100 - filePreview.rows.length) : 0;
+  const pvColLetter = (ci) => { let n = ci, s = ''; do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0); return s; };
+  const isPvSel = (r, c) => {
+    const r1 = Math.min(pvSel.r1, pvSel.r2), r2 = Math.max(pvSel.r1, pvSel.r2);
+    const c1 = Math.min(pvSel.c1, pvSel.c2), c2 = Math.max(pvSel.c1, pvSel.c2);
+    return r >= r1 && r <= r2 && c >= c1 && c <= c2;
+  };
+  const handlePvCopy = () => {
+    if (pvSel.r1 < 0 || !filePreview) return;
+    const r1 = Math.min(pvSel.r1, pvSel.r2), r2 = Math.max(pvSel.r1, pvSel.r2);
+    const c1 = Math.min(pvSel.c1, pvSel.c2), c2 = Math.max(pvSel.c1, pvSel.c2);
+    const lines = [];
+    for (let r = r1; r <= r2; r++) {
+      const row = filePreview.rows[r]; if (!row) continue;
+      const cells = [];
+      for (let c = c1; c <= c2; c++) cells.push(String(row[c] ?? ''));
+      lines.push(cells.join('\t'));
+    }
+    const ta = document.createElement('textarea');
+    ta.value = lines.join('\n'); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+    setPvCopied(true); setTimeout(() => setPvCopied(false), 1200);
+  };
+
+  // ── Keyboard: Copy / Arrow Nav / Enter แก้ไข / Escape ปิด — Active เฉพาะตอน Modal เปิด ──
+  useEffect(() => {
+    if (!filePreview) return;
+    const onKey = (e) => {
+      if (pvEditingCell) { if (e.key === 'Escape') setPvEditingCell(null); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { handlePvCopy(); return; }
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+        setPvSel(s => {
+          if (s.r1 < 0) return s;
+          let r = s.r1, c = s.c1;
+          const maxR = filePreview.rows.length + pvPadCount - 1, maxC = pvColCount - 1;
+          if (e.key === 'ArrowUp') r = Math.max(0, r - 1);
+          if (e.key === 'ArrowDown') r = Math.min(maxR, r + 1);
+          if (e.key === 'ArrowLeft') c = Math.max(0, c - 1);
+          if (e.key === 'ArrowRight') c = Math.min(maxC, c + 1);
+          return { r1: r, c1: c, r2: r, c2: c };
+        });
+        // ── Auto-Scroll: เลื่อนจอให้ Active Cell อยู่ในมุมมองเสมอ (เหมือน Batch Preview) ──
+        setTimeout(() => {
+          if (!pvScrollRef.current) return;
+          const cont = pvScrollRef.current;
+          const activeCell = cont.querySelector('[data-pv-active="true"]');
+          if (activeCell) {
+            const cr = activeCell.getBoundingClientRect();
+            const pr = cont.getBoundingClientRect();
+            if (cr.right > pr.right - 10) cont.scrollLeft += cr.right - pr.right + 10;
+            else if (cr.left < pr.left + 46) cont.scrollLeft -= pr.left + 46 - cr.left;
+            if (cr.bottom > pr.bottom - 10) cont.scrollTop += cr.bottom - pr.bottom + 10;
+            else if (cr.top < pr.top + 10) cont.scrollTop -= pr.top + 10 - cr.top;
+          }
+        }, 0);
+      }
+      if (e.key === 'Enter' && pvSel.r1 >= 0 && pvSel.r1 === pvSel.r2 && pvSel.c1 === pvSel.c2) {
+        setPvEditingCell({ r: pvSel.r1, c: pvSel.c1 });
+      }
+      if (e.key === 'Escape') { setPvSel({ r1: -1, c1: -1, r2: -1, c2: -1 }); setPvCtxMenu(m => ({ ...m, show: false })); }
+    };
+    const onUp = (e) => {
+      if (e.button !== 2) setPvDragging(false);
+      if (pvResizeRef.current) { pvResizeRef.current = null; setPvResizing(null); }
+    };
+    const onCtxClose = (e) => { if (e.button !== 2) setPvCtxMenu(m => ({ ...m, show: false })); };
+    const onResizeMove = (e) => {
+      if (!pvResizeRef.current) return;
+      const { ci, startX, startW } = pvResizeRef.current;
+      const newW = Math.max(40, startW + e.clientX - startX);
+      setPvColWidths(w => ({ ...w, [ci]: newW }));
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('click', onCtxClose);
+    window.addEventListener('mousemove', onResizeMove);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('click', onCtxClose);
+      window.removeEventListener('mousemove', onResizeMove);
+    };
+  }, [filePreview, pvSel, pvEditingCell, pvColCount]);
+
+  // ── Edge Auto-Scroll ตอนลาก Selection ใกล้ขอบจอ (Feature ที่ขาดไปจาก Batch Preview) ──
+  // ── เมาส์นิ่งใต้ขอบจอระหว่างลาก จะ Scroll ต่อเนื่องเอง + คำนวณ Selection ตามตำแหน่งเมาส์ ──
+  useEffect(() => {
+    if (!filePreview || !pvDragging) return;
+    const ZONE = 40, SPEED = 12;
+    const tick = () => {
+      const cont = pvScrollRef.current;
+      if (!cont) return;
+      const rect = cont.getBoundingClientRect();
+      const { x, y } = pvMousePosRef.current;
+      let scrolled = false;
+      if (x > rect.right - ZONE) { cont.scrollLeft += SPEED; scrolled = true; }
+      else if (x < rect.left + ZONE) { cont.scrollLeft -= SPEED; scrolled = true; }
+      if (y > rect.bottom - ZONE) { cont.scrollTop += SPEED; scrolled = true; }
+      else if (y < rect.top + ZONE) { cont.scrollTop -= SPEED; scrolled = true; }
+      if (scrolled) {
+        const el = document.elementFromPoint(x, y);
+        const td = el?.closest('[data-pv-r]');
+        if (td) {
+          const r = parseInt(td.getAttribute('data-pv-r'), 10);
+          const c = parseInt(td.getAttribute('data-pv-c'), 10);
+          if (!isNaN(r) && !isNaN(c)) setPvSel(s => (s.r2 === r && s.c2 === c) ? s : { ...s, r2: r, c2: c });
+        }
+      }
+    };
+    const id = setInterval(tick, 16);
+    return () => clearInterval(id);
+  }, [filePreview, pvDragging]);
+
   // ── Report to ผู้ตรวจ — เรียกหลังมีไฟล์แล้วเท่านั้น (แยกจาก Generate) ──
-  const handleReportTo = async (fileId) => {
+  const handleReportTo = async (batch) => {
     if (!reportPickerValue) return;
     setReportSending(true);
     try {
-      const res = await apiFetch(`/file-storage/${fileId}/report-to`, {
+      const res = await apiFetch(`/file-storage/${batch.file_url}/report-to`, {
         method: 'POST',
         body: JSON.stringify({ reportTo: reportPickerValue }),
       });
       if (res?.error) throw new Error(res.error);
+
+      // ── พึ่งมีการ Report to ผู้ตรวจจริง ถึงเปลี่ยน batch_list เป็น "Done" ──
+      // ── (แค่ Export ไฟล์เสร็จ ยังนับเป็น "Processing" อยู่ ตามที่ตกลงกันไว้) ──
+      const { error: doneErr } = await db.from('batch_list').update({ status: 'done' }).eq('id', batch.id);
+      if (doneErr) console.error('[batch_list done on report]', doneErr);
+      else {
+        setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
+        setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
+      }
+
       setReportPickerId(null);
       setReportPickerValue('');
       alert('ส่งตรวจสำเร็จ');
@@ -4646,22 +4813,34 @@ function BatchSetup({ onStart, infoItems = [] }) {
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: '22%' }} /><col style={{ width: '9%' }} /><col style={{ width: '10%' }} />
-              <col style={{ width: '11%' }} /><col style={{ width: historyTab === 'all' ? '18%' : '31%' }} />
-              <col style={{ width: '9%' }} /><col style={{ width: '8%' }} />{historyTab === 'all' && <col style={{ width: '13%' }} />}
+              {historyTab === 'all' ? (
+                <>
+                  <col style={{ width: '16%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '10%' }} /><col style={{ width: '12%' }} /><col style={{ width: '10%' }} />
+                  <col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+                </>
+              ) : (
+                <>
+                  <col style={{ width: '16%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '12%' }} /><col style={{ width: '18%' }} /><col style={{ width: '10%' }} />
+                  <col style={{ width: '6%' }} />
+                </>
+              )}
             </colgroup>
             <thead>
               <tr style={{ background: '#f8f9fa' }}>
-                {['Batch Name','Business Unit','Receive Date','Total Amount','Attachment','Status','Action',...(historyTab === 'all' ? ['Created By'] : [])].map(h => (
+                {['Batch Name','BU','Receive Date','Amount','Vat','Total','Filename','Attachment','Status','Action',...(historyTab === 'all' ? ['Created By'] : [])].map(h => (
                   <th key={h} style={{ padding: '7px 9px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {historyLoading ? (
-                <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
+                <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
-                <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}</td></tr>
+                <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
                 const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
@@ -4676,13 +4855,20 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     </td>
                     <td style={{ padding: '8px 9px', overflow: 'hidden' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{b.bu || '-'}</span></td>
                     <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rds}</td>
+                    <td style={{ padding: '8px 9px', color: '#555', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.amount != null ? Math.round(b.amount).toLocaleString('th-TH') : '—'}</td>
+                    <td style={{ padding: '8px 9px', color: '#555', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.vat != null ? Math.round(b.vat).toLocaleString('th-TH') : '—'}</td>
                     <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}</td>
+                    <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#555', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={b.file_name || ''}>
+                      {b.file_name || <span style={{ color: '#ccc', fontFamily: 'sans-serif' }}>—</span>}
+                    </td>
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+                      <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
                         {b.file_url ? (
                           <>
-                            <button onClick={() => handleFileAction(b.file_url, 'view')} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>👁 View</button>
-                            <button onClick={() => handleFileAction(b.file_url, 'download')} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>⬇ Download</button>
+                            <button onClick={() => handleFileAction(b.file_url, 'view', b.file_name)} title="View"
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '16px', cursor: 'pointer' }}>👁</button>
+                            <button onClick={() => handleFileAction(b.file_url, 'download', b.file_name)} title="Download"
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '16px', cursor: 'pointer' }}>⬇</button>
                           </>
                         ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
                       </div>
@@ -4690,26 +4876,6 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>{st.label}</span>
-                        {b.status === 'done' && b.file_url && (
-                          reportPickerId === b.id ? (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              <select value={reportPickerValue} onChange={e => setReportPickerValue(e.target.value)}
-                                style={{ fontSize: '10px', padding: '2px 4px', borderRadius: '4px', border: '0.5px solid #ddd' }}>
-                                <option value="">-- เลือกผู้ตรวจ --</option>
-                                {reportReviewers.map(u => (
-                                  <option key={u.username || u.email} value={u.username || u.email}>{u.username || u.email}</option>
-                                ))}
-                              </select>
-                              <button onClick={() => handleReportTo(b.file_url)} disabled={!reportPickerValue || reportSending}
-                                style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', border: 'none', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>ส่ง</button>
-                              <button onClick={() => { setReportPickerId(null); setReportPickerValue(''); }}
-                                style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', border: 'none', background: '#f0f0f0', color: '#666', cursor: 'pointer' }}>✕</button>
-                            </span>
-                          ) : (
-                            <button onClick={() => { setReportPickerId(b.id); setReportPickerValue(''); }}
-                              style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', cursor: 'pointer' }}>📤 Report</button>
-                          )
-                        )}
                       </div>
                     </td>
                     <td style={{ padding: '8px 9px', textAlign: 'center' }}>
@@ -4747,6 +4913,176 @@ function BatchSetup({ onStart, infoItems = [] }) {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+      {previewLoading && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'white', borderRadius: '10px', padding: '20px 28px', fontSize: '13px', color: '#555' }}>กำลังเปิดไฟล์...</div>
+        </div>
+      )}
+      {filePreview && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setFilePreview(null)}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '92vw', maxWidth: '1100px', height: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '0.5px solid #e8eaf0', flexShrink: 0 }}>
+              <div style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>📄 {filePreview.fileName}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {pvCopied && <span style={{ fontSize: '11px', color: '#1a7a1a' }}>Copied!</span>}
+                <button onClick={handleSavePreview} disabled={savingPreview}
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 14px', borderRadius: '6px', border: 'none', background: savingPreview ? '#ccc' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: 500, cursor: savingPreview ? 'default' : 'pointer' }}>
+                  {savingPreview ? 'กำลังบันทึก...' : '💾 Save'}
+                </button>
+                <button onClick={() => setFilePreview(null)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999' }}>✕</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+              {/* ── ตาราง Freeze คอลัมน์ # — Sync Scroll แนวตั้งกับตารางข้อมูลด้วย JS แทน CSS sticky ── */}
+              <style>{`.pv-frozen-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }`}</style>
+              <div ref={pvFrozenRef} className="pv-frozen-scroll" style={{ overflowY: 'auto', overflowX: 'hidden', flexShrink: 0, scrollbarWidth: 'none', msOverflowStyle: 'none', borderRight: '1.5px solid #1a3a5c', marginBottom: '16px' }}
+                onScroll={(e) => {
+                  if (pvSyncingRef.current) { pvSyncingRef.current = false; return; }
+                  if (pvScrollRef.current) { pvSyncingRef.current = true; pvScrollRef.current.scrollTop = e.target.scrollTop; }
+                }}>
+                <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '11px' }}>
+                  <thead>
+                    <tr>
+                      <th onClick={() => setPvSel({ r1: 0, c1: 0, r2: filePreview.rows.length + pvPadCount - 1, c2: pvColCount - 1 })}
+                        style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.4)', padding: '2px 5px', textAlign: 'center', fontSize: '9px', position: 'sticky', top: 0, zIndex: 2, minWidth: '36px', width: '36px', height: '18px', boxSizing: 'border-box', cursor: 'pointer' }} title="Select all">#</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filePreview.rows.map((row, ri) => {
+                      const isBookRow = ri === 0;
+                      const isH = !isBookRow && row[0] === 'H';
+                      const prevIsH = ri > 1 && filePreview.rows[ri - 1]?.[0] === 'H';
+                      const showDivider = isH && !prevIsH && ri > 1;
+                      return (
+                        <React.Fragment key={ri}>
+                          {showDivider && (
+                            <tr><td style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td></tr>
+                          )}
+                          <tr>
+                            <td onClick={() => setPvSel({ r1: ri, c1: 0, r2: ri, c2: pvColCount - 1 })}
+                              style={{ padding: '3px 5px', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: isBookRow ? '#f0f0f0' : isH ? '#dbeafa' : '#f5f5f5', color: isH ? '#0C447C' : '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{ri + 1}</td>
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
+                    {Array.from({ length: pvPadCount }).map((_, i) => {
+                      const rNum = filePreview.rows.length + i + 1;
+                      return (
+                        <tr key={`pad-${i}`}>
+                          <td onClick={() => setPvSel({ r1: filePreview.rows.length + i, c1: 0, r2: filePreview.rows.length + i, c2: pvColCount - 1 })}
+                            style={{ padding: '3px 5px', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: '#f5f5f5', color: '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{rNum}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {/* ── ตารางข้อมูล — Scroll ปกติทั้งแนวตั้ง/แนวนอน ── */}
+              <div ref={pvScrollRef} style={{ flex: 1, overflow: 'auto', padding: '0 18px 0 0', marginBottom: '16px', userSelect: 'none', position: 'relative' }}
+                onContextMenu={(e) => { e.preventDefault(); setPvCtxMenu({ show: true, x: e.clientX, y: e.clientY }); }}
+                onMouseMove={(e) => { pvMousePosRef.current = { x: e.clientX, y: e.clientY }; }}
+                onScroll={(e) => {
+                  if (pvSyncingRef.current) { pvSyncingRef.current = false; return; }
+                  if (pvFrozenRef.current) { pvSyncingRef.current = true; pvFrozenRef.current.scrollTop = e.target.scrollTop; }
+                }}>
+                <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '11px', width: 'auto', minWidth: '100%' }}>
+                  <thead>
+                    <tr>
+                      {Array.from({ length: pvColCount }).map((_, ci) => (
+                        <th key={ci}
+                          onClick={(e) => { if (e.shiftKey && pvSel.c1 >= 0) setPvSel(s => ({ ...s, c2: ci, r1: 0, r2: filePreview.rows.length + pvPadCount - 1 })); else setPvSel({ r1: 0, c1: ci, r2: filePreview.rows.length + pvPadCount - 1, c2: ci }); }}
+                          style={{ background: '#2c4a6e', color: 'rgba(255,255,255,0.8)', padding: '2px 0 2px 5px', textAlign: 'center', fontSize: '9px', fontWeight: 400, borderRight: '0.5px solid rgba(255,255,255,0.08)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2, cursor: 'pointer', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '18px', boxSizing: 'border-box' }}>
+                          {pvColLetter(ci)}
+                          <div onMouseDown={(e) => { e.stopPropagation(); pvResizeRef.current = { ci, startX: e.clientX, startW: pvColWidths[ci] || 90 }; setPvResizing(ci); }}
+                            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '4px', cursor: 'col-resize', background: pvResizing === ci ? 'rgba(255,255,255,0.5)' : 'transparent' }} />
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filePreview.rows.map((row, ri) => {
+                      const isBookRow = ri === 0;
+                      const isH = !isBookRow && row[0] === 'H';
+                      const prevIsH = ri > 1 && filePreview.rows[ri - 1]?.[0] === 'H';
+                      const showDivider = isH && !prevIsH && ri > 1;
+                      return (
+                        <React.Fragment key={ri}>
+                          {showDivider && (
+                            <tr>{row.map((_, ci) => <td key={ci} style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td>)}</tr>
+                          )}
+                          <tr style={{ background: isBookRow ? '#f8f9fa' : isH ? '#E6F1FB' : 'white' }}>
+                            {row.map((cell, ci) => {
+                              const editing = pvEditingCell?.r === ri && pvEditingCell?.c === ci;
+                              return (
+                                <td key={ci}
+                                  data-pv-r={ri} data-pv-c={ci}
+                                  data-pv-active={pvSel.r1 === ri && pvSel.r2 === ri && pvSel.c1 === ci && pvSel.c2 === ci ? 'true' : undefined}
+                                  onMouseDown={(e) => { if (e.button === 2) return; if (e.shiftKey && pvSel.r1 >= 0) setPvSel(s => ({ ...s, r2: ri, c2: ci })); else { setPvSel({ r1: ri, c1: ci, r2: ri, c2: ci }); setPvDragging(true); } }}
+                                  onMouseOver={() => { if (pvDragging) setPvSel(s => ({ ...s, r2: ri, c2: ci })); }}
+                                  onDoubleClick={() => setPvEditingCell({ r: ri, c: ci })}
+                                  style={{ padding: 0, borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', maxWidth: '160px', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '22px', boxSizing: 'border-box', color: isBookRow ? '#aaa' : isH ? '#0C447C' : '#333', background: isPvSel(ri, ci) ? '#c8dffe' : undefined, outline: pvCopied && isPvSel(ri, ci) ? '2px dashed #1a7a1a' : isPvSel(ri, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
+                                  {editing ? (
+                                    <input autoFocus value={cell === null || cell === undefined ? '' : String(cell)}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        setFilePreview(prev => ({
+                                          ...prev,
+                                          rows: prev.rows.map((r, rIdx) => rIdx !== ri ? r : r.map((c, cIdx) => cIdx === ci ? val : c)),
+                                        }));
+                                      }}
+                                      onBlur={() => setPvEditingCell(null)}
+                                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Tab') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
+                                      style={{ width: '100%', height: '100%', display: 'block', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', padding: '0 5px', margin: 0, fontSize: '11px', lineHeight: '21px', fontFamily: 'monospace', color: 'inherit' }} />
+                                  ) : (
+                                    <div style={{ padding: '0 5px', height: '100%', lineHeight: '21px', boxSizing: 'border-box', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px', fontFamily: 'monospace' }}>
+                                      {cell === '' || cell === null || cell === undefined ? '' : String(cell)}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
+                    {Array.from({ length: pvPadCount }).map((_, i) => {
+                      const rIdx = filePreview.rows.length + i;
+                      return (
+                        <tr key={`pad-${i}`}>
+                          {Array.from({ length: pvColCount }).map((_, ci) => (
+                            <td key={ci}
+                              data-pv-r={rIdx} data-pv-c={ci}
+                              onMouseDown={(e) => { if (e.button === 2) return; if (e.shiftKey && pvSel.r1 >= 0) setPvSel(s => ({ ...s, r2: rIdx, c2: ci })); else { setPvSel({ r1: rIdx, c1: ci, r2: rIdx, c2: ci }); setPvDragging(true); } }}
+                              onMouseOver={() => { if (pvDragging) setPvSel(s => ({ ...s, r2: rIdx, c2: ci })); }}
+                              style={{ padding: '3px 5px', borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', height: '22px', boxSizing: 'border-box', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, background: isPvSel(rIdx, ci) ? '#c8dffe' : 'white', outline: isPvSel(rIdx, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}></td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {pvCtxMenu.show && (
+        <div style={{ position: 'fixed', left: pvCtxMenu.x, top: pvCtxMenu.y, background: 'white', border: '0.5px solid #e8eaf0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 10004, minWidth: '160px', padding: '4px 0', fontSize: '12px' }}
+          onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+          <div onClick={() => { handlePvCopy(); setPvCtxMenu(m => ({ ...m, show: false })); }}
+            style={{ padding: '7px 14px', cursor: 'pointer', color: '#333' }}
+            onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'} onMouseLeave={e => e.currentTarget.style.background = 'white'}>
+            Copy (Ctrl+C)
+          </div>
+          <div onClick={() => { setPvSel({ r1: 0, c1: 0, r2: filePreview.rows.length + pvPadCount - 1, c2: pvColCount - 1 }); setPvCtxMenu(m => ({ ...m, show: false })); }}
+            style={{ padding: '7px 14px', cursor: 'pointer', color: '#333' }}
+            onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'} onMouseLeave={e => e.currentTarget.style.background = 'white'}>
+            Select All
           </div>
         </div>
       )}
@@ -5747,11 +6083,57 @@ const handleSelectBranch = (item, meta = {}) => {
 }
 
 // ── GenerateExport (Batch Preview) ───────────────────────────────────────────
-function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, supplierItems = [], vendorRuleItems = [], userName = '', currentUser }) {
+function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, supplierItems = [], vendorRuleItems = [], userName = '', currentUser, systemPrefix = '' }) {
   const [exported, setExported]   = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
   const [batchName, setBatchName] = useState('');
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [reservingRunning, setReservingRunning] = useState(false);
+
+  // ── ส่วนคงที่ของ Batch Name: {BU}-NMR-{YYYYMMDD}-OTH (NMR/OTH เป็นค่า Fix ตายตัว) ──
+  const baseBatchName = (() => {
+    const now = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const ymd = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}`;
+    return `${batchConfig?.bu || 'BU'}-NMR-${ymd}-OTH`;
+  })();
+
+  // ── ชื่อไฟล์ (คนละเรื่องกับ Batch Name — Batch Name มี "/" ใช้เป็นชื่อไฟล์ไม่ได้) ──
+  // ── Format: UL{YYYYMMDD}_{HHMM}{BU}.xls — "UL" เป็นค่า Fix ตายตัว ไม่ใช้ System Prefix ──
+  const previewFileName = (() => {
+    const now = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const ymd = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}`;
+    const hm = `${p2(now.getHours())}${p2(now.getMinutes())}`;
+    return `UL${ymd}_${hm}${batchConfig?.bu || 'BU'}.xls`;
+  })();
+
+  // ── กด Generate & Export → ขอเลข Running จริงจาก Backend (Lazy Reset ต่อ BU ต่อวัน) ──
+  // ── แล้วประกอบเป็น Batch Name เต็ม: {Base}/{SystemPrefix}-{Running} ──────────────
+  const openExportModal = async () => {
+    if (!invoices.length) { alert('No invoices in batch'); return; }
+    if (batchName.trim()) { setShowExportModal(true); return; } // เคยตั้ง/แก้เองแล้ว ไม่ขอเลขใหม่ซ้ำ
+    const buId = batchConfig?.buInfo?.id;
+    const prefixPart = systemPrefix || 'XXX';
+    setReservingRunning(true);
+    try {
+      if (buId) {
+        const result = await apiFetch(`/company_list/${buId}/reserve-unique-number`, {
+          method: 'POST',
+          body: JSON.stringify({ field: 'batch_running', padLength: 3 }),
+        });
+        setBatchName(`${baseBatchName}/${prefixPart}-${result.formatted}`);
+      } else {
+        setBatchName(`${baseBatchName}/${prefixPart}-001`);
+      }
+    } catch (e) {
+      console.error('[batch_running reserve]', e);
+      setBatchName(`${baseBatchName}/${prefixPart}-001`);
+    }
+    setReservingRunning(false);
+    setShowExportModal(true);
+  };
 
   // ── Report to ผู้ตรวจ: โหลดรายชื่อ User ที่มี Permission Manual ──
   const [reviewers, setReviewers] = useState([]);
@@ -6081,21 +6463,26 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     try {
       // ── สร้าง batch_list ก่อน (Tracking ใหม่ของ Batch History แยกจาก Batch Bucket) ──
       // ── เช็คชื่อซ้ำไปในตัว เพราะ batch_id เป็น Unique — ถ้าซ้ำจะ Error ตรงนี้ก่อนแตะข้อมูลอื่น ──
-      const { error: insErr } = await db.from('batch_list').insert([{
+      // ── ต้องจับ id ที่ Insert ได้กลับมาด้วย เพราะ db.update() ของระบบนี้ Update ผ่าน id เท่านั้น ──
+      const { data: insData, error: insErr } = await db.from('batch_list').insert([{
         batch_id: newBatchId,
         bu: batchConfig.bu,
         receive_date: batchConfig.receiveDate,
         status: 'processing',
         created_by: userName || currentUser?.email || '',
-      }]);
+      }]).select().single();
       if (insErr) throw new Error('ตั้งชื่อ Batch ไม่สำเร็จ (อาจซ้ำกับ Batch ที่มีอยู่แล้ว): ' + insErr.message);
+      const batchListId = insData?.id;
 
       // ── Rename Invoice ทุกใบจาก Draft ID (ตอน Start) → Batch Name จริง + Mark done ──
-      const oldDraftId = batchConfig.batchId;
+      // ── db.update() ของระบบนี้ต้องระบุ id เท่านั้น (ไม่รองรับ .eq('batch_id', ...) แบบ Bulk) ──
+      // ── เลยต้องหา id ของ Invoice ทุกใบก่อน แล้ว Update ผ่าน .in('id', ids) แทน ──
+      const idsToRename = invoices.filter(inv => inv.id).map(inv => inv.id);
+      if (!idsToRename.length) throw new Error('ไม่พบ Invoice ที่บันทึกไว้ในระบบ (ยังไม่มี id) — ลองกลับไป Invoice Entry แล้วรอ Sync สักครู่');
       const { error: renameErr } = await db.from('bucket_list')
         .update({ batch_id: newBatchId, status: 'done', exported_at: new Date().toISOString() })
-        .eq('batch_id', oldDraftId);
-      if (renameErr) throw renameErr;
+        .in('id', idsToRename);
+      if (renameErr) throw new Error('ผูก Invoice เข้า Batch ไม่สำเร็จ: ' + (renameErr.message || JSON.stringify(renameErr)));
 
       // ── สร้างไฟล์ Excel จริง เก็บลง Server + Report to ผู้ตรวจ (ถ้าเลือกไว้) ──
       // ── เพิ่มแถว bookLabel (เช่น "CDS BOOK") นำหน้าเหมือนที่โชว์ใน Batch Preview ──
@@ -6110,20 +6497,33 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
           rows: excelRows,
         }),
       });
-      if (genRes?.error) throw new Error(genRes.error);
+      if (genRes?.error) throw new Error('สร้างไฟล์ Excel ไม่สำเร็จ: ' + (typeof genRes.error === 'string' ? genRes.error : JSON.stringify(genRes.error)));
 
-      // ── ปิดงาน batch_list: status=done + total_amount ให้ My Jobs/All Jobs แสดงถูก ──
-      const totalAmount = invoices.reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0);
-      const { error: doneErr } = await db.from('batch_list')
-        .update({ status: 'done', total_amount: totalAmount })
-        .eq('batch_id', newBatchId);
-      if (doneErr) console.error('[batch_list done update]', doneErr);
+      // ── บันทึก Amount/Vat/Total ให้ My Jobs/All Jobs แสดงถูก — ยังคงสถานะ "processing" ไว้ ──
+      // ── ไม่เปลี่ยนเป็น "done" ที่นี่ เพราะ Done จริง ๆ ต้องรอมีการ Report to ผู้ตรวจก่อน ──
+      // ── ใช้ id (จาก Insert ด้านบน) แทน batch_id เพราะ db.update() รองรับแค่ id เท่านั้น ──
+      const sumAmount = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+      const sumVat = invoices.reduce((s, inv) => s + (parseFloat(inv.vat) || 0), 0);
+      const sumTotal = invoices.reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0);
+      if (batchListId) {
+        const { error: sumErr } = await db.from('batch_list')
+          .update({ amount: sumAmount, vat: sumVat, total_amount: sumTotal })
+          .eq('id', batchListId);
+        if (sumErr) console.error('[batch_list amount/vat update]', sumErr);
+      } else {
+        console.error('[batch_list amount/vat update] ไม่มี batchListId — ข้าม Update (แต่ไฟล์ Excel สร้างสำเร็จแล้ว)');
+      }
 
       setExported(true);
       setShowCompleteBanner(true);
       // ── หน่วง 2 วิให้เห็น Banner ก่อน แล้ว Auto กลับ Batch Setup ──
       setTimeout(() => { onNewBatch(); }, 2000);
-    } catch (e) { alert('Export failed: ' + e.message); }
+    } catch (e) {
+      console.error('[doExport failed]', e);
+      const msg = e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console เพิ่มเติม)';
+      alert('Export failed: ' + msg);
+      setBatchName(''); // ล้างชื่อเดิม กันลองใหม่แล้วชนกับ batch_list ที่ Insert ไปแล้วบางส่วน
+    }
     setExporting(false);
   };
 
@@ -6133,13 +6533,47 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       onMouseLeave={() => setIsDragging(false)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexShrink: 0, gap: '10px' }}>
         <button style={btnOutline} onClick={onBack}>&#8592; Back to edit</button>
-        <input value={batchName} onChange={e => setBatchName(e.target.value)} placeholder="ตั้งชื่อ Batch ก่อน Export..." disabled={exporting || exported}
-          style={{ flex: 1, maxWidth: '320px', height: '34px', padding: '0 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none' }} />
-        <button disabled={exporting || exported} onClick={doExport}
-          style={{ ...btnPrimary, background: exported ? '#27500A' : '#1a3a5c', opacity: exporting ? 0.6 : 1, cursor: exporting || exported ? 'default' : 'pointer' }}>
-          {exported ? 'Exported' : exporting ? 'Exporting...' : 'Generate & Export'}
+        <button disabled={exporting || exported || reservingRunning} onClick={openExportModal}
+          style={{ ...btnPrimary, background: exported ? '#27500A' : '#1a3a5c', opacity: (exporting || reservingRunning) ? 0.6 : 1, cursor: (exporting || exported || reservingRunning) ? 'default' : 'pointer' }}>
+          {exported ? 'Exported' : exporting ? 'Exporting...' : reservingRunning ? 'กำลังเตรียม...' : 'Generate & Export'}
         </button>
       </div>
+      {showExportModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => !exporting && setShowExportModal(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '420px', maxWidth: '92vw', padding: '24px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <div style={{ fontSize: '16px', fontWeight: 500, color: '#1a3a5c' }}>Export batch</div>
+              <button onClick={() => !exporting && setShowExportModal(false)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999' }}>✕</button>
+            </div>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '18px' }}>ตั้งชื่อ Batch ก่อนสร้างไฟล์ Excel</div>
+
+            <label style={{ fontSize: '12px', color: '#888', display: 'block', marginBottom: '6px' }}>Batch name</label>
+            <input value={batchName} onChange={e => setBatchName(e.target.value)} disabled={exporting}
+              style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', marginBottom: '14px' }} />
+
+            <label style={{ fontSize: '12px', color: '#888', display: 'block', marginBottom: '6px' }}>File type</label>
+            <select disabled style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', marginBottom: '16px', color: '#555', background: '#fafafa' }}>
+              <option>xls (Excel 97-2003)</option>
+            </select>
+
+            <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '18px' }}>
+              <div style={{ fontSize: '10px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.03em' }}>ชื่อไฟล์ที่จะได้</div>
+              <div style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>{previewFileName}</div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button onClick={() => setShowExportModal(false)} disabled={exporting}
+                style={{ padding: '7px 16px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '13px', cursor: exporting ? 'default' : 'pointer' }}>Cancel</button>
+              <button onClick={() => { setShowExportModal(false); doExport(); }} disabled={exporting}
+                style={{ padding: '7px 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '13px', fontWeight: 500, cursor: exporting ? 'default' : 'pointer' }}>
+                {exporting ? 'Exporting...' : 'Export'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showCompleteBanner && (
         <div style={{ position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, background: '#EAF3DE', color: '#27500A', padding: '12px 24px', borderRadius: '8px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}>
           ✓ Export Complete — {invoices.length} ใบ
@@ -6468,9 +6902,14 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       const { error } = await db.from('bucket_list').update({ status: 'pending', restored_at: new Date().toISOString() }).in('id', ids);
       if (error) throw error;
       // ── ไม่มี Invoice สถานะ done เหลือใน Batch นี้แล้ว → ลบแถว batch_list ทิ้งด้วย ──
+      // ── delete() ของระบบนี้ต้องระบุ id เท่านั้น (เหมือน update()) — เลย select หา id ก่อน ──
       if (g.batch_id) {
-        const { error: bErr } = await db.from('batch_list').delete().eq('batch_id', g.batch_id);
-        if (bErr) console.error('[batch_list delete on restore]', bErr);
+        const { data: blRow, error: selErr } = await db.from('batch_list').select('id').eq('batch_id', g.batch_id).single();
+        if (selErr) console.error('[batch_list find on restore]', selErr);
+        else if (blRow?.id) {
+          const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
+          if (bErr) console.error('[batch_list delete on restore]', bErr);
+        }
       }
       setRowsData(prev => prev.filter(r => !ids.includes(r.id)));
       setSelectedRows(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
@@ -6492,9 +6931,14 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       const { error } = await db.from('bucket_list').delete().in('id', ids);
       if (error) throw error;
       // ── ลบแถว batch_list ของ Batch นี้ทิ้งด้วย เพราะไม่มี Invoice เหลืออยู่แล้ว ──
+      // ── delete() ของระบบนี้ต้องระบุ id เท่านั้น (เหมือน update()) — เลย select หา id ก่อน ──
       if (g.batch_id) {
-        const { error: bErr } = await db.from('batch_list').delete().eq('batch_id', g.batch_id);
-        if (bErr) console.error('[batch_list delete on delete]', bErr);
+        const { data: blRow, error: selErr } = await db.from('batch_list').select('id').eq('batch_id', g.batch_id).single();
+        if (selErr) console.error('[batch_list find on delete]', selErr);
+        else if (blRow?.id) {
+          const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
+          if (bErr) console.error('[batch_list delete on delete]', bErr);
+        }
       }
       setRowsData(prev => prev.filter(r => !ids.includes(r.id)));
       setSelectedRows(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
@@ -6646,18 +7090,23 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
-            {canSeeAll && <col style={{ width: '32px' }} />}
-            <col style={{ width: '190px' }} />
-            <col style={{ width: '110px' }} />
-            <col />
-            <col style={{ width: '60px' }} />
-            <col style={{ width: '100px' }} />
-            <col style={{ width: '90px' }} />
-            <col style={{ width: '80px' }} />
-            <col style={{ width: '90px' }} />
-            <col style={{ width: '110px' }} />
-            <col style={{ width: '140px' }} />
-            {mainTab === 'invoicehistory' && <col style={{ width: '100px' }} />}
+            {(() => {
+              const widths = [
+                ...(canSeeAll ? [3] : []),
+                18, // Batch name — ขยายจาก 190px ตายตัว เพราะ Format ใหม่ยาวขึ้น (มี Prefix+Running ต่อท้าย)
+                9,  // Invoice
+                20, // Vendor — จำกัดสัดส่วนไว้ ไม่ดูดพื้นที่ว่างทั้งหมดเหมือนเดิม
+                6,  // BU
+                9,  // Receive date
+                8,  // Amount
+                7,  // Vat
+                8,  // Total
+                8,  // Action
+                7,  // Exported at
+                ...(mainTab === 'invoicehistory' ? [8] : []), // Created by
+              ];
+              return widths.map((w, i) => <col key={i} style={{ width: `${w}%` }} />);
+            })()}
           </colgroup>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
@@ -6846,6 +7295,49 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
 
+  // ── System Prefix ต่อ User — ใช้ประกอบ Batch Name ตอน Export ────────────────
+  // ── ถ้ายังไม่เคยตั้ง จะเด้ง Popup ให้ตั้งครั้งแรก (แก้ทีหลังได้เสมอ ไม่ล็อกถาวร) ──
+  const [systemPrefix, setSystemPrefix] = useState('');
+  const [prefixLoaded, setPrefixLoaded] = useState(false);
+  const [showPrefixModal, setShowPrefixModal] = useState(false);
+  const [prefixInput, setPrefixInput] = useState('');
+  const [savingPrefix, setSavingPrefix] = useState(false);
+  const [userRoleRowId, setUserRoleRowId] = useState(null);
+
+  useEffect(() => {
+    const me = userName || currentUser?.email || '';
+    if (!me) return;
+    apiFetch('/user_roles').then(list => {
+      const mine = (list || []).find(u =>
+        String(u.username || '').toLowerCase() === me.toLowerCase() ||
+        String(u.email || '').toLowerCase() === me.toLowerCase()
+      );
+      if (mine) {
+        setUserRoleRowId(mine.id);
+        setSystemPrefix(mine.system_prefix || '');
+        if (!mine.system_prefix) setShowPrefixModal(true);
+      }
+      setPrefixLoaded(true);
+    }).catch(e => { console.error('[system_prefix fetch]', e); setPrefixLoaded(true); });
+  }, [userName, currentUser]);
+
+  const handleSavePrefix = async () => {
+    const val = prefixInput.trim().toUpperCase();
+    if (!val) { alert('กรุณากรอก System Prefix'); return; }
+    if (!userRoleRowId) { alert('ไม่พบ User ในระบบ (user_roles) — ติดต่อ Admin'); return; }
+    setSavingPrefix(true);
+    try {
+      const { error } = await db.from('user_roles').update({ system_prefix: val }).eq('id', userRoleRowId);
+      if (error) throw error;
+      setSystemPrefix(val);
+      setShowPrefixModal(false);
+    } catch (e) {
+      console.error('[system_prefix save]', e);
+      alert('บันทึกไม่สำเร็จ: ' + e.message);
+    }
+    setSavingPrefix(false);
+  };
+
   useEffect(() => {
     fetchCollection('CompanyList'); fetchCollection('SupplierList'); fetchCollection('BranchList');
     fetchCollection('AccountList'); fetchCollection('SubAccList');   fetchCollection('CpcList');
@@ -6895,7 +7387,39 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
           <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>AP Controller</div>
           <div style={{ fontSize: '11px', color: '#aaa' }}>Accounts Payable Invoice Management</div>
         </div>
+        <button onClick={() => { setPrefixInput(systemPrefix); setShowPrefixModal(true); }}
+          style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
+          <span>🏷️ Prefix: <strong>{systemPrefix || '—'}</strong></span>
+          <span style={{ fontSize: '10px' }}>✎</span>
+        </button>
       </div>
+      {showPrefixModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => { if (systemPrefix) setShowPrefixModal(false); }}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '380px', maxWidth: '92vw', padding: '24px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '16px', fontWeight: 500, color: '#1a3a5c', marginBottom: '4px' }}>
+              {systemPrefix ? 'แก้ไข System Prefix' : 'ตั้งค่า System Prefix'}
+            </div>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>
+              {systemPrefix ? 'แก้ไข Prefix ของคุณ ใช้ประกอบ Batch Name ตอน Export' : 'ตั้งครั้งแรก — ใช้ประกอบ Batch Name ตอน Export (แก้ไขทีหลังได้เสมอ)'}
+            </div>
+            <label style={{ fontSize: '12px', color: '#888', display: 'block', marginBottom: '6px' }}>System Prefix</label>
+            <input value={prefixInput} onChange={e => setPrefixInput(e.target.value)} placeholder="เช่น KN" maxLength={10} disabled={savingPrefix}
+              style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', marginBottom: '18px', textTransform: 'uppercase' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              {systemPrefix && (
+                <button onClick={() => setShowPrefixModal(false)} disabled={savingPrefix}
+                  style={{ padding: '7px 16px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '13px', cursor: savingPrefix ? 'default' : 'pointer' }}>Cancel</button>
+              )}
+              <button onClick={handleSavePrefix} disabled={savingPrefix}
+                style={{ padding: '7px 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '13px', fontWeight: 500, cursor: savingPrefix ? 'default' : 'pointer' }}>
+                {savingPrefix ? 'กำลังบันทึก...' : 'บันทึก'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <StepBar step={step} onGo={setStep} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
@@ -6907,7 +7431,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
             userName={userName || currentUser?.email || ''} currentUser={currentUser}
             onRunningChange={handleRunningChange} />
         )}
-        {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} batchConfig={batchConfig} supplierItems={supplierItems} vendorRuleItems={vendorRuleItems} userName={userName || currentUser?.email || ''} currentUser={currentUser} />}
+        {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} batchConfig={batchConfig} supplierItems={supplierItems} vendorRuleItems={vendorRuleItems} userName={userName || currentUser?.email || ''} currentUser={currentUser} systemPrefix={systemPrefix} />}
       </div>
     </div>
   );
