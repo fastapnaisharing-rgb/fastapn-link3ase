@@ -6473,11 +6473,7 @@ const handleSelectBranch = (item, meta = {}) => {
             </colgroup>
             <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
               <tr style={{ background: '#f8f9fa' }}>
-                {/* Batch Bucket Summary: Checkbox เลือกหลายรายการ (เหมือน Invoice Mode) */}
-                <th style={{ padding: '7px 9px', borderBottom: '0.5px solid #e8eaf0', textAlign: 'center', background: '#f8f9fa' }}>
-                  <input type="checkbox" checked={invoices.length > 0 && selectedRows.size === invoices.length}
-                    onChange={() => setSelectedRows(prev => prev.size === invoices.length ? new Set() : new Set(invoices.map((inv, i) => inv.id || inv._localId || i)))} />
-                </th>
+                <th style={{ padding: '7px 9px', borderBottom: '0.5px solid #e8eaf0', background: '#f8f9fa' }} />
                 {['Invoice No.', 'Vendor', 'Tax ID', 'Branch No', 'Amount', 'Vat', 'Wht', 'Total', 'Due Date', 'Status', 'Action'].map(h => (
                   <th key={h} style={{ padding: '7px 9px', textAlign: 'center', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: '#f8f9fa' }}>{h}</th>
                 ))}
@@ -6521,25 +6517,10 @@ const handleSelectBranch = (item, meta = {}) => {
                   return (
                     <React.Fragment key={baseNo}>
                     <tr style={{ borderBottom: '0.5px solid #f5f5f5', background: isOpen ? '#f8fafc' : 'transparent' }}>
-                      <td style={{ padding: '8px 9px', textAlign: 'center' }}>
-                        {(() => {
-                          const groupRowKeys = g.items.map(({ inv, i }) => inv.id || inv._localId || i);
-                          const allSel = groupRowKeys.length > 0 && groupRowKeys.every(k => selectedRows.has(k));
-                          const someSel = !allSel && groupRowKeys.some(k => selectedRows.has(k));
-                          return (
-                            <input type="checkbox" checked={allSel} ref={el => { if (el) el.indeterminate = someSel; }}
-                              onChange={() => setSelectedRows(prev => {
-                                const next = new Set(prev);
-                                if (allSel) { groupRowKeys.forEach(k => next.delete(k)); }
-                                else { groupRowKeys.forEach(k => next.add(k)); }
-                                return next;
-                              })} />
-                          );
-                        })()}
+                      <td style={{ padding: '8px 9px', textAlign: 'center', cursor: 'pointer', color: '#888', fontSize: '11px' }} onClick={() => toggleGroup(baseNo)}>
+                        {isOpen ? '▾' : '▸'}
                       </td>
-                      <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', cursor: 'pointer' }} onClick={() => toggleGroup(baseNo)}>
-                        <span style={{ display: 'inline-block', width: '12px', color: '#888' }}>{isOpen ? '▾' : '▸'}</span> {g.baseNo}
-                      </td>
+                      <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', cursor: 'pointer' }} onClick={() => toggleGroup(baseNo)}>{g.baseNo}</td>
                       <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.vendor}</td>
                       <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', fontFamily: 'monospace', textAlign: 'center' }}>{g.taxId}</td>
                       <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{g.branchNo}</td>
@@ -6568,10 +6549,7 @@ const handleSelectBranch = (item, meta = {}) => {
                       const rowKey = inv.id || inv._localId || i;
                       return (
                         <tr key={rowKey} style={{ borderBottom: '0.5px solid #f5f5f5', background: '#fbfbfb' }}>
-                          <td style={{ padding: '6px 9px', textAlign: 'center' }}>
-                            <input type="checkbox" checked={selectedRows.has(rowKey)}
-                              onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(rowKey) ? next.delete(rowKey) : next.add(rowKey); return next; })} />
-                          </td>
+                          <td style={{ padding: '6px 9px' }} />
                           <td style={{ padding: '6px 9px 6px 20px', fontFamily: 'monospace', fontSize: '10px', color: '#0C447C' }}>{inv.invoice_no || '-'}</td>
                           <td style={{ padding: '6px 9px', fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor_name || '-'}</td>
                           <td style={{ padding: '6px 9px' }} />

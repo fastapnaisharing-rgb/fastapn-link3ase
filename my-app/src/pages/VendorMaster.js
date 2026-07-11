@@ -1,4 +1,4 @@
-  import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
   import { db } from '../lib/db';
   import { apiFetch } from '../api';
   import * as XLSX from 'xlsx';
@@ -822,6 +822,16 @@ const computeNextSyRunning = async () => {
 
     const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
     const handleDetailSave = async () => {
+    // ── AP-Code / IE-Code: บังคับต้องมี Tax ID และ Branch No. ก่อน Save เสมอ ──
+    if (tab === 'apcode' || tab === 'iecode') {
+      const missingDetail = [];
+      if (!detailForm['Tax ID']?.trim()) missingDetail.push('Tax ID');
+      if (!detailForm['No.']?.trim())    missingDetail.push('Branch No.');
+      if (missingDetail.length) {
+        alert(`กรุณากรอกข้อมูลให้ครบก่อนบันทึก: ${missingDetail.join(', ')}`);
+        return;
+      }
+    }
     const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
     const prevItem = detailItem;
 
@@ -1384,14 +1394,15 @@ if (tab === 'apcode' || tab === 'iecode') {
           <div style={{ padding:'6px 10px', fontSize:'11px', color:'#888', display:'flex', alignItems:'center', background:'#f8f9fa', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0' }}>{text}</div>
         );
         const REQUIRED_KEYS = isIe
-          ? ['IE-Code','Supplier Name','Supplier Number','Supplier Site','BU Code']
-          : ['Code','Supplier Name','Supplier Number','Supplier Site','BU Code'];
+          ? ['IE-Code','Supplier Name','Supplier Number','Supplier Site','BU Code','Tax ID','No.']
+          : ['Code','Supplier Name','Supplier Number','Supplier Site','BU Code','Tax ID','No.'];
         const cellInput = (key) => {
           const label = cfg.edit.find(([k]) => k === key)?.[1] || key;
           const isCombo = cfg.combo.includes(key);
           const isRequired = REQUIRED_KEYS.includes(key);
-          const isEmpty = editMode && isRequired && !formData[key]?.trim();
-          const cellBg = editMode && isRequired ? '#FFF3CD' : 'transparent';
+          const isEmpty = isRequired && !formData[key]?.trim();
+          // ── ไฮไลท์เหลืองให้ Field บังคับ ทั้ง View และ Edit Mode (ไม่ใช่แค่ตอน Edit) ──
+          const cellBg = isRequired ? '#FFF3CD' : 'transparent';
           const inputSt = { height:'28px', padding:'0 8px', fontSize:'12px', borderRadius:'0', outline:'none', border:'none', background:'transparent', color:'#1a3a5c', boxSizing:'border-box', width:'100%' };
           return (
             <div style={{ padding:'4px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', background: cellBg }}>
@@ -1408,7 +1419,7 @@ if (tab === 'apcode' || tab === 'iecode') {
         const codeKey = isIe ? 'IE-Code' : 'Code';
         const codeLabel = isIe ? 'IE-Code' : 'Code *';
         return (
-          <div style={{ overflow:'visible', flex:1 }}>
+          <div style={{ overflowY:'auto', overflowX:'visible', flex:1 }}>
           <div style={{ padding:'16px 20px', display:'flex', flexDirection:'column', gap:'0' }}>
 
             {/* Row 1: Code + Supplier Name */}
@@ -1706,14 +1717,12 @@ if (tab === 'apcode' || tab === 'iecode') {
                 </div>
               </div>
               {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])), setDetailForm, detailEditMode)}
-              {!detailEditMode && (
-                <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0' }}>
-                  <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
-                    <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Username</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{detailItem['username']||'-'}</div></div>
-                    <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Last Update</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(detailItem['last_update'])}</div></div>
-                  </div>
+              <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0' }}>
+                <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
+                  <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Username</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{detailItem['username']||'-'}</div></div>
+                  <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Last Update</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(detailItem['last_update'])}</div></div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
         )}
