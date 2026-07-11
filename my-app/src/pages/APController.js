@@ -548,10 +548,13 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       const favs = Array.isArray(item.favorite_taxids) ? [...item.favorite_taxids] : [];
       const already = favs.includes(vendorTaxId);
       const newFavs = already ? favs.filter(t => t !== vendorTaxId) : [...favs, vendorTaxId];
-      const { error } = await db.from('itemcode_list').update({ favorite_taxids: newFavs }).eq('id', item.id);
+      const { error } = await db.from('itemcode_list').update({ favorite_taxids: JSON.stringify(newFavs) }).eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
-    } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
+    } catch (e) {
+      console.error('[toggleFav failed]', e);
+      alert('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console)'));
+    }
     setFavUpdating(null);
   };
 
@@ -608,7 +611,10 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       }
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
       setView('search'); setForm(emptyForm); setViewTarget(null);
-    } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
+    } catch (e) {
+      console.error('[ItemCode handleSave failed]', e);
+      alert('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console)'));
+    }
     setSaving(false);
   };
 
@@ -758,7 +764,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300, backdropFilter: 'blur(2px)' }}
       onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ background: 'white', borderRadius: '14px', width: view === 'search' ? '95vw' : '94vw', maxWidth: view === 'search' ? '900px' : '980px', height: view === 'search' ? '84vh' : '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: view === 'search' ? '95vw' : '94vw', maxWidth: view === 'search' ? '1060px' : '1000px', height: view === 'search' ? '90vh' : '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
         {view === 'search' ? (
           <>
             <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
@@ -1028,7 +1034,7 @@ const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
 const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
 
 
-function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', bookFilter = '', fetchCollection, userName = '' }) {
+function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', bookFilter = '', fetchCollection, userName = '', quickVendors = [] }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const canEdit = isOwner || isAdmin || isEditor;
   const canDelete = isOwner || isAdmin;
@@ -1104,11 +1110,19 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     return sortDir === 'asc' ? cmp : -cmp;
   });
 
+  // ── Quick Vendor: Supplier ที่เคยคีย์ใน Batch นี้แล้ว (จาก Batch Bucket) ──
+  // ── ปักหมุดไว้บนสุด ไม่ต้องพิมพ์ค้นหาใหม่ — หมดอายุอัตโนมัติตอน Export Batch ──
+  // ── (เพราะ Batch Bucket ว่างตอน Export เสร็จ ก็เลยไม่มี Quick Vendor เหลือ) ──
+  const quickCodes = new Set((quickVendors || []).map(v => String(v['Code'] ?? '').toLowerCase()).filter(Boolean));
+  const quickItems = quickCodes.size ? filtered.filter(i => quickCodes.has(String(i['Code'] ?? '').toLowerCase())) : [];
+  const restItems  = quickCodes.size ? filtered.filter(i => !quickCodes.has(String(i['Code'] ?? '').toLowerCase())) : filtered;
+  const displayList = [...quickItems, ...restItems];
+
   const handleSort = (field) => { setActive(-1); if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortField(field); setSortDir('asc'); } };
   const handleKey  = (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, displayList.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
-    else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active]); }
+    else if (e.key === 'Enter' && active >= 0 && displayList[active]) { onSelect(displayList[active]); }
   };
 
   const handleOpenNew = () => {
@@ -1421,7 +1435,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
         </div>
       </div>
       <div ref={listRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
-        {filtered.length === 0 ? (
+        {displayList.length === 0 ? (
           <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
             <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏭</div>
             <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Supplier{query ? ` "${query}"` : ''}</div>
@@ -1440,13 +1454,18 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
               </tr>
             </thead>
             <tbody>
-              {filtered.map((item, i) => {
+              {displayList.map((item, i) => {
                 const isAct = i === active;
+                const showQuickHeader = i === 0 && quickItems.length > 0;
+                const showAllHeader = i === quickItems.length && quickItems.length > 0;
                 return (
-                  <tr key={item.id || i} data-row={i}
+                  <React.Fragment key={item.id || i}>
+                  {showQuickHeader && <tr><td colSpan={COLS.length + 1} style={{ padding: '5px 12px', fontSize: '10px', fontWeight: '600', color: '#0C447C', background: '#eef4fb', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '0.5px solid #c5d8f0' }}>⚡ Quick Vendor ({quickItems.length})</td></tr>}
+                  {showAllHeader && <tr><td colSpan={COLS.length + 1} style={{ padding: '5px 12px', fontSize: '10px', fontWeight: '600', color: '#888', background: '#f8f9fa', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '0.5px solid #e8eaf0' }}>All Vendors ({restItems.length})</td></tr>}
+                  <tr data-row={i}
                     onClick={() => onSelect(item)}
                     onMouseEnter={() => setActive(i)}
-                    style={{ background: isAct ? '#eef3fb' : 'white', cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
+                    style={{ background: isAct ? '#eef3fb' : (i < quickItems.length ? '#f7fafd' : 'white'), cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
                       <span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Code'] || '-'}</span>
                     </td>
@@ -1489,6 +1508,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                       </div>
                     </td>
                   </tr>
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -2132,7 +2152,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       const favs = Array.isArray(item.favorite_taxids) ? [...item.favorite_taxids] : [];
       const already = favs.includes(vendorTaxId);
       const newFavs = already ? favs.filter(t => t !== vendorTaxId) : [...favs, vendorTaxId];
-      const { error } = await db.from('sm_code_list').update({ favorite_taxids: newFavs }).eq('id', item.id);
+      const { error } = await db.from('sm_code_list').update({ favorite_taxids: JSON.stringify(newFavs) }).eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('SmCodeList', true);
     } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
@@ -3146,16 +3166,34 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     vendorInfo, itemcodeItems?.length,
   ]);
 
-  const handleSubmit = async () => {
-    if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) {
-      alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
-      return;
-    }
+  const [showPeriodConfirm, setShowPeriodConfirm] = useState(false);
+
+  const doActualSubmit = async () => {
     const ok = await onSubmitInvoice(lines);
     if (ok) {
       setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
       onClose();
     }
+  };
+
+  const handleSubmit = async () => {
+    if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) {
+      alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
+      return;
+    }
+    // ── ถ้ามีบรรทัดไหนใช้ Item Code ที่กำหนด SPI-1 = Prd หรือ CT แต่ยังไม่ใส่ Period ──
+    // ── ต้องถามยืนยันก่อน Submit เสมอ (กด Yes ถึงจะผ่านต่อได้) ──────────────────
+    const needsPeriod = lines.some(l => {
+      if (!l.itemCode?.trim()) return false;
+      const item = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === String(l.itemCode ?? '').trim().toUpperCase());
+      const spi1 = String(item?.spi1 ?? '').toUpperCase();
+      return spi1.includes('PRD') || spi1.includes('CT');
+    });
+    if (needsPeriod && !form?.period?.trim()) {
+      setShowPeriodConfirm(true);
+      return;
+    }
+    await doActualSubmit();
   };
 
   useEffect(() => {
@@ -3193,6 +3231,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const inputStyle = (w) => ({ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', width: w || '100%' });
 
   return (
+    <>
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, backdropFilter: 'blur(2px)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: 'white', ...popupStyle, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
@@ -3293,7 +3332,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             {[['Inv date','invDate','date','130px'],['Invoice num','invoiceNum','text','150px'],['GRT','grtNum','text','75px'],['GRN','grn','text','75px']].map(([label, key, type, w]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
                 <label style={fieldLabel}>{label}</label>
-                <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
+                {key === 'invoiceNum' && vendorInfo?.['Digit'] ? (
+                  <div style={{ ...inputStyle(w), display: 'flex', alignItems: 'center', padding: 0, overflow: 'hidden' }}>
+                    <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                      style={{ flex: 1, minWidth: 0, height: '100%', border: 'none', outline: 'none', background: 'transparent', padding: '0 8px', fontSize: '12px', color: 'inherit', boxSizing: 'border-box' }} />
+                    <div title="Digit (จาก Vendor Master)"
+                      style={{ flexShrink: 0, height: '100%', display: 'flex', alignItems: 'center', padding: '0 8px', background: '#f0f3f8', borderLeft: '0.5px solid #e0e0e0', fontSize: '11px', fontWeight: '500', color: '#0C447C', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                      {vendorInfo['Digit']}
+                    </div>
+                  </div>
+                ) : (
+                  <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)} style={inputStyle(w)} />
+                )}
               </div>
             ))}
             {/* Tax header dropdown */}
@@ -3731,6 +3781,27 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         })()}
       </div>
     </div>
+    {showPeriodConfirm && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10005, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onMouseDown={(e) => { if (e.target === e.currentTarget) setShowPeriodConfirm(false); }}>
+        <div style={{ background: 'white', borderRadius: '12px', width: '420px', maxWidth: '92vw', padding: '24px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '18px' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#FAEEDA', color: '#854F0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>⚠️</div>
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1a3a5c', marginBottom: '4px' }}>ยังไม่ได้ใส่ข้อมูล Period</div>
+              <div style={{ fontSize: '13px', color: '#666', lineHeight: 1.6 }}>มี Item Code ที่กำหนด SPI-1 เป็น Prd หรือ CT แต่ยังไม่ได้ใส่ข้อมูล Period<br />ต้องการบันทึกโดยไม่ใส่ข้อมูล Period หรือไม่?</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+            <button onClick={() => setShowPeriodConfirm(false)}
+              style={{ padding: '7px 20px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>No</button>
+            <button onClick={async () => { setShowPeriodConfirm(false); await doActualSubmit(); }}
+              style={{ padding: '7px 20px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>Yes</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -4556,8 +4627,6 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const pvScrollRef = useRef(null);
   const [pvResizing, setPvResizing] = useState(null);
   const pvMousePosRef = useRef({ x: 0, y: 0 });
-  const pvFrozenRef = useRef(null);
-  const pvSyncingRef = useRef(false);
 
   const pvColCount = filePreview ? Math.max(1, ...filePreview.rows.map(r => r.length)) : 0;
   const pvPadCount = filePreview ? Math.max(0, 100 - filePreview.rows.length) : 0;
@@ -4937,136 +5006,117 @@ function BatchSetup({ onStart, infoItems = [] }) {
                 <button onClick={() => setFilePreview(null)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999' }}>✕</button>
               </div>
             </div>
-            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-              {/* ── ตาราง Freeze คอลัมน์ # — Sync Scroll แนวตั้งกับตารางข้อมูลด้วย JS แทน CSS sticky ── */}
-              <style>{`.pv-frozen-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }`}</style>
-              <div ref={pvFrozenRef} className="pv-frozen-scroll" style={{ overflowY: 'auto', overflowX: 'hidden', flexShrink: 0, scrollbarWidth: 'none', msOverflowStyle: 'none', borderRight: '1.5px solid #1a3a5c', marginBottom: '16px' }}
-                onScroll={(e) => {
-                  if (pvSyncingRef.current) { pvSyncingRef.current = false; return; }
-                  if (pvScrollRef.current) { pvSyncingRef.current = true; pvScrollRef.current.scrollTop = e.target.scrollTop; }
-                }}>
-                <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '11px' }}>
-                  <thead>
-                    <tr>
-                      <th onClick={() => setPvSel({ r1: 0, c1: 0, r2: filePreview.rows.length + pvPadCount - 1, c2: pvColCount - 1 })}
-                        style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.4)', padding: '2px 5px', textAlign: 'center', fontSize: '9px', position: 'sticky', top: 0, zIndex: 2, minWidth: '36px', width: '36px', height: '18px', boxSizing: 'border-box', cursor: 'pointer' }} title="Select all">#</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filePreview.rows.map((row, ri) => {
-                      const isBookRow = ri === 0;
-                      const isH = !isBookRow && row[0] === 'H';
-                      const prevIsH = ri > 1 && filePreview.rows[ri - 1]?.[0] === 'H';
-                      const showDivider = isH && !prevIsH && ri > 1;
-                      return (
-                        <React.Fragment key={ri}>
-                          {showDivider && (
-                            <tr><td style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td></tr>
-                          )}
+            <div ref={pvScrollRef} style={{ flex: 1, overflow: 'auto', padding: '0 18px', userSelect: 'none', position: 'relative' }}
+              onContextMenu={(e) => { e.preventDefault(); setPvCtxMenu({ show: true, x: e.clientX, y: e.clientY }); }}
+              onMouseMove={(e) => { pvMousePosRef.current = { x: e.clientX, y: e.clientY }; }}>
+              <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '11px', width: 'auto', minWidth: '100%' }}>
+                <thead>
+                  <tr>
+                    <th onClick={() => setPvSel({ r1: 0, c1: 0, r2: filePreview.rows.length + pvPadCount - 1, c2: pvColCount - 1 })}
+                      style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.4)', padding: '2px 5px', textAlign: 'center', fontSize: '9px', borderRight: '1.5px solid #1a3a5c', position: 'sticky', top: 0, zIndex: 2, minWidth: '36px', width: '36px', height: '18px', boxSizing: 'border-box', cursor: 'pointer' }} title="Select all">#</th>
+                    {Array.from({ length: pvColCount }).map((_, ci) => (
+                      <th key={ci}
+                        onClick={(e) => { if (e.shiftKey && pvSel.c1 >= 0) setPvSel(s => ({ ...s, c2: ci, r1: 0, r2: filePreview.rows.length + pvPadCount - 1 })); else setPvSel({ r1: 0, c1: ci, r2: filePreview.rows.length + pvPadCount - 1, c2: ci }); }}
+                        style={{ background: '#2c4a6e', color: 'rgba(255,255,255,0.8)', padding: '2px 0 2px 5px', textAlign: 'center', fontSize: '9px', fontWeight: 400, borderRight: '0.5px solid rgba(255,255,255,0.08)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2, cursor: 'pointer', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '18px', boxSizing: 'border-box' }}>
+                        {pvColLetter(ci)}
+                        <div onMouseDown={(e) => { e.stopPropagation(); pvResizeRef.current = { ci, startX: e.clientX, startW: pvColWidths[ci] || 90 }; setPvResizing(ci); }}
+                          style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '4px', cursor: 'col-resize', background: pvResizing === ci ? 'rgba(255,255,255,0.5)' : 'transparent' }} />
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filePreview.rows.map((row, ri) => {
+                    const isBookRow = ri === 0;
+                    const isH = !isBookRow && row[0] === 'H';
+                    const prevIsH = ri > 1 && filePreview.rows[ri - 1]?.[0] === 'H';
+                    const showDivider = isH && !prevIsH && ri > 1;
+                    return (
+                      <React.Fragment key={ri}>
+                        {showDivider && (
                           <tr>
-                            <td onClick={() => setPvSel({ r1: ri, c1: 0, r2: ri, c2: pvColCount - 1 })}
-                              style={{ padding: '3px 5px', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: isBookRow ? '#f0f0f0' : isH ? '#dbeafa' : '#f5f5f5', color: isH ? '#0C447C' : '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{ri + 1}</td>
+                            <td style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td>
+                            {row.map((_, ci) => <td key={ci} style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td>)}
                           </tr>
-                        </React.Fragment>
-                      );
-                    })}
-                    {Array.from({ length: pvPadCount }).map((_, i) => {
-                      const rNum = filePreview.rows.length + i + 1;
-                      return (
-                        <tr key={`pad-${i}`}>
-                          <td onClick={() => setPvSel({ r1: filePreview.rows.length + i, c1: 0, r2: filePreview.rows.length + i, c2: pvColCount - 1 })}
-                            style={{ padding: '3px 5px', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: '#f5f5f5', color: '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{rNum}</td>
+                        )}
+                        <tr style={{ background: isBookRow ? '#f8f9fa' : isH ? '#E6F1FB' : 'white' }}>
+                          <td onClick={() => setPvSel({ r1: ri, c1: 0, r2: ri, c2: pvColCount - 1 })}
+                            style={{ padding: '3px 5px', borderRight: '1.5px solid #1a3a5c', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: isBookRow ? '#f0f0f0' : isH ? '#dbeafa' : '#f5f5f5', color: isH ? '#0C447C' : '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{ri + 1}</td>
+                          {row.map((cell, ci) => {
+                            const editing = pvEditingCell?.r === ri && pvEditingCell?.c === ci;
+                            return (
+                              <td key={ci}
+                                data-pv-r={ri} data-pv-c={ci}
+                                data-pv-active={pvSel.r1 === ri && pvSel.r2 === ri && pvSel.c1 === ci && pvSel.c2 === ci ? 'true' : undefined}
+                                onMouseDown={(e) => { if (e.button === 2) return; if (e.shiftKey && pvSel.r1 >= 0) setPvSel(s => ({ ...s, r2: ri, c2: ci })); else { setPvSel({ r1: ri, c1: ci, r2: ri, c2: ci }); setPvDragging(true); } }}
+                                onMouseOver={() => { if (pvDragging) setPvSel(s => ({ ...s, r2: ri, c2: ci })); }}
+                                onDoubleClick={() => setPvEditingCell({ r: ri, c: ci })}
+                                style={{ padding: 0, borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', maxWidth: '160px', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '22px', boxSizing: 'border-box', color: isBookRow ? '#aaa' : isH ? '#0C447C' : '#333', background: isPvSel(ri, ci) ? '#c8dffe' : undefined, outline: pvCopied && isPvSel(ri, ci) ? '2px dashed #1a7a1a' : isPvSel(ri, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
+                                {editing ? (
+                                  <input autoFocus value={cell === null || cell === undefined ? '' : String(cell)}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setFilePreview(prev => ({
+                                        ...prev,
+                                        rows: prev.rows.map((r, rIdx) => rIdx !== ri ? r : r.map((c, cIdx) => cIdx === ci ? val : c)),
+                                      }));
+                                    }}
+                                    onBlur={() => setPvEditingCell(null)}
+                                    onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Tab') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
+                                    style={{ width: '100%', height: '100%', display: 'block', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', padding: '0 5px', margin: 0, fontSize: '11px', lineHeight: '21px', fontFamily: 'monospace', color: 'inherit' }} />
+                                ) : (
+                                  <div style={{ padding: '0 5px', height: '100%', lineHeight: '21px', boxSizing: 'border-box', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px', fontFamily: 'monospace' }}>
+                                    {cell === '' || cell === null || cell === undefined ? '' : String(cell)}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              {/* ── ตารางข้อมูล — Scroll ปกติทั้งแนวตั้ง/แนวนอน ── */}
-              <div ref={pvScrollRef} style={{ flex: 1, overflow: 'auto', padding: '0 18px 0 0', marginBottom: '16px', userSelect: 'none', position: 'relative' }}
-                onContextMenu={(e) => { e.preventDefault(); setPvCtxMenu({ show: true, x: e.clientX, y: e.clientY }); }}
-                onMouseMove={(e) => { pvMousePosRef.current = { x: e.clientX, y: e.clientY }; }}
-                onScroll={(e) => {
-                  if (pvSyncingRef.current) { pvSyncingRef.current = false; return; }
-                  if (pvFrozenRef.current) { pvSyncingRef.current = true; pvFrozenRef.current.scrollTop = e.target.scrollTop; }
-                }}>
-                <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '11px', width: 'auto', minWidth: '100%' }}>
-                  <thead>
-                    <tr>
-                      {Array.from({ length: pvColCount }).map((_, ci) => (
-                        <th key={ci}
-                          onClick={(e) => { if (e.shiftKey && pvSel.c1 >= 0) setPvSel(s => ({ ...s, c2: ci, r1: 0, r2: filePreview.rows.length + pvPadCount - 1 })); else setPvSel({ r1: 0, c1: ci, r2: filePreview.rows.length + pvPadCount - 1, c2: ci }); }}
-                          style={{ background: '#2c4a6e', color: 'rgba(255,255,255,0.8)', padding: '2px 0 2px 5px', textAlign: 'center', fontSize: '9px', fontWeight: 400, borderRight: '0.5px solid rgba(255,255,255,0.08)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2, cursor: 'pointer', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '18px', boxSizing: 'border-box' }}>
-                          {pvColLetter(ci)}
-                          <div onMouseDown={(e) => { e.stopPropagation(); pvResizeRef.current = { ci, startX: e.clientX, startW: pvColWidths[ci] || 90 }; setPvResizing(ci); }}
-                            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '4px', cursor: 'col-resize', background: pvResizing === ci ? 'rgba(255,255,255,0.5)' : 'transparent' }} />
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filePreview.rows.map((row, ri) => {
-                      const isBookRow = ri === 0;
-                      const isH = !isBookRow && row[0] === 'H';
-                      const prevIsH = ri > 1 && filePreview.rows[ri - 1]?.[0] === 'H';
-                      const showDivider = isH && !prevIsH && ri > 1;
-                      return (
-                        <React.Fragment key={ri}>
-                          {showDivider && (
-                            <tr>{row.map((_, ci) => <td key={ci} style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td>)}</tr>
-                          )}
-                          <tr style={{ background: isBookRow ? '#f8f9fa' : isH ? '#E6F1FB' : 'white' }}>
-                            {row.map((cell, ci) => {
-                              const editing = pvEditingCell?.r === ri && pvEditingCell?.c === ci;
-                              return (
-                                <td key={ci}
-                                  data-pv-r={ri} data-pv-c={ci}
-                                  data-pv-active={pvSel.r1 === ri && pvSel.r2 === ri && pvSel.c1 === ci && pvSel.c2 === ci ? 'true' : undefined}
-                                  onMouseDown={(e) => { if (e.button === 2) return; if (e.shiftKey && pvSel.r1 >= 0) setPvSel(s => ({ ...s, r2: ri, c2: ci })); else { setPvSel({ r1: ri, c1: ci, r2: ri, c2: ci }); setPvDragging(true); } }}
-                                  onMouseOver={() => { if (pvDragging) setPvSel(s => ({ ...s, r2: ri, c2: ci })); }}
-                                  onDoubleClick={() => setPvEditingCell({ r: ri, c: ci })}
-                                  style={{ padding: 0, borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', maxWidth: '160px', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '22px', boxSizing: 'border-box', color: isBookRow ? '#aaa' : isH ? '#0C447C' : '#333', background: isPvSel(ri, ci) ? '#c8dffe' : undefined, outline: pvCopied && isPvSel(ri, ci) ? '2px dashed #1a7a1a' : isPvSel(ri, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
-                                  {editing ? (
-                                    <input autoFocus value={cell === null || cell === undefined ? '' : String(cell)}
-                                      onChange={e => {
-                                        const val = e.target.value;
-                                        setFilePreview(prev => ({
-                                          ...prev,
-                                          rows: prev.rows.map((r, rIdx) => rIdx !== ri ? r : r.map((c, cIdx) => cIdx === ci ? val : c)),
-                                        }));
-                                      }}
-                                      onBlur={() => setPvEditingCell(null)}
-                                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Tab') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
-                                      style={{ width: '100%', height: '100%', display: 'block', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', padding: '0 5px', margin: 0, fontSize: '11px', lineHeight: '21px', fontFamily: 'monospace', color: 'inherit' }} />
-                                  ) : (
-                                    <div style={{ padding: '0 5px', height: '100%', lineHeight: '21px', boxSizing: 'border-box', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px', fontFamily: 'monospace' }}>
-                                      {cell === '' || cell === null || cell === undefined ? '' : String(cell)}
-                                    </div>
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        </React.Fragment>
-                      );
-                    })}
-                    {Array.from({ length: pvPadCount }).map((_, i) => {
-                      const rIdx = filePreview.rows.length + i;
-                      return (
-                        <tr key={`pad-${i}`}>
-                          {Array.from({ length: pvColCount }).map((_, ci) => (
+                      </React.Fragment>
+                    );
+                  })}
+                  {Array.from({ length: pvPadCount }).map((_, i) => {
+                    const rIdx = filePreview.rows.length + i;
+                    return (
+                      <tr key={`pad-${i}`}>
+                        <td onClick={() => setPvSel({ r1: rIdx, c1: 0, r2: rIdx, c2: pvColCount - 1 })}
+                          style={{ padding: '3px 5px', borderRight: '1.5px solid #1a3a5c', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: '#f5f5f5', color: '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{rIdx + 1}</td>
+                        {Array.from({ length: pvColCount }).map((_, ci) => {
+                          const editing = pvEditingCell?.r === rIdx && pvEditingCell?.c === ci;
+                          return (
                             <td key={ci}
                               data-pv-r={rIdx} data-pv-c={ci}
                               onMouseDown={(e) => { if (e.button === 2) return; if (e.shiftKey && pvSel.r1 >= 0) setPvSel(s => ({ ...s, r2: rIdx, c2: ci })); else { setPvSel({ r1: rIdx, c1: ci, r2: rIdx, c2: ci }); setPvDragging(true); } }}
                               onMouseOver={() => { if (pvDragging) setPvSel(s => ({ ...s, r2: rIdx, c2: ci })); }}
-                              style={{ padding: '3px 5px', borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', height: '22px', boxSizing: 'border-box', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, background: isPvSel(rIdx, ci) ? '#c8dffe' : 'white', outline: isPvSel(rIdx, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}></td>
-                          ))}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                              onDoubleClick={() => setPvEditingCell({ r: rIdx, c: ci })}
+                              style={{ padding: 0, borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', height: '22px', boxSizing: 'border-box', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, background: isPvSel(rIdx, ci) ? '#c8dffe' : 'white', outline: isPvSel(rIdx, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
+                              {editing ? (
+                                <input autoFocus value={filePreview.rows[rIdx]?.[ci] ?? ''}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setFilePreview(prev => {
+                                      const newRows = [...prev.rows];
+                                      while (newRows.length <= rIdx) newRows.push([]);
+                                      const row = [...newRows[rIdx]];
+                                      while (row.length <= ci) row.push('');
+                                      row[ci] = val;
+                                      newRows[rIdx] = row;
+                                      return { ...prev, rows: newRows };
+                                    });
+                                  }}
+                                  onBlur={() => setPvEditingCell(null)}
+                                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Tab') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
+                                  style={{ width: '100%', height: '100%', display: 'block', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', padding: '0 5px', margin: 0, fontSize: '11px', lineHeight: '21px', fontFamily: 'monospace', color: 'inherit' }} />
+                              ) : null}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -5196,7 +5246,24 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const [showSendToModal, setShowSendToModal] = useState(false); // ✅ Send To modal
   const branchJustResolved = useRef(false); // ✅ ป้องกัน blur ยิงซ้ำหลัง resolveBranch
 
-  const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); if (key === 'supplierCode' && !val) setVendorInfo(null); };
+  // ── Cache Supplier code + Branch no ล่าสุดที่ Submit ไป — เรียกคืนได้ด้วยพิมพ์ "*" ──
+  // ── (Field จะ Reset ว่างหลัง Submit ปกติ แต่ค่าที่ Cache ไว้ยังเรียกกลับมาได้) ──────
+  const [lastVendorCache, setLastVendorCache] = useState({ supplierCode: '', branchNo: '' });
+
+  const setField = (key, val) => {
+    if (key === 'supplierCode' && val === '*') {
+      setFormState(f => ({ ...f, supplierCode: lastVendorCache.supplierCode, branchNo: lastVendorCache.branchNo || f.branchNo }));
+      if (lastVendorCache.supplierCode) lookupVendor(lastVendorCache.supplierCode);
+      else setVendorInfo(null);
+      return;
+    }
+    if (key === 'branchNo' && val === '*') {
+      setFormState(f => ({ ...f, branchNo: lastVendorCache.branchNo }));
+      return;
+    }
+    setFormState(f => ({ ...f, [key]: val }));
+    if (key === 'supplierCode' && !val) setVendorInfo(null);
+  };
 
   const branchOptions = {
     'Branch Direct': [...new Set(branchItems.map(b => b['Branch Direct']).filter(Boolean))],
@@ -5212,27 +5279,61 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     return null;
   };
 
-  const lookupVendor = (code) => {
-    if (!code?.trim()) { setVendorInfo(null); return; }
+  // ── หา Supplier จาก Code — ใช้ร่วมกันทั้ง lookupVendor (ตอนพิมพ์) และ Fallback ในตาราง Batch Bucket ──
+  const findSupplierByCode = (code) => {
+    if (!code?.trim()) return null;
     const bu = batchConfig?.bu || '';
     const book = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase();
-    const isGroupBook = !!book && book !== bu.toUpperCase();
+    // ── Group Book เฉพาะ Book "CGT"/"CGR" เท่านั้น — Book อื่น (เช่น CRG) ให้ใช้ BU ตามปกติ ──
+    const isGroupBook = book === 'CGT' || book === 'CGR';
     const search = code.trim().toLowerCase();
     let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
     if (found) {
       const codePrefix = String(found['Code'] ?? '').split('-')[0].toUpperCase();
       const validPrefix = isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
-      if (!validPrefix) { setVendorInfo(null); return; }
+      if (!validPrefix) return null;
+      return found;
     }
-    if (!found) {
-      if (isGroupBook) {
-        found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${book.toLowerCase()}-${search}`);
-      } else if (bu) {
-        found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${bu.toLowerCase()}-${search}`);
-      }
+    if (isGroupBook) {
+      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${book.toLowerCase()}-${search}`);
+    } else if (bu) {
+      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${bu.toLowerCase()}-${search}`);
     }
-    setVendorInfo(found || null);
+    return found || null;
   };
+
+  const lookupVendor = (code) => {
+    setVendorInfo(findSupplierByCode(code));
+  };
+
+  // ── Invoice เก่าที่ยังไม่มี vendor_tax_id/vendor_no (Field เพิ่งเพิ่มใหม่) ──
+  // ── ดึงมาจาก Supplier Code สด ๆ ตอนแสดงผลแทน ไม่ต้อง Backfill Database ──
+  const resolveVendorFallback = (inv) => {
+    if (inv.vendor_tax_id || inv.vendor_no) return { taxId: inv.vendor_tax_id, no: inv.vendor_no };
+    const found = findSupplierByCode(inv.supplier_code || inv.form_data?.supplierCode);
+    return { taxId: found?.['Tax ID'] || '', no: found?.['No.'] || '' };
+  };
+
+  // ── Quick Vendor: Vendor ที่ไม่ซ้ำกัน (กรองด้วย Tax ID + Branch No) จาก Invoice ──
+  // ── ที่มีอยู่ใน Batch Bucket ตอนนี้ — ไม่ต้องมี Storage ใหม่ ใช้ข้อมูลเดิมที่มีอยู่แล้ว ──
+  // ── หมดอายุอัตโนมัติตอน Export (Batch Bucket ว่าง เลยไม่มี Quick Vendor เหลือ) ──────
+  const quickVendors = (() => {
+    const seen = new Set();
+    const result = [];
+    for (const inv of invoices) {
+      const vf = resolveVendorFallback(inv);
+      if (!vf.taxId && !vf.no) continue;
+      const key = `${vf.taxId}|${vf.no}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const supplier = supplierItems.find(s =>
+        String(s['Tax ID'] ?? '').trim() === String(vf.taxId ?? '').trim() &&
+        String(s['No.'] ?? '').trim() === String(vf.no ?? '').trim()
+      );
+      if (supplier) result.push(supplier);
+    }
+    return result;
+  })();
 
   const handleSaveBranch = async ({ form: branchForm, isEdit, editTarget }) => {
     const meta = { updated_by: userName, updated_at: new Date().toISOString() };
@@ -5666,6 +5767,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         receive_date:    batchConfig?.receiveDate || null,
         supplier_code:   form.supplierCode || '',
         vendor_name:     vendorInfo?.['Supplier Name'] || '',
+        vendor_tax_id:   vendorInfo?.['Tax ID'] || '',
+        vendor_no:       vendorInfo?.['No.'] || '',
         branch_no:       form.branchNo || '',
         branch_label:    form.branchDirectLabel || '',
         invoice_no:      invoiceNo,
@@ -5721,10 +5824,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     // การ sync เลข running (4 หลักล่าสุด) กลับ DB จะทำ "ตอนจบ Batch" เท่านั้น
     // ผ่าน syncGrtGrnCounter() ที่ถูกเรียกจาก useEffect cleanup ด้านล่าง
     // (เมื่อออกจากหน้า InvoiceEntry / เปลี่ยน step) และ interval 30s (safety-net)
+    // ── Cache Supplier code + Branch no ล่าสุดไว้ (เรียกคืนได้ด้วยพิมพ์ "*") ────
+    // ── แล้วค่อย Reset ช่องนี้ให้ว่าง บังคับให้เลือก Vendor ใหม่ทุกครั้งชัดเจน ──
+    setLastVendorCache({ supplierCode: form.supplierCode || '', branchNo: form.branchNo || '' });
+    setVendorInfo(null);
     setFormState(f => ({
       ...f,
       invoiceNum: '', invDate: '', invTax: '', grtNum: '', grn: '',
       backDesc1: '', backDesc2: '', backDesc3: '',
+      supplierCode: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '',
     }));
     return true;
   };
@@ -5859,6 +5967,12 @@ const handleSelectBranch = (item, meta = {}) => {
   };
 
   const handleBranchNoChange = (val) => {
+    if (val === '*') {
+      const cached = lastVendorCache.branchNo || '';
+      setFormState(f => ({ ...f, branchNo: cached }));
+      if (cached) resolveBranch(cached);
+      return;
+    }
     setFormState(f => ({
       ...f,
       branchNo: val,
@@ -5890,9 +6004,10 @@ const handleSelectBranch = (item, meta = {}) => {
         }}
         supplierItems={supplierItems}
         bu={batchConfig?.bu || ''}
-        bookFilter={(() => { const b = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase(); return (b && b !== (batchConfig?.bu || '').toUpperCase()) ? b : ''; })()}
+        bookFilter={(() => { const b = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase(); return (b === 'CGT' || b === 'CGR') ? b : ''; })()}
         fetchCollection={fetchCollection}
         userName={userName || currentUser?.email || ''}
+        quickVendors={quickVendors}
       />
       <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
 
@@ -5966,9 +6081,9 @@ const handleSelectBranch = (item, meta = {}) => {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
             <col style={{ width: '3%' }} />
-            <col style={{ width: '12%' }} /><col style={{ width: '17%' }} /><col style={{ width: '9%' }} />
-            <col style={{ width: '10%' }} /><col style={{ width: '9%' }} /><col style={{ width: '9%' }} />
-            <col style={{ width: '10%' }} /><col style={{ width: '8%' }} /><col style={{ width: '9%' }} />
+            <col style={{ width: '12%' }} /><col style={{ width: '15%' }} /><col style={{ width: '9%' }} /><col style={{ width: '8%' }} />
+            <col style={{ width: '9%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
+            <col style={{ width: '9%' }} /><col style={{ width: '8%' }} /><col style={{ width: '9%' }} />
           </colgroup>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
@@ -5976,14 +6091,14 @@ const handleSelectBranch = (item, meta = {}) => {
                 <input type="checkbox" checked={invoices.length > 0 && selectedRows.size === invoices.length}
                   onChange={() => setSelectedRows(prev => prev.size === invoices.length ? new Set() : new Set(invoices.map((inv, i) => inv.id || inv._localId || i)))} />
               </th>
-              {['Invoice No.','Vendor','Branch','Amount','Vat','Wht','Total','Status','Action'].map(h => (
+              {['Invoice No.','Vendor','Tax ID','Branch No','Amount','Vat','Wht','Total','Status','Action'].map(h => (
                 <th key={h} style={{ padding: '7px 9px', textAlign: 'center', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {invoices.length === 0 ? (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
+              <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
             ) : [...invoices].sort((a, b) => {
               const getCreatedTime = (inv) => {
                 if (inv.created_at) return new Date(inv.created_at).getTime();
@@ -6011,7 +6126,15 @@ const handleSelectBranch = (item, meta = {}) => {
                 </td>
                 <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600' }}>{inv.invoice_no || '-'}</td>
                 <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor_name || '-'}</td>
-                <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px' }}>{inv.branch_no || '-'}</td>
+                {(() => {
+                  const vf = resolveVendorFallback(inv);
+                  return (
+                    <>
+                      <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', fontFamily: 'monospace', textAlign: 'center' }}>{vf.taxId || '-'}</td>
+                      <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{vf.no || '-'}</td>
+                    </>
+                  );
+                })()}
                 <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', textAlign: 'right' }}>{inv.amount != null && inv.amount !== '' ? Number(inv.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                 <td style={{ padding: '8px 9px', color: '#555', textAlign: 'right' }}>{inv.vat != null && inv.vat !== '' ? Number(inv.vat).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                 <td style={{ padding: '8px 9px', color: inv.wht < 0 ? '#A32D2D' : '#555', textAlign: 'right' }}>{inv.wht != null && inv.wht !== '' ? Number(inv.wht).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
@@ -6151,12 +6274,20 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
 
   const num = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
 
-  const fmtDate = (d) => { if (!d) return ''; const s = String(d).replace(/-/g, ''); return s.length === 8 ? s.slice(2) : s; };
+  // ── ตัดเอาแค่ส่วนวันที่ (YYYY-MM-DD) ก่อนเสมอ เผื่อ Input เป็น Full ISO Timestamp ──
+  // ── (เช่น "2026-07-10T17:00:00.000Z") กันปัญหา Format พังเวลาข้อมูลมาจาก DB โดยตรง ──
+  const fmtDate = (d) => {
+    if (!d) return '';
+    const s = String(d).slice(0, 10).replace(/-/g, '');
+    if (s.length !== 8) return String(d);
+    const y = s.slice(0, 4), m = s.slice(4, 6), day = s.slice(6, 8);
+    return day + m + y.slice(2);
+  };
   // ── เฉพาะ column O (Due Date) / P (Tax Invoice Date) ต้องเป็น DDMMYY ──
   const fmtDateDMY = (d) => {
     if (!d) return '';
-    const s = String(d).replace(/-/g, '');
-    if (s.length !== 8) return s;
+    const s = String(d).slice(0, 10).replace(/-/g, '');
+    if (s.length !== 8) return String(d);
     const y = s.slice(0, 4), m = s.slice(4, 6), day = s.slice(6, 8);
     return day + m + y.slice(2);
   };
