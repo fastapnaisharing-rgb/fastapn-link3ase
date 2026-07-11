@@ -24,7 +24,7 @@ export const AP_CONTROLLER_MENU = {
   groups: [
     { label: 'Invoice Entry', icon: '📥', items: [
       { id: 'ap-gr',   icon: '📋', label: 'AP Manual' },
-      { id: 'ap-ocr',  icon: '🔍', label: 'Scan OCR' },
+      { id: 'ap-ocr',  icon: '🔍', label: 'Invoice OCR' },
       { id: 'ap-form', icon: '📝', label: 'Purchase Order' },
     ]},
     { label: 'จัดการ', icon: '🗂️', items: [
