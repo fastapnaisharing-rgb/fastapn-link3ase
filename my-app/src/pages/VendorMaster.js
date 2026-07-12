@@ -1054,7 +1054,7 @@ const computeNextSyRunning = async () => {
       inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
       inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
       overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px':'700px', maxHeight:'95vh', display:'flex', flexDirection:'column', overflow:'hidden' },
+      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px':'700px', height:'65vh', maxHeight:'65vh', display:'flex', flexDirection:'column', overflow:'hidden' },
       iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
     };
 
@@ -1297,7 +1297,7 @@ const computeNextSyRunning = async () => {
                       <div style={{ padding:'3px 6px', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none' }}>
                         {editMode
                           ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }} />
-                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' , textAlign:'center' }}>{formData[key]||'—'}</div>
+                          : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', textAlign:'center', display:'flex', alignItems:'center', justifyContent:'center' }}>{formData[key]||'—'}</div>
                         }
                       </div>
                     </div>
@@ -1313,7 +1313,7 @@ const computeNextSyRunning = async () => {
                       <div style={{ padding:'3px 6px', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none' }}>
                         {editMode
                           ? <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }} />
-                          : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', textAlign:'center' }}>{formData[key]||'—'}</div>
+                          : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', textAlign:'center', display:'flex', alignItems:'center', justifyContent:'center' }}>{formData[key]||'—'}</div>
                         }
                       </div>
                     </div>
@@ -1337,7 +1337,7 @@ const computeNextSyRunning = async () => {
                     ? cfg.combo.includes(key1)
                       ? <ComboBox key={`exp-${formData['Short Name']}-${formData[key1]||'empty'}`} value={formData[key1]||''} onChange={val=>setFormData({...formData,[key1]:val})} options={key1==='Expense Type' ? [...new Set(['63047000-ค่าบริการอื่นๆ',...getOptions(key1)])] : getOptions(key1)} placeholder='เลือก' />
                       : <input value={formData[key1]||''} onChange={e=>setFormData({...formData,[key1]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{formData[key1]||'—'}</div>
+                    : <div style={{ fontSize:'12px', color: formData[key1] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key1]||'—'}</div>
                   }
                 </div>
                 <div style={{ padding:'5px 10px', fontSize:'11px', color:'#888', background:'#f8f9fa', display:'flex', alignItems:'center', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0', fontWeight:'500' }}>{lbl2}</div>
@@ -1346,7 +1346,7 @@ const computeNextSyRunning = async () => {
                     ? cfg.combo.includes(key2)
                       ? <ComboBox value={formData[key2]||''} onChange={val=>setFormData({...formData,[key2]:val})} options={getOptions(key2)} placeholder='เลือก' />
                       : <input value={formData[key2]||''} onChange={e=>setFormData({...formData,[key2]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{formData[key2]||'—'}</div>
+                    : <div style={{ fontSize:'12px', color: formData[key2] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key2]||'—'}</div>
                   }
                 </div>
               </div>
@@ -1358,7 +1358,7 @@ const computeNextSyRunning = async () => {
               <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', overflow:'visible' }}>
                 {editMode
                   ? <input value={formData['Remark']||''} onChange={e=>setFormData({...formData,'Remark':e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px' }}>{formData['Remark']||'—'}</div>
+                  : <div style={{ fontSize:'12px', color: formData['Remark'] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData['Remark']||'—'}</div>
                 }
               </div>
               <div style={{ padding:'5px 10px', fontSize:'11px', color:'#888', background:'#f8f9fa', display:'flex', alignItems:'center', whiteSpace:'nowrap', borderRight:'0.5px solid #e8eaf0', fontWeight:'500' }}>BlankCell</div>
@@ -1410,7 +1410,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                 ? isCombo
                   ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`เลือก`} />
                   : <input style={inputSt} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
-                : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%' }}>{formData[key]||'—'}</div>
+                : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
               }
             </div>
           );
@@ -1469,7 +1469,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                       ? cfg.combo.includes(key)
                         ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder='-' />
                         : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                      : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                      : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
                     }
                   </div>
                 ))}
@@ -1480,7 +1480,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                         ? cfg.combo.includes(key)
                           ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder='-' />
                           : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
-                        : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData[key]||'—'}</div>
+                        : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
                       }
                     </div>
                   ))}
@@ -1488,7 +1488,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                 <div style={{ padding:'4px 6px' }}>
                   {editMode
                     ? <ComboBox value={formData['Notice']||''} onChange={val=>setFormData({...formData,'Notice':val})} options={getOptions('Notice')} placeholder='-' />
-                    : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px' }}>{formData['Notice']||'—'}</div>
+                    : <div style={{ fontSize:'12px', color: formData['Notice'] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData['Notice']||'—'}</div>
                   }
                 </div>
               </div>
@@ -1516,7 +1516,7 @@ if (tab === 'apcode' || tab === 'iecode') {
               <div style={{ padding:'4px 6px' }}>
                 {editMode
                   ? <textarea rows={3} value={formData['Address']||''} onChange={e=>setFormData({...formData,'Address':e.target.value})} style={{ width:'100%', padding:'6px 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
-                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{formData['Address']||'—'}</div>
+                  : <div style={{ fontSize:'12px', color: formData['Address'] ? '#1a3a5c' : '#bbb', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5', minHeight:'72px' }}>{formData['Address']||'—'}</div>
                 }
               </div>
             </div>
@@ -1527,14 +1527,14 @@ if (tab === 'apcode' || tab === 'iecode') {
               <div style={{ padding:'4px 6px', borderRight:'0.5px solid #e8eaf0' }}>
                 {editMode
                   ? <textarea rows={3} value={formData['RuleDescrip']||''} onChange={e=>setFormData({...formData,'RuleDescrip':e.target.value})} style={{ width:'100%', padding:'6px 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
-                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{formData['RuleDescrip']||'—'}</div>
+                  : <div style={{ fontSize:'12px', color: formData['RuleDescrip'] ? '#1a3a5c' : '#bbb', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5', minHeight:'72px' }}>{formData['RuleDescrip']||'—'}</div>
                 }
               </div>
               {lbl('Notice Desc.')}
               <div style={{ padding:'4px 6px' }}>
                 {editMode
                   ? <textarea rows={3} value={formData['NoticeDescrip']||''} onChange={e=>setFormData({...formData,'NoticeDescrip':e.target.value})} style={{ width:'100%', padding:'6px 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
-                  : <div style={{ fontSize:'12px', color:'#1a3a5c', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{formData['NoticeDescrip']||'—'}</div>
+                  : <div style={{ fontSize:'12px', color: formData['NoticeDescrip'] ? '#1a3a5c' : '#bbb', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5', minHeight:'72px' }}>{formData['NoticeDescrip']||'—'}</div>
                 }
               </div>
             </div>

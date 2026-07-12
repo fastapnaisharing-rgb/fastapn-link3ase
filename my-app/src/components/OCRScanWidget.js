@@ -114,6 +114,10 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   const [error, setError] = useState(null);
   const [previewSetId, setPreviewSetId] = useState(null);
   const [previewResult, setPreviewResult] = useState(null);
+  const [formValues, setFormValues] = useState({}); // { fieldName: currentValue } — แก้ไขได้ก่อน Approve
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(null); // { message, existingSetId }
   const [batchHistory, setBatchHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
 
@@ -190,6 +194,8 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   const handleViewResult = async (setId) => {
     setPreviewSetId(setId);
     setPreviewResult(null);
+    setApproveError(null);
+    setDuplicateWarning(null);
     try {
       const data = await apiFetch(`${API_BASE}/result/${setId}`);
       // โหลดรูปภาพของแต่ละหน้าเป็น blob URL
@@ -204,8 +210,65 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
         })
       );
       setPreviewResult({ ...data, pages: pagesWithImages });
+
+      // เตรียมค่าเริ่มต้นของฟอร์ม จาก Field ที่ OCR ดึงมาได้ (ให้พนักงานแก้ไขได้ก่อน Approve)
+      const initialValues = {};
+      for (const f of data.fields || []) {
+        initialValues[f.field_name] = f.final_value ?? f.ocr_value ?? "";
+      }
+      setFormValues(initialValues);
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  // ---------------- Approve: ส่งค่าที่พนักงานตรวจสอบ/แก้ไขแล้ว ----------------
+  const handleApprove = async (confirmDuplicate = false) => {
+    if (!previewResult) return;
+    setApproving(true);
+    setApproveError(null);
+    try {
+      const fieldsPayload = (previewResult.fields || []).map((f) => ({
+        fieldName: f.field_name,
+        ocrValue: f.ocr_value,
+        finalValue: formValues[f.field_name] ?? f.ocr_value,
+      }));
+
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/approve/${previewSetId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          supplierId: previewResult.set.supplier_id,
+          invoiceNo: formValues.invoice_no,
+          fields: fieldsPayload,
+          confirmDuplicate,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (res.status === 409 && body.error === "duplicate_invoice") {
+        // เจอ Invoice ซ้ำ — ต้องให้พนักงานยืนยันก่อนว่าจะ Approve ทั้งที่ซ้ำไหม
+        setDuplicateWarning({ message: body.message, existingSetId: body.existingSetId });
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+
+      // Approve สำเร็จ — ปิด Preview แล้วรีเฟรช List
+      setPreviewSetId(null);
+      setPreviewResult(null);
+      setDuplicateWarning(null);
+      loadBatchHistory();
+      if (batchId) poll();
+    } catch (err) {
+      setApproveError(err.message);
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -348,6 +411,115 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
               </div>
             </div>
           ))}
+
+          {/* ฟอร์มตรวจสอบ/แก้ไข Field ก่อน Approve — "AI-extracted, please verify" */}
+          {previewResult && (
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: "2px solid #ddd" }}>
+              <p style={{ fontSize: 12, color: "#b06d00", marginBottom: 12 }}>
+                🤖 ข้อมูลอ่านโดยระบบอัตโนมัติ — กรุณาตรวจสอบความถูกต้องก่อนกด Approve
+              </p>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                {(previewResult.fields || []).filter(f => f.field_name !== "line_items").map((f) => {
+                  const conf = f.ocr_confidence || 0;
+                  const confColor = conf >= 0.9 ? "#3c763d" : conf >= 0.7 ? "#8a6d3b" : "#a94442";
+                  return (
+                    <div key={f.field_name}>
+                      <label style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 4 }}>
+                        {f.field_name} <span style={{ color: confColor }}>({(conf * 100).toFixed(0)}%)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={formValues[f.field_name] ?? ""}
+                        onChange={(e) => setFormValues((prev) => ({ ...prev, [f.field_name]: e.target.value }))}
+                        style={{
+                          width: "100%",
+                          padding: "6px 10px",
+                          border: `1px solid ${confColor}`,
+                          borderRadius: 4,
+                          fontSize: 13,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Line Items — แสดงเป็นตารางเล็กๆ (ยังแก้ไขไม่ได้ในเวอร์ชันนี้) */}
+              {(() => {
+                const lineItemsField = (previewResult.fields || []).find(f => f.field_name === "line_items");
+                if (!lineItemsField) return null;
+                let items = [];
+                try { items = JSON.parse(lineItemsField.ocr_value); } catch (e) { /* ignore */ }
+                if (!items.length) return null;
+                return (
+                  <div style={{ marginBottom: 16 }}>
+                    <p style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>รายการสินค้า (Line Items)</p>
+                    <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ background: "#eee" }}>
+                          {Object.keys(items[0]).map((col) => (
+                            <th key={col} style={{ padding: 6, textAlign: "left", border: "1px solid #ddd" }}>{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((row, idx) => (
+                          <tr key={idx}>
+                            {Object.keys(items[0]).map((col) => (
+                              <td key={col} style={{ padding: 6, border: "1px solid #ddd" }}>{row[col] || "-"}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+
+              {/* Validation Flags (เช่น ยอดเงินไม่สอดคล้องกัน) */}
+              {(previewResult.flags || []).length > 0 && (
+                <div style={{ marginBottom: 12, padding: 10, background: "#fff3cd", borderRadius: 6, fontSize: 12, color: "#856404" }}>
+                  ⚠️ พบข้อควรระวัง: {previewResult.flags.map(fl => fl.flag_type).join(", ")} — กรุณาตรวจสอบยอดเงินให้ละเอียด
+                </div>
+              )}
+
+              {/* คำเตือน Invoice ซ้ำ */}
+              {duplicateWarning && (
+                <div style={{ marginBottom: 12, padding: 12, background: "#f8d7da", borderRadius: 6, fontSize: 13, color: "#721c24" }}>
+                  <p style={{ margin: "0 0 8px" }}>⚠️ {duplicateWarning.message}</p>
+                  <button onClick={() => handleApprove(true)} style={{ marginRight: 8 }}>
+                    ยืนยัน Approve ทั้งที่ซ้ำ
+                  </button>
+                  <button onClick={() => setDuplicateWarning(null)}>ยกเลิก</button>
+                </div>
+              )}
+
+              {approveError && (
+                <p style={{ color: "#d9534f", fontSize: 13, marginBottom: 12 }}>เกิดข้อผิดพลาด: {approveError}</p>
+              )}
+
+              {!duplicateWarning && (
+                <button
+                  onClick={() => handleApprove(false)}
+                  disabled={approving}
+                  style={{
+                    background: "#5cb85c",
+                    color: "#fff",
+                    border: "none",
+                    padding: "10px 20px",
+                    borderRadius: 6,
+                    fontSize: 14,
+                    cursor: approving ? "not-allowed" : "pointer",
+                    opacity: approving ? 0.6 : 1,
+                  }}
+                >
+                  {approving ? "กำลังบันทึก..." : "✓ Approve"}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

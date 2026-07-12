@@ -4311,7 +4311,7 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
             <div key={label} style={{ padding: '7px 10px', borderRight: idx === 0 ? '0.5px solid #f0f0f0' : 'none' }}>
               <div style={{ fontSize: '10px', color, fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>{label}</div>
               <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
-                <span style={{ padding: '0 7px', fontSize: '11px', color, background: bg, borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>{prefix}</span>
+                <span style={{ flex: 1, padding: '0 7px', fontSize: '11px', color, background: bg, borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>{prefix}</span>
                 <input type="text" inputMode="numeric" value={val} onChange={e => onChange(e.target.value)} maxLength={getDigitCount(buInfo)} placeholder={"0".repeat(getDigitCount(buInfo))}
                   style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color, textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }} />
               </div>
@@ -4620,10 +4620,12 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [reportPickerId, setReportPickerId] = useState(null);
   const [reportPickerValue, setReportPickerValue] = useState('');
   const [reportSending, setReportSending] = useState(false);
+  const [reportPopupBatch, setReportPopupBatch] = useState(null);
   useEffect(() => {
     apiFetch('/user_roles').then(list => {
+      // ── Fix: Manual อยู่ใน permissions.Manual (JSONB) ไม่ใช่ Column บนสุด ──
       const isManual = (u) => {
-        const v = u?.Manual ?? u?.manual ?? u?.MANUAL;
+        const v = u?.permissions?.Manual ?? u?.permissions?.manual ?? u?.Manual ?? u?.manual ?? u?.MANUAL;
         return v === true || v === 'Yes' || v === 'yes' || v === 1 || v === '1';
       };
       setReportReviewers((list || []).filter(isManual));
@@ -4820,13 +4822,15 @@ function BatchSetup({ onStart, infoItems = [] }) {
       });
       if (res?.error) throw new Error(res.error);
 
-      // ── พึ่งมีการ Report to ผู้ตรวจจริง ถึงเปลี่ยน batch_list เป็น "Done" ──
-      // ── (แค่ Export ไฟล์เสร็จ ยังนับเป็น "Processing" อยู่ ตามที่ตกลงกันไว้) ──
-      const { error: doneErr } = await db.from('batch_list').update({ status: 'done' }).eq('id', batch.id);
-      if (doneErr) console.error('[batch_list done on report]', doneErr);
+      // ── Reviewing Status: กลาง Processing/Done ────────────────────────────────
+      // ── พึ่งมีการ Report to ผู้ตรวจจริง ถึงเปลี่ยน batch_list เป็น "Reviewing" ──
+      // ── (แค่ Export ไฟล์เสร็จ ยังนับเป็น "Processing" อยู่ / "Done" ต้องรอผู้ตรวจ ──
+      // ── ที่ถูกระบุชื่อ กดปุ่ม "อนุมัติ/ตรวจแล้ว" เองเท่านั้น ไม่ใช่ Auto ตอน Report to) ──
+      const { error: doneErr } = await db.from('batch_list').update({ status: 'reviewing', reported_to_username: reportPickerValue }).eq('id', batch.id);
+      if (doneErr) console.error('[batch_list reviewing on report]', doneErr);
       else {
-        setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
-        setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
+        setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue } : x));
+        setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue } : x));
       }
 
       setReportPickerId(null);
@@ -4834,6 +4838,17 @@ function BatchSetup({ onStart, infoItems = [] }) {
       alert('ส่งตรวจสำเร็จ');
     } catch (e) { alert('ส่งตรวจไม่สำเร็จ: ' + e.message); }
     setReportSending(false);
+  };
+
+  // ── อนุมัติ/ตรวจแล้ว — เฉพาะผู้ตรวจที่ถูกระบุชื่อ (reported_to_username) เท่านั้น ──
+  // ── กดแล้วค่อยเปลี่ยน batch_list.status เป็น "done" จริง ──────────────────────
+  const handleApproveReview = async (batch) => {
+    try {
+      const { error } = await db.from('batch_list').update({ status: 'done' }).eq('id', batch.id);
+      if (error) throw error;
+      setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
+      setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
+    } catch (e) { alert('อนุมัติไม่สำเร็จ: ' + e.message); }
   };
   const canSeeAll = isOwner || isAdmin;
   const me = userName || currentUser?.email || '';
@@ -4976,7 +4991,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
               ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
                 <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
-                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
+                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, reviewing: { bg: '#FAEEDA', color: '#633806', label: 'Reviewing' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
                 const ra = b.receive_date ? new Date(b.receive_date) : null;
                 const p2 = (n) => String(n).padStart(2, '0');
@@ -5003,6 +5018,11 @@ function BatchSetup({ onStart, infoItems = [] }) {
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '16px', cursor: 'pointer' }}>👁</button>
                             <button onClick={() => handleFileAction(b.file_url, 'download', b.file_name)} title="Download"
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '16px', cursor: 'pointer' }}>⬇</button>
+                            {/* ── Report to ผู้ตรวจ: เปิด Popup แนบ Invoice Register (My Jobs เท่านั้น) ── */}
+                            {historyTab === 'mine' && b.status !== 'done' && (
+                              <button onClick={() => setReportPopupBatch(b)} title="Report to ผู้ตรวจ"
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #f7dfa8', background: '#fff8ec', color: '#854F0B', fontSize: '14px', cursor: 'pointer' }}>📤</button>
+                            )}
                           </>
                         ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
                       </div>
@@ -5010,6 +5030,12 @@ function BatchSetup({ onStart, infoItems = [] }) {
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>{st.label}</span>
+                        {b.status === 'reviewing' && String(b.reported_to_username || '').trim().toLowerCase() === String(me || '').trim().toLowerCase() && (
+                          <button onClick={() => { if (window.confirm('ยืนยันว่าตรวจ Batch นี้เรียบร้อยแล้วใช่ไหม?')) handleApproveReview(b); }} title="อนุมัติ/ตรวจแล้ว"
+                            style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', cursor: 'pointer', fontWeight: '500' }}>
+                            ✓ อนุมัติ
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td style={{ padding: '8px 9px', textAlign: 'center' }}>
@@ -5201,7 +5227,168 @@ function BatchSetup({ onStart, infoItems = [] }) {
           </div>
         </div>
       )}
+      <ReportToInvoiceRegisterPopup
+        show={!!reportPopupBatch}
+        batch={reportPopupBatch}
+        reviewers={reportReviewers}
+        onClose={() => setReportPopupBatch(null)}
+        onDone={(updated) => {
+          setHistoryMine(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
+          setHistoryAll(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
+        }}
+      />
     </>
+  );
+}
+
+// ── Popup ส่งตรวจ พร้อมแนบไฟล์ Invoice Register (Paste จาก Excel/Sheet หรือ Upload ไฟล์ Excel) ──
+function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone }) {
+  const [toUsername, setToUsername] = useState('');
+  const [mode, setMode] = useState('paste');
+  const [pastedText, setPastedText] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [uploadedRows, setUploadedRows] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!show) return;
+    setToUsername(''); setMode('paste'); setPastedText('');
+    setUploadedFileName(''); setUploadedRows(null); setError('');
+  }, [show]);
+
+  if (!show) return null;
+
+  const computedFileName = (() => {
+    const base = String(batch?.file_name || batch?.batch_id || batch?.id || 'batch').replace(/\.(xlsx?|XLSX?)$/, '');
+    return `${base}_Invoice_Register.xls`;
+  })();
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFileName(file.name);
+    setError('');
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      setUploadedRows(rows);
+    } catch (err) {
+      setError('อ่านไฟล์ไม่สำเร็จ: ' + err.message);
+      setUploadedRows(null);
+    }
+  };
+
+  const canSave = !!toUsername && (mode === 'paste' ? pastedText.trim().length > 0 : !!uploadedRows);
+
+  const handleSave = async () => {
+    if (!toUsername) { setError('กรุณาเลือกผู้ตรวจ'); return; }
+    let rows;
+    if (mode === 'paste') {
+      const lines = pastedText.split(/\r?\n/).filter(l => l.length > 0);
+      if (lines.length === 0) { setError('กรุณาวางข้อมูลก่อน'); return; }
+      // ── ต้นฉบับใช้ Tab Character คั่นคอลัมน์ (ยืนยันจากการ Paste เข้า Excel จริง ──
+      // ── แล้วแยกเป็นหลายคอลัมน์ A-W เอง) — แยกแต่ละบรรทัดด้วย Tab เหมือนกัน ──────
+      rows = lines.map(l => l.split('\t'));
+    } else {
+      if (!uploadedRows) { setError('กรุณาแนบไฟล์ก่อน'); return; }
+      rows = uploadedRows;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      // MARKER_FIX_INVOICE_REGISTER_STORAGE_V1
+      const genRes = await apiFetch('/file-storage/generate', {
+        method: 'POST',
+        body: JSON.stringify({ module: 'invoice-register', bu: batch.bu, refId: `${batch.batch_id || batch.id}-IR`, fileName: computedFileName, rows }),
+      });
+      if (genRes?.error) throw new Error(genRes.error);
+      const reportRes = await apiFetch(`/file-storage/${genRes.fileId}/report-to`, {
+        method: 'POST',
+        body: JSON.stringify({ reportTo: toUsername }),
+      });
+      if (reportRes?.error) throw new Error(reportRes.error);
+      // ── เก็บไฟล์ Invoice Register แยก Column ต่างหาก ไม่ทับ file_url/file_name ──
+      // ── ของไฟล์ Export เดิม (เผื่อกระบวนการกำหนดการลบแยกกันในอนาคต) ──────────
+      const { error: updErr } = await db.from('batch_list').update({
+        status: 'reviewing', reported_to_username: toUsername,
+        invoice_register_file_id: genRes.fileId, invoice_register_file_name: genRes.fileName,
+      }).eq('id', batch.id);
+      if (updErr) throw new Error(updErr.message || updErr);
+      onDone({ id: batch.id, status: 'reviewing', reported_to_username: toUsername, invoice_register_file_id: genRes.fileId, invoice_register_file_name: genRes.fileName });
+      onClose();
+      alert('ส่งตรวจสำเร็จ');
+    } catch (e) { setError('ส่งตรวจไม่สำเร็จ: ' + e.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, backdropFilter: 'blur(2px)' }}
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      {/* MARKER_REPORT_TO_POPUP_RESIZE_V1 */}
+      <div style={{ background: 'white', borderRadius: '12px', width: '600px', boxShadow: '0 20px 60px rgba(26,58,92,0.22)', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '0.5px solid #f0f2f5', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#854F0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' }}>📤</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>ส่งตรวจ</div>
+            <div style={{ fontSize: '11px', color: '#aaa' }}>{batch?.batch_id || batch?.id}</div>
+          </div>
+          <button onClick={onClose} style={{ width: '26px', height: '26px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+        <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {error && <div style={{ padding: '8px 12px', background: '#FCEBEB', color: '#791F1F', borderRadius: '6px', fontSize: '12px' }}>⚠️ {error}</div>}
+          <div>
+            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '5px' }}>ผู้ตรวจ <span style={{ color: '#e24b4a' }}>*</span></label>
+            <select value={toUsername} onChange={e => setToUsername(e.target.value)}
+              style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '7px', background: 'white', color: '#1a3a5c', outline: 'none', cursor: 'pointer' }}>
+              <option value="">— เลือกผู้ตรวจ —</option>
+              {reviewers.map(u => (
+                <option key={u.id || u.username || u.email} value={u.username || u.email}>{u.username || u.email}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '5px' }}>Invoice register</label>
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+              <button onClick={() => setMode('paste')}
+                style={{ flex: 1, padding: '7px', borderRadius: '7px', border: mode === 'paste' ? '2px solid #378ADD' : '0.5px solid #ddd', background: mode === 'paste' ? '#E6F1FB' : 'white', color: mode === 'paste' ? '#0C447C' : '#555', fontSize: '12px', fontWeight: mode === 'paste' ? '600' : '400', cursor: 'pointer' }}>
+                📋 วางจาก Excel/Sheet
+              </button>
+              <button onClick={() => setMode('upload')}
+                style={{ flex: 1, padding: '7px', borderRadius: '7px', border: mode === 'upload' ? '2px solid #378ADD' : '0.5px solid #ddd', background: mode === 'upload' ? '#E6F1FB' : 'white', color: mode === 'upload' ? '#0C447C' : '#555', fontSize: '12px', fontWeight: mode === 'upload' ? '600' : '400', cursor: 'pointer' }}>
+                📎 แนบไฟล์ Excel
+              </button>
+            </div>
+            {mode === 'paste' ? (
+              <textarea value={pastedText} onChange={e => setPastedText(e.target.value)}
+                placeholder="คลิกแล้ววาง (Ctrl+V) ข้อมูลจาก Excel หรือ Google Sheet ที่นี่ — ระบบจะแยกคอลัมน์ตาม Tab ให้อัตโนมัติเหมือน Paste เข้า Excel จริง"
+                style={{ width: '100%', height: '240px', padding: '10px', fontSize: '11px', fontFamily: 'monospace', border: '1px dashed #ccc', borderRadius: '7px', background: '#fafbfc', color: '#1a3a5c', outline: 'none', resize: 'none', boxSizing: 'border-box' }} />
+            ) : (
+              <div>
+                <input type="file" accept=".xlsx,.xls" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+                <button onClick={() => fileInputRef.current?.click()}
+                  style={{ width: '100%', padding: '10px', borderRadius: '7px', border: '1px dashed #ccc', background: '#fafbfc', color: '#555', fontSize: '12px', cursor: 'pointer' }}>
+                  {uploadedFileName ? `📄 ${uploadedFileName}` : '📁 เลือกไฟล์ Excel...'}
+                </button>
+              </div>
+            )}
+          </div>
+          <div style={{ background: '#f8f9fa', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#888' }}>
+            จะบันทึกเป็น: <span style={{ fontFamily: 'monospace', color: '#555' }}>{computedFileName}</span>
+          </div>
+        </div>
+        <div style={{ padding: '12px 20px', borderTop: '0.5px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: '#fafbfc' }}>
+          <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
+          <button onClick={handleSave} disabled={saving || !canSave}
+            style={{ padding: '7px 18px', borderRadius: '7px', border: 'none', background: (saving || !canSave) ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: (saving || !canSave) ? 'default' : 'pointer' }}>
+            {saving ? 'กำลังส่ง...' : '📤 ส่งตรวจ'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -5230,6 +5417,14 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 
   // ── Supplier Code Quick List: กด "/" ตอนว่าง -> เปิดรายการที่เคยกรอกใน Batch นี้ ──
   const [showSupplierCodeList, setShowSupplierCodeList] = useState(false);
+  // ── Arrow Up/Down + Enter Navigation สำหรับ Supplier Code Quick List ──
+  const [supplierCodeActiveIdx, setSupplierCodeActiveIdx] = useState(-1);
+  const selectSupplierCodeFromList = (v) => {
+    setField('supplierCode', v);
+    onSupplierBlur(v);
+    setShowSupplierCodeList(false);
+    setSupplierCodeActiveIdx(-1);
+  };
 
   return (
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
@@ -5242,12 +5437,18 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
               onChange={e => {
                 const newVal = e.target.value;
                 const cur = form.supplierCode || '';
-                if (cur === '' && newVal === '/') { setShowSupplierCodeList(true); return; }
+                if (cur === '' && newVal === '/') { setShowSupplierCodeList(true); setSupplierCodeActiveIdx(-1); return; }
                 setShowSupplierCodeList(false);
                 setField('supplierCode', newVal);
               }}
-              onBlur={() => { setTimeout(() => setShowSupplierCodeList(false), 120); onSupplierBlur(form.supplierCode); }}
+              onBlur={() => { setTimeout(() => { setShowSupplierCodeList(false); setSupplierCodeActiveIdx(-1); }, 120); onSupplierBlur(form.supplierCode); }}
               onKeyDown={e => {
+                if (showSupplierCodeList && recentSupplierCode.length > 0) {
+                  if (e.key === 'ArrowDown') { e.preventDefault(); setSupplierCodeActiveIdx(i => Math.min(i + 1, recentSupplierCode.length - 1)); return; }
+                  if (e.key === 'ArrowUp') { e.preventDefault(); setSupplierCodeActiveIdx(i => Math.max(i - 1, 0)); return; }
+                  if (e.key === 'Enter' && supplierCodeActiveIdx >= 0) { e.preventDefault(); selectSupplierCodeFromList(recentSupplierCode[supplierCodeActiveIdx]); return; }
+                  if (e.key === 'Escape') { setShowSupplierCodeList(false); setSupplierCodeActiveIdx(-1); return; }
+                }
                 if (e.key === 'Enter' || e.key === 'Tab') onSupplierBlur(form.supplierCode);
               }}
               style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
@@ -5260,10 +5461,9 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
             <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 9999, background: 'white', borderRadius: '6px', border: '0.5px solid #ddd', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', width: '100%', maxHeight: '200px', overflowY: 'auto', boxSizing: 'border-box' }}>
               {recentSupplierCode.map((v, i) => (
                 <div key={i}
-                  onMouseDown={e => { e.preventDefault(); setField('supplierCode', v); onSupplierBlur(v); setShowSupplierCodeList(false); }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#eef3fb'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'white'; }}
-                  style={{ padding: '6px 10px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', borderBottom: '0.5px solid #f2f2f2' }}>
+                  onMouseDown={e => { e.preventDefault(); selectSupplierCodeFromList(v); }}
+                  onMouseEnter={() => setSupplierCodeActiveIdx(i)}
+                  style={{ padding: '6px 10px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', borderBottom: '0.5px solid #f2f2f2', background: i === supplierCodeActiveIdx ? '#eef3fb' : 'white' }}>
                   {v}
                 </div>
               ))}
@@ -5390,7 +5590,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 }
 
 // ── InvoiceEntry ──────────────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], smCodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
+function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () => {}, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], smCodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
 
@@ -5422,6 +5622,35 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const headerSubAccRef  = useRef(null);
   const formRef = useRef(form);
   useEffect(() => { formRef.current = form; }, [form]);
+
+  // ── Keyboard Shortcut ระดับหน้า Invoice Entry: Enter / Escape / End ──
+  // ── Enter (Focus ที่ Supplier code/Branch no.) -> เปิด Invoice Detail ถ้าข้อมูลครบ 2 ช่อง ──
+  // ── Escape -> กลับ Batch Setup / End -> ไป Batch Preview (ต้องไม่มี Popup อื่นเปิดอยู่) ──
+  useEffect(() => {
+    const handleGlobalKeydown = (e) => {
+      const anyPopupOpen = showInvoiceDetail || showSupplierPopup || showBranchPopup || bucketPopup.show || showSendToModal;
+      if (anyPopupOpen) return;
+
+      if (e.key === 'Enter') {
+        const active = document.activeElement;
+        const isSupplierOrBranchField = active === supplierCodeRef.current || active === branchNoRef.current;
+        if (isSupplierOrBranchField && form.supplierCode?.trim() && form.branchNo?.trim()) {
+          setShowInvoiceDetail(true);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        onBack();
+        return;
+      }
+      if (e.key === 'End') {
+        if (invoices.length > 0) onNext();
+        return;
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeydown);
+    return () => window.removeEventListener('keydown', handleGlobalKeydown);
+  }, [showInvoiceDetail, showSupplierPopup, showBranchPopup, bucketPopup.show, showSendToModal, form.supplierCode, form.branchNo, invoices.length, onBack, onNext]);
   const HEADER_FOCUS_ORDER = [
     ['supplierCode',  supplierCodeRef],
     ['branchNo',      branchNoRef],
@@ -5532,6 +5761,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   // ── ที่มีอยู่ใน Batch Bucket ตอนนี้ — ไม่ต้องมี Storage ใหม่ ใช้ข้อมูลเดิมที่มีอยู่แล้ว ──
   // ── หมดอายุอัตโนมัติตอน Export (Batch Bucket ว่าง เลยไม่มี Quick Vendor เหลือ) ──────
   const quickVendors = (() => {
+    // ── Fix: Quick Vendor ต้องกรอง BU/Book Prefix เหมือน findSupplierByCode ──
+    // ── ไม่งั้นถ้า Tax ID+No เดียวกันมีอยู่หลาย BU จะได้ Supplier ผิด BU มา ──
+    const bu = batchConfig?.bu || '';
+    const book = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase();
+    const isGroupBook = book === 'CGT' || book === 'CGR';
+    const isValidPrefix = (code) => {
+      const codePrefix = String(code ?? '').split('-')[0].toUpperCase();
+      return isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
+    };
     const seen = new Set();
     const result = [];
     for (const inv of invoices) {
@@ -5542,7 +5780,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       seen.add(key);
       const supplier = supplierItems.find(s =>
         String(s['Tax ID'] ?? '').trim() === String(vf.taxId ?? '').trim() &&
-        String(s['No.'] ?? '').trim() === String(vf.no ?? '').trim()
+        String(s['No.'] ?? '').trim() === String(vf.no ?? '').trim() &&
+        isValidPrefix(s['Code'])
       );
       if (supplier) result.push(supplier);
     }
@@ -6076,6 +6315,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     let grnRunningActual = nextGrnRunning;
     let grnBumpCount = 0;
 
+    // ── Resolve vendorInfo ณ ตอน Submit เสมอ — ป้องกัน vendorInfo ว่างหรือค้างจาก Session ก่อน ──
+    // ── กรณี User พิมพ์ Code ตรงๆ โดยไม่ผ่าน Popup / ไม่ได้กด blur ก็จะยังหาค่าเจอ ──────────
+    const resolvedVendor = vendorInfo?.['Tax ID']
+      ? vendorInfo
+      : findSupplierByCode(form.supplierCode);
+
     const newItems = [];
     for (let gi = 0; gi < groups.length; gi++) {
       const { lines: groupLines, hLine } = groups[gi];
@@ -6096,9 +6341,9 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         bu:              batchConfig?.bu || '',
         receive_date:    batchConfig?.receiveDate || null,
         supplier_code:   form.supplierCode || '',
-        vendor_name:     vendorInfo?.['Supplier Name'] || '',
-        vendor_tax_id:   vendorInfo?.['Tax ID'] || '',
-        vendor_no:       vendorInfo?.['No.'] || '',
+        vendor_name:     resolvedVendor?.['Supplier Name'] || '',
+        vendor_tax_id:   resolvedVendor?.['Tax ID'] || '',
+        vendor_no:       resolvedVendor?.['No.'] || '',
         branch_no:       form.branchNo || '',
         branch_label:    form.branchDirectLabel || '',
         invoice_no:      invoiceNo,
@@ -6818,9 +7063,9 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   const [reportTo, setReportTo] = useState('');
   React.useEffect(() => {
     apiFetch('/user_roles').then(list => {
-      // ── เช็คหลาย Case กันพลาด (ไม่มั่นใจชื่อ Column ที่แน่นอน) ──
+      // ── Fix: Manual อยู่ใน permissions.Manual (JSONB) ไม่ใช่ Column บนสุด ──
       const isManual = (u) => {
-        const v = u?.Manual ?? u?.manual ?? u?.MANUAL;
+        const v = u?.permissions?.Manual ?? u?.permissions?.manual ?? u?.Manual ?? u?.manual ?? u?.MANUAL;
         return v === true || v === 'Yes' || v === 'yes' || v === 1 || v === '1';
       };
       setReviewers((list || []).filter(isManual));
@@ -8010,16 +8255,20 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
   const handleSavePrefix = async () => {
     const val = prefixInput.trim().toUpperCase();
     if (!val) { alert('กรุณากรอก System Prefix'); return; }
-    if (!userRoleRowId) { alert('ไม่พบ User ในระบบ (user_roles) — ติดต่อ Admin'); return; }
     setSavingPrefix(true);
     try {
-      const { error } = await db.from('user_roles').update({ system_prefix: val }).eq('id', userRoleRowId);
-      if (error) throw error;
+      // ── ใช้ Endpoint เฉพาะ (ทุก Role ตั้ง Prefix ของตัวเองได้ ไม่ต้องเป็น Owner) ──
+      // ── user_roles/self/system_prefix
+      const res = await apiFetch('/user_roles/self/system_prefix', {
+        method: 'PUT',
+        body: JSON.stringify({ system_prefix: val }),
+      });
+      if (res?.error) throw new Error(typeof res.error === 'string' ? res.error : 'บันทึกไม่สำเร็จ');
       setSystemPrefix(val);
       setShowPrefixModal(false);
     } catch (e) {
       console.error('[system_prefix save]', e);
-      alert('บันทึกไม่สำเร็จ: ' + e.message);
+      alert('บันทึกไม่สำเร็จ: ' + (e?.message || 'ไม่ทราบสาเหตุ'));
     }
     setSavingPrefix(false);
   };
@@ -8110,7 +8359,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
         {step === 2 && (
-          <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)}
+          <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)}
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}
             cpcItems={cpcItems} itemcodeItems={itemcodeItems} categoryItems={categoryItems} noticeItems={noticeItems}
             vendorRuleItems={vendorRuleItems} smCodeItems={smCodeItems} fetchCollection={fetchCollection}
