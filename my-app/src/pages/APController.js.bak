@@ -902,14 +902,14 @@ const fmt2Val = (n) => n === 0 ? '' : n.toLocaleString('en-US', { minimumFractio
 
 const buildTaxCodeVal = (vatChar, branchDirectCode) => {
   const v = String(vatChar ?? '').trim().toUpperCase();
-  if (v === 'V') return `${branchDirectCode}-N VAT7%`;
-  if (v === 'S') return `${branchDirectCode}-N SVAT7%`;
+  if (v === 'V') return `${branchDirectCode}-N VAT7`;
+  if (v === 'S') return `${branchDirectCode}-N SVAT7`;
   return '';
 };
 const buildWhtCodeVal = (whtChar, branchDirectCode) => {
   const w = String(whtChar ?? '').trim().toUpperCase();
   if (w === 'N' || w === '') return '';
-  return `${branchDirectCode}-WHT${w}%`;
+  return `${branchDirectCode}-WHT${w}`;
 };
 
 const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
@@ -3049,7 +3049,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         const vatAmount = parseFloat(val) || 0;
         const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
         const taxCode0 = lines[idx]?.taxCode || '';
-        const isVatLine = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+        const isVatLine = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
         const autoGrn = (isVatLine && isAutoGrt) ? grnPreview : '';
         setLines(prev => {
           const next = [...prev];
@@ -3079,14 +3079,14 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // ── Helpers ───────────────────────────────────────────────────────────────
   const buildTaxCode = (vatChar, branchDirectCode) => {
     const v = String(vatChar ?? '').trim().toUpperCase();
-    if (v === 'V') return `${branchDirectCode}-N VAT7%`;
-    if (v === 'S') return `${branchDirectCode}-N SVAT7%`;
+    if (v === 'V') return `${branchDirectCode}-N VAT7`;
+    if (v === 'S') return `${branchDirectCode}-N SVAT7`;
     return '';
   };
   const buildWhtCode = (whtChar, branchDirectCode) => {
     const w = String(whtChar ?? '').trim().toUpperCase();
     if (w === 'N' || w === '') return '';
-    return `${branchDirectCode}-WHT${w}%`;
+    return `${branchDirectCode}-WHT${w}`;
   };
   const fmt2 = (n) => n === 0 ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -3207,6 +3207,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   const handleSubmit = async () => {
+    // ── Block Submit: ไม่มีข้อมูล Branch No. ห้าม Submit เด็ดขาด ──
+    if (!form?.branchNo?.trim()) {
+      alert('กรุณาเลือก Branch ก่อน Submit — ไม่สามารถ Submit Invoice ที่ไม่มีข้อมูล Branch ได้');
+      return;
+    }
     if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) {
       alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
       return;
@@ -3339,7 +3344,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>GRN</div>
                     {(() => {
                       const taxCode0 = String(lines[0]?.taxCode || '');
-                      const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+                      const isVat = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
                       const val = isAutoGrt ? (isVat ? grnPreview : '-') : (form?.grn || '—');
                       return <div style={{ fontSize: '12px', fontWeight: '500', color: (val !== '—' && val !== '-') ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val}</div>;
                     })()}
@@ -3721,7 +3726,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           vendorTaxId={vendorInfo?.['Tax ID'] || ''}
           onSelect={({ vendor, realInvoiceNo, taxInvoiceDate }) => {
             const taxCode0 = String(lines[realVendorLineIdx]?.taxCode || '');
-            const isVatBool = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+            const isVatBool = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
             const isVat = isVatBool ? 'Yes' : 'No';
             const lineHl = lines[realVendorLineIdx]?.hl || 'L';
             // Auto GRN: ใช้ grnPreview prop ที่ส่งมาจาก InvoiceEntry
@@ -3888,8 +3893,8 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
 
   const derivedIsVat = lines.some(l => {
     const tc = String(l.taxCode || '');
-    return tc.includes('VAT7%') && !tc.includes('SVAT7%');
-  }) ? 'Yes' : lines.some(l => String(l.taxCode || '').includes('SVAT7%')) ? 'SVAT' : 'No';
+    return tc.includes('VAT7') && !tc.includes('SVAT7');
+  }) ? 'Yes' : lines.some(l => String(l.taxCode || '').includes('SVAT7')) ? 'SVAT' : 'No';
 
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
   const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
@@ -3908,7 +3913,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
         const vatAmount = parseFloat(val) || 0;
         const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
         const taxCode0 = lines[idx]?.taxCode || '';
-        const isVatLine = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+        const isVatLine = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
         const autoGrn = '';
         setLines(prev => {
           const next = [...prev];
@@ -3960,6 +3965,12 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
       else break;
     }
     if (cleanedLines.length !== lines.length) setLines(cleanedLines);
+
+    // ── Block Save: ไม่มีข้อมูล Branch No. ห้าม Save เด็ดขาด (Edit Invoice) ──
+    if (!form?.branchNo?.trim()) {
+      alert('ไม่พบข้อมูล Branch — ไม่สามารถบันทึก Invoice ที่ไม่มีข้อมูล Branch ได้');
+      return;
+    }
 
     if (!cleanedLines[0]?.itemCode?.trim() || !cleanedLines[0]?.amount?.trim()) { alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
     setSaving(true);
@@ -4450,6 +4461,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
       const dc = getDigitCount(buInfo);
       setApGrtRunning(String((override ? buInfo.ap_grt_prev : buInfo.ap_grt) ?? 0).padStart(dc, '0'));
       setApGrnRunning(String((override ? buInfo.ap_grn_prev : buInfo.ap_grn) ?? 0).padStart(dc, '0'));
+      // ── Pre-fill Due Date จาก company_list.ap_due_date (ค่าล่าสุดที่เคย Sync ไว้) ──
+      // ── ตัดเหลือ YYYY-MM-DD เท่านั้น เผื่อ DB ส่ง Timestamp เต็มรูปแบบมา (เหมือนที่เจอกับ Inv Date) ──
+      if (buInfo.ap_due_date) setDueDate(String(buInfo.ap_due_date).slice(0, 10));
     }
   }, [buInfo]);
 
@@ -5359,7 +5373,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
   const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
 
   // ── GRT/GRN running number — gen อัตโนมัติเมื่อ GRT Status = Auto ──────────
-  // GRT: รันทุก invoice / GRN: รันเฉพาะ invoice ที่ Tax code เป็น VAT7% (ไม่ใช่ SVAT7%)
+  // GRT: รันทุก invoice / GRN: รันเฉพาะ invoice ที่ Tax code เป็น VAT7 (ไม่ใช่ SVAT7)
   const isAutoGrt = (batchConfig?.buInfo?.['AP GRT Control'] || '') === 'Auto';
   const [nextGrtRunning, setNextGrtRunning] = useState(() => parseInt(batchConfig?.apGrtRunning || '0', 10) || 0);
   const [nextGrnRunning, setNextGrnRunning] = useState(() => parseInt(batchConfig?.apGrnRunning || '0', 10) || 0);
@@ -5711,6 +5725,30 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     }
   };
 
+  // ── Sync Due Date -> company_list.ap_due_date (ทุกครั้งที่เปลี่ยนค่า) ──
+  // ── รวมถึงตอน Start Batch ครั้งแรก (Effect นี้ยิงทันทีที่ Mount เพราะ form.dueDate ──
+  // ── ตั้งต้นจาก batchConfig.dueDate อยู่แล้ว) และทุกครั้งที่แก้ Due date ใน Step 2 ──
+  const lastSyncedDueDateRef = useRef(null);
+  useEffect(() => {
+    const buVal = String(batchConfig?.bu || '').trim();
+    if (!buVal || !form.dueDate) return;
+    if (lastSyncedDueDateRef.current === form.dueDate) return;
+    (async () => {
+      try {
+        const buId = batchConfig?.buInfo?.id;
+        const payload = { ap_due_date: form.dueDate };
+        const { error } = buId
+          ? await db.from('company_list').update(payload).eq('id', buId)
+          : await db.from('company_list').update(payload).eq('bu', buVal);
+        if (error) throw error;
+        lastSyncedDueDateRef.current = form.dueDate;
+        if (fetchCollection) await fetchCollection('CompanyList', true);
+      } catch (e) {
+        console.error('syncApDueDate:', e);
+      }
+    })();
+  }, [form.dueDate, batchConfig?.bu, batchConfig?.buInfo?.id]);
+
   // ── presence heartbeat: แจ้งตัวเอง + เช็คว่ามี session อื่นของ BU เดียวกันไหม ──
   const heartbeat = async () => {
     if (!batchConfig?.batchId || !batchConfig?.bu) return;
@@ -5957,13 +5995,46 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
     const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     const roleLabel = isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer';
 
-    // ── แบ่ง lines เป็น Invoice แยกตาม H/L ────────────────────────────────────
-    // ทุกครั้งที่เจอ hl === 'H' = เริ่ม Invoice ใหม่ 1 ใบ
-    // L ที่ตามมาจะรวมเข้า Invoice ของ H ตัวล่าสุด จนกว่าจะเจอ H ตัวถัดไป
+    // ── Bug Fix: กรองบรรทัดว่างทิ้งก่อน Group (กัน Ghost Line เข้ากลุ่ม Tax Code ว่าง) ──
+    // ── บรรทัดที่ Item Code และ Amount ว่างทั้งคู่ ถือว่าไม่มีข้อมูล ตัดทิ้งตั้งแต่ต้นเลย ──
+    const meaningfulLines = lines.filter(l => String(l.itemCode || '').trim() || String(l.amount || '').trim());
+
+    // ── แบ่ง lines เป็น Invoice ────────────────────────────────────────────────
+    // Step 1: แบ่งเป็น H-Block ก่อน (H เริ่ม Block ใหม่, L รวมเข้า Block ล่าสุด) — เหมือนเดิม
+    const hBlocks = [];
+    meaningfulLines.forEach(line => {
+      if (line.hl === 'H' || hBlocks.length === 0) hBlocks.push([line]);
+      else hBlocks[hBlocks.length - 1].push(line);
+    });
+    // ── กฎใหม่: จับกลุ่มตาม Tax Code ที่เหมือนกัน (Priority SVAT7 > VAT7 > ว่าง) ──
+    // Step 2: ภายในแต่ละ H-Block จับกลุ่มย่อยตามค่า Tax Code ที่ตรงกันเป๊ะ (ไม่สนตำแหน่ง/H-L เดิม)
+    // ว่าง ≠ มี Tax Code เสมอ (นับเป็นคนละกลุ่ม) — กลุ่มที่มี Tax Code ได้ Priority เป็น Invoice หลักก่อน
+    const rankTax = (tc) => {
+      const t = String(tc || '').trim();
+      if (t.includes('SVAT7')) return 2;
+      if (t.includes('VAT7')) return 1;
+      return 0;
+    };
     const groups = [];
-    lines.forEach(line => {
-      if (line.hl === 'H' || groups.length === 0) groups.push([line]);
-      else groups[groups.length - 1].push(line);
+    hBlocks.forEach(block => {
+      const hLine = block[0]; // บรรทัด H ดั้งเดิมของ Block — ใช้เป็นแหล่ง Description/Real Vendor เสมอ
+      const bucketMap = new Map();
+      const bucketOrder = [];
+      block.forEach(line => {
+        const tax = String(line.taxCode || '').trim();
+        if (!bucketMap.has(tax)) { bucketMap.set(tax, []); bucketOrder.push(tax); }
+        bucketMap.get(tax).push(line);
+      });
+      const sortedKeys = [...bucketOrder].sort((a, b) => rankTax(b) - rankTax(a));
+      sortedKeys.forEach(key => {
+        // ── Bug Fix: บรรทัดแรกของกลุ่มที่ Split ใหม่ ต้องเป็น H เสมอ (แม้เดิมจะเป็น L) ──
+        // ── เพราะตอนนี้มันคือหัวของ Invoice ใหม่ของตัวเองแล้ว ไม่ใช่ L ของใครอีกต่อไป ──
+        const bucketLines = bucketMap.get(key);
+        if (bucketLines.length && bucketLines[0].hl !== 'H') {
+          bucketLines[0] = { ...bucketLines[0], hl: 'H' };
+        }
+        groups.push({ lines: bucketLines, hLine });
+      });
     });
 
     // ── GRT: ขอ 1 เลขจาก backend (การันตีไม่ซ้ำ) ใช้ร่วมทุก Invoice ที่ split จาก submit นี้ ──
@@ -5977,16 +6048,16 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
       bumpGrt = true;
     }
 
-    // ── GRN: ขอเลขแยกทีละครั้งจาก backend เฉพาะ Invoice ที่ Tax Code = VAT7% ──────
+    // ── GRN: ขอเลขแยกทีละครั้งจาก backend เฉพาะ Invoice ที่ Tax Code = VAT7 ──────
     const baseInvoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) || '';
     let grnRunningActual = nextGrnRunning;
     let grnBumpCount = 0;
 
     const newItems = [];
     for (let gi = 0; gi < groups.length; gi++) {
-      const groupLines = groups[gi];
+      const { lines: groupLines, hLine } = groups[gi];
       const taxCode0 = String(groupLines[0]?.taxCode || '');
-      const isVat = taxCode0.includes('VAT7%') && !taxCode0.includes('SVAT7%');
+      const isVat = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
       let grnVal = '';
       if (isAutoGrt && isVat) {
         const res = await requestUniqueNumber('ap_grn', batchConfig?.grnPrefix || '', grnRunningActual);
@@ -6010,7 +6081,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
         invoice_no:      invoiceNo,
         inv_date:        form.invDate || null,
         period:          form.period || '',
-        description:     groupLines[0]?.desc || '',
+        description:     hLine?.desc || '',
         amount:          sumField(groupLines, 'amount'),
         vat:             sumField(groupLines, 'vat'),
         wht:             sumField(groupLines, 'wht'),
@@ -6020,14 +6091,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, supplierItem
           grtNum: grtNumVal,
           grn: grnVal,
           invoiceSuffix,
-          // Real Vendor — ดึงจาก H line (groupLines[0]) ที่เลือกไว้
-          realVendorCode:   groupLines[0]?.realVendorCode   || '',
-          realVendorName:   groupLines[0]?.realVendorName   || '',
-          realVendorTaxid:  groupLines[0]?.realVendorTaxid  || '',
-          realVendorBranch: groupLines[0]?.realVendorBranch || '',
-          realInvoiceNo:    groupLines[0]?.realInvoiceNo    || '',
-          realVendorTaxDate: groupLines[0]?.realVendorTaxDate || '',
-          isVat:            groupLines[0]?.isVat            || '',
+          // Real Vendor — ดึงจาก H line ดั้งเดิมของ Block (hLine) เสมอ ไม่ใช่บรรทัดแรกของกลุ่มย่อย
+          realVendorCode:   hLine?.realVendorCode   || '',
+          realVendorName:   hLine?.realVendorName   || '',
+          realVendorTaxid:  hLine?.realVendorTaxid  || '',
+          realVendorBranch: hLine?.realVendorBranch || '',
+          realInvoiceNo:    hLine?.realInvoiceNo    || '',
+          realVendorTaxDate: hLine?.realVendorTaxDate || '',
+          isVat:            hLine?.isVat            || '',
         },
         lines:           groupLines,
         status:          'pending',
@@ -6395,7 +6466,8 @@ const handleSelectBranch = (item, meta = {}) => {
                 <td style={{ padding: '8px 9px', fontWeight: '600', color: '#1a3a5c', textAlign: 'right' }}>{inv.net != null && inv.net !== '' ? Number(inv.net).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                 <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', textAlign: 'center' }}>
                   {(() => {
-                    const d = inv.form_data?.dueDate;
+                    // ── Due Date Fallback: ถ้า Invoice ไม่มี Due Date -> ใช้ของ Batch Setup แทน ──
+                    const d = inv.form_data?.dueDate || batchConfig?.dueDate;
                     if (!d) return '—';
                     const s = String(d).slice(0, 10);
                     const [y, m, day] = s.split('-');
@@ -6473,7 +6545,11 @@ const handleSelectBranch = (item, meta = {}) => {
             </colgroup>
             <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
               <tr style={{ background: '#f8f9fa' }}>
-                <th style={{ padding: '7px 9px', borderBottom: '0.5px solid #e8eaf0', background: '#f8f9fa' }} />
+                {/* Batch Bucket Summary: Checkbox เลือกหลายรายการ (เหมือน Invoice Mode) */}
+                <th style={{ padding: '7px 9px', borderBottom: '0.5px solid #e8eaf0', textAlign: 'center', background: '#f8f9fa' }}>
+                  <input type="checkbox" checked={invoices.length > 0 && selectedRows.size === invoices.length}
+                    onChange={() => setSelectedRows(prev => prev.size === invoices.length ? new Set() : new Set(invoices.map((inv, i) => inv.id || inv._localId || i)))} />
+                </th>
                 {['Invoice No.', 'Vendor', 'Tax ID', 'Branch No', 'Amount', 'Vat', 'Wht', 'Total', 'Due Date', 'Status', 'Action'].map(h => (
                   <th key={h} style={{ padding: '7px 9px', textAlign: 'center', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: '#f8f9fa' }}>{h}</th>
                 ))}
@@ -6491,7 +6567,7 @@ const handleSelectBranch = (item, meta = {}) => {
                     const vf = resolveVendorFallback(inv);
                     groups[baseNo] = {
                       baseNo, vendor: inv.vendor_name || '-', taxId: vf.taxId || '-', branchNo: vf.no || '-',
-                      dueDate: inv.form_data?.dueDate || '', status: inv.status || 'pending',
+                      dueDate: inv.form_data?.dueDate || batchConfig?.dueDate || '', status: inv.status || 'pending',
                       lines: 0, amount: 0, vat: 0, wht: 0, net: 0, items: [],
                     };
                     order.push(baseNo);
@@ -6517,10 +6593,25 @@ const handleSelectBranch = (item, meta = {}) => {
                   return (
                     <React.Fragment key={baseNo}>
                     <tr style={{ borderBottom: '0.5px solid #f5f5f5', background: isOpen ? '#f8fafc' : 'transparent' }}>
-                      <td style={{ padding: '8px 9px', textAlign: 'center', cursor: 'pointer', color: '#888', fontSize: '11px' }} onClick={() => toggleGroup(baseNo)}>
-                        {isOpen ? '▾' : '▸'}
+                      <td style={{ padding: '8px 9px', textAlign: 'center' }}>
+                        {(() => {
+                          const groupRowKeys = g.items.map(({ inv, i }) => inv.id || inv._localId || i);
+                          const allSel = groupRowKeys.length > 0 && groupRowKeys.every(k => selectedRows.has(k));
+                          const someSel = !allSel && groupRowKeys.some(k => selectedRows.has(k));
+                          return (
+                            <input type="checkbox" checked={allSel} ref={el => { if (el) el.indeterminate = someSel; }}
+                              onChange={() => setSelectedRows(prev => {
+                                const next = new Set(prev);
+                                if (allSel) { groupRowKeys.forEach(k => next.delete(k)); }
+                                else { groupRowKeys.forEach(k => next.add(k)); }
+                                return next;
+                              })} />
+                          );
+                        })()}
                       </td>
-                      <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', cursor: 'pointer' }} onClick={() => toggleGroup(baseNo)}>{g.baseNo}</td>
+                      <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600', cursor: 'pointer' }} onClick={() => toggleGroup(baseNo)}>
+                        <span style={{ display: 'inline-block', width: '12px', color: '#888' }}>{isOpen ? '▾' : '▸'}</span> {g.baseNo}
+                      </td>
                       <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.vendor}</td>
                       <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', fontFamily: 'monospace', textAlign: 'center' }}>{g.taxId}</td>
                       <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{g.branchNo}</td>
@@ -6549,7 +6640,10 @@ const handleSelectBranch = (item, meta = {}) => {
                       const rowKey = inv.id || inv._localId || i;
                       return (
                         <tr key={rowKey} style={{ borderBottom: '0.5px solid #f5f5f5', background: '#fbfbfb' }}>
-                          <td style={{ padding: '6px 9px' }} />
+                          <td style={{ padding: '6px 9px', textAlign: 'center' }}>
+                            <input type="checkbox" checked={selectedRows.has(rowKey)}
+                              onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(rowKey) ? next.delete(rowKey) : next.add(rowKey); return next; })} />
+                          </td>
                           <td style={{ padding: '6px 9px 6px 20px', fontFamily: 'monospace', fontSize: '10px', color: '#0C447C' }}>{inv.invoice_no || '-'}</td>
                           <td style={{ padding: '6px 9px', fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor_name || '-'}</td>
                           <td style={{ padding: '6px 9px' }} />
@@ -6784,7 +6878,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       const branchCode = String(fd.branchDirectLabel || '').split('-')[0].trim();
       const derivedVat = lines.some(l => {
         const tc = String(l.taxCode || '');
-        return tc.includes('VAT7%') && !tc.includes('SVAT7%');
+        return tc.includes('VAT7') && !tc.includes('SVAT7');
       }) ? 'Yes' : 'No';
       const totalAmt = lines.reduce((s, l) => s + (parseFloat(String(l.total || '').replace(/,/g, '')) || 0), 0);
 
