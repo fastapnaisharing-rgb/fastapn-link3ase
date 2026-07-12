@@ -419,8 +419,17 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
                 🤖 ข้อมูลอ่านโดยระบบอัตโนมัติ — กรุณาตรวจสอบความถูกต้องก่อนกด Approve
               </p>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                {(previewResult.fields || []).filter(f => f.field_name !== "line_items").map((f) => {
+              {(() => {
+                const allFields = (previewResult.fields || []).filter(f => f.field_name !== "line_items");
+                const fieldMap = Object.fromEntries(allFields.map(f => [f.field_name, f]));
+
+                const FIELD_GROUPS = [
+                  { title: "ผู้ขาย (Vendor)", keys: ["tax_id", "supplier_name", "vendor_name_ocr", "vendor_branch_code"] },
+                  { title: "ผู้ซื้อ (Buyer)", keys: ["buyer_tax_id", "buyer_name", "buyer_branch_code"] },
+                  { title: "ข้อมูลเอกสาร (Document)", keys: ["invoice_no", "invoice_date", "document_type", "total_amount", "subtotal", "vat_amount"] },
+                ];
+
+                const renderField = (f) => {
                   const conf = f.ocr_confidence || 0;
                   const confColor = conf >= 0.9 ? "#3c763d" : conf >= 0.7 ? "#8a6d3b" : "#a94442";
                   return (
@@ -443,8 +452,40 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
                       />
                     </div>
                   );
-                })}
-              </div>
+                };
+
+                const groupedKeys = new Set(FIELD_GROUPS.flatMap(g => g.keys));
+                const ungroupedFields = allFields.filter(f => !groupedKeys.has(f.field_name));
+
+                return (
+                  <>
+                    {FIELD_GROUPS.map((group) => {
+                      const groupFields = group.keys.map(k => fieldMap[k]).filter(Boolean);
+                      if (groupFields.length === 0) return null;
+                      return (
+                        <div key={group.title} style={{ marginBottom: 16 }}>
+                          <p style={{ fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 8, textTransform: "uppercase" }}>
+                            {group.title}
+                          </p>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            {groupFields.map(renderField)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {ungroupedFields.length > 0 && (
+                      <div style={{ marginBottom: 16 }}>
+                        <p style={{ fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 8, textTransform: "uppercase" }}>
+                          อื่นๆ
+                        </p>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                          {ungroupedFields.map(renderField)}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Line Items — แสดงเป็นตารางเล็กๆ (ยังแก้ไขไม่ได้ในเวอร์ชันนี้) */}
               {(() => {
