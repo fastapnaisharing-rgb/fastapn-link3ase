@@ -50,7 +50,7 @@ function PlaceholderPage({ title, icon }) {
 
 // ✅ Maps activePage -> maintenance menu key (as set in System Console > Access Control)
 const PAGE_MAINTENANCE_MAP = {
-  'ap-gr': 'ap-gr', 'ap-ocr': 'ap-ocr', 'ap-form': 'ap-form', 'ap-drafts': 'ap-drafts',
+  'ap-gr': 'ap-controller', 'ap-ocr': 'ap-controller', 'ap-form': 'ap-controller', 'ap-drafts': 'ap-controller',
   'vat-incomplete-report': 'vat-controller',
   'vat-amagno-reconcile': 'vat-controller',
   'vat-popvat-report': 'vat-controller',
@@ -482,8 +482,7 @@ function MainApp() {
   // MARKER_APP_OPEN_INBOX_FROM_NOTIF_V1
   // ── จำว่าต้องเปิด Tab ไหนใน APController หลัง Navigate มาจาก Notification ──
   const [pendingHistoryTab, setPendingHistoryTab] = useState(null);
-  // MARKER_NOTIF_CLICK_TARGET_BY_AUDIENCE_V1
-  const handleOpenInbox = (tab = 'inbox') => { setPendingHistoryTab(tab); setActivePage('ap-gr'); };
+  const handleOpenInbox = () => { setPendingHistoryTab('inbox'); setActivePage('ap-gr'); };
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
   const [apNotifications, setApNotifications] = useState([]);
@@ -890,15 +889,12 @@ function MainApp() {
     </div>
   );
 
-  const fpSub = (id, icon, label) => {
-    if (!isOwner && maintenanceMenus.includes(id)) return null;
-    return (
-      <div key={id} onClick={() => selectPage(id)}
-        style={{ padding: '7px 16px 7px 36px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? '#f0faf6' : 'transparent', color: activePage === id ? '#0F6E56' : '#555', fontWeight: activePage === id ? '500' : '400' }}>
-        <span>{icon}</span> {label}
-      </div>
-    );
-  };
+  const fpSub = (id, icon, label) => (
+    <div key={id} onClick={() => selectPage(id)}
+      style={{ padding: '7px 16px 7px 36px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? '#f0faf6' : 'transparent', color: activePage === id ? '#0F6E56' : '#555', fontWeight: activePage === id ? '500' : '400' }}>
+      <span>{icon}</span> {label}
+    </div>
+  );
 
   const fpItem = (id, icon, label) => (
     <div key={id} onClick={() => selectPage(id)}
@@ -998,7 +994,7 @@ function MainApp() {
                     </button>
                   </div>
                 </div>
-                <button onClick={() => { setActivePage('home'); logout(); }} style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <button onClick={logout} style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                   <LogoutIcon /> Logout
                 </button>
               </>

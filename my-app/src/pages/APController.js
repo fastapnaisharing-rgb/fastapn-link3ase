@@ -4365,7 +4365,8 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchDirectL
 }
 
 // ── BatchSetup ────────────────────────────────────────────────────────────────
-function BatchSetup({ onStart, infoItems = [] }) {
+// MARKER_FIX_INITIAL_HISTORY_TAB_BATCHSETUP_V1
+function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const today = new Date();
   const pad2  = (n) => String(n).padStart(2, '0');
   const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
@@ -4593,9 +4594,10 @@ function BatchSetup({ onStart, infoItems = [] }) {
     setSelfOverrideLoading(false);
   };
 
-  const [historyTab, setHistoryTab]     = useState('mine');
+  const [historyTab, setHistoryTab]     = useState(initialHistoryTab === 'inbox' ? 'inbox' : 'mine');
   const [historyMine, setHistoryMine]   = useState([]);
   const [historyAll, setHistoryAll]     = useState([]);
+  const [historyInbox, setHistoryInbox] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   // ── ลบแถวใน Batch History (batch_list) — ใช้ล้าง Batch ทดสอบ/ค้าง Processing ──
@@ -4638,8 +4640,20 @@ function BatchSetup({ onStart, infoItems = [] }) {
   const [filePreview, setFilePreview] = useState(null); // { fileId, fileName, rows: [[...]] }
   const [previewLoading, setPreviewLoading] = useState(false);
   const [savingPreview, setSavingPreview] = useState(false);
+  const fileBlobCache = useRef({}); // cache Blob URL ต่อ fileId ใน session
+
   const handleFileAction = async (fileId, mode, suggestedFileName) => {
     try {
+      // ── ถ้า open และ cache มีแล้ว → ใช้ทันทีไม่ต้อง fetch ──
+      if (mode === 'open' && fileBlobCache.current[fileId]) {
+        const a = document.createElement('a');
+        a.href = fileBlobCache.current[fileId];
+        a.download = suggestedFileName || 'invoice_register.xls';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        return;
+      }
       const token = sessionStorage.getItem('fastapn_token');
       const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       if (mode === 'view') setPreviewLoading(true);
@@ -4656,6 +4670,17 @@ function BatchSetup({ onStart, infoItems = [] }) {
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
         setFilePreview({ fileId, fileName: suggestedFileName || 'preview.xls', rows });
+      } else if (mode === 'open') {
+        // ── mode 'open': Download + Cache Blob ใน session ──
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        fileBlobCache.current[fileId] = url;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = suggestedFileName || 'invoice_register.xls';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
       } else {
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
@@ -4842,13 +4867,98 @@ function BatchSetup({ onStart, infoItems = [] }) {
 
   // ── อนุมัติ/ตรวจแล้ว — เฉพาะผู้ตรวจที่ถูกระบุชื่อ (reported_to_username) เท่านั้น ──
   // ── กดแล้วค่อยเปลี่ยน batch_list.status เป็น "done" จริง ──────────────────────
+  // MARKER_NOTIFICATIONS_WIRING_V1
+  // ── ลบ Notification ที่ผูกกับ Batch (ใช้ร่วมกันทั้ง Approve/Reject) ──────────
+  // MARKER_MIGRATE_BATCH_NOTIFICATIONS_V1
+  const deleteNotificationsForBatch = async (batchIdKey, audienceFilter) => {
+    if (!batchIdKey) return [];
+    const { data: notifs } = await db.from('batch_notifications').select('id, audience').eq('batch_id', batchIdKey);
+    const list = (notifs || []).filter(n => !audienceFilter || n.audience === audienceFilter);
+    if (list.length > 0) {
+      await db.from('batch_notifications').delete().in('id', list.map(n => n.id));
+    }
+    return notifs || [];
+  };
+  // MARKER_MARK_NOTIF_APPROVED_V1
+  // ── Approve: ไม่ลบทันที -> Update status='approved' + Reset created_at ──────
+  // ── ให้ Cron ฝั่ง Backend (app.js) ลบทิ้งเองหลังผ่านไป 1 ชม. (ทั้ง 2 ฝั่ง) ────
+  const markNotificationsApproved = async (batchIdKey) => {
+    if (!batchIdKey) return;
+    const { data: notifs } = await db.from('batch_notifications').select('id').eq('batch_id', batchIdKey);
+    const ids = (notifs || []).map(n => n.id);
+    if (ids.length > 0) {
+      await db.from('batch_notifications').update({ status: 'approved', created_at: new Date().toISOString() }).in('id', ids);
+    }
+  };
+
   const handleApproveReview = async (batch) => {
     try {
-      const { error } = await db.from('batch_list').update({ status: 'done' }).eq('id', batch.id);
+      const approvedBy = userName || currentUser?.email || '';
+      const approvedAt = new Date().toISOString();
+
+      // 1. Update batch_list — บันทึก approved_by + approved_at
+      const { error } = await db.from('batch_list').update({
+        status: 'approved',
+        approved_by: approvedBy,
+        approved_at: approvedAt,
+      }).eq('id', batch.id);
       if (error) throw error;
-      setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
-      setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'done' } : x));
+
+      // 2. Update local state
+      const updated = { status: 'approved', approved_by: approvedBy, approved_at: approvedAt };
+      setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, ...updated } : x));
+      setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, ...updated } : x));
+      setHistoryInbox(prev => prev.filter(x => x.id !== batch.id));
+
+      // 3. Mark notifications approved
+      try { await markNotificationsApproved(batch.batch_id); } catch (nErr) { console.error('[mark notifications approved]', nErr); }
+
+      // 4. บันทึก activity_log — Approve Stamp
+      try {
+        const token = sessionStorage.getItem('fastapn_token');
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        await fetch(`${apiBase}/api/activity_log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            username: approvedBy,
+            module: 'AP',
+            action: 'BATCH_APPROVE',
+            detail: JSON.stringify({
+              batch_id: batch.batch_id || '',
+              approved_by: approvedBy,
+              approved_at: approvedAt,
+              sender: batch.created_by || '',
+            }),
+          }),
+        });
+      } catch (logErr) { console.error('[activity_log BATCH_APPROVE]', logErr); }
+
     } catch (e) { alert('อนุมัติไม่สำเร็จ: ' + e.message); }
+  };
+
+  // ── ปฏิเสธ — เฉพาะผู้ตรวจที่ถูกระบุชื่อ (reported_to_username) เท่านั้น ──────
+  // ── status เปลี่ยนเป็น 'rejected' -> ฝั่งผู้ส่งเห็นปุ่ม Report to กลับมาอัตโนมัติ ──
+  // ── ไม่มี Prompt ถามเหตุผล — จะมี Notification แจ้งที่หน้า Home แยกต่างหากแทน ──
+  const handleRejectReview = async (batch) => {
+    try {
+      const { error } = await db.from('batch_list').update({ status: 'rejected' }).eq('id', batch.id);
+      if (error) throw error;
+      setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'rejected' } : x));
+      setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'rejected' } : x));
+      setHistoryInbox(prev => prev.filter(x => x.id !== batch.id));
+      // ── ลบ Notification ฝั่งผู้รับ + เปลี่ยนฝั่งผู้ส่งเป็น 'rejected' ───────────
+      try {
+        const batchIdKey = batch.batch_id || '';
+        if (batchIdKey) {
+          const { data: notifs } = await db.from('batch_notifications').select('id, audience').eq('batch_id', batchIdKey);
+          const receiverIds = (notifs || []).filter(n => n.audience === 'receiver').map(n => n.id);
+          const senderIds = (notifs || []).filter(n => n.audience === 'sender').map(n => n.id);
+          if (receiverIds.length > 0) await db.from('batch_notifications').delete().in('id', receiverIds);
+          if (senderIds.length > 0) await db.from('batch_notifications').update({ status: 'rejected' }).in('id', senderIds);
+        }
+      } catch (nErr) { console.error('[update notifications on reject]', nErr); }
+    } catch (e) { alert('ปฏิเสธไม่สำเร็จ: ' + e.message); }
   };
   const canSeeAll = isOwner || isAdmin;
   const me = userName || currentUser?.email || '';
@@ -4862,6 +4972,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
         const { data: mine } = await db.from('batch_list').select('*').eq('created_by', me).order('created_at', { ascending: false }).limit(100);
         setHistoryMine(mine || []);
         if (canSeeAll) { const { data: all } = await db.from('batch_list').select('*').order('created_at', { ascending: false }).limit(500); setHistoryAll(all || []); }
+        // ── Inbox Tab: Batch ที่ถูก Report to มาให้ตรวจ (ทุก Role, โชว์เฉพาะตอนมีข้อมูล) ──
+        const { data: inbox } = await db.from('batch_list').select('*').eq('reported_to_username', me).eq('status', 'reviewing').order('created_at', { ascending: false }).limit(100);
+        setHistoryInbox(inbox || []);
       } catch (e) { console.error('loadHistory:', e); }
       setHistoryLoading(false);
     };
@@ -4951,7 +5064,7 @@ function BatchSetup({ onStart, infoItems = [] }) {
         <div style={card}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
             <div style={{ display: 'flex' }}>
-              {[{ key: 'mine', label: '👤 My Jobs', count: historyMine.length }, ...(canSeeAll ? [{ key: 'all', label: '👥 All Jobs', count: historyAll.length }] : [])].map(t => (
+              {[{ key: 'mine', label: '👤 My Jobs', count: historyMine.length }, ...(historyInbox.length > 0 ? [{ key: 'inbox', label: '📥 Inbox', count: historyInbox.length }] : []), ...(canSeeAll ? [{ key: 'all', label: '👥 All Jobs', count: historyAll.length }] : [])].map(t => (
                 <div key={t.key} onClick={() => setHistoryTab(t.key)}
                   style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: historyTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: historyTab === t.key ? '#1a3a5c' : '#888', fontWeight: historyTab === t.key ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   {t.label}<span style={{ background: historyTab === t.key ? '#1a3a5c' : '#e8e8e8', color: historyTab === t.key ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{t.count}</span>
@@ -4961,26 +5074,28 @@ function BatchSetup({ onStart, infoItems = [] }) {
             <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Batch History</span>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
+            {/* MARKER_BATCH_TABLE_COLUMN_WIDTH_V1 */}
             <colgroup>
-              {historyTab === 'all' ? (
+              {(historyTab === 'all' || historyTab === 'inbox') ? (
                 <>
-                  <col style={{ width: '16%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '15%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
                   <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
-                  <col style={{ width: '10%' }} /><col style={{ width: '12%' }} /><col style={{ width: '10%' }} />
+                  <col style={{ width: '10%' }} /><col style={{ width: '9%' }} /><col style={{ width: '14%' }} />
                   <col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
                 </>
               ) : (
                 <>
-                  <col style={{ width: '16%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '19%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
                   <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
-                  <col style={{ width: '12%' }} /><col style={{ width: '18%' }} /><col style={{ width: '10%' }} />
+                  <col style={{ width: '11%' }} /><col style={{ width: '10%' }} /><col style={{ width: '16%' }} />
                   <col style={{ width: '6%' }} />
                 </>
               )}
             </colgroup>
             <thead>
               <tr style={{ background: '#f8f9fa' }}>
-                {['Batch Name','BU','Receive Date','Amount','Vat','Total','Filename','Attachment','Status','Action',...(historyTab === 'all' ? ['Created By'] : [])].map(h => (
+                {/* MARKER_APPROVE_AT_COLUMN_MINE_V1 */}
+                {['Batch Name','BU','Receive Date','Amount','Vat','Total','Filename','Attachment','Status','Action',...(historyTab === 'mine' ? ['Approve At'] : []),...((historyTab === 'all' || historyTab === 'inbox') ? ['Created By'] : [])].map(h => (
                   <th key={h} style={{ padding: '7px 9px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
                 ))}
               </tr>
@@ -4988,14 +5103,17 @@ function BatchSetup({ onStart, infoItems = [] }) {
             <tbody>
               {historyLoading ? (
                 <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
-              ) : (historyTab === 'mine' ? historyMine : historyAll).length === 0 ? (
-                <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : 'No batch history'}</td></tr>
-              ) : (historyTab === 'mine' ? historyMine : historyAll).map(b => {
-                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, reviewing: { bg: '#FAEEDA', color: '#633806', label: 'Reviewing' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
+              ) : (historyTab === 'mine' ? historyMine : historyTab === 'inbox' ? historyInbox : historyAll).length === 0 ? (
+                <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : historyTab === 'inbox' ? 'ยังไม่มีงานส่งเข้ามา' : 'No batch history'}</td></tr>
+              ) : (historyTab === 'mine' ? historyMine : historyTab === 'inbox' ? historyInbox : historyAll).map(b => {
+                const approvedLabel = b.approved_by ? `Approved by ${b.approved_by}` : 'Approved';
+                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, approved: { bg: '#EAF3DE', color: '#27500A', label: approvedLabel }, reviewing: { bg: '#FAEEDA', color: '#633806', label: 'Reviewing' }, rejected: { bg: '#FCEBEB', color: '#791F1F', label: 'Rejected' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
                 const ra = b.receive_date ? new Date(b.receive_date) : null;
                 const p2 = (n) => String(n).padStart(2, '0');
                 const rds = ra ? `${p2(ra.getDate())}/${p2(ra.getMonth()+1)}/${ra.getFullYear()}` : '-';
+                const aa = b.approved_at ? new Date(b.approved_at) : null;
+                const aas = aa ? `${p2(aa.getDate())}/${p2(aa.getMonth()+1)}/${aa.getFullYear()} ${p2(aa.getHours())}:${p2(aa.getMinutes())}` : '-';
                 return (
                   <tr key={b.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
                     <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -5011,30 +5129,51 @@ function BatchSetup({ onStart, infoItems = [] }) {
                       {b.file_name || <span style={{ color: '#ccc', fontFamily: 'sans-serif' }}>—</span>}
                     </td>
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                        {b.file_url ? (
-                          <>
-                            <button onClick={() => handleFileAction(b.file_url, 'view', b.file_name)} title="View"
-                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '16px', cursor: 'pointer' }}>👁</button>
-                            <button onClick={() => handleFileAction(b.file_url, 'download', b.file_name)} title="Download"
-                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '16px', cursor: 'pointer' }}>⬇</button>
-                            {/* ── Report to ผู้ตรวจ: เปิด Popup แนบ Invoice Register (My Jobs เท่านั้น) ── */}
-                            {historyTab === 'mine' && b.status !== 'done' && (
-                              <button onClick={() => setReportPopupBatch(b)} title="Report to ผู้ตรวจ"
-                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #f7dfa8', background: '#fff8ec', color: '#854F0B', fontSize: '14px', cursor: 'pointer' }}>📤</button>
-                            )}
-                          </>
-                        ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
-                      </div>
+                      {(() => {
+                        // ── Inbox Tab: ใช้ไฟล์ Invoice Register (ไฟล์ที่ผู้ตรวจ "ได้รับ" จริง) ──
+                        // ── ถ้าไม่มี Fallback ไปไฟล์ Export เดิม กันปุ่มพัง ─────────────────────
+                        const useInvoiceRegister = historyTab === 'inbox' && b.invoice_register_file_id;
+                        const attachId = useInvoiceRegister ? b.invoice_register_file_id : b.file_url;
+                        const attachName = useInvoiceRegister ? b.invoice_register_file_name : b.file_name;
+                        return (
+                          <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                            {/* MARKER_FIX_VIEW_OPEN_BY_TAB_V1 */}
+                            {attachId ? (
+                              <>
+                                {historyTab === 'inbox' ? (
+                                  <button onClick={() => handleFileAction(attachId, 'open', attachName)} title="Open"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '16px', cursor: 'pointer' }}>📂</button>
+                                ) : (
+                                  <button onClick={() => handleFileAction(attachId, 'view', attachName)} title="View"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '16px', cursor: 'pointer' }}>👁</button>
+                                )}
+                                <button onClick={() => handleFileAction(attachId, 'download', attachName)} title="Download"
+                                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '16px', cursor: 'pointer' }}>⬇</button>
+                                {/* ── Report to ผู้ตรวจ: เปิด Popup แนบ Invoice Register (My Jobs เท่านั้น) ── */}
+                                {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved' && (
+                                  <button onClick={() => setReportPopupBatch(b)} title="Report to ผู้ตรวจ"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #f7dfa8', background: '#fff8ec', color: '#854F0B', fontSize: '14px', cursor: 'pointer' }}>📤</button>
+                                )}
+                              </>
+                            ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>{st.label}</span>
                         {b.status === 'reviewing' && String(b.reported_to_username || '').trim().toLowerCase() === String(me || '').trim().toLowerCase() && (
-                          <button onClick={() => { if (window.confirm('ยืนยันว่าตรวจ Batch นี้เรียบร้อยแล้วใช่ไหม?')) handleApproveReview(b); }} title="อนุมัติ/ตรวจแล้ว"
-                            style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', cursor: 'pointer', fontWeight: '500' }}>
-                            ✓ อนุมัติ
-                          </button>
+                          <>
+                            <button onClick={() => { if (window.confirm('ยืนยันว่าตรวจ Batch นี้เรียบร้อยแล้วใช่ไหม?')) handleApproveReview(b); }} title="อนุมัติ/ตรวจแล้ว"
+                              style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', cursor: 'pointer', fontWeight: '500' }}>
+                              ✓ อนุมัติ
+                            </button>
+                            <button onClick={() => handleRejectReview(b)} title="ปฏิเสธ (ให้ผู้ส่งแก้ไขแล้วส่งใหม่)"
+                              style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', fontWeight: '500' }}>
+                              ✗ ปฏิเสธ
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>
@@ -5044,7 +5183,9 @@ function BatchSetup({ onStart, infoItems = [] }) {
                         {deletingBatchRowId === b.id ? '···' : '🗑'}
                       </button>
                     </td>
-                    {historyTab === 'all' && <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.created_by || '-'}</td>}
+                    {/* MARKER_APPROVE_AT_STYLE_MATCH_CREATEDBY_V1 */}
+                    {historyTab === 'mine' && <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{aas}</td>}
+                    {(historyTab === 'all' || historyTab === 'inbox') && <td style={{ padding: '8px 9px', color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.created_by || '-'}</td>}
                   </tr>
                 );
               })}
@@ -5242,21 +5383,28 @@ function BatchSetup({ onStart, infoItems = [] }) {
 }
 
 // ── Popup ส่งตรวจ พร้อมแนบไฟล์ Invoice Register (Paste จาก Excel/Sheet หรือ Upload ไฟล์ Excel) ──
+// MARKER_INVOICE_REGISTER_REUSE_EXISTING_V1
 function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone }) {
   const [toUsername, setToUsername] = useState('');
   const [mode, setMode] = useState('paste');
   const [pastedText, setPastedText] = useState('');
+  const [pastedRows, setPastedRows] = useState(null); // Array 2 มิติ จาก HTML Table ใน Clipboard (ถ้ามี)
   const [uploadedFileName, setUploadedFileName] = useState('');
-  const [uploadedRows, setUploadedRows] = useState(null);
+  // MARKER_UPLOAD_RAW_FILE_NO_PARSE_V1
+  const [uploadedFileBase64, setUploadedFileBase64] = useState(null); // ไฟล์ต้นฉบับ Base64 ตรงๆ ไม่ Parse
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
 
+  // ── มีไฟล์ Invoice Register เดิมติดกับ Batch นี้อยู่แล้วหรือไม่ (เช่น Resend หลังโดน Reject) ──
+  const hasExistingFile = !!(batch?.invoice_register_file_id);
+
   useEffect(() => {
     if (!show) return;
-    setToUsername(''); setMode('paste'); setPastedText('');
-    setUploadedFileName(''); setUploadedRows(null); setError('');
-  }, [show]);
+    // MARKER_FIX_MODE_DEFAULT_HASEXISTINGFILE_V1
+    setToUsername(''); setMode(hasExistingFile ? 'existing' : 'paste'); setPastedText(''); setPastedRows(null);
+    setUploadedFileName(''); setUploadedFileBase64(null); setError('');
+  }, [show, batch?.id]);
 
   if (!show) return null;
 
@@ -5265,48 +5413,97 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
     return `${base}_Invoice_Register.xls`;
   })();
 
-  const handleFileSelect = async (e) => {
+  const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadedFileName(file.name);
     setError('');
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
-      setUploadedRows(rows);
-    } catch (err) {
-      setError('อ่านไฟล์ไม่สำเร็จ: ' + err.message);
-      setUploadedRows(null);
-    }
+    // ── อ่านไฟล์เป็น Base64 ตรงๆ ไม่ Parse/Rebuild -> เก็บ Byte ต่อ Byte เหมือนต้นฉบับ ──
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const base64 = dataUrl.split(',')[1] || '';
+      if (!base64) { setError('อ่านไฟล์ไม่สำเร็จ'); setUploadedFileBase64(null); return; }
+      setUploadedFileBase64(base64);
+    };
+    reader.onerror = () => { setError('อ่านไฟล์ไม่สำเร็จ'); setUploadedFileBase64(null); };
+    reader.readAsDataURL(file);
   };
 
-  const canSave = !!toUsername && (mode === 'paste' ? pastedText.trim().length > 0 : !!uploadedRows);
+  // MARKER_PASTE_HTML_TABLE_CLIPBOARD_V1
+  // MARKER_PASTE_FIXEDWIDTH_SPACE_FALLBACK_V1
+  // ── อ่าน HTML Table จริงจาก Clipboard ('text/html') แทน Plain Text ────────
+  // ── เพราะ <textarea> อ่านได้แค่ Plain Text ทำให้โครงสร้างหลายแถว/คอลัมน์หาย ──
+  // ── ถ้าไม่มี HTML Table (เช่น Oracle Applications 11i ที่จัดคอลัมน์ด้วย Space ──
+  // ── ใน <pre> ไม่ใช่ Table จริง) จะแยกคอลัมน์ด้วยช่องว่างติดกัน 2 ตัวขึ้นไปแทน ──
+  const handlePasteEvent = (e) => {
+    try {
+      const html = e.clipboardData?.getData('text/html');
+      if (html) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const table = doc.querySelector('table');
+        if (table) {
+          const rows = Array.from(table.rows).map(tr =>
+            Array.from(tr.cells).map(td => (td.textContent || '').replace(/\s+/g, ' ').trim())
+          );
+          if (rows.length > 0) { setPastedRows(rows); return; }
+        }
+      }
+      // ── Fallback: ไม่มี HTML Table -> เดาขอบเขตคอลัมน์จากช่องว่างติดกัน 2+ ตัว ──
+      const plain = e.clipboardData?.getData('text/plain') || '';
+      if (plain.trim()) {
+        const fixedRows = plain.split(/\r?\n/)
+          .map(line => line.split(/ {2,}/).map(c => c.trim()).filter(c => c.length > 0))
+          .filter(r => r.length > 0);
+        if (fixedRows.length > 0) { setPastedRows(fixedRows); return; }
+      }
+    } catch (err) { console.error('[parse paste html table]', err); }
+    setPastedRows(null);
+  };
+
+  const canSave = !!toUsername && (mode === 'existing' ? true : (mode === 'paste' ? pastedText.trim().length > 0 : !!uploadedFileBase64));
 
   const handleSave = async () => {
     if (!toUsername) { setError('กรุณาเลือกผู้ตรวจ'); return; }
     let rows;
     if (mode === 'paste') {
-      const lines = pastedText.split(/\r?\n/).filter(l => l.length > 0);
-      if (lines.length === 0) { setError('กรุณาวางข้อมูลก่อน'); return; }
-      // ── ต้นฉบับใช้ Tab Character คั่นคอลัมน์ (ยืนยันจากการ Paste เข้า Excel จริง ──
-      // ── แล้วแยกเป็นหลายคอลัมน์ A-W เอง) — แยกแต่ละบรรทัดด้วย Tab เหมือนกัน ──────
-      rows = lines.map(l => l.split('\t'));
-    } else {
-      if (!uploadedRows) { setError('กรุณาแนบไฟล์ก่อน'); return; }
-      rows = uploadedRows;
+      // MARKER_FIX_PASTE_USE_PASTEDROWS_V2
+      if (!pastedText.trim()) { setError('กรุณาวางข้อมูลก่อน'); return; }
+      // ── ใช้โครงสร้างจริงจาก HTML Table/Fixed-width (pastedRows) ก่อนเสมอ ──────
+      // ── ถ้า Parse ไม่ได้เลย (ไม่มี Table, ไม่มี Space คั่น) Fallback Cell เดียว ──
+      rows = (pastedRows && pastedRows.length > 0) ? pastedRows : [[pastedText]];
+    } else if (mode === 'upload') {
+      // MARKER_UPLOAD_RAW_FILE_NO_PARSE_V1
+      if (!uploadedFileBase64) { setError('กรุณาแนบไฟล์ก่อน'); return; }
     }
     setSaving(true);
     setError('');
     try {
-      // MARKER_FIX_INVOICE_REGISTER_STORAGE_V1
-      const genRes = await apiFetch('/file-storage/generate', {
-        method: 'POST',
-        body: JSON.stringify({ module: 'invoice-register', bu: batch.bu, refId: `${batch.batch_id || batch.id}-IR`, fileName: computedFileName, rows }),
-      });
-      if (genRes?.error) throw new Error(genRes.error);
-      const reportRes = await apiFetch(`/file-storage/${genRes.fileId}/report-to`, {
+      let fileId, fileName;
+      if (mode === 'existing') {
+        // ── ใช้ไฟล์ Invoice Register เดิม ไม่ต้อง Generate ใหม่ ────────────────
+        fileId = batch.invoice_register_file_id;
+        fileName = batch.invoice_register_file_name;
+      } else if (mode === 'upload') {
+        // ── ส่งไฟล์ต้นฉบับตรงๆ เป็น Base64 -> Backend เก็บ Byte ต่อ Byte ไม่ Parse/Rebuild ──
+        const genRes = await apiFetch('/file-storage/generate-raw', {
+          method: 'POST',
+          body: JSON.stringify({ module: 'invoice-register', bu: batch.bu, refId: `${batch.batch_id || batch.id}-IR`, fileName: computedFileName, fileBase64: uploadedFileBase64 }),
+        });
+        if (genRes?.error) throw new Error(genRes.error);
+        fileId = genRes.fileId;
+        fileName = genRes.fileName;
+      } else {
+        // MARKER_FIX_INVOICE_REGISTER_STORAGE_V1
+        const genRes = await apiFetch('/file-storage/generate', {
+          method: 'POST',
+          body: JSON.stringify({ module: 'invoice-register', bu: batch.bu, refId: `${batch.batch_id || batch.id}-IR`, fileName: computedFileName, rows }),
+        });
+        if (genRes?.error) throw new Error(genRes.error);
+        fileId = genRes.fileId;
+        fileName = genRes.fileName;
+      }
+      const reportRes = await apiFetch(`/file-storage/${fileId}/report-to`, {
         method: 'POST',
         body: JSON.stringify({ reportTo: toUsername }),
       });
@@ -5315,10 +5512,37 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
       // ── ของไฟล์ Export เดิม (เผื่อกระบวนการกำหนดการลบแยกกันในอนาคต) ──────────
       const { error: updErr } = await db.from('batch_list').update({
         status: 'reviewing', reported_to_username: toUsername,
-        invoice_register_file_id: genRes.fileId, invoice_register_file_name: genRes.fileName,
+        invoice_register_file_id: fileId, invoice_register_file_name: fileName,
       }).eq('id', batch.id);
       if (updErr) throw new Error(updErr.message || updErr);
-      onDone({ id: batch.id, status: 'reviewing', reported_to_username: toUsername, invoice_register_file_id: genRes.fileId, invoice_register_file_name: genRes.fileName });
+      // ── Insert Notification ทั้ง 2 ฝั่ง — Resend ถ้า Batch นี้เคยถูก Reject มาก่อน ──
+      // ── ใช้ batch_notifications (Table แยก ไม่มี Constraint แปลกๆ เหมือน ──
+      // ── notifications เดิม — ไม่ต้องใส่ message/category/action_type/created_by) ──
+      // MARKER_CLEANUP_DUPLICATE_NOTIF_BEFORE_INSERT_V1
+      try {
+        const isResend = batch.status === 'rejected';
+        const batchIdKey = batch.batch_id || '';
+        const senderUsername = batch.created_by || '';
+        const receiverTitle = `${senderUsername} ส่งตรวจ Batch ${batchIdKey}`;
+        const senderTitle = `ส่งตรวจ Batch ${batchIdKey} ถึง ${toUsername}`;
+        // ── ลบ Notification เก่าของ Batch นี้ทั้งหมดก่อน กันซ้อนกันถ้าเคยส่งตรวจมาแล้ว ──
+        if (batchIdKey) {
+          const { data: oldNotifs } = await db.from('batch_notifications').select('id').eq('batch_id', batchIdKey);
+          const oldIds = (oldNotifs || []).map(n => n.id);
+          if (oldIds.length > 0) {
+            await db.from('batch_notifications').delete().in('id', oldIds);
+          }
+        }
+        await db.from('batch_notifications').insert([{
+          recipient_username: toUsername, audience: 'receiver', batch_id: batchIdKey,
+          status: 'unread', title: receiverTitle,
+        }]);
+        await db.from('batch_notifications').insert([{
+          recipient_username: senderUsername, audience: 'sender', batch_id: batchIdKey,
+          status: isResend ? 'resend' : 'wait', title: senderTitle,
+        }]);
+      } catch (nErr) { console.error('[insert batch_notifications on report-to]', nErr); }
+      onDone({ id: batch.id, status: 'reviewing', reported_to_username: toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
       onClose();
       alert('ส่งตรวจสำเร็จ');
     } catch (e) { setError('ส่งตรวจไม่สำเร็จ: ' + e.message); }
@@ -5329,8 +5553,8 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, backdropFilter: 'blur(2px)' }}
       onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       {/* MARKER_REPORT_TO_POPUP_RESIZE_V1 */}
-      <div style={{ background: 'white', borderRadius: '12px', width: '600px', boxShadow: '0 20px 60px rgba(26,58,92,0.22)', overflow: 'hidden' }}>
-        <div style={{ padding: '16px 20px', borderBottom: '0.5px solid #f0f2f5', display: 'flex', alignItems: 'center', gap: '10px' }}>
+      <div style={{ background: 'white', borderRadius: '12px', width: '96vw', maxWidth: '1280px', boxShadow: '0 20px 60px rgba(26,58,92,0.22)', overflow: 'hidden' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '0.5px solid #f0f2f5', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#854F0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' }}>📤</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>ส่งตรวจ</div>
@@ -5338,12 +5562,12 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
           </div>
           <button onClick={onClose} style={{ width: '26px', height: '26px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
-        <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {error && <div style={{ padding: '8px 12px', background: '#FCEBEB', color: '#791F1F', borderRadius: '6px', fontSize: '12px' }}>⚠️ {error}</div>}
           <div>
-            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '5px' }}>ผู้ตรวจ <span style={{ color: '#e24b4a' }}>*</span></label>
+            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>ผู้ตรวจ <span style={{ color: '#e24b4a' }}>*</span></label>
             <select value={toUsername} onChange={e => setToUsername(e.target.value)}
-              style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '7px', background: 'white', color: '#1a3a5c', outline: 'none', cursor: 'pointer' }}>
+              style={{ width: '100%', height: '28px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '7px', background: 'white', color: '#1a3a5c', outline: 'none', cursor: 'pointer' }}>
               <option value="">— เลือกผู้ตรวจ —</option>
               {reviewers.map(u => (
                 <option key={u.id || u.username || u.email} value={u.username || u.email}>{u.username || u.email}</option>
@@ -5351,36 +5575,60 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
             </select>
           </div>
           <div>
-            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '5px' }}>Invoice register</label>
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-              <button onClick={() => setMode('paste')}
-                style={{ flex: 1, padding: '7px', borderRadius: '7px', border: mode === 'paste' ? '2px solid #378ADD' : '0.5px solid #ddd', background: mode === 'paste' ? '#E6F1FB' : 'white', color: mode === 'paste' ? '#0C447C' : '#555', fontSize: '12px', fontWeight: mode === 'paste' ? '600' : '400', cursor: 'pointer' }}>
-                📋 วางจาก Excel/Sheet
-              </button>
-              <button onClick={() => setMode('upload')}
-                style={{ flex: 1, padding: '7px', borderRadius: '7px', border: mode === 'upload' ? '2px solid #378ADD' : '0.5px solid #ddd', background: mode === 'upload' ? '#E6F1FB' : 'white', color: mode === 'upload' ? '#0C447C' : '#555', fontSize: '12px', fontWeight: mode === 'upload' ? '600' : '400', cursor: 'pointer' }}>
-                📎 แนบไฟล์ Excel
-              </button>
-            </div>
-            {mode === 'paste' ? (
-              <textarea value={pastedText} onChange={e => setPastedText(e.target.value)}
-                placeholder="คลิกแล้ววาง (Ctrl+V) ข้อมูลจาก Excel หรือ Google Sheet ที่นี่ — ระบบจะแยกคอลัมน์ตาม Tab ให้อัตโนมัติเหมือน Paste เข้า Excel จริง"
-                style={{ width: '100%', height: '240px', padding: '10px', fontSize: '11px', fontFamily: 'monospace', border: '1px dashed #ccc', borderRadius: '7px', background: '#fafbfc', color: '#1a3a5c', outline: 'none', resize: 'none', boxSizing: 'border-box' }} />
-            ) : (
-              <div>
-                <input type="file" accept=".xlsx,.xls" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
-                <button onClick={() => fileInputRef.current?.click()}
-                  style={{ width: '100%', padding: '10px', borderRadius: '7px', border: '1px dashed #ccc', background: '#fafbfc', color: '#555', fontSize: '12px', cursor: 'pointer' }}>
-                  {uploadedFileName ? `📄 ${uploadedFileName}` : '📁 เลือกไฟล์ Excel...'}
+            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>Invoice register</label>
+            {mode === 'existing' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '7px', background: '#EAF3DE', border: '0.5px solid #C0DD97' }}>
+                <span style={{ fontSize: '16px' }}>✅</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '12px', color: '#27500A', margin: 0, fontWeight: '500' }}>มีไฟล์ Invoice Register อยู่แล้ว</p>
+                  <p style={{ fontSize: '11px', color: '#3B6D11', margin: '2px 0 0', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch?.invoice_register_file_name || '-'}</p>
+                </div>
+                <button onClick={() => setMode('paste')}
+                  style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #C0DD97', background: 'white', color: '#3B6D11', fontSize: '11px', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  แนบไฟล์ใหม่แทน
                 </button>
               </div>
+            ) : (
+              <>
+                {hasExistingFile && (
+                  <button onClick={() => setMode('existing')}
+                    style={{ marginBottom: '8px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #C0DD97', background: '#EAF3DE', color: '#27500A', fontSize: '11px', cursor: 'pointer' }}>
+                    ✅ ใช้ไฟล์เดิมที่มีอยู่แล้วแทน
+                  </button>
+                )}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                  <button onClick={() => setMode('paste')}
+                    style={{ flex: 1, padding: '7px', borderRadius: '7px', border: mode === 'paste' ? '2px solid #378ADD' : '0.5px solid #ddd', background: mode === 'paste' ? '#E6F1FB' : 'white', color: mode === 'paste' ? '#0C447C' : '#555', fontSize: '12px', fontWeight: mode === 'paste' ? '600' : '400', cursor: 'pointer' }}>
+                    📋 วางจาก Excel/Sheet
+                  </button>
+                  <button onClick={() => setMode('upload')}
+                    style={{ flex: 1, padding: '7px', borderRadius: '7px', border: mode === 'upload' ? '2px solid #378ADD' : '0.5px solid #ddd', background: mode === 'upload' ? '#E6F1FB' : 'white', color: mode === 'upload' ? '#0C447C' : '#555', fontSize: '12px', fontWeight: mode === 'upload' ? '600' : '400', cursor: 'pointer' }}>
+                    📎 แนบไฟล์ Excel
+                  </button>
+                </div>
+                {mode === 'paste' ? (
+                  <textarea value={pastedText} onChange={e => setPastedText(e.target.value)} onPaste={handlePasteEvent}
+                    placeholder="คลิกแล้ววาง (Ctrl+V) ข้อมูลจาก Excel หรือ Google Sheet ที่นี่ — ระบบจะแยกคอลัมน์ตาม Tab ให้อัตโนมัติเหมือน Paste เข้า Excel จริง"
+                    style={{ width: '100%', height: '360px', padding: '8px', fontSize: '11px', fontFamily: 'monospace', border: '1px dashed #ccc', borderRadius: '7px', background: '#fafbfc', color: '#1a3a5c', outline: 'none', resize: 'none', boxSizing: 'border-box', overflowX: 'auto', whiteSpace: 'pre' }} />
+                ) : (
+                  <div>
+                    <input type="file" accept=".xlsx,.xls" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+                    <button onClick={() => fileInputRef.current?.click()}
+                      style={{ width: '100%', padding: '10px', borderRadius: '7px', border: '1px dashed #ccc', background: '#fafbfc', color: '#555', fontSize: '12px', cursor: 'pointer' }}>
+                      {uploadedFileName ? `📄 ${uploadedFileName}` : '📁 เลือกไฟล์ Excel...'}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
-          <div style={{ background: '#f8f9fa', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#888' }}>
-            จะบันทึกเป็น: <span style={{ fontFamily: 'monospace', color: '#555' }}>{computedFileName}</span>
-          </div>
+          {mode !== 'existing' && (
+            <div style={{ background: '#f8f9fa', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#888' }}>
+              จะบันทึกเป็น: <span style={{ fontFamily: 'monospace', color: '#555' }}>{computedFileName}</span>
+            </div>
+          )}
         </div>
-        <div style={{ padding: '12px 20px', borderTop: '0.5px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: '#fafbfc' }}>
+        <div style={{ padding: '8px 16px', borderTop: '0.5px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: '#fafbfc' }}>
           <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
           <button onClick={handleSave} disabled={saving || !canSave}
             style={{ padding: '7px 18px', borderRadius: '7px', border: 'none', background: (saving || !canSave) ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: (saving || !canSave) ? 'default' : 'pointer' }}>
@@ -8217,7 +8465,8 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 }
 
 // ── Root ──────────────────────────────────────────────────────────────────────
-export default function APController({ activeSubTab, onSubTabChange, flyoutOpen }) {
+// MARKER_INITIAL_HISTORY_TAB_V1
+export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, initialHistoryTab }) {
   const { fetchCollection, getCached } = useDataCache();
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
@@ -8357,7 +8606,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen 
       )}
       <StepBar step={step} onGo={setStep} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} />}
+        {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} />}
         {step === 2 && (
           <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)}
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}
