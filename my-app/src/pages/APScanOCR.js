@@ -25,11 +25,7 @@ export default function APScanOCR({ onNavigateToAP }) {
   };
 
   return (
-    <div style={{ padding: "2rem" }}>
-      <h2>Scan OCR</h2>
-      <p style={{ color: "#888", marginBottom: 24 }}>
-        อัพโหลดใบ Invoice เพื่อให้ระบบอ่านข้อมูลอัตโนมัติ
-      </p>
+    <div>
       <OCRScanWidget documentType="ap_invoice" onReadyToReview={handleReadyToReview} />
     </div>
   );

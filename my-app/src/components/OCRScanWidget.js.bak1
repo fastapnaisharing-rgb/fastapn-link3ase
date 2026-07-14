@@ -549,12 +549,12 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
                   borderBottom: "1px solid #f0f0f0",
                 }}
               >
-                <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>{s.invoice_no || "-"}</td>
-                <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>{s.supplier_name || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.invoice_date || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.document_type || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.bu || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.confidence != null ? `${s.confidence}%` : "-"}</td>
+                <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>-</td>
+                <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>-</td>
+                <td style={{ ...tdStyle, color: "#888" }}>-</td>
+                <td style={{ ...tdStyle, color: "#888" }}>-</td>
+                <td style={{ ...tdStyle, color: "#888" }}>-</td>
+                <td style={{ ...tdStyle, color: "#888" }}>-</td>
                 <td style={tdStyle}>{s._num}</td>
                 <td style={tdStyle}>
                   <strong style={{ color: isCompleted ? "#3c763d" : "#1a3a5c" }}>

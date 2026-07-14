@@ -5084,11 +5084,12 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                   <col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
                 </>
               ) : (
+                // MARKER_FIX_COLGROUP_APPROVE_AT_WIDTH_V1
                 <>
-                  <col style={{ width: '19%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '15%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
                   <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
-                  <col style={{ width: '11%' }} /><col style={{ width: '10%' }} /><col style={{ width: '16%' }} />
-                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '10%' }} /><col style={{ width: '9%' }} /><col style={{ width: '14%' }} />
+                  <col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
                 </>
               )}
             </colgroup>
