@@ -143,6 +143,13 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
     return () => clearInterval(interval);
   }, [loadBatchHistory]);
 
+  // ---------------- Auto-select Batch ล่าสุด ให้ตาราง OCR Result เป็น Default เสมอ ----------------
+  useEffect(() => {
+    if (!batchId && batchHistory.length > 0) {
+      setBatchId(batchHistory[0].batch_id);
+    }
+  }, [batchId, batchHistory]);
+
   // ---------------- เลือกไฟล์ (ยังไม่ Upload — รอกด Start Processing) ----------------
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
@@ -197,11 +204,11 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   }, [batchId]);
 
   useEffect(() => {
-    if (phase !== "processing") return;
+    if (!batchId) return;
     poll();
     const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
-  }, [phase, poll]);
+  }, [batchId, poll]);
 
   // ---------------- ดูผล OCR ของชุดที่เลือก (พร้อมโหลดรูปภาพ) ----------------
   const handleViewResult = async (setId) => {
@@ -511,103 +518,123 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
         </div>
       )}
 
-      {phase === "processing" && (
-        <div>
-          <div style={{ padding: "1rem 1.5rem", background: "#f5f5f5", borderRadius: 8, marginBottom: 16 }}>
-            <p style={{ margin: 0 }}>
-              ประมวลผล OCR แล้ว {donePages} / {totalPages} หน้า — พบ {sets.length} ชุดเอกสาร
-            </p>
-            <div style={{ width: "100%", background: "#ddd", borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
-              <div
-                style={{
-                  width: `${totalPages ? (donePages / totalPages) * 100 : 0}%`,
-                  background: "#5cb85c",
-                  height: 8,
-                  transition: "width 0.3s",
-                }}
-              />
-            </div>
-          </div>
+      <div>
+        {batchHistory.length > 0 && (
+          <p style={{ fontSize: 12, color: "#8b94a0", marginBottom: 8 }}>
+            แสดงผลจาก Batch ล่าสุด: {batchHistory[0]?.source_file_name || "-"}
+          </p>
+        )}
 
-          {/* รายการชุดที่ทยอย ready ออกมา — แสดงเป็น Table เต็มความกว้าง */}
-          {(() => {
-            const numberedSets = sets.map((s, i) => ({ ...s, _num: i + 1 }));
-            const activeSets = numberedSets.filter((s) => s.status !== "approved");
-            const completedSets = numberedSets.filter((s) => s.status === "approved");
+        {/* รายการชุดเอกสาร — Table เต็มความกว้าง เป็น Default เสมอ (ไม่ต้องรอ Process) */}
+        {(() => {
+          const numberedSets = sets.map((s, i) => ({ ...s, _num: i + 1 }));
+          const activeSets = numberedSets.filter((s) => s.status !== "approved");
+          const completedSets = numberedSets.filter((s) => s.status === "approved");
 
-            const thStyle = {
-              textAlign: "left", padding: "8px 10px", fontSize: 12, fontWeight: 500,
-              color: "#6b7280", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap",
-            };
-            const tdStyle = { padding: "8px 10px", fontSize: 13, verticalAlign: "middle" };
+          const thStyle = {
+            textAlign: "left", padding: "10px 16px", fontSize: 12, fontWeight: 500,
+            color: "#8b94a0", borderBottom: "0.5px solid #eef0f2", whiteSpace: "nowrap",
+            background: "#fafbfc", position: "sticky", top: 0,
+          };
+          const tdStyle = { padding: "12px 16px", fontSize: 13, verticalAlign: "middle" };
 
-            const renderRow = (s, isCompleted) => (
-              <tr
-                key={s.id}
-                style={{
-                  background: isCompleted ? "#fff" : s.status === "ready_for_review" ? "#eaf6ea" : "#fff",
-                  borderBottom: "1px solid #f0f0f0",
-                }}
-              >
-                <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>{s.invoice_no || "-"}</td>
-                <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>{s.supplier_name || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.invoice_date || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.document_type || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.bu || "-"}</td>
-                <td style={{ ...tdStyle, color: "#888" }}>{s.confidence != null ? `${s.confidence}%` : "-"}</td>
-                <td style={tdStyle}>{s._num}</td>
-                <td style={tdStyle}>
-                  <strong style={{ color: isCompleted ? "#3c763d" : "#1a3a5c" }}>
-                    {SET_STATUS_LABEL[s.status] || s.status}
-                  </strong>
-                </td>
-                <td style={tdStyle}>
-                  {!isCompleted && s.status === "ready_for_review" && (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => handleViewResult(s.id)}>ดูผล OCR</button>
-                      {onReadyToReview && (
-                        <button onClick={() => onReadyToReview(s.id)}>ไปกรอกฟอร์ม</button>
-                      )}
-                    </div>
-                  )}
-                  {isCompleted && <span style={{ color: "#b0b6bd" }}>-</span>}
-                </td>
-              </tr>
-            );
-
+          const STATUS_BADGE_COLOR = {
+            ready_for_review: { bg: "#faeeda", color: "#854f0b" },
+            approved: { bg: "#eaf3de", color: "#27500a" },
+            pending: { bg: "#f1eee8", color: "#5f5e5a" },
+            processing: { bg: "#e6f1fb", color: "#0c447c" },
+          };
+          const statusBadge = (status) => {
+            const c = STATUS_BADGE_COLOR[status] || { bg: "#f1eee8", color: "#5f5e5a" };
             return (
-              <div style={{ width: "100%", overflowX: "auto" }}>
-                {sets.length === 0 && <p style={{ color: "#888" }}>ยังไม่มีชุดเอกสารเสร็จ รอสักครู่...</p>}
-                {sets.length > 0 && (
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        <th style={thStyle}>Invoice No.</th>
-                        <th style={thStyle}>Supplier Name</th>
-                        <th style={thStyle}>Doc Date</th>
-                        <th style={thStyle}>Doc Type</th>
-                        <th style={thStyle}>BU</th>
-                        <th style={thStyle}>Confidence</th>
-                        <th style={thStyle}>Page</th>
-                        <th style={thStyle}>Status</th>
-                        <th style={thStyle}>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeSets.map((s) => renderRow(s, false))}
-                      {completedSets.map((s) => renderRow(s, true))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+              <span style={{ background: c.bg, color: c.color, fontSize: 11, padding: "3px 10px", borderRadius: 20 }}>
+                {SET_STATUS_LABEL[status] || status}
+              </span>
             );
-          })()}
+          };
+          const buBadge = (bu) =>
+            bu ? (
+              <span style={{ background: "#e6f1fb", color: "#0c447c", fontSize: 11, padding: "2px 8px", borderRadius: 4, fontWeight: 500 }}>
+                {bu}
+              </span>
+            ) : (
+              <span style={{ color: "#b0b6bd" }}>-</span>
+            );
 
-          <button onClick={handleReset} style={{ marginTop: 16, background: "none", border: "none", color: "#888", cursor: "pointer" }}>
-            ยกเลิก / อัพโหลดใหม่
-          </button>
-        </div>
-      )}
+          const renderRow = (s, isCompleted) => (
+            <tr
+              key={s.id}
+              style={{
+                background: isCompleted ? "#fafcfa" : "#fff",
+                borderBottom: "0.5px solid #f3f4f6",
+              }}
+            >
+              <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c", fontWeight: 500 }}>{s.invoice_no || "-"}</td>
+              <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>{s.supplier_name || "-"}</td>
+              <td style={{ ...tdStyle, color: "#4b5563" }}>{s.invoice_date || "-"}</td>
+              <td style={{ ...tdStyle, color: "#4b5563" }}>{s.document_type || "-"}</td>
+              <td style={tdStyle}>{buBadge(s.bu)}</td>
+              <td style={{ ...tdStyle, color: "#4b5563" }}>{s.confidence != null ? `${s.confidence}%` : "-"}</td>
+              <td style={{ ...tdStyle, color: "#4b5563" }}>{s._num}</td>
+              <td style={tdStyle}>{statusBadge(s.status)}</td>
+              <td style={tdStyle}>
+                {!isCompleted && s.status === "ready_for_review" && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => handleViewResult(s.id)}
+                      style={{ fontSize: 12, color: "#1a3a5c", border: "0.5px solid #d8dde3", background: "#fff", padding: "5px 10px", borderRadius: 6, cursor: "pointer" }}
+                    >
+                      ดูผล OCR
+                    </button>
+                    {onReadyToReview && (
+                      <button
+                        onClick={() => onReadyToReview(s.id)}
+                        style={{ fontSize: 12, color: "#1a3a5c", border: "0.5px solid #d8dde3", background: "#fff", padding: "5px 10px", borderRadius: 6, cursor: "pointer" }}
+                      >
+                        ไปกรอกฟอร์ม
+                      </button>
+                    )}
+                  </div>
+                )}
+                {isCompleted && <span style={{ color: "#b0b6bd" }}>-</span>}
+              </td>
+            </tr>
+          );
+
+          return (
+            <div style={{ width: "100%", background: "#fff", borderRadius: 12, border: "0.5px solid #d8dde3", overflow: "hidden" }}>
+              <div style={{ maxHeight: "60vh", overflowY: "auto", overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Invoice No.</th>
+                      <th style={thStyle}>Supplier Name</th>
+                      <th style={thStyle}>Doc Date</th>
+                      <th style={thStyle}>Doc Type</th>
+                      <th style={thStyle}>BU</th>
+                      <th style={thStyle}>Confidence</th>
+                      <th style={thStyle}>Page</th>
+                      <th style={thStyle}>Status</th>
+                      <th style={thStyle}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sets.length === 0 && (
+                      <tr>
+                        <td colSpan={9} style={{ textAlign: "center", padding: "40px 16px", color: "#b0b6bd" }}>
+                          ยังไม่มีข้อมูล — อัพโหลดไฟล์เพื่อเริ่มต้น
+                        </td>
+                      </tr>
+                    )}
+                    {activeSets.map((s) => renderRow(s, false))}
+                    {completedSets.map((s) => renderRow(s, true))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
 
       {/* Preview ผล OCR — Side by Side (รูปภาพ + ข้อความ) */}
       {previewSetId && (

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../lib/db';
 import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
@@ -2991,7 +2991,7 @@ return (
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [] }) {
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '' }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -3003,6 +3003,67 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
   const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
   const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
+
+  // ── GRN Preview แบบ Group-aware (Live) — เลียนแบบ Logic แบ่งกลุ่มเดียวกับ
+  // handleSubmitInvoice (Step 1: H-Block, Step 2: Tax Code) เพื่อให้แต่ละ Line
+  // เห็น Preview ของกลุ่มตัวเอง ไม่ใช่ค่า Flat เดียวกันหมดทุก Line (กัน Real
+  // Vendor โชว์เลขซ้ำกับ GRN หลักตอน Preview ก่อน Submit) ──────────────────
+  const grnPreviewByLineIdx = useMemo(() => {
+    if (!isAutoGrt) return {};
+    const rankTax = (tc) => {
+      const t = String(tc || '').trim();
+      if (t.includes('SVAT7')) return 2;
+      if (t.includes('VAT7')) return 1;
+      return 0;
+    };
+    const hBlocks = [];
+    lines.forEach((line, idx) => {
+      if (line.hl === 'H' || hBlocks.length === 0) hBlocks.push([idx]);
+      else hBlocks[hBlocks.length - 1].push(idx);
+    });
+    const groups = [];
+    hBlocks.forEach((blockIdxs) => {
+      const bucketMap = new Map();
+      const bucketOrder = [];
+      blockIdxs.forEach((idx) => {
+        const tax = String(lines[idx]?.taxCode || '').trim();
+        if (!bucketMap.has(tax)) { bucketMap.set(tax, []); bucketOrder.push(tax); }
+        bucketMap.get(tax).push(idx);
+      });
+      const sortedKeys = [...bucketOrder].sort((a, b) => rankTax(b) - rankTax(a));
+      sortedKeys.forEach((key) => groups.push(bucketMap.get(key)));
+    });
+    let running = nextGrnRunning;
+    const map = {};
+    groups.forEach((idxs) => {
+      const taxCode0 = String(lines[idxs[0]]?.taxCode || '');
+      const isVat = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
+      let previewVal = '';
+      if (isVat) {
+        running += 1;
+        previewVal = `${grnPrefix}${String(running).padStart(4, '0')}`;
+      }
+      idxs.forEach((idx) => { map[idx] = previewVal; });
+    });
+    return map;
+  }, [lines, isAutoGrt, nextGrnRunning, grnPrefix]);
+
+  // ── Sync realGrn ให้เป็นค่า Live ตลอดเวลา — กันค่าค้างจากตอน Blur ครั้งเดียว
+  // เมื่อ H-Block เปลี่ยน (เพิ่ม/ลบ Line) ทำให้ Group ของ Real Vendor ขยับ ──
+  useEffect(() => {
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((line, idx) => {
+        // เฉพาะ Line ที่เคย Mark เป็น Real Vendor แล้วเท่านั้น (isVat ถูกตั้งค่าไว้)
+        if (line.isVat !== 'Yes' && line.isVat !== 'No') return line;
+        const freshGrn = line.isVat === 'Yes' ? (grnPreviewByLineIdx[idx] || '') : '';
+        if ((line.realGrn || '') === freshGrn) return line;
+        changed = true;
+        return { ...line, realGrn: freshGrn };
+      });
+      return changed ? next : prev;
+    });
+  }, [grnPreviewByLineIdx]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [showContractPopup, setShowContractPopup]     = useState(false);
   const [showRealVendorPopup, setShowRealVendorPopup] = useState(false);
@@ -3050,7 +3111,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
         const taxCode0 = lines[idx]?.taxCode || '';
         const isVatLine = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
-        const autoGrn = (isVatLine && isAutoGrt) ? grnPreview : '';
+        const autoGrn = (isVatLine && isAutoGrt) ? (grnPreviewByLineIdx[idx] || '') : '';
         setLines(prev => {
           const next = [...prev];
           next[idx] = {
@@ -3729,8 +3790,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             const isVatBool = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
             const isVat = isVatBool ? 'Yes' : 'No';
             const lineHl = lines[realVendorLineIdx]?.hl || 'L';
-            // Auto GRN: ใช้ grnPreview prop ที่ส่งมาจาก InvoiceEntry
-            const autoGrn = (isVatBool && lineHl === 'H' && isAutoGrt) ? grnPreview : '';
+            // Auto GRN: ใช้ grnPreviewByLineIdx (Group-aware) แทน grnPreview (Flat)
+            const autoGrn = (isVatBool && lineHl === 'H' && isAutoGrt) ? (grnPreviewByLineIdx[realVendorLineIdx] || '') : '';
             const rv = {
               realVendorCode:   vendor['SM-Code'] || '',
               realVendorName:   vendor['Company Name'] || '',
@@ -4294,7 +4355,9 @@ function getDigitCount(bi) {
   return (n >= 1 && n <= 10) ? n : 4;
 }
 
-function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix, onApGrtRunningChange, onApGrnRunningChange }) {
+// MARKER_SEMI_AUTO_GRT_LOCK_V1
+// MARKER_FIX_GRNLOCKED_PROP_SCOPE_V1
+function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix, onApGrtRunningChange, onApGrnRunningChange, onApGrtRunningBlur = () => {}, onApGrnRunningBlur = () => {}, onApGrtRunningFocus = () => {}, onApGrnRunningFocus = () => {}, grtLocked = false, grnLocked = false }) {
   const rows = [['Company name', buInfo?.['THAI COMPANY NAME']], ['Tax ID', buInfo?.['TAX ID']], ['Company code', buInfo?.['COMPANY CODE']], ['Book', buInfo?.['BOOK']], ['Segment3', buInfo?.['SEGMENT3']], ['GRT status', buInfo?.['AP GRT Control']]];
   const infoRowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr' };
   const keyStyle = { fontSize: '11px', color: '#999', padding: '7px 10px', background: '#fafafa', borderRight: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center' };
@@ -4307,13 +4370,17 @@ function BuInfoPanel({ buInfo, apGrtRunning, apGrnRunning, grtPrefix, grnPrefix,
       <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden' }}>
         <div style={{ background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '5px 10px' }}><div style={{ fontSize: '10px', fontWeight: '600', color: '#1a3a5c', letterSpacing: '0.05em', textTransform: 'uppercase' }}>AP</div></div>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
-          {[['GRT', grtPrefix, apGrtRunning, onApGrtRunningChange, '#1a3a5c', '#f0f3f8'], ['GRN', grnPrefix, apGrnRunning, onApGrnRunningChange, '#c0392b', '#fdf0f0']].map(([label, prefix, val, onChange, color, bg], idx) => (
+          {/* MARKER_SEPARATE_GRN_LOCK_V1 */}
+          {/* MARKER_AUTO_READONLY_GRT_GRN_V2 — ใช้ grtLocked/grnLocked Prop ที่มี Logic
+              เช็ค Pending Invoice ของ Semi-Auto ครบอยู่แล้ว (GRT=เช็ค Pending, GRN=Lock เสมอ)
+              ยังคง readOnly (ไม่ใช่ disabled) ไม่มีไอคอน 🔒 ไม่เทาซีด หน้าตาปกติ */}
+          {[['GRT', grtPrefix, apGrtRunning, onApGrtRunningChange, onApGrtRunningBlur, onApGrtRunningFocus, '#1a3a5c', '#f0f3f8', grtLocked], ['GRN', grnPrefix, apGrnRunning, onApGrnRunningChange, onApGrnRunningBlur, onApGrnRunningFocus, '#c0392b', '#fdf0f0', grnLocked]].map(([label, prefix, val, onChange, onBlur, onFocus, color, bg, isLocked], idx) => (
             <div key={label} style={{ padding: '7px 10px', borderRight: idx === 0 ? '0.5px solid #f0f0f0' : 'none' }}>
               <div style={{ fontSize: '10px', color, fontWeight: '600', marginBottom: '4px', textAlign: 'center' }}>{label}</div>
               <div style={{ display: 'flex', alignItems: 'center', height: '28px', border: '0.5px solid #ddd', borderRadius: '5px', overflow: 'hidden', background: 'white' }}>
                 <span style={{ flex: 1, padding: '0 7px', fontSize: '11px', color, background: bg, borderRight: '0.5px solid #ddd', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.05em' }}>{prefix}</span>
-                <input type="text" inputMode="numeric" value={val} onChange={e => onChange(e.target.value)} maxLength={getDigitCount(buInfo)} placeholder={"0".repeat(getDigitCount(buInfo))}
-                  style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color, textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em' }} />
+                <input type="text" inputMode="numeric" value={val} onChange={e => !isLocked && onChange(e.target.value)} onBlur={!isLocked ? onBlur : undefined} onFocus={!isLocked ? onFocus : undefined} maxLength={getDigitCount(buInfo)} placeholder={"0".repeat(getDigitCount(buInfo))} readOnly={isLocked}
+                  style={{ flex: 1, height: '100%', padding: '0 6px', fontSize: '12px', border: 'none', outline: 'none', color, textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.15em', cursor: isLocked ? 'default' : 'text', background: isLocked ? '#f5f5f5' : 'white' }} />
               </div>
             </div>
           ))}
@@ -4452,6 +4519,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [buInfo, setBuInfo]             = useState(null);
   const [showPopup, setShowPopup]       = useState(false);
   const [apGrtRunning, setApGrtRunning] = useState('0000');
+  const [grtLocked, setGrtLocked] = useState(false); // Semi-Auto: Lock ถ้ามี Invoice ค้างใน Batch Bucket ของ BU นี้
+  // MARKER_SEPARATE_GRN_LOCK_V1
+  // ── GRN Lock แยกจาก GRT: Lock เสมอสำหรับ Auto/Semi-Auto (ไม่เช็ค Pending เลย) / Manual แก้ได้เสมอ ──
+  const grnLocked = (() => {
+    const g = buInfo?.['AP GRT Control'] || '';
+    return g === 'Auto' || g === 'Semi-Auto';
+  })();
   const [apGrnRunning, setApGrnRunning] = useState('0000');
 
   // ── pre-fill running number ตาม Mode (Current ใช้ ap_grt/ap_grn, Override ใช้ ap_grt_prev/ap_grn_prev) ──
@@ -4467,6 +4541,34 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       if (buInfo.ap_due_date) setDueDate(String(buInfo.ap_due_date).slice(0, 10));
     }
   }, [buInfo]);
+
+  // MARKER_UNIFIED_GRT_GRN_LOCK_V1
+  // ── Lock เลขเริ่มต้น GRT/GRN (ใช้ Lock เดียวกันทั้งคู่) ตาม GRT Control ──────
+  // ── Auto -> Lock เสมอ / Manual -> ไม่ Lock เลย ─────────────────────────
+  // ── Semi-Auto -> Lock เฉพาะถ้ามี Invoice ค้างใน Batch Bucket ของ BU นี้ ──
+  useEffect(() => {
+    let cancelled = false;
+    const computeRunningNumLock = async () => {
+      const grtControl = buInfo?.['AP GRT Control'] || '';
+      if (grtControl === 'Auto') { if (!cancelled) setGrtLocked(true); return; }
+      if (grtControl === 'Manual') { if (!cancelled) setGrtLocked(false); return; }
+      if (grtControl === 'Semi-Auto') {
+        if (!bu) { if (!cancelled) setGrtLocked(false); return; }
+        try {
+          const { data } = await db.from('bucket_list').select('id').eq('bu', bu).eq('status', 'pending').limit(1);
+          if (!cancelled) setGrtLocked((data || []).length > 0);
+        } catch (e) {
+          console.error('[check semi-auto running num lock]', e);
+          if (!cancelled) setGrtLocked(false);
+        }
+        return;
+      }
+      // ── ไม่ได้ตั้งค่า (Empty/ค่าอื่น) -> ไม่ Lock (พฤติกรรมเดิมก่อนมี Feature นี้) ──
+      if (!cancelled) setGrtLocked(false);
+    };
+    computeRunningNumLock();
+    return () => { cancelled = true; };
+  }, [buInfo, bu]);
 
   // ── กัน Popup Blocked เด้งซ้ำ — ดึงจาก Endpoint เล็กๆ แยก ใช้ได้ทุก User ไม่ต้องมี Permission Manual ──
   const [hasPendingCloseRequest, setHasPendingCloseRequest] = useState(false);
@@ -4606,10 +4708,17 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     if (!window.confirm(`ต้องการลบ Batch "${b.batch_id || b.id}" ออกจาก Batch History ถาวรใช่ไหม?`)) return;
     setDeletingBatchRowId(b.id);
     try {
+      // ── ลบ bucket_list (Invoice items) ของ batch นี้ก่อน ──
+      const { error: bucketErr } = await db.from('bucket_list').delete().eq('batch_id', b.batch_id);
+      if (bucketErr) throw bucketErr;
+      // ── ลบ batch_list ──
       const { error } = await db.from('batch_list').delete().eq('id', b.id);
       if (error) throw error;
+      // ── Update local state ทุก tab รวมถึง Invoice History ──
       setHistoryMine(prev => prev.filter(x => x.id !== b.id));
       setHistoryAll(prev => prev.filter(x => x.id !== b.id));
+      setHistoryInbox(prev => prev.filter(x => x.id !== b.id));
+      wsNotify('batch_deleted', b.batch_id, 'deleted');
     } catch (e) {
       console.error('delete batch_list row:', e);
       alert('ลบไม่สำเร็จ: ' + e.message);
@@ -4640,7 +4749,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [filePreview, setFilePreview] = useState(null); // { fileId, fileName, rows: [[...]] }
   const [previewLoading, setPreviewLoading] = useState(false);
   const [savingPreview, setSavingPreview] = useState(false);
-  const fileBlobCache = useRef({}); // cache Blob URL ต่อ fileId ใน session
+  const fileBlobCache = useRef({});
+  const wsRef = useRef(null); // cache Blob URL ต่อ fileId ใน session
 
   const handleFileAction = async (fileId, mode, suggestedFileName) => {
     try {
@@ -4856,6 +4966,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       else {
         setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue } : x));
         setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue } : x));
+        wsNotify('batch_sent', batch.batch_id, 'reviewing');
       }
 
       setReportPickerId(null);
@@ -4909,6 +5020,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, ...updated } : x));
       setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, ...updated } : x));
       setHistoryInbox(prev => prev.filter(x => x.id !== batch.id));
+      wsNotify('batch_approved', batch.batch_id, 'approved');
 
       // 3. Mark notifications approved
       try { await markNotificationsApproved(batch.batch_id); } catch (nErr) { console.error('[mark notifications approved]', nErr); }
@@ -4945,6 +5057,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       const { error } = await db.from('batch_list').update({ status: 'rejected' }).eq('id', batch.id);
       if (error) throw error;
       setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'rejected' } : x));
+      wsNotify('batch_rejected', batch.batch_id, 'rejected');
       setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'rejected' } : x));
       setHistoryInbox(prev => prev.filter(x => x.id !== batch.id));
       // ── ลบ Notification ฝั่งผู้รับ + เปลี่ยนฝั่งผู้ส่งเป็น 'rejected' ───────────
@@ -4963,7 +5076,17 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const canSeeAll = isOwner || isAdmin;
   const me = userName || currentUser?.email || '';
 
-  const handleRunningChange = (val, setter, digitCount) => { const dc = digitCount || 4; const num = val.replace(/\D/g, '').slice(0, dc); setter(num.padStart(dc, '0')); };
+  // MARKER_FIX_RUNNING_NUM_INPUT_PAD_V1
+  // ── ตอนพิมพ์ไม่ Pad เลข 0 ทันที (กันเลขใหม่หลุดจาก slice) — Pad ให้ครบหลักตอน Blur แทน ──
+  const wsNotify = async (event, batch_id, status) => {
+    try { await apiFetch('/ws-notify', { method: 'POST', body: JSON.stringify({ event, batch_id, status }) }); } catch {}
+  };
+
+  const handleRunningChange = (val, setter, digitCount) => { const dc = digitCount || 4; const num = val.replace(/\D/g, '').slice(0, dc); setter(num); };
+  const handleRunningBlur = (setter, digitCount) => { const dc = digitCount || 4; setter(prev => String(prev || '').padStart(dc, '0')); };
+  // MARKER_ADD_RUNNING_NUM_FOCUS_CLEAR_V1
+  // ── กด Focus (คลิกเข้าช่อง) -> เคลียร์เป็นค่าว่างทันที กันพิมพ์ทับ "0000" เดิมแล้วเพี้ยน ──
+  const handleRunningFocus = (setter) => { setter(''); };
 
   useEffect(() => {
     const load = async () => {
@@ -4978,7 +5101,26 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       } catch (e) { console.error('loadHistory:', e); }
       setHistoryLoading(false);
     };
-    if (me) load();
+    if (me) {
+      load();
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const wsUrl = apiBase.replace(/^http/, 'ws');
+      let ws;
+      const connect = () => {
+        ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+        ws.onmessage = ({ data }) => {
+          try {
+            const { event } = JSON.parse(data);
+            if (['batch_sent','batch_recalled','batch_approved','batch_rejected','batch_deleted'].includes(event)) load(true);
+          } catch {}
+        };
+        ws.onerror = () => console.warn('[WS] error');
+        ws.onclose = () => { setTimeout(connect, 5000); };
+      };
+      connect();
+      return () => { ws?.close(); wsRef.current = null; };
+    }
   }, [me, canSeeAll]);
 
   const handleSelectBU = (item) => { setBu(item['bu'] || ''); setBuInfo(item); setShowPopup(false); };
@@ -5048,14 +5190,30 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                   </div>
                 </div>
                 <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
-                  onClick={() => {
+                  // MARKER_SYNC_GRT_GRN_ON_START_BATCH_V1
+                  onClick={async () => {
                     if (isBlocked) { setShowBlockedPopup(true); return; }
+                    // ── Update เลข GRT/GRN เริ่มต้นกลับเข้า company_list ทันที (กันหายถ้าปิด Browser ก่อน Submit Invoice) ──
+                    try {
+                      const override = isOverride(buInfo);
+                      const payload = override
+                        ? { ap_grt_prev: parseInt(apGrtRunning, 10) || 0, ap_grn_prev: parseInt(apGrnRunning, 10) || 0 }
+                        : { ap_grt: parseInt(apGrtRunning, 10) || 0, ap_grn: parseInt(apGrnRunning, 10) || 0 };
+                      const buId = buInfo?.id;
+                      if (buId) {
+                        await db.from('company_list').update(payload).eq('id', buId);
+                      } else if (bu) {
+                        await db.from('company_list').update(payload).eq('bu', bu);
+                      }
+                    } catch (e) {
+                      console.error('[sync grt/grn on start batch]', e);
+                    }
                     onStart({ bu: bu || '-', receiveDate, dueDate, period: isOverride(buInfo) ? 'Override' : 'Current', apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT', buInfo), grnPrefix: getPrefix('GRN', buInfo), buInfo });
                   }}>▶ Start Batch</button>
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
-                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT', buInfo)} grnPrefix={getPrefix('GRN', buInfo)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} />
+                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT', buInfo)} grnPrefix={getPrefix('GRN', buInfo)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningBlur={() => handleRunningBlur(setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningBlur={() => handleRunningBlur(setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningFocus={() => handleRunningFocus(setApGrtRunning)} onApGrnRunningFocus={() => handleRunningFocus(setApGrnRunning)} grtLocked={grtLocked} grnLocked={grnLocked} />
               </div>
             </div>
           </div>
@@ -5676,10 +5834,11 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
   };
 
   return (
+    // MARKER_CENTER_INVOICE_HEADER_LABELS_V1
     <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #e8eaf0' }}>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '130px', position: 'relative' }}>
-          <label style={{ fontSize: '11px', color: '#888' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
+          <label style={{ fontSize: '11px', color: '#888', textAlign: 'center' }}>Supplier code <span style={{ color: '#e24b4a' }}>*</span></label>
           <div style={{ position: 'relative' }}>
             <input type="text" value={form.supplierCode}
               ref={supplierCodeRef}
@@ -5720,7 +5879,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '110px' }}>
-          <label style={{ fontSize: '11px', color: '#888' }}>Branch no.</label>
+          <label style={{ fontSize: '11px', color: '#888', textAlign: 'center' }}>Branch no.</label>
           <div style={{ position: 'relative' }}>
             <input type="text" value={form.branchNo}
               ref={branchNoRef}
@@ -5737,7 +5896,8 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px', position: 'relative' }}>
-          <label style={{ fontSize: '11px', color: '#888' }}>CPC</label>
+          {/* MARKER_CENTER_INPUT_TEXT_CPC_ACCOUNT_SUBACC_V1 */}
+          <label style={{ fontSize: '11px', color: '#888', textAlign: 'center' }}>CPC</label>
           <input type="text" value={form.headerCpc || ''}
             ref={headerCpcRef}
             onChange={e => {
@@ -5749,7 +5909,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
               setField('headerCpc', newVal);
             }}
             onBlur={() => setTimeout(() => setShowCpcList(false), 120)}
-            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: 'center' }} />
           {showCpcList && recentHeaderCpc.length > 0 && (
             <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 9999, background: 'white', borderRadius: '6px', border: '0.5px solid #ddd', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', width: '100%', maxHeight: '200px', overflowY: 'auto', boxSizing: 'border-box' }}>
               {recentHeaderCpc.map((v, i) => (
@@ -5765,7 +5925,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '100px', position: 'relative' }}>
-          <label style={{ fontSize: '11px', color: '#888' }}>Account</label>
+          <label style={{ fontSize: '11px', color: '#888', textAlign: 'center' }}>Account</label>
           <input type="text" value={form.headerAccount || ''}
             ref={headerAccountRef}
             onChange={e => {
@@ -5777,7 +5937,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
               setField('headerAccount', newVal);
             }}
             onBlur={() => setTimeout(() => setShowAccountList(false), 120)}
-            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: 'center' }} />
           {showAccountList && recentHeaderAccount.length > 0 && (
             <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 9999, background: 'white', borderRadius: '6px', border: '0.5px solid #ddd', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', width: '100%', maxHeight: '200px', overflowY: 'auto', boxSizing: 'border-box' }}>
               {recentHeaderAccount.map((v, i) => (
@@ -5793,7 +5953,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px', position: 'relative' }}>
-          <label style={{ fontSize: '11px', color: '#888' }}>SubAcc</label>
+          <label style={{ fontSize: '11px', color: '#888', textAlign: 'center' }}>SubAcc</label>
           <input type="text" value={form.headerSubAcc || ''}
             ref={headerSubAccRef}
             onChange={e => {
@@ -5805,7 +5965,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
               setField('headerSubAcc', newVal);
             }}
             onBlur={() => setTimeout(() => setShowSubAccList(false), 120)}
-            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+            style={{ height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: 'center' }} />
           {showSubAccList && recentHeaderSubAcc.length > 0 && (
             <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 9999, background: 'white', borderRadius: '6px', border: '0.5px solid #ddd', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', width: '100%', maxHeight: '200px', overflowY: 'auto', boxSizing: 'border-box' }}>
               {recentHeaderSubAcc.map((v, i) => (
@@ -5845,7 +6005,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
 
   // ── GRT/GRN running number — gen อัตโนมัติเมื่อ GRT Status = Auto ──────────
   // GRT: รันทุก invoice / GRN: รันเฉพาะ invoice ที่ Tax code เป็น VAT7 (ไม่ใช่ SVAT7)
-  const isAutoGrt = (batchConfig?.buInfo?.['AP GRT Control'] || '') === 'Auto';
+  // MARKER_RESTORE_SEMIAUTO_AND_FIX_REALGRN_V1
+  // ── Auto และ Semi-Auto ทำงานเหมือนกันทุกประการ (Auto-Gen ทุก Invoice) ──────
+  // ── Manual เท่านั้นที่พิมพ์เองทุก Invoice ที่ Popup (ไม่มี Auto-Gen เลย) ────
+  const grtControlMode = batchConfig?.buInfo?.['AP GRT Control'] || '';
+  const isAutoGrt = grtControlMode === 'Auto' || grtControlMode === 'Semi-Auto';
   const [nextGrtRunning, setNextGrtRunning] = useState(() => parseInt(batchConfig?.apGrtRunning || '0', 10) || 0);
   const [nextGrnRunning, setNextGrnRunning] = useState(() => parseInt(batchConfig?.apGrnRunning || '0', 10) || 0);
   const [vendorInfo, setVendorInfo]               = useState(null);
@@ -6603,6 +6767,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         vat:             sumField(groupLines, 'vat'),
         wht:             sumField(groupLines, 'wht'),
         net:             sumField(groupLines, 'total'),
+        // MARKER_RESTORE_SEMIAUTO_AND_FIX_REALGRN_V1
         form_data:       {
           ...form,
           grtNum: grtNumVal,
@@ -6616,6 +6781,9 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
           realInvoiceNo:    hLine?.realInvoiceNo    || '',
           realVendorTaxDate: hLine?.realVendorTaxDate || '',
           isVat:            hLine?.isVat            || '',
+          // ── Sync realGrn ให้ตรงกับเลขจริงที่ Reserve ได้ (grnVal) แทนเลข Preview เดิม ──
+          // ── Sync เฉพาะ Line ที่เคยใช้ Real Vendor จริง (มี realGrn ค้างอยู่) เท่านั้น ──
+          realGrn:          hLine?.realGrn ? grnVal : '',
         },
         lines:           groupLines,
         status:          'pending',
@@ -6867,7 +7035,7 @@ const handleSelectBranch = (item, meta = {}) => {
       
       <div style={{ ...card, overflow: 'visible', flexShrink: 0 }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} recentHeaderCpc={recentHeaderCpc} recentHeaderAccount={recentHeaderAccount} recentHeaderSubAcc={recentHeaderSubAcc} recentSupplierCode={recentSupplierCode} supplierCodeRef={supplierCodeRef} branchNoRef={branchNoRef} headerCpcRef={headerCpcRef} headerAccountRef={headerAccountRef} headerSubAccRef={headerSubAccRef} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
