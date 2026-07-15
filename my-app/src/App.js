@@ -375,6 +375,16 @@ function IncomingToast({ request, currentUser, userName, onDismiss }) {
           body: JSON.stringify({ detail: JSON.stringify({ ...(typeof request.detail === 'string' ? JSON.parse(request.detail||'{}') : request.detail||{}), responded: true, responded_by: userName || currentUser?.email || '', responded_at: new Date().toISOString() }) }),
         });
       }
+      // 4. Broadcast แบบ Real-time ให้ฝั่งผู้ส่งเห็นการเปลี่ยนแปลงทันที ──────────
+      // ── (เดิมมีแค่ dispatchEvent('bucketAccepted') ซึ่งทำงานแค่ใน Tab เดียวกัน ──
+      // ── กับที่ IncomingToast render อยู่ ไม่ถึงฝั่งผู้ส่งที่อยู่คนละ Session/User) ──
+      try {
+        await fetch(`${API}/api/ws-notify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ event: 'bucket_accepted', batch_id: ids.join(','), status: 'accepted' }),
+        });
+      } catch {}
       onDismiss('accepted');
     } catch (e) { alert('รับไม่สำเร็จ: ' + e.message); }
     setActing(false);
@@ -418,6 +428,14 @@ function IncomingToast({ request, currentUser, userName, onDismiss }) {
           body: JSON.stringify({ detail: JSON.stringify({ ...(typeof request.detail === 'string' ? JSON.parse(request.detail||'{}') : request.detail||{}), responded: true, reject_note: rejectNote || '', responded_by: userName || currentUser?.email || '', responded_at: new Date().toISOString() }) }),
         });
       }
+      // 4. Broadcast แบบ Real-time ให้ฝั่งผู้ส่งเห็นการเปลี่ยนแปลงทันที (เหมือนขั้นตอน Accept) ──
+      try {
+        await fetch(`${API}/api/ws-notify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ event: 'bucket_rejected', batch_id: ids.join(','), status: 'rejected' }),
+        });
+      } catch {}
       onDismiss('rejected');
     } catch (e) { alert('ปฏิเสธไม่สำเร็จ: ' + e.message); }
     setActing(false);
@@ -539,6 +557,28 @@ function MainApp() {
     fetchApNotifications();
     const interval = setInterval(() => { fetchRequests(); fetchApNotifications(); }, 30000);
     return () => clearInterval(interval);
+  }, [currentUser]);
+
+  // ── Real-time: ฟัง broadcast 'bucket_sent' จาก server ให้ Toast ขึ้นทันที ──────
+  // ── ไม่ต้องรอ Poll รอบ 30 วิ — Poll เดิมด้านบนยังอยู่เป็น Fallback เผื่อ WS หลุด ──
+  // ── (WS Push คือ Broadcast message เดียว เบากว่า Poll ถี่ขึ้นมาก ไม่เพิ่ม Load) ──
+  useEffect(() => {
+    if (!currentUser) return;
+    const wsUrl = API.replace(/^http/, 'ws');
+    let ws;
+    const connect = () => {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = ({ data }) => {
+        try {
+          const { event } = JSON.parse(data);
+          if (event === 'bucket_sent') fetchRequests();
+        } catch {}
+      };
+      ws.onerror = () => console.warn('[WS] error (App shell)');
+      ws.onclose = () => { setTimeout(connect, 5000); };
+    };
+    connect();
+    return () => ws?.close();
   }, [currentUser]);
 
   // ── ดึง AP Period Notifications (Close Period / Override) เฉพาะ User ที่มี Permission Manual ──

@@ -6313,6 +6313,28 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     window.addEventListener('bucketAccepted', handler);
     return () => window.removeEventListener('bucketAccepted', handler);
   }, []);
+  // -- Real-time: ฟัง broadcast จาก server เมื่อ invoice ที่ "ส่งไปให้คนอื่น" ถูก --
+  // -- Accept/Reject จากฝั่งผู้รับ (คนละ Browser/Session กับเรา) -- ต่างจาก ------
+  // -- 'bucketAccepted' ข้างบนที่เป็น window event ทำงานได้แค่ใน Tab เดียวกันเท่านั้น --
+  useEffect(() => {
+    if (!me) return;
+    const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+    const wsUrl = apiBase.replace(/^http/, 'ws');
+    let ws;
+    const connect = () => {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = ({ data }) => {
+        try {
+          const { event } = JSON.parse(data);
+          if (['bucket_accepted', 'bucket_rejected'].includes(event)) setBucketRefreshTick(t => t + 1);
+        } catch {}
+      };
+      ws.onerror = () => console.warn('[WS] error (InvoiceEntry)');
+      ws.onclose = () => { setTimeout(connect, 5000); };
+    };
+    connect();
+    return () => ws?.close();
+  }, [me]);
 
   // ── ref เก็บ invoices ล่าสุด ให้ syncPendingToBucket อ่านได้โดยไม่ต้อง re-create interval ──
   const invoicesRef = useRef(invoices);
@@ -6607,7 +6629,18 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       }),
     });
 
-    // 4. update local state
+    // 4. Broadcast แบบ Real-time ให้ฝั่งผู้รับเห็น Toast ทันที ────────────────
+    // ── (ไม่ต้องรอ Poll รอบถัดไปที่ 30 วิ — ใช้ WS Push แทน ไม่เพิ่ม Load ──────
+    // ── เพราะเป็นแค่ Broadcast message เดียว ไม่ใช่การ Poll ถี่ขึ้น) ──────────
+    try {
+      await fetch(`${apiBase}/api/ws-notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ event: 'bucket_sent', batch_id: toUsername, status: 'sent' }),
+      });
+    } catch {}
+
+    // 5. update local state
     setInvoices(prev => {
       const next = prev.map((inv, i) => {
         const key = inv.id || inv._localId || i;
