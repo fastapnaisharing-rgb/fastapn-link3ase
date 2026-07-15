@@ -5289,9 +5289,10 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     </td>
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       {(() => {
-                        // ── Inbox Tab: ใช้ไฟล์ Invoice Register (ไฟล์ที่ผู้ตรวจ "ได้รับ" จริง) ──
-                        // ── ถ้าไม่มี Fallback ไปไฟล์ Export เดิม กันปุ่มพัง ─────────────────────
-                        const useInvoiceRegister = historyTab === 'inbox' && b.invoice_register_file_id;
+                        // ── ถ้ามีไฟล์ Invoice Register แนบอยู่แล้ว (ไม่ว่า Tab ไหน) ใช้ไฟล์นั้นแทน ──
+                        // ── ไฟล์ Export เดิม (b.file_url) — เพราะ Invoice Register คือไฟล์ล่าสุดที่ ──
+                        // ── ผู้ตรวจ "ได้รับ" จริง ถ้าไม่มี Fallback ไปไฟล์ Export เดิม กันปุ่มพัง ──
+                        const useInvoiceRegister = !!b.invoice_register_file_id;
                         const attachId = useInvoiceRegister ? b.invoice_register_file_id : b.file_url;
                         const attachName = useInvoiceRegister ? b.invoice_register_file_name : b.file_name;
                         return (
