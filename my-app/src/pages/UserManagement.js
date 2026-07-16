@@ -5,6 +5,8 @@ import React, { useState, useEffect, useMemo } from 'react';
   import { useUserRole } from '../contexts/useUserRole';
   import DeployMonitor, { RAMDashboardTab } from './DeployMonitor';
   import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
+  import { broadcastWs } from '../wsManager';
+  import { confirmDialog } from '../confirmDialog';
 
   const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'];
 
@@ -345,7 +347,11 @@ import React, { useState, useEffect, useMemo } from 'react';
         });
         await fetchOverrides();
         setOpenFolder(null);
-      } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
+        // ── Broadcast แบบ Real-time — User ที่ถูกให้/ตัดสิทธิ์ (login ค้างอยู่) ──
+        // ── จะเห็นผลทันที ไม่ต้อง Logout/Login ใหม่หรือ Refresh หน้าเอง ────────
+        // ── (ฝั่งรับอยู่ที่ AuthContext.js — subscribeWs('doc_access_updated')) ──
+        broadcastWs('doc_access_updated', { folder_key: folderKey });
+      } catch (err) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + err.message, { variant: 'danger' }); }
       setSaving(false);
     };
 
@@ -559,8 +565,8 @@ useEffect(() => {
         setSelected(prev => prev.filter(s => s !== item.id));
         fetchBins();
         fetchBinCount();
-        alert('✅ Restore สำเร็จ');
-      } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+        confirmDialog.alert('Restore สำเร็จ', { variant: 'success' });
+      } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
       setLoading(false);
     };
 
@@ -608,8 +614,8 @@ useEffect(() => {
         setSelected([]);
         fetchBins();
         fetchBinCount();
-        alert(`✅ Restore สำเร็จ ${total} รายการ`);
-      } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+        confirmDialog.alert(`Restore สำเร็จ ${total} รายการ`, { variant: 'success' });
+      } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
       setLoading(false);
       setProgress(0);
       setProgressDone(0);
@@ -629,7 +635,7 @@ useEffect(() => {
         setSelected(prev => prev.filter(s => s !== item.id));
         fetchBins();
         fetchBinCount();
-      } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+      } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
       setLoading(false);
     };
     // ✅ Batch Permanent Delete — group by table, batch .in() ทีละ 100
@@ -675,8 +681,8 @@ useEffect(() => {
         setConfirmBulkDelete(false);
         fetchBins();
         fetchBinCount();
-        alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
-      } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+        confirmDialog.alert(`ลบถาวรสำเร็จ ${total} รายการ`, { variant: 'success' });
+      } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
       setLoading(false);
       setProgress(0);
       setProgressDone(0);

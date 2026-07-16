@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
   import { useDataCache } from '../contexts/DataCacheContext';
+  import { confirmDialog } from '../confirmDialog';
 
 
   function useWindowWidth() {
@@ -452,10 +453,12 @@ const computeNextSyRunning = async () => {
     const [showForm, setShowForm]       = useState(false);
     const [editId, setEditId]           = useState(null);
     const [form, setForm]               = useState({});
+    const [showNewErrors, setShowNewErrors] = useState(false); // ── True หลังกด Save แล้วยังกรอกไม่ครบ — ไฮไลต์ Field แดง ──
     const [showDetailModal, setShowDetailModal] = useState(false);
     const [detailItem, setDetailItem]   = useState(null);
     const [detailEditMode, setDetailEditMode] = useState(false);
     const [detailForm, setDetailForm]   = useState({});
+    const [showDetailErrors, setShowDetailErrors] = useState(false); // ── เหมือน showNewErrors แต่สำหรับ Detail Modal ──
     const [showPreview, setShowPreview] = useState(false);
     const [previewRows, setPreviewRows] = useState([]);
     const [importing, setImporting]     = useState(false);
@@ -648,8 +651,8 @@ const computeNextSyRunning = async () => {
         setShowPreview(false); setPreviewRows([]); await fetchTab(tab);
         if (tab === 'apcode') invalidate('SupplierList');
         if (tab === 'category') invalidate('VendorCategory');
-        alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
-      } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+        confirmDialog.alert(`Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`, { variant: 'success' });
+      } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
       setImporting(false);
     };
 
@@ -669,14 +672,14 @@ const computeNextSyRunning = async () => {
       if (!form['CPC_Cr']?.trim())       missing.push('CPC Cr');
       if (!form['Account_Dr2']?.trim())  missing.push('Account Cr');
       if (!form['Sub Acc_Cr']?.trim())   missing.push('Sub Acc Cr');
-      if (missing.length) { alert(`กรุณากรอกข้อมูลให้ครบถ้วนตาม Required Field`); return; }
+      if (missing.length) { confirmDialog.alert('กรุณากรอกข้อมูลให้ครบถ้วนตาม Required Field', { variant: 'danger' }); return; }
       // ← ตรงนี้ครับ หลัง missing check
       if (!editId) {
         const duplicate = (dataMap['smcode'] || []).find(
           i => String(i['SM-Code'] || '').trim().toLowerCase() === form['SM-Code'].trim().toLowerCase()
         );
         if (duplicate) {
-          alert(`❌ Simple Code "${form['SM-Code']}" มีอยู่แล้วใน SM-Code List`);
+          confirmDialog.alert(`Simple Code "${form['SM-Code']}" มีอยู่แล้วใน SM-Code List`, { variant: 'danger' });
           return;
         }
       }
@@ -684,11 +687,19 @@ const computeNextSyRunning = async () => {
 
     if (tab === 'apcode') {
       const missing = ['Code','Supplier Name','Supplier Number','Supplier Site','BU Code'].filter(k => !form[k]?.trim());
-      if (missing.length) { alert(`กรุณากรอกข้อมูลให้ครบ:\n• ${missing.join('\n• ')}`); return; }
+      if (missing.length) {
+        setShowNewErrors(true); // ── ไฮไลต์ Field สีแดงแทนการ List ชื่อใน Popup ──
+        confirmDialog.alert('กรอกข้อมูลให้ครบก่อนบันทึก', { variant: 'danger' });
+        return;
+      }
     }
     if (tab === 'iecode') {
       const missing = ['IE-Code','Supplier Name','Supplier Number','Supplier Site','BU Code'].filter(k => !form[k]?.trim());
-      if (missing.length) { alert(`กรุณากรอกข้อมูลให้ครบ:\n• ${missing.join('\n• ')}`); return; }
+      if (missing.length) {
+        setShowNewErrors(true);
+        confirmDialog.alert('กรอกข้อมูลให้ครบก่อนบันทึก', { variant: 'danger' });
+        return;
+      }
     }
     const ts = getTimestamp(); const cuStr = cu();
     let data = { ...form, username: cuStr, last_update: ts };
@@ -738,7 +749,7 @@ const computeNextSyRunning = async () => {
         ? prev[tab].map(i => (i.id === editId ? optimisticItem : i))
         : [...prev[tab], optimisticItem],
     }));
-    setShowForm(false); setEditId(null); setForm({});
+    setShowForm(false); setEditId(null); setForm({}); setShowNewErrors(false);
 
     try {
       if (wasEdit) {
@@ -759,14 +770,14 @@ const computeNextSyRunning = async () => {
           ? prev[tab].map(i => (i.id === editId ? prevItem : i))
           : prev[tab].filter(i => i.id !== tempId),
       }));
-      alert('เกิดข้อผิดพลาด: ' + err.message);
+      confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' });
     }
   };
 
 
 
     const handleDelete = async (id) => {
-    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    if (!(await confirmDialog.confirm('ต้องการลบรายการนี้?', { variant: 'danger', confirmText: 'ลบ' }))) return;
     const cuStr = cu(); const now = new Date().toISOString();
     const item = items.find(i => i.id === id);
     if (!item) return;
@@ -784,14 +795,14 @@ const computeNextSyRunning = async () => {
     } catch (err) {
       // ❌ ใส่กลับเข้าหน้าจอเหมือนเดิม
       setDataMap(prev => ({ ...prev, [tab]: [...prev[tab], item] }));
-      alert('ลบไม่สำเร็จ: ' + err.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + err.message, { variant: 'danger' });
     }
   };
 
 
 
     const handleBulkDelete = async () => {
-    if (!window.confirm(`ต้องการลบ ${selected.length} รายการ?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ ${selected.length} รายการ?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     const cuStr = cu(); const now = new Date().toISOString();
     const selectedSet = new Set(selected);
     const rowsToDelete = items.filter(i => selectedSet.has(i.id));
@@ -810,17 +821,17 @@ const computeNextSyRunning = async () => {
       }
       if (tab === 'apcode') invalidate('SupplierList');
       if (tab === 'category') invalidate('VendorCategory');
-      alert(`✅ ลบสำเร็จ ${rowsToDelete.length} รายการ`);
+      confirmDialog.alert(`ลบสำเร็จ ${rowsToDelete.length} รายการ`, { variant: 'success' });
     } catch (err) {
       // ❌ ใส่กลับเข้าหน้าจอทั้งหมดเหมือนเดิม
       setDataMap(prev => ({ ...prev, [tab]: [...prev[tab], ...rowsToDelete] }));
-      alert('ลบไม่สำเร็จ: ' + err.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + err.message, { variant: 'danger' });
     }
   };
 
 
 
-    const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); };
+    const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); setShowDetailErrors(false); };
     const handleDetailSave = async () => {
     // ── AP-Code / IE-Code: บังคับต้องมี Tax ID และ Branch No. ก่อน Save เสมอ ──
     if (tab === 'apcode' || tab === 'iecode') {
@@ -828,10 +839,12 @@ const computeNextSyRunning = async () => {
       if (!detailForm['Tax ID']?.trim()) missingDetail.push('Tax ID');
       if (!detailForm['No.']?.trim())    missingDetail.push('Branch No.');
       if (missingDetail.length) {
-        alert(`กรุณากรอกข้อมูลให้ครบก่อนบันทึก: ${missingDetail.join(', ')}`);
+        setShowDetailErrors(true); // ── ไฮไลต์ Field สีแดงแทนการ List ชื่อใน Popup ──
+        confirmDialog.alert('กรอกข้อมูลให้ครบก่อนบันทึก', { variant: 'danger' });
         return;
       }
     }
+    setShowDetailErrors(false);
     const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
     const prevItem = detailItem;
 
@@ -847,7 +860,7 @@ const computeNextSyRunning = async () => {
     } catch (err) {
       // ❌ ย้อนกลับ
       setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === prevItem.id ? prevItem : i)) }));
-      alert('เกิดข้อผิดพลาด: ' + err.message);
+      confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' });
     }
   };
 
@@ -858,7 +871,7 @@ const computeNextSyRunning = async () => {
   try {
     const data = await apiFetch(`/recycle_bin?eq_source_table=${cfg.table}&order=deleted_at.desc`);
     setRecycleBinItems(data || []);
-  } catch (err) { alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message); }
+  } catch (err) { confirmDialog.alert('โหลด Recycle Bin ไม่สำเร็จ: ' + err.message, { variant: 'danger' }); }
   setRecycleBinLoading(false);
 };
 
@@ -877,18 +890,18 @@ const computeNextSyRunning = async () => {
     if (tabKey) { await fetchTab(tabKey); if (tabKey === 'iecode') await refreshNextSyRunning(); }
     if (tabKey === 'apcode') invalidate('SupplierList');
     if (tabKey === 'category') invalidate('VendorCategory');
-    alert(`✅ Restore สำเร็จ — ${binItem.source_key}`);
-  } catch (err) { alert('Restore ไม่สำเร็จ: ' + err.message); }
+    confirmDialog.alert(`Restore สำเร็จ — ${binItem.source_key}`, { variant: 'success' });
+  } catch (err) { confirmDialog.alert('Restore ไม่สำเร็จ: ' + err.message, { variant: 'danger' }); }
 };
 
 
     const handlePermanentDelete = async (binItem) => {
-  if (!window.confirm(`ลบถาวร "${binItem.source_key}"?`)) return;
+  if (!(await confirmDialog.confirm(`ลบถาวร "${binItem.source_key}"?`, { variant: 'danger', confirmText: 'ลบถาวร' }))) return;
   try {
     if (binItem.source_table !== 'ie_code_list') await apiFetch(`/${binItem.source_table}/${binItem.source_id}`, { method: 'DELETE' });
     await apiFetch(`/recycle_bin/${binItem.id}`, { method: 'DELETE' });
     setRecycleBinItems(prev => prev.filter(i => i.id !== binItem.id));
-  } catch (err) { alert('ลบถาวรไม่สำเร็จ: ' + err.message); }
+  } catch (err) { confirmDialog.alert('ลบถาวรไม่สำเร็จ: ' + err.message, { variant: 'danger' }); }
 };
 
 
@@ -912,14 +925,14 @@ const computeNextSyRunning = async () => {
     await fetchTab(tab); if (tab === 'iecode') await refreshNextSyRunning();
     if (tab === 'apcode') invalidate('SupplierList');
     if (tab === 'category') invalidate('VendorCategory');
-    alert(`✅ Restore สำเร็จ ${total} รายการ`);
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    confirmDialog.alert(`Restore สำเร็จ ${total} รายการ`, { variant: 'success' });
+  } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   setRecycleBinLoading2(false); setRecycleBinProgress(0);
 };
 
 
     const handleBulkPermanentDeleteBin = async () => {
-  if (!window.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ?`)) return;
+  if (!(await confirmDialog.confirm(`ลบถาวร ${recycleBinSelected.length} รายการ?`, { variant: 'danger', confirmText: 'ลบถาวร' }))) return;
   setRecycleBinLoading2(true); setRecycleBinProgress(0);
   try {
     const targets = recycleBinItems.filter(b => recycleBinSelected.includes(b.id));
@@ -930,8 +943,8 @@ const computeNextSyRunning = async () => {
     }
     for (const b of targets) await apiFetch(`/recycle_bin/${b.id}`, { method: 'DELETE' });
     setRecycleBinSelected([]); setRecycleBinItems(prev => prev.filter(b => !recycleBinSelected.includes(b.id)));
-    alert(`✅ ลบถาวรสำเร็จ ${total} รายการ`);
-  } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    confirmDialog.alert(`ลบถาวรสำเร็จ ${total} รายการ`, { variant: 'success' });
+  } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   setRecycleBinLoading2(false); setRecycleBinProgress(0);
 };
 
@@ -948,7 +961,7 @@ const computeNextSyRunning = async () => {
 
     // ─── Vendor Rule handlers ─────────────────────────────────────────────────────
     const handleRuleSave = async () => {
-    if (!ruleForm.item?.trim()) { alert('กรุณาระบุ Item'); return; }
+    if (!ruleForm.item?.trim()) { confirmDialog.alert('กรุณาระบุ Item', { variant: 'danger' }); return; }
     const ts = getTimestamp();
     const payload = { ...ruleForm, username: cu(), last_update: ts };
     RULE_FIELDS.forEach(([k]) => { if (!String(payload[k] ?? '').trim()) payload[k] = null; });
@@ -980,14 +993,14 @@ const computeNextSyRunning = async () => {
         ? prev.map(r => (r.id === editRuleId ? prevRule : r))
         : prev.filter(r => r.id !== tempId)
       );
-      alert('เกิดข้อผิดพลาด: ' + err.message);
+      confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' });
     }
   };
 
 
 
     const handleRuleDelete = async (id) => {
-    if (!window.confirm('ต้องการลบ rule นี้?')) return;
+    if (!(await confirmDialog.confirm('ต้องการลบ rule นี้?', { variant: 'danger', confirmText: 'ลบ' }))) return;
     const prevRule = vendorRules.find(r => r.id === id);
 
     // ✅ เอาออกจากหน้าจอทันที
@@ -999,7 +1012,7 @@ const computeNextSyRunning = async () => {
     } catch (err) {
       // ❌ ใส่กลับเข้าหน้าจอเหมือนเดิม
       if (prevRule) setVendorRules(prev => [...prev, prevRule].sort((a, b) => a.id - b.id));
-      alert('ลบไม่สำเร็จ: ' + err.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + err.message, { variant: 'danger' });
     }
   };
 
@@ -1070,7 +1083,7 @@ const computeNextSyRunning = async () => {
       </colgroup>
     );
 
-    const renderFormFields = (formData, setFormData, editMode = true) => {
+    const renderFormFields = (formData, setFormData, editMode = true, showErrors = false) => {
       if (tab === 'smcode') {
 
         
@@ -1401,11 +1414,15 @@ if (tab === 'apcode' || tab === 'iecode') {
           const isCombo = cfg.combo.includes(key);
           const isRequired = REQUIRED_KEYS.includes(key);
           const isEmpty = isRequired && !formData[key]?.trim();
-          // ── ไฮไลท์เหลืองให้ Field บังคับ ทั้ง View และ Edit Mode (ไม่ใช่แค่ตอน Edit) ──
-          const cellBg = isRequired ? '#FFF3CD' : 'transparent';
+          // ── Inline Validation: กด Save แล้วยังกรอกไม่ครบ (showErrors=true) ──────
+          // ── ไฮไลต์แดงเฉพาะ Field ที่ขาดจริง แทน Popup List ชื่อ Field ──────────
+          // ── ไม่ Error ยังคงเป็นสีเหลืองจางบอกว่าเป็น Required Field ตามเดิม ──────
+          const hasError = showErrors && isEmpty;
+          const cellBg = hasError ? '#FCEBEB' : isRequired ? '#FFF3CD' : 'transparent';
+          const cellBorder = hasError ? '1px solid #791F1F' : 'none';
           const inputSt = { height:'28px', padding:'0 8px', fontSize:'12px', borderRadius:'0', outline:'none', border:'none', background:'transparent', color:'#1a3a5c', boxSizing:'border-box', width:'100%' };
           return (
-            <div style={{ padding:'4px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', background: cellBg }}>
+            <div style={{ padding:'4px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', background: cellBg, border: cellBorder, boxSizing:'border-box' }}>
               {editMode
                 ? isCombo
                   ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`เลือก`} />
@@ -1574,7 +1591,7 @@ if (tab === 'apcode' || tab === 'iecode') {
               <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
               <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
-              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={()=>{setForm(Object.fromEntries(cfg.edit.map(([k])=>[k,'']))); setEditId(null); setShowForm(true); setTimeout(() => simpleCodeRef.current?.focus(), 100);}}>+ New</button>
+              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={()=>{setForm(Object.fromEntries(cfg.edit.map(([k])=>[k,'']))); setEditId(null); setShowForm(true); setShowNewErrors(false); setTimeout(() => simpleCodeRef.current?.focus(), 100);}}>+ New</button>
             </div>
           )}
         </div>
@@ -1677,11 +1694,11 @@ if (tab === 'apcode' || tab === 'iecode') {
                   {tab === 'iecode' && !editId && <div style={{ fontSize:'11px', color:'#0F6E56', marginTop:'2px' }}>SY-Running: {nextSyRunning} (Auto)</div>}
                 </div>
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowForm(false)}>Cancel</button>
+                  <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setShowForm(false); setShowNewErrors(false);}}>Cancel</button>
                   <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleNewSave}>Save</button>
                 </div>
               </div>
-              {renderFormFields(form, setForm, true)}
+              {renderFormFields(form, setForm, true, showNewErrors)}
               <div style={{ padding:'0 20px 16px' }}>
                 <div style={{ display:'flex', gap:'12px', alignItems:'center' }}>
                   <div style={{ flex:1 }}>
@@ -1710,13 +1727,13 @@ if (tab === 'apcode' || tab === 'iecode') {
                 <div style={{ display:'flex', gap:'8px' }}>
                   {detailEditMode ? (
                     <>
-                      <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])));}}>Cancel</button>
+                      <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||'']))); setShowDetailErrors(false);}}>Cancel</button>
                       <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleDetailSave}>Save</button>
                     </>
                   ) : <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowDetailModal(false)}>Close</button>}
                 </div>
               </div>
-              {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])), setDetailForm, detailEditMode)}
+              {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])), setDetailForm, detailEditMode, showDetailErrors)}
               <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0' }}>
                 <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
                   <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Username</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{detailItem['username']||'-'}</div></div>

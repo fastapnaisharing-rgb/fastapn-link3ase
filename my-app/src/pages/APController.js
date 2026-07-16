@@ -6,6 +6,9 @@ import { useDataCache } from '../contexts/DataCacheContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 import { registerSyncFlush } from '../contexts/syncRegistry';
+import { useRealtimeRefresh } from '../useRealtimeRefresh';
+import { broadcastWs } from '../wsManager';
+import { confirmDialog } from '../confirmDialog';
 
 const PERIOD_OPTIONS = ['Current', 'Pre-Close', 'Override'];
 
@@ -4705,7 +4708,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   // ── ลบแถวใน Batch History (batch_list) — ใช้ล้าง Batch ทดสอบ/ค้าง Processing ──
   const [deletingBatchRowId, setDeletingBatchRowId] = useState(null);
   const handleDeleteBatchRow = async (b) => {
-    if (!window.confirm(`ต้องการลบ Batch "${b.batch_id || b.id}" ออกจาก Batch History ถาวรใช่ไหม?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ Batch "${b.batch_id || b.id}" ออกจาก Batch History ถาวรใช่ไหม?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     setDeletingBatchRowId(b.id);
     try {
       // ── ลบ bucket_list (Invoice items) ของ batch นี้ก่อน ──
@@ -4721,7 +4724,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       wsNotify('batch_deleted', b.batch_id, 'deleted');
     } catch (e) {
       console.error('delete batch_list row:', e);
-      alert('ลบไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setDeletingBatchRowId(null);
   };
@@ -5054,7 +5057,11 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   // ── ไม่มี Prompt ถามเหตุผล — จะมี Notification แจ้งที่หน้า Home แยกต่างหากแทน ──
   const handleRejectReview = async (batch) => {
     try {
-      const { error } = await db.from('batch_list').update({ status: 'rejected' }).eq('id', batch.id);
+      // ── เคลียร์ invoice_register_file_id ทิ้งด้วย กัน Field ค้างข้อมูลเก่าไว้ ──
+      // ── หลัง Reject แล้ว Batch นี้จะกลับไปแก้ใหม่ ไฟล์ Register เดิมใช้ไม่ได้แล้ว ──
+      const { error } = await db.from('batch_list').update({
+        status: 'rejected', invoice_register_file_id: null, invoice_register_file_name: null,
+      }).eq('id', batch.id);
       if (error) throw error;
       setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'rejected' } : x));
       wsNotify('batch_rejected', batch.batch_id, 'rejected');
@@ -5078,9 +5085,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
 
   // MARKER_FIX_RUNNING_NUM_INPUT_PAD_V1
   // ── ตอนพิมพ์ไม่ Pad เลข 0 ทันที (กันเลขใหม่หลุดจาก slice) — Pad ให้ครบหลักตอน Blur แทน ──
-  const wsNotify = async (event, batch_id, status) => {
-    try { await apiFetch('/ws-notify', { method: 'POST', body: JSON.stringify({ event, batch_id, status }) }); } catch {}
-  };
+  // ── wsNotify คงชื่อเดิมไว้ (เรียกใช้อยู่หลายจุดในไฟล์นี้) แต่ Implementation ──
+  // ── ย้ายไปรวมที่ broadcastWs() ใน wsManager.js เพื่อไม่ให้ Logic กระจาย ────
+  const wsNotify = (event, batch_id, status) => broadcastWs(event, { batch_id, status });
 
   const handleRunningChange = (val, setter, digitCount) => { const dc = digitCount || 4; const num = val.replace(/\D/g, '').slice(0, dc); setter(num); };
   const handleRunningBlur = (setter, digitCount) => { const dc = digitCount || 4; setter(prev => String(prev || '').padStart(dc, '0')); };
@@ -5088,40 +5095,28 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   // ── กด Focus (คลิกเข้าช่อง) -> เคลียร์เป็นค่าว่างทันที กันพิมพ์ทับ "0000" เดิมแล้วเพี้ยน ──
   const handleRunningFocus = (setter) => { setter(''); };
 
-  useEffect(() => {
-    const load = async () => {
-      setHistoryLoading(true);
-      try {
-        const { data: mine } = await db.from('batch_list').select('*').eq('created_by', me).order('created_at', { ascending: false }).limit(100);
-        setHistoryMine(mine || []);
-        if (canSeeAll) { const { data: all } = await db.from('batch_list').select('*').order('created_at', { ascending: false }).limit(500); setHistoryAll(all || []); }
-        // ── Inbox Tab: Batch ที่ถูก Report to มาให้ตรวจ (ทุก Role, โชว์เฉพาะตอนมีข้อมูล) ──
-        const { data: inbox } = await db.from('batch_list').select('*').eq('reported_to_username', me).eq('status', 'reviewing').order('created_at', { ascending: false }).limit(100);
-        setHistoryInbox(inbox || []);
-      } catch (e) { console.error('loadHistory:', e); }
-      setHistoryLoading(false);
-    };
-    if (me) {
-      load();
-      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
-      const wsUrl = apiBase.replace(/^http/, 'ws');
-      let ws;
-      const connect = () => {
-        ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-        ws.onmessage = ({ data }) => {
-          try {
-            const { event } = JSON.parse(data);
-            if (['batch_sent','batch_recalled','batch_approved','batch_rejected','batch_deleted'].includes(event)) load(true);
-          } catch {}
-        };
-        ws.onerror = () => console.warn('[WS] error');
-        ws.onclose = () => { setTimeout(connect, 5000); };
-      };
-      connect();
-      return () => { ws?.close(); wsRef.current = null; };
-    }
+  const loadHistory = React.useCallback(async () => {
+    if (!me) return;
+    setHistoryLoading(true);
+    try {
+      const { data: mine } = await db.from('batch_list').select('*').eq('created_by', me).order('created_at', { ascending: false }).limit(100);
+      setHistoryMine(mine || []);
+      if (canSeeAll) { const { data: all } = await db.from('batch_list').select('*').order('created_at', { ascending: false }).limit(500); setHistoryAll(all || []); }
+      // ── Inbox Tab: Batch ที่ถูก Report to มาให้ตรวจ (ทุก Role, โชว์เฉพาะตอนมีข้อมูล) ──
+      const { data: inbox } = await db.from('batch_list').select('*').eq('reported_to_username', me).eq('status', 'reviewing').order('created_at', { ascending: false }).limit(100);
+      setHistoryInbox(inbox || []);
+    } catch (e) { console.error('loadHistory:', e); }
+    setHistoryLoading(false);
   }, [me, canSeeAll]);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  // ── Real-time: ใช้ Shared WS Connection (wsManager) แทนเปิด Connection เอง ──
+  // ── ครอบคลุม Poll Fallback 60 วิ ในตัวอยู่แล้ว (useRealtimeRefresh) ─────────
+  useRealtimeRefresh(
+    ['batch_sent', 'batch_recalled', 'batch_approved', 'batch_rejected', 'batch_deleted'],
+    loadHistory,
+  );
 
   const handleSelectBU = (item) => { setBu(item['bu'] || ''); setBuInfo(item); setShowPopup(false); };
   const handleBuChange = (val) => {
@@ -5289,10 +5284,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     </td>
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       {(() => {
-                        // ── ถ้ามีไฟล์ Invoice Register แนบอยู่แล้ว (ไม่ว่า Tab ไหน) ใช้ไฟล์นั้นแทน ──
-                        // ── ไฟล์ Export เดิม (b.file_url) — เพราะ Invoice Register คือไฟล์ล่าสุดที่ ──
-                        // ── ผู้ตรวจ "ได้รับ" จริง ถ้าไม่มี Fallback ไปไฟล์ Export เดิม กันปุ่มพัง ──
-                        const useInvoiceRegister = !!b.invoice_register_file_id;
+                        // ── ถ้ามีไฟล์ Invoice Register แนบอยู่ "และ" Batch ยังอยู่ในสถานะ ──
+                        // ── ที่เกี่ยวกับการตรวจ (reviewing/approved) ค่อยใช้ไฟล์นั้นแทน ────
+                        // ── เดิมเช็คแค่ field มีค่าอย่างเดียว — พอ Batch โดน Reject/Recall ──
+                        // ── กลับมาแก้ใหม่ (status กลับเป็น processing) invoice_register_ ──
+                        // ── file_id ยังค้างอยู่ในแถวเดิม (ไม่มีจุดไหนเคลียร์ทิ้ง) ทำให้ ──
+                        // ── My Jobs/All Jobs ยังโหลดไฟล์ Invoice Register เก่าผิดๆ ──────
+                        const useInvoiceRegister = !!b.invoice_register_file_id && ['reviewing', 'approved'].includes(b.status);
                         const attachId = useInvoiceRegister ? b.invoice_register_file_id : b.file_url;
                         const attachName = useInvoiceRegister ? b.invoice_register_file_name : b.file_name;
                         return (
@@ -5675,6 +5673,10 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         invoice_register_file_id: fileId, invoice_register_file_name: fileName,
       }).eq('id', batch.id);
       if (updErr) throw new Error(updErr.message || updErr);
+      // ── Broadcast แบบ Real-time ให้ผู้ตรวจเห็น Batch นี้ทันที (P2P Event) ──────
+      // ── จุดนี้เคยขาด wsNotify ไป ต่างจาก handleReportTo (ปุ่ม 📤 ในตาราง) ──────
+      // ── ที่มี wsNotify('batch_sent', ...) อยู่แล้ว ทำให้ Popup นี้ไม่ Real-time ──
+      try { await broadcastWs('batch_sent', { batch_id: batch.batch_id, status: 'reviewing' }); } catch {}
       // ── Insert Notification ทั้ง 2 ฝั่ง — Resend ถ้า Batch นี้เคยถูก Reject มาก่อน ──
       // ── ใช้ batch_notifications (Table แยก ไม่มี Constraint แปลกๆ เหมือน ──
       // ── notifications เดิม — ไม่ต้องใส่ message/category/action_type/created_by) ──
@@ -6316,25 +6318,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   // -- Real-time: ฟัง broadcast จาก server เมื่อ invoice ที่ "ส่งไปให้คนอื่น" ถูก --
   // -- Accept/Reject จากฝั่งผู้รับ (คนละ Browser/Session กับเรา) -- ต่างจาก ------
   // -- 'bucketAccepted' ข้างบนที่เป็น window event ทำงานได้แค่ใน Tab เดียวกันเท่านั้น --
-  useEffect(() => {
-    if (!me) return;
-    const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
-    const wsUrl = apiBase.replace(/^http/, 'ws');
-    let ws;
-    const connect = () => {
-      ws = new WebSocket(wsUrl);
-      ws.onmessage = ({ data }) => {
-        try {
-          const { event } = JSON.parse(data);
-          if (['bucket_accepted', 'bucket_rejected'].includes(event)) setBucketRefreshTick(t => t + 1);
-        } catch {}
-      };
-      ws.onerror = () => console.warn('[WS] error (InvoiceEntry)');
-      ws.onclose = () => { setTimeout(connect, 5000); };
-    };
-    connect();
-    return () => ws?.close();
-  }, [me]);
+  // -- ใช้ Shared WS Connection (wsManager) แทนเปิด Connection เอง ------------
+  useRealtimeRefresh(
+    ['bucket_accepted', 'bucket_rejected'],
+    () => setBucketRefreshTick(t => t + 1),
+  );
 
   // ── ref เก็บ invoices ล่าสุด ให้ syncPendingToBucket อ่านได้โดยไม่ต้อง re-create interval ──
   const invoicesRef = useRef(invoices);
@@ -6556,7 +6544,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   // ✅ ลบรายการที่เลือกไว้ใน Batch Bucket (bulk delete) ────────────────────
   const handleDeleteSelected = async () => {
     if (!selectedRows.size) return;
-    if (!window.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือก?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือก?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     const toDelete = invoices.filter((inv, i) => selectedRows.has(inv.id || inv._localId || i));
     const syncedIds = toDelete.filter(inv => inv._synced && inv.id).map(inv => inv.id);
     if (syncedIds.length) {
@@ -6632,13 +6620,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     // 4. Broadcast แบบ Real-time ให้ฝั่งผู้รับเห็น Toast ทันที ────────────────
     // ── (ไม่ต้องรอ Poll รอบถัดไปที่ 30 วิ — ใช้ WS Push แทน ไม่เพิ่ม Load ──────
     // ── เพราะเป็นแค่ Broadcast message เดียว ไม่ใช่การ Poll ถี่ขึ้น) ──────────
-    try {
-      await fetch(`${apiBase}/api/ws-notify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ event: 'bucket_sent', batch_id: toUsername, status: 'sent' }),
-      });
-    } catch {}
+    broadcastWs('bucket_sent', { batch_id: toUsername, status: 'sent' });
 
     // 5. update local state
     setInvoices(prev => {
@@ -6665,6 +6647,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       await db.from('bucket_list').update({
         status: 'pending', sent_to_user_id: null, sent_to_username: null,
       }).in('id', syncedIds);
+      // ── Broadcast แบบ Real-time ให้ฝั่งผู้รับเห็น Toast หายไปทันที (P2P Event) ──
+      broadcastWs('bucket_recalled', { batch_id: '', status: 'pending' });
     }
     setInvoices(prev => {
       const next = prev.map((inv, i) => {
@@ -7216,9 +7200,11 @@ const handleSelectBranch = (item, meta = {}) => {
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
                       </button>
                       <button title="Recall — ดึงกลับ" onClick={async () => {
-                          if (window.confirm('ดึง invoice กลับจาก ' + (inv.sent_to_username || 'ผู้รับ') + ' ใช่ไหม?')) {
+                          if (await confirmDialog.confirm('ดึง invoice กลับจาก ' + (inv.sent_to_username || 'ผู้รับ') + ' ใช่ไหม?')) {
                             if (inv._synced && inv.id) {
                               await db.from('bucket_list').update({ status: 'pending', sent_to_user_id: null, sent_to_username: null }).eq('id', inv.id);
+                              // ── Broadcast แบบ Real-time ให้ฝั่งผู้รับเห็น Toast หายไปทันที (P2P Event) ──
+                              broadcastWs('bucket_recalled', { batch_id: '', status: 'pending' });
                             }
                             setInvoices(prev => { const next = prev.map((x, idx) => idx === i ? { ...x, status: 'pending', sent_to_username: null } : x); saveLocalBucket(next); return next; });
                           }
@@ -8196,12 +8182,21 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 
   React.useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
+  // ── Real-time: หน้านี้เดิมไม่มี Poll หรือ WS Listener เลย — ข้อมูลค้างจนกว่า ──
+  // ── จะเปลี่ยน Tab/Filter หรือ Refresh หน้าเอง ── ใช้ Shared WS Connection ───
+  // ── (wsManager) แทนเปิด Connection เอง — มี Poll Fallback 60 วิ ในตัว ──────
+  useRealtimeRefresh(
+    ['batch_deleted', 'batch_approved', 'batch_rejected', 'invoice_history_changed'],
+    fetchHistory,
+  );
+
+
   const [restoringId, setRestoringId] = React.useState(null);
   const [selectedRows, setSelectedRows] = React.useState(new Set());
   const [deletingHistory, setDeletingHistory] = React.useState(false);
   const handleDeleteHistorySelected = async () => {
     if (!selectedRows.size) return;
-    if (!window.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือกออกจาก Invoice History ถาวรใช่ไหม?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือกออกจาก Invoice History ถาวรใช่ไหม?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     setDeletingHistory(true);
     try {
       const ids = Array.from(selectedRows);
@@ -8209,15 +8204,17 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       if (error) throw error;
       setRowsData(prev => prev.filter(r => !selectedRows.has(r.id)));
       setSelectedRows(new Set());
+      // ── Broadcast: Invoice History เป็น Shared View (Owner/Admin เห็นของทุกคน) ──
+      broadcastWs('invoice_history_changed', {});
     } catch (e) {
       console.error('delete invoice history:', e);
-      alert('ลบไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setDeletingHistory(false);
   };
 
   const handleRestore = async (inv) => {
-    if (!window.confirm(`ต้องการ Restore invoice "${inv.invoice_no || '-'}" กลับไปที่ Batch Bucket ใช่ไหม?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการ Restore invoice "${inv.invoice_no || '-'}" กลับไปที่ Batch Bucket ใช่ไหม?`, { confirmText: 'Restore' }))) return;
     setRestoringId(inv.id);
     try {
       const { error } = await db.from('bucket_list')
@@ -8227,7 +8224,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       setRowsData(prev => prev.filter(r => r.id !== inv.id));
     } catch (e) {
       console.error('restore invoice:', e);
-      alert('Restore ไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('Restore ไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setRestoringId(null);
   };
@@ -8236,7 +8233,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   const [restoringSelected, setRestoringSelected] = React.useState(false);
   const handleRestoreSelected = async () => {
     if (!selectedRows.size) return;
-    if (!window.confirm(`ต้องการ Restore ${selectedRows.size} รายการที่เลือก กลับไปที่ Batch Bucket ใช่ไหม?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการ Restore ${selectedRows.size} รายการที่เลือก กลับไปที่ Batch Bucket ใช่ไหม?`, { confirmText: 'Restore' }))) return;
     setRestoringSelected(true);
     try {
       const ids = Array.from(selectedRows);
@@ -8248,7 +8245,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       setSelectedRows(new Set());
     } catch (e) {
       console.error('restore selected:', e);
-      alert('Restore ไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('Restore ไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setRestoringSelected(false);
   };
@@ -8256,16 +8253,17 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   // ── ลบทีละแถว (Owner/Admin เท่านั้น — เหมือนสิทธิ์ Bulk Delete) ──────────
   const [deletingOneId, setDeletingOneId] = React.useState(null);
   const handleDeleteOne = async (inv) => {
-    if (!window.confirm(`ต้องการลบ Invoice "${inv.invoice_no || '-'}" ออกจาก Invoice History ถาวรใช่ไหม?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ Invoice "${inv.invoice_no || '-'}" ออกจาก Invoice History ถาวรใช่ไหม?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     setDeletingOneId(inv.id);
     try {
       const { error } = await db.from('bucket_list').delete().eq('id', inv.id);
       if (error) throw error;
       setRowsData(prev => prev.filter(r => r.id !== inv.id));
       setSelectedRows(prev => { const next = new Set(prev); next.delete(inv.id); return next; });
+      broadcastWs('invoice_history_changed', {});
     } catch (e) {
       console.error('delete one invoice history:', e);
-      alert('ลบไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setDeletingOneId(null);
   };
@@ -8278,7 +8276,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   const handleRestoreBatch = async (g) => {
     const ids = g.items.map(i => i.id);
     if (!ids.length) return;
-    if (!window.confirm(`ต้องการ Restore ทั้ง Batch "${g.batch_id}" (${ids.length} ใบ) กลับไปที่ Batch Bucket ใช่ไหม?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการ Restore ทั้ง Batch "${g.batch_id}" (${ids.length} ใบ) กลับไปที่ Batch Bucket ใช่ไหม?`, { confirmText: 'Restore' }))) return;
     setRestoringBatchId(g.batch_id);
     try {
       const { error } = await db.from('bucket_list').update({ status: 'pending', restored_at: new Date().toISOString() }).in('id', ids);
@@ -8295,9 +8293,12 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       }
       setRowsData(prev => prev.filter(r => !ids.includes(r.id)));
       setSelectedRows(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
+      // ── Broadcast: กระทบ batch_list ด้วย (ลบไปตอน batch ไม่มี Invoice เหลือ) ──
+      // ── ใช้ Event เดียวกับปุ่ม 🗑 ใน Batch History เพื่อให้ Real-time ตรงกัน ──
+      broadcastWs('batch_deleted', { batch_id: g.batch_id, status: 'restored' });
     } catch (e) {
       console.error('restore batch:', e);
-      alert('Restore ไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('Restore ไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setRestoringBatchId(null);
   };
@@ -8307,7 +8308,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   const handleDeleteBatch = async (g) => {
     const ids = g.items.map(i => i.id);
     if (!ids.length) return;
-    if (!window.confirm(`ต้องการลบ Batch "${g.batch_id}" (${ids.length} ใบ) ออกจาก Invoice History ถาวรใช่ไหม?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ Batch "${g.batch_id}" (${ids.length} ใบ) ออกจาก Invoice History ถาวรใช่ไหม?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     setDeletingBatchId(g.batch_id);
     try {
       const { error } = await db.from('bucket_list').delete().in('id', ids);
@@ -8324,9 +8325,12 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       }
       setRowsData(prev => prev.filter(r => !ids.includes(r.id)));
       setSelectedRows(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
+      // ── Broadcast: กระทบ batch_list ด้วย ให้ Batch History (คนละ Session) ────
+      // ── เห็นว่า Batch หายไปทันที เหมือนปุ่ม 🗑 ใน Batch History ทุกประการ ──
+      broadcastWs('batch_deleted', { batch_id: g.batch_id, status: 'deleted' });
     } catch (e) {
       console.error('delete batch:', e);
-      alert('ลบไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setDeletingBatchId(null);
   };

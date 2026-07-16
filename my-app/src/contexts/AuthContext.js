@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { flushAllSync } from './syncRegistry';
+import { subscribeWs } from '../wsManager';
 
 const AuthContext = createContext();
 const API_URL = process.env.REACT_APP_API_URL;
@@ -37,6 +38,30 @@ export function AuthProvider({ children }) {
     setUserRole(user?.role || null);
     setUserName(user?.username || null);
     setUserPermissions(user?.permissions || null);
+    // ── Auto-merge doc_access_override เข้ากับ docAccess ────────────────────
+    // ── เดิม: userPermissions.docAccess มาจาก user_roles.permissions (JSON) ──
+    // ── ตั้งครั้งเดียวโดย Admin เท่านั้น ไม่เกี่ยวกับ doc_access_override ────
+    // ── ที่ User ขอสิทธิ์รายโฟลเดอร์แล้ว Owner/Admin กด Approve ทีหลัง ──────
+    // ── ทำให้ Approve แล้วยังเข้า Document Center ไม่ได้ ต้องรอ Admin ไปติ๊ก ──
+    // ── docAccess ใน User Management ซ้ำอีกรอบ — Merge ตรงนี้แทน ให้ Auto ──
+    if (user?.id) mergeDocAccessOverrides(user.id);
+  };
+
+  // ── ดึง doc_access_override ที่ Approve แล้ว (allowed=true) ของ user นี้ ──
+  // ── มา Merge เข้า userPermissions.docAccess ทันทีที่ Login/Restore Session ──
+  const mergeDocAccessOverrides = async (userId) => {
+    try {
+      const res = await apiFetch(`/doc_access_override?eq_user_id=${userId}&eq_allowed=true`);
+      if (!res.ok) return;
+      const overrides = await res.json();
+      if (!Array.isArray(overrides) || overrides.length === 0) return;
+      setUserPermissions(prev => {
+        const base = prev || {};
+        const mergedDocAccess = { ...(base.docAccess || {}) };
+        overrides.forEach(o => { if (o.folder_key) mergedDocAccess[o.folder_key] = true; });
+        return { ...base, docAccess: mergedDocAccess };
+      });
+    } catch (e) { console.error('[mergeDocAccessOverrides]', e); }
   };
 
   const clearUserState = () => {
@@ -63,6 +88,17 @@ export function AuthProvider({ children }) {
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
   }, []);
+
+  // ── Real-time: ฟัง 'doc_access_updated' — Admin ให้/ตัดสิทธิ์ Document Center ──
+  // ── ให้ session ที่ Login ค้างอยู่เห็นผลทันที ไม่ต้อง Logout/Login ใหม่หรือ ──
+  // ── Refresh หน้าเอง (ฝั่งส่งอยู่ที่ UserManagement.js/App.js — broadcastWs) ──
+  useEffect(() => {
+    if (!currentUser?.id) return undefined;
+    const unsubscribe = subscribeWs(['doc_access_updated'], () => {
+      mergeDocAccessOverrides(currentUser.id);
+    });
+    return unsubscribe;
+  }, [currentUser?.id]);
 
   // ── init: restore session from token ─────────────────────────────────────────
   useEffect(() => {

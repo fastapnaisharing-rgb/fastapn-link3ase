@@ -15,6 +15,10 @@ import VatController from './pages/VatController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db } from './lib/db';
+import { useRealtimeRefresh } from './useRealtimeRefresh';
+import { broadcastWs } from './wsManager';
+import { confirmDialog } from './confirmDialog';
+import ConfirmDialogHost from './ConfirmDialogHost';
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 
@@ -378,15 +382,9 @@ function IncomingToast({ request, currentUser, userName, onDismiss }) {
       // 4. Broadcast แบบ Real-time ให้ฝั่งผู้ส่งเห็นการเปลี่ยนแปลงทันที ──────────
       // ── (เดิมมีแค่ dispatchEvent('bucketAccepted') ซึ่งทำงานแค่ใน Tab เดียวกัน ──
       // ── กับที่ IncomingToast render อยู่ ไม่ถึงฝั่งผู้ส่งที่อยู่คนละ Session/User) ──
-      try {
-        await fetch(`${API}/api/ws-notify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ event: 'bucket_accepted', batch_id: ids.join(','), status: 'accepted' }),
-        });
-      } catch {}
+      broadcastWs('bucket_accepted', { batch_id: ids.join(','), status: 'accepted' });
       onDismiss('accepted');
-    } catch (e) { alert('รับไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('รับไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setActing(false);
   };
 
@@ -429,15 +427,9 @@ function IncomingToast({ request, currentUser, userName, onDismiss }) {
         });
       }
       // 4. Broadcast แบบ Real-time ให้ฝั่งผู้ส่งเห็นการเปลี่ยนแปลงทันที (เหมือนขั้นตอน Accept) ──
-      try {
-        await fetch(`${API}/api/ws-notify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ event: 'bucket_rejected', batch_id: ids.join(','), status: 'rejected' }),
-        });
-      } catch {}
+      broadcastWs('bucket_rejected', { batch_id: ids.join(','), status: 'rejected' });
       onDismiss('rejected');
-    } catch (e) { alert('ปฏิเสธไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('ปฏิเสธไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setActing(false);
   };
 
@@ -559,27 +551,10 @@ function MainApp() {
     return () => clearInterval(interval);
   }, [currentUser]);
 
-  // ── Real-time: ฟัง broadcast 'bucket_sent' จาก server ให้ Toast ขึ้นทันที ──────
-  // ── ไม่ต้องรอ Poll รอบ 30 วิ — Poll เดิมด้านบนยังอยู่เป็น Fallback เผื่อ WS หลุด ──
-  // ── (WS Push คือ Broadcast message เดียว เบากว่า Poll ถี่ขึ้นมาก ไม่เพิ่ม Load) ──
-  useEffect(() => {
-    if (!currentUser) return;
-    const wsUrl = API.replace(/^http/, 'ws');
-    let ws;
-    const connect = () => {
-      ws = new WebSocket(wsUrl);
-      ws.onmessage = ({ data }) => {
-        try {
-          const { event } = JSON.parse(data);
-          if (event === 'bucket_sent') fetchRequests();
-        } catch {}
-      };
-      ws.onerror = () => console.warn('[WS] error (App shell)');
-      ws.onclose = () => { setTimeout(connect, 5000); };
-    };
-    connect();
-    return () => ws?.close();
-  }, [currentUser]);
+  // ── Real-time: ฟัง broadcast 'bucket_sent'/'bucket_recalled' จาก server ────
+  // ── ให้ Toast ขึ้น/หายทันที ไม่ต้องรอ Poll รอบ 30 วิด้านบน ─────────────────
+  // ── ใช้ Shared WS Connection (wsManager) แทนเปิด Connection แยกของตัวเอง ──
+  useRealtimeRefresh(['bucket_sent', 'bucket_recalled'], () => fetchRequests());
 
   // ── ดึง AP Period Notifications (Close Period / Override) เฉพาะ User ที่มี Permission Manual ──
   const fetchApNotifications = async () => {
@@ -732,9 +707,12 @@ function MainApp() {
         await db.from('access_requests').update({
           status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
         }).eq('id', req.id);
+        // ── Broadcast แบบ Real-time — ผู้ขอสิทธิ์ (login ค้างอยู่) เห็นผลทันที ──
+        // ── ไม่ต้อง Logout/Login ใหม่ (เหมือน handleSaveFolder ใน UserManagement) ──
+        broadcastWs('doc_access_updated', { folder_key: req.folder_key });
       }
       fetchRequests();
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   };
 
   const handleReject = async (req) => {
@@ -758,7 +736,7 @@ function MainApp() {
         }).eq('id', req.id);
       }
       fetchRequests();
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   };
 
   useEffect(() => {
@@ -1175,11 +1153,16 @@ function MainApp() {
 
 function App() {
   return (
-    <AuthProvider>
-      <DataCacheProvider>
-        <MainApp />
-      </DataCacheProvider>
-    </AuthProvider>
+    <>
+      {/* ── Mount ครั้งเดียวที่นี่ — ให้ confirmDialog.confirm()/alert() ────── */}
+      {/* ── เรียกใช้ได้จากทุกไฟล์ในแอพ แทน window.confirm()/alert() เดิม ────── */}
+      <ConfirmDialogHost />
+      <AuthProvider>
+        <DataCacheProvider>
+          <MainApp />
+        </DataCacheProvider>
+      </AuthProvider>
+    </>
   );
 }
 
