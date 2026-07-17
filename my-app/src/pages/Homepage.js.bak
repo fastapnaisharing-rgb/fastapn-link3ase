@@ -2,8 +2,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../lib/db';
-// MARKER_HOMEPAGE_NOTIFICATION_CHAT_V1
-import BatchChatDrawer from './BatchChatDrawer';
 
 const ROLE_STYLE = {
   Owner:  { background: '#d4f0e7', color: '#0F6E56' },
@@ -74,7 +72,6 @@ function Homepage({ onOpenInbox } = {}) {
   const [notifications, setNotifications] = useState([]);
   const [loadingNotif, setLoadingNotif] = useState(true);
   const [batchMeta, setBatchMeta] = useState({}); // batch_id -> { bu, status } จาก batch_list
-  const [chatBatchId, setChatBatchId] = useState(null); // Notification "ถูกตีกลับ" -> เปิด Chat ทันที
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [offlineUsers, setOfflineUsers] = useState([]);
   const [loadingTeam, setLoadingTeam] = useState(true);
@@ -222,11 +219,7 @@ function Homepage({ onOpenInbox } = {}) {
                 const st = BATCH_STATUS_STYLE[statusKey] || BATCH_STATUS_STYLE.reviewing;
                 // MARKER_FIX_HOMEPAGE_COMMENT_SYNTAX_V1
                 return (
-                  <div key={n.id} onClick={() => {
-                    // ── MARKER_HOMEPAGE_NOTIFICATION_CHAT_V1: Rejected -> เปิด Chat ทันที ไม่ Navigate ──
-                    if (statusKey === 'rejected') { setChatBatchId(n.batch_id); return; }
-                    onOpenInbox && onOpenInbox(n.audience === 'sender' ? 'mine' : 'inbox');
-                  }}
+                  <div key={n.id} onClick={() => onOpenInbox && onOpenInbox(n.audience === 'sender' ? 'mine' : 'inbox')}
                     style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #eee', borderRadius: '10px', cursor: onOpenInbox ? 'pointer' : 'default', background: '#fafbfc' }}>
                     <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: st.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{st.icon}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -298,16 +291,6 @@ function Homepage({ onOpenInbox } = {}) {
         </div>
 
       </div>
-
-      {chatBatchId && (
-        <BatchChatDrawer
-          batch={{ batch_id: chatBatchId }}
-          isRejectMode={false}
-          currentUsername={me}
-          onClose={() => setChatBatchId(null)}
-          onMinimize={() => setChatBatchId(null)}
-        />
-      )}
 
     </div>
   );

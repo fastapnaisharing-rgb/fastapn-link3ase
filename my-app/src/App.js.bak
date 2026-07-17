@@ -15,6 +15,10 @@ import VatController from './pages/VatController';
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db } from './lib/db';
+import { useRealtimeRefresh } from './useRealtimeRefresh';
+import { broadcastWs } from './wsManager';
+import { confirmDialog } from './confirmDialog';
+import ConfirmDialogHost from './ConfirmDialogHost';
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 
@@ -50,7 +54,7 @@ function PlaceholderPage({ title, icon }) {
 
 // ✅ Maps activePage -> maintenance menu key (as set in System Console > Access Control)
 const PAGE_MAINTENANCE_MAP = {
-  'ap-gr': 'ap-controller', 'ap-ocr': 'ap-controller', 'ap-form': 'ap-controller', 'ap-drafts': 'ap-controller',
+  'ap-gr': 'ap-gr', 'ap-ocr': 'ap-ocr', 'ap-form': 'ap-form', 'ap-drafts': 'ap-drafts',
   'vat-incomplete-report': 'vat-controller',
   'vat-amagno-reconcile': 'vat-controller',
   'vat-popvat-report': 'vat-controller',
@@ -375,8 +379,12 @@ function IncomingToast({ request, currentUser, userName, onDismiss }) {
           body: JSON.stringify({ detail: JSON.stringify({ ...(typeof request.detail === 'string' ? JSON.parse(request.detail||'{}') : request.detail||{}), responded: true, responded_by: userName || currentUser?.email || '', responded_at: new Date().toISOString() }) }),
         });
       }
+      // 4. Broadcast แบบ Real-time ให้ฝั่งผู้ส่งเห็นการเปลี่ยนแปลงทันที ──────────
+      // ── (เดิมมีแค่ dispatchEvent('bucketAccepted') ซึ่งทำงานแค่ใน Tab เดียวกัน ──
+      // ── กับที่ IncomingToast render อยู่ ไม่ถึงฝั่งผู้ส่งที่อยู่คนละ Session/User) ──
+      broadcastWs('bucket_accepted', { batch_id: ids.join(','), status: 'accepted' });
       onDismiss('accepted');
-    } catch (e) { alert('รับไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('รับไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setActing(false);
   };
 
@@ -418,8 +426,10 @@ function IncomingToast({ request, currentUser, userName, onDismiss }) {
           body: JSON.stringify({ detail: JSON.stringify({ ...(typeof request.detail === 'string' ? JSON.parse(request.detail||'{}') : request.detail||{}), responded: true, reject_note: rejectNote || '', responded_by: userName || currentUser?.email || '', responded_at: new Date().toISOString() }) }),
         });
       }
+      // 4. Broadcast แบบ Real-time ให้ฝั่งผู้ส่งเห็นการเปลี่ยนแปลงทันที (เหมือนขั้นตอน Accept) ──
+      broadcastWs('bucket_rejected', { batch_id: ids.join(','), status: 'rejected' });
       onDismiss('rejected');
-    } catch (e) { alert('ปฏิเสธไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('ปฏิเสธไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setActing(false);
   };
 
@@ -482,7 +492,8 @@ function MainApp() {
   // MARKER_APP_OPEN_INBOX_FROM_NOTIF_V1
   // ── จำว่าต้องเปิด Tab ไหนใน APController หลัง Navigate มาจาก Notification ──
   const [pendingHistoryTab, setPendingHistoryTab] = useState(null);
-  const handleOpenInbox = () => { setPendingHistoryTab('inbox'); setActivePage('ap-gr'); };
+  // MARKER_NOTIF_CLICK_TARGET_BY_AUDIENCE_V1
+  const handleOpenInbox = (tab = 'inbox') => { setPendingHistoryTab(tab); setActivePage('ap-gr'); };
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
   const [apNotifications, setApNotifications] = useState([]);
@@ -539,6 +550,11 @@ function MainApp() {
     const interval = setInterval(() => { fetchRequests(); fetchApNotifications(); }, 30000);
     return () => clearInterval(interval);
   }, [currentUser]);
+
+  // ── Real-time: ฟัง broadcast 'bucket_sent'/'bucket_recalled' จาก server ────
+  // ── ให้ Toast ขึ้น/หายทันที ไม่ต้องรอ Poll รอบ 30 วิด้านบน ─────────────────
+  // ── ใช้ Shared WS Connection (wsManager) แทนเปิด Connection แยกของตัวเอง ──
+  useRealtimeRefresh(['bucket_sent', 'bucket_recalled'], () => fetchRequests());
 
   // ── ดึง AP Period Notifications (Close Period / Override) เฉพาะ User ที่มี Permission Manual ──
   const fetchApNotifications = async () => {
@@ -691,9 +707,12 @@ function MainApp() {
         await db.from('access_requests').update({
           status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
         }).eq('id', req.id);
+        // ── Broadcast แบบ Real-time — ผู้ขอสิทธิ์ (login ค้างอยู่) เห็นผลทันที ──
+        // ── ไม่ต้อง Logout/Login ใหม่ (เหมือน handleSaveFolder ใน UserManagement) ──
+        broadcastWs('doc_access_updated', { folder_key: req.folder_key });
       }
       fetchRequests();
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   };
 
   const handleReject = async (req) => {
@@ -717,7 +736,7 @@ function MainApp() {
         }).eq('id', req.id);
       }
       fetchRequests();
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   };
 
   useEffect(() => {
@@ -889,12 +908,15 @@ function MainApp() {
     </div>
   );
 
-  const fpSub = (id, icon, label) => (
-    <div key={id} onClick={() => selectPage(id)}
-      style={{ padding: '7px 16px 7px 36px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? '#f0faf6' : 'transparent', color: activePage === id ? '#0F6E56' : '#555', fontWeight: activePage === id ? '500' : '400' }}>
-      <span>{icon}</span> {label}
-    </div>
-  );
+  const fpSub = (id, icon, label) => {
+    if (!isOwner && maintenanceMenus.includes(id)) return null;
+    return (
+      <div key={id} onClick={() => selectPage(id)}
+        style={{ padding: '7px 16px 7px 36px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderLeft: activePage === id ? '3px solid #5DCAA5' : '3px solid transparent', background: activePage === id ? '#f0faf6' : 'transparent', color: activePage === id ? '#0F6E56' : '#555', fontWeight: activePage === id ? '500' : '400' }}>
+        <span>{icon}</span> {label}
+      </div>
+    );
+  };
 
   const fpItem = (id, icon, label) => (
     <div key={id} onClick={() => selectPage(id)}
@@ -994,7 +1016,7 @@ function MainApp() {
                     </button>
                   </div>
                 </div>
-                <button onClick={logout} style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <button onClick={() => { setActivePage('home'); logout(); }} style={{ width: '100%', padding: '7px', background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.4)', borderRadius: '6px', color: '#e74c3c', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                   <LogoutIcon /> Logout
                 </button>
               </>
@@ -1131,11 +1153,16 @@ function MainApp() {
 
 function App() {
   return (
-    <AuthProvider>
-      <DataCacheProvider>
-        <MainApp />
-      </DataCacheProvider>
-    </AuthProvider>
+    <>
+      {/* ── Mount ครั้งเดียวที่นี่ — ให้ confirmDialog.confirm()/alert() ────── */}
+      {/* ── เรียกใช้ได้จากทุกไฟล์ในแอพ แทน window.confirm()/alert() เดิม ────── */}
+      <ConfirmDialogHost />
+      <AuthProvider>
+        <DataCacheProvider>
+          <MainApp />
+        </DataCacheProvider>
+      </AuthProvider>
+    </>
   );
 }
 
