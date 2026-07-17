@@ -4742,6 +4742,11 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         const j = await bucketDelRes.json().catch(() => ({}));
         throw new Error(j.error || 'ลบ bucket_list ไม่สำเร็จ');
       }
+      // ── ลบ batch_comments (Chat + ไฟล์รูปแนบ) ของ batch นี้ด้วย ──────
+      await fetch(`${delApiBase}/api/batch-comments/by-batch/${encodeURIComponent(b.batch_id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${delToken}` },
+      }).catch((e) => console.error('delete batch_comments:', e));
       // ── ลบ batch_list ──
       const { error } = await db.from('batch_list').delete().eq('id', b.id);
       if (error) throw error;
@@ -4764,6 +4769,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [reportSending, setReportSending] = useState(false);
   const [reportPopupBatch, setReportPopupBatch] = useState(null);
   const [rejectChatBatch, setRejectChatBatch] = useState(null);
+  // MARKER_APCONTROLLER_CHAT_FULL_V3
+  const [viewChatBatch, setViewChatBatch] = useState(null); // ดู Chat อย่างเดียว (ไม่ใช่ Reject)
   useEffect(() => {
     apiFetch('/user_roles').then(list => {
       // ── Fix: Manual อยู่ใน permissions.Manual (JSONB) ไม่ใช่ Column บนสุด ──
@@ -4993,11 +5000,12 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       // ── พึ่งมีการ Report to ผู้ตรวจจริง ถึงเปลี่ยน batch_list เป็น "Reviewing" ──
       // ── (แค่ Export ไฟล์เสร็จ ยังนับเป็น "Processing" อยู่ / "Done" ต้องรอผู้ตรวจ ──
       // ── ที่ถูกระบุชื่อ กดปุ่ม "อนุมัติ/ตรวจแล้ว" เองเท่านั้น ไม่ใช่ Auto ตอน Report to) ──
-      const { error: doneErr } = await db.from('batch_list').update({ status: 'reviewing', reported_to_username: reportPickerValue }).eq('id', batch.id);
+      const sentAtNow = new Date().toISOString();
+      const { error: doneErr } = await db.from('batch_list').update({ status: 'reviewing', reported_to_username: reportPickerValue, sent_at: sentAtNow }).eq('id', batch.id);
       if (doneErr) console.error('[batch_list reviewing on report]', doneErr);
       else {
-        setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue } : x));
-        setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue } : x));
+        setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue, sent_at: sentAtNow } : x));
+        setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'reviewing', reported_to_username: reportPickerValue, sent_at: sentAtNow } : x));
         wsNotify('batch_sent', batch.batch_id, 'reviewing');
       }
 
@@ -5137,7 +5145,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       setHistoryMine(mine || []);
       if (canSeeAll) { const { data: all } = await db.from('batch_list').select('*').order('created_at', { ascending: false }).limit(500); setHistoryAll(all || []); }
       // ── Inbox Tab: Batch ที่ถูก Report to มาให้ตรวจ (ทุก Role, โชว์เฉพาะตอนมีข้อมูล) ──
-      const { data: inbox } = await db.from('batch_list').select('*').eq('reported_to_username', me).eq('status', 'reviewing').order('created_at', { ascending: false }).limit(100);
+      const { data: inbox } = await db.from('batch_list').select('*').eq('reported_to_username', me).in('status', ['reviewing', 'rejected']).order('created_at', { ascending: false }).limit(100);
       setHistoryInbox(inbox || []);
     } catch (e) { console.error('loadHistory:', e); }
     setHistoryLoading(false);
@@ -5295,7 +5303,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : historyTab === 'inbox' ? 'ยังไม่มีงานส่งเข้ามา' : 'No batch history'}</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyTab === 'inbox' ? historyInbox : historyAll).map(b => {
                 const approvedLabel = b.approved_by ? `Approved by ${b.approved_by}` : 'Approved';
-                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, approved: { bg: '#EAF3DE', color: '#27500A', label: approvedLabel }, reviewing: { bg: '#FAEEDA', color: '#633806', label: 'Reviewing' }, rejected: { bg: '#FCEBEB', color: '#791F1F', label: 'Rejected' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
+                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, approved: { bg: '#EAF3DE', color: '#27500A', label: approvedLabel }, reviewing: { bg: '#FAEEDA', color: '#633806', label: `Reviewing by ${b.reported_to_username || '...'}` }, rejected: { bg: '#FCEBEB', color: '#791F1F', label: 'Rejected' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
                 const ra = b.receive_date ? new Date(b.receive_date) : null;
                 const p2 = (n) => String(n).padStart(2, '0');
@@ -5346,6 +5354,10 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                                   <button onClick={() => setReportPopupBatch(b)} title="Report to ผู้ตรวจ"
                                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #f7dfa8', background: '#fff8ec', color: '#854F0B', fontSize: '14px', cursor: 'pointer' }}>📤</button>
                                 )}
+                                {b.status === 'approved' && (
+                                  <button onClick={() => setViewChatBatch(b)} title="ดู Chat ย้อนหลัง"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #85B7EB', background: '#E6F1FB', color: '#0C447C', fontSize: '14px', cursor: 'pointer' }}>✉️</button>
+                                )}
                               </>
                             ) : <span style={{ fontSize: '11px', color: '#ccc' }}>No file</span>}
                           </div>
@@ -5354,17 +5366,26 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     </td>
                     <td style={{ padding: '8px 9px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500' }}>{st.label}</span>
-                        {b.status === 'reviewing' && String(b.reported_to_username || '').trim().toLowerCase() === String(me || '').trim().toLowerCase() && (
+                        <span
+                          onClick={() => { if (b.status === 'rejected') setViewChatBatch(b); }}
+                          style={{
+                            background: st.bg, color: st.color, padding: '2px 9px', borderRadius: '20px', fontSize: '10px', fontWeight: '500',
+                            cursor: b.status === 'rejected' ? 'pointer' : 'default',
+                            textDecoration: b.status === 'rejected' ? 'underline' : 'none',
+                          }}
+                        >{st.label}</span>
+                        {['reviewing', 'rejected'].includes(b.status) && String(b.reported_to_username || '').trim().toLowerCase() === String(me || '').trim().toLowerCase() && (
                           <>
                             <button onClick={() => { if (window.confirm('ยืนยันว่าตรวจ Batch นี้เรียบร้อยแล้วใช่ไหม?')) handleApproveReview(b); }} title="อนุมัติ/ตรวจแล้ว"
                               style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', cursor: 'pointer', fontWeight: '500' }}>
                               ✓ อนุมัติ
                             </button>
-                            <button onClick={() => setRejectChatBatch(b)} title="ปฏิเสธ (ให้ผู้ส่งแก้ไขแล้วส่งใหม่)"
-                              style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', fontWeight: '500' }}>
-                              ✗ ปฏิเสธ
-                            </button>
+                            {b.status === 'reviewing' && (
+                              <button onClick={() => setRejectChatBatch(b)} title="ปฏิเสธ (ให้ผู้ส่งแก้ไขแล้วส่งใหม่)"
+                                style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', fontWeight: '500' }}>
+                                ✗ ปฏิเสธ
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
@@ -5581,6 +5602,15 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
             await handleRejectReview(batch);
             setRejectChatBatch(null);
           }}
+        />
+      )}
+      {viewChatBatch && (
+        <BatchChatDrawer
+          batch={viewChatBatch}
+          isRejectMode={false}
+          currentUsername={me}
+          onClose={() => setViewChatBatch(null)}
+          onMinimize={() => setViewChatBatch(null)}
         />
       )}
     </>

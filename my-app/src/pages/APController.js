@@ -6235,11 +6235,31 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     } else if (bu) {
       found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${bu.toLowerCase()}-${search}`);
     }
+    if (found) return found;
+
+    // MARKER_SUPPLIER_SECONDARY_LOOKUP_V1
+    // ── Lookup Key ที่ 2: ลองหาใน Supplier Number / No. ด้วย (คนละ Field จาก Code) ──
+    // ── กรณีพิมพ์ค่าอื่นที่ไม่ใช่ Code ตรงๆ (เช่น N-157999) — Filter BU เหมือนเดิม ──
+    const isValidPrefixSecondary = (c) => {
+      const codePrefix = String(c ?? '').split('-')[0].toUpperCase();
+      return isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
+    };
+    found = supplierItems.find(s =>
+      isValidPrefixSecondary(s['Code']) &&
+      (String(s['Supplier Number'] ?? '').trim().toLowerCase() === search ||
+       String(s['No.'] ?? '').trim().toLowerCase() === search)
+    );
     return found || null;
   };
 
   const lookupVendor = (code) => {
-    setVendorInfo(findSupplierByCode(code));
+    const found = findSupplierByCode(code);
+    setVendorInfo(found);
+    // ── Match เจอจาก Lookup Key ที่ 2 (ค่าไม่ตรงกับ Code จริง) ──────────
+    // ── แทนที่ช่อง Supplier code ด้วย Code จริงให้อัตโนมัติ ──────────────
+    if (found && found['Code'] && String(found['Code']).trim().toLowerCase() !== String(code || '').trim().toLowerCase()) {
+      setField('supplierCode', found['Code']);
+    }
   };
 
   // ── Invoice เก่าที่ยังไม่มี vendor_tax_id/vendor_no (Field เพิ่งเพิ่มใหม่) ──

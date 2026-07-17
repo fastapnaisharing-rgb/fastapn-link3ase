@@ -701,6 +701,11 @@ function MainApp() {
         await db.from('access_requests').update({
           status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
         }).eq('id', req.id);
+        // MARKER_APP_SIGNUP_BROADCAST_V1
+        // ── Broadcast แบบ Real-time — Owner/Admin คนอื่นเห็น User ใหม่โผล่ ──
+        // ── ในหน้า Users Tab ทันที ไม่ต้อง Refresh หน้าเอง (ฝั่งรับอยู่ที่ ──
+        // ── UserManagement.js — subscribeWs('signup_approved')) ──────────
+        broadcastWs('signup_approved', { user_id: req.ref_user_id });
       } else {
         await db.from('doc_access_override').upsert({
           user_id: req.requester_id, folder_key: req.folder_key, allowed: true,

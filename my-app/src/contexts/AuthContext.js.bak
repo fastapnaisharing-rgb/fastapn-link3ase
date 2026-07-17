@@ -122,20 +122,6 @@ export function AuthProvider({ children }) {
     return unsubscribe;
   }, [currentUser?.id]);
 
-  // MARKER_AUTHCONTEXT_FORCE_LOGOUT_ON_DELETE_V1
-  // ── Real-time: ฟัง 'user_deleted' — Admin ลบ User คนนี้ออกจากระบบไปแล้ว ──
-  // ── ต้อง Force Logout ทันที กัน Session เก่าใช้งานต่อได้ทั้งที่ไม่มีตัวตน ──
-  // ── ในระบบแล้ว (ฝั่งส่งอยู่ที่ UserManagement.js — broadcastWs) ───────────
-  useEffect(() => {
-    if (!currentUser?.email) return undefined;
-    const unsubscribe = subscribeWs(['user_deleted'], (event, payload) => {
-      if (String(payload.email || '').toLowerCase() === String(currentUser.email || '').toLowerCase()) {
-        logout();
-      }
-    });
-    return unsubscribe;
-  }, [currentUser?.email]);
-
   // ── init: restore session from token ─────────────────────────────────────────
   useEffect(() => {
     const APP_VERSION = '2.0.0';

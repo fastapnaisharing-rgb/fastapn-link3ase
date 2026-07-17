@@ -1,5 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+// MARKER_GLOBAL_CHAT_BUBBLE_V1
+import GlobalChatBubble from './GlobalChatBubble';
 import { DataCacheProvider, useDataCache } from './contexts/DataCacheContext';
 import Login from './pages/Login';
 import Homepage from './pages/Homepage';
@@ -1147,6 +1149,7 @@ function MainApp() {
           }}
         />
       )}
+      <GlobalChatBubble currentUsername={userName || currentUser?.email || ''} />
     </div>
   );
 }

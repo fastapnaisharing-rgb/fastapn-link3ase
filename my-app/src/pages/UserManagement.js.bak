@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo } from 'react';
   import { useUserRole } from '../contexts/useUserRole';
   import DeployMonitor, { RAMDashboardTab } from './DeployMonitor';
   import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
-  import { broadcastWs, subscribeWs } from '../wsManager';
+  import { broadcastWs } from '../wsManager';
   import { confirmDialog } from '../confirmDialog';
 
   const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'];
@@ -1623,14 +1623,6 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     };
 
     useEffect(() => { fetchUsers(); fetchBinCount(); }, []);
-
-    // MARKER_USERMANAGEMENT_SIGNUP_LISTENER_V1
-    // ── Real-time: ฟัง 'signup_approved' — Owner/Admin คนอื่น Approve Signup ──
-    // ── ไปแล้ว ให้ User ใหม่โผล่ในตารางนี้ทันที ไม่ต้อง Refresh หน้าเอง ────────
-    useEffect(() => {
-      const unsubscribe = subscribeWs(['signup_approved'], () => fetchUsers());
-      return unsubscribe;
-    }, []);
 
     const S = {
       container: { padding: '20px' },

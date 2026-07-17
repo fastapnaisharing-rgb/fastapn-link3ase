@@ -2,11 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/db';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
-// MARKER_UPLOADGEN_DOCACCESS_FIX_V1
-import { broadcastWs, subscribeWs } from '../wsManager';
 
 const DOC_FOLDERS = [
-  { key: 'ap',   label: 'AP Manual',       icon: '🧾', permKey: 'Manual', color: '#E6F1FB', textColor: '#0C447C', desc: 'ใบวางบิล, ใบเสร็จ, หนังสือยืนยัน' },
+  { key: 'ap',   label: 'AP Manual',       icon: '🧾', permKey: 'VAT',   color: '#E6F1FB', textColor: '#0C447C', desc: 'ใบวางบิล, ใบเสร็จ, หนังสือยืนยัน' },
   { key: 'vat',  label: 'VAT Control',     icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A', desc: 'ใบกำกับภาษี, รายงาน PP30' },
   { key: 'ie',   label: 'I-Expense',       icon: '💸', permKey: 'IE',    color: '#FAEEDA', textColor: '#633806', desc: 'ใบเบิกค่าใช้จ่าย, ค่าเดินทาง, ค่าที่พัก' },
   { key: 'gl',   label: 'GL Report',       icon: '📊', permKey: 'GL',    color: '#EEEDFE', textColor: '#3C3489', desc: 'รายงาน GL บัญชีแยกประเภท' },
@@ -404,13 +402,6 @@ function DocumentCenter() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── Real-time: ได้รับ Permission หรือ Access ใหม่ -> fetchData() สดทันที ──
-  // ── ไม่ต้อง Refresh หน้าเอง (ฝั่งส่งอยู่ที่ UserManagement.js/App.js) ─────
-  useEffect(() => {
-    const unsubscribe = subscribeWs(['doc_access_updated', 'user_permissions_updated'], () => fetchData());
-    return unsubscribe;
-  }, [fetchData]);
-
   const canAccess = (folder) => {
     // Owner เข้าได้ทุกกล่องเสมอ
     if (isOwner) return true;
@@ -446,9 +437,6 @@ function DocumentCenter() {
       }]);
       if (error) throw error;
       setRequests(prev => [...prev, { folder_key: folder.key, status: 'pending' }]);
-      // ── Broadcast แบบ Real-time — Owner/Admin เห็นคำขอใหม่ทันที ไม่ต้อง ──
-      // ── รอ Poll 30 วิ (ฝั่งรับอยู่ที่ App.js — fetchRequests) ─────────────
-      broadcastWs('access_request_new', { folder_key: folder.key, requester_name: userName || currentUser?.email || '' });
       showToast(`ส่งคำขอ "${folder.label}" แล้วครับ รออนุมัติจาก Owner/Admin`);
     } catch (err) { showToast('เกิดข้อผิดพลาด: ' + err.message, 'error'); }
     setRequesting(prev => ({ ...prev, [folder.key]: false }));
