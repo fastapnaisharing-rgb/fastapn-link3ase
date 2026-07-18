@@ -320,9 +320,31 @@ import React, { useState, useEffect, useMemo } from 'react';
       return getEffective(user, folderKey).allowed;
     };
 
-    const handleToggle = (userId, folderKey, newValue) => {
+    // MARKER_USERMANAGEMENT_TOGGLE_AUTOSAVE_V1
+    // ── Auto-Save — Toggle ปุ๊บบันทึกทันที ไม่ต้องกดปุ่ม "บันทึก" แยกอีกที ──
+    const handleToggle = async (userId, folderKey, newValue) => {
       const key = `${userId}_${folderKey}`;
-      setPendingChanges(prev => ({ ...prev, [key]: newValue }));
+      setPendingChanges(prev => ({ ...prev, [key]: newValue })); // โชว์ผลทันทีระหว่างรอ Save
+      setSaving(true);
+      try {
+        await apiFetch(`/doc_access_override/upsert?onConflict=user_id,folder_key`, {
+          method: 'POST',
+          body: JSON.stringify({
+            user_id: userId, folder_key: folderKey, allowed: newValue,
+            updated_by: userName || currentUser?.email || '',
+            updated_at: new Date().toISOString(),
+          }),
+        });
+        setPendingChanges(prev => { const next = { ...prev }; delete next[key]; return next; });
+        await fetchOverrides();
+        // ── Broadcast แบบ Real-time — User ที่ถูกให้/ตัดสิทธิ์ (login ค้างอยู่) ──
+        // ── จะเห็นผลทันที (ฝั่งรับอยู่ที่ AuthContext.js/UploadGen.js) ────────
+        broadcastWs('doc_access_updated', { folder_key: folderKey });
+      } catch (err) {
+        confirmDialog.alert('บันทึกไม่สำเร็จ: ' + err.message, { variant: 'danger' });
+        setPendingChanges(prev => { const next = { ...prev }; delete next[key]; return next; });
+      }
+      setSaving(false);
     };
 
     const handleSaveFolder = async (folderKey) => {
@@ -396,7 +418,6 @@ import React, { useState, useEffect, useMemo } from 'react';
                   <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{folder.label}</div>
                   <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
                     เข้าถึงได้ {canAccess.length} คน · ไม่มีสิทธิ์ {noAccess.length} คน
-                    {hasPending && <span style={{ marginLeft: '6px', color: '#856404', background: '#FFF3CD', padding: '1px 6px', borderRadius: '10px', fontSize: '10px' }}>มีการเปลี่ยนแปลง</span>}
                   </div>
                 </div>
                 <button onClick={() => setOpenFolder(isOpen ? null : folder.key)}
@@ -455,15 +476,10 @@ import React, { useState, useEffect, useMemo } from 'react';
                     </div>
                   </div>
                   <div style={{ borderTop: '0.5px solid #f0f0f0', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '11px', color: '#888' }}>💡 Toggle เปิด/ปิด แล้วกด บันทึก — Owner/Admin เข้าได้เสมอ</span>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={() => { setOpenFolder(null); setPendingChanges(prev => { const next = { ...prev }; Object.keys(next).forEach(k => { if (k.endsWith(`_${folder.key}`)) delete next[k]; }); return next; }); }}
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
-                      <button onClick={() => handleSaveFolder(folder.key)} disabled={saving || !hasPending}
-                        style={{ padding: '6px 14px', borderRadius: '6px', border: 'none', background: hasPending ? '#1a3a5c' : '#ccc', color: 'white', fontSize: '12px', cursor: hasPending ? 'pointer' : 'default', fontWeight: '500' }}>
-                        {saving ? 'กำลังบันทึก...' : '💾 บันทึก'}
-                      </button>
-                    </div>
+                    <span style={{ fontSize: '11px', color: '#888' }}>{saving ? '💾 กำลังบันทึก...' : '💡 Toggle เปิด/ปิด — บันทึกทันที Owner/Admin เข้าได้เสมอ'}</span>
+                    <button onClick={() => setOpenFolder(null)}
+                      style={{ padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ปิด</button>
+                  {/* MARKER_USERMANAGEMENT_CLEANUP_SAVE_UI_V1 */}
                   </div>
                 </div>
               )}
@@ -1688,6 +1704,10 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         saveUser(updated.find(u => u.id === id));
         return updated;
       });
+      // MARKER_USERMANAGEMENT_ROLE_BROADCAST_V1
+      // ── Real-time: แจ้ง Session ของ User คนนี้ให้ Refresh Role/Permission ──
+      // ── ทันที (ฝั่งรับอยู่ที่ AuthContext.js — Event เดียวกับ Permission) ──
+      broadcastWs('user_permissions_updated', { user_id: id });
     };
 
     // MARKER_PERMISSION_ACCESS_AUTOSYNC_V1

@@ -127,8 +127,9 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
   const visibleRequests = requests.filter(req => {
     if (req.status === 'pending') return true; // Pending แสดงเสมอ ไม่มีวันหมดอายุ
     if (!req.handled_at) return true; // กันกรณีไม่มี handled_at
+    // MARKER_APP_NOTIF_1HOUR_V1
     const hoursSinceHandled = (Date.now() - new Date(req.handled_at).getTime()) / (1000*60*60);
-    return hoursSinceHandled < 24; // แสดงเฉพาะที่ยังไม่เกิน 24 ชม.
+    return hoursSinceHandled < 1; // แสดงเฉพาะที่ยังไม่เกิน 1 ชม.
   });
 
   // ── แยก Notification ตาม category — AP Period / Orphan ปลอดภัย / System Alert (RAM) แสดงคนละ Section ──
@@ -313,7 +314,7 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
           )}
         </div>
         <div style={{ padding: '12px 18px', borderTop: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-          <span style={{ fontSize: '11px', color: '#aaa' }}>จัดการแล้วจะหายอัตโนมัติใน 24 ชม.</span>
+          <span style={{ fontSize: '11px', color: '#aaa' }}>จัดการแล้วจะหายอัตโนมัติใน 1 ชม.</span>
           {isOwner && (
             <button onClick={onGoAccess} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: '0.5px solid #1a3a5c', background: 'white', color: '#1a3a5c', cursor: 'pointer', fontWeight: '500' }}>
               ไป Access Control →
@@ -556,7 +557,10 @@ function MainApp() {
   // ── Real-time: ฟัง broadcast 'bucket_sent'/'bucket_recalled' จาก server ────
   // ── ให้ Toast ขึ้น/หายทันที ไม่ต้องรอ Poll รอบ 30 วิด้านบน ─────────────────
   // ── ใช้ Shared WS Connection (wsManager) แทนเปิด Connection แยกของตัวเอง ──
-  useRealtimeRefresh(['bucket_sent', 'bucket_recalled'], () => fetchRequests());
+  // MARKER_APP_ACCESS_REQUEST_LISTENER_V1
+  // ── เพิ่ม 'access_request_new' — Signup ใหม่ (auth.js) + ขอสิทธิ์ Folder ──
+  // ── ใหม่ (UploadGen.js) เห็นแบบ Real-time ไม่ต้องรอ Poll 30 วิ ──────────
+  useRealtimeRefresh(['bucket_sent', 'bucket_recalled', 'access_request_new'], () => fetchRequests());
 
   // ── ดึง AP Period Notifications (Close Period / Override) เฉพาะ User ที่มี Permission Manual ──
   const fetchApNotifications = async () => {

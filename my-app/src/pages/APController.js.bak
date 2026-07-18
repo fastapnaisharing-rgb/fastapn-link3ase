@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 import { registerSyncFlush } from '../contexts/syncRegistry';
 import { useRealtimeRefresh } from '../useRealtimeRefresh';
-import { broadcastWs } from '../wsManager';
+import { broadcastWs, subscribeWs } from '../wsManager';
 import { confirmDialog } from '../confirmDialog';
 // MARKER_REJECT_CHAT_DRAWER_V1
 import BatchChatDrawer from './BatchChatDrawer';
@@ -565,7 +565,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
     } catch (e) {
       console.error('[toggleFav failed]', e);
-      alert('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console)'));
+      confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console)'), { variant: 'danger' });
     }
     setFavUpdating(null);
   };
@@ -610,7 +610,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   };
 
   const handleSave = async () => {
-    if (!form.description?.trim()) { alert('กรุณากรอก Description'); return; }
+    if (!form.description?.trim()) { confirmDialog.alert('กรุณากรอก Description'); return; }
     setSaving(true);
     try {
       const payload = { ...form, updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() };
@@ -625,18 +625,18 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       setView('search'); setForm(emptyForm); setViewTarget(null);
     } catch (e) {
       console.error('[ItemCode handleSave failed]', e);
-      alert('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console)'));
+      confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console)'), { variant: 'danger' });
     }
     setSaving(false);
   };
 
   const handleDelete = async (item) => {
-    if (!window.confirm(`ต้องการลบ "${item.code} — ${item.description || ''}" ใช่หรือไม่?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ "${item.code} — ${item.description || ''}" ใช่หรือไม่?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     try {
       const { error } = await db.from('itemcode_list').delete().eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('ItemcodeList', true);
-    } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
   const openForm = (item, mode) => {
@@ -1184,12 +1184,12 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   };
 
   const handleDeleteSupplier = async (item) => {
-    if (!window.confirm(`ต้องการลบ "${item['Code']} — ${item['Supplier Name'] || ''}" ใช่หรือไม่?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ "${item['Code']} — ${item['Supplier Name'] || ''}" ใช่หรือไม่?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     try {
       const { error } = await db.from('supplier_list').delete().eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('SupplierList', true);
-    } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
   const COLS = [
@@ -1840,7 +1840,7 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('ต้องการลบรายการนี้?')) return;
+    if (!(await confirmDialog.confirm('ต้องการลบรายการนี้?', { variant: 'danger', confirmText: 'ลบ' }))) return;
     await apiFetch(`/contract_list/${id}`, { method: 'DELETE' });
     await loadItems();
   };
@@ -2198,7 +2198,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       });
       if (!favRes.ok) { const j = await favRes.json().catch(() => ({})); throw new Error(j.error || 'บันทึกไม่สำเร็จ'); }
       if (fetchCollection) await fetchCollection('SmCodeList', true);
-    } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setFavUpdating(null);
   };
 
@@ -2359,12 +2359,12 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
   };
 
   const handleSmDelete = async (item) => {
-    if (!window.confirm(`ต้องการลบ "${item['SM-Code']} — ${item['Company Name'] || ''}" ใช่หรือไม่?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ "${item['SM-Code']} — ${item['Company Name'] || ''}" ใช่หรือไม่?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     try {
       const { error } = await db.from('sm_code_list').delete().eq('id', item.id);
       if (error) throw error;
       if (fetchCollection) await fetchCollection('SmCodeList', true);
-    } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
   const handleSmBack = () => { setView('search'); setEditTarget(null); setSmForm({}); setSmFormError(''); setTimeout(() => inputRef.current?.focus(), 60); };
@@ -3289,11 +3289,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const handleSubmit = async () => {
     // ── Block Submit: ไม่มีข้อมูล Branch No. ห้าม Submit เด็ดขาด ──
     if (!form?.branchNo?.trim()) {
-      alert('กรุณาเลือก Branch ก่อน Submit — ไม่สามารถ Submit Invoice ที่ไม่มีข้อมูล Branch ได้');
+      confirmDialog.alert('กรุณาเลือก Branch ก่อน Submit — ไม่สามารถ Submit Invoice ที่ไม่มีข้อมูล Branch ได้');
       return;
     }
     if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) {
-      alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
+      confirmDialog.alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
       return;
     }
     // ── ถ้ามีบรรทัดไหนใช้ Item Code ที่กำหนด SPI-1 = Prd หรือ CT แต่ยังไม่ใส่ Period ──
@@ -4048,11 +4048,11 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
 
     // ── Block Save: ไม่มีข้อมูล Branch No. ห้าม Save เด็ดขาด (Edit Invoice) ──
     if (!form?.branchNo?.trim()) {
-      alert('ไม่พบข้อมูล Branch — ไม่สามารถบันทึก Invoice ที่ไม่มีข้อมูล Branch ได้');
+      confirmDialog.alert('ไม่พบข้อมูล Branch — ไม่สามารถบันทึก Invoice ที่ไม่มีข้อมูล Branch ได้');
       return;
     }
 
-    if (!cleanedLines[0]?.itemCode?.trim() || !cleanedLines[0]?.amount?.trim()) { alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
+    if (!cleanedLines[0]?.itemCode?.trim() || !cleanedLines[0]?.amount?.trim()) { confirmDialog.alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
     setSaving(true);
     const invoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) + (form.invoiceSuffix || '');
     const ok = await onSave({ form_data: form, lines: cleanedLines, invoiceNo });
@@ -4561,6 +4561,20 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     }
   }, [buInfo]);
 
+  // MARKER_APCONTROLLER_GRTGRN_REALTIME_V1
+  // ── Real-time: คนอื่น Reserve เลข GRT/GRN ของ BU เดียวกันไปแล้ว ──────────
+  // ── อัปเดตเลขบนจอทันที กันเห็นเลขซ้ำ/เก่าค้างจนโดน Error ตอน Submit ─────
+  useEffect(() => {
+    if (!bu) return undefined;
+    const unsubscribe = subscribeWs(['grt_grn_reserved'], (event, payload) => {
+      if (payload.bu !== bu) return;
+      const dc = getDigitCount(buInfo);
+      if (payload.field === 'ap_grt') setApGrtRunning(String(payload.value ?? 0).padStart(dc, '0'));
+      if (payload.field === 'ap_grn') setApGrnRunning(String(payload.value ?? 0).padStart(dc, '0'));
+    });
+    return unsubscribe;
+  }, [bu, buInfo]);
+
   // MARKER_UNIFIED_GRT_GRN_LOCK_V1
   // ── Lock เลขเริ่มต้น GRT/GRN (ใช้ Lock เดียวกันทั้งคู่) ตาม GRT Control ──────
   // ── Auto -> Lock เสมอ / Manual -> ไม่ Lock เลย ─────────────────────────
@@ -4681,7 +4695,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       setShowBlockedPopup(false);
     } catch (e) {
       console.error('close-period:', e);
-      alert('ปิด Period ไม่สำเร็จ: ' + e.message);
+      confirmDialog.alert('ปิด Period ไม่สำเร็จ: ' + e.message, { variant: 'danger' });
     }
     setRequestCloseLoading(false);
   };
@@ -4695,7 +4709,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       if (exact) setBuInfo({ ...exact, ap_period_mode: 'prev' });
     } catch (e) {
       console.error('self-override:', e);
-      alert('Override ไม่สำเร็จ: ' + (e.message || 'เกิดข้อผิดพลาด'));
+      confirmDialog.alert('Override ไม่สำเร็จ: ' + (e.message || 'เกิดข้อผิดพลาด'), { variant: 'danger' });
     }
     setSelfOverrideLoading(false);
   };
@@ -4710,7 +4724,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       setReceiveDate(todayStr); // ── กลับเป็น Current แล้ว Default Receive Date ต้องเป็นวันนี้ ──
     } catch (e) {
       console.error('reopen:', e);
-      alert('Reopen ไม่สำเร็จ: ' + (e.message || 'เกิดข้อผิดพลาด'));
+      confirmDialog.alert('Reopen ไม่สำเร็จ: ' + (e.message || 'เกิดข้อผิดพลาด'), { variant: 'danger' });
     }
     setSelfOverrideLoading(false);
   };
@@ -4747,6 +4761,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${delToken}` },
       }).catch((e) => console.error('delete batch_comments:', e));
+      // MARKER_DELETE_BATCH_NOTIFICATIONS_V1
+      // ── ลบ batch_notifications ที่ผูกกับ batch นี้ด้วย (กัน Notification ──
+      // ── กลายเป็น "ผี" ชี้ไปหา Batch ที่ไม่มีตัวตนแล้ว) ────────────────
+      await fetch(`${delApiBase}/api/batch_notifications?eq_batch_id=${encodeURIComponent(b.batch_id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${delToken}` },
+      }).catch((e) => console.error('delete batch_notifications:', e));
       // ── ลบ batch_list ──
       const { error } = await db.from('batch_list').delete().eq('id', b.id);
       if (error) throw error;
@@ -4837,13 +4858,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         a.href = url; a.download = suggestedFileName || ''; document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => window.URL.revokeObjectURL(url), 10000);
       }
-    } catch (e) { alert('เกิดข้อผิดพลาด: ' + e.message); }
+    } catch (e) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + e.message, { variant: 'danger' }); }
     setPreviewLoading(false);
   };
 
   // ── บันทึกที่แก้ใน Preview ทับไฟล์เดิมบน Server (Re-generate .xls จาก rows ที่แก้แล้ว) ──
   const handleSavePreview = async () => {
-    if (!filePreview?.fileId) { alert('ไม่พบไฟล์สำหรับบันทึก'); return; }
+    if (!filePreview?.fileId) { confirmDialog.alert('ไม่พบไฟล์สำหรับบันทึก'); return; }
     setSavingPreview(true);
     try {
       const res = await apiFetch(`/file-storage/${filePreview.fileId}/update`, {
@@ -4851,8 +4872,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         body: JSON.stringify({ rows: filePreview.rows }),
       });
       if (res?.error) throw new Error(res.error);
-      alert('บันทึกทับไฟล์เดิมสำเร็จ');
-    } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
+      confirmDialog.alert('บันทึกทับไฟล์เดิมสำเร็จ');
+    } catch (e) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setSavingPreview(false);
   };
 
@@ -5011,8 +5032,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
 
       setReportPickerId(null);
       setReportPickerValue('');
-      alert('ส่งตรวจสำเร็จ');
-    } catch (e) { alert('ส่งตรวจไม่สำเร็จ: ' + e.message); }
+      confirmDialog.alert('ส่งตรวจสำเร็จ');
+    } catch (e) { confirmDialog.alert('ส่งตรวจไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setReportSending(false);
   };
 
@@ -5086,7 +5107,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         });
       } catch (logErr) { console.error('[activity_log BATCH_APPROVE]', logErr); }
 
-    } catch (e) { alert('อนุมัติไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('อนุมัติไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
   // ── ปฏิเสธ — เฉพาะผู้ตรวจที่ถูกระบุชื่อ (reported_to_username) เท่านั้น ──────
@@ -5120,7 +5141,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
           if (senderIds.length > 0) await db.from('batch_notifications').update({ status: 'rejected' }).in('id', senderIds);
         }
       } catch (nErr) { console.error('[update notifications on reject]', nErr); }
-    } catch (e) { alert('ปฏิเสธไม่สำเร็จ: ' + e.message); }
+    } catch (e) { confirmDialog.alert('ปฏิเสธไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
   const canSeeAll = isOwner || isAdmin;
   const me = userName || currentUser?.email || '';
@@ -5376,7 +5397,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                         >{st.label}</span>
                         {['reviewing', 'rejected'].includes(b.status) && String(b.reported_to_username || '').trim().toLowerCase() === String(me || '').trim().toLowerCase() && (
                           <>
-                            <button onClick={() => { if (window.confirm('ยืนยันว่าตรวจ Batch นี้เรียบร้อยแล้วใช่ไหม?')) handleApproveReview(b); }} title="อนุมัติ/ตรวจแล้ว"
+                            <button onClick={async () => { if (await confirmDialog.confirm('ยืนยันว่าตรวจ Batch นี้เรียบร้อยแล้วใช่ไหม?', { confirmText: 'อนุมัติ' })) handleApproveReview(b); }} title="อนุมัติ/ตรวจแล้ว"
                               style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', cursor: 'pointer', fontWeight: '500' }}>
                               ✓ อนุมัติ
                             </button>
@@ -5783,7 +5804,7 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
       } catch (nErr) { console.error('[insert batch_notifications on report-to]', nErr); }
       onDone({ id: batch.id, status: 'reviewing', reported_to_username: toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
       onClose();
-      alert('ส่งตรวจสำเร็จ');
+      confirmDialog.alert('ส่งตรวจสำเร็จ');
     } catch (e) { setError('ส่งตรวจไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
@@ -6235,11 +6256,31 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     } else if (bu) {
       found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${bu.toLowerCase()}-${search}`);
     }
+    if (found) return found;
+
+    // MARKER_SUPPLIER_SECONDARY_LOOKUP_V1
+    // ── Lookup Key ที่ 2: ลองหาใน Supplier Number / No. ด้วย (คนละ Field จาก Code) ──
+    // ── กรณีพิมพ์ค่าอื่นที่ไม่ใช่ Code ตรงๆ (เช่น N-157999) — Filter BU เหมือนเดิม ──
+    const isValidPrefixSecondary = (c) => {
+      const codePrefix = String(c ?? '').split('-')[0].toUpperCase();
+      return isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
+    };
+    found = supplierItems.find(s =>
+      isValidPrefixSecondary(s['Code']) &&
+      (String(s['Supplier Number'] ?? '').trim().toLowerCase() === search ||
+       String(s['No.'] ?? '').trim().toLowerCase() === search)
+    );
     return found || null;
   };
 
   const lookupVendor = (code) => {
-    setVendorInfo(findSupplierByCode(code));
+    const found = findSupplierByCode(code);
+    setVendorInfo(found);
+    // ── Match เจอจาก Lookup Key ที่ 2 (ค่าไม่ตรงกับ Code จริง) ──────────
+    // ── แทนที่ช่อง Supplier code ด้วย Code จริงให้อัตโนมัติ ──────────────
+    if (found && found['Code'] && String(found['Code']).trim().toLowerCase() !== String(code || '').trim().toLowerCase()) {
+      setField('supplierCode', found['Code']);
+    }
   };
 
   // ── Invoice เก่าที่ยังไม่มี vendor_tax_id/vendor_no (Field เพิ่งเพิ่มใหม่) ──
@@ -6606,7 +6647,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       }).eq('id', target.id);
       if (error) {
         console.error('[SAVE-BUCKET-ERROR] full error object:', error, 'updated.form_data=', updated.form_data);
-        alert('บันทึกไม่สำเร็จ: ' + (error.message || error.hint || error.code || JSON.stringify(error)));
+        confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (error.message || error.hint || error.code || JSON.stringify(error)), { variant: 'danger' });
         return false;
       }
     }
@@ -6639,7 +6680,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   const handleDeleteGroup = async (baseNo) => {
     const toDelete = invoices.filter(inv => String(inv.invoice_no || '-').replace(/\/\d+$/, '') === baseNo);
     if (!toDelete.length) return;
-    if (!window.confirm(`ต้องการลบ Invoice ${baseNo} ทั้งหมด ${toDelete.length} บรรทัด?`)) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ Invoice ${baseNo} ทั้งหมด ${toDelete.length} บรรทัด?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     const syncedIds = toDelete.filter(inv => inv._synced && inv.id).map(inv => inv.id);
     if (syncedIds.length) {
       await db.from('bucket_list').delete().in('id', syncedIds);
@@ -7549,7 +7590,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   // ── กด Generate & Export → ขอเลข Running จริงจาก Backend (Lazy Reset ต่อ BU ต่อวัน) ──
   // ── แล้วประกอบเป็น Batch Name เต็ม: {Base}/{SystemPrefix}-{Running} ──────────────
   const openExportModal = async () => {
-    if (!invoices.length) { alert('No invoices in batch'); return; }
+    if (!invoices.length) { confirmDialog.alert('No invoices in batch'); return; }
     if (batchName.trim()) { setShowExportModal(true); return; } // เคยตั้ง/แก้เองแล้ว ไม่ขอเลขใหม่ซ้ำ
     const buId = batchConfig?.buInfo?.id;
     const prefixPart = systemPrefix || 'XXX';
@@ -7901,9 +7942,9 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   }, [isDragging]);
 
   const doExport = async () => {
-    if (!invoices.length) { alert('No invoices in batch'); return; }
+    if (!invoices.length) { confirmDialog.alert('No invoices in batch'); return; }
     const newBatchId = batchName.trim();
-    if (!newBatchId) { alert('กรุณาตั้งชื่อ Batch ก่อน Export'); return; }
+    if (!newBatchId) { confirmDialog.alert('กรุณาตั้งชื่อ Batch ก่อน Export'); return; }
     setExporting(true);
     try {
       // ── สร้าง batch_list ก่อน (Tracking ใหม่ของ Batch History แยกจาก Batch Bucket) ──
@@ -7966,7 +8007,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     } catch (e) {
       console.error('[doExport failed]', e);
       const msg = e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console เพิ่มเติม)';
-      alert('Export failed: ' + msg);
+      confirmDialog.alert('Export failed: ' + msg, { variant: 'danger' });
       setBatchName(''); // ล้างชื่อเดิม กันลองใหม่แล้วชนกับ batch_list ที่ Insert ไปแล้วบางส่วน
     }
     setExporting(false);
@@ -8420,7 +8461,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
     try {
       const { data, error } = await db.from('batch_list').select('file_url').eq('batch_id', g.batch_id).single();
       if (error) throw error;
-      if (!data?.file_url) { alert('ยังไม่มีไฟล์สำหรับ Batch นี้'); setDownloadingBatchId(null); return; }
+      if (!data?.file_url) { confirmDialog.alert('ยังไม่มีไฟล์สำหรับ Batch นี้'); setDownloadingBatchId(null); return; }
       const token = sessionStorage.getItem('fastapn_token');
       const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const res = await fetch(`${apiBase}/api/file-storage/${data.file_url}/download`, { headers: { Authorization: `Bearer ${token}` } });
@@ -8431,7 +8472,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       setTimeout(() => window.URL.revokeObjectURL(url), 10000);
     } catch (e) {
       console.error('download batch:', e);
-      alert('เกิดข้อผิดพลาด: ' + e.message);
+      confirmDialog.alert('เกิดข้อผิดพลาด: ' + e.message, { variant: 'danger' });
     }
     setDownloadingBatchId(null);
   };
@@ -8787,7 +8828,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
 
   const handleSavePrefix = async () => {
     const val = prefixInput.trim().toUpperCase();
-    if (!val) { alert('กรุณากรอก System Prefix'); return; }
+    if (!val) { confirmDialog.alert('กรุณากรอก System Prefix'); return; }
     setSavingPrefix(true);
     try {
       // ── ใช้ Endpoint เฉพาะ (ทุก Role ตั้ง Prefix ของตัวเองได้ ไม่ต้องเป็น Owner) ──
@@ -8801,7 +8842,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
       setShowPrefixModal(false);
     } catch (e) {
       console.error('[system_prefix save]', e);
-      alert('บันทึกไม่สำเร็จ: ' + (e?.message || 'ไม่ทราบสาเหตุ'));
+      confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (e?.message || 'ไม่ทราบสาเหตุ'), { variant: 'danger' });
     }
     setSavingPrefix(false);
   };

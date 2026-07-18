@@ -421,6 +421,16 @@ function DocumentCenter() {
     return userRoleData?.permissions?.[folder.permKey] ?? false;
   };
 
+  // MARKER_UPLOADGEN_AUTOBACK_V1
+  // ── Auto Back to Document Center — ถ้ากำลังเปิดดู Folder ที่เพิ่งโดนตัดสิทธิ์ ──
+  // ── ไปพอดี (Owner/Admin ปิด Access ระหว่างที่ยังเปิดหน้านี้ค้างอยู่) ──────────
+  useEffect(() => {
+    if (activeFolder && !canAccess(activeFolder)) {
+      setActiveFolder(null);
+      showToast('สิทธิ์เข้าถึงโฟลเดอร์นี้ถูกยกเลิกแล้ว', 'error');
+    }
+  }, [overrides, userRoleData, activeFolder]);
+
   const getRequestStatus = (folderKey) => {
     const req = requests.find(r => r.folder_key === folderKey && r.status === 'pending');
     return req ? 'pending' : null;
