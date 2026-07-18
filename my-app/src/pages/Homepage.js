@@ -223,8 +223,14 @@ function Homepage({ onOpenInbox } = {}) {
                 // MARKER_FIX_HOMEPAGE_COMMENT_SYNTAX_V1
                 return (
                   <div key={n.id} onClick={() => {
-                    // ── MARKER_HOMEPAGE_NOTIFICATION_CHAT_V1: Rejected -> เปิด Chat ทันที ไม่ Navigate ──
-                    if (statusKey === 'rejected') { setChatBatchId(n.batch_id); return; }
+                    // ── MARKER_HOMEPAGE_NOTIFICATION_CHAT_V1: Rejected -> เปิด Chat ทันที ──
+                    // MARKER_HOMEPAGE_REJECT_GOTO_INBOX_V1
+                    // ── พาไปที่ Tab Inbox/My Jobs ด้วย (ไม่ return ออกก่อนแล้ว) ──────────
+                    if (statusKey === 'rejected') {
+                      setChatBatchId(n.batch_id);
+                      onOpenInbox && onOpenInbox(n.audience === 'sender' ? 'mine' : 'inbox');
+                      return;
+                    }
                     onOpenInbox && onOpenInbox(n.audience === 'sender' ? 'mine' : 'inbox');
                   }}
                     style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #eee', borderRadius: '10px', cursor: onOpenInbox ? 'pointer' : 'default', background: '#fafbfc' }}>

@@ -4741,14 +4741,19 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     if (!(await confirmDialog.confirm(`ต้องการลบ Batch "${b.batch_id || b.id}" ออกจาก Batch History ถาวรใช่ไหม?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     setDeletingBatchRowId(b.id);
     try {
-      // ── ลบ bucket_list (Invoice items) ของ batch นี้ก่อน ──
-      // MARKER_DELETE_BUCKET_LIST_FIX_V1
-      // ── ใช้ fetch() ตรงไปที่ Endpoint ใหม่ (Bulk Delete ด้วย Filter) แทน ──
-      // ── db.from(...).delete().eq('batch_id', ...) เดิมใช้งานไม่ได้ เพราะ ──
-      // ── Backend รองรับแค่ลบด้วย id เดี่ยวๆ เท่านั้น (DELETE /:id) ────────
+      // MARKER_APCONTROLLER_DELETE_BUNDLE_V1
       const delToken = sessionStorage.getItem('fastapn_token');
       const delApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
-      const bucketDelRes = await fetch(`${delApiBase}/api/bucket_list?eq_batch_id=${encodeURIComponent(b.batch_id)}`, {
+      // ── Bundle Batch + Invoice ทั้งหมดเป็น Recycle Bin รายการเดียวก่อนลบจริง ──
+      // ── (1 Batch = 1 รายการ ไม่แยกเป็นราย Invoice) — ไม่ล้ม Flow แม้ Bundle ──
+      // ── พลาด (แค่ Log ไม่ได้ ไม่ใช่ตัว Delete จริงเอง) ───────────────────
+      await fetch(`${delApiBase}/api/batch-recycle-bundle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${delToken}` },
+        body: JSON.stringify({ batch_id: b.batch_id }),
+      }).catch((e) => console.error('batch-recycle-bundle:', e));
+      // ── ลบ bucket_list (Invoice items) — ?hard=true กัน Insert ซ้ำ (Bundle แล้ว) ──
+      const bucketDelRes = await fetch(`${delApiBase}/api/bucket_list?eq_batch_id=${encodeURIComponent(b.batch_id)}&hard=true`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${delToken}` },
       });
@@ -4761,16 +4766,21 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${delToken}` },
       }).catch((e) => console.error('delete batch_comments:', e));
-      // MARKER_DELETE_BATCH_NOTIFICATIONS_V1
-      // ── ลบ batch_notifications ที่ผูกกับ batch นี้ด้วย (กัน Notification ──
-      // ── กลายเป็น "ผี" ชี้ไปหา Batch ที่ไม่มีตัวตนแล้ว) ────────────────
-      await fetch(`${delApiBase}/api/batch_notifications?eq_batch_id=${encodeURIComponent(b.batch_id)}`, {
+      // ── ลบ batch_notifications ที่ผูกกับ batch นี้ด้วย — ?hard=true (ไม่ต้อง ──
+      // ── เก็บ Notification เข้า Recycle Bin แยก ไม่มีประโยชน์ที่จะกู้คืน) ──────
+      await fetch(`${delApiBase}/api/batch_notifications?eq_batch_id=${encodeURIComponent(b.batch_id)}&hard=true`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${delToken}` },
       }).catch((e) => console.error('delete batch_notifications:', e));
-      // ── ลบ batch_list ──
-      const { error } = await db.from('batch_list').delete().eq('id', b.id);
-      if (error) throw error;
+      // ── ลบ batch_list — ?hard=true (Bundle เข้า Recycle Bin ไปแล้วข้างบน) ──
+      const batchDelRes = await fetch(`${delApiBase}/api/batch_list/${b.id}?hard=true`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${delToken}` },
+      });
+      if (!batchDelRes.ok) {
+        const j = await batchDelRes.json().catch(() => ({}));
+        throw new Error(j.error || 'ลบ batch_list ไม่สำเร็จ');
+      }
       // ── Update local state ทุก tab รวมถึง Invoice History ──
       setHistoryMine(prev => prev.filter(x => x.id !== b.id));
       setHistoryAll(prev => prev.filter(x => x.id !== b.id));
@@ -5800,6 +5810,17 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         await db.from('batch_notifications').insert([{
           recipient_username: senderUsername, audience: 'sender', batch_id: batchIdKey,
           status: isResend ? 'resend' : 'wait', title: senderTitle,
+        }]);
+        // MARKER_APCONTROLLER_BATCH_REVIEW_NOTIF_V1
+        // ── Insert access_requests (batch_review) — ขึ้นใน Notification Bell ──
+        // ── ของผู้ตรวจ ค้างอยู่จนกว่าจะ Approve จริง (ไม่หายไปเอง 24 ชม.เหมือน ──
+        // ── รายการอื่น) — ลบตัวเก่าของ Batch นี้ก่อน กันซ้อนถ้าเคย Reject มาแล้ว ──
+        const { data: oldBR } = await db.from('access_requests').select('id, ref_batch_ids').eq('request_type', 'batch_review');
+        const oldBRMatch = (oldBR || []).filter(r => (r.ref_batch_ids || []).includes(batchIdKey));
+        if (oldBRMatch.length > 0) await db.from('access_requests').delete().in('id', oldBRMatch.map(r => r.id));
+        await db.from('access_requests').insert([{
+          request_type: 'batch_review', requester_name: senderUsername, target_username: toUsername,
+          ref_batch_ids: [batchIdKey], status: 'pending', created_at: new Date().toISOString(),
         }]);
       } catch (nErr) { console.error('[insert batch_notifications on report-to]', nErr); }
       onDone({ id: batch.id, status: 'reviewing', reported_to_username: toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
@@ -6931,13 +6952,73 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       });
     }
 
+    // MARKER_APCONTROLLER_DUPLICATE_CHECK_SUBMIT_V1
+    // ── Duplicate Check ก่อน Submit จริง — bucket_list + legacy_poc_history ────
+    // ── แดง (is_duplicate) = ตัดออกทันที ไม่มีปุ่ม Accept ────────────────────
+    // ── เหลือง (has_warning) = Popup ให้เลือก Accept/Reject เอง ───────────────
+    const dupToken = sessionStorage.getItem('fastapn_token');
+    const dupApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+    const finalItems = [];
+    for (const item of newItems) {
+      try {
+        const params = new URLSearchParams({
+          vendor_no: item.vendor_no || '',
+          invoice_no: item.invoice_no || '',
+          amount: item.net != null ? String(item.net) : '',
+        });
+        if (item.form_data?.poNum) params.set('po_num', item.form_data.poNum);
+        const dupRes = await fetch(`${dupApiBase}/api/invoice-duplicate-check?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${dupToken}` },
+        });
+        const dupData = dupRes.ok
+          ? await dupRes.json()
+          : { is_duplicate: false, has_warning: false, matches: [], related_by_po: [], related_by_amount: [] };
+
+        if (dupData.is_duplicate) {
+          const m = dupData.matches[0] || {};
+          await confirmDialog.alert(
+            `Invoice "${item.invoice_no}" ซ้ำกับข้อมูลที่มีอยู่แล้ว\n` +
+            `Vendor: ${m.vendor_name || m.vendor_no || '-'}\nAmount: ${m.amount ?? '-'}\n` +
+            `Ref: ${m.ref || '-'} (${m.record_type === 'legacy' ? 'ข้อมูลเก่า' : 'Batch ระบบใหม่'})\n\n` +
+            `รายการนี้จะไม่ถูกเพิ่มเข้า Batch — กรุณาตรวจสอบก่อนคีย์ใหม่`,
+            { variant: 'danger' }
+          );
+          continue;
+        }
+
+        if (dupData.has_warning) {
+          const relatedList = [...(dupData.related_by_po || []), ...(dupData.related_by_amount || [])];
+          const detailLines = relatedList.slice(0, 3).map(r =>
+            `  • Invoice: ${r.invoice_no} | Vendor: ${r.vendor_name || r.vendor_no} | Amount: ${r.amount}`
+          ).join('\n');
+          // TODO: ตรวจสอบว่า confirmDialog.confirm รองรับ cancelText ไหม ถ้าไม่รองรับ
+          // ปุ่ม Cancel จะขึ้น Label Default แทน (ยังทำงานถูกต้อง แค่ Label อาจไม่ตรง)
+          const accepted = await confirmDialog.confirm(
+            `Invoice "${item.invoice_no}" มีรายการที่น่าสงสัยว่าอาจซ้ำ:\n${detailLines}\n\n` +
+            `ต้องการยืนยันบันทึกรายการนี้ต่อหรือไม่?`,
+            { variant: 'warning', confirmText: 'Accept (ยืนยันไม่ซ้ำ)', cancelText: 'Reject (ตัดออก)' }
+          );
+          if (!accepted) continue;
+          item._dupWarning = 'yellow';
+          item._dupConfirmedAt = new Date().toISOString();
+          item._dupDetail = relatedList.slice(0, 5);
+        } else {
+          item._dupWarning = 'green';
+        }
+      } catch (dupErr) {
+        console.error('duplicate check:', dupErr);
+        item._dupWarning = null; // เช็คไม่สำเร็จ — ปล่อยผ่าน ไม่ Block (กัน Backend ล่มแล้วคีย์ไม่ได้เลย)
+      }
+      finalItems.push(item);
+    }
+
     setInvoices(prev => {
       // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
       // เปรียบ invoice_no + branch_no + amount ของ item ใหม่กับที่มีอยู่แล้ว
       const existingKeys = new Set(
         prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${inv.amount}`)
       );
-      const deduped = newItems.filter(
+      const deduped = finalItems.filter(
         item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${item.amount}`)
       );
       if (!deduped.length) return prev;
@@ -7296,6 +7377,17 @@ const handleSelectBranch = (item, meta = {}) => {
                   })()}
                 </td>
                 <td style={{ padding: '8px 9px', textAlign: 'center' }}>
+                  {/* MARKER_APCONTROLLER_DUP_STATUS_DOT_V1 */}
+                  {inv._dupWarning && (
+                    <span
+                      title={inv._dupWarning === 'yellow' ? 'มีรายการที่น่าสงสัยว่าอาจซ้ำ (ยืนยันผ่านแล้ว)' : 'เช็คแล้ว ไม่พบซ้ำ'}
+                      style={{
+                        display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%',
+                        marginRight: '4px',
+                        background: inv._dupWarning === 'yellow' ? '#EF9F27' : '#639922',
+                      }}
+                    />
+                  )}
                   {inv.status === 'sent' ? (
                     <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', background: '#FFF3CD', color: '#856404', fontWeight: '500', whiteSpace: 'nowrap' }}>
                       📤 {inv.sent_to_username ? `→ ${inv.sent_to_username}` : 'Sent'}
@@ -8405,6 +8497,20 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         const { data: blRow, error: selErr } = await db.from('batch_list').select('id').eq('batch_id', g.batch_id).single();
         if (selErr) console.error('[batch_list find on restore]', selErr);
         else if (blRow?.id) {
+          // MARKER_APCONTROLLER_BATCH_CASCADE_CLEANUP_V1
+          // ── Cleanup batch_comments (Chat) + batch_notifications (Bell) ──
+          // ── ก่อนลบ batch_list กัน Orphan Data ค้าง (Pattern เดียวกับ ──
+          // ── handleDeleteBatchRow ในหน้า Batch History) ────────────────
+          const delToken = sessionStorage.getItem('fastapn_token');
+          const delApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+          await fetch(`${delApiBase}/api/batch-comments/by-batch/${encodeURIComponent(g.batch_id)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_comments on restore:', e));
+          await fetch(`${delApiBase}/api/batch_notifications?eq_batch_id=${encodeURIComponent(g.batch_id)}&hard=true`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_notifications on restore:', e));
           const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
           if (bErr) console.error('[batch_list delete on restore]', bErr);
         }
@@ -8437,6 +8543,20 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         const { data: blRow, error: selErr } = await db.from('batch_list').select('id').eq('batch_id', g.batch_id).single();
         if (selErr) console.error('[batch_list find on delete]', selErr);
         else if (blRow?.id) {
+          // MARKER_APCONTROLLER_BATCH_CASCADE_CLEANUP_V1
+          // ── Cleanup batch_comments (Chat) + batch_notifications (Bell) ──
+          // ── ก่อนลบ batch_list กัน Orphan Data ค้าง (Pattern เดียวกับ ──
+          // ── handleDeleteBatchRow ในหน้า Batch History) ────────────────
+          const delToken = sessionStorage.getItem('fastapn_token');
+          const delApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+          await fetch(`${delApiBase}/api/batch-comments/by-batch/${encodeURIComponent(g.batch_id)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_comments on delete:', e));
+          await fetch(`${delApiBase}/api/batch_notifications?eq_batch_id=${encodeURIComponent(g.batch_id)}&hard=true`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_notifications on delete:', e));
           const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
           if (bErr) console.error('[batch_list delete on delete]', bErr);
         }

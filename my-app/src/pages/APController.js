@@ -5811,6 +5811,17 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
           recipient_username: senderUsername, audience: 'sender', batch_id: batchIdKey,
           status: isResend ? 'resend' : 'wait', title: senderTitle,
         }]);
+        // MARKER_APCONTROLLER_BATCH_REVIEW_NOTIF_V1
+        // ── Insert access_requests (batch_review) — ขึ้นใน Notification Bell ──
+        // ── ของผู้ตรวจ ค้างอยู่จนกว่าจะ Approve จริง (ไม่หายไปเอง 24 ชม.เหมือน ──
+        // ── รายการอื่น) — ลบตัวเก่าของ Batch นี้ก่อน กันซ้อนถ้าเคย Reject มาแล้ว ──
+        const { data: oldBR } = await db.from('access_requests').select('id, ref_batch_ids').eq('request_type', 'batch_review');
+        const oldBRMatch = (oldBR || []).filter(r => (r.ref_batch_ids || []).includes(batchIdKey));
+        if (oldBRMatch.length > 0) await db.from('access_requests').delete().in('id', oldBRMatch.map(r => r.id));
+        await db.from('access_requests').insert([{
+          request_type: 'batch_review', requester_name: senderUsername, target_username: toUsername,
+          ref_batch_ids: [batchIdKey], status: 'pending', created_at: new Date().toISOString(),
+        }]);
       } catch (nErr) { console.error('[insert batch_notifications on report-to]', nErr); }
       onDone({ id: batch.id, status: 'reviewing', reported_to_username: toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
       onClose();
@@ -6941,13 +6952,73 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       });
     }
 
+    // MARKER_APCONTROLLER_DUPLICATE_CHECK_SUBMIT_V1
+    // ── Duplicate Check ก่อน Submit จริง — bucket_list + legacy_poc_history ────
+    // ── แดง (is_duplicate) = ตัดออกทันที ไม่มีปุ่ม Accept ────────────────────
+    // ── เหลือง (has_warning) = Popup ให้เลือก Accept/Reject เอง ───────────────
+    const dupToken = sessionStorage.getItem('fastapn_token');
+    const dupApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+    const finalItems = [];
+    for (const item of newItems) {
+      try {
+        const params = new URLSearchParams({
+          vendor_no: item.vendor_no || '',
+          invoice_no: item.invoice_no || '',
+          amount: item.net != null ? String(item.net) : '',
+        });
+        if (item.form_data?.poNum) params.set('po_num', item.form_data.poNum);
+        const dupRes = await fetch(`${dupApiBase}/api/invoice-duplicate-check?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${dupToken}` },
+        });
+        const dupData = dupRes.ok
+          ? await dupRes.json()
+          : { is_duplicate: false, has_warning: false, matches: [], related_by_po: [], related_by_amount: [] };
+
+        if (dupData.is_duplicate) {
+          const m = dupData.matches[0] || {};
+          await confirmDialog.alert(
+            `Invoice "${item.invoice_no}" ซ้ำกับข้อมูลที่มีอยู่แล้ว\n` +
+            `Vendor: ${m.vendor_name || m.vendor_no || '-'}\nAmount: ${m.amount ?? '-'}\n` +
+            `Ref: ${m.ref || '-'} (${m.record_type === 'legacy' ? 'ข้อมูลเก่า' : 'Batch ระบบใหม่'})\n\n` +
+            `รายการนี้จะไม่ถูกเพิ่มเข้า Batch — กรุณาตรวจสอบก่อนคีย์ใหม่`,
+            { variant: 'danger' }
+          );
+          continue;
+        }
+
+        if (dupData.has_warning) {
+          const relatedList = [...(dupData.related_by_po || []), ...(dupData.related_by_amount || [])];
+          const detailLines = relatedList.slice(0, 3).map(r =>
+            `  • Invoice: ${r.invoice_no} | Vendor: ${r.vendor_name || r.vendor_no} | Amount: ${r.amount}`
+          ).join('\n');
+          // TODO: ตรวจสอบว่า confirmDialog.confirm รองรับ cancelText ไหม ถ้าไม่รองรับ
+          // ปุ่ม Cancel จะขึ้น Label Default แทน (ยังทำงานถูกต้อง แค่ Label อาจไม่ตรง)
+          const accepted = await confirmDialog.confirm(
+            `Invoice "${item.invoice_no}" มีรายการที่น่าสงสัยว่าอาจซ้ำ:\n${detailLines}\n\n` +
+            `ต้องการยืนยันบันทึกรายการนี้ต่อหรือไม่?`,
+            { variant: 'warning', confirmText: 'Accept (ยืนยันไม่ซ้ำ)', cancelText: 'Reject (ตัดออก)' }
+          );
+          if (!accepted) continue;
+          item._dupWarning = 'yellow';
+          item._dupConfirmedAt = new Date().toISOString();
+          item._dupDetail = relatedList.slice(0, 5);
+        } else {
+          item._dupWarning = 'green';
+        }
+      } catch (dupErr) {
+        console.error('duplicate check:', dupErr);
+        item._dupWarning = null; // เช็คไม่สำเร็จ — ปล่อยผ่าน ไม่ Block (กัน Backend ล่มแล้วคีย์ไม่ได้เลย)
+      }
+      finalItems.push(item);
+    }
+
     setInvoices(prev => {
       // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
       // เปรียบ invoice_no + branch_no + amount ของ item ใหม่กับที่มีอยู่แล้ว
       const existingKeys = new Set(
         prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${inv.amount}`)
       );
-      const deduped = newItems.filter(
+      const deduped = finalItems.filter(
         item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${item.amount}`)
       );
       if (!deduped.length) return prev;
@@ -7306,6 +7377,17 @@ const handleSelectBranch = (item, meta = {}) => {
                   })()}
                 </td>
                 <td style={{ padding: '8px 9px', textAlign: 'center' }}>
+                  {/* MARKER_APCONTROLLER_DUP_STATUS_DOT_V1 */}
+                  {inv._dupWarning && (
+                    <span
+                      title={inv._dupWarning === 'yellow' ? 'มีรายการที่น่าสงสัยว่าอาจซ้ำ (ยืนยันผ่านแล้ว)' : 'เช็คแล้ว ไม่พบซ้ำ'}
+                      style={{
+                        display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%',
+                        marginRight: '4px',
+                        background: inv._dupWarning === 'yellow' ? '#EF9F27' : '#639922',
+                      }}
+                    />
+                  )}
                   {inv.status === 'sent' ? (
                     <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', background: '#FFF3CD', color: '#856404', fontWeight: '500', whiteSpace: 'nowrap' }}>
                       📤 {inv.sent_to_username ? `→ ${inv.sent_to_username}` : 'Sent'}
@@ -8287,26 +8369,43 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   const fetchHistory = React.useCallback(async () => {
     setLoading(true);
     try {
+      // MARKER_APCONTROLLER_INVOICE_HISTORY_LEGACY_UNION_V1
       // ── คำนวณสดตอนเรียกจริงแต่ละครั้ง (ไม่ใช่ตัวแปรนอกที่ทำ dependency ──
       // ── เปลี่ยนทุก render จนวนลูปไม่มีที่สิ้นสุด — เคยเป็นบั๊กมาก่อน) ──────
       const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      let query = `/bucket_list?eq_status=done`;
       const isAllUsers = mainTab === 'invoicehistory';
-      if (!isAllUsers) {
-        query += `&eq_created_by=${encodeURIComponent(userName || currentUser?.email || '')}`;
-      }
-      // ── ตัดสินว่า "เร็ว" (≤7 วัน) หรือ "เก่า" (>7 วัน) จาก mainTab/subTab ──
       const isRecent = isAllUsers ? subTab === 'recent' : mainTab === 'myjob';
-      if (isRecent) query += `&gte_exported_at=${sevenDaysAgoISO}`;
-      else query += `&lt_exported_at=${sevenDaysAgoISO}`;
-      if (dateFrom) query += `&gte_receive_date=${dateFrom}`;
-      if (dateTo) query += `&lte_receive_date=${dateTo}`;
-      query += `&order=receive_date.desc`;
-      const data = await apiFetch(query);
-      setRowsData(Array.isArray(data) ? data : []);
+      // ── เปลี่ยนจาก /bucket_list ตรงๆ เป็น /invoice-history (Backend UNION กับ ──
+      // ── legacy_poc_history ให้เองถ้า all_users=true และ Role เป็น Owner/Admin) ──
+      const params = new URLSearchParams({
+        all_users: String(isAllUsers),
+        recent: String(isRecent),
+      });
+      if (!isAllUsers) params.set('user_name', userName || currentUser?.email || '');
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
+      const data = await apiFetch(`/invoice-history?${params.toString()}`);
+      // ── Map Field ชื่อใหม่จาก Endpoint กลับเป็นชื่อเดิมที่โค้ดส่วนอื่นในไฟล์นี้ ──
+      // ── ใช้อยู่แล้ว (batch_id, invoice_no, vendor_name, net) กัน Refactor ทั้งไฟล์ ──
+      const mapped = (Array.isArray(data) ? data : []).map(r => ({
+        id: r.record_id,
+        batch_id: r.batch_name,
+        invoice_no: r.invoice,
+        vendor_name: r.vendor,
+        bu: r.bu,
+        receive_date: r.receive_date,
+        amount: r.amount,
+        vat: r.vat,
+        net: r.total,
+        exported_at: r.exported_at,
+        created_by: r.created_by,
+        record_type: r.record_type || 'actual',
+      }));
+      setRowsData(mapped);
     } catch (e) { console.error('fetch invoice history:', e); }
     setLoading(false);
   }, [mainTab, subTab, dateFrom, dateTo, userName, currentUser]);
+
 
   React.useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
@@ -8398,6 +8497,24 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 
   // ── View — เปิด Popup ดูรายละเอียด Invoice แบบ Read-only ─────────────────
   const [viewingInvoice, setViewingInvoice] = React.useState(null);
+  // ── Legacy Detail: ดึง Field เต็ม (PO Num, GL Code, Dept Code, Tax Code, Note) ──
+  // ── เฉพาะตอนเปิด View Modal ของแถว Legacy เท่านั้น — Owner/Admin เท่านั้นที่เรียกได้ ──
+  const [legacyDetail, setLegacyDetail] = React.useState(null);
+  React.useEffect(() => {
+    if (!viewingInvoice || viewingInvoice.record_type !== 'legacy') { setLegacyDetail(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = sessionStorage.getItem('fastapn_token');
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        const res = await fetch(`${apiBase}/api/legacy_poc_history/${viewingInvoice.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!cancelled && res.ok) setLegacyDetail(await res.json());
+      } catch (e) { console.error('legacy detail fetch:', e); }
+    })();
+    return () => { cancelled = true; };
+  }, [viewingInvoice]);
 
   // ── Restore ทั้ง Batch — คืนสถานะ pending ให้ทุก Invoice ใน Batch นั้น ──
   const [restoringBatchId, setRestoringBatchId] = React.useState(null);
@@ -8415,6 +8532,20 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         const { data: blRow, error: selErr } = await db.from('batch_list').select('id').eq('batch_id', g.batch_id).single();
         if (selErr) console.error('[batch_list find on restore]', selErr);
         else if (blRow?.id) {
+          // MARKER_APCONTROLLER_BATCH_CASCADE_CLEANUP_V1
+          // ── Cleanup batch_comments (Chat) + batch_notifications (Bell) ──
+          // ── ก่อนลบ batch_list กัน Orphan Data ค้าง (Pattern เดียวกับ ──
+          // ── handleDeleteBatchRow ในหน้า Batch History) ────────────────
+          const delToken = sessionStorage.getItem('fastapn_token');
+          const delApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+          await fetch(`${delApiBase}/api/batch-comments/by-batch/${encodeURIComponent(g.batch_id)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_comments on restore:', e));
+          await fetch(`${delApiBase}/api/batch_notifications?eq_batch_id=${encodeURIComponent(g.batch_id)}&hard=true`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_notifications on restore:', e));
           const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
           if (bErr) console.error('[batch_list delete on restore]', bErr);
         }
@@ -8447,6 +8578,20 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         const { data: blRow, error: selErr } = await db.from('batch_list').select('id').eq('batch_id', g.batch_id).single();
         if (selErr) console.error('[batch_list find on delete]', selErr);
         else if (blRow?.id) {
+          // MARKER_APCONTROLLER_BATCH_CASCADE_CLEANUP_V1
+          // ── Cleanup batch_comments (Chat) + batch_notifications (Bell) ──
+          // ── ก่อนลบ batch_list กัน Orphan Data ค้าง (Pattern เดียวกับ ──
+          // ── handleDeleteBatchRow ในหน้า Batch History) ────────────────
+          const delToken = sessionStorage.getItem('fastapn_token');
+          const delApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+          await fetch(`${delApiBase}/api/batch-comments/by-batch/${encodeURIComponent(g.batch_id)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_comments on delete:', e));
+          await fetch(`${delApiBase}/api/batch_notifications?eq_batch_id=${encodeURIComponent(g.batch_id)}&hard=true`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${delToken}` },
+          }).catch((e) => console.error('delete batch_notifications on delete:', e));
           const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
           if (bErr) console.error('[batch_list delete on delete]', bErr);
         }
@@ -8504,7 +8649,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
     const map = new Map();
     filtered.forEach(r => {
       const key = r.batch_id || '(ไม่มี Batch)';
-      if (!map.has(key)) map.set(key, { batch_id: r.batch_id || '', bu: r.bu, receive_date: r.receive_date, exported_at: r.exported_at, items: [] });
+      if (!map.has(key)) map.set(key, { batch_id: r.batch_id || '', bu: r.bu, receive_date: r.receive_date, exported_at: r.exported_at, record_type: r.record_type || 'actual', items: [] });
       map.get(key).items.push(r);
     });
     return Array.from(map.values()).map(g => ({
@@ -8659,13 +8804,18 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                       onClick={() => setExpandedBatches(prev => { const next = new Set(prev); next.has(g.batch_id) ? next.delete(g.batch_id) : next.add(g.batch_id); return next; })}>
                       {canSeeAll && (
                         <td style={{ padding: '8px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                          {g.record_type !== 'legacy' && (
                           <input type="checkbox" checked={groupAllSelected}
                             onChange={() => setSelectedRows(prev => { const next = new Set(prev); groupItemIds.forEach(id => { groupAllSelected ? next.delete(id) : next.add(id); }); return next; })} />
+                          )}
                         </td>
                       )}
                       <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#1a3a5c', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={g.batch_id || ''}>
                         <span style={{ display: 'inline-block', marginRight: '6px', transition: 'transform .12s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
                         {g.batch_id || '(ไม่มี Batch)'}
+                        {g.record_type === 'legacy' && (
+                          <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 500, padding: '1px 6px', borderRadius: '20px', background: '#F1EFE8', color: '#5F5E5A', fontFamily: 'sans-serif' }}>Legacy</span>
+                        )}
                       </td>
                       <td style={{ padding: '8px 10px' }}></td>
                       <td style={{ padding: '8px 10px' }}></td>
@@ -8675,6 +8825,14 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalVat)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalNet)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        {g.record_type === 'legacy' ? (
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                            <button onClick={e => { e.stopPropagation(); setViewingInvoice(g.items[0]); }} title="Detail"
+                              style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '15px', cursor: 'pointer' }}>
+                              👁
+                            </button>
+                          </div>
+                        ) : (
                         <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
                           <button onClick={e => { e.stopPropagation(); handleRestoreBatch(g); }} disabled={restoringBatchId === g.batch_id} title="Restore ทั้ง Batch"
                             style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #c5d8f0', background: restoringBatchId === g.batch_id ? '#f0f0f0' : '#eef4fb', color: '#1a3a5c', fontSize: '15px', cursor: restoringBatchId === g.batch_id ? 'default' : 'pointer' }}>
@@ -8691,6 +8849,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                             </button>
                           )}
                         </div>
+                        )}
                       </td>
                       <td style={{ padding: '8px 10px', color: '#888' }}>{fmtDT(ea)}</td>
                       {mainTab === 'invoicehistory' && <td style={{ padding: '8px 10px' }}></td>}
@@ -8703,8 +8862,10 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                         <tr key={inv.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
                           {canSeeAll && (
                             <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                              {inv.record_type !== 'legacy' && (
                               <input type="checkbox" checked={selectedRows.has(inv.id)}
                                 onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(inv.id) ? next.delete(inv.id) : next.add(inv.id); return next; })} />
+                              )}
                             </td>
                           )}
                           <td style={{ padding: '6px 10px', fontSize: '11px', color: '#aaa' }}>{g.batch_id || '-'}</td>
@@ -8717,15 +8878,17 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                           <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(inv.net)}</td>
                           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                              {inv.record_type !== 'legacy' && (
                               <button onClick={() => handleRestore(inv)} disabled={restoringId === inv.id} title="Restore"
                                 style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #c5d8f0', background: restoringId === inv.id ? '#f0f0f0' : '#eef4fb', color: '#1a3a5c', fontSize: '15px', cursor: restoringId === inv.id ? 'default' : 'pointer' }}>
                                 {restoringId === inv.id ? '···' : '↩'}
                               </button>
+                              )}
                               <button onClick={() => setViewingInvoice(inv)} title="View"
                                 style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '15px', cursor: 'pointer' }}>
                                 👁
                               </button>
-                              {canSeeAll && (
+                              {canSeeAll && inv.record_type !== 'legacy' && (
                                 <button onClick={() => handleDeleteOne(inv)} disabled={deletingOneId === inv.id} title="Delete"
                                   style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '0.5px solid #f7c1c1', background: deletingOneId === inv.id ? '#f0f0f0' : '#FCEBEB', color: '#791F1F', fontSize: '15px', cursor: deletingOneId === inv.id ? 'default' : 'pointer' }}>
                                   {deletingOneId === inv.id ? '···' : '🗑'}
@@ -8765,6 +8928,23 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
               <div><span style={{ color: '#888' }}>Exported At: </span>{fmtDT(viewingInvoice.exported_at ? new Date(viewingInvoice.exported_at) : null)}</div>
               <div><span style={{ color: '#888' }}>Created By: </span>{viewingInvoice.created_by || '-'}</div>
             </div>
+            {viewingInvoice.record_type === 'legacy' && (
+              <div style={{ background: '#FAEEDA', border: '0.5px solid #EF9F27', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: '#854F0B', marginBottom: '6px' }}>ข้อมูลจากระบบเก่า (Legacy)</div>
+                {!legacyDetail ? (
+                  <div style={{ fontSize: '11px', color: '#854F0B' }}>กำลังโหลด...</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '11px', color: '#633806' }}>
+                    <div><span style={{ color: '#854F0B' }}>PO Num: </span>{legacyDetail.po_num || '-'}</div>
+                    <div><span style={{ color: '#854F0B' }}>GL Code: </span>{legacyDetail.gl_code || '-'}</div>
+                    <div><span style={{ color: '#854F0B' }}>Dept Code: </span>{legacyDetail.dept_code || '-'}</div>
+                    <div><span style={{ color: '#854F0B' }}>Tax Code: </span>{legacyDetail.tax_code || '-'}</div>
+                    <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#854F0B' }}>Note: </span>{legacyDetail.note || '-'}</div>
+                    <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#854F0B' }}>Source: </span>{legacyDetail.source || '-'}</div>
+                  </div>
+                )}
+              </div>
+            )}
             {Array.isArray(viewingInvoice.lines) && viewingInvoice.lines.length > 0 && (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '14px' }}>
                 <thead>

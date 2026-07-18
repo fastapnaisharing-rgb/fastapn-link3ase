@@ -19,6 +19,9 @@ import { useUserRole } from './contexts/useUserRole';
 import { db } from './lib/db';
 import { useRealtimeRefresh } from './useRealtimeRefresh';
 import { broadcastWs } from './wsManager';
+// MARKER_APP_BATCH_REVIEW_BELL_V1
+import BatchChatDrawer from './pages/BatchChatDrawer';
+import FilePreviewPopup from './FilePreviewPopup';
 import { confirmDialog } from './confirmDialog';
 import ConfirmDialogHost from './ConfirmDialogHost';
 
@@ -99,7 +102,7 @@ const BellIcon = () => (
 
 const DOC_FOLDER_LABELS = { ap: 'AP Manual', vat: 'VAT Control', ie: 'I-Expense', gl: 'GL Report', ipro: 'I-Pro Interface' };
 
-function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe, onClosePeriod }) {
+function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe, onClosePeriod, onGotoBatch, onOpenChatBatch, onRejectBatch, onPreviewFile }) {
   const pendingCount = requests.filter(r => r.status === 'pending').length;
   const pendingReqs = requests.filter(r => r.status === 'pending');
   // ── แก้ Bug: เดิมไม่มี Filter 24 ชม. เลย ทำให้ Request เก่าค้างอยู่ตลอดไป ──
@@ -166,32 +169,52 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
               {pendingReqs.map(req => {
                 const isSignup = req.request_type === 'signup';
                 const isBatchTransfer = req.request_type === 'batch_transfer';
+                const isBatchReview = req.request_type === 'batch_review';
+                const batchIdForReview = (req.ref_batch_ids || [])[0];
                 const folderLabel = DOC_FOLDER_LABELS[req.folder_key] || req.folder_key;
                 const initial = (req.requester_name || '?')[0].toUpperCase();
                 const title = isSignup
                   ? `${req.requester_name} ขอสมัครเข้าใช้งานระบบ`
                   : isBatchTransfer
                     ? `${req.requester_name} ส่ง Batch มาให้ (${(req.ref_batch_ids || []).length} invoices)`
-                    : (isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`);
+                    : isBatchReview
+                      ? `${req.requester_name} ส่ง Batch ${batchIdForReview} มาให้ตรวจ`
+                      : (isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`);
                 return (
                   <div key={req.id} style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', background: '#f8fbff' }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                       <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: isSignup ? '#EAF3DE' : '#e8f0fb', color: isSignup ? '#27500A' : '#0C447C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', marginBottom: '2px' }}>
-                          {isSignup && <span style={{ fontSize: '10px', background: '#EAF3DE', color: '#27500A', padding: '1px 6px', borderRadius: '20px', marginRight: '6px' }}>สมัครใหม่</span>}
+                        <div
+                          onClick={isBatchReview ? () => onGotoBatch?.(batchIdForReview) : undefined}
+                          style={{ fontSize: '13px', fontWeight: '500', color: isBatchReview ? '#0C447C' : '#1a3a5c', marginBottom: '2px', cursor: isBatchReview ? 'pointer' : 'default', textDecoration: isBatchReview ? 'underline' : 'none', textUnderlineOffset: '2px' }}
+                        >
+                          {isSignup && <span style={{ fontSize: '10px', background: '#EAF3DE', color: '#27500A', padding: '1px 6px', borderRadius: '20px', marginRight: '6px', textDecoration: 'none', display: 'inline-block' }}>สมัครใหม่</span>}
+                          {isBatchReview && <span style={{ fontSize: '10px', background: '#E6F1FB', color: '#0C447C', padding: '1px 6px', borderRadius: '20px', marginRight: '6px', textDecoration: 'none', display: 'inline-block' }}>ส่งตรวจ</span>}
                           {title}
                         </div>
-                        <div style={{ fontSize: '11px', color: '#888', marginBottom: isOwner ? '10px' : '0' }}>
-                          {req.requester_name} · {formatTime(req.created_at)}
+                        <div style={{ fontSize: '11px', color: '#888', marginBottom: (isOwner || isBatchReview) ? '10px' : '0' }}>
+                          {req.requester_name} · {formatTime(req.created_at)}{isBatchReview ? ' · ยังไม่ Approve' : ''}
                         </div>
-                        {isOwner && (
+                        {isBatchReview && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button onClick={() => onPreviewFile?.(req)} title="ดูไฟล์ Invoice Register" style={{ width: '28px', height: '28px', padding: 0, fontSize: '13px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', cursor: 'pointer' }}>👁</button>
+                              <button onClick={() => onOpenChatBatch?.(batchIdForReview)} title="Chat" style={{ width: '28px', height: '28px', padding: 0, fontSize: '13px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', cursor: 'pointer' }}>💬</button>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button onClick={() => onApprove(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: 'none', background: '#EAF3DE', color: '#27500A', cursor: 'pointer', fontWeight: '500' }}>อนุมัติ</button>
+                              <button onClick={() => onRejectBatch?.(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', cursor: 'pointer' }}>ปฏิเสธ</button>
+                            </div>
+                          </div>
+                        )}
+                        {!isBatchReview && isOwner && (
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <button onClick={() => onApprove(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: 'none', background: '#EAF3DE', color: '#27500A', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>✅ อนุมัติ</button>
                             <button onClick={() => onReject(req)} style={{ fontSize: '12px', padding: '5px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>❌ ปฏิเสธ</button>
                           </div>
                         )}
-                        {!isOwner && (
+                        {!isBatchReview && !isOwner && (
                           <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: '#FFF3CD', color: '#856404' }}>⏳ รออนุมัติ</span>
                         )}
                       </div>
@@ -499,6 +522,10 @@ function MainApp() {
   const handleOpenInbox = (tab = 'inbox') => { setPendingHistoryTab(tab); setActivePage('ap-gr'); };
   const [showBell, setShowBell] = useState(false);
   const [requests, setRequests] = useState([]);
+  // MARKER_APP_BATCH_REVIEW_BELL_V1
+  const [rejectChatReq, setRejectChatReq] = useState(null); // { batch_id } สำหรับ Reject จาก Bell
+  const [viewChatBatchId, setViewChatBatchId] = useState(null); // Batch ID สำหรับดู Chat อย่างเดียว
+  const [previewFile, setPreviewFile] = useState(null); // { fileId, fileName }
   const [apNotifications, setApNotifications] = useState([]);
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
   const [incomingBatch, setIncomingBatch] = useState(null); // ✅ batch transfer notification
@@ -632,7 +659,14 @@ function MainApp() {
       });
       const data = await res.json();
       const all = Array.isArray(data) ? data : [];
-      setRequests(all.filter(r => r.request_type !== 'batch_transfer'));
+      const myUsernameLower = (userName || currentUser?.email || '').trim().toLowerCase();
+      setRequests(all.filter(r => {
+        if (r.request_type === 'batch_transfer') return false;
+        if (r.request_type === 'batch_review') {
+          return String(r.target_username || '').trim().toLowerCase() === myUsernameLower;
+        }
+        return true;
+      }));
       // ── poll bucket_list ที่ส่งมาให้เรา (status=sent) ──
       const myUsername = userName || currentUser?.email || '';
       if (myUsername) {
@@ -710,6 +744,15 @@ function MainApp() {
         // ── ในหน้า Users Tab ทันที ไม่ต้อง Refresh หน้าเอง (ฝั่งรับอยู่ที่ ──
         // ── UserManagement.js — subscribeWs('signup_approved')) ──────────
         broadcastWs('signup_approved', { user_id: req.ref_user_id });
+      } else if (req.request_type === 'batch_review') {
+        const batchId = (req.ref_batch_ids || [])[0];
+        await db.from('batch_list').update({
+          status: 'approved', approved_at: new Date().toISOString(),
+        }).eq('batch_id', batchId);
+        await db.from('access_requests').update({
+          status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
+        }).eq('id', req.id);
+        broadcastWs('batch_approved', { batch_id: batchId });
       } else {
         await db.from('doc_access_override').upsert({
           user_id: req.requester_id, folder_key: req.folder_key, allowed: true,
@@ -724,6 +767,29 @@ function MainApp() {
       }
       fetchRequests();
     } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
+  };
+
+  const handleGotoBatch = () => { handleOpenInbox('inbox'); setShowBell(false); };
+  const handleOpenChatBatch = (batchId) => setViewChatBatchId(batchId);
+  const handleRejectBatchFromBell = (req) => {
+    const batchId = (req.ref_batch_ids || [])[0];
+    setRejectChatReq({ id: req.id, batch_id: batchId });
+  };
+  const handleRejectConfirmedFromBell = async (batch) => {
+    try {
+      await db.from('batch_list').update({ status: 'rejected', approved_at: null }).eq('batch_id', batch.batch_id);
+      broadcastWs('batch_rejected', { batch_id: batch.batch_id });
+    } catch (e) { console.error('[reject batch from bell]', e); }
+    setRejectChatReq(null);
+    fetchRequests();
+  };
+  const handlePreviewFileForReq = async (req) => {
+    const batchId = (req.ref_batch_ids || [])[0];
+    try {
+      const { data } = await db.from('batch_list').select('invoice_register_file_id, invoice_register_file_name').eq('batch_id', batchId).single();
+      if (!data?.invoice_register_file_id) { confirmDialog.alert('ยังไม่มีไฟล์สำหรับ Batch นี้'); return; }
+      setPreviewFile({ fileId: data.invoice_register_file_id, fileName: data.invoice_register_file_name });
+    } catch (e) { confirmDialog.alert('โหลดไฟล์ไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
   const handleReject = async (req) => {
@@ -1136,6 +1202,36 @@ function MainApp() {
           onMarkApNotifRead={handleMarkApNotifRead}
           onClearOrphanSafe={handleClearOrphanSafe}
           onClosePeriod={handleClosePeriodFromBell}
+          onGotoBatch={handleGotoBatch}
+          onOpenChatBatch={handleOpenChatBatch}
+          onRejectBatch={handleRejectBatchFromBell}
+          onPreviewFile={handlePreviewFileForReq}
+        />
+      )}
+      {rejectChatReq && (
+        <BatchChatDrawer
+          batch={rejectChatReq}
+          isRejectMode={true}
+          currentUsername={userName || currentUser?.email || ''}
+          onClose={() => setRejectChatReq(null)}
+          onMinimize={() => setRejectChatReq(null)}
+          onRejectConfirmed={handleRejectConfirmedFromBell}
+        />
+      )}
+      {viewChatBatchId && (
+        <BatchChatDrawer
+          batch={{ batch_id: viewChatBatchId }}
+          isRejectMode={false}
+          currentUsername={userName || currentUser?.email || ''}
+          onClose={() => setViewChatBatchId(null)}
+          onMinimize={() => setViewChatBatchId(null)}
+        />
+      )}
+      {previewFile && (
+        <FilePreviewPopup
+          fileId={previewFile.fileId}
+          fileName={previewFile.fileName}
+          onClose={() => setPreviewFile(null)}
         />
       )}
       {toast && (

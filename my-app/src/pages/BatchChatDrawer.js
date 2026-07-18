@@ -18,6 +18,39 @@ function getToken() {
   return sessionStorage.getItem('fastapn_token');
 }
 
+// MARKER_CHATDRAWER_AUTHED_IMAGE_V1
+// ── AuthedImage — โหลดรูปที่ต้อง Auth (<img src> ธรรมดาแนบ Token ไปด้วย ────
+// ── ไม่ได้ — ต้อง fetch() พร้อม Token ก่อน แล้วแปลงเป็น Blob URL แทน) ──────
+function AuthedImage({ url, alt, onClick, style }) {
+  const [blobUrl, setBlobUrl] = useState(null);
+
+  useEffect(() => {
+    let revoked = false;
+    let objectUrl = null;
+    (async () => {
+      try {
+        const token = getToken();
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        objectUrl = URL.createObjectURL(blob);
+        if (!revoked) setBlobUrl(objectUrl);
+      } catch (e) {
+        console.error('[AuthedImage] load error:', e);
+      }
+    })();
+    return () => {
+      revoked = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+
+  if (!blobUrl) {
+    return <div style={{ ...style, background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#8a94a3' }}>โหลด...</div>;
+  }
+  return <img src={blobUrl} alt={alt} onClick={() => onClick?.(blobUrl)} style={style} />;
+}
+
 export default function BatchChatDrawer({ batch, isRejectMode = false, onClose, onMinimize, onRejectConfirmed, currentUsername = '' }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
@@ -215,10 +248,10 @@ export default function BatchChatDrawer({ batch, isRejectMode = false, onClose, 
                   </div>
                 )}
                 {m.image_url && (
-                  <img
-                    src={imgSrc(m)}
+                  <AuthedImage
+                    url={imgSrc(m)}
                     alt="attachment"
-                    onClick={() => setLightboxSrc(imgSrc(m))}
+                    onClick={(blobUrl) => setLightboxSrc(blobUrl)}
                     style={{ maxWidth: '130px', maxHeight: '130px', borderRadius: '6px', border: '0.5px solid #97C459', marginTop: '3px', display: 'block', cursor: 'zoom-in' }}
                   />
                 )}
