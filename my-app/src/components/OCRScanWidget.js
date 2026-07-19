@@ -8,6 +8,7 @@
  */
 import React, { useState, useEffect, useCallback } from "react";
 import { callGeminiSplitMerge, checkGeminiToggle } from "../utils/geminiSplitMerge";
+import { useAuth } from "../contexts/AuthContext";
 
 const API_BASE = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '') + '/api/ocr';
 
@@ -48,17 +49,32 @@ const SET_STATUS_LABEL = {
 
 // ---------------- ส่วน Monitor: รายการ Batch ทั้งหมดที่เคย Upload ----------------
 function BatchHistory({ onSelectBatch }) {
+  const { userRole } = useAuth();
+  const isOwner = String(userRole || "").toLowerCase() === "owner";
+  const [queueTab, setQueueTab] = useState("mine"); // "mine" | "all"
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeSets, setActiveSets] = useState([]);
 
   const loadBatches = useCallback(async () => {
     try {
-      const data = await apiFetch(`${API_BASE}/batches`);
+      const scopeParam = queueTab === "all" && isOwner ? "?scope=all" : "";
+      const data = await apiFetch(`${API_BASE}/batches${scopeParam}`);
       setBatches(data.batches);
     } catch (err) {
       console.error("load batches error:", err);
     } finally {
       setLoading(false);
+    }
+  }, [queueTab, isOwner]);
+
+  // ---------------- ดึงชุดเอกสาร (Set) ที่กำลังทำงานอยู่ พร้อม % Progress ----------------
+  const loadActiveSets = useCallback(async () => {
+    try {
+      const data = await apiFetch(`${API_BASE}/active-sets`);
+      setActiveSets(data.activeSets || []);
+    } catch (err) {
+      console.error("load active sets error:", err);
     }
   }, []);
 
@@ -67,6 +83,12 @@ function BatchHistory({ onSelectBatch }) {
     const interval = setInterval(loadBatches, 5000); // อัพเดตทุก 5 วิ เผื่อมี Batch กำลังทำงานอยู่
     return () => clearInterval(interval);
   }, [loadBatches]);
+
+  useEffect(() => {
+    loadActiveSets();
+    const interval = setInterval(loadActiveSets, 3000); // ถี่กว่า Batch List ให้ % ขยับสด
+    return () => clearInterval(interval);
+  }, [loadActiveSets]);
 
   if (loading) return <p style={{ color: "#888", marginTop: 24 }}>กำลังโหลดประวัติ...</p>;
   if (batches.length === 0) return null;
@@ -85,6 +107,32 @@ function BatchHistory({ onSelectBatch }) {
 
   return (
     <div style={{ marginTop: 32 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12, borderBottom: "0.5px solid #eef0f2" }}>
+        <div
+          onClick={() => setQueueTab("mine")}
+          style={{
+            padding: "6px 14px", fontSize: 13, cursor: "pointer",
+            fontWeight: queueTab === "mine" ? 500 : 400,
+            color: queueTab === "mine" ? "#1a3a5c" : "#8b94a0",
+            borderBottom: queueTab === "mine" ? "2px solid #1a3a5c" : "2px solid transparent",
+          }}
+        >
+          My Queue
+        </div>
+        {isOwner && (
+          <div
+            onClick={() => setQueueTab("all")}
+            style={{
+              padding: "6px 14px", fontSize: 13, cursor: "pointer",
+              fontWeight: queueTab === "all" ? 500 : 400,
+              color: queueTab === "all" ? "#1a3a5c" : "#8b94a0",
+              borderBottom: queueTab === "all" ? "2px solid #1a3a5c" : "2px solid transparent",
+            }}
+          >
+            All Queue
+          </div>
+        )}
+      </div>
       <p style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>ไฟล์ที่เคยอัพโหลด</p>
       {batches.map((b) => {
         const isProcessing = b.pages_done < b.total_pages;
@@ -104,9 +152,33 @@ function BatchHistory({ onSelectBatch }) {
               background: isProcessing ? "#fff8ec" : "#fff",
             }}
           >
-            <span>
-              {b.source_file_name || "(ไม่ทราบชื่อไฟล์)"} — {b.pages_done}/{b.total_pages} หน้า
-            </span>
+            <div style={{ flex: 1 }}>
+              <div>
+                {b.source_file_name || "(ไม่ทราบชื่อไฟล์)"} — {b.pages_done}/{b.total_pages} หน้า
+                {queueTab === "all" && b.uploaded_by_name && (
+                  <span style={{ fontSize: 11, color: "#8b94a0", marginLeft: 8 }}>
+                    (อัพโหลดโดย {b.uploaded_by_name})
+                  </span>
+                )}
+              </div>
+              {/* ---------------- ชุดเอกสาร (Set) ที่กำลังทำงานอยู่ พร้อม % Progress จริง ---------------- */}
+              {activeSets.filter((s) => s.batch_id === b.batch_id).map((s) => (
+                <div key={s.set_id} style={{ marginTop: 6, marginRight: 12 }} onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8b94a0", marginBottom: 2 }}>
+                    <span>ชุดกำลังทำงาน ({s.pages_done}/{s.total_pages} หน้า)</span>
+                    <span>{s.display_progress_pct != null ? `${s.display_progress_pct}%` : "-"}</span>
+                  </div>
+                  <div style={{ width: "100%", height: 5, background: "#eef0f2", borderRadius: 3, overflow: "hidden" }}>
+                    <div
+                      style={{
+                        width: `${Math.min(100, s.display_progress_pct || 0)}%`,
+                        height: "100%", background: "#5b9279", transition: "width 0.4s ease",
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
             <span style={{ fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 8 }}>
               {b.sets_ready > 0 && <span style={{ color: "#3c763d" }}>พร้อมตรวจ {b.sets_ready} • </span>}
               {b.sets_approved > 0 && <span>อนุมัติแล้ว {b.sets_approved} • </span>}
@@ -130,6 +202,8 @@ function BatchHistory({ onSelectBatch }) {
 }
 
 export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToReview }) {
+  const { userRole } = useAuth();
+  const isOwner = String(userRole || "").toLowerCase() === "owner";
   const [batchId, setBatchId] = useState(null);
   const [phase, setPhase] = useState("upload"); // upload | processing
   const [uploading, setUploading] = useState(false);
@@ -157,6 +231,10 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   }, []);
 
   const handleToggleGemini = async () => {
+    if (!isOwner) {
+      alert("เฉพาะ Owner เท่านั้นที่มีสิทธิ์เปลี่ยนโหมด Gemini OCR / OCR extract");
+      return;
+    }
     if (geminiToggleLoading) return;
     const newValue = !geminiEnabled;
     setGeminiToggleLoading(true);
@@ -302,6 +380,20 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
     const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
   }, [batchId, poll]);
+
+  // ---------------- ลบทีละชุดเอกสาร (Set) ----------------
+  const handleDeleteSet = async (setId, invoiceNo) => {
+    const ok = window.confirm(
+      `ลบชุดเอกสาร "${invoiceNo || "(ไม่มีเลข Invoice)"}" ออกจากตารางนี้?\n\nการลบนี้ไม่สามารถย้อนกลับได้`
+    );
+    if (!ok) return;
+    try {
+      await apiFetch(`${API_BASE}/set/${setId}`, { method: "DELETE" });
+      poll(); // รีเฟรชตารางทันทีหลังลบสำเร็จ
+    } catch (err) {
+      alert(`ลบไม่สำเร็จ: ${err.message}`);
+    }
+  };
 
   // ---------------- ดูผล OCR ของชุดที่เลือก (พร้อมโหลดรูปภาพ) ----------------
   const handleViewResult = async (setId) => {
@@ -459,12 +551,19 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
             <button
               onClick={handleToggleGemini}
               disabled={geminiToggleLoading}
-              title={geminiEnabled ? "Gemini OCR เปิดอยู่ — คลิกเพื่อปิด (กลับไปใช้ OCR extract ปกติ)" : "OCR extract (PaddleOCR ปกติ) — คลิกเพื่อเปิด Gemini OCR"}
+              title={
+                !isOwner
+                  ? "เฉพาะ Owner เท่านั้นที่มีสิทธิ์เปลี่ยนโหมดนี้"
+                  : geminiEnabled
+                  ? "Gemini OCR เปิดอยู่ — คลิกเพื่อปิด (กลับไปใช้ OCR extract ปกติ)"
+                  : "OCR extract (PaddleOCR ปกติ) — คลิกเพื่อเปิด Gemini OCR"
+              }
               style={{
                 background: geminiEnabled ? "#5b9279" : "rgba(255,255,255,0.15)",
                 color: "#fff", fontSize: 12, padding: "5px 10px", borderRadius: 20,
-                border: "none", cursor: geminiToggleLoading ? "wait" : "pointer",
-                display: "flex", alignItems: "center", gap: 6, opacity: geminiToggleLoading ? 0.6 : 1,
+                border: "none", cursor: !isOwner ? "not-allowed" : geminiToggleLoading ? "wait" : "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+                opacity: !isOwner ? 0.5 : geminiToggleLoading ? 0.6 : 1,
               }}
             >
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: geminiEnabled ? "#c9f2da" : "#8b94a0", flexShrink: 0 }} />
@@ -598,8 +697,8 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: "#fff", borderRadius: 12, padding: 20, width: "90%", maxWidth: 600,
-              maxHeight: "80vh", overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+              background: "#fff", borderRadius: 12, padding: 20, width: "90%", maxWidth: 720,
+              maxHeight: "85vh", overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -679,28 +778,37 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
               <td style={{ ...tdStyle, color: "#4b5563" }}>{s.document_type || "-"}</td>
               <td style={tdStyle}>{buBadge(s.bu)}</td>
               <td style={{ ...tdStyle, color: "#4b5563" }}>{s.confidence != null ? `${s.confidence}%` : "-"}</td>
-              <td style={{ ...tdStyle, color: "#4b5563" }}>{s._num}</td>
+              <td style={{ ...tdStyle, color: "#4b5563" }}>{s.total_pages}</td>
               <td style={tdStyle}>{statusBadge(s.status)}</td>
               <td style={tdStyle}>
-                {!isCompleted && s.status === "ready_for_review" && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      onClick={() => handleViewResult(s.id)}
-                      style={{ fontSize: 12, color: "#1a3a5c", border: "0.5px solid #d8dde3", background: "#fff", padding: "5px 10px", borderRadius: 6, cursor: "pointer" }}
-                    >
-                      ดูผล OCR
-                    </button>
-                    {onReadyToReview && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {!isCompleted && s.status === "ready_for_review" && (
+                    <>
                       <button
-                        onClick={() => onReadyToReview(s.id)}
+                        onClick={() => handleViewResult(s.id)}
                         style={{ fontSize: 12, color: "#1a3a5c", border: "0.5px solid #d8dde3", background: "#fff", padding: "5px 10px", borderRadius: 6, cursor: "pointer" }}
                       >
-                        ไปกรอกฟอร์ม
+                        ดูผล OCR
                       </button>
-                    )}
-                  </div>
-                )}
-                {isCompleted && <span style={{ color: "#b0b6bd" }}>-</span>}
+                      {onReadyToReview && (
+                        <button
+                          onClick={() => onReadyToReview(s.id)}
+                          style={{ fontSize: 12, color: "#1a3a5c", border: "0.5px solid #d8dde3", background: "#fff", padding: "5px 10px", borderRadius: 6, cursor: "pointer" }}
+                        >
+                          ไปกรอกฟอร์ม
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {isCompleted && <span style={{ color: "#b0b6bd" }}>-</span>}
+                  <button
+                    onClick={() => handleDeleteSet(s.id, s.invoice_no)}
+                    title="ลบชุดเอกสารนี้"
+                    style={{ fontSize: 12, color: "#c0392b", border: "1px solid #f0c4c0", background: "#fdf0ef", padding: "5px 10px", borderRadius: 6, cursor: "pointer" }}
+                  >
+                    ลบ
+                  </button>
+                </div>
               </td>
             </tr>
           );

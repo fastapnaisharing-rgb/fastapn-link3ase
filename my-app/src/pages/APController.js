@@ -3025,8 +3025,17 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [lines, setLines] = useState([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
   const line1 = lines[0];
   const setLine1 = (fn) => setLines(prev => { const next = [...prev]; next[0] = typeof fn === 'function' ? fn(prev[0]) : fn; return next; });
-  const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
-  const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
+  const setLine1Field = (key, val) => {
+    setLine1(l => ({ ...l, [key]: val }));
+    if (key === 'itemCode') sessionSequence.current[0] = val?.trim() || '';
+  };
+  const setLineField = (idx, key, val) => {
+    setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
+    // ── Track itemCode sequence ใน session ──
+    if (key === 'itemCode') {
+      sessionSequence.current[idx] = val?.trim() || '';
+    }
+  };
   const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
 
   // ── GRN Preview แบบ Group-aware (Live) — เลียนแบบ Logic แบ่งกลุ่มเดียวกับ
@@ -3153,7 +3162,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   const handleSaveFlowOpen = () => {
-    const itemsToSave = lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode.trim() }));
+    // ── ใช้ sessionSequence ถ้ามี ไม่งั้น fallback ไปใช้ lines ──
+    const seqItems = sessionSequence.current
+      .map((code, i) => code ? { hl: lines[i]?.hl || 'L', itemCode: code } : null)
+      .filter(Boolean);
+    const itemsToSave = seqItems.length > 0
+      ? seqItems
+      : lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode.trim() }));
     if (!itemsToSave.length) return;
     setSaveFlowState({ name: '', mode: 'new', targetId: '', saving: false, error: null });
     setShowSaveFlowModal(true);
@@ -3236,6 +3251,33 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   }, [show]);
   const lineAmountRefs   = useRef([]);
   const lineRealInvoiceRefs = useRef([]);
+  const sessionSequence = useRef([]); // บันทึก itemCode sequence ที่ใช้จริงใน session
+  // ══════════════════════════════════════════════════════════════════════════════
+  // FLOW + REAL VENDOR INTERACTION PATTERN
+  // ══════════════════════════════════════════════════════════════════════════════
+  // Flow mode คือการ autofill itemCode ตาม Step ที่กำหนดไว้ใน flow.items[]
+  // Real Vendor คือ sub-row ที่เปิดขึ้นเมื่อ itemCode เป็น V-RV (ภาษีมูลค่าเพิ่ม)
+  //
+  // ลำดับการทำงานที่ถูกต้อง:
+  //
+  //  1. Flow add Row → autofill itemCode → Focus ที่ Amount
+  //  2. กรอก Amount → blur (ถ้าเป็น V-RV → Real Vendor sub-row เปิดขึ้นอัตโนมัติ)
+  //  3. ถ้ามี Real Vendor sub-row:
+  //     - กรอก Real Invoice No. → Tab → ไป Tax Invoice Date
+  //     - กรอก Tax Invoice Date → Tab:
+  //         ถ้า V-RV   → add H+L rows อัตโนมัติ
+  //         ถ้า Flow    → addLineAndFocus() ต่อ (add Row step ถัดไปของ Flow)
+  //  4. ถ้าไม่มี Real Vendor sub-row:
+  //     - Enter/Tab จาก Amount → addLineAndFocus() ต่อ Flow ได้เลย
+  //
+  // Guard conditions (ป้องกัน add Row ก่อนเวลา):
+  //  - realVendorLineIdx !== -1  → มี Real Vendor popup เปิดอยู่
+  //  - hasRVPending              → Real Vendor sub-row ยังกรอกไม่ครบ
+  //                                (มี realVendorName แต่ไม่มี realInvoiceNo หรือ realVendorTaxDate)
+  //  - selectedFlow && flowStep < flow.items.length && !isVRV → อยู่ใน Flow mode
+  //                                ไม่ add Line จาก blur Amount เอง
+  // ══════════════════════════════════════════════════════════════════════════════
+
   const addLineAndFocus = () => {
     // MARKER_APCONTROLLER_INVOICE_FLOW_V1
     // ── ถ้ามี Flow Active และยังมี Step เหลือ — เติม Item Code Step ถัดไปให้ ──
@@ -3248,6 +3290,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       setLines(prev => {
         const next = [...prev, { hl: nextItem.hl || 'L', itemCode: nextItem.itemCode || '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
         const newIdx = next.length - 1;
+        // ── Track autofill itemCode ลง sessionSequence ──
+        sessionSequence.current[newIdx] = nextItem.itemCode?.trim() || '';
         setTimeout(() => {
           lineAmountRefs.current[newIdx]?.focus();
           lineAmountRefs.current[newIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -3277,6 +3321,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       const itemCode = lines[idx]?.itemCode?.trim();
       const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCode?.toUpperCase());
       const isVRV = String(itemData?.value ?? '').trim().toUpperCase() === 'V-RV';
+      // ── ถ้าใช้ Flow อยู่และไม่ใช่ V-RV → ไม่ addLine จาก blur ใช้ Tab/Enter แทน ──
+      if (selectedFlow && flowStep < selectedFlow.items.length && !isVRV) return;
       if (isVRV) {
         const vatAmount = parseFloat(val) || 0;
         const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
@@ -3432,6 +3478,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
   const doActualSubmit = async () => {
     const ok = await onSubmitInvoice(lines);
+    if (ok) sessionSequence.current = [];
     if (ok) {
       setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
       onClose();
@@ -3818,13 +3865,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onFocus={() => handleMoneyFocus(idx, key, line[key])}
                                 onBlur={() => handleMoneyBlur(idx, key, line[key])}
                                 onKeyDown={e => {
-                                  if (e.key === 'Enter') { const l = lines[idx]; if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus(); }
+                                  if (e.key === 'Enter') {
+                                    const l = lines[idx];
+                                    const hasRVPending = l?.realVendorName && (!l?.realInvoiceNo?.trim() || !l?.realVendorTaxDate?.trim());
+                                    if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim() && realVendorLineIdx === -1 && !hasRVPending) addLineAndFocus();
+                                  }
                                   // MARKER_APCONTROLLER_INVOICE_FLOW_TAB_V1
                                   // ── Tab จาก Amount ข้ามไป Amount บรรทัดถัดไปของ Flow เหมือน Enter ──────
                                   // ── เฉพาะตอนยังมี Step เหลือเท่านั้น — Flow หมดแล้วปล่อย Tab ทำงานปกติ ──
                                   else if (e.key === 'Tab' && !e.shiftKey && selectedFlow && flowStep < selectedFlow.items.length && realVendorLineIdx === -1) {
-                                    e.preventDefault();
-                                    addLineAndFocus();
+                                    const curLine = lines[idx];
+                                    const hasRVPending = curLine?.realVendorName && (!curLine?.realInvoiceNo?.trim() || !curLine?.realVendorTaxDate?.trim());
+                                    if (!hasRVPending) {
+                                      e.preventDefault();
+                                      addLineAndFocus();
+                                    }
                                   }
                                 }}
                                 style={{ width: '100%', height: '28px', padding: '0 6px 0 26px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'right' }} />
@@ -3877,6 +3932,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             onClick={() => {
                               if (lines.length <= 1) return;
                               setLines(prev => {
+                                sessionSequence.current.splice(idx, 1);
                                 const next = prev.filter((_, i) => i !== idx);
                                 if (idx === 0 && next.length > 0) {
                                   next[0] = { ...next[0], hl: 'H' };
@@ -3937,10 +3993,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                         amount: '',
                                         tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
                                       }];
+                                      const hIdx = next.length - 2;
+                                      const lIdx = next.length - 1;
+                                      // ── Track V-RV autofill itemCode ลง sessionSequence ──
+                                      sessionSequence.current[hIdx] = mapping.h?.trim() || '';
+                                      sessionSequence.current[lIdx] = mapping.l?.trim() || '';
                                       const newIdx = next.length - 1;
                                       setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
                                       return next;
                                     });
+                                  } else if (selectedFlow && flowStep < selectedFlow.items.length) {
+                                    // ── ถ้าใช้ Flow อยู่ และ Real Vendor ครบแล้ว → add Row ถัดไปของ Flow ──
+                                    e.preventDefault();
+                                    addLineAndFocus();
                                   }
                                 }
                                 }}
@@ -5132,10 +5197,12 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [reportPickerValue, setReportPickerValue] = useState('');
   const [reportSending, setReportSending] = useState(false);
   const [reportPopupBatch, setReportPopupBatch] = useState(null);
-  // MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1
-  const [selfApproveMode, setSelfApproveMode] = useState(false);
+  // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
   const canApproveBatch = userPermissions?.ApproveBatch === true;
   const [rejectChatBatch, setRejectChatBatch] = useState(null);
+  // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
+  // ── ก่อน Reject จริง ถามก่อนว่าจะใส่ Comment หรือ Reject เฉยๆ ─────────────
+  const [rejectChoiceBatch, setRejectChoiceBatch] = useState(null);
   // MARKER_APCONTROLLER_CHAT_FULL_V3
   const [viewChatBatch, setViewChatBatch] = useState(null); // ดู Chat อย่างเดียว (ไม่ใช่ Reject)
   useEffect(() => {
@@ -5716,16 +5783,14 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                                 )}
                                 <button onClick={() => handleFileAction(attachId, 'download', attachName)} title="Download"
                                   style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '16px', cursor: 'pointer' }}>⬇</button>
-                                {/* ── Report to ผู้ตรวจ: เปิด Popup แนบ Invoice Register (My Jobs เท่านั้น) ── */}
-                                {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved' && (
-                                  <button onClick={() => { setSelfApproveMode(false); setReportPopupBatch(b); }} title="Report to ผู้ตรวจ"
+                                {/* MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1 */}
+                                {/* ── Report to ผู้ตรวจ / อนุมัติ: Popup เดียว ปุ่มเปลี่ยนความหมายเองข้างใน ── */}
+                                {/* ── (My Jobs เท่านั้น) — ถ้ามีสิทธิ์ ApproveBatch และ Batch นี้ถูกส่งให้ ──── */}
+                                {/* ── คนอื่นตรวจไปแล้ว (reviewing) ไม่ต้องโชว์ปุ่มอีก ปล่อยตาม Flow ปกติ ──── */}
+                                {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved'
+                                  && !(canApproveBatch && b.status === 'reviewing') && (
+                                  <button onClick={() => setReportPopupBatch(b)} title="ส่งตรวจ / อนุมัติ"
                                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #f7dfa8', background: '#fff8ec', color: '#854F0B', fontSize: '14px', cursor: 'pointer' }}>📤</button>
-                                )}
-                                {/* MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1 */}
-                                {/* ── อนุมัติเอง: เฉพาะคนมีสิทธิ์ ApproveBatch — ไม่ต้องส่งใคร ── */}
-                                {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved' && canApproveBatch && (
-                                  <button onClick={() => { setSelfApproveMode(true); setReportPopupBatch(b); }} title="อนุมัติ (ไม่ต้องส่งใคร)"
-                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '14px', cursor: 'pointer' }}>✅</button>
                                 )}
                                 {b.status === 'approved' && (
                                   <button onClick={() => setViewChatBatch(b)} title="ดู Chat ย้อนหลัง"
@@ -5754,7 +5819,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                               ✓ อนุมัติ
                             </button>
                             {b.status === 'reviewing' && (
-                              <button onClick={() => setRejectChatBatch(b)} title="ปฏิเสธ (ให้ผู้ส่งแก้ไขแล้วส่งใหม่)"
+                              <button onClick={() => setRejectChoiceBatch(b)} title="ปฏิเสธ (ให้ผู้ส่งแก้ไขแล้วส่งใหม่)"
                                 style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', fontWeight: '500' }}>
                                 ✗ ปฏิเสธ
                               </button>
@@ -5958,9 +6023,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         show={!!reportPopupBatch}
         batch={reportPopupBatch}
         reviewers={reportReviewers}
-        selfApprove={selfApproveMode}
+        canApproveBatch={canApproveBatch}
         currentUsername={me}
-        onClose={() => { setReportPopupBatch(null); setSelfApproveMode(false); }}
+        onClose={() => setReportPopupBatch(null)}
         onDone={(updated) => {
           setHistoryMine(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
           setHistoryAll(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
@@ -5995,6 +6060,31 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
           }
         }}
       />
+      {/* MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1 */}
+      {rejectChoiceBatch && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setRejectChoiceBatch(null)}>
+          <div style={{ background: 'white', borderRadius: '10px', width: '340px', maxWidth: '92vw', padding: '18px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c', marginBottom: '4px' }}>ปฏิเสธ Batch นี้</div>
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: '16px' }}>ต้องการใส่ Comment บอกเหตุผลด้วยไหม?</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button onClick={() => { setRejectChatBatch(rejectChoiceBatch); setRejectChoiceBatch(null); }}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                💬 ใส่ Comment
+              </button>
+              <button onClick={async () => { const b = rejectChoiceBatch; setRejectChoiceBatch(null); await handleRejectReview(b); }}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                ✗ ปฏิเสธเฉยๆ (ไม่ใส่ Comment)
+              </button>
+              <button onClick={() => setRejectChoiceBatch(null)}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {rejectChatBatch && (
         <BatchChatDrawer
           batch={rejectChatBatch}
@@ -6023,7 +6113,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
 
 // ── Popup ส่งตรวจ พร้อมแนบไฟล์ Invoice Register (Paste จาก Excel/Sheet หรือ Upload ไฟล์ Excel) ──
 // MARKER_INVOICE_REGISTER_REUSE_EXISTING_V1
-function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone, selfApprove = false, currentUsername = '' }) {
+function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone, canApproveBatch = false, currentUsername = '' }) {
   const [toUsername, setToUsername] = useState('');
   const [mode, setMode] = useState('paste');
   const [pastedText, setPastedText] = useState('');
@@ -6037,12 +6127,17 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
 
   // ── มีไฟล์ Invoice Register เดิมติดกับ Batch นี้อยู่แล้วหรือไม่ (เช่น Resend หลังโดน Reject) ──
   const hasExistingFile = !!(batch?.invoice_register_file_id);
+  // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
+  // ── ไม่เลือกผู้ตรวจ + มีสิทธิ์ ApproveBatch = โหมดอนุมัติเอง (คำนวณสดตาม ──
+  // ── ที่พิมพ์ใน Dropdown แต่ละครั้ง ไม่ใช่ค่าคงที่จากภายนอกแบบเดิม) ─────────
+  const isSelfApprove = canApproveBatch && !toUsername.trim();
 
   useEffect(() => {
     if (!show) return;
     // MARKER_FIX_MODE_DEFAULT_HASEXISTINGFILE_V1
-    setToUsername(selfApprove ? currentUsername : '');
-    // MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1 setMode(hasExistingFile ? 'existing' : 'paste'); setPastedText(''); setPastedRows(null);
+    setToUsername('');
+    // ── Bug Fix: Comment เคยกลืนคำสั่งข้างล่างไป (จาก Patch รอบก่อน) ──────────
+    setMode(hasExistingFile ? 'existing' : 'paste'); setPastedText(''); setPastedRows(null);
     setUploadedFileName(''); setUploadedFileBase64(null); setError('');
   }, [show, batch?.id]);
 
@@ -6101,10 +6196,11 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
     setPastedRows(null);
   };
 
-  const canSave = !!toUsername && (mode === 'existing' ? true : (mode === 'paste' ? pastedText.trim().length > 0 : !!uploadedFileBase64));
+  // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
+  const canSave = (canApproveBatch || !!toUsername) && (mode === 'existing' ? true : (mode === 'paste' ? pastedText.trim().length > 0 : !!uploadedFileBase64));
 
   const handleSave = async () => {
-    if (!toUsername) { setError('กรุณาเลือกผู้ตรวจ'); return; }
+    if (!canApproveBatch && !toUsername) { setError('กรุณาเลือกผู้ตรวจ'); return; }
     let rows;
     if (mode === 'paste') {
       // MARKER_FIX_PASTE_USE_PASTEDROWS_V2
@@ -6143,10 +6239,10 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         fileId = genRes.fileId;
         fileName = genRes.fileName;
       }
-      // MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1
+      // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
       // ── Self-Approve: ข้าม report-to API + Notification ทั้งหมด, Status เป็น ──
       // ── 'approved' ทันที (ไม่ใช่ 'reviewing' รอคนอื่น) ──────────────────────
-      if (!selfApprove) {
+      if (!isSelfApprove) {
         const reportRes = await apiFetch(`/file-storage/${fileId}/report-to`, {
           method: 'POST',
           body: JSON.stringify({ reportTo: toUsername }),
@@ -6156,15 +6252,15 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
       // ── เก็บไฟล์ Invoice Register แยก Column ต่างหาก ไม่ทับ file_url/file_name ──
       // ── ของไฟล์ Export เดิม (เผื่อกระบวนการกำหนดการลบแยกกันในอนาคต) ──────────
       const { error: updErr } = await db.from('batch_list').update({
-        status: selfApprove ? 'approved' : 'reviewing', reported_to_username: toUsername,
+        status: isSelfApprove ? 'approved' : 'reviewing', reported_to_username: isSelfApprove ? currentUsername : toUsername,
         invoice_register_file_id: fileId, invoice_register_file_name: fileName,
       }).eq('id', batch.id);
       if (updErr) throw new Error(updErr.message || updErr);
       // ── Broadcast แบบ Real-time ให้ผู้ตรวจเห็น Batch นี้ทันที (P2P Event) ──────
       // ── จุดนี้เคยขาด wsNotify ไป ต่างจาก handleReportTo (ปุ่ม 📤 ในตาราง) ──────
       // ── ที่มี wsNotify('batch_sent', ...) อยู่แล้ว ทำให้ Popup นี้ไม่ Real-time ──
-      try { await broadcastWs('batch_sent', { batch_id: batch.batch_id, status: selfApprove ? 'approved' : 'reviewing' }); } catch {}
-      if (!selfApprove) {
+      try { await broadcastWs('batch_sent', { batch_id: batch.batch_id, status: isSelfApprove ? 'approved' : 'reviewing' }); } catch {}
+      if (!isSelfApprove) {
       // ── Insert Notification ทั้ง 2 ฝั่ง — Resend ถ้า Batch นี้เคยถูก Reject มาก่อน ──
       // ── ใช้ batch_notifications (Table แยก ไม่มี Constraint แปลกๆ เหมือน ──
       // ── notifications เดิม — ไม่ต้องใส่ message/category/action_type/created_by) ──
@@ -6204,10 +6300,10 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         }]);
       } catch (nErr) { console.error('[insert batch_notifications on report-to]', nErr); }
       }
-      onDone({ id: batch.id, batch_id: batch.batch_id, status: selfApprove ? 'approved' : 'reviewing', reported_to_username: toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
+      onDone({ id: batch.id, batch_id: batch.batch_id, status: isSelfApprove ? 'approved' : 'reviewing', reported_to_username: isSelfApprove ? currentUsername : toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
       onClose();
-      confirmDialog.alert(selfApprove ? 'อนุมัติสำเร็จ' : 'ส่งตรวจสำเร็จ');
-    } catch (e) { setError((selfApprove ? 'อนุมัติไม่สำเร็จ: ' : 'ส่งตรวจไม่สำเร็จ: ') + e.message); }
+      confirmDialog.alert(isSelfApprove ? 'อนุมัติสำเร็จ' : 'ส่งตรวจสำเร็จ');
+    } catch (e) { setError((isSelfApprove ? 'อนุมัติไม่สำเร็จ: ' : 'ส่งตรวจไม่สำเร็จ: ') + e.message); }
     setSaving(false);
   };
 
@@ -6217,30 +6313,32 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
       {/* MARKER_REPORT_TO_POPUP_RESIZE_V1 */}
       <div style={{ background: 'white', borderRadius: '12px', width: '96vw', maxWidth: '1280px', boxShadow: '0 20px 60px rgba(26,58,92,0.22)', overflow: 'hidden' }}>
         <div style={{ padding: '10px 16px', borderBottom: '0.5px solid #f0f2f5', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: selfApprove ? '#0F6E56' : '#854F0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' }}>{selfApprove ? '✅' : '📤'}</div>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isSelfApprove ? '#0F6E56' : '#854F0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' }}>{isSelfApprove ? '✅' : '📤'}</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{selfApprove ? 'อนุมัติ' : 'ส่งตรวจ'}</div>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{isSelfApprove ? 'อนุมัติ' : 'ส่งตรวจ'}</div>
             <div style={{ fontSize: '11px', color: '#aaa' }}>{batch?.batch_id || batch?.id}</div>
           </div>
           <button onClick={onClose} style={{ width: '26px', height: '26px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
         <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {error && <div style={{ padding: '8px 12px', background: '#FCEBEB', color: '#791F1F', borderRadius: '6px', fontSize: '12px' }}>⚠️ {error}</div>}
-          {selfApprove ? (
-            <div style={{ padding: '8px 12px', background: '#EAF3DE', color: '#27500A', borderRadius: '6px', fontSize: '12px' }}>
-              ✅ อนุมัติโดย {currentUsername} — ไม่ต้องเลือกผู้ตรวจ ไม่ส่ง Notification
-            </div>
-          ) : (
           <div>
-            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>ผู้ตรวจ <span style={{ color: '#e24b4a' }}>*</span></label>
+            <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>
+              ผู้ตรวจ {!canApproveBatch && <span style={{ color: '#e24b4a' }}>*</span>}
+              {canApproveBatch && <span style={{ color: '#aaa', fontWeight: 400 }}> (ไม่บังคับ — เว้นว่างไว้ = อนุมัติเอง)</span>}
+            </label>
             <select value={toUsername} onChange={e => setToUsername(e.target.value)}
               style={{ width: '100%', height: '28px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '7px', background: 'white', color: '#1a3a5c', outline: 'none', cursor: 'pointer' }}>
-              <option value="">— เลือกผู้ตรวจ —</option>
+              <option value="">{canApproveBatch ? '— ไม่ระบุ (อนุมัติเอง) —' : '— เลือกผู้ตรวจ —'}</option>
               {reviewers.map(u => (
                 <option key={u.id || u.username || u.email} value={u.username || u.email}>{u.username || u.email}</option>
               ))}
             </select>
           </div>
+          {isSelfApprove && (
+            <div style={{ padding: '8px 12px', background: '#EAF3DE', color: '#27500A', borderRadius: '6px', fontSize: '12px' }}>
+              ✅ อนุมัติโดย {currentUsername} — ไม่ต้องส่งใคร ไม่ส่ง Notification
+            </div>
           )}
           <div>
             <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>Invoice register</label>
@@ -6300,7 +6398,7 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
           <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
           <button onClick={handleSave} disabled={saving || !canSave}
             style={{ padding: '7px 18px', borderRadius: '7px', border: 'none', background: (saving || !canSave) ? '#aaa' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: (saving || !canSave) ? 'default' : 'pointer' }}>
-            {saving ? 'กำลังส่ง...' : '📤 ส่งตรวจ'}
+            {saving ? 'กำลังบันทึก...' : (isSelfApprove ? '📎 แนบไฟล์' : '📤 ส่งตรวจ')}
           </button>
         </div>
       </div>
