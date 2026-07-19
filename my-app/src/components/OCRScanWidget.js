@@ -7,6 +7,7 @@
  * ================================================================
  */
 import React, { useState, useEffect, useCallback } from "react";
+import { callGeminiSplitMerge, checkGeminiToggle } from "../utils/geminiSplitMerge";
 
 const API_BASE = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '') + '/api/ocr';
 
@@ -70,6 +71,18 @@ function BatchHistory({ onSelectBatch }) {
   if (loading) return <p style={{ color: "#888", marginTop: 24 }}>กำลังโหลดประวัติ...</p>;
   if (batches.length === 0) return null;
 
+  const handleDeleteBatch = async (e, batchId, fileName) => {
+    e.stopPropagation(); // กัน Click ปุ่มลบไป Trigger onSelectBatch (เปิด Batch) พร้อมกัน
+    const ok = window.confirm(`ลบข้อมูล "${fileName || "ไฟล์นี้"}" ออกจากคิวทั้งหมด?\n\nการลบนี้ไม่สามารถย้อนกลับได้`);
+    if (!ok) return;
+    try {
+      await apiFetch(`${API_BASE}/batch/${batchId}`, { method: "DELETE" });
+      loadBatches(); // รีเฟรช List ทันทีหลังลบสำเร็จ
+    } catch (err) {
+      alert(`ลบไม่สำเร็จ: ${err.message}`);
+    }
+  };
+
   return (
     <div style={{ marginTop: 32 }}>
       <p style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>ไฟล์ที่เคยอัพโหลด</p>
@@ -94,10 +107,20 @@ function BatchHistory({ onSelectBatch }) {
             <span>
               {b.source_file_name || "(ไม่ทราบชื่อไฟล์)"} — {b.pages_done}/{b.total_pages} หน้า
             </span>
-            <span style={{ fontSize: 12, color: "#888" }}>
+            <span style={{ fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 8 }}>
               {b.sets_ready > 0 && <span style={{ color: "#3c763d" }}>พร้อมตรวจ {b.sets_ready} • </span>}
               {b.sets_approved > 0 && <span>อนุมัติแล้ว {b.sets_approved} • </span>}
               {isProcessing ? "กำลังทำงาน..." : "เสร็จสมบูรณ์"}
+              <button
+                onClick={(e) => handleDeleteBatch(e, b.batch_id, b.source_file_name)}
+                title="ลบข้อมูลนี้ออกจากคิว"
+                style={{
+                  marginLeft: 6, fontSize: 11, color: "#c0392b", border: "1px solid #f0c4c0",
+                  background: "#fdf0ef", padding: "3px 8px", borderRadius: 5, cursor: "pointer",
+                }}
+              >
+                ลบ
+              </button>
             </span>
           </div>
         );
@@ -123,6 +146,34 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   const [duplicateWarning, setDuplicateWarning] = useState(null); // { message, existingSetId }
   const [batchHistory, setBatchHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [geminiEnabled, setGeminiEnabled] = useState(true); // Default เปิดไว้ก่อน รอโหลดค่าจริงจาก Backend
+  const [geminiToggleLoading, setGeminiToggleLoading] = useState(false);
+
+  // ---------------- โหลดสถานะ Toggle Gemini ตอนเปิดหน้า ----------------
+  useEffect(() => {
+    checkGeminiToggle()
+      .then((data) => setGeminiEnabled(data.enabled))
+      .catch((err) => console.error("โหลดสถานะ Gemini Toggle ไม่สำเร็จ:", err));
+  }, []);
+
+  const handleToggleGemini = async () => {
+    if (geminiToggleLoading) return;
+    const newValue = !geminiEnabled;
+    setGeminiToggleLoading(true);
+    try {
+      await apiFetch(`${API_BASE}/gemini/toggle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newValue }),
+      });
+      setGeminiEnabled(newValue);
+    } catch (err) {
+      console.error("เปลี่ยนสถานะ Gemini ไม่สำเร็จ:", err);
+      alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err.message}`);
+    } finally {
+      setGeminiToggleLoading(false);
+    }
+  };
 
   // ---------------- โหลดรายการ Batch เก่าทั้งหมดตอนเปิดหน้า (Monitor) ----------------
   const loadBatchHistory = useCallback(async () => {
@@ -185,10 +236,52 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
       loadBatchHistory(); // รีเฟรช Badge ตัวเลขบนปุ่ม Job Queue ทันที ไม่ต้องรอ Poll รอบถัดไป
       // หมายเหตุ: ไม่ setBatchId / ไม่ setPhase("processing") แล้ว — อยู่หน้า Upload ต่อได้
       // งานวิ่งพื้นหลัง ดูผลได้จาก Panel Job Queue (BatchHistory) แทน
+
+      // ให้ Gemini ช่วย Split & Merge (หรือ Fallback ถ้าใช้ไม่ได้) — รันเป็น
+      // Background Task ไม่ Block UI ตรงนี้ (ไม่ await)
+      resolveGrouping(data.batchId, data.pages || []);
     } catch (err) {
       setError(err.message);
     } finally {
       setUploading(false);
+    }
+  };
+
+  // ---------------- Gemini Split & Merge (หรือ Fallback) หลัง Upload เสร็จ ----------------
+  const resolveGrouping = async (batchId, pages) => {
+    try {
+      const token = getAuthToken();
+      const pageBlobs = await Promise.all(
+        pages.map(async (p) => {
+          const imgRes = await fetch(`${API_BASE}/page-image/${p.pageId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const blob = await imgRes.blob();
+          return { pageNumber: p.pageNumber, imageBlob: blob };
+        })
+      );
+
+      const result = await callGeminiSplitMerge(pageBlobs, batchId);
+
+      if (result.usedFallback) {
+        console.warn("[OCR] Gemini ใช้ไม่ได้ -> Fallback (Worker เดา Boundary เอง):", result.reason);
+        await apiFetch(`${API_BASE}/skip-grouping/${batchId}`, { method: "POST" });
+      } else {
+        await apiFetch(`${API_BASE}/apply-groups/${batchId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groups: result.groups }),
+        });
+      }
+    } catch (err) {
+      // ไม่ว่าจะพังตรงไหนก็ตาม -> Fallback ไป skip-grouping เสมอ กันหน้าค้างที่
+      // 'pending_grouping' ตลอดไปโดยไม่มีใครมาปลดล็อก
+      console.error("[OCR] resolveGrouping ล้มเหลว fallback ไป skip-grouping:", err);
+      try {
+        await apiFetch(`${API_BASE}/skip-grouping/${batchId}`, { method: "POST" });
+      } catch (err2) {
+        console.error("[OCR] skip-grouping fallback ก็ล้มเหลวด้วย:", err2);
+      }
     }
   };
 
@@ -363,9 +456,20 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: "#b9c9da" }}>Document import · OCR-powered</p>
               </div>
             </div>
-            <span style={{ background: "rgba(255,255,255,0.15)", color: "#fff", fontSize: 12, padding: "5px 10px", borderRadius: 20 }}>
-              OCR extract
-            </span>
+            <button
+              onClick={handleToggleGemini}
+              disabled={geminiToggleLoading}
+              title={geminiEnabled ? "Gemini OCR เปิดอยู่ — คลิกเพื่อปิด (กลับไปใช้ OCR extract ปกติ)" : "OCR extract (PaddleOCR ปกติ) — คลิกเพื่อเปิด Gemini OCR"}
+              style={{
+                background: geminiEnabled ? "#5b9279" : "rgba(255,255,255,0.15)",
+                color: "#fff", fontSize: 12, padding: "5px 10px", borderRadius: 20,
+                border: "none", cursor: geminiToggleLoading ? "wait" : "pointer",
+                display: "flex", alignItems: "center", gap: 6, opacity: geminiToggleLoading ? 0.6 : 1,
+              }}
+            >
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: geminiEnabled ? "#c9f2da" : "#8b94a0", flexShrink: 0 }} />
+              {geminiEnabled ? "Gemini OCR" : "OCR extract"}
+            </button>
           </div>
 
           {/* Stepper: Indicator แสดงสถานะอย่างเดียว กดย้อนขั้นไม่ได้ */}

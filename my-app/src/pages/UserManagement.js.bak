@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
   import { db } from '../lib/db';
   import { apiFetch } from '../api';
   import { useAuth } from '../contexts/AuthContext';
@@ -8,16 +8,13 @@
   import { broadcastWs, subscribeWs } from '../wsManager';
   import { confirmDialog } from '../confirmDialog';
 
-  // MARKER_USERMANAGEMENT_APPROVE_BATCH_PERMISSION_V1
-  // ── ApproveBatch: สิทธิ์แยกต่างหากจาก Owner/Admin (คุมระบบ vs คุมการดำเนินงาน) ──
-  // ── Default false ทุก Role — Owner ต้องมาเปิดให้ทีละคนเอง ไม่ผูกกับ Role อัตโนมัติ ──
-  const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual', 'ApproveBatch'];
+  const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'];
 
   const DEFAULT_PERMISSIONS = {
-    Owner:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true, ApproveBatch: false },
-    Admin:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true, ApproveBatch: false },
-    Editor: { VAT: true, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: true, ApproveBatch: false },
-    Viewer: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false, ApproveBatch: false }
+    Owner:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true },
+    Admin:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true },
+    Editor: { VAT: true, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: true },
+    Viewer: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false }
   };
 
   const TABLE_LABELS = {

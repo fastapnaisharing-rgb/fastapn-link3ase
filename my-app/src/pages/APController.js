@@ -939,7 +939,14 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
   const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
   const disGDesc = buildDisGDesc(itemData?.dis_g, form?.backDesc1, form?.backDesc2, form?.backDesc3);
-  const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
+  // ── MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_V1 ──────────────────────────────
+  // ── Customize Invoice: "งวดที่ N จำนวน X%" แทรกหลัง ibPrefix เฉพาะตอนกรอกมา ──
+  // ── จริง (ไม่กรอกเลย = ไม่มีข้อความนี้ ไม่กระทบ Description เดิมเลย) ────────
+  const customizeParts = [];
+  if (form?.customizePeriod) customizeParts.push(`งวดที่ ${form.customizePeriod}`);
+  if (form?.customizePercent) customizeParts.push(`จำนวน ${form.customizePercent}%`);
+  const customizeText = customizeParts.join(' ');
+  const descVal = [ibPrefix, customizeText, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
   const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
   const hasITC = notices.includes('ITC');
   const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
@@ -3009,7 +3016,7 @@ return (
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '' }) {
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '', flowMemory = {}, setFlowMemory = () => {}, supplierCodeRef }) {
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -3084,6 +3091,131 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   }, [grnPreviewByLineIdx]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [showContractPopup, setShowContractPopup]     = useState(false);
+  // MARKER_APCONTROLLER_INVOICE_FLOW_V1
+  // ── Invoice Entry Flow — จำชุด Item Code (H/L) ที่ใช้ซ้ำบ่อยต่อ Vendor ──────
+  const [vendorFlows, setVendorFlows] = useState([]);
+  const [selectedFlow, setSelectedFlow] = useState(null);
+  const [flowStep, setFlowStep] = useState(0);
+  const [showSaveFlowModal, setShowSaveFlowModal] = useState(false);
+  const [saveFlowState, setSaveFlowState] = useState({ name: '', mode: 'new', targetId: '', saving: false, error: null });
+  const [showDeleteFlowConfirm, setShowDeleteFlowConfirm] = useState(false);
+  const isFlowAdmin = userName && (currentUser?.appRole === 'Owner' || currentUser?.appRole === 'Admin');
+
+  const flowApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+  const flowToken = () => sessionStorage.getItem('fastapn_token');
+
+  const vendorNoForFlow = vendorInfo?.['Supplier Number'] || '';
+
+  // ── ดึง Flow ของ Vendor นี้ทุกครั้งที่เปลี่ยน Vendor + จำ Flow ล่าสุดที่เคยใช้ ──
+  // ── ในรอบ Batch นี้ (flowMemory เป็นความจำฝั่ง Frontend เท่านั้น ไม่ลง DB) ────
+  useEffect(() => {
+    if (!vendorNoForFlow) { setVendorFlows([]); setSelectedFlow(null); setFlowStep(0); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${flowApiBase}/api/invoice-flows?vendor_no=${encodeURIComponent(vendorNoForFlow)}`, {
+          headers: { Authorization: `Bearer ${flowToken()}` },
+        });
+        const data = res.ok ? await res.json() : [];
+        if (cancelled) return;
+        setVendorFlows(Array.isArray(data) ? data : []);
+        // ── ถ้าเคยเลือก Flow ของ Vendor นี้ไว้ในรอบ Batch นี้ และตาราง Item ──
+        // ── ยังว่างอยู่ (บรรทัดแรกยังไม่มี Item Code) ให้ Auto-apply ให้เลย ──
+        const remembered = flowMemory?.[vendorNoForFlow];
+        const stillFresh = lines.length === 1 && !lines[0]?.itemCode?.trim();
+        if (remembered && stillFresh) {
+          const match = (Array.isArray(data) ? data : []).find(f => f.id === remembered.id);
+          if (match) applyFlowStep0(match);
+        }
+      } catch (e) { console.error('fetch invoice flows:', e); }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendorNoForFlow]);
+
+  // MARKER_APCONTROLLER_FLOW_DEFER_TO_ITEMCODE_FOCUS_V1
+  // ── เลือก Flow จาก Dropdown -> แค่ "จำ" ไว้เฉยๆ (flowStep ยังเป็น 0) ──────
+  // ── ยังไม่ Auto-fill ทันที รอจนกว่าจะ Tab/Click เข้า Item Code แถวแรกก่อน ──
+  // ── (เผื่อกรอก Header Invoice ให้ครบก่อน ไม่ให้ Flow แทรกกลางจังหวะ) ──────
+  const applyFlowStep0 = (flow) => {
+    if (!flow?.items?.length) return;
+    setSelectedFlow(flow);
+    setFlowStep(0);
+    setFlowMemory?.(prev => ({ ...prev, [vendorNoForFlow]: { id: flow.id, flow_name: flow.flow_name } }));
+  };
+
+  // ── เรียกตอน Focus เข้า Item Code แถวแรกจริงๆ — ตรงนี้ค่อย Auto-fill ────
+  const applyFlowToFirstLine = () => {
+    if (!selectedFlow || flowStep !== 0 || realVendorLineIdx !== -1) return;
+    setLine1Field('itemCode', selectedFlow.items[0]?.itemCode || '');
+    setFlowStep(1);
+    setTimeout(() => { amountRef.current?.focus(); }, 60);
+  };
+
+  const handleSaveFlowOpen = () => {
+    const itemsToSave = lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode.trim() }));
+    if (!itemsToSave.length) return;
+    setSaveFlowState({ name: '', mode: 'new', targetId: '', saving: false, error: null });
+    setShowSaveFlowModal(true);
+  };
+
+  const handleSaveFlowConfirm = async () => {
+    const itemsToSave = lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode.trim() }));
+    const exampleLines = lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode, amount: l.amount, desc: l.desc }));
+    if (!saveFlowState.name.trim()) { setSaveFlowState(s => ({ ...s, error: 'ต้องระบุชื่อ Flow' })); return; }
+    setSaveFlowState(s => ({ ...s, saving: true, error: null }));
+    try {
+      const body = {
+        flow_name: saveFlowState.name.trim(),
+        vendor_no: vendorNoForFlow,
+        items: itemsToSave,
+        example_lines: exampleLines,
+        example_invoice_no: buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || null,
+        example_date: form?.invDate || null,
+      };
+      const isReplace = saveFlowState.mode === 'replace' && saveFlowState.targetId;
+      const res = await fetch(
+        `${flowApiBase}/api/invoice-flows${isReplace ? '/' + saveFlowState.targetId : ''}`,
+        {
+          method: isReplace ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${flowToken()}` },
+          body: JSON.stringify(body),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'บันทึก Flow ไม่สำเร็จ');
+      setShowSaveFlowModal(false);
+      // ── Refresh List ─────────────────────────────────────────────────
+      const listRes = await fetch(`${flowApiBase}/api/invoice-flows?vendor_no=${encodeURIComponent(vendorNoForFlow)}`, {
+        headers: { Authorization: `Bearer ${flowToken()}` },
+      });
+      setVendorFlows(listRes.ok ? await listRes.json() : []);
+    } catch (e) {
+      setSaveFlowState(s => ({ ...s, saving: false, error: e.message }));
+    }
+  };
+
+  const handleDeleteFlowConfirm = async () => {
+    if (!selectedFlow) return;
+    try {
+      const res = await fetch(`${flowApiBase}/api/invoice-flows/${selectedFlow.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${flowToken()}` },
+      });
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'ลบ Flow ไม่สำเร็จ');
+      }
+      setVendorFlows(prev => prev.filter(f => f.id !== selectedFlow.id));
+      setSelectedFlow(null);
+      setFlowStep(0);
+      setShowDeleteFlowConfirm(false);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  // MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_V1
+  const [showCustomizeModal, setShowCustomizeModal]   = useState(false);
   const [showRealVendorPopup, setShowRealVendorPopup] = useState(false);
   const [realVendorLineIdx, setRealVendorLineIdx]     = useState(-1); // index ของ line ที่กด Real Vendor
   const [activeLineIdx, setActiveLineIdx] = useState(0);
@@ -3105,6 +3237,26 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const lineAmountRefs   = useRef([]);
   const lineRealInvoiceRefs = useRef([]);
   const addLineAndFocus = () => {
+    // MARKER_APCONTROLLER_INVOICE_FLOW_V1
+    // ── ถ้ามี Flow Active และยังมี Step เหลือ — เติม Item Code Step ถัดไปให้ ──
+    // ── ทันที แล้ว Focus ไปที่ Amount (ไม่ใช่ Item Code แบบปกติ) ──────────────
+    // MARKER_APCONTROLLER_INVOICE_FLOW_VRV_GUARD_V1
+    // ── ปิด Flow ชั่วคราวถ้ากำลังเปิด Real Vendor Sub-row อยู่ (realVendorLineIdx ─
+    // ── !== -1) กัน Flow แทรกกลางจังหวะที่ V-RV กำลังทำงานของตัวเองอยู่ ─────────
+    if (selectedFlow && flowStep < selectedFlow.items.length && realVendorLineIdx === -1) {
+      const nextItem = selectedFlow.items[flowStep];
+      setLines(prev => {
+        const next = [...prev, { hl: nextItem.hl || 'L', itemCode: nextItem.itemCode || '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
+        const newIdx = next.length - 1;
+        setTimeout(() => {
+          lineAmountRefs.current[newIdx]?.focus();
+          lineAmountRefs.current[newIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }, 30);
+        return next;
+      });
+      setFlowStep(s => s + 1);
+      return;
+    }
     setLines(prev => {
       const next = [...prev, { hl: 'L', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
       const newIdx = next.length - 1;
@@ -3283,6 +3435,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     if (ok) {
       setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
       onClose();
+      // MARKER_APCONTROLLER_FOCUS_SUPPLIER_AFTER_SUBMIT_V1
+      // ── Submit สำเร็จ -> กลับไป Focus ที่ Supplier code ให้ทันที ─────────────
+      setTimeout(() => { supplierCodeRef?.current?.focus(); }, 60);
     }
   };
 
@@ -3399,6 +3554,33 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     {vendorInfo?.['Address'] || '—'}
                   </span>
                 </div>
+                {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
+                {vendorNoForFlow && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderTop: '0.5px solid #eee', paddingTop: '8px' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#185FA5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
+                    </svg>
+                    <select
+                      value={selectedFlow?.id || ''}
+                      onChange={e => {
+                        const flow = vendorFlows.find(f => f.id === e.target.value);
+                        if (flow) applyFlowStep0(flow);
+                        else { setSelectedFlow(null); setFlowStep(0); }
+                      }}
+                      style={{ flex: 1, fontSize: '11px', color: '#185FA5', border: '0.5px solid #c5d8f0', borderRadius: '5px', padding: '4px 6px', background: 'white' }}>
+                      <option value="">— ไม่ใช้ Flow —</option>
+                      {vendorFlows.map(f => (
+                        <option key={f.id} value={f.id}>Flow: {f.flow_name}</option>
+                      ))}
+                    </select>
+                    {selectedFlow && isFlowAdmin && (
+                      <button title="ลบ Flow นี้ (Admin/Owner)" onClick={() => setShowDeleteFlowConfirm(true)}
+                        style={{ width: '26px', height: '26px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '0.5px solid #f7c1c1', borderRadius: '5px', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', flexShrink: 0 }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <div style={{ ...card, width: '49%', marginBottom: 0 }}>
@@ -3492,6 +3674,20 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               )}
             </div>
             <PeriodPicker value={form?.period || ''} onChange={v => setField('period', v)} recentValues={recentPeriods} />
+            {/* MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_V1 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
+              <label style={fieldLabel}>&nbsp;</label>
+              <button title="Customize invoice — เพิ่มงวดที่/จำนวน % ต่อท้าย Description ทุกบรรทัด"
+                onClick={() => setShowCustomizeModal(true)}
+                style={{ height: '30px', width: '30px', borderRadius: '6px', border: (form?.customizePeriod || form?.customizePercent) ? '1px solid #185FA5' : '0.5px solid #c5d8f0', background: (form?.customizePeriod || form?.customizePercent) ? '#E6F1FB' : '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                {/* MARKER_APCONTROLLER_CUSTOMIZE_ICON_FIX_V1 */}
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="6" cy="10" r="2"/><line x1="6" y1="4" x2="6" y2="8"/><line x1="6" y1="12" x2="6" y2="20"/>
+                  <circle cx="12" cy="16" r="2"/><line x1="12" y1="4" x2="12" y2="14"/><line x1="12" y1="18" x2="12" y2="20"/>
+                  <circle cx="18" cy="7" r="2"/><line x1="18" y1="4" x2="18" y2="5"/><line x1="18" y1="9" x2="18" y2="20"/>
+                </svg>
+              </button>
+            </div>
             {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
                 <label style={fieldLabel}>{label}</label>
@@ -3553,7 +3749,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               <input type="text" maxLength={8}
                                 ref={el => { lineItemCodeRefs.current[idx] = el; if (idx === 0) itemCodeRef.current = el; }}
                                 value={line[key]}
-                                onFocus={() => setActiveLineIdx(idx)}
+                                onFocus={() => { setActiveLineIdx(idx); if (idx === 0) applyFlowToFirstLine(); }}
                                 onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
                                 onBlur={e => {
                                   // auto-pad: "787" → "C0000787" (กรอกตัวเลข 1-7 หลัก ไม่มีตัวอักษรปน)
@@ -3571,12 +3767,15 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             </div>
                           ) : key === 'tax' ? (
                             <div style={{ position: 'relative' }}>
+                              {/* MARKER_APCONTROLLER_TAX_DROPDOWN_FIX_V1 */}
                               <input
                                 type="text" value={line[key]}
                                 onChange={e => { const v = e.target.value.toUpperCase(); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
-                                onFocus={() => setTaxDropdownIdx(idx)}
+                                onClick={() => setTaxDropdownIdx(idx)}
                                 onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
                                 onKeyDown={(e) => {
+                                  if (e.key === 'ArrowDown') { e.preventDefault(); setTaxDropdownIdx(idx); return; }
+                                  if (e.key === 'Escape') { setTaxDropdownIdx(null); return; }
                                   if (e.key === 'Enter') {
                                     const l = lines[idx];
                                     if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
@@ -3618,7 +3817,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onChange={e => { handleMoneyChange(idx, key, e.target.value); }}
                                 onFocus={() => handleMoneyFocus(idx, key, line[key])}
                                 onBlur={() => handleMoneyBlur(idx, key, line[key])}
-                                onKeyDown={e => { if (e.key === 'Enter') { const l = lines[idx]; if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus(); } }}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') { const l = lines[idx]; if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus(); }
+                                  // MARKER_APCONTROLLER_INVOICE_FLOW_TAB_V1
+                                  // ── Tab จาก Amount ข้ามไป Amount บรรทัดถัดไปของ Flow เหมือน Enter ──────
+                                  // ── เฉพาะตอนยังมี Step เหลือเท่านั้น — Flow หมดแล้วปล่อย Tab ทำงานปกติ ──
+                                  else if (e.key === 'Tab' && !e.shiftKey && selectedFlow && flowStep < selectedFlow.items.length && realVendorLineIdx === -1) {
+                                    e.preventDefault();
+                                    addLineAndFocus();
+                                  }
+                                }}
                                 style={{ width: '100%', height: '28px', padding: '0 6px 0 26px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'right' }} />
                             </div>
                           ) : (
@@ -3853,6 +4061,115 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           fetchCollection={fetchCollection}
           userName={userName}
         />
+        {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
+        {showSaveFlowModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => !saveFlowState.saving && setShowSaveFlowModal(false)}>
+            <div style={{ background: 'white', borderRadius: '10px', width: '400px', maxWidth: '92vw', padding: '18px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c', marginBottom: '4px' }}>บันทึกเป็น Flow</div>
+              <div style={{ fontSize: '11px', color: '#888', marginBottom: '14px' }}>
+                ผูก Flow นี้กับ Vendor {vendorNoForFlow} ({vendorInfo?.['Supplier Name'] || ''})
+              </div>
+              {saveFlowState.error && (
+                <div style={{ background: '#FCEBEB', border: '0.5px solid #f7c1c1', color: '#791F1F', fontSize: '11px', padding: '8px 10px', borderRadius: '6px', marginBottom: '12px' }}>{saveFlowState.error}</div>
+              )}
+              {vendorFlows.length > 0 && (
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', fontSize: '11px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                    <input type="radio" checked={saveFlowState.mode === 'new'} onChange={() => setSaveFlowState(s => ({ ...s, mode: 'new', targetId: '' }))} />
+                    สร้างใหม่ {vendorFlows.length >= 5 && <span style={{ color: '#A32D2D' }}>(ครบ 5 แล้ว)</span>}
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                    <input type="radio" checked={saveFlowState.mode === 'replace'} onChange={() => setSaveFlowState(s => ({ ...s, mode: 'replace', targetId: vendorFlows[0]?.id || '' }))} />
+                    แทนที่ Flow เดิม
+                  </label>
+                </div>
+              )}
+              {saveFlowState.mode === 'replace' && (
+                <select value={saveFlowState.targetId} onChange={e => {
+                  const f = vendorFlows.find(x => x.id === e.target.value);
+                  setSaveFlowState(s => ({ ...s, targetId: e.target.value, name: f?.flow_name || s.name }));
+                }} style={{ width: '100%', marginBottom: '10px', fontSize: '12px', padding: '6px' }}>
+                  {vendorFlows.map(f => <option key={f.id} value={f.id}>{f.flow_name}</option>)}
+                </select>
+              )}
+              <label style={fieldLabel}>ชื่อ Flow</label>
+              <input type="text" value={saveFlowState.name} onChange={e => setSaveFlowState(s => ({ ...s, name: e.target.value }))}
+                style={{ ...inputStyle('100%'), marginBottom: '14px' }} />
+              <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '11px', color: '#666' }}>
+                จะจำ {lines.filter(l => l.itemCode?.trim()).length} บรรทัด: {lines.filter(l => l.itemCode?.trim()).map(l => l.itemCode).join(', ')}
+                <br />ไม่จำ Amount / Invoice No. / วันที่ — ต้องกรอกใหม่ทุกครั้ง
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button onClick={() => setShowSaveFlowModal(false)} disabled={saveFlowState.saving}
+                  style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={handleSaveFlowConfirm} disabled={saveFlowState.saving}
+                  style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '600', cursor: saveFlowState.saving ? 'default' : 'pointer' }}>
+                  {saveFlowState.saving ? 'กำลังบันทึก...' : 'บันทึก Flow'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showDeleteFlowConfirm && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => setShowDeleteFlowConfirm(false)}>
+            <div style={{ background: 'white', borderRadius: '10px', width: '340px', maxWidth: '92vw', padding: '18px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c', marginBottom: '8px' }}>ลบ Flow "{selectedFlow?.flow_name}"?</div>
+              <div style={{ fontSize: '12px', color: '#666', marginBottom: '16px' }}>Flow นี้เป็นของกลาง ทุกคนใช้ร่วมกันอยู่ — ลบแล้วกู้คืนไม่ได้</div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button onClick={() => setShowDeleteFlowConfirm(false)} style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={handleDeleteFlowConfirm} style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>ลบ Flow</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_V1 */}
+        {showCustomizeModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => setShowCustomizeModal(false)}>
+            <div style={{ background: 'white', borderRadius: '10px', width: '360px', maxWidth: '92vw', padding: '18px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Customize invoice</div>
+                <button onClick={() => setShowCustomizeModal(false)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999', lineHeight: 1 }}>×</button>
+              </div>
+              <div style={{ fontSize: '11px', color: '#888', marginBottom: '14px' }}>เพิ่มคำอธิบายต่อท้าย Description ทุกบรรทัดในใบนี้</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
+                <div>
+                  <label style={fieldLabel}>งวดที่</label>
+                  <input type="text" value={form?.customizePeriod || ''} onChange={e => setField('customizePeriod', e.target.value)} style={inputStyle('100%')} />
+                </div>
+                <div>
+                  <label style={fieldLabel}>จำนวน %</label>
+                  <input type="text" value={form?.customizePercent || ''} onChange={e => setField('customizePercent', e.target.value)} style={inputStyle('100%')} />
+                </div>
+              </div>
+              {(() => {
+                const cParts = [];
+                if (form?.customizePeriod) cParts.push(`งวดที่ ${form.customizePeriod}`);
+                if (form?.customizePercent) cParts.push(`จำนวน ${form.customizePercent}%`);
+                const previewLine = lines.find(l => l.itemCode?.trim() && l.desc?.trim());
+                return (
+                  <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '10px', color: '#999', marginBottom: '4px' }}>ตัวอย่าง Description ที่จะได้</div>
+                    <div style={{ fontSize: '12px', color: cParts.length ? '#1a3a5c' : '#ccc', fontStyle: cParts.length ? 'normal' : 'italic' }}>
+                      {previewLine ? previewLine.desc : (cParts.length ? cParts.join(' ') : 'ยังไม่มี Item Code ให้ Preview')}
+                    </div>
+                  </div>
+                );
+              })()}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button onClick={() => { setField('customizePeriod', ''); setField('customizePercent', ''); }}
+                  style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer', color: '#791F1F' }}>ล้างค่า</button>
+                <button onClick={() => setShowCustomizeModal(false)}
+                  style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>เสร็จสิ้น</button>
+              </div>
+            </div>
+          </div>
+        )}
         <ItemCodeSearchPopup
           show={showItemCodePopup} onClose={() => setShowItemCodePopup(false)}
           onSelect={(item) => {
@@ -3873,11 +4190,20 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           const fmt2 = (n) => n === 0 ? '0.00' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
           return (
             <div style={{ borderTop: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-              <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0 }}>
+              {/* MARKER_APCONTROLLER_FLOW_BUTTON_LAYOUT_V1 */}
+              <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button onClick={handleSubmit} title="Submit (Ctrl+Enter)" style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   Submit
                   <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>
                 </button>
+                {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
+                {vendorNoForFlow && lines.some(l => l.itemCode?.trim()) && (
+                  <button onClick={handleSaveFlowOpen} title="บันทึกชุด Item Code นี้เป็น Flow ไว้ใช้ซ้ำ"
+                    style={{ padding: '6px 14px', borderRadius: '7px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    บันทึกเป็น Flow
+                  </button>
+                )}
               </div>
               <div style={{ flex: 1 }} />
               {/* ── Clear form button — dark red, same size as Submit, gap 5px from VAT block ── */}
@@ -4029,6 +4355,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
     lines.map(l => l.tax).join(','),
     form.period, form.invTax, form.backDesc1, form.backDesc2, form.backDesc3,
     form.branchNo, form.branchDirectLabel, form.branchIBLabel,
+    form.customizePeriod, form.customizePercent,
   ]);
 
   if (!show || !invoice) return null;
@@ -4236,8 +4563,13 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                             <div style={{ position: 'relative' }}>
                               <input type="text" value={line[key]} disabled={isView}
                                 onChange={e => setLineField(idx, 'tax', e.target.value.toUpperCase())}
-                                onFocus={() => !isView && setTaxDropdownIdx(idx)}
+                                onClick={() => !isView && setTaxDropdownIdx(idx)}
                                 onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
+                                onKeyDown={(e) => {
+                                  if (isView) return;
+                                  if (e.key === 'ArrowDown') { e.preventDefault(); setTaxDropdownIdx(idx); }
+                                  if (e.key === 'Escape') { setTaxDropdownIdx(null); }
+                                }}
                                 style={inputStyle('100%', isView)} />
                               {taxDropdownIdx === idx && (
                                 <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
@@ -4531,7 +4863,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     return pattern.replace('Y', y).replace('MM', mm);
   };
 
-  const { userName, currentUser } = useAuth();
+  const { userName, currentUser, userPermissions } = useAuth();
+  // MARKER_APCONTROLLER_FIX_APPROVE_PERMISSION_FIELD_V1
   const { isOwner, isAdmin }      = useUserRole();
   const [bu, setBu]                     = useState('');
   const [dueDate, setDueDate]           = useState('');
@@ -4799,6 +5132,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [reportPickerValue, setReportPickerValue] = useState('');
   const [reportSending, setReportSending] = useState(false);
   const [reportPopupBatch, setReportPopupBatch] = useState(null);
+  // MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1
+  const [selfApproveMode, setSelfApproveMode] = useState(false);
+  const canApproveBatch = userPermissions?.ApproveBatch === true;
   const [rejectChatBatch, setRejectChatBatch] = useState(null);
   // MARKER_APCONTROLLER_CHAT_FULL_V3
   const [viewChatBatch, setViewChatBatch] = useState(null); // ดู Chat อย่างเดียว (ไม่ใช่ Reject)
@@ -5382,8 +5718,14 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                                   style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '16px', cursor: 'pointer' }}>⬇</button>
                                 {/* ── Report to ผู้ตรวจ: เปิด Popup แนบ Invoice Register (My Jobs เท่านั้น) ── */}
                                 {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved' && (
-                                  <button onClick={() => setReportPopupBatch(b)} title="Report to ผู้ตรวจ"
+                                  <button onClick={() => { setSelfApproveMode(false); setReportPopupBatch(b); }} title="Report to ผู้ตรวจ"
                                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #f7dfa8', background: '#fff8ec', color: '#854F0B', fontSize: '14px', cursor: 'pointer' }}>📤</button>
+                                )}
+                                {/* MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1 */}
+                                {/* ── อนุมัติเอง: เฉพาะคนมีสิทธิ์ ApproveBatch — ไม่ต้องส่งใคร ── */}
+                                {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved' && canApproveBatch && (
+                                  <button onClick={() => { setSelfApproveMode(true); setReportPopupBatch(b); }} title="อนุมัติ (ไม่ต้องส่งใคร)"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '14px', cursor: 'pointer' }}>✅</button>
                                 )}
                                 {b.status === 'approved' && (
                                   <button onClick={() => setViewChatBatch(b)} title="ดู Chat ย้อนหลัง"
@@ -5616,10 +5958,41 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
         show={!!reportPopupBatch}
         batch={reportPopupBatch}
         reviewers={reportReviewers}
-        onClose={() => setReportPopupBatch(null)}
+        selfApprove={selfApproveMode}
+        currentUsername={me}
+        onClose={() => { setReportPopupBatch(null); setSelfApproveMode(false); }}
         onDone={(updated) => {
           setHistoryMine(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
           setHistoryAll(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
+          // MARKER_APCONTROLLER_SELF_APPROVE_FOLLOW_FLOW_V1
+          // ── Self-Approve: ทำตาม Flow เดิม "หลังจาก Approve" ให้ครบเหมือนตอน ──
+          // ── Reviewer อนุมัติปกติ (handleApproveReview) — ยกเว้น approved_by/ ──
+          // ── approved_at ใน batch_list ที่ตั้งใจไม่ตั้งค่า (กัน Badge ขึ้น ──
+          // ── "Approved by ตัวเอง" ซึ่งไม่มีประโยชน์ — แต่ activity_log ยังบันทึก ──
+          // ── ไว้เป็น Audit Trail อยู่ดี คนละเรื่องกับ Badge ที่โชว์หน้าจอ) ──────
+          if (updated.status === 'approved') {
+            (async () => {
+              try {
+                wsNotify('batch_approved', updated.batch_id, 'approved');
+                await markNotificationsApproved(updated.batch_id);
+                const approvedBy = me;
+                const approvedAt = new Date().toISOString();
+                const token = sessionStorage.getItem('fastapn_token');
+                const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+                await fetch(`${apiBase}/api/activity_log`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  body: JSON.stringify({
+                    username: approvedBy, module: 'AP', action: 'BATCH_APPROVE',
+                    detail: JSON.stringify({
+                      batch_id: updated.batch_id || '', approved_by: approvedBy, approved_at: approvedAt,
+                      sender: approvedBy, self_approve: true,
+                    }),
+                  }),
+                });
+              } catch (e) { console.error('[self approve follow-up flow]', e); }
+            })();
+          }
         }}
       />
       {rejectChatBatch && (
@@ -5650,7 +6023,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
 
 // ── Popup ส่งตรวจ พร้อมแนบไฟล์ Invoice Register (Paste จาก Excel/Sheet หรือ Upload ไฟล์ Excel) ──
 // MARKER_INVOICE_REGISTER_REUSE_EXISTING_V1
-function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone }) {
+function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone, selfApprove = false, currentUsername = '' }) {
   const [toUsername, setToUsername] = useState('');
   const [mode, setMode] = useState('paste');
   const [pastedText, setPastedText] = useState('');
@@ -5668,7 +6041,8 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
   useEffect(() => {
     if (!show) return;
     // MARKER_FIX_MODE_DEFAULT_HASEXISTINGFILE_V1
-    setToUsername(''); setMode(hasExistingFile ? 'existing' : 'paste'); setPastedText(''); setPastedRows(null);
+    setToUsername(selfApprove ? currentUsername : '');
+    // MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1 setMode(hasExistingFile ? 'existing' : 'paste'); setPastedText(''); setPastedRows(null);
     setUploadedFileName(''); setUploadedFileBase64(null); setError('');
   }, [show, batch?.id]);
 
@@ -5769,22 +6143,28 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         fileId = genRes.fileId;
         fileName = genRes.fileName;
       }
-      const reportRes = await apiFetch(`/file-storage/${fileId}/report-to`, {
-        method: 'POST',
-        body: JSON.stringify({ reportTo: toUsername }),
-      });
-      if (reportRes?.error) throw new Error(reportRes.error);
+      // MARKER_APCONTROLLER_SELF_APPROVE_BATCH_V1
+      // ── Self-Approve: ข้าม report-to API + Notification ทั้งหมด, Status เป็น ──
+      // ── 'approved' ทันที (ไม่ใช่ 'reviewing' รอคนอื่น) ──────────────────────
+      if (!selfApprove) {
+        const reportRes = await apiFetch(`/file-storage/${fileId}/report-to`, {
+          method: 'POST',
+          body: JSON.stringify({ reportTo: toUsername }),
+        });
+        if (reportRes?.error) throw new Error(reportRes.error);
+      }
       // ── เก็บไฟล์ Invoice Register แยก Column ต่างหาก ไม่ทับ file_url/file_name ──
       // ── ของไฟล์ Export เดิม (เผื่อกระบวนการกำหนดการลบแยกกันในอนาคต) ──────────
       const { error: updErr } = await db.from('batch_list').update({
-        status: 'reviewing', reported_to_username: toUsername,
+        status: selfApprove ? 'approved' : 'reviewing', reported_to_username: toUsername,
         invoice_register_file_id: fileId, invoice_register_file_name: fileName,
       }).eq('id', batch.id);
       if (updErr) throw new Error(updErr.message || updErr);
       // ── Broadcast แบบ Real-time ให้ผู้ตรวจเห็น Batch นี้ทันที (P2P Event) ──────
       // ── จุดนี้เคยขาด wsNotify ไป ต่างจาก handleReportTo (ปุ่ม 📤 ในตาราง) ──────
       // ── ที่มี wsNotify('batch_sent', ...) อยู่แล้ว ทำให้ Popup นี้ไม่ Real-time ──
-      try { await broadcastWs('batch_sent', { batch_id: batch.batch_id, status: 'reviewing' }); } catch {}
+      try { await broadcastWs('batch_sent', { batch_id: batch.batch_id, status: selfApprove ? 'approved' : 'reviewing' }); } catch {}
+      if (!selfApprove) {
       // ── Insert Notification ทั้ง 2 ฝั่ง — Resend ถ้า Batch นี้เคยถูก Reject มาก่อน ──
       // ── ใช้ batch_notifications (Table แยก ไม่มี Constraint แปลกๆ เหมือน ──
       // ── notifications เดิม — ไม่ต้องใส่ message/category/action_type/created_by) ──
@@ -5823,10 +6203,11 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
           ref_batch_ids: [batchIdKey], status: 'pending', created_at: new Date().toISOString(),
         }]);
       } catch (nErr) { console.error('[insert batch_notifications on report-to]', nErr); }
-      onDone({ id: batch.id, status: 'reviewing', reported_to_username: toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
+      }
+      onDone({ id: batch.id, batch_id: batch.batch_id, status: selfApprove ? 'approved' : 'reviewing', reported_to_username: toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
       onClose();
-      confirmDialog.alert('ส่งตรวจสำเร็จ');
-    } catch (e) { setError('ส่งตรวจไม่สำเร็จ: ' + e.message); }
+      confirmDialog.alert(selfApprove ? 'อนุมัติสำเร็จ' : 'ส่งตรวจสำเร็จ');
+    } catch (e) { setError((selfApprove ? 'อนุมัติไม่สำเร็จ: ' : 'ส่งตรวจไม่สำเร็จ: ') + e.message); }
     setSaving(false);
   };
 
@@ -5836,15 +6217,20 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
       {/* MARKER_REPORT_TO_POPUP_RESIZE_V1 */}
       <div style={{ background: 'white', borderRadius: '12px', width: '96vw', maxWidth: '1280px', boxShadow: '0 20px 60px rgba(26,58,92,0.22)', overflow: 'hidden' }}>
         <div style={{ padding: '10px 16px', borderBottom: '0.5px solid #f0f2f5', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#854F0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' }}>📤</div>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: selfApprove ? '#0F6E56' : '#854F0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' }}>{selfApprove ? '✅' : '📤'}</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>ส่งตรวจ</div>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{selfApprove ? 'อนุมัติ' : 'ส่งตรวจ'}</div>
             <div style={{ fontSize: '11px', color: '#aaa' }}>{batch?.batch_id || batch?.id}</div>
           </div>
           <button onClick={onClose} style={{ width: '26px', height: '26px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
         <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {error && <div style={{ padding: '8px 12px', background: '#FCEBEB', color: '#791F1F', borderRadius: '6px', fontSize: '12px' }}>⚠️ {error}</div>}
+          {selfApprove ? (
+            <div style={{ padding: '8px 12px', background: '#EAF3DE', color: '#27500A', borderRadius: '6px', fontSize: '12px' }}>
+              ✅ อนุมัติโดย {currentUsername} — ไม่ต้องเลือกผู้ตรวจ ไม่ส่ง Notification
+            </div>
+          ) : (
           <div>
             <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>ผู้ตรวจ <span style={{ color: '#e24b4a' }}>*</span></label>
             <select value={toUsername} onChange={e => setToUsername(e.target.value)}
@@ -5855,6 +6241,7 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
               ))}
             </select>
           </div>
+          )}
           <div>
             <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>Invoice register</label>
             {mode === 'existing' ? (
@@ -6123,7 +6510,9 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 // ── InvoiceEntry ──────────────────────────────────────────────────────────────
 function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () => {}, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], smCodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
   const { isOwner, isAdmin, isEditor } = useUserRole();
-  const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '' });
+  // MARKER_APCONTROLLER_INVOICE_FLOW_V1
+  const [flowMemory, setFlowMemory] = useState({});
+  const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '', customizePeriod: '', customizePercent: '' });
 
   // ── GRT/GRN running number — gen อัตโนมัติเมื่อ GRT Status = Auto ──────────
   // GRT: รันทุก invoice / GRN: รันเฉพาะ invoice ที่ Tax code เป็น VAT7 (ไม่ใช่ SVAT7)
@@ -7041,6 +7430,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       ...f,
       invoiceNum: '', invDate: '', invTax: '', grtNum: '', grn: '',
       backDesc1: '', backDesc2: '', backDesc3: '',
+      customizePeriod: '', customizePercent: '',
       supplierCode: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '',
       // ── Reset CPC/Account/SubAcc (รวม branchCpc ค่าซ่อนจาก Branch) ทุก Invoice ใหม่ ──────────
       headerCpc: '', headerAccount: '', headerSubAcc: '', branchCpc: '',
@@ -7252,7 +7642,7 @@ const handleSelectBranch = (item, meta = {}) => {
       
       <div style={{ ...card, overflow: 'visible', flexShrink: 0 }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} recentHeaderCpc={recentHeaderCpc} recentHeaderAccount={recentHeaderAccount} recentHeaderSubAcc={recentHeaderSubAcc} recentSupplierCode={recentSupplierCode} supplierCodeRef={supplierCodeRef} branchNoRef={branchNoRef} headerCpcRef={headerCpcRef} headerAccountRef={headerAccountRef} headerSubAccRef={headerSubAccRef} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} flowMemory={flowMemory} setFlowMemory={setFlowMemory} supplierCodeRef={supplierCodeRef} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
@@ -8497,6 +8887,69 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 
   // ── View — เปิด Popup ดูรายละเอียด Invoice แบบ Read-only ─────────────────
   const [viewingInvoice, setViewingInvoice] = React.useState(null);
+  // MARKER_APCONTROLLER_LEGACY_IMPORT_BUTTON_V1
+  // ── Import Modal (Custom Mapping) — Owner-only ────────────────────────
+  const [importModal, setImportModal] = React.useState(null);
+  // importModal = null (ปิด) | { step: 'upload'|'mapping'|'result', file, fileBase64,
+  //   headers, mapping, previewRows, dupCount, matchedTemplate, saveTemplate,
+  //   templateName, loading, result, error }
+
+  const handleImportFileSelect = async (file) => {
+    if (!file) return;
+    setImportModal({ step: 'upload', loading: true, file, fileBase64: null, headers: [], mapping: {}, previewRows: [], dupCount: 0, matchedTemplate: null, saveTemplate: true, templateName: file.name.replace(/\.[^.]+$/, ''), error: null, result: null });
+    try {
+      const fileBase64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const res = await fetch(`${apiBase}/api/legacy-import/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ file_base64: fileBase64, file_name: file.name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'อ่านไฟล์ไม่สำเร็จ');
+      setImportModal(prev => ({
+        ...prev, step: 'mapping', loading: false, fileBase64,
+        headers: data.headers, mapping: data.suggested_mapping || {},
+        previewRows: data.preview_rows || [], dupCount: data.estimated_duplicate_count || 0,
+        matchedTemplate: data.matched_template || null,
+        templateName: data.matched_template?.name || prev.templateName,
+      }));
+    } catch (e) {
+      setImportModal(prev => ({ ...prev, step: 'upload', loading: false, error: e.message }));
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    setImportModal(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const res = await fetch(`${apiBase}/api/legacy-import/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          file_base64: importModal.fileBase64,
+          headers: importModal.headers,
+          column_mapping: importModal.mapping,
+          save_template: importModal.saveTemplate,
+          template_name: importModal.templateName,
+          source_label: `manual_import_${new Date().toISOString().slice(0, 10)}`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Import ไม่สำเร็จ');
+      setImportModal(prev => ({ ...prev, step: 'result', loading: false, result: data }));
+      fetchHistory();
+    } catch (e) {
+      setImportModal(prev => ({ ...prev, loading: false, error: e.message }));
+    }
+  };
   // ── Legacy Detail: ดึง Field เต็ม (PO Num, GL Code, Dept Code, Tax Code, Note) ──
   // ── เฉพาะตอนเปิด View Modal ของแถว Legacy เท่านั้น — Owner/Admin เท่านั้นที่เรียกได้ ──
   const [legacyDetail, setLegacyDetail] = React.useState(null);
@@ -8684,7 +9137,18 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 
   return (
     <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
-      <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px', color: '#1a3a5c' }}>📄 Invoice History</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+        <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: '#1a3a5c' }}>📄 Invoice History</h2>
+        {/* MARKER_APCONTROLLER_IMPORT_BUTTON_FIX_V1 */}
+        {isOwner && mainTab === 'invoicehistory' && (
+          <button onClick={() => document.getElementById('legacyImportFileInput').click()}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: '110px', padding: '7px 18px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+            ⬆ Import
+          </button>
+        )}
+        <input id="legacyImportFileInput" type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
+          onChange={e => { handleImportFileSelect(e.target.files?.[0]); e.target.value = ''; }} />
+      </div>
       <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px' }}>รายการ Invoice ที่ Export ออกจากระบบแล้ว</div>
 
       {/* ── แถว: Tab เท่านั้น ── */}
@@ -8910,6 +9374,116 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       </div>
 
       {/* ── View Modal: ดูรายละเอียด Invoice แบบ Read-only ──────────────────── */}
+      {/* ── Import Modal (Custom Mapping) — Owner-only ────────────────────── */}
+      {importModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => !importModal.loading && setImportModal(null)}>
+          <div style={{ background: 'white', borderRadius: '10px', width: '620px', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto', padding: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1a3a5c' }}>Import ข้อมูล Legacy</div>
+              <button onClick={() => !importModal.loading && setImportModal(null)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999', lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px' }}>จับคู่ Column ในไฟล์ กับ Field ที่ระบบต้องการ</div>
+
+            {importModal.error && (
+              <div style={{ background: '#FCEBEB', border: '0.5px solid #f7c1c1', color: '#791F1F', fontSize: '12px', padding: '8px 10px', borderRadius: '6px', marginBottom: '12px' }}>{importModal.error}</div>
+            )}
+
+            {importModal.step === 'upload' && importModal.loading && (
+              <div style={{ textAlign: 'center', color: '#888', fontSize: '12px', padding: '30px 0' }}>กำลังอ่านไฟล์...</div>
+            )}
+
+            {importModal.step === 'mapping' && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f8f9fa', borderRadius: '6px', padding: '8px 10px', marginBottom: '12px', fontSize: '12px' }}>
+                  📄 <span>{importModal.file?.name}</span>
+                  {importModal.matchedTemplate && (
+                    <span style={{ color: '#0F6E56', fontSize: '11px' }}>— ตรวจพบ Template: {importModal.matchedTemplate.name} (Auto-fill ให้แล้ว)</span>
+                  )}
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '10px' }}>
+                  <tbody>
+                    {importModal.headers.map(h => {
+                      const isRequired = ['invoice_num', 'vendor_no', 'amount'].includes(importModal.mapping[h]);
+                      return (
+                        <tr key={h} style={isRequired ? { background: '#E6F1FB' } : undefined}>
+                          <td style={{ padding: '6px 4px', width: '46%' }}>{h}</td>
+                          <td style={{ width: '20px', color: '#aaa' }}>→</td>
+                          <td style={{ padding: '6px 4px' }}>
+                            <select value={importModal.mapping[h] || ''} onChange={e => setImportModal(prev => ({ ...prev, mapping: { ...prev.mapping, [h]: e.target.value || undefined } }))}
+                              style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '0.5px solid #ddd', width: '180px' }}>
+                              <option value="">— ไม่ Map / ข้าม —</option>
+                              {['po_num', 'doc_date', 'invoice_num', 'vendor_no', 'tax_code', 'gl_code', 'dept_code', 'amount', 'description', 'note'].map(f => (
+                                <option key={f} value={f}>{f}</option>
+                              ))}
+                            </select>
+                            {isRequired && <span style={{ marginLeft: '6px', fontSize: '10px', color: '#185FA5' }}>จำเป็น</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: '11px', color: '#888', marginBottom: '14px' }}>ทั้งหมด {importModal.headers.length} Column — จำเป็นต้อง Map: Invoice Num / Vendor No. / Amount</div>
+
+                {importModal.previewRows.length > 0 && (
+                  <div style={{ borderTop: '0.5px solid #eee', paddingTop: '10px', marginBottom: '10px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>Preview {importModal.previewRows.length} แถวแรก</div>
+                    <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                      <thead><tr style={{ color: '#888' }}>
+                        {['po_num', 'invoice_num', 'vendor_no', 'amount'].map(f => <th key={f} style={{ textAlign: 'left', padding: '2px 6px 2px 0' }}>{f}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {importModal.previewRows.map((r, i) => (
+                          <tr key={i} style={{ borderTop: '0.5px solid #f0f0f0' }}>
+                            <td style={{ padding: '2px 6px 2px 0' }}>{r.po_num || '-'}</td>
+                            <td style={{ padding: '2px 6px 2px 0' }}>{r.invoice_num || '-'}</td>
+                            <td style={{ padding: '2px 6px 2px 0' }}>{r.vendor_no || '-'}</td>
+                            <td style={{ padding: '2px 6px 2px 0' }}>{r.amount ?? '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', marginBottom: '10px', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={importModal.saveTemplate} onChange={e => setImportModal(prev => ({ ...prev, saveTemplate: e.target.checked }))} />
+                  บันทึกเป็น Template ชื่อ
+                  <input type="text" value={importModal.templateName} onChange={e => setImportModal(prev => ({ ...prev, templateName: e.target.value }))}
+                    style={{ padding: '3px 6px', fontSize: '12px', borderRadius: '4px', border: '0.5px solid #ddd', width: '160px' }} />
+                  ไว้ใช้ครั้งหน้า
+                </label>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: '#888' }}>เจอซ้ำกับของเดิม {importModal.dupCount} แถว จะข้ามไม่ Import ซ้ำ</span>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => setImportModal(null)} disabled={importModal.loading}
+                      style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
+                    <button onClick={handleImportConfirm} disabled={importModal.loading}
+                      style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: 600, cursor: importModal.loading ? 'default' : 'pointer' }}>
+                      {importModal.loading ? 'กำลัง Import...' : 'Import'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {importModal.step === 'result' && importModal.result && (
+              <>
+                <div style={{ background: '#EAF3DE', border: '0.5px solid #97C459', color: '#27500A', fontSize: '13px', padding: '12px', borderRadius: '6px', marginBottom: '14px' }}>
+                  Import สำเร็จ {importModal.result.inserted} แถว, ข้าม {importModal.result.skipped_duplicate} แถว (ซ้ำของเดิม), รวม {importModal.result.total_in_file} แถวในไฟล์
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <button onClick={() => setImportModal(null)} style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>ปิด</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {viewingInvoice && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setViewingInvoice(null)}>
@@ -9135,3 +9709,4 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
     </div>
   );
 }
+// MARKER_APCONTROLLER_APPROVE_LABEL_RENAME_V1
