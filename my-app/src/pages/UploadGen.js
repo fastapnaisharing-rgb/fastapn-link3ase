@@ -46,25 +46,83 @@ function formatDate(ts) {
 
 // ─── Add File Modal ───────────────────────────────────────────────────────────
 function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
-  const [form, setForm] = useState({ file_name: '', sharepoint_url: '', description: '', file_type: '', file_size: '' });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [docType, setDocType] = React.useState('APN01');
+  const [tab, setTab] = React.useState('paste');
+  const [pasteText, setPasteText] = React.useState('');
+  const [parsedRows, setParsedRows] = React.useState([]);
+  const [parsedHeaders, setParsedHeaders] = React.useState([]);
+  const [fileName, setFileName] = React.useState('');
+  const [serialCode, setSerialCode] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const fileRef = React.useRef(null);
+
+  const DOC_TYPE_MAP = { APN01:'Invoice_Register', AP07:'Input_Tax_Invoice', AP09:'Input_Tax_Invoice', TRANS:'Transaction_AP', STORE:'Doc_Collection' };
+
+  const genSerial = React.useCallback((bu='', type=docType) => {
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(2);
+    const mm = String(now.getMonth()+1).padStart(2,'0');
+    const dd = String(now.getDate()).padStart(2,'0');
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mi = String(now.getMinutes()).padStart(2,'0');
+    const label = DOC_TYPE_MAP[type] || type;
+    return `${bu||'XX'}_${label}_${type}-${yy}${mm}${dd}_${hh}${mi}`;
+  }, [docType]);
+
+  React.useEffect(() => { setSerialCode(genSerial()); }, [docType]);
+
+  const cleanCompanyName = (s) => s
+    .replace(/Co\.,\s*Ltd\./gi,'Co,Ltd').replace(/Co\.,\s*Ltd/gi,'Co,Ltd')
+    .replace(/บจก\.\s*/g,'บจก ').replace(/บมจ\.\s*/g,'บมจ ').replace(/จำกัด\s*\./g,'จำกัด ');
+
+  const parseTabText = (text) => {
+    const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return { headers:[], rows:[] };
+    const headers = lines[0].split('	').map(h => h.trim());
+    const rows = lines.slice(1).map(line => {
+      const cells = line.split('	');
+      const row = {};
+      headers.forEach((h,i) => { row[h] = (cells[i]||'').trim(); });
+      return row;
+    });
+    return { headers, rows };
+  };
+
+  const handlePaste = (text) => {
+    setPasteText(text);
+    if (text.trim().length < 5) { setParsedRows([]); return; }
+    const { headers, rows } = parseTabText(text);
+    setParsedHeaders(headers);
+    setParsedRows(rows);
+    // auto-detect BU จาก Batch Name
+    const batchCol = rows[0]?.['Batch Name'] || rows[0]?.['[ ]'] || '';
+    const buMatch = batchCol.match(/^([A-Z]{2,6})-/);
+    if (buMatch) setSerialCode(genSerial(buMatch[1], docType));
+  };
+
+  const handleFileRead = (file) => {
+    setFileName(file.name);
+    const nameWithout = file.name.replace(/\.[^.]+$/,'');
+    setSerialCode(nameWithout);
+  };
 
   const handleSave = async () => {
-    if (!form.file_name.trim()) { setError('กรุณากรอกชื่อไฟล์ครับ'); return; }
-    if (!form.sharepoint_url.trim()) { setError('กรุณาใส่ SharePoint URL ครับ'); return; }
+    if (!serialCode.trim()) { setError('กรุณาระบุ Serial code'); return; }
+    if (parsedRows.length === 0 && !fileName) { setError('กรุณาวางข้อมูลหรือแนบไฟล์ก่อน'); return; }
     setSaving(true);
     try {
-      const ext = form.file_name.split('.').pop().toLowerCase();
-      const { error: err } = await db.from('doc_files').insert([{
-        folder_key: folder.key,
-        file_name: form.file_name.trim(),
-        sharepoint_url: form.sharepoint_url.trim(),
-        description: form.description.trim() || null,
-        file_type: ext || form.file_type || null,
-        file_size: form.file_size ? parseInt(form.file_size) : null,
+      const now = new Date().toISOString();
+      const { error: err } = await db.from('doc_collection').insert([{
+        serial_code: serialCode.trim(),
+        doc_type: docType,
+        doc_name: DOC_TYPE_MAP[docType] || docType,
+        rows: parsedRows,
+        source: 'upload',
+        file_date: new Date().toISOString().split('T')[0],
         uploaded_by: userName || currentUser?.email || '',
-        uploaded_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
       }]);
       if (err) throw err;
       onSave();
@@ -74,58 +132,91 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
   };
 
   const S = {
-    overlay: { position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-    modal: { background:'white', borderRadius:'12px', width:'480px', maxHeight:'85vh', display:'flex', flexDirection:'column', overflow:'hidden' },
-    input: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #ddd', fontSize:'13px', width:'100%', boxSizing:'border-box', marginBottom:'12px' },
-    label: { fontSize:'12px', color:'#666', display:'block', marginBottom:'4px', fontWeight:'500' },
-    btn: { padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize:'13px' },
+    overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
+    modal: { background:'white', borderRadius:'12px', width:'560px', maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'hidden' },
+    pill: (sel) => ({ display:'inline-flex', alignItems:'center', gap:'5px', padding:'4px 12px', borderRadius:'20px', fontSize:'11px', cursor:'pointer', border:'0.5px solid', borderColor: sel?'#1a3a5c':'#ddd', background: sel?'#1a3a5c':'#f5f5f5', color: sel?'white':'#555', transition:'all .15s', userSelect:'none' }),
+    tab: (sel) => ({ flex:1, padding:'7px', fontSize:'12px', border:'0.5px solid #ddd', background: sel?'white':'#f5f5f5', color: sel?'#1a3a5c':'#888', cursor:'pointer', fontWeight: sel?'500':'400' }),
+    inp: { padding:'5px 8px', borderRadius:'6px', border:'0.5px solid #d0d0d0', fontSize:'12px', width:'100%', boxSizing:'border-box', height:'30px' },
   };
+
+  const docTypes = [
+    { key:'APN01', label:'APN01' }, { key:'AP07', label:'AP07' },
+    { key:'AP09', label:'AP09' }, { key:'TRANS', label:'TRANS' }, { key:'STORE', label:'เก็บลง DB' },
+  ];
 
   return (
     <div style={S.overlay}>
       <div style={S.modal}>
-        <div style={{ padding:'16px 20px', borderBottom:'0.5px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
-            <div style={{ width:'32px', height:'32px', borderRadius:'8px', background:folder.color, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>{folder.icon}</div>
-            <span style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c' }}>เพิ่มไฟล์ใน {folder.label}</span>
+        <div style={{ padding:'14px 18px', borderBottom:'0.5px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+            <div style={{ width:'26px', height:'26px', borderRadius:'6px', background:folder.color, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px' }}>{folder.icon}</div>
+            <span style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>เพิ่มไฟล์ใน {folder.label}</span>
           </div>
           <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', fontSize:'18px', color:'#888' }}>×</button>
         </div>
-        <div style={{ padding:'16px 20px', overflowY:'auto', flex:1 }}>
-          {error && <div style={{ background:'#FCEBEB', color:'#791F1F', padding:'8px 12px', borderRadius:'6px', fontSize:'12px', marginBottom:'12px' }}>{error}</div>}
-          <label style={S.label}>ชื่อไฟล์ <span style={{ color:'#e74c3c' }}>*</span></label>
-          <input style={S.input} placeholder="เช่น Invoice_Jan2025.pdf" value={form.file_name} onChange={e => setForm({...form, file_name: e.target.value})} />
-          <label style={S.label}>SharePoint URL <span style={{ color:'#e74c3c' }}>*</span></label>
-          <input style={S.input} placeholder="https://company.sharepoint.com/..." value={form.sharepoint_url} onChange={e => setForm({...form, sharepoint_url: e.target.value})} />
-          <label style={S.label}>Description</label>
-          <input style={S.input} placeholder="หมายเหตุ เช่น ใบวางบิล มกราคม 2568" value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
-            <div>
-              <label style={S.label}>ประเภทไฟล์</label>
-              <select style={{ ...S.input, marginBottom:0 }} value={form.file_type} onChange={e => setForm({...form, file_type: e.target.value})}>
-                <option value="">Auto (จากชื่อไฟล์)</option>
-                <option value="pdf">PDF</option>
-                <option value="xlsx">Excel</option>
-                <option value="docx">Word</option>
-                <option value="pptx">PowerPoint</option>
-                <option value="jpg">รูปภาพ</option>
-                <option value="other">อื่นๆ</option>
-              </select>
-            </div>
-            <div>
-              <label style={S.label}>ขนาดไฟล์ (bytes)</label>
-              <input style={{ ...S.input, marginBottom:0 }} type="number" placeholder="เช่น 1048576" value={form.file_size} onChange={e => setForm({...form, file_size: e.target.value})} />
-            </div>
-          </div>
-          <div style={{ background:'#f8f9fa', borderRadius:'6px', padding:'10px 12px', marginTop:'12px', fontSize:'11px', color:'#888' }}>
-            💡 ระบบจะเก็บ link ไปยัง SharePoint — ไฟล์จริงยังอยู่ใน SharePoint ของบริษัท
+
+        <div style={{ padding:'10px 18px', borderBottom:'0.5px solid #f0f0f0', background:'#f8f9fa', flexShrink:0 }}>
+          <div style={{ fontSize:'11px', color:'#888', marginBottom:'6px' }}>ประเภทเอกสาร</div>
+          <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
+            {docTypes.map(dt => (
+              <span key={dt.key} style={S.pill(docType===dt.key)} onClick={() => setDocType(dt.key)}>{dt.label}</span>
+            ))}
           </div>
         </div>
-        <div style={{ padding:'12px 20px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'flex-end', gap:'8px', flexShrink:0 }}>
-          <button style={{ ...S.btn, background:'#f0f0f0', color:'#555' }} onClick={onClose}>ยกเลิก</button>
-          <button style={{ ...S.btn, background:'#1a3a5c', color:'white', fontWeight:'500' }} onClick={handleSave} disabled={saving}>
-            {saving ? 'กำลังบันทึก...' : '💾 บันทึก'}
-          </button>
+
+        <div style={{ padding:'14px 18px', overflowY:'auto', flex:1 }}>
+          {error && <div style={{ background:'#FCEBEB', color:'#791F1F', padding:'7px 12px', borderRadius:'6px', fontSize:'12px', marginBottom:'10px' }}>{error}</div>}
+
+          <div style={{ display:'flex', marginBottom:'10px' }}>
+            <button style={{ ...S.tab(tab==='paste'), borderRadius:'6px 0 0 6px' }} onClick={() => setTab('paste')}>📋 วางจาก Excel/Sheet</button>
+            <button style={{ ...S.tab(tab==='file'), borderRadius:'0 6px 6px 0', borderLeft:'none' }} onClick={() => setTab('file')}>📎 แนบไฟล์ Excel</button>
+          </div>
+
+          {tab === 'paste' ? (
+            <div>
+              <textarea
+                placeholder='คลิกแล้ววาง (Ctrl+V) ข้อมูลจาก Excel หรือ Google Sheet ที่นี่ — ระบบจะแยกคอลัมน์ตาม Tab ให้อัตโนมัติเหมือน Paste เข้า Excel จริง'
+                style={{ width:'100%', height:'160px', fontSize:'11px', borderRadius:'6px', border:'0.5px solid #d0d0d0', padding:'8px', boxSizing:'border-box', resize:'none', fontFamily:'monospace', lineHeight:1.5 }}
+                value={pasteText}
+                onChange={e => handlePaste(e.target.value)}
+              />
+              {parsedRows.length > 0 && (
+                <div style={{ marginTop:'6px', padding:'6px 10px', background:'#EAF3DE', borderRadius:'6px', fontSize:'11px', color:'#27500A' }}>
+                  ✅ detect ได้ {parsedRows.length} แถว {parsedHeaders.length} คอลัมน์ — พร้อม parse
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div onClick={() => fileRef.current?.click()} style={{ border:'1.5px dashed #d0d0d0', borderRadius:'8px', padding:'28px 16px', textAlign:'center', cursor:'pointer', background:'#fafafa' }}>
+                <div style={{ fontSize:'28px', marginBottom:'6px' }}>📊</div>
+                <div style={{ fontSize:'12px', fontWeight:'500', color:'#1a3a5c' }}>{fileName || 'ลากไฟล์มาวาง หรือคลิกเลือก'}</div>
+                <div style={{ fontSize:'11px', color:'#aaa', marginTop:'3px' }}>.xlsx, .xls เท่านั้น</div>
+              </div>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={e => e.target.files[0] && handleFileRead(e.target.files[0])} />
+            </div>
+          )}
+
+          <div style={{ marginTop:'12px' }}>
+            <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'3px' }}>Serial code (ชื่อไฟล์)</label>
+            <input style={S.inp} value={serialCode} onChange={e => setSerialCode(e.target.value)} />
+          </div>
+
+          <div style={{ marginTop:'12px', padding:'8px 12px', background:'#f8f9fa', borderRadius:'6px', fontSize:'11px', color:'#888' }}>
+            📎 รูปหลักฐานสามารถเพิ่มเติมได้ภายหลังผ่าน Attachment
+          </div>
+        </div>
+
+        <div style={{ padding:'10px 18px', borderTop:'0.5px solid #f0f0f0', background:'#f8f9fa', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          <div style={{ fontSize:'11px', color:'#aaa', fontFamily:'monospace' }}>
+            จะบันทึกเป็น: <span style={{ color:'#555' }}>{serialCode||'—'}.xlsx</span>
+          </div>
+          <div style={{ display:'flex', gap:'8px' }}>
+            <button style={{ padding:'6px 14px', borderRadius:'6px', border:'0.5px solid #ddd', background:'white', fontSize:'12px', cursor:'pointer', color:'#555' }} onClick={onClose}>ยกเลิก</button>
+            <button style={{ padding:'6px 16px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', fontSize:'12px', cursor:'pointer', fontWeight:'500' }} onClick={handleSave} disabled={saving}>
+              {saving ? 'กำลังบันทึก...' : '💾 บันทึก'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

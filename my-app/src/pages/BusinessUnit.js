@@ -214,11 +214,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     return () => observer.disconnect();
   }, []);
 
-  const INFO_FIELDS = ['bu','THAI COMPANY NAME','ENGLISH COMPANY NAME','TAX ID','PREPARE BY','DEPARTMENT','COMPANY CODE','VAT %','Last Rate (%)','BOOK','SEGMENT3','AP GRT Control','mt_Grt','mt_Grn','updated_by','updated_at'];
+  const INFO_FIELDS = ['bu','THAI COMPANY NAME','ENGLISH COMPANY NAME','bu_code_name','system_bank','TAX ID','PREPARE BY','DEPARTMENT','COMPANY CODE','VAT %','Last Rate (%)','BOOK','SEGMENT3','AP GRT Control','mt_Grt','mt_Grn','updated_by','updated_at'];
   const INFO_KEY = 'TAX ID';
   const INFO_COMBO = ['bu','DEPARTMENT','BOOK','AP GRT Control'];
   const INFO_EDIT = [
     ['bu','BU'],['THAI COMPANY NAME','Thai Company Name'],['ENGLISH COMPANY NAME','English Company Name'],
+    ['bu_code_name','BU Code Name'],['system_bank','System Bank'],
     ['TAX ID','Tax ID'],['PREPARE BY','Prepare By'],['DEPARTMENT','Department'],
     ['COMPANY CODE','Company Code'],['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],
     ['BOOK','Book'],['SEGMENT3','Segment3'],['AP GRT Control','AP GRT Control'],
@@ -231,6 +232,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     { key: 'bu', label: 'BU', sortable: true, w: 70 },
     { key: 'THAI COMPANY NAME', label: 'Thai Company Name', sortable: true, w: 220 },
     { key: 'ENGLISH COMPANY NAME', label: 'English Company Name', w: 220 },
+    { key: 'bu_code_name', label: 'BU Code Name', w: 200 },
+    { key: 'system_bank', label: 'System Bank', w: 120 },
     { key: 'TAX ID', label: 'Tax ID', w: 130 },
     { key: 'PREPARE BY', label: 'Prepare By', w: 140 },
     { key: 'COMPANY CODE', label: 'Company Code', w: 120 },
@@ -356,7 +359,17 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const metaFields = { updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() };
 
   const doInfoSave = async (form) => {
-    const data = { ...form, ...metaFields };
+    // Auto-fill bu_code_name จาก SEGMENT3 - bu_name_full (ยกเว้น CHR/CHN)
+    let autoForm = { ...form };
+    const book = (autoForm['BOOK'] || '').trim().toUpperCase();
+    if (!['CHR','CHN'].includes(book)) {
+      const seg = (autoForm['SEGMENT3'] || '').trim();
+      const nameF = (autoForm['bu_name_full'] || '').trim();
+      if (seg && nameF && !autoForm['bu_code_name']?.trim()) {
+        autoForm['bu_code_name'] = `${seg} - ${nameF}`;
+      }
+    }
+    const data = { ...autoForm, ...metaFields };
     if (infoEditId) {
       const { data: updated, error } = await db.from('company_list').update(data).eq('id', infoEditId).select().single();
       if (error) throw error;
@@ -827,6 +840,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['bu','BU',1],['TAX ID','Tax ID',1],
     ['THAI COMPANY NAME','Thai Company Name',2],
     ['ENGLISH COMPANY NAME','English Company Name',2],
+    ['bu_code_name','BU Code Name',2],
+    ['system_bank','System Bank',2],
     ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],
     ['COMPANY CODE','Company Code',1],['BOOK','Book',1],
     ['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
@@ -836,6 +851,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['bu','BU',1],['TAX ID','Tax ID',1],['COMPANY CODE','Company Code',1],['BOOK','Book',1],
     ['THAI COMPANY NAME','Thai Company Name',4],
     ['ENGLISH COMPANY NAME','English Company Name',4],
+    ['bu_code_name','BU Code Name',4],
+    ['system_bank','System Bank',4],
     ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
     ['SEGMENT3','Segment3',1],['AP GRT Control','AP GRT Control',1],
     ['mt_Grt','GRT_Cus',1],['mt_Grn','GRN_Cus',1],
@@ -849,7 +866,20 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           {INFO_LAYOUT.map(([key, label, span]) => (
             <div key={key} style={{ gridColumn:`span ${Math.min(span, cols)}` }}>
               <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'3px' }}>{label}</label>
-              {INFO_COMBO.includes(key)
+              {key === 'bu_code_name' ? (
+                <input style={S.input}
+                  value={infoForm[key]||''}
+                  placeholder={`${infoForm['SEGMENT3']||'Segment3'} - ${infoForm['ENGLISH COMPANY NAME']||'English Company Name'}`}
+                  onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}
+                  onBlur={e=>{
+                    if(!e.target.value.trim()){
+                      const seg=(infoForm['SEGMENT3']||'').trim();
+                      const eng=(infoForm['ENGLISH COMPANY NAME']||'').trim();
+                      if(seg||eng) setInfoForm(f=>({...f,[key]:[seg,eng].filter(Boolean).join(' - ')}));
+                    }
+                  }}
+                />
+              ) : INFO_COMBO.includes(key)
                 ?<ComboBox value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`เลือก ${label}`}/>
                 :<input style={S.input} value={infoForm[key]||''} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
               }

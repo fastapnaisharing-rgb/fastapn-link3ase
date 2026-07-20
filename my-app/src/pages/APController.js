@@ -3025,17 +3025,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [lines, setLines] = useState([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
   const line1 = lines[0];
   const setLine1 = (fn) => setLines(prev => { const next = [...prev]; next[0] = typeof fn === 'function' ? fn(prev[0]) : fn; return next; });
-  const setLine1Field = (key, val) => {
-    setLine1(l => ({ ...l, [key]: val }));
-    if (key === 'itemCode') sessionSequence.current[0] = val?.trim() || '';
-  };
-  const setLineField = (idx, key, val) => {
-    setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
-    // ── Track itemCode sequence ใน session ──
-    if (key === 'itemCode') {
-      sessionSequence.current[idx] = val?.trim() || '';
-    }
-  };
+  const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
+  const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
   const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
 
   // ── GRN Preview แบบ Group-aware (Live) — เลียนแบบ Logic แบ่งกลุ่มเดียวกับ
@@ -3104,6 +3095,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // ── Invoice Entry Flow — จำชุด Item Code (H/L) ที่ใช้ซ้ำบ่อยต่อ Vendor ──────
   const [vendorFlows, setVendorFlows] = useState([]);
   const [selectedFlow, setSelectedFlow] = useState(null);
+  // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+  // ── Session บันทึก Action จริงของ User (พิมพ์ Item Code + Tab/Blur ออกจาก ──
+  // ── ช่อง) แยกจาก lines ที่อาจมีบรรทัดที่ระบบ Auto-Add ให้ปนอยู่ (เช่น V-RV) ──
+  // ── ใช้แทน lines.filter(...) ตอน "บันทึกเป็น Flow" กัน Auto-Add ติดเข้า Flow ──
+  const [flowActionSession, setFlowActionSession] = useState([]);
   const [flowStep, setFlowStep] = useState(0);
   const [showSaveFlowModal, setShowSaveFlowModal] = useState(false);
   const [saveFlowState, setSaveFlowState] = useState({ name: '', mode: 'new', targetId: '', saving: false, error: null });
@@ -3162,20 +3158,17 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   const handleSaveFlowOpen = () => {
-    // ── ใช้ sessionSequence ถ้ามี ไม่งั้น fallback ไปใช้ lines ──
-    const seqItems = sessionSequence.current
-      .map((code, i) => code ? { hl: lines[i]?.hl || 'L', itemCode: code } : null)
-      .filter(Boolean);
-    const itemsToSave = seqItems.length > 0
-      ? seqItems
-      : lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode.trim() }));
+    // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+    // ── ใช้ Session ที่บันทึกจาก Action จริงของ User แทน lines.filter(...) ──
+    // ── กันบรรทัดที่ระบบ Auto-Add ให้ (เช่น V-RV) ติดเข้า Flow โดยไม่ตั้งใจ ──
+    const itemsToSave = flowActionSession;
     if (!itemsToSave.length) return;
     setSaveFlowState({ name: '', mode: 'new', targetId: '', saving: false, error: null });
     setShowSaveFlowModal(true);
   };
 
   const handleSaveFlowConfirm = async () => {
-    const itemsToSave = lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode.trim() }));
+    const itemsToSave = flowActionSession;
     const exampleLines = lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode, amount: l.amount, desc: l.desc }));
     if (!saveFlowState.name.trim()) { setSaveFlowState(s => ({ ...s, error: 'ต้องระบุชื่อ Flow' })); return; }
     setSaveFlowState(s => ({ ...s, saving: true, error: null }));
@@ -3205,6 +3198,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         headers: { Authorization: `Bearer ${flowToken()}` },
       });
       setVendorFlows(listRes.ok ? await listRes.json() : []);
+      // MARKER_APCONTROLLER_FLOW_REPLACE_SYNC_SELECTED_V1
+      // ── Bug Fix: เดิม Refresh แค่ vendorFlows (List ใน Dropdown) แต่ไม่เคย ──
+      // ── อัปเดต selectedFlow (ตัวที่กำลัง Active ใช้ Auto-Fill อยู่ตอนนี้) ────
+      // ── พอ "แทนที่ Flow เดิม" (Replace) สำเร็จ selectedFlow ยังค้างชี้ไปที่ ──
+      // ── ข้อมูลเก่าก่อน Replace ใน Memory ทำให้ Auto-Fill ดึงของเก่าผิดๆ ──────
+      if (isReplace) { setSelectedFlow(data); setFlowStep(0); }
     } catch (e) {
       setSaveFlowState(s => ({ ...s, saving: false, error: e.message }));
     }
@@ -3235,7 +3234,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [realVendorLineIdx, setRealVendorLineIdx]     = useState(-1); // index ของ line ที่กด Real Vendor
   const [activeLineIdx, setActiveLineIdx] = useState(0);
   const [taxDropdownIdx, setTaxDropdownIdx] = useState(null);
+  // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
+  const [taxLineActiveIdx, setTaxLineActiveIdx] = useState(-1);
   const [taxHdrOpen, setTaxHdrOpen] = useState(false);
+  // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
+  // ── Index ที่ Highlight อยู่ตอนนี้ใน Dropdown Tax (Header) — ใช้กับ ArrowUp/ ──
+  // ── Down ไล่ดูรายการ + Enter เลือก เหมือน Dropdown จริง ────────────────────
+  const [taxHdrActiveIdx, setTaxHdrActiveIdx] = useState(-1);
   const [calcOpen, setCalcOpen]     = useState(false);
   const [calcLineIdx, setCalcLineIdx] = useState(-1);
   const [calcInitValue, setCalcInitValue] = useState('');
@@ -3251,7 +3256,6 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   }, [show]);
   const lineAmountRefs   = useRef([]);
   const lineRealInvoiceRefs = useRef([]);
-  const sessionSequence = useRef([]); // บันทึก itemCode sequence ที่ใช้จริงใน session
   // ══════════════════════════════════════════════════════════════════════════════
   // FLOW + REAL VENDOR INTERACTION PATTERN
   // ══════════════════════════════════════════════════════════════════════════════
@@ -3290,8 +3294,6 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       setLines(prev => {
         const next = [...prev, { hl: nextItem.hl || 'L', itemCode: nextItem.itemCode || '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
         const newIdx = next.length - 1;
-        // ── Track autofill itemCode ลง sessionSequence ──
-        sessionSequence.current[newIdx] = nextItem.itemCode?.trim() || '';
         setTimeout(() => {
           lineAmountRefs.current[newIdx]?.focus();
           lineAmountRefs.current[newIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -3321,8 +3323,6 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       const itemCode = lines[idx]?.itemCode?.trim();
       const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCode?.toUpperCase());
       const isVRV = String(itemData?.value ?? '').trim().toUpperCase() === 'V-RV';
-      // ── ถ้าใช้ Flow อยู่และไม่ใช่ V-RV → ไม่ addLine จาก blur ใช้ Tab/Enter แทน ──
-      if (selectedFlow && flowStep < selectedFlow.items.length && !isVRV) return;
       if (isVRV) {
         const vatAmount = parseFloat(val) || 0;
         const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
@@ -3478,9 +3478,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
   const doActualSubmit = async () => {
     const ok = await onSubmitInvoice(lines);
-    if (ok) sessionSequence.current = [];
     if (ok) {
       setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+      // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+      // ── Clear Session ทุกครั้งที่ Submit สำเร็จ — เริ่ม Invoice ใหม่ = Session ใหม่ ──
+      setFlowActionSession([]);
       onClose();
       // MARKER_APCONTROLLER_FOCUS_SUPPLIER_AFTER_SUBMIT_V1
       // ── Submit สำเร็จ -> กลับไป Focus ที่ Supplier code ให้ทันที ─────────────
@@ -3522,6 +3524,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       if (e.key === 'Delete' && e.ctrlKey) {
         e.preventDefault();
         setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+        // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+        setFlowActionSession([]);
         setField('invDate',    '');
         setField('invoiceNum', '');
         setField('invTax',     '');
@@ -3699,22 +3703,40 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             {/* Tax header dropdown */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0, position: 'relative' }}>
               <label style={fieldLabel}>Tax</label>
+              {/* MARKER_APCONTROLLER_TAX_HEADER_DROPDOWN_FIX_V1 */}
               <input
                 type="text"
                 value={form?.invTax || ''}
                 onChange={e => setField('invTax', e.target.value.toUpperCase())}
-                onFocus={() => setTaxHdrOpen(true)}
+                onClick={() => { setTaxHdrOpen(true); setTaxHdrActiveIdx(TAX_TYPE_OPTS.indexOf(form?.invTax || '')); }}
+                onKeyDown={e => {
+                  // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (!taxHdrOpen) { setTaxHdrOpen(true); setTaxHdrActiveIdx(0); }
+                    else setTaxHdrActiveIdx(i => Math.min(TAX_TYPE_OPTS.length - 1, i + 1));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (taxHdrOpen) setTaxHdrActiveIdx(i => Math.max(0, i - 1));
+                  } else if (e.key === 'Enter') {
+                    if (taxHdrOpen && taxHdrActiveIdx >= 0) {
+                      e.preventDefault();
+                      setField('invTax', TAX_TYPE_OPTS[taxHdrActiveIdx]);
+                      setTaxHdrOpen(false);
+                    }
+                  } else if (e.key === 'Escape') setTaxHdrOpen(false);
+                }}
                 onBlur={() => setTimeout(() => setTaxHdrOpen(false), 120)}
                 style={inputStyle('60px')}
               />
               {taxHdrOpen && (
                 <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, width: '60px', zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '170px', overflowY: 'auto' }}>
-                  {TAX_TYPE_OPTS.map(o => (
+                  {TAX_TYPE_OPTS.map((o, oi) => (
                     <div key={o}
+                      ref={el => { if (oi === taxHdrActiveIdx) el?.scrollIntoView({ block: 'nearest' }); }}
                       onMouseDown={e => { e.preventDefault(); setField('invTax', o); setTaxHdrOpen(false); }}
-                      style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: (form?.invTax || '') === o ? '#eef3fb' : 'white', whiteSpace: 'nowrap' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = '#eef3fb'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = (form?.invTax || '') === o ? '#eef3fb' : 'white'; }}
+                      onMouseEnter={() => setTaxHdrActiveIdx(oi)}
+                      style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: oi === taxHdrActiveIdx ? '#eef3fb' : ((form?.invTax || '') === o ? '#f5f8fc' : 'white'), whiteSpace: 'nowrap' }}
                     >{o}</div>
                   ))}
                 </div>
@@ -3801,9 +3823,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onBlur={e => {
                                   // auto-pad: "787" → "C0000787" (กรอกตัวเลข 1-7 หลัก ไม่มีตัวอักษรปน)
                                   const raw = e.target.value.trim();
+                                  let finalVal = raw;
                                   if (raw && /^\d{1,7}$/.test(raw)) {
-                                    const padded = 'C' + raw.padStart(7, '0');
-                                    idx === 0 ? setLine1Field(key, padded) : setLineField(idx, key, padded);
+                                    finalVal = 'C' + raw.padStart(7, '0');
+                                    idx === 0 ? setLine1Field(key, finalVal) : setLineField(idx, key, finalVal);
+                                  }
+                                  // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+                                  // ── บันทึกเข้า Session เฉพาะตอน User พิมพ์เอง + Blur ออกจากช่องนี้ ──
+                                  // ── จริง (onBlur เกิดจาก User Action เท่านั้น — บรรทัดที่ระบบ ────
+                                  // ── Auto-Add ให้ เช่น V-RV จะข้าม Focus ช่อง Item Code ไปเลย ──────
+                                  // ── (Focus ตรงไป Amount) เลยไม่มีทาง Trigger onBlur นี้ได้ ────────
+                                  // MARKER_APCONTROLLER_FLOW_SESSION_ONLY_WHEN_NO_FLOW_V1
+                                  // ── บันทึกเข้า Session เฉพาะตอน Dropdown เป็น "— ไม่ใช้ Flow —" ──
+                                  // ── (selectedFlow === null) เท่านั้น — ถ้ามี Flow ถูกเลือกอยู่แล้ว ──
+                                  // ── ไม่บันทึกทับ กันข้อมูล Session ปนกันสับสน ────────────────────
+                                  if (finalVal.trim() && !selectedFlow) {
+                                    setFlowActionSession(prev => [...prev, { hl: line.hl, itemCode: finalVal.trim() }]);
                                   }
                                 }}
                                 style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
@@ -3818,12 +3853,30 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               <input
                                 type="text" value={line[key]}
                                 onChange={e => { const v = e.target.value.toUpperCase(); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
-                                onClick={() => setTaxDropdownIdx(idx)}
+                                onClick={() => { setTaxDropdownIdx(idx); setTaxLineActiveIdx(TAX_TYPE_OPTS.indexOf(line[key])); }}
                                 onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
                                 onKeyDown={(e) => {
-                                  if (e.key === 'ArrowDown') { e.preventDefault(); setTaxDropdownIdx(idx); return; }
+                                  // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
+                                  if (e.key === 'ArrowDown') {
+                                    e.preventDefault();
+                                    if (taxDropdownIdx !== idx) { setTaxDropdownIdx(idx); setTaxLineActiveIdx(0); }
+                                    else setTaxLineActiveIdx(i => Math.min(TAX_TYPE_OPTS.length - 1, i + 1));
+                                    return;
+                                  }
+                                  if (e.key === 'ArrowUp') {
+                                    e.preventDefault();
+                                    if (taxDropdownIdx === idx) setTaxLineActiveIdx(i => Math.max(0, i - 1));
+                                    return;
+                                  }
                                   if (e.key === 'Escape') { setTaxDropdownIdx(null); return; }
                                   if (e.key === 'Enter') {
+                                    if (taxDropdownIdx === idx && taxLineActiveIdx >= 0) {
+                                      e.preventDefault();
+                                      const o = TAX_TYPE_OPTS[taxLineActiveIdx];
+                                      idx === 0 ? setLine1Field('tax', o) : setLineField(idx, 'tax', o);
+                                      setTaxDropdownIdx(null);
+                                      return;
+                                    }
                                     const l = lines[idx];
                                     if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
                                   }
@@ -3831,12 +3884,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
                               {taxDropdownIdx === idx && (
                                 <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, width: '50px', minWidth: '50px', zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '170px', maxWidth: '50px', overflowY: 'auto' }}>
-                                  {TAX_TYPE_OPTS.map(o => (
+                                  {TAX_TYPE_OPTS.map((o, oi) => (
                                     <div key={o}
+                                      ref={el => { if (oi === taxLineActiveIdx) el?.scrollIntoView({ block: 'nearest' }); }}
                                       onMouseDown={(e) => { e.preventDefault(); idx === 0 ? setLine1Field('tax', o) : setLineField(idx, 'tax', o); setTaxDropdownIdx(null); }}
-                                      style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: line[key] === o ? '#eef3fb' : 'white', whiteSpace: 'nowrap' }}
-                                      onMouseEnter={e => { e.currentTarget.style.background = '#eef3fb'; }}
-                                      onMouseLeave={e => { e.currentTarget.style.background = line[key] === o ? '#eef3fb' : 'white'; }}
+                                      onMouseEnter={() => setTaxLineActiveIdx(oi)}
+                                      style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: oi === taxLineActiveIdx ? '#eef3fb' : (line[key] === o ? '#f5f8fc' : 'white'), whiteSpace: 'nowrap' }}
                                     >{o}</div>
                                   ))}
                                 </div>
@@ -3865,21 +3918,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onFocus={() => handleMoneyFocus(idx, key, line[key])}
                                 onBlur={() => handleMoneyBlur(idx, key, line[key])}
                                 onKeyDown={e => {
-                                  if (e.key === 'Enter') {
-                                    const l = lines[idx];
-                                    const hasRVPending = l?.realVendorName && (!l?.realInvoiceNo?.trim() || !l?.realVendorTaxDate?.trim());
-                                    if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim() && realVendorLineIdx === -1 && !hasRVPending) addLineAndFocus();
-                                  }
+                                  if (e.key === 'Enter') { const l = lines[idx]; if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus(); }
                                   // MARKER_APCONTROLLER_INVOICE_FLOW_TAB_V1
                                   // ── Tab จาก Amount ข้ามไป Amount บรรทัดถัดไปของ Flow เหมือน Enter ──────
                                   // ── เฉพาะตอนยังมี Step เหลือเท่านั้น — Flow หมดแล้วปล่อย Tab ทำงานปกติ ──
                                   else if (e.key === 'Tab' && !e.shiftKey && selectedFlow && flowStep < selectedFlow.items.length && realVendorLineIdx === -1) {
-                                    const curLine = lines[idx];
-                                    const hasRVPending = curLine?.realVendorName && (!curLine?.realInvoiceNo?.trim() || !curLine?.realVendorTaxDate?.trim());
-                                    if (!hasRVPending) {
-                                      e.preventDefault();
-                                      addLineAndFocus();
-                                    }
+                                    e.preventDefault();
+                                    addLineAndFocus();
                                   }
                                 }}
                                 style={{ width: '100%', height: '28px', padding: '0 6px 0 26px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'right' }} />
@@ -3932,7 +3977,6 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             onClick={() => {
                               if (lines.length <= 1) return;
                               setLines(prev => {
-                                sessionSequence.current.splice(idx, 1);
                                 const next = prev.filter((_, i) => i !== idx);
                                 if (idx === 0 && next.length > 0) {
                                   next[0] = { ...next[0], hl: 'H' };
@@ -3970,46 +4014,47 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Tax Invoice Date</span>
                               <input type="date" value={line.realVendorTaxDate || ''}
-                                onKeyDown={e => {
-                                if (e.key === 'Tab' && line.realInvoiceNo?.trim()) {
-                                  const itemCodeVrv = line.itemCode?.trim();
-                                  const itemDataVrv = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCodeVrv?.toUpperCase());
-                                  const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
-                                  if (isVRV) {
-                                    e.preventDefault();
-                                    const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
-                                    const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
-                                    const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                    const mapping = VRV_MAPPING[line.itemCode] || {};
-                                    setLines(prev => {
-                                      const next = [...prev, {
-                                        hl: 'H',
-                                        itemCode: mapping.h || '',
-                                        amount: negFormatted,
-                                        tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
-                                      }, {
-                                        hl: 'L',
-                                        itemCode: mapping.l || '',
-                                        amount: '',
-                                        tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
-                                      }];
-                                      const hIdx = next.length - 2;
-                                      const lIdx = next.length - 1;
-                                      // ── Track V-RV autofill itemCode ลง sessionSequence ──
-                                      sessionSequence.current[hIdx] = mapping.h?.trim() || '';
-                                      sessionSequence.current[lIdx] = mapping.l?.trim() || '';
-                                      const newIdx = next.length - 1;
-                                      setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
-                                      return next;
-                                    });
-                                  } else if (selectedFlow && flowStep < selectedFlow.items.length) {
-                                    // ── ถ้าใช้ Flow อยู่ และ Real Vendor ครบแล้ว → add Row ถัดไปของ Flow ──
-                                    e.preventDefault();
-                                    addLineAndFocus();
+                                // MARKER_APCONTROLLER_REALTAXDATE_ONCHANGE_TRIGGER_V1
+                                // ── ย้าย Logic จาก onKeyDown(Tab) มาเป็น onChange แทน — เดิมกด Tab ──
+                                // ── เท่านั้นถึงจะ Trigger V-RV Auto-Add/Flow ต่อ แต่เลือกวันที่ผ่าน ──
+                                // ── Calendar Picker (คลิกเมาส์) ไม่มีการกด Tab เกิดขึ้นเลย เลยไม่ ──
+                                // ── ทำงาน — onChange ของ input date ยิงครั้งเดียวตอนค่าสมบูรณ์ ────
+                                // ── (ไม่ว่าจะพิมพ์เองจนครบหรือคลิก Calendar) เลยไม่มีความเสี่ยง ────
+                                // ── Trigger ซ้ำ 2 ครั้งถ้าพิมพ์เองแล้วกด Tab ต่อ ──────────────────
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  idx === 0 ? setLine1Field('realVendorTaxDate', v) : setLineField(idx, 'realVendorTaxDate', v);
+                                  if (v && line.realInvoiceNo?.trim()) {
+                                    const itemCodeVrv = line.itemCode?.trim();
+                                    const itemDataVrv = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCodeVrv?.toUpperCase());
+                                    const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
+                                    if (isVRV) {
+                                      const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
+                                      const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
+                                      const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                      const mapping = VRV_MAPPING[line.itemCode] || {};
+                                      setLines(prev => {
+                                        const next = [...prev, {
+                                          hl: 'H',
+                                          itemCode: mapping.h || '',
+                                          amount: negFormatted,
+                                          tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                        }, {
+                                          hl: 'L',
+                                          itemCode: mapping.l || '',
+                                          amount: '',
+                                          tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                        }];
+                                        const newIdx = next.length - 1;
+                                        setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
+                                        return next;
+                                      });
+                                    } else if (selectedFlow && flowStep < selectedFlow.items.length) {
+                                      // ── ถ้าใช้ Flow อยู่ และ Real Vendor ครบแล้ว → add Row ถัดไปของ Flow ──
+                                      addLineAndFocus();
+                                    }
                                   }
-                                }
                                 }}
-                                onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorTaxDate', v) : setLineField(idx, 'realVendorTaxDate', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -4163,7 +4208,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <input type="text" value={saveFlowState.name} onChange={e => setSaveFlowState(s => ({ ...s, name: e.target.value }))}
                 style={{ ...inputStyle('100%'), marginBottom: '14px' }} />
               <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '11px', color: '#666' }}>
-                จะจำ {lines.filter(l => l.itemCode?.trim()).length} บรรทัด: {lines.filter(l => l.itemCode?.trim()).map(l => l.itemCode).join(', ')}
+                จะจำ {flowActionSession.length} บรรทัด: {flowActionSession.map(l => l.itemCode).join(', ')}
                 <br />ไม่จำ Amount / Invoice No. / วันที่ — ต้องกรอกใหม่ทุกครั้ง
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
@@ -4240,6 +4285,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           onSelect={(item) => {
             if (activeLineIdx === 0) { setLine1Field('itemCode', item.code || ''); }
             else { setLineField(activeLineIdx, 'itemCode', item.code || ''); }
+            // MARKER_APCONTROLLER_FLOW_SESSION_SEARCH_POPUP_V1
+            // ── บันทึก Session ด้วย ตอนเลือก Item Code ผ่าน Popup ค้นหา (ไม่ใช่แค่ ──
+            // ── พิมพ์เอง+Blur) — ไม่งั้น Flow ที่ใช้ 🔍 เลือกล้วนๆ จะไม่มีวันมี ──
+            // ── อะไรให้บันทึกเป็น Flow ได้เลย เพราะ Session ว่างตลอด ──────────────
+            // MARKER_APCONTROLLER_FLOW_SESSION_ONLY_WHEN_NO_FLOW_V1
+            // ── บันทึกเข้า Session เฉพาะตอน Dropdown เป็น "— ไม่ใช้ Flow —" เท่านั้น ──
+            if (item.code?.trim() && !selectedFlow) {
+              const hlForSession = lines[activeLineIdx]?.hl || 'L';
+              setFlowActionSession(prev => [...prev, { hl: hlForSession, itemCode: item.code.trim() }]);
+            }
             setShowItemCodePopup(false);
             setTimeout(() => lineAmountRefs.current[activeLineIdx]?.focus(), 50);
           }}
@@ -4262,7 +4317,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>
                 </button>
                 {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
-                {vendorNoForFlow && lines.some(l => l.itemCode?.trim()) && (
+                {vendorNoForFlow && flowActionSession.length > 0 && (
                   <button onClick={handleSaveFlowOpen} title="บันทึกชุด Item Code นี้เป็น Flow ไว้ใช้ซ้ำ"
                     style={{ padding: '6px 14px', borderRadius: '7px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
@@ -4275,6 +4330,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <button
                 onClick={() => {
                   setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+                  // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+                  setFlowActionSession([]);
                 }}
                 style={{ alignSelf: 'center', marginRight: '5px', padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#7B1A1A', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
@@ -4330,6 +4387,8 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
   const [taxDropdownIdx, setTaxDropdownIdx] = useState(null);
+  // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
+  const [taxLineActiveIdx, setTaxLineActiveIdx] = useState(-1);
 
   useEffect(() => {
     if (show && invoice) {
@@ -4628,19 +4687,35 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                             <div style={{ position: 'relative' }}>
                               <input type="text" value={line[key]} disabled={isView}
                                 onChange={e => setLineField(idx, 'tax', e.target.value.toUpperCase())}
-                                onClick={() => !isView && setTaxDropdownIdx(idx)}
+                                onClick={() => { if (!isView) { setTaxDropdownIdx(idx); setTaxLineActiveIdx(TAX_TYPE_OPTS.indexOf(line[key])); } }}
                                 onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
                                 onKeyDown={(e) => {
                                   if (isView) return;
-                                  if (e.key === 'ArrowDown') { e.preventDefault(); setTaxDropdownIdx(idx); }
+                                  // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
+                                  if (e.key === 'ArrowDown') {
+                                    e.preventDefault();
+                                    if (taxDropdownIdx !== idx) { setTaxDropdownIdx(idx); setTaxLineActiveIdx(0); }
+                                    else setTaxLineActiveIdx(i => Math.min(TAX_TYPE_OPTS.length - 1, i + 1));
+                                  }
+                                  if (e.key === 'ArrowUp') {
+                                    if (taxDropdownIdx === idx) setTaxLineActiveIdx(i => Math.max(0, i - 1));
+                                  }
+                                  if (e.key === 'Enter' && taxDropdownIdx === idx && taxLineActiveIdx >= 0) {
+                                    e.preventDefault();
+                                    setLineField(idx, 'tax', TAX_TYPE_OPTS[taxLineActiveIdx]);
+                                    setTaxDropdownIdx(null);
+                                  }
                                   if (e.key === 'Escape') { setTaxDropdownIdx(null); }
                                 }}
                                 style={inputStyle('100%', isView)} />
                               {taxDropdownIdx === idx && (
                                 <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '5px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', minWidth: '100%', maxHeight: '170px', overflowY: 'auto' }}>
-                                  {TAX_TYPE_OPTS.map(o => (
-                                    <div key={o} onMouseDown={(e) => { e.preventDefault(); setLineField(idx, 'tax', o); setTaxDropdownIdx(null); }}
-                                      style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: line[key] === o ? '#eef3fb' : 'white', whiteSpace: 'nowrap' }}>{o}</div>
+                                  {TAX_TYPE_OPTS.map((o, oi) => (
+                                    <div key={o}
+                                      ref={el => { if (oi === taxLineActiveIdx) el?.scrollIntoView({ block: 'nearest' }); }}
+                                      onMouseDown={(e) => { e.preventDefault(); setLineField(idx, 'tax', o); setTaxDropdownIdx(null); }}
+                                      onMouseEnter={() => setTaxLineActiveIdx(oi)}
+                                      style={{ padding: '4px 8px', fontSize: '11px', color: '#1a3a5c', cursor: 'pointer', background: oi === taxLineActiveIdx ? '#eef3fb' : (line[key] === o ? '#f5f8fc' : 'white'), whiteSpace: 'nowrap' }}>{o}</div>
                                   ))}
                                 </div>
                               )}
@@ -5203,6 +5278,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
   // ── ก่อน Reject จริง ถามก่อนว่าจะใส่ Comment หรือ Reject เฉยๆ ─────────────
   const [rejectChoiceBatch, setRejectChoiceBatch] = useState(null);
+  // MARKER_APCONTROLLER_APPROVE_PILL_QUICK_V1
+  // ── Pill "✓ อนุมัติ" ข้าง Status — ถามก่อนว่าจะแนบไฟล์หรือ Approve เลยไม่ต้องแนบ ──
+  const [approveChoiceBatch, setApproveChoiceBatch] = useState(null);
   // MARKER_APCONTROLLER_CHAT_FULL_V3
   const [viewChatBatch, setViewChatBatch] = useState(null); // ดู Chat อย่างเดียว (ไม่ใช่ Reject)
   useEffect(() => {
@@ -5523,6 +5601,46 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     } catch (e) { confirmDialog.alert('อนุมัติไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
+  // MARKER_APCONTROLLER_APPROVE_PILL_QUICK_V1
+  // ── Self-Approve จาก Pill "✓ อนุมัติ" — เลือก "ไม่ต้องแนบไฟล์" ────────────
+  // ── ไม่ตั้ง approved_by/approved_at (กัน Badge ขึ้น "Approved by ตัวเอง" ──
+  // ── ที่ไม่มีประโยชน์) แต่ยังทำตาม Flow เดิมครบ (wsNotify + Mark Notification ──
+  // ── + activity_log) เหมือน Self-Approve ที่แนบไฟล์ทุกประการ ─────────────
+  const handleSelfApproveNoFile = async (batch) => {
+    try {
+      const approvedBy = me;
+      const approvedAt = new Date().toISOString();
+
+      const { error } = await db.from('batch_list').update({
+        status: 'approved',
+        reported_to_username: approvedBy,
+      }).eq('id', batch.id);
+      if (error) throw error;
+
+      setHistoryMine(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'approved', reported_to_username: approvedBy } : x));
+      setHistoryAll(prev => prev.map(x => x.id === batch.id ? { ...x, status: 'approved', reported_to_username: approvedBy } : x));
+      wsNotify('batch_approved', batch.batch_id, 'approved');
+
+      try { await markNotificationsApproved(batch.batch_id); } catch (nErr) { console.error('[mark notifications approved]', nErr); }
+
+      try {
+        const token = sessionStorage.getItem('fastapn_token');
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        await fetch(`${apiBase}/api/activity_log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            username: approvedBy, module: 'AP', action: 'BATCH_APPROVE',
+            detail: JSON.stringify({
+              batch_id: batch.batch_id || '', approved_by: approvedBy, approved_at: approvedAt,
+              sender: approvedBy, self_approve: true, no_file: true,
+            }),
+          }),
+        });
+      } catch (logErr) { console.error('[activity_log BATCH_APPROVE no_file]', logErr); }
+    } catch (e) { confirmDialog.alert('อนุมัติไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
+  };
+
   // ── ปฏิเสธ — เฉพาะผู้ตรวจที่ถูกระบุชื่อ (reported_to_username) เท่านั้น ──────
   // ── status เปลี่ยนเป็น 'rejected' -> ฝั่งผู้ส่งเห็นปุ่ม Report to กลับมาอัตโนมัติ ──
   // ── ไม่มี Prompt ถามเหตุผล — จะมี Notification แจ้งที่หน้า Home แยกต่างหากแทน ──
@@ -5826,6 +5944,15 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                             )}
                           </>
                         )}
+                        {/* MARKER_APCONTROLLER_APPROVE_PILL_QUICK_V1 */}
+                        {/* ── Pill อนุมัติทางลัด — เฉพาะคนมีสิทธิ์ ApproveBatch, My Jobs, Status ── */}
+                        {/* ── ยังเป็น processing (ยังไม่เคยส่งใคร) — ถามก่อนว่าจะแนบไฟล์ไหม ──── */}
+                        {historyTab === 'mine' && canApproveBatch && b.status === 'processing' && (
+                          <button onClick={() => setApproveChoiceBatch(b)} title="อนุมัติ"
+                            style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', cursor: 'pointer', fontWeight: '500' }}>
+                            ✓ อนุมัติ
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td style={{ padding: '8px 9px', textAlign: 'center' }}>
@@ -6060,6 +6187,31 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
           }
         }}
       />
+      {/* MARKER_APCONTROLLER_APPROVE_PILL_QUICK_V1 */}
+      {approveChoiceBatch && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setApproveChoiceBatch(null)}>
+          <div style={{ background: 'white', borderRadius: '10px', width: '340px', maxWidth: '92vw', padding: '18px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c', marginBottom: '4px' }}>อนุมัติ Batch นี้</div>
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: '16px' }}>ต้องการแนบไฟล์ Invoice Register ด้วยไหม?</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button onClick={() => { setReportPopupBatch(approveChoiceBatch); setApproveChoiceBatch(null); }}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                📎 แนบไฟล์
+              </button>
+              <button onClick={async () => { const b = approveChoiceBatch; setApproveChoiceBatch(null); await handleSelfApproveNoFile(b); }}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                ✓ อนุมัติเลย (ไม่ต้องแนบ)
+              </button>
+              <button onClick={() => setApproveChoiceBatch(null)}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1 */}
       {rejectChoiceBatch && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -6607,6 +6759,14 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 
 // ── InvoiceEntry ──────────────────────────────────────────────────────────────
 function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () => {}, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], smCodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
+  // ── wsNotifyInEntry — Broadcast event หลัง Submit / ส่ง WebSocket event ไปที่ Server ──
+  const wsNotifyInEntry = async (event, batch_id, status) => {
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      await fetch(`${apiBase}/api/ws-notify`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ event, batch_id, status }) });
+    } catch {}
+  };
   const { isOwner, isAdmin, isEditor } = useUserRole();
   // MARKER_APCONTROLLER_INVOICE_FLOW_V1
   const [flowMemory, setFlowMemory] = useState({});
@@ -6982,7 +7142,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       // same item - which fixes duplicate rows caused by a race condition
       // where the page unloads/refreshes before the previous sync result
       // (the _synced flag) is saved back to localStorage.
-      const payloads = pending.map(({ _localId, _synced, id, ...rest }) => ({
+      // MARKER_APCONTROLLER_FIX_DUPWARNING_UPSERT_BUG_V1
+      // ── Bug Fix: Strip Field ชั่วคราวจาก Duplicate Check ออกก่อนส่งเข้า ──
+      // ── bucket_list — ถ้าไม่ Strip บางแถวมี Field เหล่านี้บางแถวไม่มี ──────
+      // ── ทำให้ Backend สร้าง SQL Column ไม่ตรงกันทุกแถว pg Driver Error ────
+      // ── ทันทีที่เจอ undefined (500 Internal Server Error) ─────────────────
+      const payloads = pending.map(({ _localId, _synced, id, _dupWarning, _dupConfirmedAt, _dupDetail, ...rest }) => ({
         ...rest,
         local_id: _localId,
       }));
@@ -6998,7 +7163,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         const next = prev.map(inv => {
           if (inv._synced) return inv;
           const row = byLocalId.get(inv._localId);
-          return row ? { ...row, _synced: true } : inv;
+          // MARKER_APCONTROLLER_KEEP_DUPWARNING_AFTER_SYNC_V1
+          // ── เก็บ _dupWarning/_dupConfirmedAt/_dupDetail ไว้จาก State เดิม ──────
+          // ── (Frontend-Only Field ตั้งใจไม่บันทึกลง DB) ก่อนที่ก้อนนี้จะโดน ──────
+          // ── แทนที่ทั้งหมดด้วย row จาก Backend (ที่ไม่มี Field พวกนี้อยู่แล้ว) ──
+          // ── ไม่งั้นจุดสีเขียว/เหลืองในตาราง Batch Bucket จะหายไปหลัง Sync ──────
+          return row ? { ...row, _synced: true, _dupWarning: inv._dupWarning, _dupConfirmedAt: inv._dupConfirmedAt, _dupDetail: inv._dupDetail } : inv;
         });
         saveLocalBucket(next);
         return next;
@@ -7533,6 +7703,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       // ── Reset CPC/Account/SubAcc (รวม branchCpc ค่าซ่อนจาก Branch) ทุก Invoice ใหม่ ──────────
       headerCpc: '', headerAccount: '', headerSubAcc: '', branchCpc: '',
     }));
+    // ── Sync ทันทีหลัง Submit และรอให้เสร็จจริงๆ ก่อน return ──────────────────
+    await syncPendingToBucket();
+    // ── Broadcast ให้ทุก client รู้ว่ามี Invoice ใหม่ ──────────────────────────
+    wsNotifyInEntry('batch_updated', batchConfig?.batchId, 'pending');
+    await syncPendingToBucket();
+    wsNotifyInEntry('batch_updated', batchConfig?.batchId, 'pending');
+    // ── Sync ทันทีหลัง Submit รอให้เสร็จก่อน return ────────────────────────────
+    await syncPendingToBucket();
+    wsNotifyInEntry('batch_updated', batchConfig?.batchId, 'pending');
     return true;
   };
 
@@ -8543,7 +8722,25 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       // ── Rename Invoice ทุกใบจาก Draft ID (ตอน Start) → Batch Name จริง + Mark done ──
       // ── db.update() ของระบบนี้ต้องระบุ id เท่านั้น (ไม่รองรับ .eq('batch_id', ...) แบบ Bulk) ──
       // ── เลยต้องหา id ของ Invoice ทุกใบก่อน แล้ว Update ผ่าน .in('id', ids) แทน ──
-      const idsToRename = invoices.filter(inv => inv.id).map(inv => inv.id);
+      // ── Sync ก่อน Export — upsert รายการที่ยังไม่มี id แล้วรับ id กลับมาก่อน ──
+      let mergedInvoices = [...invoices];
+      const pendingToSync = invoices.filter(inv => !inv._synced && !inv.id);
+      if (pendingToSync.length > 0) {
+        // MARKER_APCONTROLLER_FIX_DUPWARNING_UPSERT_BUG_V1
+        const payloads = pendingToSync.map(({ _localId, _synced, id, _dupWarning, _dupConfirmedAt, _dupDetail, ...rest }) => ({ ...rest, local_id: _localId }));
+        const { data: syncedRows, error: syncErr } = await db.from('bucket_list').upsert(payloads, { onConflict: 'local_id' }).select();
+        if (syncErr) throw new Error('Sync Invoice ก่อน Export ไม่สำเร็จ: ' + syncErr.message);
+        // merge id ที่ได้กลับเข้า mergedInvoices
+        if (syncedRows?.length) {
+          const byLocalId = new Map(syncedRows.map(r => [r.local_id, r]));
+          mergedInvoices = mergedInvoices.map(inv => {
+            if (inv.id) return inv;
+            const row = byLocalId.get(inv._localId);
+            return row ? { ...inv, id: row.id, _synced: true } : inv;
+          });
+        }
+      }
+      const idsToRename = mergedInvoices.filter(inv => inv.id).map(inv => inv.id);
       if (!idsToRename.length) throw new Error('ไม่พบ Invoice ที่บันทึกไว้ในระบบ (ยังไม่มี id) — ลองกลับไป Invoice Entry แล้วรอ Sync สักครู่');
       const { error: renameErr } = await db.from('bucket_list')
         .update({ batch_id: newBatchId, status: 'done', exported_at: new Date().toISOString() })
