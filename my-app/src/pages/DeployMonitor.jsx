@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 
@@ -363,54 +362,148 @@ function RamDonut({ orphanRamMb, usedMb, totalMb, backendRamMb }) {
   return <canvas ref={canvasRef} />;
 }
 
-function RamLineChart({ history }) {
+// ── High-risk process names ที่ต้องการ track แยกใน Stacked Area ──
+const HIGH_RISK_PROCS = ['pgAdmin4', 'powershell', 'sqlservr', 'MsMpEng', 'SentinelAgent'];
+const HIGH_RISK_COLORS = {
+  pgAdmin4:      { bg: 'rgba(235,104,52,0.18)',  border: 'rgba(235,104,52,0.55)' },
+  powershell:    { bg: 'rgba(230,168,23,0.18)',   border: 'rgba(230,168,23,0.55)' },
+  sqlservr:      { bg: 'rgba(232,123,164,0.15)',  border: 'rgba(232,123,164,0.5)' },
+  MsMpEng:       { bg: 'rgba(137,87,229,0.13)',   border: 'rgba(137,87,229,0.4)'  },
+  SentinelAgent: { bg: 'rgba(192,57,43,0.13)',    border: 'rgba(192,57,43,0.4)'   },
+};
+
+function RamLineChart({ history: historyRaw, totalRamMb }) {
+  const history = Array.isArray(historyRaw) ? historyRaw : [];
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
   useEffect(() => {
-    if (!canvasRef.current || !history?.length) return;
-    const labels = history.map(h => formatTime(h.recorded_at));
-    const data = history.map(h => h.ram_pct);
+    if (!canvasRef.current || !history.length) return;
 
-    const ctx = canvasRef.current.getContext('2d');
-    const gradient = ctx.createLinearGradient(0, 0, 0, 190);
-    gradient.addColorStop(0, 'rgba(237,161,0,0.25)');
-    gradient.addColorStop(1, 'rgba(237,161,0,0.0)');
+    const labels = history.map(h => formatTime(h.recorded_at));
+    const totalData = history.map(h => h.ram_pct);
+
+    // ── high-risk: วาดเป็น line บาง fill opacity ซ้อนเส้นหลัก ──────────────────
+    // ── แปลง MB → % โดยใช้ totalRamMb จาก /ram-current (ไม่พึ่ง ram_total_mb) ──
+    // ── ram.total จาก /ram-current เป็น MB แล้ว (getCurrentRam หาร 1024*1024 ไว้แล้ว) ──
+    // ── ถ้าค่า > 100000 แสดงว่าหลุดเป็น bytes มา → หาร 1024 อีกครั้ง ──
+    const rawTotal = totalRamMb && totalRamMb > 0 ? totalRamMb : null;
+    const ramTotalSafe = rawTotal ? (rawTotal > 100000 ? Math.round(rawTotal / 1024) : rawTotal) : null;
+    const highRiskDatasets = ramTotalSafe ? HIGH_RISK_PROCS.map(name => {
+      const data = history.map(h => {
+        const procs = h.top_processes || [];
+        const found = procs.find(p => p.Name === name);
+        if (!found || !found.RAM) return 0;
+        return Math.max(0, Math.min(100, Math.round((found.RAM / ramTotalSafe) * 100 * 10) / 10));
+      });
+      const hasData = data.some(v => v > 0);
+      if (!hasData) return null;
+      const c = HIGH_RISK_COLORS[name] || { bg: 'rgba(150,150,150,0.15)', border: 'rgba(150,150,150,0.3)' };
+      return {
+        type: 'bar', label: name, data,
+        backgroundColor: c.bg,
+        borderColor: 'transparent',
+        borderWidth: 0,
+        order: 3,
+        yAxisID: 'y',
+        categoryPercentage: 1.0,
+        barPercentage: 1.0,
+      };
+    }).filter(Boolean) : [];
 
     if (chartRef.current) chartRef.current.destroy();
-    chartRef.current = new Chart(ctx, {
-      type: 'line',
+    chartRef.current = new Chart(canvasRef.current, {
       data: {
         labels,
         datasets: [
           {
-            data, borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 6, fill: true, backgroundColor: gradient, tension: 0.35,
+            type: 'line', label: 'RAM รวม', data: totalData,
+            borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 5,
+            fill: false, tension: 0.35, order: 0, yAxisID: 'y',
             segment: { borderColor: c => (c.p1.parsed.y >= 75 ? '#e24b4a' : '#eda100') },
             pointHoverBackgroundColor: c => (c.parsed.y >= 75 ? '#e24b4a' : '#eda100'),
           },
-          { data: labels.map(() => 75), borderColor: '#f0997b', borderWidth: 1, borderDash: [3, 4], pointRadius: 0, fill: false },
+          {
+            type: 'line', label: 'เกณฑ์ 75%', data: labels.map(() => 75),
+            borderColor: 'rgba(220,80,80,0.35)', borderWidth: 1,
+            borderDash: [4, 4], pointRadius: 0, fill: false, order: 1, yAxisID: 'y',
+          },
+          ...highRiskDatasets,
         ],
       },
       options: {
-        responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        responsive: true, maintainAspectRatio: false, aspectRatio: 1,
+        interaction: { mode: 'index', intersect: false },
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#fcfcfb', titleColor: '#0b0b0b', bodyColor: '#52514e', borderColor: '#e1e0d9', borderWidth: 1,
-            padding: 10, cornerRadius: 8, displayColors: false,
-            callbacks: { label: c => `RAM ${c.parsed.y}%`, afterLabel: c => (c.parsed.y >= 75 ? 'เกินเกณฑ์วิกฤต' : '') },
+            backgroundColor: '#fcfcfb', titleColor: '#0b0b0b', bodyColor: '#52514e',
+            borderColor: '#e1e0d9', borderWidth: 1, padding: 10, cornerRadius: 8,
+            callbacks: {
+              label: c => {
+                if (c.dataset.label === 'เกณฑ์ 75%') return null;
+                if (c.dataset.type === 'bar') return null;
+                if (c.dataset.label === 'RAM รวม') return ` RAM รวม: ${c.parsed.y}%`;
+                return c.raw > 0 ? ` ${c.dataset.label}: ~${c.raw}%` : null;
+              },
+              footer: items => {
+                const hr = items.filter(i => HIGH_RISK_PROCS.includes(i.dataset.label) && i.dataset.type !== 'bar' && i.raw > 0);
+                if (!hr.length) return '';
+                return `High-risk รวม: ~${hr.reduce((s, i) => s + i.raw, 0).toFixed(1)}%`;
+              },
+            },
           },
         },
         scales: {
-          y: { min: 0, max: 100, grid: { color: '#e1e0d9' }, ticks: { color: '#898781', font: { size: 11 }, callback: v => v + '%', stepSize: 25 } },
-          x: { grid: { display: false }, ticks: { color: '#898781', font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } },
+          y: {
+            min: 0, max: 100,
+            position: 'left',
+            grid: { color: '#e8e7e1' },
+            ticks: { color: '#898781', font: { size: 11 }, callback: v => v + '%', stepSize: 25 },
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: '#898781', font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 },
+          },
         },
       },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [history]);
 
-  return <canvas ref={canvasRef} />;
+  // ── Legend แสดงเฉพาะ process ที่มีข้อมูลจริง ──
+  const activeProcs = HIGH_RISK_PROCS.filter(name =>
+    history.some(h => (h.top_processes || []).find(p => p.Name === name))
+  );
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '8px', alignItems: 'center' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#888' }}>
+          <span style={{ width: '20px', height: '2px', background: '#eda100', display: 'inline-block', borderRadius: '1px' }} />
+          RAM รวม
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#888' }}>
+          <span style={{ width: '20px', borderTop: '1.5px dashed rgba(220,80,80,0.5)', display: 'inline-block' }} />
+          เกณฑ์ 75%
+        </span>
+        {activeProcs.length > 0 && <span style={{ width: '1px', height: '12px', background: '#e0e0e0' }} />}
+        {activeProcs.map(name => {
+          const c = HIGH_RISK_COLORS[name] || {};
+          return (
+            <span key={name} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#888' }}>
+              <span style={{ width: '10px', height: '9px', borderRadius: '2px', background: c.bg, border: `0.5px solid ${c.border || '#ccc'}`, display: 'inline-block' }} />
+              {name}
+              <span style={{ fontSize: '10px', background: '#FCEBEB', color: '#A32D2D', padding: '1px 5px', borderRadius: '3px' }}>high-risk</span>
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ position: 'relative', width: '100%', height: '190px' }}>
+        <canvas ref={canvasRef} style={{ width: '100% !important', height: '100% !important' }} />
+      </div>
+    </div>
+  );
 }
 
 export function RAMDashboardTab() {
@@ -419,12 +512,12 @@ export function RAMDashboardTab() {
   const [analysis, setAnalysis] = useState(null);
   const [expandedProc, setExpandedProc] = useState(null);
   const [killLog, setKillLog] = useState([]);
-  const [confirmData, setConfirmData] = useState(null);
+  const [previewData, setPreviewData] = useState(null);
+  const [selectedPids, setSelectedPids] = useState(new Set());
   const [killing, setKilling] = useState(false);
-  const [confirmSafeData, setConfirmSafeData] = useState(null);
   const [killingSafe, setKillingSafe] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
-  const [chartReady] = useState(true);
+  const [anomalyCleared, setAnomalyCleared] = useState(false);
 
  
   const fetchAll = useCallback(async () => {
@@ -438,6 +531,8 @@ export function RAMDashboardTab() {
       setHistory(hist);
       setAnalysis(ana);
       setLastRefresh(Date.now());
+      // ถ้า RAM กลับปกติแล้ว (anomaly หาย) → reset cleared state
+      if (!ana?.hasAnomaly) setAnomalyCleared(false);
     } catch (err) { console.error('RAM dashboard fetch error:', err); }
   }, []);
 
@@ -455,39 +550,86 @@ export function RAMDashboardTab() {
     return () => clearInterval(interval);
   }, [fetchAll, fetchKillLog]);
 
+  // ── เปิด Preview Modal — auto-kill จัดการ backend แล้ว ส่ง suggest กลับให้ Owner ──
   const handlePreviewKill = async () => {
     try {
       const data = await authFetch('/system/kill-orphans/preview', { method: 'POST' });
-      setConfirmData(data);
+      setPreviewData(data);
+      const suggestPids = new Set((data.suggest || []).map(p => p.Id));
+      setSelectedPids(suggestPids);
+      if (data.autoKilledCount > 0) {
+        setAnomalyCleared(true);
+        await fetchAll();
+        await fetchKillLog();
+      }
     } catch (err) { console.error('preview kill error:', err); }
   };
 
-  const handleConfirmKill = async () => {
-    if (!confirmData?.eligible?.length) return;
-    setKilling(true);
-    try {
-      const pids = confirmData.eligible.map(p => p.Id);
-      await authFetch('/system/kill-orphans/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pids }) });
-      setConfirmData(null);
-      await fetchAll();
-      await fetchKillLog();
-    } catch (err) { console.error('confirm kill error:', err); }
-    setKilling(false);
-  };
-
+  // ── Kill เฉพาะ auto tier (score ≥ 80) ทันที ไม่ต้องรอ Owner เลือก ──
   const handleConfirmKillSafe = async () => {
     setKillingSafe(true);
     try {
       await authFetch('/system/kill-orphans/confirm-safe', { method: 'POST' });
-      setConfirmSafeData(null);
+      setPreviewData(null);
       await fetchAll();
       await fetchKillLog();
     } catch (err) { console.error('confirm kill safe error:', err); }
     setKillingSafe(false);
   };
 
-  if (!current || !chartReady) {
-    return <div style={{ padding: '60px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>กำลังโหลดข้อมูล...</div>;
+  // ── Kill เฉพาะ PID ที่ Owner ติ๊กเลือก (suggest tier) ──
+  const handleConfirmKill = async () => {
+    if (!selectedPids.size) return;
+    setKilling(true);
+    try {
+      await authFetch('/system/kill-orphans/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pids: [...selectedPids] }),
+      });
+      setPreviewData(null);
+      setSelectedPids(new Set());
+      setAnomalyCleared(true);
+      await fetchAll();
+      await fetchKillLog();
+    } catch (err) { console.error('confirm kill error:', err); }
+    setKilling(false);
+  };
+
+  const togglePid = (pid) => {
+    setSelectedPids(prev => {
+      const next = new Set(prev);
+      next.has(pid) ? next.delete(pid) : next.add(pid);
+      return next;
+    });
+  };
+
+  if (!current) {
+    return (
+      <div style={{ padding: '20px 24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <div style={{ width: '120px', height: '20px', background: '#f0efec', borderRadius: '4px' }} />
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ width: '60px', height: '30px', background: '#f0efec', borderRadius: '6px' }} />
+            <div style={{ width: '140px', height: '30px', background: '#f0efec', borderRadius: '6px' }} />
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '28px', marginBottom: '28px', alignItems: 'start' }}>
+          <div style={{ width: '172px', height: '172px', borderRadius: '50%', background: '#f0efec', margin: '0 auto' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', paddingTop: '20px' }}>
+            <div style={{ width: '65%', height: '13px', background: '#f0efec', borderRadius: '4px' }} />
+            <div style={{ width: '45%', height: '13px', background: '#f0efec', borderRadius: '4px' }} />
+            <div style={{ width: '100%', height: '6px', background: '#f0efec', borderRadius: '3px', marginTop: '16px' }} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+          <div style={{ flex: 1, height: '76px', background: '#f0efec', borderRadius: '8px' }} />
+          <div style={{ flex: 1, height: '76px', background: '#f0efec', borderRadius: '8px' }} />
+        </div>
+        <div style={{ width: '160px', height: '13px', background: '#f0efec', borderRadius: '4px', marginBottom: '10px' }} />
+        <div style={{ height: '190px', background: '#f0efec', borderRadius: '8px', marginBottom: '24px' }} />
+      </div>
+    );
   }
 
   const { ram, orphanCount, orphanRamMb, orphanSafety, topProcesses } = current;
@@ -558,7 +700,7 @@ export function RAMDashboardTab() {
           <p style={{ fontSize: '22px', fontWeight: '500', margin: 0, color: '#27500A' }}>{safeCount}</p>
           <p style={{ fontSize: '12px', color: '#27500A', margin: '2px 0 10px' }}>ปลอดภัยที่จะปิด ({safeRamMb} MB)</p>
           {safeCount > 0 && (
-            <button onClick={() => setConfirmSafeData(true)} style={{ fontSize: '12px', padding: '5px 10px', border: 'none', borderRadius: '6px', background: '#27500A', color: 'white', cursor: 'pointer' }}>
+            <button onClick={handlePreviewKill} style={{ fontSize: '12px', padding: '5px 10px', border: 'none', borderRadius: '6px', background: '#27500A', color: 'white', cursor: 'pointer' }}>
               ปิดโปรแกรมที่ปลอดภัย
             </button>
           )}
@@ -570,23 +712,32 @@ export function RAMDashboardTab() {
       </div>
 
       <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>RAM ย้อนหลัง 24 ชั่วโมง</p>
-      <div style={{ position: 'relative', height: '190px', marginBottom: '24px' }}>
-        <RamLineChart history={history} />
+      <div style={{ marginBottom: '24px' }}>
+        <RamLineChart history={history} totalRamMb={ram?.total} />
       </div>
 
-      {analysis?.hasAnomaly && (
-        <div style={{ background: '#FCEBEB', borderRadius: '12px', padding: '16px 20px', marginBottom: '24px' }}>
+      {(analysis?.hasAnomaly || anomalyCleared) && (
+        <div style={{ background: anomalyCleared ? '#EAF3DE' : '#FCEBEB', borderRadius: '12px', padding: '16px 20px', marginBottom: '24px', transition: 'background 0.4s' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-            <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: '#e24b4a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <span style={{ color: 'white', fontSize: '15px' }}>⚠️</span>
+            <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: anomalyCleared ? '#3B6D11' : '#e24b4a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background 0.4s' }}>
+              <span style={{ color: 'white', fontSize: '15px' }}>{anomalyCleared ? '✓' : '⚠️'}</span>
             </div>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: '13px', fontWeight: '500', color: '#791F1F', margin: '0 0 3px' }}>RAM เพิ่มขึ้น {analysis.increase} เปอร์เซ็นต์ ใน {analysis.hoursSpan} ชั่วโมง</p>
-              <p style={{ fontSize: '12px', color: '#791F1F', margin: '0 0 10px', lineHeight: 1.5 }}>
-                ระหว่าง {formatTime(analysis.fromTime)} ถึง {formatTime(analysis.toTime)}
-                {analysis.topSuspect && <> — สาเหตุที่เป็นไปได้คือ <code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 5px', borderRadius: '4px', fontSize: '11px' }}>{analysis.topSuspect.name}</code> เพิ่มจาก {analysis.topSuspect.beforeRam} เป็น {analysis.topSuspect.afterRam} MB</>}
-              </p>
-              <button onClick={handlePreviewKill} style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '6px', border: 'none', background: '#e24b4a', color: 'white', cursor: 'pointer' }}>เคลียร์ orphan process</button>
+              {anomalyCleared ? (
+                <>
+                  <p style={{ fontSize: '13px', fontWeight: '500', color: '#27500A', margin: '0 0 3px' }}>เคลียร์แล้ว — RAM จะกลับสู่ปกติในรอบถัดไป</p>
+                  <p style={{ fontSize: '12px', color: '#3B6D11', margin: 0 }}>ระบบจะตรวจสอบใหม่อีกครั้งในอีก 5 นาที</p>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontSize: '13px', fontWeight: '500', color: '#791F1F', margin: '0 0 3px' }}>RAM เพิ่มขึ้น {analysis.increase} เปอร์เซ็นต์ ใน {analysis.hoursSpan} ชั่วโมง</p>
+                  <p style={{ fontSize: '12px', color: '#791F1F', margin: '0 0 10px', lineHeight: 1.5 }}>
+                    ระหว่าง {formatTime(analysis.fromTime)} ถึง {formatTime(analysis.toTime)}
+                    {analysis.topSuspect && <> — สาเหตุที่เป็นไปได้คือ <code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 5px', borderRadius: '4px', fontSize: '11px' }}>{analysis.topSuspect.name}</code> เพิ่มจาก {analysis.topSuspect.beforeRam} เป็น {analysis.topSuspect.afterRam} MB</>}
+                  </p>
+                  <button onClick={handlePreviewKill} style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '6px', border: 'none', background: '#e24b4a', color: 'white', cursor: 'pointer' }}>เคลียร์ orphan process</button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -611,53 +762,112 @@ export function RAMDashboardTab() {
         })}
       </div>
 
-      <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>ประวัติการเคลียร์ orphan process</p>
+      <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>ประวัติการเคลียร์ process</p>
       <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '8px', overflow: 'hidden' }}>
         {killLog.length === 0 && <div style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>ยังไม่มีประวัติการเคลียร์</div>}
         {killLog.map((log, i) => {
-          const detail = typeof log.detail === 'string' ? JSON.parse(log.detail) : log.detail;
+          const detail = typeof log.detail === 'string' ? JSON.parse(log.detail) : (log.detail || {});
+          const isAuto = detail.triggered_by === 'auto_score';
+          const ramDiff = detail.ram_before_pct != null && detail.ram_after_pct != null
+            ? detail.ram_before_pct - detail.ram_after_pct : null;
           return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: i < killLog.length - 1 ? '0.5px solid #e8e8e8' : 'none' }}>
-              <span style={{ width: '90px', fontSize: '12px', color: '#888', flexShrink: 0 }}>{formatTime(log.created_at)}</span>
-              <span style={{ flex: 1, fontSize: '13px' }}>{log.username}</span>
-              <span style={{ fontSize: '12px', color: '#888', marginRight: '12px' }}>{detail?.count || 0} process</span>
+            <div key={i} style={{ padding: '10px 14px', borderBottom: i < killLog.length - 1 ? '0.5px solid #e8e8e8' : 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '11px', color: '#888', flexShrink: 0, minWidth: '90px' }}>{formatTime(log.created_at)}</span>
+                <span style={{ fontSize: '13px', flex: 1 }}>{log.username}</span>
+                <span style={{ fontSize: '10px', padding: '1px 7px', borderRadius: '10px', flexShrink: 0,
+                  background: isAuto ? '#EAF3DE' : '#EDE9FE',
+                  color: isAuto ? '#27500A' : '#4C1D95' }}>
+                  {isAuto ? 'Auto' : 'Manual'}
+                </span>
+                <span style={{ fontSize: '12px', color: '#555', flexShrink: 0 }}>{detail.count || 0} ตัว</span>
+                {ramDiff != null && ramDiff > 0 && (
+                  <span style={{ fontSize: '11px', color: '#27500A', flexShrink: 0 }}>↓ {ramDiff}%</span>
+                )}
+              </div>
+              {detail.process_detail?.length > 0 && (
+                <div style={{ marginTop: '6px', paddingLeft: '98px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                  {detail.process_detail.map((p, j) => (
+                    <span key={j} style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '10px', background: p.killed ? '#EAF3DE' : '#FCEBEB', color: p.killed ? '#3B6D11' : '#791F1F' }}>
+                      {p.name} {p.ram_mb}MB
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
 
-      {confirmData && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
-          <div style={{ background: 'white', borderRadius: '10px', padding: '24px', width: '420px' }}>
-            <h3 style={{ fontSize: '15px', marginBottom: '12px', color: '#791F1F' }}>⚠️ ยืนยันเคลียร์ Orphan Process</h3>
-            <p style={{ fontSize: '13px', color: '#555', marginBottom: '12px' }}>
-              พบ PowerShell ที่ไม่มีหน้าต่างเปิดอยู่ อายุเกิน 24 ชม. จำนวน <strong>{confirmData.count} ตัว</strong> คิดเป็น RAM <strong>{confirmData.totalRamMb} MB</strong>
-            </p>
-            <div style={{ background: '#FFF3CD', borderRadius: '6px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#856404' }}>
-              การกระทำนี้จะปิด Process เหล่านี้ทันที ไม่สามารถย้อนกลับได้
+      {previewData && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '480px', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ fontSize: '15px', margin: '0 0 2px', color: '#0b0b0b' }}>เคลียร์ process</h3>
+                <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>ระบบวิเคราะห์ความปลอดภัยแล้ว</p>
+              </div>
+              <button onClick={() => { setPreviewData(null); setSelectedPids(new Set()); }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#aaa', lineHeight: 1 }}>×</button>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button onClick={() => setConfirmData(null)} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: '#f0f0f0', color: '#555', fontSize: '13px' }}>ยกเลิก</button>
-              <button onClick={handleConfirmKill} disabled={killing} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: killing ? 'default' : 'pointer', background: killing ? '#ccc' : '#e24b4a', color: 'white', fontSize: '13px', fontWeight: '500' }}>
-                {killing ? 'กำลังเคลียร์...' : `ยืนยันเคลียร์ ${confirmData.count} ตัว`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {confirmSafeData && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
-          <div style={{ background: 'white', borderRadius: '10px', padding: '24px', width: '400px' }}>
-            <h3 style={{ fontSize: '15px', marginBottom: '12px', color: '#27500A' }}>ปิดโปรแกรมที่ปลอดภัย</h3>
-            <p style={{ fontSize: '13px', color: '#555', marginBottom: '16px' }}>
-              ระบบตรวจสอบแล้วว่ามี <strong>{safeCount} โปรแกรม</strong> ไม่ได้ใช้งานมานาน ปิดได้อย่างปลอดภัย
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button onClick={() => setConfirmSafeData(null)} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: '#f0f0f0', color: '#555', fontSize: '13px' }}>ยกเลิก</button>
-              <button onClick={handleConfirmKillSafe} disabled={killingSafe} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: killingSafe ? '#ccc' : '#27500A', color: 'white', fontSize: '13px', fontWeight: '500' }}>
-                {killingSafe ? 'กำลังปิด...' : `ยืนยันปิด ${safeCount} ตัว`}
-              </button>
+            {/* Auto-kill summary — ทำไปแล้ว แสดงผลลัพธ์ */}
+            {previewData.autoKilledCount > 0 && (
+              <div style={{ background: '#EAF3DE', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '18px' }}>✓</span>
+                  <span style={{ fontSize: '13px', fontWeight: '500', color: '#27500A' }}>
+                    ระบบปิดอัตโนมัติแล้ว {previewData.autoKilledCount} ตัว — คืน RAM ~{previewData.autoRamMb} MB
+                  </span>
+                </div>
+                {previewData.autoKilled?.map((p, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', fontSize: '12px', color: '#3B6D11', padding: '3px 0' }}>
+                    <span style={{ flex: 1 }}>{p.name}</span>
+                    <span style={{ marginRight: '10px' }}>{p.ram_mb} MB</span>
+                    <span style={{ fontSize: '10px', background: p.killed ? '#C0DD97' : '#f7c1c1', color: p.killed ? '#27500A' : '#791F1F', padding: '1px 6px', borderRadius: '10px' }}>
+                      {p.killed ? 'สำเร็จ' : 'ล้มเหลว'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Suggest tier — ให้ Owner ตัดสินใจ */}
+            {previewData.suggest?.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <p style={{ fontSize: '12px', color: '#856404', fontWeight: '500', margin: '0 0 8px' }}>
+                  ต้องการให้ Owner ตัดสินใจ — ติ๊กเลือก process ที่ต้องการปิด
+                </p>
+                {previewData.suggest.map(p => (
+                  <div key={p.Id} onClick={() => togglePid(p.Id)}
+                    style={{ display: 'flex', alignItems: 'center', padding: '9px 12px', background: selectedPids.has(p.Id) ? '#FFFBEB' : '#fafafa', border: `0.5px solid ${selectedPids.has(p.Id) ? '#eda100' : '#e8e8e8'}`, borderRadius: '6px', marginBottom: '6px', cursor: 'pointer' }}>
+                    <input type="checkbox" readOnly checked={selectedPids.has(p.Id)} style={{ marginRight: '10px', accentColor: '#eda100', flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '13px', fontWeight: '500' }}>{p.Name}</div>
+                      <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>{(p.reasons || []).join(' · ')}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '10px' }}>
+                      <div style={{ fontSize: '13px' }}>{p.RAM} MB</div>
+                      <div style={{ fontSize: '10px', color: '#856404' }}>score {p.score}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {previewData.autoKilledCount === 0 && !previewData.suggest?.length && (
+              <p style={{ fontSize: '13px', color: '#888', textAlign: 'center', padding: '20px 0' }}>ไม่มี process ที่ควร Kill ตอนนี้</p>
+            )}
+
+            <div style={{ borderTop: '0.5px solid #e8e8e8', paddingTop: '14px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button onClick={() => { setPreviewData(null); setSelectedPids(new Set()); }}
+                style={{ padding: '7px 14px', borderRadius: '6px', border: '0.5px solid #e0e0e0', cursor: 'pointer', background: 'white', color: '#555', fontSize: '13px' }}>ปิด</button>
+              {previewData.suggest?.length > 0 && selectedPids.size > 0 && (
+                <button onClick={handleConfirmKill} disabled={killing}
+                  style={{ padding: '7px 16px', borderRadius: '6px', border: 'none', cursor: killing ? 'default' : 'pointer', background: killing ? '#ccc' : '#eda100', color: 'white', fontSize: '13px', fontWeight: '500' }}>
+                  {killing ? 'กำลังปิด...' : `ปิด ${selectedPids.size} ตัว`}
+                </button>
+              )}
             </div>
           </div>
         </div>
