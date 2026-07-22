@@ -93,13 +93,21 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
   const [parsedRows, setParsedRows] = React.useState([]);
   const [parsedHeaders, setParsedHeaders] = React.useState([]);
   const [fileQueue, setFileQueue] = React.useState([]);
+  const [selectedFileIdx, setSelectedFileIdx] = React.useState(0);
   const [serialCode, setSerialCode] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [saveProgress, setSaveProgress] = React.useState(0);
   const [error, setError] = React.useState('');
+  const [formatWarning, setFormatWarning] = React.useState('');
   const fileRef = React.useRef(null);
   const [attachments, setAttachments] = React.useState([]); // max 3 รูป
   const [dragOver, setDragOver] = React.useState(false);
+  // ── PDF OCR state ──────────────────────────────────────────────
+  const [pdfFile, setPdfFile]       = React.useState(null);
+  const [pdfOcring, setPdfOcring]   = React.useState(false);
+  const [pdfResult, setPdfResult]   = React.useState(null);
+  const [pdfError, setPdfError]     = React.useState('');
+  const pdfInputRef                 = React.useRef();
 
   const DOC_TYPE_MAP = { APN01:'Invoice_Register', AP07:'Input_Tax_Invoice', AP09:'Input_Tax_Invoice', TRANS:'Transaction_AP' };
 
@@ -116,7 +124,14 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     const headers = lines[0].split('	').map(h => h.trim());
     const rows = lines.slice(1).map(line => {
       const cells = line.split('	'); const row={};
-      headers.forEach((h,i) => { row[h]=(cells[i]||'').trim(); });
+      headers.forEach((h,i) => {
+        let val = (cells[i]||'').trim();
+        if (['Invoice Amount','Tax Amount','Amount','Total','VAT'].includes(h)) {
+          const n = parseFloat(String(val).replace(/,/g,''));
+          if (!isNaN(n)) val = n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        row[h] = val;
+      });
       return row;
     });
     return { headers, rows };
@@ -125,13 +140,27 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
   const handlePaste = (text) => {
     setPasteText(text);
     if (text.trim().length < 5) { setParsedRows([]); return; }
+    // ── เช็ค Scientific Notation จาก raw text ก่อน parse ──
+    const rawLines = text.trim().split(/\r?\n/).filter(l=>l.trim());
+    const rawHeaders = rawLines[0]?.split('\t').map(h=>h.trim())||[];
+    const invIdx = rawHeaders.indexOf('Invoice Num');
+    if (invIdx >= 0) {
+      const sciRows = rawLines.slice(1).filter(line => {
+        const cells = line.split('\t');
+        return /^-?\d+\.?\d*[eE][+-]?\d+$/.test((cells[invIdx]||'').trim());
+      });
+      if (sciRows.length > 0) {
+        const sample = (sciRows[0].split('\t')[invIdx]||'').trim();
+        setFormatWarning(`⚠️ พบ Invoice Number ${sciRows.length} รายการที่ผิด Format (เช่น "${sample}") — กรุณาเปิดไฟล์ Excel แก้ Format column Invoice Num เป็น Number แล้ว Copy ใหม่`);
+      } else {
+        setFormatWarning('');
+      }
+    }
     const { headers, rows } = parseTabText(text);
     setParsedHeaders(headers); setParsedRows(rows);
     if (!serialCode) {
-      const bv = rows[0]?.['Batch Name'] || rows[0]?.['[ ]'] || '';
-      const m = bv.match(/^([A-Z]{2,6})-/);
-      const bu = m ? m[1] : '';
-      setSerialCode(genSerial(bu, docType));
+      const bu = detectBU('', rows);
+      if (bu) setSerialCode(genSerial(bu, docType));
     }
   };
 
@@ -155,14 +184,105 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
 
   const handleFiles = (fileList) => {
     const files = Array.from(fileList);
-    setFileQueue(files.map(f => ({
+    const newQueue = files.map(f => ({
       name: f.name,
       serialCode: f.name.replace(/\.[^.]+$/,''),
       rows: [],
+      headers: [],
       bu: f.name.split('_')[0] || '',
       detectedType: detectDocType(f.name),
       status: 'ready',
-    })));
+      loading: true,
+    }));
+    setFileQueue(newQueue);
+
+    // อ่านแต่ละไฟล์ด้วย SheetJS
+    files.forEach((file, idx) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const XLSX = require('xlsx');
+          const wb   = XLSX.read(e.target.result, { type: 'array', cellText: false, cellDates: true });
+          const ws   = wb.Sheets[wb.SheetNames[0]];
+
+          // ── อ่านทุก row เป็น array ก่อน (raw:false เพื่อให้ Date เป็น string) ──
+          const allRows = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '', header: 1 });
+
+          // ── ดึง metadata จาก A1-A4 (col 0 = label, col 1 = value) ──
+          const getCellVal = (rowIdx) => String(allRows[rowIdx]?.[1] || '').trim();
+          const metaDocType     = getCellVal(0); // row 1: DOC TYPE
+          const metaBuRaw       = getCellVal(1); // row 2: BU CODE เช่น "3218 - Beautrium Co.,Ltd."
+          const metaBuName      = getCellVal(2); // row 3: ชื่อผู้ประกอบการ
+          const metaReceiveDate = getCellVal(3); // row 4: Receive Date
+
+          // แยก bu_code จาก "3218 - Beautrium Co.,Ltd." → "3218"
+          const metaBuCode = metaBuRaw.includes('-') ? metaBuRaw.split('-')[0].trim() : metaBuRaw.trim();
+
+          // ── หา header row จริง (row ที่มี 'Branch' หรือ 'Invoice Number') ──
+          const HEADER_KEYS = ['Branch','Invoice Number','Invoice Num','Vendor Name','GR Transaction No.'];
+          let headerRowIdx = 0;
+          for (let i = 0; i < Math.min(10, allRows.length); i++) {
+            const rowVals = allRows[i].map(v => String(v||'').trim());
+            if (HEADER_KEYS.some(k => rowVals.includes(k))) { headerRowIdx = i; break; }
+          }
+
+          // ── parse data rows โดย skip metadata ด้านบน ──
+          const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '', range: headerRowIdx });
+          const NUM_COLS = ['Invoice Amount','Tax Amount','Amount','Total','VAT','มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
+          rows.forEach(row => { Object.keys(row).forEach(k => {
+            if (row[k] instanceof Date) {
+              const d = row[k];
+              const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+              row[k] = `${String(d.getDate()).padStart(2,'0')}-${months[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
+            } else if (typeof row[k] === 'number') {
+              if (NUM_COLS.includes(k)) {
+                row[k] = Number(row[k]).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              } else {
+                row[k] = String(row[k]);
+              }
+            }
+          }); });
+          const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+          const bu = metaBuCode || detectBU(file.name, rows);
+          const detectedType = metaDocType || detectDocType(file.name);
+          const serial = file.name.replace(/\.[^.]+$/, ''); // ใช้ชื่อไฟล์ตัด .xlsx เป็น serial_code
+          setFileQueue(prev => prev.map((f, i) => i === idx ? {
+            ...f, rows, headers, loading: false,
+            bu, serialCode: serial, detectedType,
+            metaBuCode, metaBuName, metaReceiveDate,
+          } : f));
+          if (idx === 0 && serial) setSerialCode(serial);
+        } catch (err) {
+          setFileQueue(prev => prev.map((f, i) => i === idx ? { ...f, loading: false, status: 'error', error: 'อ่านไฟล์ไม่ได้: ' + err.message } : f));
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const handlePdfSave = async () => {
+    if (!pdfResult?.rows?.length) { setPdfError('ไม่มีข้อมูลให้บันทึก'); return; }
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const meta = pdfResult.metadata || {};
+      const buCode = (meta.bu_code || '').split('-')[0].trim();
+      const { data: buData } = await db.from('company_list').select('bu_name_full').eq('bu', buCode).maybeSingle();
+      const { error: err } = await db.from('doc_collection').insert([{
+        serial_code:  serialCode || pdfResult.serial_code,
+        doc_type:     meta.doc_type || docType,
+        doc_name:     DOC_TYPE_MAP[meta.doc_type || docType] || docType,
+        rows:         pdfResult.rows,
+        bu_code:      buCode || meta.bu_code || '',
+        bu_code_name: buData?.bu_name_full || meta.bu_name || '',
+        source:       'ocr_pdf',
+        file_date:    meta.receive_date || now.split('T')[0],
+        uploaded_by:  userName || currentUser?.email || '',
+        created_at:   now, updated_at: now,
+      }]);
+      if (err) throw new Error(err.message);
+      onSave(); onClose();
+    } catch(e) { setPdfError('บันทึกไม่สำเร็จ: ' + e.message); setSaving(false); }
   };
 
   const handleSave = async () => {
@@ -170,6 +290,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
       if (!serialCode.trim()) { setError('กรุณาระบุ Serial code'); return; }
       if (parsedRows.length === 0) { setError('กรุณาวางข้อมูลก่อน'); return; }
       if (!['APN01','AP07','AP09','TRANS'].includes(docType)) { setError('ไม่สามารถ Generate ได้ เนื่องจากประเภทเอกสารนี้ยังไม่มีในระบบ'); return; }
+      // ── เช็ค Scientific Notation ก่อนบันทึก ──
+      const sciRows = parsedRows.filter(r => /^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(r['Invoice Num']||'')));
+      if (sciRows.length > 0) {
+        alert(`❌ ไม่สามารถบันทึกได้\n\nพบ Invoice Number ${sciRows.length} รายการที่ผิด Format (เช่น "${sciRows[0]['Invoice Num']}")\n\nกรุณาเปิดไฟล์ Excel → Format column Invoice Num เป็น Number → Copy ใหม่`);
+        return;
+      }
       setSaving(true);
       try {
         const now = new Date().toISOString();
@@ -206,8 +332,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           const { error: err } = await db.from('doc_collection').insert([{
             serial_code: f.serialCode, doc_type: f.detectedType||docType,
             doc_name: DOC_TYPE_MAP[f.detectedType||docType]||docType,
-            rows: f.rows, bu_code: f.bu, source: 'upload',
-            file_date: now.split('T')[0],
+            rows: f.rows, bu_code: f.metaBuCode||f.bu, bu_code_name: f.metaBuName||null,
+            source: 'upload',
+            file_date: f.metaReceiveDate || now.split('T')[0],
             uploaded_by: userName||currentUser?.email||'',
             created_at: now, updated_at: now,
           }]);
@@ -252,7 +379,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           {error && <div style={{ background:'#FCEBEB',color:'#791F1F',padding:'7px 12px',borderRadius:'6px',fontSize:'12px',marginBottom:'10px' }}>{error}</div>}
           <div style={{ display:'flex',marginBottom:'10px' }}>
             <button style={{ ...S.tab(tab==='paste'),borderRadius:'6px 0 0 6px' }} onClick={()=>setTab('paste')}>📋 วางจาก Excel/Sheet</button>
-            <button style={{ ...S.tab(tab==='file'),borderRadius:'0 6px 6px 0',borderLeft:'none' }} onClick={()=>setTab('file')}>📎 แนบไฟล์ Excel (หลายไฟล์)</button>
+            <button style={{ ...S.tab(tab==='file'),borderLeft:'none' }} onClick={()=>setTab('file')}>📎 แนบไฟล์ Excel (หลายไฟล์)</button>
+            <button style={{ ...S.tab(tab==='pdf'),borderRadius:'0 6px 6px 0',borderLeft:'none' }} onClick={()=>setTab('pdf')}>📄 OCR PDF</button>
           </div>
           {tab==='paste' ? (
             <div>
@@ -262,9 +390,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
                   value={pasteText} onChange={e=>handlePaste(e.target.value)}/>
               ) : (
                 <div>
-                  <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 10px',background:'#EAF3DE',borderRadius:'6px 6px 0 0',fontSize:'11px',color:'#27500A' }}>
-                    <span>✅ detect ได้ {parsedRows.length} แถว {parsedHeaders.length} คอลัมน์</span>
-                    <button onClick={()=>{setPasteText('');setParsedRows([]);setParsedHeaders([]);setSerialCode('');}} style={{ fontSize:'10px',padding:'2px 8px',borderRadius:'4px',border:'0.5px solid #aaa',background:'white',cursor:'pointer',color:'#555' }}>✕ ล้าง</button>
+                  <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 10px',background: formatWarning ? '#FCEBEB' : '#EAF3DE',borderRadius:'6px 6px 0 0',fontSize:'11px',color: formatWarning ? '#791F1F' : '#27500A' }}>
+                    <span>{formatWarning ? `⚠️ detect ได้ ${parsedRows.length} แถว — มี Format ผิด ${parsedRows.filter(r=>/^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(r['Invoice Num']||''))).length} รายการ` : `✅ detect ได้ ${parsedRows.length} แถว ${parsedHeaders.length} คอลัมน์`}</span>
+                    <button onClick={()=>{setPasteText('');setParsedRows([]);setParsedHeaders([]);setSerialCode('');setFormatWarning('');}} style={{ fontSize:'10px',padding:'2px 8px',borderRadius:'4px',border:'0.5px solid #aaa',background:'white',cursor:'pointer',color:'#555' }}>✕ ล้าง</button>
                   </div>
                   <div style={{ overflowX:'auto',overflowY:'auto',maxHeight:'480px',border:'0.5px solid #d0d0d0',borderTop:'none',borderRadius:'0 0 6px 6px' }}>
                     <table style={{ borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%' }}>
@@ -274,15 +402,19 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
                         ))}</tr>
                       </thead>
                       <tbody>
-                        {parsedRows.map((row,i)=>(
-                          <tr key={i} style={{ background:i%2===0?'white':'#f8f9fa' }}
-                            onMouseEnter={e=>e.currentTarget.style.background='#f0f6ff'}
-                            onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'white':'#f8f9fa'}>
+                        {parsedRows.map((row,i)=>{
+                          const hasSci = /^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(row['Invoice Num']||''));
+                          const rowBg = hasSci ? '#FCEBEB' : i%2===0 ? 'white' : '#f8f9fa';
+                          return (
+                          <tr key={i} style={{ background: rowBg }}
+                            onMouseEnter={e=>e.currentTarget.style.background=hasSci?'#f7d0d0':'#f0f6ff'}
+                            onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
                             {parsedHeaders.map((h,j)=>(
-                              <td key={j} style={{ padding:'4px 10px',borderRight:'0.5px solid #f0f0f0',borderBottom:'0.5px solid #f0f0f0',color:'#333' }}>{row[h]||''}</td>
+                              <td key={j} style={{ padding:'4px 10px',borderRight:'0.5px solid #f0f0f0',borderBottom:'0.5px solid #f0f0f0',color: hasSci && h==='Invoice Num' ? '#c0392b' : '#333', fontWeight: hasSci && h==='Invoice Num' ? '600' : 'normal' }}>{row[h]||''}</td>
                             ))}
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -291,79 +423,60 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
 
             </div>
           ) : (
-            <div>
-              <div
-                onDragOver={e=>{e.preventDefault();e.currentTarget.style.background='#f0f6ff';e.currentTarget.style.borderColor='#1a3a5c';}}
-                onDragLeave={e=>{e.currentTarget.style.background='#fafafa';e.currentTarget.style.borderColor='#d0d0d0';}}
-                onDrop={e=>{e.preventDefault();e.currentTarget.style.background='#fafafa';e.currentTarget.style.borderColor='#d0d0d0';handleFiles(e.dataTransfer.files);}}
-                onClick={()=>fileRef.current?.click()}
-                style={{ border:'1.5px dashed #d0d0d0',borderRadius:'8px',height:'300px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer',background:'#fafafa',transition:'all .15s',gap:'8px' }}>
-                {fileQueue.length === 0 ? (
-                  <>
-                    <div style={{ fontSize:'32px' }}>📊</div>
-                    <div style={{ fontSize:'12px',fontWeight:'500',color:'#1a3a5c' }}>ลากไฟล์มาวาง หรือคลิกเลือก</div>
-                    <div style={{ fontSize:'11px',color:'#aaa' }}>.xlsx, .xls — เลือกได้หลายไฟล์พร้อมกัน</div>
-                  </>
-                ) : (
-                  <div style={{ width:'100%',height:'100%',display:'flex',gap:'0',overflow:'hidden',borderRadius:'7px' }}>
-                    <div style={{ flex:'0 0 40%',background:'#1a3a5c',display:'flex',flexDirection:'column',justifyContent:'center',padding:'16px 20px',gap:'6px',overflowY:'auto' }}>
+            <div style={{ display:'flex',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden',minHeight:'400px' }}>
+              <div style={{ width:'190px',flexShrink:0,background:'#1a3a5c',display:'flex',flexDirection:'column' }}
+                onDragOver={e=>{e.preventDefault();}} onDrop={e=>{e.preventDefault();handleFiles(e.dataTransfer.files);}}>
+                <div style={{ flex:1,overflowY:'auto',padding:'6px' }}>
+                  {fileQueue.length === 0 ? (
+                    <div onClick={()=>fileRef.current?.click()} style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',gap:'6px',cursor:'pointer' }}>
+                      <div style={{ fontSize:'28px' }}>📊</div>
+                      <div style={{ fontSize:'10px',color:'rgba(255,255,255,0.6)',textAlign:'center' }}>ลากไฟล์มาวาง<br/>หรือคลิกเลือก</div>
+                      <div style={{ fontSize:'9px',color:'rgba(255,255,255,0.35)' }}>.xlsx, .xls</div>
+                    </div>
+                  ) : (
+                    <>
                       {fileQueue.map((f,i)=>(
-                        <div key={i} style={{ display:'flex',alignItems:'center',gap:'8px',padding:'5px 8px',borderRadius:'5px',background:'rgba(255,255,255,0.08)' }}>
-                          <span style={{ fontSize:'16px' }}>{f.status==='done'?'✅':f.status==='error'?'❌':'📄'}</span>
+                        <div key={i} onClick={()=>setSelectedFileIdx(i)} style={{ display:'flex',alignItems:'center',gap:'6px',padding:'5px 7px',borderRadius:'5px',cursor:'pointer',marginBottom:'4px',background:selectedFileIdx===i?'rgba(255,255,255,0.22)':'rgba(255,255,255,0.07)',border:selectedFileIdx===i?'0.5px solid rgba(255,255,255,0.35)':'0.5px solid transparent' }}>
+                          <span style={{ fontSize:'14px',flexShrink:0 }}>{f.loading?'⏳':f.status==='done'?'✅':f.status==='error'?'❌':'📄'}</span>
                           <div style={{ flex:1,minWidth:0 }}>
                             <div style={{ fontSize:'10px',color:'white',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{f.name}</div>
-                            <div style={{ fontSize:'9px',color:'rgba(255,255,255,0.6)' }}>BU: {f.bu||'-'} · {f.detectedType}</div>
+                            <div style={{ fontSize:'9px',color:'rgba(255,255,255,0.5)',marginTop:'1px' }}>{f.bu||'-'} · {f.detectedType}{f.rows?.length?` · ${f.rows.length}แถว`:''}</div>
                           </div>
+                          <button onClick={e=>{e.stopPropagation();setFileQueue(prev=>{const next=prev.filter((_,j)=>j!==i);if(selectedFileIdx>=next.length)setSelectedFileIdx(Math.max(0,next.length-1));return next;});}} style={{ background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:'12px',padding:'0 2px',lineHeight:1,flexShrink:0 }}>✕</button>
                         </div>
                       ))}
-                      {fileQueue.length < 10 && (
-                        <div style={{ fontSize:'10px',color:'rgba(255,255,255,0.4)',textAlign:'center',marginTop:'4px' }}>+ คลิกเพื่อเพิ่มไฟล์</div>
-                      )}
-                    </div>
-                    <div style={{ flex:1,padding:'16px',overflowY:'auto',background:'white' }}>
-                      <div style={{ fontSize:'11px',fontWeight:'500',color:'#1a3a5c',marginBottom:'8px' }}>ตัวอย่างข้อมูล: {fileQueue[0]?.name}</div>
-                      {fileQueue[0]?.rows?.length > 0 ? (
-                        <table style={{ borderCollapse:'collapse',fontSize:'10px',width:'100%' }}>
-                          <thead>
-                            <tr>{Object.keys(fileQueue[0].rows[0]||{}).slice(0,5).map((h,i)=>(
-                              <th key={i} style={{ padding:'3px 8px',background:'#f0f0f0',fontSize:'10px',textAlign:'left',borderBottom:'0.5px solid #ddd',whiteSpace:'nowrap' }}>{h}</th>
-                            ))}</tr>
-                          </thead>
-                          <tbody>
-                            {fileQueue[0].rows.slice(0,5).map((row,i)=>(
-                              <tr key={i}>
-                                {Object.keys(fileQueue[0].rows[0]||{}).slice(0,5).map((h,j)=>(
-                                  <td key={j} style={{ padding:'3px 8px',borderBottom:'0.5px solid #f0f0f0',fontSize:'10px',whiteSpace:'nowrap',maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis' }}>{row[h]}</td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <div style={{ fontSize:'11px',color:'#aaa',textAlign:'center',marginTop:'20px' }}>อ่านข้อมูลจากไฟล์ .xlsx จำเป็นต้องใช้ SheetJS</div>
-                      )}
-                    </div>
+                      <div onClick={()=>fileRef.current?.click()} style={{ fontSize:'10px',color:'rgba(255,255,255,0.35)',textAlign:'center',marginTop:'6px',cursor:'pointer' }}>+ เพิ่มไฟล์</div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div style={{ flex:1,background:'white',display:'flex',flexDirection:'column',overflow:'hidden' }}>
+                {fileQueue.length === 0 ? (
+                  <div style={{ flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'6px',color:'#aaa' }}>
+                    <div style={{ fontSize:'28px' }}>📋</div>
+                    <div style={{ fontSize:'11px' }}>เลือกไฟล์เพื่อดู Preview</div>
                   </div>
-                )}
+                ) : (() => {
+                  const sel = fileQueue[selectedFileIdx]||fileQueue[0];
+                  if (!sel) return null;
+                  if (sel.loading) return <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',color:'#888'}}>กำลังอ่านไฟล์...</div>;
+                  if (!sel.rows?.length) return <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',color:'#aaa'}}>ไม่มีข้อมูล</div>;
+                  return (
+                    <>
+                      <div style={{padding:'6px 12px',borderBottom:'0.5px solid #f0f0f0',fontSize:'11px',fontWeight:'500',color:'#1a3a5c',display:'flex',justifyContent:'space-between'}}>
+                        <span>{sel.name}</span><span style={{fontWeight:'400',color:'#aaa',fontSize:'10px'}}>{sel.rows.length} แถว · {sel.headers.length} คอลัมน์</span>
+                      </div>
+                      <div style={{flex:1,overflowX:'auto',overflowY:'auto'}}>
+                        <table style={{borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%'}}>
+                          <thead><tr>{sel.headers.map((h,i)=>(<th key={i} style={{padding:'5px 10px',background:'#1a3a5c',color:'rgba(255,255,255,0.9)',fontWeight:'500',textAlign:'left',borderRight:'0.5px solid rgba(255,255,255,0.1)',position:'sticky',top:0,zIndex:1}}>{h}</th>))}</tr></thead>
+                          <tbody>{sel.rows.map((row,i)=>(<tr key={i} style={{background:i%2===0?'white':'#f8f9fa'}}>{sel.headers.map((h,j)=>(<td key={j} style={{padding:'4px 10px',borderBottom:'0.5px solid #f0f0f0'}}>{row[h]||''}</td>))}</tr>))}</tbody>
+                        </table>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
               <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{ display:'none' }} onChange={e=>handleFiles(e.target.files)}/>
-              {fileQueue.length>0 && (
-                <div style={{ marginTop:'10px',border:'0.5px solid #e8e8e8',borderRadius:'6px',overflow:'hidden' }}>
-                  <div style={{ padding:'6px 10px',background:'#f8f9fa',fontSize:'11px',color:'#888',borderBottom:'0.5px solid #e8e8e8' }}>
-                    {fileQueue.length} ไฟล์ — {fileQueue.filter(f=>f.status==='ready').length} พร้อม / {fileQueue.filter(f=>f.status==='done').length} บันทึกแล้ว
-                  </div>
-                  {fileQueue.map((f,i) => (
-                    <div key={i} style={{ display:'flex',alignItems:'center',gap:'8px',padding:'7px 10px',borderBottom:'0.5px solid #f0f0f0',fontSize:'11px' }}>
-                      <span>{f.status==='done'?'✅':f.status==='error'?'❌':'📄'}</span>
-                      <div style={{ flex:1,minWidth:0 }}>
-                        <div style={{ fontWeight:'500',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#1a3a5c' }}>{f.name}</div>
-                        <div style={{ fontSize:'10px',color:'#aaa' }}>BU: {f.bu||'-'} · {f.detectedType}</div>
-                      </div>
-                      {f.status==='ready' && <input value={f.serialCode} onChange={e=>setFileQueue(prev=>prev.map((p,j)=>j===i?{...p,serialCode:e.target.value}:p))} style={{ ...S.inp,width:'200px',fontSize:'10px' }}/>}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
@@ -411,14 +524,94 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
               </div>
 
         </div>
+        {/* ── PDF OCR Tab ─────────────────────────────────────────── */}
+        {tab === 'pdf' && (() => {
+          const PDF_COLS = ['Branch','Vendor Name','GR Transaction No.','Invoice Number','Receive Date','รายการ','มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม','Batch Name'];
+          const NUM_COLS_PDF = ['มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
+
+          const handlePdfDrop = async (e) => {
+            e.preventDefault();
+            const file = (e.dataTransfer?.files?.[0]) || (e.target?.files?.[0]);
+            if (!file || file.type !== 'application/pdf') { setPdfError('กรุณาเลือกไฟล์ PDF เท่านั้น'); return; }
+            setPdfFile(file); setPdfResult(null); setPdfError(''); setPdfOcring(true);
+            try {
+              const token = sessionStorage.getItem('fastapn_token');
+              const fd = new FormData(); fd.append('file', file);
+              const res = await fetch('http://10.101.87.126:4000/api/docenter/ocr-pdf', {
+                method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+              });
+              const data = await res.json();
+              if (!res.ok || !data.success) throw new Error(data.detail || data.error || 'OCR ล้มเหลว');
+              setPdfResult(data);
+              setSerialCode(data.serial_code || '');
+              if (data.doc_type) setDocType(data.doc_type);
+            } catch(err) { setPdfError('OCR ไม่สำเร็จ: ' + err.message); }
+            setPdfOcring(false);
+          };
+
+          return !pdfResult ? (
+            /* Drop Zone */
+            <div onClick={()=>pdfInputRef.current?.click()} onDrop={handlePdfDrop} onDragOver={e=>e.preventDefault()}
+              style={{ flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'10px',cursor:'pointer',background:'#f8f9fa',border:'1.5px dashed #ccc',borderRadius:'8px',margin:'16px' }}>
+              {pdfOcring ? (
+                <>
+                  <div style={{ fontSize:'36px' }}>⏳</div>
+                  <div style={{ fontSize:'13px',color:'#1a3a5c',fontWeight:'500' }}>กำลัง OCR อยู่ รอสักครู่...</div>
+                  <div style={{ fontSize:'11px',color:'#aaa' }}>PaddleOCR กำลังอ่านตาราง</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize:'44px' }}>📄</div>
+                  <div style={{ fontSize:'13px',color:'#1a3a5c',fontWeight:'500' }}>ลากไฟล์ PDF มาวาง หรือคลิกเลือก</div>
+                  <div style={{ fontSize:'11px',color:'#aaa' }}>รองรับ APN01 · AP07 · AP09 · TRANS · สูงสุด 30MB</div>
+                  {pdfError && <div style={{ fontSize:'11px',color:'#c0392b' }}>{pdfError}</div>}
+                </>
+              )}
+              <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display:'none' }} onChange={handlePdfDrop}/>
+            </div>
+          ) : (
+            /* Preview */
+            <div style={{ flex:1,display:'flex',flexDirection:'column',overflow:'hidden' }}>
+              <div style={{ padding:'7px 16px',background:'#f0f6ff',borderBottom:'0.5px solid #dce8fb',display:'flex',gap:'20px',flexWrap:'wrap',flexShrink:0,alignItems:'center' }}>
+                {pdfResult.metadata?.doc_type     && <span style={{ fontSize:'11px',color:'#1a3a5c' }}><b>DOC TYPE</b> {pdfResult.metadata.doc_type}</span>}
+                {pdfResult.metadata?.bu_code      && <span style={{ fontSize:'11px',color:'#1a3a5c' }}><b>BU CODE</b> {pdfResult.metadata.bu_code}</span>}
+                {pdfResult.metadata?.bu_name      && <span style={{ fontSize:'11px',color:'#555' }}><b>บริษัท</b> {pdfResult.metadata.bu_name}</span>}
+                {pdfResult.metadata?.receive_date && <span style={{ fontSize:'11px',color:'#555' }}><b>Receive Date</b> {pdfResult.metadata.receive_date}</span>}
+                <span style={{ fontSize:'11px',color:'#888',marginLeft:'auto' }}>{pdfResult.total_rows} รายการ · {pdfResult.pages} หน้า</span>
+                <button onClick={()=>{setPdfResult(null);setPdfFile(null);setPdfError('');}}
+                  style={{ fontSize:'11px',color:'#888',background:'none',border:'none',cursor:'pointer',textDecoration:'underline' }}>เลือกไฟล์ใหม่</button>
+              </div>
+              <div style={{ flex:1,overflowX:'auto',overflowY:'auto' }}>
+                <div style={{ minWidth:'max-content',padding:'0 16px',boxSizing:'border-box' }}>
+                  <table style={{ borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%' }}>
+                    <thead><tr>{PDF_COLS.map((h,i)=>(
+                      <th key={i} style={{ padding:'6px 10px',background:'#1a3a5c',color:'white',fontWeight:'600',textAlign:NUM_COLS_PDF.includes(h)?'right':'left' }}>{h}</th>
+                    ))}</tr></thead>
+                    <tbody>{pdfResult.rows.map((row,ri)=>(
+                      <tr key={ri} style={{ background:ri%2===0?'white':'#f5f8ff' }}>
+                        {PDF_COLS.map((h,ci)=>(
+                          <td key={ci} style={{ padding:'5px 10px',borderBottom:'0.5px solid #f0f0f0',textAlign:NUM_COLS_PDF.includes(h)?'right':'left' }}>{row[h]||'-'}</td>
+                        ))}
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+              {pdfError && <div style={{ padding:'6px 16px',fontSize:'11px',color:'#c0392b',background:'#fff5f5' }}>{pdfError}</div>}
+            </div>
+          );
+        })()}
+
         <div style={{ padding:'10px 18px',borderTop:'0.5px solid #f0f0f0',background:'#f8f9fa',display:'flex',alignItems:'center',gap:'10px',flexShrink:0 }}>
           <label style={{ fontSize:'11px',color:'#888',whiteSpace:'nowrap',flexShrink:0 }}>Serial Code</label>
           <input style={{ ...S.inp,flex:1,fontFamily:'monospace',fontSize:'11px' }} value={serialCode} onChange={e=>setSerialCode(e.target.value)} placeholder="generate อัตโนมัติเมื่อ detect BU ได้"/>
           <div style={{ display:'flex',gap:'8px',alignItems:'center',flexShrink:0,marginLeft:'auto' }}>
             {saving&&saveProgress>0 && <span style={{ fontSize:'11px',color:'#1a3a5c',fontWeight:'500' }}>{saveProgress}%</span>}
             <button style={{ padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer',color:'#555' }} onClick={onClose}>ยกเลิก</button>
-            <button style={{ padding:'6px 16px',borderRadius:'6px',border:'none',background:saving?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500' }} onClick={handleSave} disabled={saving}>
-              {saving?`กำลังบันทึก... ${saveProgress}%`:'💾 บันทึก'}
+            <button style={{ padding:'6px 16px',borderRadius:'6px',border:'none',background:saving?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500' }}
+              onClick={tab==='pdf' ? handlePdfSave : handleSave}
+              disabled={saving}>
+              {saving?`กำลังบันทึก... ${saveProgress>0?saveProgress+'%':''}`:'💾 บันทึก'}
             </button>
           </div>
         </div>
@@ -446,29 +639,74 @@ function DocDetailModal({ file, onClose }) {
   };
 
   // Map raw rows → display rows ตาม APN01 format
-  // [ ] = "AP Manual..6920740506.589801.....24-JUL-26.No.20-JUL-26.."
-  // split('.') → filter ตัวเลขล้วน → [0]=GR, [1]=Branch
+  // รองรับ 2 source: paste (มี '[ ]','Supplier','Invoice Num') และ template upload (มี 'Branch','Vendor Name','Invoice Number')
   const mappedRows = rawRows.map(r => {
-    const invAmt = parseFloat(String(r['Invoice Amount']||'0').replace(/,/g,''))||0;
-    const gross = invAmt;
-    const bracketParts = String(r['[ ]']||'').split('.').map(p=>p.trim()).filter(p=>p);
-    const numParts = bracketParts.filter(p=>/^\d+$/.test(p));
-    const grNo   = numParts[0] || '';
-    const branch = numParts[1] || '';
-    return {
-      'Branch': branch,
-      'Vendor Name': r['Supplier']||'',
-      'GR Transaction No.': grNo,
-      'Invoice Number': r['Invoice Num']||'',
-      'Receive Date': r['Invoice Date']||'',
-      'รายการ': r['Description']||'',
-      'มูลค่าก่อนภาษี': gross||'',
-      'มูลค่าภาษี': parseFloat(String(r['Tax Amount']||'0').replace(/,/g,''))||'',
-      'มูลค่ารวม': invAmt||'',
-      'Batch Name': r['Batch Name']||'',
-    };
+    const isPasteFormat = '[ ]' in r || 'Supplier' in r || 'Invoice Num' in r;
+    if (isPasteFormat) {
+      const invAmt = parseFloat(String(r['Invoice Amount']||'0').replace(/,/g,''))||0;
+      const bracketParts = String(r['[ ]']||'').split('.').map(p=>p.trim()).filter(p=>p);
+      const numParts = bracketParts.filter(p=>/^\d+$/.test(p));
+      return {
+        'Branch': numParts[1] || '',
+        'Vendor Name': r['Supplier']||'',
+        'GR Transaction No.': numParts[0] || '',
+        'Invoice Number': r['Invoice Num']||'',
+        'Receive Date': r['Invoice Date']||'',
+        'รายการ': r['Description']||'',
+        'มูลค่าก่อนภาษี': invAmt||'',
+        'มูลค่าภาษี': parseFloat(String(r['Tax Amount']||'0').replace(/,/g,''))||'',
+        'มูลค่ารวม': invAmt||'',
+        'Batch Name': r['Batch Name']||'',
+      };
+    } else {
+      // Template upload format — column names ตรงกับ COLS อยู่แล้ว
+      const gross = parseFloat(String(r['มูลค่าก่อนภาษี']||r['Gross Value']||r['Invoice Amount']||'0').replace(/,/g,''))||0;
+      const vat   = parseFloat(String(r['มูลค่าภาษี']||r['Vat Value']||r['Tax Amount']||'0').replace(/,/g,''))||0;
+      const total = parseFloat(String(r['มูลค่ารวม']||r['Total Value']||'0').replace(/,/g,''))||(gross+vat)||0;
+      return {
+        'Branch': r['Branch']||'',
+        'Vendor Name': r['Vendor Name']||'',
+        'GR Transaction No.': r['GR Transaction No.']||'',
+        'Invoice Number': r['Invoice Number']||r['Invoice Num']||'',
+        'Receive Date': r['Receive Date']||'',
+        'รายการ': r['รายการ']||r['Description']||'',
+        'มูลค่าก่อนภาษี': gross||'',
+        'มูลค่าภาษี': vat||'',
+        'มูลค่ารวม': total||'',
+        'Batch Name': r['Batch Name']||'',
+      };
+    }
   });
 
+  const API_BASE = 'http://10.101.87.126:4000/api';
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadExcel = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${API_BASE}/excel/download`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ file, rows: mappedRows }),
+      });
+      if (!res.ok) throw new Error('Generate ไม่สำเร็จ');
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `${file.serial_code || 'Invoice_Register'}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Download ไม่สำเร็จ: ' + err.message);
+    }
+    setDownloading(false);
+  };
   const COLS = ['Branch','Vendor Name','GR Transaction No.','Invoice Number','Receive Date','รายการ','มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม','Batch Name'];
   const COL_W = {'Branch':'80px','Vendor Name':'160px','GR Transaction No.':'140px','Invoice Number':'160px','Receive Date':'110px','รายการ':'auto','มูลค่าก่อนภาษี':'120px','มูลค่าภาษี':'110px','มูลค่ารวม':'120px','Batch Name':'170px'};
   const NUM_COLS = ['มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
@@ -480,7 +718,7 @@ function DocDetailModal({ file, onClose }) {
 
   const S = {
     overlay:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000},
-    modal:{background:'white',borderRadius:'12px',width:window.innerWidth<=1366?'calc(100vw - 40px)':'calc(100vw - 200px)',maxWidth:window.innerWidth<=1366?'calc(100vw - 40px)':'calc(100vw - 200px)',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden'},
+    modal:{background:'white',borderRadius:'12px',width:'calc(100vw - 40px)',maxWidth:'1280px',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden'},
     th:{padding:'7px 10px',fontSize:'11px',color:'rgba(255,255,255,0.9)',fontWeight:'500',background:'#1a3a5c',whiteSpace:'nowrap',borderRight:'0.5px solid rgba(255,255,255,0.1)',position:'sticky',top:0,zIndex:2},
     td:{padding:'7px 10px',fontSize:'11px',borderBottom:'0.5px solid #f0f0f0',verticalAlign:'middle'},
     hlabel:{fontSize:'11px',color:'#555',width:'130px',padding:'4px 0',flexShrink:0,fontWeight:'500'},
@@ -496,7 +734,9 @@ function DocDetailModal({ file, onClose }) {
             <span style={{fontSize:'13px',fontWeight:'500',color:'#1a3a5c',maxWidth:'600px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.serial_code}</span>
           </div>
           <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-            <button style={{padding:'5px 12px',fontSize:'11px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',color:'#555'}}>⬇ Download</button>
+            <button onClick={handleDownloadExcel} disabled={downloading} style={{padding:'5px 12px',fontSize:'11px',borderRadius:'6px',border:'0.5px solid #1a3a5c',background: downloading ? '#ccc' : '#1a3a5c',cursor: downloading ? 'default' : 'pointer',color:'white'}}>
+              {downloading ? 'กำลัง Generate...' : '⬇ Download Excel'}
+            </button>
             <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:'22px',color:'#aaa',lineHeight:1}}>×</button>
           </div>
         </div>
@@ -513,6 +753,7 @@ function DocDetailModal({ file, onClose }) {
         </div>
 
         <div style={{overflowX:'auto',overflowY:'auto',flex:1}}>
+          <div style={{minWidth:'max-content',padding:'0 20px',boxSizing:'border-box'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px',tableLayout:'auto'}}>
             <thead>
               <tr>
@@ -535,6 +776,7 @@ function DocDetailModal({ file, onClose }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
 
         <div style={{padding:'8px 20px',borderTop:'0.5px solid #f0f0f0',background:'#f8f9fa',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
@@ -547,6 +789,140 @@ function DocDetailModal({ file, onClose }) {
 }
 
 
+// ── compress รูปก่อน save ให้เหลือ ≤ maxKB ──────────────────────────────────
+function compressImage(dataUrl, maxKB = 200, quality = 0.82) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      // คำนวณขนาดใหม่ถ้ากว้าง/สูงเกิน 1600px
+      const MAX_DIM = 1600;
+      let { width, height } = img;
+      if (width > MAX_DIM || height > MAX_DIM) {
+        const ratio = Math.min(MAX_DIM / width, MAX_DIM / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+
+      // ลด quality จนกว่าจะ ≤ maxKB
+      let q = quality;
+      let result = canvas.toDataURL('image/jpeg', q);
+      while (result.length * 0.75 > maxKB * 1024 && q > 0.3) {
+        q -= 0.08;
+        result = canvas.toDataURL('image/jpeg', q);
+      }
+      resolve(result);
+    };
+    img.src = dataUrl;
+  });
+}
+
+function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
+  const [attachments, setAttachments] = React.useState(Array.isArray(file.attachments) ? [...file.attachments] : []);
+  const [saving, setSaving] = React.useState(false);
+  const [preview, setPreview] = React.useState(null); // index ที่กำลัง preview
+  const inputRef = React.useRef();
+
+  const handleAddFiles = (e) => {
+    const imgs = Array.from(e.target.files||[]).filter(f=>f.type.startsWith('image/'));
+    if (attachments.length + imgs.length > 3) { alert('แนบได้สูงสุด 3 รูปครับ'); return; }
+    imgs.slice(0, 3 - attachments.length).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = async ev => {
+        const compressed = await compressImage(ev.target.result, 200);
+        const kb = Math.round(compressed.length * 0.75 / 1024);
+        setAttachments(prev => [...prev, { name: file.name, data: compressed, mime: 'image/jpeg', size_kb: kb }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const handleRemove = (i) => {
+    setAttachments(prev => prev.filter((_,j)=>j!==i));
+    if (preview === i) setPreview(null);
+    else if (preview > i) setPreview(p => p - 1);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await db.from('doc_collection').update({ attachments }).eq('id', file.id);
+      await logActivity('update_attachment', file.serial_code, { count: attachments.length });
+      onSave();
+    } catch(e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&onClose()}
+      style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1500}}>
+      <div style={{background:'white',borderRadius:'12px',width:'520px',maxHeight:'90vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
+        {/* Header */}
+        <div style={{padding:'12px 18px',borderBottom:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
+          <div>
+            <div style={{fontSize:'13px',fontWeight:'600',color:'#1a3a5c'}}>📎 จัดการรูปแนบ</div>
+            <div style={{fontSize:'10px',color:'#888',marginTop:'2px'}}>{file.serial_code}</div>
+          </div>
+          <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:'20px',color:'#aaa',lineHeight:1}}>×</button>
+        </div>
+
+        {/* Content */}
+        <div style={{padding:'16px 18px',flex:1,overflowY:'auto'}}>
+          {/* Preview ใหญ่ */}
+          <div style={{width:'100%',height:'220px',borderRadius:'8px',background:'#f4f6f9',border:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'12px',overflow:'hidden',cursor:preview!=null?'zoom-in':'default'}}
+            onClick={()=>preview!=null&&window.open(attachments[preview].data,'_blank')}>
+            {preview != null
+              ? <img src={attachments[preview].data} alt={attachments[preview].name} style={{maxWidth:'100%',maxHeight:'100%',objectFit:'contain'}}/>
+              : <div style={{textAlign:'center',color:'#bbb'}}>
+                  <div style={{fontSize:'32px',marginBottom:'6px'}}>🖼</div>
+                  <div style={{fontSize:'11px'}}>คลิกรูปด้านล่างเพื่อดู Preview</div>
+                </div>
+            }
+          </div>
+
+          {/* Thumbnail list */}
+          <div style={{display:'flex',gap:'8px',marginBottom:'14px',flexWrap:'wrap'}}>
+            {attachments.map((a,i)=>(
+              <div key={i} style={{position:'relative',width:'80px',height:'80px'}}>
+                <img src={a.data} alt={a.name} onClick={()=>setPreview(i)}
+                  style={{width:'80px',height:'80px',borderRadius:'6px',objectFit:'cover',cursor:'pointer',border:preview===i?'2px solid #1a3a5c':'1.5px solid #ddd',transition:'border .15s'}}/>
+                <button onClick={()=>handleRemove(i)}
+                  style={{position:'absolute',top:'-6px',right:'-6px',width:'18px',height:'18px',borderRadius:'50%',background:'#c0392b',border:'none',color:'white',cursor:'pointer',fontSize:'10px',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>✕</button>
+                <div style={{fontSize:'9px',color:'#888',textAlign:'center',marginTop:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'80px'}}>{a.name}</div>
+                {a.size_kb && <div style={{fontSize:'9px',color:'#aaa',textAlign:'center'}}>{a.size_kb} KB</div>}
+              </div>
+            ))}
+            {attachments.length < 3 && (
+              <div onClick={()=>inputRef.current?.click()}
+                style={{width:'80px',height:'80px',borderRadius:'6px',border:'1.5px dashed #ccc',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer',gap:'4px',color:'#bbb',background:'#fafafa',transition:'all .15s'}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor='#1a3a5c';e.currentTarget.style.color='#1a3a5c';}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor='#ccc';e.currentTarget.style.color='#bbb';}}>
+                <span style={{fontSize:'22px'}}>+</span>
+                <span style={{fontSize:'9px'}}>เพิ่มรูป</span>
+              </div>
+            )}
+          </div>
+          <input ref={inputRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleAddFiles}/>
+
+          <div style={{fontSize:'10px',color:'#aaa'}}>แนบได้สูงสุด 3 รูป · คลิก ✕ เพื่อลบรูป · {attachments.length}/3</div>
+        </div>
+
+        {/* Footer */}
+        <div style={{padding:'10px 18px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'flex-end',gap:'8px',flexShrink:0}}>
+          <button onClick={onClose} style={{padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer',color:'#555'}}>ยกเลิก</button>
+          <button onClick={handleSave} disabled={saving} style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:saving?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:saving?'default':'pointer',fontWeight:'500'}}>
+            {saving ? 'กำลังบันทึก...' : '💾 บันทึก'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -555,6 +931,8 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   const [showAdd, setShowAdd] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [viewFile, setViewFile] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // { attachments:[], index:0 }
+  const [attachModal, setAttachModal] = useState(null); // file object ที่กำลังแก้ไข attachment
 
   const TABS = [
     { key:'APN01', label:'APN01' },
@@ -586,6 +964,49 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
     } catch(e){ alert('ลบไม่สำเร็จ: '+e.message); }
   };
 
+  const API_BASE_ROW = 'http://10.101.87.126:4000/api';
+  const [downloadingRow, setDownloadingRow] = useState(null);
+
+  const handleRowDownload = async (file) => {
+    if (downloadingRow === file.id) return;
+    setDownloadingRow(file.id);
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const rawRows = Array.isArray(file.rows) ? file.rows : [];
+      const mappedRows = rawRows.map(r => {
+        const invAmt = parseFloat(String(r['Invoice Amount']||'0').replace(/,/g,''))||0;
+        const bracketParts = String(r['[ ]']||'').split('.').map(p=>p.trim()).filter(p=>p);
+        const numParts = bracketParts.filter(p=>/^\d+$/.test(p));
+        return {
+          'Branch': numParts[1]||'',
+          'Vendor Name': r['Supplier']||'',
+          'GR Transaction No.': numParts[0]||'',
+          'Invoice Number': r['Invoice Num']||'',
+          'Receive Date': r['Invoice Date']||'',
+          'รายการ': r['Description']||'',
+          'มูลค่าก่อนภาษี': invAmt||'',
+          'มูลค่าภาษี': parseFloat(String(r['Tax Amount']||'0').replace(/,/g,''))||'',
+          'มูลค่ารวม': invAmt||'',
+          'Batch Name': r['Batch Name']||'',
+        };
+      });
+      const res = await fetch(`${API_BASE_ROW}/excel/download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ file, rows: mappedRows }),
+      });
+      if (!res.ok) throw new Error('Generate ไม่สำเร็จ');
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `${file.serial_code || 'Invoice_Register'}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { alert('Download ไม่สำเร็จ: ' + err.message); }
+    setDownloadingRow(null);
+  };
+
   const filtered = files.filter(f => {
     const matchTab = activeTab==='TRANS' ? ['TRANS','STORE'].includes(f.doc_type) : f.doc_type===activeTab;
     const matchSearch = !search || (() => {
@@ -610,7 +1031,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   };
 
   return (
-    <div style={{ padding:'20px' }}>
+    <div style={{ padding:'20px', minWidth:0, overflow:'hidden' }}>
       <div style={{ display:'flex',alignItems:'center',gap:'8px',marginBottom:'16px' }}>
         <button onClick={onBack} style={{ background:'none',border:'none',cursor:'pointer',color:'#888',fontSize:'13px',padding:0 }}>← Document Center</button>
         <span style={{ color:'#ddd' }}>/</span>
@@ -638,7 +1059,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
           </button>
         ))}
       </div>
-      <div style={{ background:'white',borderRadius:'0 0 8px 8px',border:'0.5px solid #e8e8e8',borderTop:'none',overflow:'auto' }}>
+      <div style={{ background:'white',borderRadius:'0 0 8px 8px',border:'0.5px solid #e8e8e8',borderTop:'none',overflowX:'auto',overflowY:'visible',width:'100%' }}>
         {loading ? (
           <div style={{ padding:'40px',textAlign:'center',color:'#aaa',fontSize:'13px' }}>กำลังโหลด...</div>
         ) : filtered.length===0 ? (
@@ -686,6 +1107,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
                           <>
                             {file.attachments.slice(0,3).map((a,i)=>(
                               <img key={i} src={a.data} alt={a.name} title={a.name}
+                                onClick={()=>setLightbox({attachments:file.attachments,index:i})}
                                 style={{ width:'32px',height:'32px',borderRadius:'4px',objectFit:'cover',border:'0.5px solid #ddd',cursor:'pointer' }}/>
                             ))}
                             {file.attachments.length>3&&<span style={{ fontSize:'10px',color:'#aaa' }}>+{file.attachments.length-3}</span>}
@@ -697,8 +1119,8 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
                     <td style={{ ...S.td,textAlign:'center' }}>
                       <div style={{ display:'inline-flex',gap:'4px' }}>
                         <button title="ดู" onClick={()=>setViewFile(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>👁</button>
-                        <button title="Download" style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>⬇</button>
-                        <button title="Attachment" style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>📎</button>
+                        <button title="Download" onClick={()=>handleRowDownload(file)} disabled={downloadingRow===file.id} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background: downloadingRow===file.id ? '#eee' : 'white',cursor: downloadingRow===file.id ? 'default' : 'pointer',fontSize:'12px' }}>⬇</button>
+                        <button title="จัดการรูปแนบ" onClick={()=>setAttachModal(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #1a3a5c',background:'white',cursor:'pointer',fontSize:'12px' }}>📎</button>
                         {canDelete && <button title="ลบ" onClick={()=>setConfirmDelete(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',cursor:'pointer',fontSize:'12px' }}>🗑</button>}
                       </div>
                     </td>
@@ -713,6 +1135,41 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
         )}
       </div>
       {viewFile && <DocDetailModal file={viewFile} onClose={()=>setViewFile(null)}/>}
+      {attachModal && (
+        <AttachmentModal
+          file={attachModal}
+          onClose={()=>setAttachModal(null)}
+          onSave={()=>{ setAttachModal(null); fetchFiles(); }}
+          db={db}
+          logActivity={logActivity}
+        />
+      )}
+      {lightbox && (
+        <div onClick={()=>setLightbox(null)}
+          style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.82)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000,flexDirection:'column',gap:'12px'}}>
+          <div onClick={e=>e.stopPropagation()} style={{position:'relative',maxWidth:'90vw',maxHeight:'80vh'}}>
+            <img src={lightbox.attachments[lightbox.index].data} alt={lightbox.attachments[lightbox.index].name}
+              style={{maxWidth:'90vw',maxHeight:'80vh',borderRadius:'8px',objectFit:'contain',boxShadow:'0 8px 32px rgba(0,0,0,0.5)'}}/>
+            <button onClick={()=>setLightbox(null)}
+              style={{position:'absolute',top:'-14px',right:'-14px',width:'28px',height:'28px',borderRadius:'50%',border:'none',background:'white',cursor:'pointer',fontSize:'14px',fontWeight:'bold',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 2px 8px rgba(0,0,0,0.3)'}}>×</button>
+            {lightbox.attachments.length>1&&lightbox.index>0&&(
+              <button onClick={()=>setLightbox(p=>({...p,index:p.index-1}))}
+                style={{position:'absolute',left:'-40px',top:'50%',transform:'translateY(-50%)',width:'32px',height:'32px',borderRadius:'50%',border:'none',background:'white',cursor:'pointer',fontSize:'16px',boxShadow:'0 2px 8px rgba(0,0,0,0.3)'}}>‹</button>
+            )}
+            {lightbox.attachments.length>1&&lightbox.index<lightbox.attachments.length-1&&(
+              <button onClick={()=>setLightbox(p=>({...p,index:p.index+1}))}
+                style={{position:'absolute',right:'-40px',top:'50%',transform:'translateY(-50%)',width:'32px',height:'32px',borderRadius:'50%',border:'none',background:'white',cursor:'pointer',fontSize:'16px',boxShadow:'0 2px 8px rgba(0,0,0,0.3)'}}>›</button>
+            )}
+          </div>
+          <div style={{display:'flex',gap:'8px'}}>
+            {lightbox.attachments.map((a,i)=>(
+              <img key={i} src={a.data} alt={a.name} onClick={e=>{e.stopPropagation();setLightbox(p=>({...p,index:i}));}}
+                style={{width:'48px',height:'48px',borderRadius:'4px',objectFit:'cover',cursor:'pointer',border:i===lightbox.index?'2px solid white':'2px solid rgba(255,255,255,0.3)',opacity:i===lightbox.index?1:0.6,transition:'all .15s'}}/>
+            ))}
+          </div>
+          <div style={{fontSize:'11px',color:'rgba(255,255,255,0.5)'}}>{lightbox.attachments[lightbox.index].name}</div>
+        </div>
+      )}
       {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={()=>{setShowAdd(false);fetchFiles();}} userName={userName} currentUser={currentUser}/>}
       {confirmDelete && (
         <div style={{ position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:999 }}>
