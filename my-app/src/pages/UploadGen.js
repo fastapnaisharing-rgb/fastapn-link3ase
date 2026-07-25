@@ -86,6 +86,407 @@ function AttachDropZone({ attachments, setAttachments }) {
 }
 
 
+// ── Duplicate check — serial_code + doc_type เท่านั้น ──────────────────
+// APN01 และ AP09 มาจากข้อมูลชุดเดียวกันแต่คนละประเภทเอกสาร ห้าม block กัน
+async function checkDuplicateSerial(db, serialCode, docType) {
+  if (!serialCode) return null;
+  const { data } = await db
+    .from('doc_collection')
+    .select('serial_code,doc_type')
+    .eq('serial_code', serialCode)
+    .eq('doc_type', docType)
+    .maybeSingle();
+  return data || null;
+}
+
+// ── Module-level AP09 row parser ─────────────────────────────────────────────
+// [ ] format: "AP Manual.{vendor_tax}.{GRT_batch}.{GL}...{Yes|No}.{TaxInvDate}.{TaxInvNo}"
+// branch มาจาก column Site ของ row ไม่ใช่ parts[2]
+// vendor ใบกำกับภาษีมาจาก parts[1] (เช่น "กรมศุลกากร") ไม่ใช่ Supplier (DHL ซ้ำทุกแถว)
+// ── parseAP09RowsFromRaw ──────────────────────────────────────────────────────
+// [ ] format (split by '.'):
+//   [0] "AP Manual"
+//   [1] ชื่อเจ้าของใบกำกับภาษี เช่น "กรมศุลกากร" (ว่าง = ไม่มี)
+//   [2] GRT Batch No. เช่น "6920720127"
+//   [3] GL เช่น "010101"
+//   ...
+//   [yesIdx+0] "Yes"
+//   [yesIdx+1] Receive Date เช่น "22-JUL-26"
+//   [yesIdx+2] GRT No. (ใบ GRT จริง) เช่น "6910720051"
+//   [yesIdx+3] Tax Invoice Date เช่น "07-JUL-26"
+//   [yesIdx+4] Tax Invoice No. เช่น "1190-090337"
+function parseAP09RowsFromRaw(rawRows) {
+  return rawRows
+    .filter(r => {
+      const parts = String(r['[ ]'] || '').split('.').map(p => p.trim());
+      return parts.some(p => p.toLowerCase() === 'yes');
+    })
+    .map(r => {
+      const parts  = String(r['[ ]'] || '').split('.').map(p => p.trim());
+      const yesIdx = parts.findIndex(p => p.toLowerCase() === 'yes');
+
+      // Branch: ดึงจาก [ ] เหมือน APN01 — numParts[1] คือ GL เช่น "010101"
+      const bracketParts = parts.filter(p => p);
+      const numParts = bracketParts.filter(p => /^\d+$/.test(p));
+      const branch   = numParts[1] || '';
+
+      // Vendor Name: ชื่อเจ้าของใบกำกับอยู่ที่ parts[1]
+      // ถ้าว่าง (แถวค่าดำเนินการ DHL เอง) → ใช้ r['Supplier']
+      const taxVendor = (parts[1] || '').trim() || r['Supplier'] || r['Vendor Name'] || '';
+
+      // ข้อมูลหลัง Yes
+      const receiveDate = yesIdx >= 0 ? (parts[yesIdx + 1] || '').trim() : '';
+      const grtNo       = yesIdx >= 0 ? (parts[yesIdx + 2] || '').trim() : '';
+      const taxInvDate  = yesIdx >= 0 ? (parts[yesIdx + 3] || '').trim() : '';
+      const taxInvNo    = yesIdx >= 0 ? (parts[yesIdx + 4] || '').trim() : '';
+
+      // ยอดเงิน: ดึงจาก Invoice Amount ของ row นั้น (ไม่คำนวณย้อน)
+      const invAmt = parseFloat(String(r['Invoice Amount'] || r['มูลค่ารวม'] || '0').replace(/,/g, '')) || 0;
+      const taxAmt = parseFloat(String(r['Tax Amount'] || '0').replace(/,/g, '')) || 0;
+      // ยอดก่อนภาษี = invAmt - taxAmt (ถ้ามี Tax Amount) หรือคำนวณจาก 100/107
+      const gross  = taxAmt > 0
+        ? Math.round((invAmt - taxAmt) * 100) / 100
+        : Math.round(invAmt * 100 / 107 * 100) / 100;
+      const vat    = taxAmt > 0
+        ? taxAmt
+        : Math.round(invAmt * 7 / 107 * 100) / 100;
+
+      return {
+        'Branch':           branch,
+        'Vendor Name':      taxVendor,
+        'Receive Date':     receiveDate || r['Invoice Date'] || r['Receive Date'] || '',
+        'GRT No.':          grtNo,
+        'Tax Invoice Date': taxInvDate,
+        'Tax Invoice No.':  taxInvNo,
+        'Description':      r['Description'] || r['Desctiption'] || r['รายการ'] || '',
+        'ยอดก่อนภาษี':     gross,
+        'ยอดภาษี':         vat,
+        'ยอดรวม':          invAmt,
+      };
+    });
+}
+
+function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MAP, db, userName, currentUser, onSave, onClose, saving, setSaving, genSerial }) {
+  const [pdfQueue, setPdfQueue]       = React.useState([]); // [{file, status, result, error}]
+  const [selected, setSelected]       = React.useState(null); // index ที่เลือกดู preview
+  const [attachments, setAttachments] = React.useState([]);
+  const [pdfError, setPdfError]       = React.useState('');
+  const pdfInputRef                   = React.useRef();
+  const attachInputRef                = React.useRef();
+
+  const runOcr = async (file, idx, retryCount = 0, rotation = 0) => {
+    setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'ocring', error:''} : x));
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const fd = new FormData(); fd.append('file', file);
+      if (rotation) fd.append('rotation', String(rotation));
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 300000); // 5 นาที (รอ server queue ได้)
+      let res;
+      try {
+        res = await fetch('http://10.101.87.126:4000/api/docenter/ocr-pdf', {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.detail || data.error || 'OCR ล้มเหลว');
+      const buShort = data.metadata?.bu_short || data.metadata?.bu_code?.split('-')[0]?.trim() || '';
+      const dtype   = data.doc_type || data.metadata?.doc_type || docType;
+      // Lookup bu จาก company_list เพื่อเอา bu code (MPS, LKS) มา genSerial
+      // ดึง BU จากชื่อไฟล์ — รองรับทั้ง "MPS_..." และ "MPS - APN01 - ..."
+      const nameNoExt = file.name.replace(/\.pdf$/i, '');
+      const buFromName = (() => {
+        const m1 = nameNoExt.match(/^([A-Z]{2,6})_/);
+        if (m1) return m1[1];
+        const m2 = nameNoExt.match(/^([A-Z]{2,6})[ -]/);
+        if (m2) return m2[1];
+        return '';
+      })();
+      let buCode = buFromName || buShort || 'XX';
+      // Lookup company_list ด้วย bu_code_name ถ้ามี buShort (0568)
+      if (buShort && !buFromName) {
+        try {
+          const r = await db.from('company_list').select('bu').ilike('bu_code_name', buShort + '%').maybeSingle();
+          if (r?.data?.bu) buCode = r.data.bu;
+        } catch(_) {}
+      }
+      const serial = genSerial ? genSerial(buCode, dtype) : (data.serial_code || file.name);
+      setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'done', result:data, serial} : x));
+      if (idx === 0 || selected === idx) {
+        setSelected(idx);
+        setSerialCode(serial);
+      }
+    } catch(err) {
+      const msg = err.name === 'AbortError' ? 'หมดเวลา — server ใช้เวลานานเกิน 5 นาที' : err.message;
+      // retry เฉพาะ network error (ไม่ใช่ abort หรือ server error)
+      if (retryCount === 0 && err.name !== 'AbortError' && err.message === 'Failed to fetch') {
+        setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'ocring', error:'กำลัง retry...'} : x));
+        await new Promise(r => setTimeout(r, 3000));
+        return runOcr(file, idx, 1);
+      }
+      setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'error', error:msg} : x));
+    }
+  };
+
+  const addFiles = async (files) => {
+    const pdfs = Array.from(files).filter(f => f.type === 'application/pdf');
+    if (!pdfs.length) { setPdfError('กรุณาเลือกไฟล์ PDF เท่านั้น'); return; }
+    // Duplicate check ใน queue
+    const existingNames = new Set(pdfQueue.map(x => x.file.name));
+    const newPdfs = pdfs.filter(f => {
+      if (existingNames.has(f.name)) { setPdfError(`ไฟล์ "${f.name}" มีอยู่ใน queue แล้ว`); return false; }
+      return true;
+    });
+    if (!newPdfs.length) return;
+    setPdfError('');
+    const startIdx = pdfQueue.length;
+    const newItems = newPdfs.map(f => ({ file: f, status: 'pending', result: null, error: '' }));
+    setPdfQueue(q => [...q, ...newItems]);
+    if (selected === null) setSelected(startIdx);
+    for (let i = 0; i < newPdfs.length; i++) {
+      await runOcr(newPdfs[i], startIdx + i);
+    }
+  };
+
+  const removeFile = (idx) => {
+    setPdfQueue(q => q.filter((_,i) => i !== idx));
+    setSelected(s => s === idx ? (pdfQueue.length > 1 ? 0 : null) : s > idx ? s - 1 : s);
+  };
+
+  const handlePdfSave = async () => {
+    const readyItems = pdfQueue.filter(x => x.status === 'done');
+    if (!readyItems.length) { setPdfError('ไม่มีไฟล์ที่ OCR สำเร็จ'); return; }
+    setSaving(true);
+    for (const item of readyItems) {
+      try {
+        const itemIdx = pdfQueue.indexOf(item);
+        const rot = previewRotation[itemIdx] || 0;
+        const now  = new Date().toISOString();
+        const meta = item.result.metadata || {};
+        // ดึง bu (MPS/LKS) จาก company_list โดย match bu_code_name
+        const buShort = meta.bu_short || meta.bu_code?.split('-')[0]?.trim() || '';
+        let insertBuCode     = buShort;
+        let insertBuCodeName = meta.bu_code || '';
+        let insertBuName     = meta.bu_name || meta.bu_name_ocr || '';
+        if (buShort) {
+          try {
+            const { data: cl } = await db.from('company_list')
+              .select('bu,bu_code_name,"THAI COMPANY NAME"')
+              .ilike('bu_code_name', buShort + '%').maybeSingle();
+            if (cl) {
+              insertBuCode     = cl.bu || buShort;
+              insertBuCodeName = cl.bu_code_name || insertBuCodeName;
+              insertBuName     = cl['THAI COMPANY NAME'] || insertBuName;
+            }
+          } catch(_) {}
+        }
+        const finalSerial = item.serial || serialCode.trim() || item.result.serial_code || item.file.name;
+        const ocrDocType  = meta.doc_type || docType;
+        // Duplicate check — serial + doc_type เท่านั้น
+        const dupSerial = await checkDuplicateSerial(db, finalSerial, ocrDocType);
+        if (dupSerial) { setPdfError(`Serial "${finalSerial}" (${ocrDocType}) มีในระบบแล้ว — ข้ามไฟล์นี้`); continue; }
+        // rotate รูปก่อน insert ถ้ามี rotation
+        let pdfImageData = item.result.pdf_image || '';
+        if (pdfImageData && rot) {
+          try {
+            const img = new Image();
+            img.src = pdfImageData;
+            await new Promise(r => { img.onload = r; });
+            const canvas = document.createElement('canvas');
+            const swap = rot === 90 || rot === 270;
+            canvas.width  = swap ? img.height : img.width;
+            canvas.height = swap ? img.width  : img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.translate(canvas.width/2, canvas.height/2);
+            ctx.rotate(rot * Math.PI / 180);
+            ctx.drawImage(img, -img.width/2, -img.height/2);
+            pdfImageData = canvas.toDataURL('image/jpeg', 0.85);
+          } catch(_) {}
+        }
+        const pdfAttachment = pdfImageData ? [{
+          name: finalSerial + '.jpg',
+          data: pdfImageData, mime: 'image/jpeg', source: 'ocr_pdf',
+        }] : [];
+
+        // ── Group rows ตาม receive_date → insert แยก record ─────────────
+        const allRows = item.result.rows || [];
+        const rowsByDate = {};
+        const defaultDate = meta.receive_date || now.split('T')[0];
+        allRows.forEach(r => {
+          const rd = r['Receive Date'] || defaultDate;
+          if (!rowsByDate[rd]) rowsByDate[rd] = [];
+          rowsByDate[rd].push(r);
+        });
+        const dateGroups = Object.entries(rowsByDate);
+        // ถ้าวันเดียว ใช้ serial เดิม / ถ้าหลายวัน ใส่ suffix วันที่
+        for (let gi = 0; gi < dateGroups.length; gi++) {
+          const [groupDate, groupRows] = dateGroups[gi];
+          const groupSerial = dateGroups.length === 1
+            ? finalSerial
+            : `${finalSerial}_${groupDate.replace(/[^a-zA-Z0-9]/g, '')}`;
+          const { error: err } = await db.from('doc_collection').insert([{
+            serial_code:  groupSerial,
+            doc_type:     ocrDocType,
+            doc_name:     DOC_TYPE_MAP[ocrDocType] || ocrDocType,
+            rows:         groupRows,
+            bu_code:      insertBuCode,
+            bu_code_name: insertBuCodeName,
+            bu_name:      insertBuName,
+            source:       'ocr_pdf',
+            file_date:    groupDate,
+            uploaded_by:  userName || currentUser?.email || '',
+            ocr_text:     item.result.ocr_text || '',
+            attachments:  gi === 0 ? [...pdfAttachment, ...attachments] : [...attachments],
+            created_at:   now, updated_at: now,
+          }]);
+          if (err) throw new Error(err.message);
+        }
+      } catch(e) { setPdfError('บันทึกไม่สำเร็จ: ' + e.message); }
+    }
+    setSaving(false);
+    onSave();
+  };
+
+  const [previewRotation, setPreviewRotation] = React.useState({}); // {idx: 0/90/180/270}
+
+  const selectedItem = selected !== null ? pdfQueue[selected] : null;
+  const meta = selectedItem?.result?.metadata || {};
+  const currentRot = selected !== null ? (previewRotation[selected] || 0) : 0;
+  const rotatePreview = () => setPreviewRotation(r => ({ ...r, [selected]: ((r[selected]||0) + 90) % 360 }));
+
+  const statusIcon = (s) => s==='done'?'✅':s==='ocring'?'⏳':s==='error'?'❌':s==='duplicate'?'⚠️':'🕐';
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden', minHeight:0 }}>
+      {/* ── Main area: left list + right preview ── */}
+      <div style={{ display:'flex', flex:1, overflow:'hidden', gap:0, minHeight:0 }}>
+
+        {/* ── Left: File List ── */}
+        <div style={{ width:'240px', flexShrink:0, display:'flex', flexDirection:'column', borderRight:'1px solid #e5eaf2', background:'#f8faff' }}>
+          <input ref={pdfInputRef} type="file" accept="application/pdf" multiple style={{ display:'none' }}
+            onChange={e=>addFiles(e.target.files)}/>
+
+          {/* File list */}
+          <div style={{ flex:1, overflowY:'auto' }}
+            onDrop={e=>{e.preventDefault();addFiles(e.dataTransfer.files);}}
+            onDragOver={e=>e.preventDefault()}>
+            {pdfQueue.length === 0 ? (
+              <div style={{ height:'100%', minHeight:'300px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', cursor:'pointer', background:'#1a3a5c', color:'white' }}
+                onClick={()=>pdfInputRef.current?.click()}>
+                <div style={{ fontSize:'40px', marginBottom:'10px' }}>📄</div>
+                <div style={{ fontWeight:'500', fontSize:'12px', marginBottom:'4px' }}>ลากไฟล์มาวาง</div>
+                <div style={{ fontSize:'11px', color:'rgba(255,255,255,0.5)' }}>หรือคลิกเพื่อเลือก</div>
+                <div style={{ fontSize:'10px', color:'rgba(255,255,255,0.3)', marginTop:'4px' }}>.pdf</div>
+              </div>
+            ) : pdfQueue.map((item, idx) => (
+              <div key={idx} onClick={()=>{ setSelected(idx); if(item.serial) setSerialCode(item.serial); }}
+                style={{ padding:'8px 10px', borderBottom:'0.5px solid #eef', cursor:'pointer', background: selected===idx ? '#e8f0fb' : 'transparent', display:'flex', flexDirection:'column', gap:'3px' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+                  <span style={{ fontSize:'13px' }}>{statusIcon(item.status)}</span>
+                  <span style={{ fontSize:'11px', fontWeight:'500', color:'#1a3a5c', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={item.file.name}>{item.file.name}</span>
+                  <button onClick={e=>{e.stopPropagation();removeFile(idx);}}
+                    style={{ background:'none', border:'none', color:'#aaa', cursor:'pointer', fontSize:'13px', padding:'0 2px', lineHeight:1 }}>×</button>
+                </div>
+                {item.status === 'ocring' && (
+                  <div style={{ height:'3px', background:'#e0e8f8', borderRadius:'2px', overflow:'hidden' }}>
+                    <div style={{ height:'100%', width:'60%', background:'#1a3a5c', borderRadius:'2px', animation:'progress 1s infinite' }}/>
+                  </div>
+                )}
+                {item.status === 'error' && <div style={{ fontSize:'10px', color:'#c0392b' }}>{item.error}</div>}
+                {item.status === 'duplicate' && (
+                  <div style={{ fontSize:'10px', color:'#e67e22', marginTop:'2px' }}>
+                    ⚠️ คล้าย {item.dupInfo?.serial_code} {item.dupInfo?.similarity}%
+                    <div style={{ display:'flex', gap:'4px', marginTop:'3px' }}>
+                      <button onClick={e=>{e.stopPropagation();setPdfQueue(q=>q.map((x,i)=>i===idx?{...x,status:'done'}:x));}}
+                        style={{ padding:'2px 8px',borderRadius:'3px',border:'none',background:'#27ae60',color:'white',fontSize:'10px',cursor:'pointer' }}>✓ Approve</button>
+                      <button onClick={e=>{e.stopPropagation();setPdfQueue(q=>q.map((x,i)=>i===idx?{...x,status:'error',error:'Rejected by user'}:x));}}
+                        style={{ padding:'2px 8px',borderRadius:'3px',border:'none',background:'#c0392b',color:'white',fontSize:'10px',cursor:'pointer' }}>✕ Reject</button>
+                    </div>
+                  </div>
+                )}
+                {item.status === 'done' && <div style={{ fontSize:'10px', color:'#27ae60' }}>{item.result.total_rows} รายการ · {item.result.pages} หน้า</div>}
+              </div>
+            ))}
+            {/* ปุ่มเพิ่มไฟล์เมื่อมีไฟล์แล้ว */}
+            {pdfQueue.length > 0 && (
+              <div onClick={()=>pdfInputRef.current?.click()}
+                style={{ padding:'8px 10px', textAlign:'center', fontSize:'11px', color:'#1a3a5c', cursor:'pointer', borderTop:'0.5px solid #eef' }}
+                onDrop={e=>{e.preventDefault();addFiles(e.dataTransfer.files);}}
+                onDragOver={e=>e.preventDefault()}>
+                ＋ เพิ่มไฟล์ PDF
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0 }}>
+          {selectedItem?.result ? (
+            <>
+              {/* Metadata bar */}
+              <div style={{ padding:'8px 14px', background:'#f0f6ff', borderBottom:'0.5px solid #dce8fb', display:'flex', gap:'16px', flexWrap:'wrap', flexShrink:0, alignItems:'center' }}>
+                {meta.doc_type    && <span style={{ fontSize:'11px', color:'#1a3a5c' }}><b>DOC TYPE</b> {meta.doc_type}</span>}
+                {meta.bu_code     && <span style={{ fontSize:'11px', color:'#1a3a5c' }}><b>BU CODE</b> {meta.bu_code}</span>}
+                {meta.bu_name     && <span style={{ fontSize:'11px', color:'#555' }}><b>บริษัท</b> {meta.bu_name}</span>}
+                {meta.receive_date && <span style={{ fontSize:'11px', color:'#555' }}><b>Receive Date</b> {meta.receive_date}</span>}
+                <span style={{ fontSize:'11px', color:'#888', marginLeft:'auto' }}>{selectedItem.result.total_rows} รายการ · {selectedItem.result.pages} หน้า</span>
+                {selectedItem.result.pdf_image && (
+                  <button onClick={rotatePreview}
+                    title={`หมุน 90° (ปัจจุบัน ${currentRot}°)`}
+                    style={{ padding:'3px 10px', borderRadius:'6px', border:'0.5px solid #c0d0e8', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px', flexShrink:0 }}>
+                    ↺ {currentRot}°
+                  </button>
+                )}
+              </div>
+              {/* PDF Image */}
+              <div style={{ flex:1, overflowY:'auto', display:'flex', justifyContent:'center', alignItems:'flex-start', padding:'12px', background:'#f5f5f5' }}>
+                {selectedItem.result.pdf_image ? (
+                  <img src={selectedItem.result.pdf_image} alt="PDF Preview"
+                    style={{ maxWidth: currentRot===90||currentRot===270 ? 'calc(100vh - 200px)' : '100%', borderRadius:'6px', boxShadow:'0 2px 12px rgba(0,0,0,0.15)', cursor:'zoom-in', transform:`rotate(${currentRot}deg)`, transition:'transform 0.3s ease', transformOrigin:'center center' }}
+                    onClick={()=>window.open(selectedItem.result.pdf_image,'_blank')}/>
+                ) : (
+                  <div style={{ textAlign:'center', color:'#aaa', paddingTop:'40px' }}>
+                    <div style={{ fontSize:'40px' }}>📄</div>
+                    <div style={{ fontSize:'12px', marginTop:'8px' }}>{selectedItem.result.total_rows} รายการ</div>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'#ccc', fontSize:'12px', flexDirection:'column', gap:'8px' }}
+              onDrop={e=>{e.preventDefault();addFiles(e.dataTransfer.files);}}
+              onDragOver={e=>e.preventDefault()}>
+              <div style={{ fontSize:'40px' }}>📄</div>
+              {pdfQueue.length === 0 ? 'ลากไฟล์ PDF มาวาง หรือเพิ่มไฟล์จากด้านซ้าย' : 'เลือกไฟล์จากรายการทางซ้าย'}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Footer: Serial + Save ── */}
+      <div style={{ borderTop:'1px solid #e5eaf2', padding:'10px 16px', background:'white', flexShrink:0, display:'flex', gap:'8px', alignItems:'center' }}>
+        <input
+          value={selected !== null && pdfQueue[selected] ? (pdfQueue[selected].serial || serialCode) : serialCode}
+          onChange={e => {
+            const val = e.target.value;
+            if (selected !== null) {
+              setPdfQueue(q => q.map((x,i) => i===selected ? {...x, serial: val} : x));
+            }
+            setSerialCode(val);
+          }}
+          placeholder="Serial Code"
+          style={{ flex:1, padding:'6px 10px', border:'1px solid #ddd', borderRadius:'6px', fontSize:'12px' }}/>
+        <button onClick={handlePdfSave} disabled={saving || !pdfQueue.some(x=>x.status==='done')}
+          style={{ padding:'6px 20px', borderRadius:'6px', border:'none', background: saving||!pdfQueue.some(x=>x.status==='done') ?'#ccc':'#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor: saving?'default':'pointer' }}>
+          {saving ? 'กำลังบันทึก...' : '💾 บันทึก'}
+        </button>
+        {pdfError && <span style={{ fontSize:'11px', color:'#c0392b' }}>{pdfError}</span>}
+      </div>
+    </div>
+  );
+}
+
 function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
   const [docType, setDocType] = React.useState('APN01');
   const [tab, setTab] = React.useState('paste');
@@ -102,20 +503,21 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
   const fileRef = React.useRef(null);
   const [attachments, setAttachments] = React.useState([]); // max 3 รูป
   const [dragOver, setDragOver] = React.useState(false);
-  // ── PDF OCR state ──────────────────────────────────────────────
-  const [pdfFile, setPdfFile]       = React.useState(null);
-  const [pdfOcring, setPdfOcring]   = React.useState(false);
-  const [pdfResult, setPdfResult]   = React.useState(null);
-  const [pdfError, setPdfError]     = React.useState('');
-  const pdfInputRef                 = React.useRef();
 
-  const DOC_TYPE_MAP = { APN01:'Invoice_Register', AP07:'Input_Tax_Invoice', AP09:'Input_Tax_Invoice', TRANS:'Transaction_AP' };
+  // DOC_TYPE_MAP: doc_type → ชื่อเอกสารใน serial (มีช่องว่าง ตรงตามตัวอย่างจริง)
+  const DOC_TYPE_MAP = {
+    APN01: 'Invoice Register',
+    AP07:  'Input Tax Invoice',
+    AP09:  'Input Tax Invoice',
+    TRANS: 'Transaction AP',
+  };
 
+  // genSerial: CDS_Invoice Register_APN01-260419.2256
   const genSerial = (bu, type) => {
     const now = new Date();
     const p = (n) => String(n).padStart(2,'0');
     const yy=String(now.getFullYear()).slice(2),mm=p(now.getMonth()+1),dd=p(now.getDate()),hh=p(now.getHours()),mi=p(now.getMinutes());
-    return `${bu||'XX'}_${DOC_TYPE_MAP[type]||type}_${type}-${yy}${mm}${dd}_${hh}${mi}`;
+    return `${bu||'XX'}_${DOC_TYPE_MAP[type]||type}_${type}-${yy}${mm}${dd}.${hh}${mi}`;
   };
 
   const parseTabText = (text) => {
@@ -158,9 +560,10 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     }
     const { headers, rows } = parseTabText(text);
     setParsedHeaders(headers); setParsedRows(rows);
+    // Tab paste = ไฟล์ดิบเสมอ → gen serial APN01 อัตโนมัติ ไม่ต้องให้ user เลือก
     if (!serialCode) {
       const bu = detectBU('', rows);
-      if (bu) setSerialCode(genSerial(bu, docType));
+      if (bu) setSerialCode(genSerial(bu, 'APN01'));
     }
   };
 
@@ -172,6 +575,41 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     if (m) return m[1];
     const liab = rows[0]?.['Liability Account'] || '';
     return liab.split('-')[2] || '';
+  };
+
+  // detect ว่า rows ชุดนี้ Gen doc type ไหนได้บ้าง
+  const detectAvailableDocTypes = (rows) => {
+    if (!rows || rows.length === 0) return [];
+    const headers = Object.keys(rows[0] || {});
+    const available = [];
+
+    // Invoice Batch format (มี [ ] และ Supplier/Invoice Num) → APN01
+    const isInvoiceBatch = headers.includes('[ ]') &&
+      (headers.includes('Invoice Num') || headers.includes('Supplier'));
+    if (isInvoiceBatch) {
+      available.push('APN01');
+      // มี Yes ใน [ ] = Gen AP09 ได้
+      const hasYes = rows.some(r => String(r['[ ]']||'').split('.').some(s => s.trim().toLowerCase() === 'yes'));
+      if (hasYes) available.push('AP09');
+      // Invoice Batch ไม่ใช่ TRANS — return เลย
+      return available;
+    }
+
+    // AP07/AP09 standalone format
+    if (headers.includes('Vat Value') || headers.includes('Tax Invoice No') || headers.includes('GRT No')) {
+      available.push('AP07');
+      return available;
+    }
+
+    // TRANS/IMP format — ต้องมี Liability Account และไม่มี [ ] หรือ Invoice Num
+    if ((headers.includes('Liability Account') || headers.includes('GL Account'))
+        && !headers.includes('[ ]') && !headers.includes('Invoice Num')) {
+      available.push('TRANS');
+      return available;
+    }
+
+    // fallback — ถ้า detect ไม่ได้ก็ไม่แสดง pill
+    return available;
   };
 
   const detectDocType = (fileName) => {
@@ -215,11 +653,11 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           const metaBuName      = getCellVal(2); // row 3: ชื่อผู้ประกอบการ
           const metaReceiveDate = getCellVal(3); // row 4: Receive Date
 
-          // แยก bu_code จาก "3218 - Beautrium Co.,Ltd." → "3218"
-          const metaBuCode = metaBuRaw.includes('-') ? metaBuRaw.split('-')[0].trim() : metaBuRaw.trim();
+          // เก็บ bu_code เต็มๆ จากไฟล์ เช่น "3218 - Beautrium Co.,Ltd."
+          const metaBuCode = metaBuRaw.trim();
 
           // ── หา header row จริง (row ที่มี 'Branch' หรือ 'Invoice Number') ──
-          const HEADER_KEYS = ['Branch','Invoice Number','Invoice Num','Vendor Name','GR Transaction No.'];
+          const HEADER_KEYS = ['Branch','Invoice Number','Invoice Num','Vendor Name','GR Transaction No.','GRT No.','Tax Invoice No.','Tax Invoice Date'];
           let headerRowIdx = 0;
           for (let i = 0; i < Math.min(10, allRows.length); i++) {
             const rowVals = allRows[i].map(v => String(v||'').trim());
@@ -243,7 +681,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
             }
           }); });
           const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
-          const bu = metaBuCode || detectBU(file.name, rows);
+          // bu_code สำหรับ lookup company_list
+          const buShortFromMeta = metaBuCode?.split('-')[0]?.trim() || '';
+          const bu = detectBU(file.name, rows) || buShortFromMeta || '';
           const detectedType = metaDocType || detectDocType(file.name);
           const serial = file.name.replace(/\.[^.]+$/, ''); // ใช้ชื่อไฟล์ตัด .xlsx เป็น serial_code
           setFileQueue(prev => prev.map((f, i) => i === idx ? {
@@ -260,37 +700,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     });
   };
 
-  const handlePdfSave = async () => {
-    if (!pdfResult?.rows?.length) { setPdfError('ไม่มีข้อมูลให้บันทึก'); return; }
-    setSaving(true);
-    try {
-      const now = new Date().toISOString();
-      const meta = pdfResult.metadata || {};
-      const buCode = (meta.bu_code || '').split('-')[0].trim();
-      const { data: buData } = await db.from('company_list').select('bu_name_full').eq('bu', buCode).maybeSingle();
-      const { error: err } = await db.from('doc_collection').insert([{
-        serial_code:  serialCode || pdfResult.serial_code,
-        doc_type:     meta.doc_type || docType,
-        doc_name:     DOC_TYPE_MAP[meta.doc_type || docType] || docType,
-        rows:         pdfResult.rows,
-        bu_code:      buCode || meta.bu_code || '',
-        bu_code_name: buData?.bu_name_full || meta.bu_name || '',
-        source:       'ocr_pdf',
-        file_date:    meta.receive_date || now.split('T')[0],
-        uploaded_by:  userName || currentUser?.email || '',
-        created_at:   now, updated_at: now,
-      }]);
-      if (err) throw new Error(err.message);
-      onSave(); onClose();
-    } catch(e) { setPdfError('บันทึกไม่สำเร็จ: ' + e.message); setSaving(false); }
-  };
-
   const handleSave = async () => {
+    // ── Tab paste: ไฟล์ดิบ → Gen APN01 + AP09 เสมอ ──────────────────────
     if (tab === 'paste') {
       if (!serialCode.trim()) { setError('กรุณาระบุ Serial code'); return; }
       if (parsedRows.length === 0) { setError('กรุณาวางข้อมูลก่อน'); return; }
-      if (!['APN01','AP07','AP09','TRANS'].includes(docType)) { setError('ไม่สามารถ Generate ได้ เนื่องจากประเภทเอกสารนี้ยังไม่มีในระบบ'); return; }
-      // ── เช็ค Scientific Notation ก่อนบันทึก ──
+      // เช็ค Scientific Notation
       const sciRows = parsedRows.filter(r => /^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(r['Invoice Num']||'')));
       if (sciRows.length > 0) {
         alert(`❌ ไม่สามารถบันทึกได้\n\nพบ Invoice Number ${sciRows.length} รายการที่ผิด Format (เช่น "${sciRows[0]['Invoice Num']}")\n\nกรุณาเปิดไฟล์ Excel → Format column Invoice Num เป็น Number → Copy ใหม่`);
@@ -298,62 +713,134 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
       }
       setSaving(true);
       try {
-        const now = new Date().toISOString();
-        const buCode = serialCode.trim().split('_')[0] || null;
-        // Lookup bu_code_name จาก company_list
-        let buCodeName = null;
+        const now    = new Date().toISOString();
+        const serial = serialCode.trim();
+        const buCode = serial.split('_')[0] || null;
+        let buCodeName = null, buNameThai = null;
         if (buCode) {
-          const { data: buData } = await db.from('company_list').select('bu_code_name,bu_name_full').eq('bu', buCode).single();
-          buCodeName = buData?.bu_code_name || buData?.bu_name_full || null;
+          const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', buCode).maybeSingle();
+          buCodeName = buData?.bu_code_name || null;
+          buNameThai = buData?.['THAI COMPANY NAME'] || null;
         }
+        // Duplicate check — serial + doc_type เท่านั้น
+        const dupAPN01 = await checkDuplicateSerial(db, serial, 'APN01');
+        if (dupAPN01) { setError(`Serial "${serial}" (APN01) มีในระบบแล้ว`); setSaving(false); return; }
+
+        // Insert APN01 — ทุก rows (ข้อมูลตั้งหนี้)
         const { error: err } = await db.from('doc_collection').insert([{
-          serial_code: serialCode.trim(),
-          bu_code: buCode,
+          serial_code:  serial,
+          bu_code:      buCode,
           bu_code_name: buCodeName,
-          doc_type: docType,
-          doc_name: DOC_TYPE_MAP[docType]||docType, rows: parsedRows,
-          attachments: attachments,
-          source: 'upload', file_date: now.split('T')[0],
-          uploaded_by: userName||currentUser?.email||'',
-          created_at: now, updated_at: now,
+          bu_name:      buNameThai,
+          doc_type:     'APN01',
+          doc_name:     DOC_TYPE_MAP['APN01'],
+          rows:         parsedRows,
+          attachments:  attachments,
+          source:       'upload',
+          file_date:    now.split('T')[0],
+          uploaded_by:  userName || currentUser?.email || '',
+          created_at:   now,
+          updated_at:   now,
         }]);
         if (err) throw err;
+
+        // Insert AP09 — เฉพาะแถวที่มี Yes (ใบกำกับภาษี) คนละประเภทกับ APN01 ไม่ใช่ duplicate
+        const ap09Rows = parseAP09RowsFromRaw(parsedRows);
+        if (ap09Rows.length > 0) {
+          // serial AP09 = แทน APN01→AP09 และ Invoice Register→Input Tax Invoice
+          const ap09Serial = serial
+            .replace('APN01', 'AP09')
+            .replace('Invoice Register', 'Input Tax Invoice');
+          const finalAP09Serial = ap09Serial !== serial ? ap09Serial : serial + '_AP09';
+          const dupAP09 = await checkDuplicateSerial(db, finalAP09Serial, 'AP09');
+          if (!dupAP09) {
+            const ap09Now = new Date().toISOString();
+            await db.from('doc_collection').insert([{
+              serial_code:  finalAP09Serial,
+              bu_code:      buCode,
+              bu_code_name: buCodeName,
+              bu_name:      buNameThai,
+              doc_type:     'AP09',
+              doc_name:     DOC_TYPE_MAP['AP09'],
+              rows:         ap09Rows,
+              attachments:  [],
+              source:       'upload',
+              file_date:    ap09Now.split('T')[0],
+              uploaded_by:  userName || currentUser?.email || '',
+              created_at:   ap09Now,
+              updated_at:   ap09Now,
+            }]);
+          }
+        }
         onSave(); onClose();
-      } catch (err) { setError('เกิดข้อผิดพลาด: '+err.message); }
+      } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
       setSaving(false);
+
+    // ── Tab file: ไฟล์สำเร็จ → บันทึกตรง serial = ชื่อไฟล์ ──────────────
     } else {
-      const readyFiles = fileQueue.filter(f => f.status==='ready');
-      if (readyFiles.length===0) { setError('ไม่มีไฟล์ที่พร้อมบันทึก'); return; }
+      console.log('[handleSave] tab:', tab, 'fileQueue:', fileQueue.length, fileQueue.map(f=>({name:f.name,status:f.status,loading:f.loading,rows:f.rows?.length})));
+      const readyFiles = fileQueue.filter(f => f.status === 'ready' && !f.loading);
+      console.log('[handleSave] readyFiles:', readyFiles.length);
+      if (readyFiles.length === 0) { setError('ไม่มีไฟล์ที่พร้อมบันทึก — ดู Console สำหรับรายละเอียด'); return; }
       setSaving(true); setSaveProgress(0);
       let done = 0;
       for (const f of readyFiles) {
         try {
-          const now = new Date().toISOString();
-          const { error: err } = await db.from('doc_collection').insert([{
-            serial_code: f.serialCode, doc_type: f.detectedType||docType,
-            doc_name: DOC_TYPE_MAP[f.detectedType||docType]||docType,
-            rows: f.rows, bu_code: f.metaBuCode||f.bu, bu_code_name: f.metaBuName||null,
-            source: 'upload',
-            file_date: f.metaReceiveDate || now.split('T')[0],
-            uploaded_by: userName||currentUser?.email||'',
-            created_at: now, updated_at: now,
-          }]);
+          const now         = new Date().toISOString();
+          const serial      = f.serialCode; // ชื่อไฟล์ตัด .xlsx = serial ตายตัว
+          const docType     = f.detectedType || 'APN01';
+          const buCodeShort = f.bu || (f.metaBuCode ? f.metaBuCode.split('-')[0].trim() : '');
+          let buNameThai    = f.metaBuName || null;
+          let buCodeName    = f.metaBuCode || null;
+          if (buCodeShort) {
+            const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', buCodeShort).maybeSingle();
+            if (buData?.['THAI COMPANY NAME']) buNameThai = buData['THAI COMPANY NAME'];
+            if (buData?.bu_code_name) buCodeName = buData.bu_code_name;
+          }
+          // Duplicate check — serial + doc_type เท่านั้น
+          const dup = await checkDuplicateSerial(db, serial, docType);
+          if (dup) {
+            setFileQueue(prev => prev.map(p => p.name === f.name ? { ...p, status:'error', error:`Serial "${serial}" (${docType}) มีในระบบแล้ว` } : p));
+            done++; setSaveProgress(Math.round(done / readyFiles.length * 100));
+            continue;
+          }
+          console.log('[insert] serial:', serial, 'docType:', docType, 'bu:', buCodeShort, 'rows:', f.rows?.length, 'metaBuCode:', f.metaBuCode, 'metaReceiveDate:', f.metaReceiveDate);
+          const insertPayload = {
+            serial_code:  serial,
+            doc_type:     docType,
+            doc_name:     DOC_TYPE_MAP[docType] || docType,
+            rows:         f.rows,
+            bu_code:      buCodeShort,
+            bu_code_name: buCodeName || null,
+            bu_name:      buNameThai,
+            source:       'upload',
+            file_date:    (f.metaReceiveDate && f.metaReceiveDate !== '0' && !isNaN(Date.parse(f.metaReceiveDate)))
+                            ? f.metaReceiveDate
+                            : now.split('T')[0],
+            uploaded_by:  userName || currentUser?.email || '',
+            created_at:   now,
+            updated_at:   now,
+          };
+          const { data: insertData, error: err } = await db.from('doc_collection').insert([insertPayload]).select();
+          console.log('[insert result] data:', insertData, 'error:', err);
           if (err) throw err;
-          setFileQueue(prev => prev.map(p => p.name===f.name?{...p,status:'done'}:p));
+          setFileQueue(prev => prev.map(p => p.name === f.name ? { ...p, status:'done' } : p));
         } catch (err) {
-          setFileQueue(prev => prev.map(p => p.name===f.name?{...p,status:'error',error:err.message}:p));
+          console.error('[insert catch]', err);
+          setFileQueue(prev => prev.map(p => p.name === f.name ? { ...p, status:'error', error:err.message } : p));
+          setError('Insert error: ' + err.message);
         }
-        done++; setSaveProgress(Math.round(done/readyFiles.length*100));
+        done++; setSaveProgress(Math.round(done / readyFiles.length * 100));
       }
       setSaving(false);
       setTimeout(() => { onSave(); onClose(); }, 800);
     }
   };
 
-  const docTypes = [{key:'APN01',label:'APN01'},{key:'AP07',label:'AP07'},{key:'AP09',label:'AP09'},{key:'TRANS',label:'TRANS'}];
+  // docTypes ไม่จำเป็นแล้ว — Tab บอก intent ครบ (paste=raw→APN01+AP09, file=finished, pdf=OCR)
   const S = {
     overlay: { position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:999 },
-    modal: { background:'white',borderRadius:'12px',width:'1080px',maxHeight:'96vh',display:'flex',flexDirection:'column',overflow:'hidden' },
+    modal: { background:'white',borderRadius:'12px',width:'calc(100vw - 80px)',maxWidth:'1400px',height:'92vh',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden' },
     pill: (sel) => ({ display:'inline-flex',alignItems:'center',padding:'4px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',border:'0.5px solid',borderColor:sel?'#1a3a5c':'#ddd',background:sel?'#1a3a5c':'#f5f5f5',color:sel?'white':'#555',userSelect:'none' }),
     tab: (sel) => ({ flex:1,padding:'7px',fontSize:'12px',border:'0.5px solid #ddd',background:sel?'white':'#f5f5f5',color:sel?'#1a3a5c':'#888',cursor:'pointer',fontWeight:sel?'500':'400' }),
     inp: { padding:'5px 8px',borderRadius:'6px',border:'0.5px solid #d0d0d0',fontSize:'12px',width:'100%',boxSizing:'border-box',height:'30px' },
@@ -369,29 +856,46 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           </div>
           <button onClick={onClose} style={{ background:'none',border:'none',cursor:'pointer',fontSize:'18px',color:'#888' }}>×</button>
         </div>
-        <div style={{ padding:'10px 18px',borderBottom:'0.5px solid #f0f0f0',background:'#f8f9fa',flexShrink:0 }}>
-          <div style={{ fontSize:'11px',color:'#888',marginBottom:'6px' }}>ประเภทเอกสาร</div>
-          <div style={{ display:'flex',gap:'6px',flexWrap:'wrap' }}>
-            {docTypes.map(dt => (<span key={dt.key} style={S.pill(docType===dt.key)} onClick={()=>{setDocType(dt.key);setSerialCode('');}}>{dt.label}</span>))}
-          </div>
-        </div>
-        <div style={{ padding:'14px 18px',overflowY:'auto',flex:1 }}>
+        {/* Tab paste: แสดงสรุปว่าจะ Gen อะไรบ้าง (info เท่านั้น ไม่ให้เลือก) */}
+        {tab === 'paste' && parsedRows.length > 0 && (() => {
+          const ap09Count = parseAP09RowsFromRaw(parsedRows).length;
+          return (
+            <div style={{ padding:'6px 18px',borderBottom:'0.5px solid #f0f0f0',background:'#f0f6ff',flexShrink:0,display:'flex',alignItems:'center',gap:'10px' }}>
+              <span style={{ fontSize:'11px',color:'#0C447C',fontWeight:'500' }}>จะ Gen:</span>
+              <span style={{ fontSize:'11px',padding:'2px 10px',borderRadius:'20px',background:'#1a3a5c',color:'white' }}>APN01</span>
+              {ap09Count > 0 && (
+                <span style={{ fontSize:'11px',padding:'2px 10px',borderRadius:'20px',background:'#0F6E56',color:'white' }}>AP09 ({ap09Count} รายการ)</span>
+              )}
+              <span style={{ fontSize:'11px',color:'#888',marginLeft:'4px' }}>— บันทึกอัตโนมัติทั้งคู่</span>
+            </div>
+          );
+        })()}
+        <div style={{ padding:'14px 18px', flexShrink:0 }}>
           {error && <div style={{ background:'#FCEBEB',color:'#791F1F',padding:'7px 12px',borderRadius:'6px',fontSize:'12px',marginBottom:'10px' }}>{error}</div>}
-          <div style={{ display:'flex',marginBottom:'10px' }}>
+          <div style={{ display:'flex' }}>
             <button style={{ ...S.tab(tab==='paste'),borderRadius:'6px 0 0 6px' }} onClick={()=>setTab('paste')}>📋 วางจาก Excel/Sheet</button>
             <button style={{ ...S.tab(tab==='file'),borderLeft:'none' }} onClick={()=>setTab('file')}>📎 แนบไฟล์ Excel (หลายไฟล์)</button>
             <button style={{ ...S.tab(tab==='pdf'),borderRadius:'0 6px 6px 0',borderLeft:'none' }} onClick={()=>setTab('pdf')}>📄 OCR PDF</button>
           </div>
+        </div>
+
+        {/* ── Tab content ── */}
+        {tab==='pdf' ? (
+          <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
+            <PdfOcrTab serialCode={serialCode} setSerialCode={setSerialCode} docType={docType} setDocType={setDocType} DOC_TYPE_MAP={DOC_TYPE_MAP} db={db} userName={userName} currentUser={currentUser} onSave={onSave} onClose={onClose} saving={saving} setSaving={setSaving} genSerial={genSerial}/>
+          </div>
+        ) : (
+        <div style={{ padding:'0 18px 14px', overflowY:'auto', flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
           {tab==='paste' ? (
-            <div>
+            <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
               {parsedRows.length === 0 ? (
                 <textarea placeholder="คลิกแล้ววาง (Ctrl+V) ข้อมูลจาก Excel หรือ Google Sheet ที่นี่ — ระบบจะแยกคอลัมน์ตาม Tab ให้อัตโนมัติ"
-                  style={{ width:'100%',height:'300px',fontSize:'11px',borderRadius:'6px',border:'0.5px solid #d0d0d0',padding:'8px',boxSizing:'border-box',resize:'none',fontFamily:'monospace',lineHeight:1.5,whiteSpace:'pre',overflowX:'auto' }}
+                  style={{ flex:1, width:'100%', minHeight:'200px', fontSize:'11px',borderRadius:'6px',border:'0.5px solid #d0d0d0',padding:'8px',boxSizing:'border-box',resize:'none',fontFamily:'monospace',lineHeight:1.5,whiteSpace:'pre',overflowX:'auto' }}
                   value={pasteText} onChange={e=>handlePaste(e.target.value)}/>
               ) : (
                 <div>
                   <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 10px',background: formatWarning ? '#FCEBEB' : '#EAF3DE',borderRadius:'6px 6px 0 0',fontSize:'11px',color: formatWarning ? '#791F1F' : '#27500A' }}>
-                    <span>{formatWarning ? `⚠️ detect ได้ ${parsedRows.length} แถว — มี Format ผิด ${parsedRows.filter(r=>/^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(r['Invoice Num']||''))).length} รายการ` : `✅ detect ได้ ${parsedRows.length} แถว ${parsedHeaders.length} คอลัมน์`}</span>
+                    <span>{formatWarning ? `⚠️ detect ได้ ${parsedRows.length} แถว — มี Format ผิด ${parsedRows.filter(r=>/^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(r['Invoice Num']||''))).length} รายการ` : `✅ detect ได้ ${parsedRows.length} แถว${docType==='AP09'?' (มีใบกำกับ '+parsedRows.filter(r=>String(r['[ ]']||'').split('.').some(s=>s.trim().toLowerCase()==='yes')).length+' รายการ)':''} ${parsedHeaders.length} คอลัมน์`}</span>
                     <button onClick={()=>{setPasteText('');setParsedRows([]);setParsedHeaders([]);setSerialCode('');setFormatWarning('');}} style={{ fontSize:'10px',padding:'2px 8px',borderRadius:'4px',border:'0.5px solid #aaa',background:'white',cursor:'pointer',color:'#555' }}>✕ ล้าง</button>
                   </div>
                   <div style={{ overflowX:'auto',overflowY:'auto',maxHeight:'480px',border:'0.5px solid #d0d0d0',borderTop:'none',borderRadius:'0 0 6px 6px' }}>
@@ -402,7 +906,10 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
                         ))}</tr>
                       </thead>
                       <tbody>
-                        {parsedRows.map((row,i)=>{
+                        {(docType === 'AP09'
+                ? parsedRows.filter(r => String(r['[ ]']||'').split('.').some(s=>s.trim().toLowerCase()==='yes'))
+                : parsedRows
+              ).map((row,i)=>{
                           const hasSci = /^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(row['Invoice Num']||''));
                           const rowBg = hasSci ? '#FCEBEB' : i%2===0 ? 'white' : '#f8f9fa';
                           return (
@@ -420,10 +927,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
                   </div>
                 </div>
               )}
-
             </div>
           ) : (
-            <div style={{ display:'flex',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden',minHeight:'400px' }}>
+            <div style={{ display:'flex',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden',flex:1,minHeight:'400px' }}>
               <div style={{ width:'190px',flexShrink:0,background:'#1a3a5c',display:'flex',flexDirection:'column' }}
                 onDragOver={e=>{e.preventDefault();}} onDrop={e=>{e.preventDefault();handleFiles(e.dataTransfer.files);}}>
                 <div style={{ flex:1,overflowY:'auto',padding:'6px' }}>
@@ -479,8 +985,10 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
               <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{ display:'none' }} onChange={e=>handleFiles(e.target.files)}/>
             </div>
           )}
+        </div>
+        )}
 
-              <div
+        {tab !== 'pdf' && <div
                   onDragOver={e=>{e.preventDefault();e.currentTarget.style.background='#f0f6ff';e.currentTarget.style.borderColor='#1a3a5c';}}
                   onDragLeave={e=>{e.currentTarget.style.background='#fafafa';e.currentTarget.style.borderColor='#d0d0d0';}}
                   onDrop={e=>{
@@ -521,100 +1029,20 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
                       {attachments.length<3 && <span style={{fontSize:'11px',color:'#aaa'}}>+ เพิ่มรูป ({attachments.length}/3)</span>}
                     </>
                   )}
-              </div>
+              </div>}
 
-        </div>
-        {/* ── PDF OCR Tab ─────────────────────────────────────────── */}
-        {tab === 'pdf' && (() => {
-          const PDF_COLS = ['Branch','Vendor Name','GR Transaction No.','Invoice Number','Receive Date','รายการ','มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม','Batch Name'];
-          const NUM_COLS_PDF = ['มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
-
-          const handlePdfDrop = async (e) => {
-            e.preventDefault();
-            const file = (e.dataTransfer?.files?.[0]) || (e.target?.files?.[0]);
-            if (!file || file.type !== 'application/pdf') { setPdfError('กรุณาเลือกไฟล์ PDF เท่านั้น'); return; }
-            setPdfFile(file); setPdfResult(null); setPdfError(''); setPdfOcring(true);
-            try {
-              const token = sessionStorage.getItem('fastapn_token');
-              const fd = new FormData(); fd.append('file', file);
-              const res = await fetch('http://10.101.87.126:4000/api/docenter/ocr-pdf', {
-                method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
-              });
-              const data = await res.json();
-              if (!res.ok || !data.success) throw new Error(data.detail || data.error || 'OCR ล้มเหลว');
-              setPdfResult(data);
-              setSerialCode(data.serial_code || '');
-              if (data.doc_type) setDocType(data.doc_type);
-            } catch(err) { setPdfError('OCR ไม่สำเร็จ: ' + err.message); }
-            setPdfOcring(false);
-          };
-
-          return !pdfResult ? (
-            /* Drop Zone */
-            <div onClick={()=>pdfInputRef.current?.click()} onDrop={handlePdfDrop} onDragOver={e=>e.preventDefault()}
-              style={{ flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'10px',cursor:'pointer',background:'#f8f9fa',border:'1.5px dashed #ccc',borderRadius:'8px',margin:'16px' }}>
-              {pdfOcring ? (
-                <>
-                  <div style={{ fontSize:'36px' }}>⏳</div>
-                  <div style={{ fontSize:'13px',color:'#1a3a5c',fontWeight:'500' }}>กำลัง OCR อยู่ รอสักครู่...</div>
-                  <div style={{ fontSize:'11px',color:'#aaa' }}>PaddleOCR กำลังอ่านตาราง</div>
-                </>
-              ) : (
-                <>
-                  <div style={{ fontSize:'44px' }}>📄</div>
-                  <div style={{ fontSize:'13px',color:'#1a3a5c',fontWeight:'500' }}>ลากไฟล์ PDF มาวาง หรือคลิกเลือก</div>
-                  <div style={{ fontSize:'11px',color:'#aaa' }}>รองรับ APN01 · AP07 · AP09 · TRANS · สูงสุด 30MB</div>
-                  {pdfError && <div style={{ fontSize:'11px',color:'#c0392b' }}>{pdfError}</div>}
-                </>
-              )}
-              <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display:'none' }} onChange={handlePdfDrop}/>
-            </div>
-          ) : (
-            /* Preview */
-            <div style={{ flex:1,display:'flex',flexDirection:'column',overflow:'hidden' }}>
-              <div style={{ padding:'7px 16px',background:'#f0f6ff',borderBottom:'0.5px solid #dce8fb',display:'flex',gap:'20px',flexWrap:'wrap',flexShrink:0,alignItems:'center' }}>
-                {pdfResult.metadata?.doc_type     && <span style={{ fontSize:'11px',color:'#1a3a5c' }}><b>DOC TYPE</b> {pdfResult.metadata.doc_type}</span>}
-                {pdfResult.metadata?.bu_code      && <span style={{ fontSize:'11px',color:'#1a3a5c' }}><b>BU CODE</b> {pdfResult.metadata.bu_code}</span>}
-                {pdfResult.metadata?.bu_name      && <span style={{ fontSize:'11px',color:'#555' }}><b>บริษัท</b> {pdfResult.metadata.bu_name}</span>}
-                {pdfResult.metadata?.receive_date && <span style={{ fontSize:'11px',color:'#555' }}><b>Receive Date</b> {pdfResult.metadata.receive_date}</span>}
-                <span style={{ fontSize:'11px',color:'#888',marginLeft:'auto' }}>{pdfResult.total_rows} รายการ · {pdfResult.pages} หน้า</span>
-                <button onClick={()=>{setPdfResult(null);setPdfFile(null);setPdfError('');}}
-                  style={{ fontSize:'11px',color:'#888',background:'none',border:'none',cursor:'pointer',textDecoration:'underline' }}>เลือกไฟล์ใหม่</button>
-              </div>
-              <div style={{ flex:1,overflowX:'auto',overflowY:'auto' }}>
-                <div style={{ minWidth:'max-content',padding:'0 16px',boxSizing:'border-box' }}>
-                  <table style={{ borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%' }}>
-                    <thead><tr>{PDF_COLS.map((h,i)=>(
-                      <th key={i} style={{ padding:'6px 10px',background:'#1a3a5c',color:'white',fontWeight:'600',textAlign:NUM_COLS_PDF.includes(h)?'right':'left' }}>{h}</th>
-                    ))}</tr></thead>
-                    <tbody>{pdfResult.rows.map((row,ri)=>(
-                      <tr key={ri} style={{ background:ri%2===0?'white':'#f5f8ff' }}>
-                        {PDF_COLS.map((h,ci)=>(
-                          <td key={ci} style={{ padding:'5px 10px',borderBottom:'0.5px solid #f0f0f0',textAlign:NUM_COLS_PDF.includes(h)?'right':'left' }}>{row[h]||'-'}</td>
-                        ))}
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              </div>
-              {pdfError && <div style={{ padding:'6px 16px',fontSize:'11px',color:'#c0392b',background:'#fff5f5' }}>{pdfError}</div>}
-            </div>
-          );
-        })()}
-
-        <div style={{ padding:'10px 18px',borderTop:'0.5px solid #f0f0f0',background:'#f8f9fa',display:'flex',alignItems:'center',gap:'10px',flexShrink:0 }}>
+        {tab !== 'pdf' && <div style={{ padding:'10px 18px',borderTop:'0.5px solid #f0f0f0',background:'#f8f9fa',display:'flex',alignItems:'center',gap:'10px',flexShrink:0 }}>
           <label style={{ fontSize:'11px',color:'#888',whiteSpace:'nowrap',flexShrink:0 }}>Serial Code</label>
           <input style={{ ...S.inp,flex:1,fontFamily:'monospace',fontSize:'11px' }} value={serialCode} onChange={e=>setSerialCode(e.target.value)} placeholder="generate อัตโนมัติเมื่อ detect BU ได้"/>
           <div style={{ display:'flex',gap:'8px',alignItems:'center',flexShrink:0,marginLeft:'auto' }}>
             {saving&&saveProgress>0 && <span style={{ fontSize:'11px',color:'#1a3a5c',fontWeight:'500' }}>{saveProgress}%</span>}
             <button style={{ padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer',color:'#555' }} onClick={onClose}>ยกเลิก</button>
             <button style={{ padding:'6px 16px',borderRadius:'6px',border:'none',background:saving?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500' }}
-              onClick={tab==='pdf' ? handlePdfSave : handleSave}
-              disabled={saving}>
-              {saving?`กำลังบันทึก... ${saveProgress>0?saveProgress+'%':''}`:'💾 บันทึก'}
+              onClick={handleSave} disabled={saving}>
+              {saving?`กำลังบันทึก...${saveProgress>0?` ${saveProgress}%`:'`'}`:'💾 บันทึก'}
             </button>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );
@@ -638,9 +1066,26 @@ function DocDetailModal({ file, onClose }) {
     return `${String(dt.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getMonth()]}-${String(dt.getFullYear()).slice(2)}`;
   };
 
-  // Map raw rows → display rows ตาม APN01 format
-  // รองรับ 2 source: paste (มี '[ ]','Supplier','Invoice Num') และ template upload (มี 'Branch','Vendor Name','Invoice Number')
+  const isAP09 = file.doc_type === 'AP09';
+
+  // Map raw rows ตาม doc_type
   const mappedRows = rawRows.map(r => {
+    if (isAP09) {
+      // AP09 rows ถูก map แล้วจาก parseAP09RowsFromRaw
+      return {
+        'Branch':           r['Branch'] || '',
+        'Vendor Name':      r['Vendor Name'] || '',
+        'Receive Date':     r['Receive Date'] || '',
+        'GRT No.':          r['GRT No.'] || '',
+        'Tax Invoice Date': r['Tax Invoice Date'] || '',
+        'Tax Invoice No.':  r['Tax Invoice No.'] || '',
+        'Description':      r['Description'] || r['Desctiption'] || '',
+        'ยอดก่อนภาษี':     parseFloat(String(r['ยอดก่อนภาษี']||'0').replace(/,/g,''))||0,
+        'ยอดภาษี':         parseFloat(String(r['ยอดภาษี']||'0').replace(/,/g,''))||0,
+        'ยอดรวม':          parseFloat(String(r['ยอดรวม']||'0').replace(/,/g,''))||0,
+      };
+    }
+    // APN01 format
     const isPasteFormat = '[ ]' in r || 'Supplier' in r || 'Invoice Num' in r;
     if (isPasteFormat) {
       const invAmt = parseFloat(String(r['Invoice Amount']||'0').replace(/,/g,''))||0;
@@ -658,24 +1103,22 @@ function DocDetailModal({ file, onClose }) {
         'มูลค่ารวม': invAmt||'',
         'Batch Name': r['Batch Name']||'',
       };
-    } else {
-      // Template upload format — column names ตรงกับ COLS อยู่แล้ว
-      const gross = parseFloat(String(r['มูลค่าก่อนภาษี']||r['Gross Value']||r['Invoice Amount']||'0').replace(/,/g,''))||0;
-      const vat   = parseFloat(String(r['มูลค่าภาษี']||r['Vat Value']||r['Tax Amount']||'0').replace(/,/g,''))||0;
-      const total = parseFloat(String(r['มูลค่ารวม']||r['Total Value']||'0').replace(/,/g,''))||(gross+vat)||0;
-      return {
-        'Branch': r['Branch']||'',
-        'Vendor Name': r['Vendor Name']||'',
-        'GR Transaction No.': r['GR Transaction No.']||'',
-        'Invoice Number': r['Invoice Number']||r['Invoice Num']||'',
-        'Receive Date': r['Receive Date']||'',
-        'รายการ': r['รายการ']||r['Description']||'',
-        'มูลค่าก่อนภาษี': gross||'',
-        'มูลค่าภาษี': vat||'',
-        'มูลค่ารวม': total||'',
-        'Batch Name': r['Batch Name']||'',
-      };
     }
+    const gross = parseFloat(String(r['มูลค่าก่อนภาษี']||r['Gross Value']||r['Invoice Amount']||'0').replace(/,/g,''))||0;
+    const vat   = parseFloat(String(r['มูลค่าภาษี']||r['Vat Value']||r['Tax Amount']||'0').replace(/,/g,''))||0;
+    const total = parseFloat(String(r['มูลค่ารวม']||r['Total Value']||'0').replace(/,/g,''))||(gross+vat)||0;
+    return {
+      'Branch': r['Branch']||'',
+      'Vendor Name': r['Vendor Name']||'',
+      'GR Transaction No.': r['GR Transaction No.']||'',
+      'Invoice Number': r['Invoice Number']||r['Invoice Num']||'',
+      'Receive Date': r['Receive Date']||'',
+      'รายการ': r['รายการ']||r['Description']||'',
+      'มูลค่าก่อนภาษี': gross||'',
+      'มูลค่าภาษี': vat||'',
+      'มูลค่ารวม': total||'',
+      'Batch Name': r['Batch Name']||'',
+    };
   });
 
   const API_BASE = 'http://10.101.87.126:4000/api';
@@ -707,18 +1150,41 @@ function DocDetailModal({ file, onClose }) {
     }
     setDownloading(false);
   };
-  const COLS = ['Branch','Vendor Name','GR Transaction No.','Invoice Number','Receive Date','รายการ','มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม','Batch Name'];
-  const COL_W = {'Branch':'80px','Vendor Name':'160px','GR Transaction No.':'140px','Invoice Number':'160px','Receive Date':'110px','รายการ':'auto','มูลค่าก่อนภาษี':'120px','มูลค่าภาษี':'110px','มูลค่ารวม':'120px','Batch Name':'170px'};
-  const NUM_COLS = ['มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
+  const COLS = isAP09
+    ? ['Branch','Vendor Name','Receive Date','GRT No.','Tax Invoice Date','Tax Invoice No.','Description','ยอดก่อนภาษี','ยอดภาษี','ยอดรวม']
+    : ['Branch','Vendor Name','GR Transaction No.','Invoice Number','Receive Date','รายการ','มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม','Batch Name'];
+  const NUM_COLS = isAP09 ? ['ยอดก่อนภาษี','ยอดภาษี','ยอดรวม'] : ['มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
+  // COL_W: fixed cols รวมกัน < 1200px เพื่อให้ รายการ/Description ได้พื้นที่เหลือโดยไม่มี scroll ข้าง
+  // APN01 fixed: 80+150+120+140+100+110+100+110+150 = 1060 → รายการได้ ~180px
+  // AP09  fixed: 80+150+100+110+110+130+110+100+110 = 1000 → Description ได้ ~240px
+  const COL_W = {
+    'Branch':             '80px',
+    'Vendor Name':        '150px',
+    'GR Transaction No.': '120px',
+    'Invoice Number':     '140px',
+    'Receive Date':       '100px',
+    'GRT No.':            '110px',
+    'Tax Invoice Date':   '110px',
+    'Tax Invoice No.':    '130px',
+    'Description':        'auto',
+    'รายการ':             'auto',
+    'มูลค่าก่อนภาษี':    '110px',
+    'ยอดก่อนภาษี':       '110px',
+    'มูลค่าภาษี':        '100px',
+    'ยอดภาษี':           '100px',
+    'มูลค่ารวม':         '110px',
+    'ยอดรวม':            '110px',
+    'Batch Name':         '150px',
+  };
 
-  const totalAmt = mappedRows.reduce((s,r)=>s+(parseFloat(r['มูลค่าก่อนภาษี'])||0),0);
-  const totalVat = mappedRows.reduce((s,r)=>s+(parseFloat(r['มูลค่าภาษี'])||0),0);
-  const totalAll = mappedRows.reduce((s,r)=>s+(parseFloat(r['มูลค่ารวม'])||0),0);
+  const totalAmt = mappedRows.reduce((s,r)=>s+(parseFloat(r[NUM_COLS[0]])||0),0);
+  const totalVat = mappedRows.reduce((s,r)=>s+(parseFloat(r[NUM_COLS[1]])||0),0);
+  const totalAll = mappedRows.reduce((s,r)=>s+(parseFloat(r[NUM_COLS[2]])||0),0);
   const receiveDate = rawRows[0]?.['Invoice Date']||file.file_date||'';
 
   const S = {
     overlay:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000},
-    modal:{background:'white',borderRadius:'12px',width:'calc(100vw - 40px)',maxWidth:'1280px',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden'},
+    modal:{background:'white',borderRadius:'12px',width:'calc(100vw - 40px)',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden'},
     th:{padding:'7px 10px',fontSize:'11px',color:'rgba(255,255,255,0.9)',fontWeight:'500',background:'#1a3a5c',whiteSpace:'nowrap',borderRight:'0.5px solid rgba(255,255,255,0.1)',position:'sticky',top:0,zIndex:2},
     td:{padding:'7px 10px',fontSize:'11px',borderBottom:'0.5px solid #f0f0f0',verticalAlign:'middle'},
     hlabel:{fontSize:'11px',color:'#555',width:'130px',padding:'4px 0',flexShrink:0,fontWeight:'500'},
@@ -745,20 +1211,19 @@ function DocDetailModal({ file, onClose }) {
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'2px 40px'}}>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>DOC TYPE</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.doc_type}</span></div>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>BU CODE</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.bu_code_name||file.bu_code||'-'}</span></div>
-            <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>ชื่อผู้ประกอบการ</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.bu_code_name||'-'}</span></div>
+            <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>ชื่อผู้ประกอบการ</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.bu_name||file.bu_code_name||'-'}</span></div>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>Receive Date</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{fmtDate(receiveDate)}</span></div>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>อัพโหลดโดย</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.uploaded_by||'-'}</span></div>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>จำนวนรายการ</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{mappedRows.length} รายการ</span></div>
           </div>
         </div>
 
-        <div style={{overflowX:'auto',overflowY:'auto',flex:1}}>
-          <div style={{minWidth:'max-content',padding:'0 20px',boxSizing:'border-box'}}>
+        <div style={{overflowX:'auto',overflowY:'auto',flex:1,padding:'0 20px',boxSizing:'border-box'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px',tableLayout:'auto'}}>
             <thead>
               <tr>
                 {COLS.map((h,i)=>(
-                  <th key={i} style={{...S.th,width:COL_W[h]==='auto'?undefined:COL_W[h],minWidth:COL_W[h]||'80px',textAlign:NUM_COLS.includes(h)?'right':'left'}}>{h}</th>
+                  <th key={i} style={{...S.th,whiteSpace:'nowrap',textAlign:NUM_COLS.includes(h)?'right':'left'}}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -768,20 +1233,31 @@ function DocDetailModal({ file, onClose }) {
                   onMouseEnter={e=>e.currentTarget.style.background='#f0f6ff'}
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'white':'#f8fbff'}>
                   {COLS.map((h,j)=>(
-                    <td key={j} style={{...S.td,textAlign:NUM_COLS.includes(h)?'right':'left',maxWidth:h==='รายการ'?'320px':undefined,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:h==='รายการ'?'nowrap':'normal'}}>
-                      {NUM_COLS.includes(h) ? fmtNum(row[h]) : h==='Receive Date' ? fmtDate(row[h]) : (row[h]||'')}
+                    <td key={j} style={{...S.td,textAlign:NUM_COLS.includes(h)?'right':'left',whiteSpace:'nowrap'}}>
+                      {NUM_COLS.includes(h) ? fmtNum(row[h]) : (h==='Receive Date'||h==='Tax Invoice Date') ? fmtDate(row[h]) : (row[h]||'')}
                     </td>
                   ))}
                 </tr>
               ))}
+              {/* Total row — อยู่ใน table เพื่อให้ align column ตรง */}
+              <tr style={{background:'#EAF3DE',borderTop:'2px solid #97C459'}}>
+                {COLS.map((h,j)=>{
+                  const isFirst = j === 0;
+                  const isNum   = NUM_COLS.includes(h);
+                  const fmt2    = (n) => Math.round(n * 100) / 100;
+                  const totals  = [fmt2(totalAmt), fmt2(totalVat), fmt2(totalAll)];
+                  const numIdx  = NUM_COLS.indexOf(h);
+                  return (
+                    <td key={j} style={{...S.td,fontWeight:'600',fontSize:'12px',color:'#27500A',
+                      textAlign: isNum ? 'right' : isFirst ? 'left' : 'left',
+                      whiteSpace:'nowrap', borderBottom:'none'}}>
+                      {isFirst ? 'ยอดรวมทั้งหมด' : isNum ? fmtNum(totals[numIdx]) : ''}
+                    </td>
+                  );
+                })}
+              </tr>
             </tbody>
           </table>
-          </div>
-        </div>
-
-        <div style={{padding:'8px 20px',borderTop:'0.5px solid #f0f0f0',background:'#f8f9fa',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
-          <span style={{fontSize:'11px',color:'#888'}}>ยอดรวมทั้งหมด</span>
-          <span style={{fontSize:'13px',fontWeight:'500',color:'#1a3a5c'}}>{totalAll>0?totalAll.toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtNum(totalAmt)}</span>
         </div>
       </div>
     </div>
@@ -933,6 +1409,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   const [viewFile, setViewFile] = useState(null);
   const [lightbox, setLightbox] = useState(null); // { attachments:[], index:0 }
   const [attachModal, setAttachModal] = useState(null); // file object ที่กำลังแก้ไข attachment
+  const [showQueue, setShowQueue] = useState(false);
+  const [queueItems, setQueueItems] = useState([]);
+  const [queueBadge, setQueueBadge] = useState(0);
+  const API_Q = 'http://10.101.87.126:4000/api/docenter';
 
   const TABS = [
     { key:'APN01', label:'APN01' },
@@ -956,6 +1436,24 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
+  // ── Queue: ดึงรายการและนับ pending/ocring ────────────────────────────────
+  const fetchQueue = React.useCallback(async () => {
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const r = await fetch(`${API_Q}/queue`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await r.json();
+      setQueueItems(Array.isArray(data) ? data : []);
+      setQueueBadge(data.filter(q => q.status === 'done').length);
+    } catch(_) {}
+  }, []);
+
+  // poll queue ทุก 10 วินาทีเมื่อเปิด FolderDetail
+  useEffect(() => {
+    fetchQueue();
+    const iv = setInterval(fetchQueue, 10000);
+    return () => clearInterval(iv);
+  }, [fetchQueue]);
+
   const handleDelete = async (file) => {
     try {
       await db.from('doc_collection').delete().eq('id', file.id);
@@ -967,6 +1465,39 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   const API_BASE_ROW = 'http://10.101.87.126:4000/api';
   const [downloadingRow, setDownloadingRow] = useState(null);
 
+  // ── Parse [ ] field → AP09 rows ─────────────────────────────────────────
+  const parseAP09Rows = (rawRows) => {
+    return rawRows
+      .filter(r => {
+        const parts = String(r['[ ]'] || '').split('.').map(p => p.trim());
+        return parts.some(p => p.toLowerCase() === 'yes');
+      })
+      .map(r => {
+        const parts = String(r['[ ]'] || '').split('.').map(p => p.trim()).filter(p => p);
+        const yesIdx = parts.findIndex(p => p.toLowerCase() === 'yes');
+        const branch = parts[2] || '';
+        const taxInvDate = yesIdx >= 0 ? parts[yesIdx + 1] || '' : '';
+        const grtNo      = yesIdx >= 0 ? parts[yesIdx + 2] || '' : '';
+        // Vendor Name จาก Supplier ปกติ (Real Vendor อยู่ใน bracket segment ก่อน Yes)
+        const vendorName = r['Supplier'] || r['Vendor Name'] || '';
+        const invAmt = parseFloat(String(r['Invoice Amount'] || r['มูลค่ารวม'] || '0').replace(/,/g,'')) || 0;
+        const gross  = Math.round(invAmt * 100 / 107 * 100) / 100;
+        const vat    = Math.round(invAmt * 7   / 107 * 100) / 100;
+        return {
+          'Branch':           branch,
+          'Vendor Name':      vendorName,
+          'Receive Date':     r['Invoice Date'] || r['Receive Date'] || '',
+          'GRT No.':          grtNo,
+          'Tax Invoice Date': taxInvDate,
+          'Tax Invoice No.':  r['Invoice Num'] || r['Invoice Number'] || '',
+          'Description':      r['Description'] || r['Desctiption'] || r['รายการ'] || '',
+          'ยอดก่อนภาษี':     gross,
+          'ยอดภาษี':         vat,
+          'ยอดรวม':          invAmt,
+        };
+      });
+  };
+
   const handleRowDownload = async (file) => {
     if (downloadingRow === file.id) return;
     setDownloadingRow(file.id);
@@ -974,26 +1505,48 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
       const token = sessionStorage.getItem('fastapn_token');
       const rawRows = Array.isArray(file.rows) ? file.rows : [];
       const mappedRows = rawRows.map(r => {
-        const invAmt = parseFloat(String(r['Invoice Amount']||'0').replace(/,/g,''))||0;
-        const bracketParts = String(r['[ ]']||'').split('.').map(p=>p.trim()).filter(p=>p);
-        const numParts = bracketParts.filter(p=>/^\d+$/.test(p));
-        return {
-          'Branch': numParts[1]||'',
-          'Vendor Name': r['Supplier']||'',
-          'GR Transaction No.': numParts[0]||'',
-          'Invoice Number': r['Invoice Num']||'',
-          'Receive Date': r['Invoice Date']||'',
-          'รายการ': r['Description']||'',
-          'มูลค่าก่อนภาษี': invAmt||'',
-          'มูลค่าภาษี': parseFloat(String(r['Tax Amount']||'0').replace(/,/g,''))||'',
-          'มูลค่ารวม': invAmt||'',
-          'Batch Name': r['Batch Name']||'',
-        };
+        const isPasteFormat = '[ ]' in r || 'Supplier' in r || 'Invoice Num' in r;
+        if (isPasteFormat) {
+          const invAmt = parseFloat(String(r['Invoice Amount']||'0').replace(/,/g,''))||0;
+          const bracketParts = String(r['[ ]']||'').split('.').map(p=>p.trim()).filter(p=>p);
+          const numParts = bracketParts.filter(p=>/^\d+$/.test(p));
+          return {
+            'Branch': numParts[1]||'',
+            'Vendor Name': r['Supplier']||'',
+            'GR Transaction No.': numParts[0]||'',
+            'Invoice Number': r['Invoice Num']||'',
+            'Receive Date': r['Invoice Date']||'',
+            'รายการ': r['Description']||'',
+            'มูลค่าก่อนภาษี': invAmt||'',
+            'มูลค่าภาษี': parseFloat(String(r['Tax Amount']||'0').replace(/,/g,''))||'',
+            'มูลค่ารวม': invAmt||'',
+            'Batch Name': r['Batch Name']||'',
+          };
+        } else {
+          // Template upload format — column names ตรงกับ COLS อยู่แล้ว
+          const gross = parseFloat(String(r['มูลค่าก่อนภาษี']||r['Gross Value']||r['Invoice Amount']||'0').replace(/,/g,''))||0;
+          const vat   = parseFloat(String(r['มูลค่าภาษี']||r['Vat Value']||r['Tax Amount']||'0').replace(/,/g,''))||0;
+          const total = parseFloat(String(r['มูลค่ารวม']||r['Total Value']||'0').replace(/,/g,''))||(gross+vat)||0;
+          return {
+            'Branch': r['Branch']||'',
+            'Vendor Name': r['Vendor Name']||'',
+            'GR Transaction No.': r['GR Transaction No.']||'',
+            'Invoice Number': r['Invoice Number']||r['Invoice Num']||'',
+            'Receive Date': r['Receive Date']||'',
+            'รายการ': r['รายการ']||r['Description']||'',
+            'มูลค่าก่อนภาษี': gross||'',
+            'มูลค่าภาษี': vat||'',
+            'มูลค่ารวม': total||'',
+            'Batch Name': r['Batch Name']||'',
+          };
+        }
       });
+      // ถ้า APN01 → ส่ง ap09Rows ด้วยให้ backend gen 2 sheets
+      const ap09Rows = file.doc_type === 'APN01' ? parseAP09Rows(rawRows) : [];
       const res = await fetch(`${API_BASE_ROW}/excel/download`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ file, rows: mappedRows }),
+        body: JSON.stringify({ file, rows: mappedRows, ap09Rows }),
       });
       if (!res.ok) throw new Error('Generate ไม่สำเร็จ');
       const blob = await res.blob();
@@ -1008,11 +1561,20 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
   };
 
   const filtered = files.filter(f => {
-    const matchTab = activeTab==='TRANS' ? ['TRANS','STORE'].includes(f.doc_type) : f.doc_type===activeTab;
+    const matchTab = (() => {
+      if (activeTab === 'TRANS') return ['TRANS','STORE'].includes(f.doc_type);
+      if (activeTab === 'AP09') return f.doc_type === 'AP09';
+      return f.doc_type === activeTab;
+    })();
     const matchSearch = !search || (() => {
       const q = search.toLowerCase();
       return f.serial_code?.toLowerCase().includes(q) ||
         f.bu_code?.toLowerCase().includes(q) ||
+        f.bu_code_name?.toLowerCase().includes(q) ||
+        f.bu_name?.toLowerCase().includes(q) ||
+        f.file_date?.toLowerCase().includes(q) ||
+        f.uploaded_by?.toLowerCase().includes(q) ||
+        f.ocr_text?.toLowerCase().includes(q) ||
         (Array.isArray(f.rows) && f.rows.some(row =>
           Object.values(row).some(v => String(v||'').toLowerCase().includes(q))
         ));
@@ -1020,8 +1582,27 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
     return matchTab && matchSearch;
   });
 
-  const tabCount = (key) => files.filter(f => key==='TRANS'?['TRANS','STORE'].includes(f.doc_type):f.doc_type===key).length;
-  const fmtDate = (d) => { if(!d)return'-'; const dt=new Date(d); return `${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getFullYear()).slice(2)}`; };
+  const tabCount = (key) => {
+    if (key === 'TRANS') return files.filter(f => ['TRANS','STORE'].includes(f.doc_type)).length;
+    if (key === 'AP09') return files.filter(f => f.doc_type === 'AP09').length;
+    return files.filter(f => f.doc_type === key).length;
+  };
+  const fmtDate = (d) => {
+    if (!d) return '-';
+    const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    // "01-Dec-25" หรือ "1-Dec-25" → คืนตรงๆ
+    const m = String(d).match(/^(\d{1,2})[-/]([A-Za-z]{3})[-/](\d{2,4})$/);
+    if (m) {
+      const day = m[1].padStart(2,'0');
+      const mon = m[2].charAt(0).toUpperCase() + m[2].slice(1,3).toLowerCase();
+      const yr  = m[3].length===2 ? m[3] : String(m[3]).slice(2);
+      return `${day}-${mon}-${yr}`;
+    }
+    const dt = new Date(d);
+    if (isNaN(dt)) return String(d).replace(/T.*/,'');
+    return `${String(dt.getDate()).padStart(2,'0')}-${MON[dt.getMonth()]}-${String(dt.getFullYear()).slice(2)}`;
+  };
   const fmtNum = (n) => n!=null&&!isNaN(n)&&Number(n)!==0 ? Number(n).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}) : '-';
 
   const S = {
@@ -1049,6 +1630,17 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
           style={{ width:'25%',padding:'6px 10px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'12px' }}/>
         {search && <button onClick={()=>setSearch('')} style={{ padding:'6px 10px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'12px',cursor:'pointer',background:'#f5f5f5' }}>✕</button>}
         <div style={{ flex:1 }}/>
+        <div style={{ position:'relative', display:'inline-block' }}>
+          <button onClick={()=>{ setShowQueue(true); fetchQueue(); }}
+            style={{ padding:'7px 14px',borderRadius:'6px',border:'0.5px solid #1a3a5c',background:'white',color:'#1a3a5c',fontSize:'13px',cursor:'pointer',fontWeight:'500' }}>
+            🔔 Queue
+          </button>
+          {queueBadge > 0 && (
+            <span style={{ position:'absolute',top:'-6px',right:'-6px',background:'#e74c3c',color:'white',borderRadius:'50%',width:'18px',height:'18px',fontSize:'10px',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'700' }}>
+              {queueBadge}
+            </span>
+          )}
+        </div>
         <button onClick={()=>setShowAdd(true)} style={{ padding:'7px 14px',borderRadius:'6px',border:'none',background:'#1a3a5c',color:'white',fontSize:'13px',cursor:'pointer',fontWeight:'500' }}>+ เพิ่มไฟล์</button>
       </div>
       <div style={{ borderBottom:'1px solid #e8e8e8',display:'flex' }}>
@@ -1085,10 +1677,16 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
             <tbody>
               {filtered.map(file => {
                 const rows = Array.isArray(file.rows)?file.rows:[];
-                const totalAmt = rows.reduce((s,r)=>s+(parseFloat(r['Gross Value']||r['มูลค่าก่อนภาษี']||r['Invoice Amount']||0)),0);
-                const totalVat = rows.reduce((s,r)=>s+(parseFloat(r['Vat Value']||r['มูลค่าภาษี']||r['Tax Amount']||0)),0);
-                const totalAll = rows.reduce((s,r)=>s+(parseFloat(r['Total Value']||r['มูลค่ารวม']||0)),0);
-                const receiveDate = rows[0]?.['Receive Date']||file.file_date||'';
+                const toNum = v => parseFloat(String(v||'0').replace(/,/g,''))||0;
+                const totalAmt = rows.reduce((s,r)=>s+toNum(r['ยอดก่อนภาษี']||r['มูลค่าก่อนภาษี']||r['Gross Value']||r['Invoice Amount']),0);
+                const totalVat = rows.reduce((s,r)=>s+toNum(r['ยอดภาษี']||r['มูลค่าภาษี']||r['Vat Value']||r['Tax Amount']),0);
+                const totalAll = rows.reduce((s,r)=>s+toNum(r['ยอดรวม']||r['มูลค่ารวม']||r['Total Value']),0);
+                const rawReceiveDate = rows[0]?.['Receive Date']||file.file_date||'';
+                // clean duplicate เช่น "01-Dec-25 01-Dec-25" → "01-Dec-25"
+                const receiveDate = (() => {
+                  const m = String(rawReceiveDate).match(/(\d{1,2}[-/][A-Za-z]{3}[-/]\d{2,4})/);
+                  return m ? m[1] : rawReceiveDate;
+                })();
                 const attachCount = Array.isArray(file.attachments)?file.attachments.length:0;
                 return (
                   <tr key={file.id} onMouseEnter={e=>e.currentTarget.style.background='#f8fbff'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
@@ -1098,8 +1696,8 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
                     <td style={{ ...S.td,fontSize:'10px',maxWidth:'200px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#555' }} title={file.bu_code_name||''}>{file.bu_code_name||'-'}</td>
                     <td style={{ ...S.td,textAlign:'center' }}><span style={{ display:'inline-block',padding:'2px 7px',borderRadius:'4px',fontSize:'10px',fontWeight:'500',background:'#e8f0fb',color:'#1a3a5c' }}>{file.bu_code||'-'}</span></td>
                     <td style={S.td}>{fmtDate(receiveDate)}</td>
-                    <td style={{ ...S.td,textAlign:'right' }}>{fmtNum(totalAmt)}</td>
-                    <td style={{ ...S.td,textAlign:'right' }}>{fmtNum(totalVat)}</td>
+                    <td style={{ ...S.td,textAlign:'right' }}>{totalAmt>0?fmtNum(totalAmt):'-'}</td>
+                    <td style={{ ...S.td,textAlign:'right' }}>{totalVat>0?fmtNum(totalVat):'-'}</td>
                     <td style={{ ...S.td,textAlign:'right',fontWeight:'500' }}>{(totalAll||totalAmt+totalVat)>0?'฿'+fmtNum(totalAll||totalAmt+totalVat):'-'}</td>
                     <td style={{ ...S.td,textAlign:'center' }}>
                       <div style={{ display:'flex',gap:'4px',justifyContent:'center',alignItems:'center' }}>
@@ -1118,7 +1716,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
                     
                     <td style={{ ...S.td,textAlign:'center' }}>
                       <div style={{ display:'inline-flex',gap:'4px' }}>
-                        <button title="ดู" onClick={()=>setViewFile(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>👁</button>
+                        {file.source === 'ocr_pdf' && Array.isArray(file.attachments) && file.attachments.length > 0
+                          ? <button title="ดูรูป PDF" onClick={()=>setLightbox({attachments:file.attachments,index:0})} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #1a3a5c',background:'#1a3a5c',cursor:'pointer',fontSize:'8px',color:'white',fontWeight:'700',letterSpacing:'0px',padding:'0' }}>PDF</button>
+                          : <button title="ดู" onClick={()=>setViewFile(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>👁</button>
+                        }
                         <button title="Download" onClick={()=>handleRowDownload(file)} disabled={downloadingRow===file.id} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background: downloadingRow===file.id ? '#eee' : 'white',cursor: downloadingRow===file.id ? 'default' : 'pointer',fontSize:'12px' }}>⬇</button>
                         <button title="จัดการรูปแนบ" onClick={()=>setAttachModal(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #1a3a5c',background:'white',cursor:'pointer',fontSize:'12px' }}>📎</button>
                         {canDelete && <button title="ลบ" onClick={()=>setConfirmDelete(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',cursor:'pointer',fontSize:'12px' }}>🗑</button>}
@@ -1170,7 +1771,75 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete }) {
           <div style={{fontSize:'11px',color:'rgba(255,255,255,0.5)'}}>{lightbox.attachments[lightbox.index].name}</div>
         </div>
       )}
-      {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={()=>{setShowAdd(false);fetchFiles();}} userName={userName} currentUser={currentUser}/>}
+      {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={()=>{setShowAdd(false);fetchFiles();fetchQueue();}} userName={userName} currentUser={currentUser}/>}
+
+      {/* ── Queue Modal ── */}
+      {showQueue && (
+        <div style={{ position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1500 }}
+          onClick={()=>setShowQueue(false)}>
+          <div onClick={e=>e.stopPropagation()}
+            style={{ background:'white',borderRadius:'12px',width:'680px',maxHeight:'80vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.2)' }}>
+            {/* Header */}
+            <div style={{ padding:'14px 18px',borderBottom:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0 }}>
+              <span style={{ fontSize:'14px',fontWeight:'600',color:'#1a3a5c' }}>🔔 OCR Queue</span>
+              <button onClick={()=>setShowQueue(false)} style={{ background:'none',border:'none',cursor:'pointer',fontSize:'18px',color:'#888' }}>×</button>
+            </div>
+            {/* List */}
+            <div style={{ flex:1,overflowY:'auto',padding:'8px 0' }}>
+              {queueItems.length === 0 ? (
+                <div style={{ textAlign:'center',color:'#aaa',padding:'40px',fontSize:'13px' }}>ไม่มีรายการใน Queue</div>
+              ) : queueItems.map(q => (
+                <div key={q.id} style={{ padding:'10px 18px',borderBottom:'0.5px solid #f5f5f5',display:'flex',alignItems:'center',gap:'12px' }}>
+                  <span style={{ fontSize:'18px' }}>
+                    {q.status==='done'?'✅':q.status==='ocring'?'⏳':q.status==='error'?'❌':'🕐'}
+                  </span>
+                  <div style={{ flex:1,minWidth:0 }}>
+                    <div style={{ fontSize:'12px',fontWeight:'500',color:'#1a3a5c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{q.file_name}</div>
+                    <div style={{ fontSize:'10px',color:'#888',marginTop:'2px' }}>
+                      {q.uploaded_by} · {new Date(q.created_at).toLocaleString('th-TH',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'})}
+                      {q.status==='done' && q.result_meta && ` · ${q.result_meta.doc_type||''} ${q.result_meta.bu_code||''}`}
+                      {q.status==='error' && <span style={{ color:'#c0392b' }}> · {q.error_msg}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display:'flex',gap:'6px',flexShrink:0 }}>
+                    {q.status==='done' && (
+                      <button onClick={async()=>{
+                        // ดึง result แล้วเปิด AddFileModal พร้อม data
+                        const token = sessionStorage.getItem('fastapn_token');
+                        const r = await fetch(`${API_Q}/queue/${q.id}/result`,{headers:{Authorization:`Bearer ${token}`}});
+                        const data = await r.json();
+                        if (data.result_data) {
+                          // ลบออกจาก queue หลัง save
+                          await fetch(`${API_Q}/queue/${q.id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                          fetchQueue(); fetchFiles();
+                        }
+                      }}
+                        style={{ padding:'4px 10px',borderRadius:'4px',border:'none',background:'#1a3a5c',color:'white',fontSize:'11px',cursor:'pointer' }}>
+                        📥 บันทึก
+                      </button>
+                    )}
+                    <button onClick={async()=>{
+                      const token = sessionStorage.getItem('fastapn_token');
+                      await fetch(`${API_Q}/queue/${q.id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                      fetchQueue();
+                    }}
+                      style={{ padding:'4px 8px',borderRadius:'4px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',color:'#c0392b',fontSize:'11px',cursor:'pointer' }}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Footer */}
+            <div style={{ padding:'10px 18px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0 }}>
+              <span style={{ fontSize:'11px',color:'#888' }}>
+                {queueItems.filter(q=>q.status==='done').length} เสร็จ · {queueItems.filter(q=>['pending','ocring'].includes(q.status)).length} รอ
+              </span>
+              <button onClick={fetchQueue} style={{ padding:'5px 12px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>🔄 Refresh</button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmDelete && (
         <div style={{ position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:999 }}>
           <div style={{ background:'white',borderRadius:'10px',padding:'24px',width:'380px' }}>
@@ -1225,6 +1894,42 @@ function DocumentCenter() {
   }, [currentUser]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // ── Track active session + Auto start/stop OCR service ───────────────
+  useEffect(() => {
+    if (!userName && !currentUser?.email) return;
+    const user = userName || currentUser?.email || '';
+    const sessionId = `doc-center-${user}-${Date.now()}`;
+    const token = sessionStorage.getItem('fastapn_token');
+
+    const heartbeat = async () => {
+      // 1. upsert session
+      await db.from('menu_active_sessions').upsert({
+        session_id: sessionId,
+        menu_id: 'document-center',
+        user_name: user,
+        last_seen: new Date().toISOString(),
+      }, { onConflict: 'session_id' });
+      // 2. trigger auto start/stop OCR service
+      fetch('/api/docenter/ocr-service/auto', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    };
+
+    heartbeat();
+    const interval = setInterval(heartbeat, 30000);
+
+    return () => {
+      clearInterval(interval);
+      db.from('menu_active_sessions').delete().eq('session_id', sessionId);
+      // stop service ถ้าไม่มี user เหลือ
+      fetch('/api/docenter/ocr-service/auto', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    };
+  }, [userName, currentUser]);
 
   useEffect(() => {
     const unsubscribe = subscribeWs(['doc_access_updated', 'user_permissions_updated'], () => fetchData());

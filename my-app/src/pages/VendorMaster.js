@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
   import { db } from '../lib/db';
   import { apiFetch } from '../api';
   import * as XLSX from 'xlsx';
@@ -111,6 +111,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
   const normalizeCpc     = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(5, '0') : ''; };
   const normalizeAccount = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(8, '0') : ''; };
   const normalizeSubAcc  = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(6, '0') : ''; };
+  // MARKER_VENDORMASTER_OFINCODE_NORMALIZE
+  const normalizeOfinCode = (val) => { const str = String(val ?? '').trim().replace(/[^0-9]/g, ''); return str ? str.padStart(6, '0') : ''; };
 
   const getEntityType = (taxId) => { const str = String(taxId || '').replace(/[^0-9]/g, ''); if (str.length !== 13) return null; if (str[0] === '0') return 'นิติบุคคล'; if (str[0] === '9') return 'องค์กรพิเศษ'; return 'บุคคลธรรมดา'; };
   const entityBadge = (taxId) => {
@@ -672,7 +674,7 @@ const computeNextSyRunning = async () => {
       if (!form['CPC_Cr']?.trim())       missing.push('CPC Cr');
       if (!form['Account_Dr2']?.trim())  missing.push('Account Cr');
       if (!form['Sub Acc_Cr']?.trim())   missing.push('Sub Acc Cr');
-      if (missing.length) { confirmDialog.alert('กรุณากรอกข้อมูลให้ครบถ้วนตาม Required Field', { variant: 'danger' }); return; }
+      if (missing.length) { setShowNewErrors(true); confirmDialog.alert('กรุณากรอกข้อมูลให้ครบถ้วนตาม Required Field', { variant: 'danger' }); return; }
       // ← ตรงนี้ครับ หลัง missing check
       if (!editId) {
         const duplicate = (dataMap['smcode'] || []).find(
@@ -1067,7 +1069,7 @@ const computeNextSyRunning = async () => {
       inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
       inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
       overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px':'700px', height:'65vh', maxHeight:'65vh', display:'flex', flexDirection:'column', overflow:'hidden' },
+      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px':'700px', maxHeight:'88vh', display:'flex', flexDirection:'column', overflow:'hidden' }, // MARKER_VENDORMASTER_MODAL_HEIGHT_FIX
       iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
     };
 
@@ -1083,7 +1085,8 @@ const computeNextSyRunning = async () => {
       </colgroup>
     );
 
-    const renderFormFields = (formData, setFormData, editMode = true, showErrors = false) => {
+    // MARKER_SMCODE_BADGES_NEW_ONLY
+    const renderFormFields = (formData, setFormData, editMode = true, showErrors = false, isNewRecord = true) => {
       if (tab === 'smcode') {
 
         
@@ -1104,7 +1107,7 @@ const computeNextSyRunning = async () => {
               const br = isLast ? 'none' : '0.5px solid #e8eaf0';
               if (c.blank) return <div key={`c${i}`} style={{ borderRight:br, minHeight:'28px' }} />;
               if (c.check) {
-                const ofinCode = (formData['Ofin Code'] || '').trim();
+                const ofinCode = normalizeOfinCode(formData['Ofin Code'] || '');
                 const foundBranch = ofinCode ? branchList.find(b => String(b['Branch Code'] || '').trim() === ofinCode) : null;
                 return (
                   <div key={`c${i}`} style={{ 
@@ -1124,8 +1127,9 @@ const computeNextSyRunning = async () => {
               const key = c.key;
               const isCombo = !c.noCombo && (cfg.combo.includes(key) || c.combo);
               const opts = c.opts || getOptions(key);
+              const cellHasError = showErrors && c.required && !String(formData[key]||'').trim();
               return (
-                <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center',justifyContent: c.center ? 'center' : 'flex-start', borderRight:br, overflow:'visible', background: c.bg || 'transparent' }}>
+                <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center',justifyContent: c.center ? 'center' : 'flex-start', borderRight:br, overflow:'visible', background: cellHasError ? '#FCEBEB' : (c.bg || 'transparent'), boxShadow: cellHasError ? 'inset 0 0 0 1px #791F1F' : 'none' }}>
                   {editMode
                     ? isCombo
                     ? <ComboBox 
@@ -1138,6 +1142,7 @@ const computeNextSyRunning = async () => {
                       : <input 
                           ref={key === 'SM-Code' ? simpleCodeRef : undefined}
                           value={formData[key]||''} onChange={e=> c.onChangeFn ? c.onChangeFn(e.target.value) : setFormData({...formData,[key]:e.target.value})} 
+                          onBlur={key === 'Ofin Code' ? () => handleOfinCodeChange(normalizeOfinCode(formData['Ofin Code'])) : undefined}
                           style={{ 
                             height:'24px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', 
                             background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box',
@@ -1147,7 +1152,7 @@ const computeNextSyRunning = async () => {
                             fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', 
                             textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%',
                             textAlign: c.center ? 'center' : 'left'  // ✅ เพิ่มตรงนี้
-                          }}>{formData[key]||'—'}</div>
+                          }}>{/* MARKER_VENDORMASTER_OFINCODE_DISPLAY_NORMALIZE */ key === 'Ofin Code' ? (normalizeOfinCode(formData[key]) || '—') : (formData[key]||'—')}</div>
                   }
                 </div>
               );
@@ -1268,14 +1273,14 @@ const computeNextSyRunning = async () => {
 
             {/* Row 1: 1=Simple Code | 2=OFIN CODE | 3=Supplier Code | 4=Type | 5=Sub Type | 6=OFIN SIMPLE NAME | 7=Short Branch | 8=BU */}
             {smGrid([
-              { label:'Simple Code',   key:'SM-Code',       w:'1fr', bg:'#FFF9C4' },
-              { label:'OFIN CODE',     key:'Ofin Code',     w:'160px',  bg:'#FFF9C4', center:true, onChangeFn: handleOfinCodeChange },
+              { label:'Simple Code *', key:'SM-Code',       w:'1fr', bg:'#FFF9C4', required:true },  // MARKER_SMCODE_REQUIRED_HIGHLIGHT
+              { label:'OFIN CODE *',   key:'Ofin Code',     w:'160px',  bg:'#FFF9C4', center:true, required:true, onChangeFn: handleOfinCodeChange },
               { label:'Supplier Code', key:'Supplier Code', w:'180px', onChangeFn: handleSupplierCodeChange , center:true  },
               { label:'Type',          key:'_type',         w:'170px',  combo:true  , opts:typeOptions , center:true},
               { label:'Sub Type',      key:'_sub_type',     w:'180px', combo:true , opts:subTypeOptions , center:true},
             ])}
 
-            {(formData['SM-Code']?.trim() || supplierCode) && (
+            {isNewRecord && (formData['SM-Code']?.trim() || supplierCode) && (
               <div style={{ marginBottom:'4px', display:'flex', alignItems:'center', gap:'8px' }}>
                 {formData['SM-Code']?.trim() && (
                   (dataMap['smcode'] || []).find(i => String(i['SM-Code'] || '').trim().toLowerCase() === formData['SM-Code'].trim().toLowerCase() && i.id !== editId)
@@ -1293,10 +1298,10 @@ const computeNextSyRunning = async () => {
 
             {/* Row 2: Vendor Name | Tax ID | Branch No. | AT-Match */}
             {smGrid([
-              { label:'Vendor Name', key:'Company Name',     w:'1fr'  , bg:'#FFF9C4'  },
-              { label:'Tax ID',      key:'Tax ID',           w:'240px' , bg:'#FFF9C4'  },
-              { label:'Branch No.',  key:'Branch',           w:'180px' , bg:'#FFF9C4'  },
-              { label:'AT-Match', key:'Short Name', w:'110px', combo:true, bg:'#FFF9C4', opts:[...new Set((dataMap['smcode']||[]).map(i=>i['Short Name']).filter(Boolean))], onChangeFn: handleATMatchChange },
+              { label:'Vendor Name *', key:'Company Name',     w:'1fr'  , bg:'#FFF9C4', required:true  },
+              { label:'Tax ID *',    key:'Tax ID',           w:'240px' , bg:'#FFF9C4', required:true  },
+              { label:'Branch No. *', key:'Branch',           w:'180px' , bg:'#FFF9C4', required:true  },
+              { label:'AT-Match *', key:'Short Name', w:'110px', combo:true, bg:'#FFF9C4', required:true, opts:[...new Set((dataMap['smcode']||[]).map(i=>i['Short Name']).filter(Boolean))], onChangeFn: handleATMatchChange },
             ])}
 
             {/* Row 3: Debit / Credit Account */}
@@ -1698,7 +1703,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                   <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleNewSave}>Save</button>
                 </div>
               </div>
-              {renderFormFields(form, setForm, true, showNewErrors)}
+              {renderFormFields(form, setForm, true, showNewErrors, !editId)}
               <div style={{ padding:'0 20px 16px' }}>
                 <div style={{ display:'flex', gap:'12px', alignItems:'center' }}>
                   <div style={{ flex:1 }}>
@@ -1733,7 +1738,30 @@ if (tab === 'apcode' || tab === 'iecode') {
                   ) : <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowDetailModal(false)}>Close</button>}
                 </div>
               </div>
-              {renderFormFields(detailEditMode ? detailForm : Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])), setDetailForm, detailEditMode, showDetailErrors)}
+              {/* MARKER_VENDORMASTER_DETAIL_AUTOLOOKUP */}
+              {(() => {
+                const detailOfinMatch = branchList.find(b => String(b['Branch Code'] || '').trim() === normalizeOfinCode(detailItem['Ofin Code'] || ''));
+                // MARKER_VENDORMASTER_DETAIL_LOOKUP_DEBUG
+                console.log('[SM-Code View Auto-fill] OFIN CODE (เติม 0 แล้ว):', normalizeOfinCode(detailItem['Ofin Code'] || ''), '| เจอ Branch Match:', detailOfinMatch);
+                const detailLiveMap = detailOfinMatch ? {
+                  '_ofinSimpleName': detailOfinMatch['Simple Brand Code'] || '',
+                  'Short Branch': detailOfinMatch['BU-Branch'] || '',
+                  'BU': detailOfinMatch['bu'] || '',
+                  '_buCompanySimple': detailOfinMatch['Simple Company'] || '',
+                  '_taxIdBu': detailOfinMatch['BU-TaxID'] || '',
+                  '_comPct': detailOfinMatch['%'] || '',
+                  '_specPct': detailOfinMatch['DB(%)'] || '',
+                  '_buBranch': detailOfinMatch['BU-Branch'] || '',
+                  '_buCompany': detailOfinMatch['Company for Show in Report Display'] || '',
+                  '_branchCode': detailOfinMatch['Branch Code'] || '',
+                  '_groupP': detailOfinMatch['Group-P'] || '',
+                  '_branchStatus': detailOfinMatch['status'] || '',
+                } : {};
+                // MARKER_VENDORMASTER_DETAIL_LOOKUP_FIX_KEYS
+                const detailAllKeys = Array.from(new Set([...cfg.edit.map(([k]) => k), ...Object.keys(detailLiveMap)]));
+                const detailViewData = Object.fromEntries(detailAllKeys.map(k => [k, (detailLiveMap[k] || detailItem[k] || '')]));
+                return renderFormFields(detailEditMode ? detailForm : detailViewData, setDetailForm, detailEditMode, showDetailErrors, false);
+              })()}
               <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0' }}>
                 <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
                   <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Username</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{detailItem['username']||'-'}</div></div>

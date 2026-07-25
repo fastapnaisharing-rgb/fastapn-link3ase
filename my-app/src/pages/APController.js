@@ -49,7 +49,34 @@ const BRANCH_EDIT = [
   ['Inactive Date',                         'Inactive Date',      5],
   ['Branch Address',                        'Branch Address',     12],
 ];
-const BRANCH_COMBO = ['Branch Direct', 'bu', 'Group-P', 'status'];
+// MARKER_BRANCH_FORM_DIRECT_AUTOFILL_V4
+// MARKER_BRANCH_FORM_COMBO_REMOVE_V9
+const BRANCH_COMBO = [];
+// MARKER_BRANCH_FORM_STYLE_V1
+// MARKER_BRANCH_FORM_ROWS_V3
+const BRANCH_FORM_ROWS = [
+  ['Branch Code', 'status'],
+  ['Company for Show in Report Display'],
+  ['bu', 'Group-P'],
+  ['BU-TaxID', 'BU-Branch'],
+  ['%', 'DB(%)'],
+  ['Simple Company'],
+  ['Simple Brand Code'],
+  ['Branch Address'],
+  ['BU Code', 'Branch Allocate'],
+  ['cpc', 'Branch Direct'],
+  ['Inactive Date'],
+];
+const BRANCH_FIELD_COLOR = {
+  'Branch Code': '#FCF3D5',
+  'status': '#FCF3D5',
+  'Company for Show in Report Display': '#FCF3D5',
+  'bu': '#FCF3D5',
+  'Group-P': '#FCF3D5',
+  'BU-TaxID': '#FCF3D5',
+  '%': '#DCEAF1',
+};
+const BRANCH_REQUIRED_KEYS = ['Branch Code', 'status', 'Company for Show in Report Display', 'bu', 'Group-P', 'BU-TaxID'];
 
 const formatBranchLabel = (item) =>
   `${item?.['Branch Code'] ?? ''}-${item?.['Company for Show in Report Display'] ?? ''}`;
@@ -272,6 +299,8 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
   const [saving, setSaving]       = useState(false);
   const [sortField, setSortField] = useState('BU-Branch');
   const [sortDir, setSortDir]     = useState('asc');
+  // MARKER_BRANCH_FORM_LOGIC_V2
+  const [openDropdown, setOpenDropdown] = useState(null);
   const inputRef = useRef(null);
   const listRef  = useRef(null);
 
@@ -290,6 +319,18 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
     if (active < 0 || !listRef.current) return;
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
   }, [active]);
+
+  // MARKER_BRANCH_FORM_DIRECT_AUTOFILL_V4_FIXED
+  useEffect(() => {
+    if (view !== 'new' && view !== 'edit') return;
+    const buVal = String(form['bu'] || '').trim();
+    const branchVal = String(form['BU-Branch'] || '').trim();
+    if (!buVal || !branchVal) return;
+    const computed = `${buVal}-${branchVal.padStart(5, '0')}`;
+    if (form['Branch Direct'] !== computed) {
+      setForm(f => ({ ...f, 'Branch Direct': computed }));
+    }
+  }, [view, form['bu'], form['BU-Branch']]);
 
   if (!show) return null;
 
@@ -316,22 +357,83 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
     else if (e.key === 'Enter' && active >= 0 && filtered[active]) { onSelect(filtered[active], { isIB: false }); }
   };
   const handleOpenEdit = (item) => { const f = {}; BRANCH_EDIT.forEach(([k]) => { f[k] = item[k] || ''; }); setEditTarget(item); setForm(f); setFormError(''); setView('edit'); };
-  const handleOpenNew  = () => { const f = {}; BRANCH_EDIT.forEach(([k]) => { f[k] = ''; }); if (bu) f['bu'] = bu; setEditTarget(null); setForm(f); setFormError(''); setView('new'); };
+  // MARKER_BRANCH_FORM_AUTOFILL_SCOPE_V6
+  const handleOpenNew  = () => { const f = {}; BRANCH_EDIT.forEach(([k]) => { f[k] = ''; }); setEditTarget(null); setForm(f); setFormError(''); setView('new'); };
   const handleBack = () => { setView('search'); setEditTarget(null); setForm({}); setFormError(''); setTimeout(() => inputRef.current?.focus(), 60); };
   const validateForm = (f) => {
-    if (!f['Branch Code']?.trim()) return 'กรุณากรอก Branch Code';
+    for (const key of BRANCH_REQUIRED_KEYS) {
+      if (!String(f[key] || '').trim()) {
+        const label = (BRANCH_EDIT.find(([k]) => k === key) || [null, key])[1];
+        return `กรุณากรอก ${label}`;
+      }
+    }
     if (f['status'] === 'Closed' && !f['Inactive Date']) return 'กรุณากรอก Inactive Date เมื่อ Status เป็น Closed';
     if (f['status'] === 'Relocate' && !f['Branch Allocate']) return 'กรุณากรอก Branch Allocate เมื่อ Status เป็น Relocate';
     return '';
   };
+  // MARKER_BRANCH_DUPLICATE_CHECK
   const handleSave = async () => {
     const err = validateForm(form); if (err) { setFormError(err); return; }
+    if (view !== 'edit') {
+      const dupBranch = branchItems.find(b => String(b['Branch Code'] || '').trim() === String(form['Branch Code'] || '').trim());
+      if (dupBranch) { setFormError(`Branch Code "${form['Branch Code']}" มีอยู่แล้วในระบบ`); return; }
+    }
     setSaving(true);
     try { await onSaveBranch({ form, isEdit: view === 'edit', editTarget }); handleBack(); }
     catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
   const setField = (key, val) => { setForm(f => ({ ...f, [key]: val })); setFormError(''); };
+  // MARKER_BRANCH_FORM_SIMPLEBRAND_AUTOFILL_V5
+  // MARKER_BRANCH_FORM_AUTOFILL_DEBUG_V10
+  // MARKER_BRANCH_FORM_HEADOFFICE_LOOKUP_V11
+  const handleBranchCodeBlur = () => {
+    const code = String(form['Branch Code'] || '').trim();
+    if (code.length < 3) return;
+    const hoCode = code.slice(0, -2) + '01';
+    const match = branchItems.find(b => String(b['Branch Code'] || '').trim() === hoCode);
+    if (!match) {
+      console.warn('[Branch Auto-fill] ไม่พบ Head Office ของ Branch Code:', code, '(คำนวณเป็น', hoCode, ')');
+      return;
+    }
+    console.log('[Branch Auto-fill] พบ Head Office:', hoCode, match);
+    setForm(f => ({
+      ...f,
+      'bu': String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || ''),
+      'Group-P': String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || ''),
+      'BU-TaxID': String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || ''),
+      '%': String(f['%'] || '').trim() ? f['%'] : (match['%'] || ''),
+      'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || ''),
+    }));
+  };
+  const handleCompanyBlur = () => {
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const rawName = String(form['Company for Show in Report Display'] || '').trim();
+    const name = norm(rawName);
+    const branchCodeVal = String(form['Branch Code'] || '').trim();
+    const match = name ? branchItems.find(b => norm(b['Company for Show in Report Display']) === name) : null;
+    if (name && !match) {
+      console.warn('[Branch Auto-fill] ไม่พบ Branch ที่ Company for Report ตรงกับ:', JSON.stringify(rawName), '| จำนวน Branch ทั้งหมดที่โหลดมา (branchItems.length):', branchItems.length);
+    } else if (match) {
+      console.log('[Branch Auto-fill] พบ Match แล้ว จาก Branch Code:', match['Branch Code'], match);
+    }
+    setForm(f => {
+      const next = { ...f };
+      if (match) {
+        next['bu'] = String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || '');
+        next['Group-P'] = String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || '');
+        next['BU-TaxID'] = String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || '');
+        next['%'] = String(f['%'] || '').trim() ? f['%'] : (match['%'] || '');
+        next['Simple Company'] = String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || '');
+      }
+      if (!String(f['Simple Brand Code'] || '').trim() && branchCodeVal && rawName) {
+        next['Simple Brand Code'] = `${branchCodeVal}-${rawName}`;
+      }
+      return next;
+    });
+    // MARKER_BRANCH_FORM_AUTOFILL_TIMING_V12
+    handleBranchCodeBlur();
+  };
 
   const IconIB = () => (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3m8 0h3a2 2 0 002-2v-3"/><circle cx="12" cy="12" r="3"/></svg>);
   const IconEdit = () => (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>);
@@ -350,33 +452,81 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
           </div>
         </div>
         {formError && <div style={{ padding: '8px 20px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderBottom: '1px solid #f7c1c1', flexShrink: 0 }}>⚠️ {formError}</div>}
-        <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '10px 12px' }}>
-            {BRANCH_EDIT.map(([key, label, span]) => {
-              const isReadOnly = key === 'Branch Code' && isEdit;
-              const needInactive = key === 'Inactive Date';
-              const isDisabled = needInactive && form['status'] !== 'Closed';
-              const isRequired = (key === 'Branch Code') || (key === 'Inactive Date' && form['status'] === 'Closed') || (key === 'Branch Allocate' && form['status'] === 'Relocate');
-              const hasErr = !!formError && isRequired && !form[key]?.trim();
-              const baseInput = { height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%', border: hasErr ? '1px solid #e74c3c' : '0.5px solid #ddd', background: (isReadOnly || isDisabled) ? '#f5f5f5' : 'white', color: (isReadOnly || isDisabled) ? '#999' : '#1a3a5c' };
-              const opts = branchOptions[key] || [];
-              return (
-                <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', gridColumn: `span ${span}` }}>
-                  <label style={{ fontSize: '11px', color: hasErr ? '#e74c3c' : '#888' }}>
-                    {label}{isRequired && <span style={{ color: '#e24b4a' }}> *</span>}
-                    {needInactive && <span style={{ fontSize: '10px', color: '#bbb' }}> (เฉพาะ Closed)</span>}
-                  </label>
-                  {key === 'Inactive Date' ? (
-                    <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={baseInput} />
-                  ) : BRANCH_COMBO.includes(key) ? (
-                    <><input list={`combo-branch-${key}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} placeholder={`เลือก ${label}`} style={baseInput} /><datalist id={`combo-branch-${key}`}>{opts.map((o, i) => <option key={i} value={o} />)}</datalist></>
-                  ) : (
-                    <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} style={baseInput} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
+        <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px', background: '#fff' }}>
+          {BRANCH_FORM_ROWS.map((rowKeys, ri) => (
+            // MARKER_BRANCH_FORM_ROW_GAP_V8
+            <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative', zIndex: ri }}>
+              {rowKeys.map((key, ki) => {
+                const label = (BRANCH_EDIT.find(([k]) => k === key) || [null, key])[1];
+                const isReadOnly = key === 'Branch Code' && isEdit;
+                const needInactive = key === 'Inactive Date';
+                const isDisabled = needInactive && form['status'] !== 'Closed';
+                const isRequired = BRANCH_REQUIRED_KEYS.includes(key) || (key === 'Inactive Date' && form['status'] === 'Closed') || (key === 'Branch Allocate' && form['status'] === 'Relocate');
+                const hasErr = !!formError && isRequired && !form[key]?.trim();
+                const opts = branchOptions[key] || [];
+                const isFullRow = rowKeys.length === 1;
+                const isLast = ki === rowKeys.length - 1;
+                const bg = needInactive ? '#eef1f3' : (BRANCH_FIELD_COLOR[key] || '#fff');
+                const valueColor = BRANCH_FIELD_COLOR[key] ? '#5c5636' : '#333';
+                // MARKER_BRANCH_FORM_BORDER_FIX_V7
+                const labelCellStyle = { flex: isFullRow ? '0 0 160px' : (ki === 0 ? '0 0 160px' : '0 0 120px'), border: hasErr ? '1px dashed #e74c3c' : '1px dashed #2c5f7c', marginLeft: ki === 0 ? 0 : '-1px', padding: '8px 10px', display: 'flex', alignItems: key === 'Branch Address' ? 'flex-start' : 'center', paddingTop: key === 'Branch Address' ? '10px' : '8px', opacity: isDisabled ? 0.6 : 1, boxSizing: 'border-box', position: 'relative', zIndex: ki * 2 };
+                const valueCellStyle = { flex: 1, background: bg, border: hasErr ? '1px dashed #e74c3c' : '1px dashed #2c5f7c', marginLeft: '-1px', padding: '8px 10px', display: 'flex', alignItems: 'center', minHeight: key === 'Branch Address' ? '56px' : undefined, opacity: isDisabled ? 0.7 : 1, boxSizing: 'border-box', position: 'relative', zIndex: ki * 2 + 1 };
+                const inputBare = { width: '100%', border: 'none', background: 'transparent', fontSize: '13px', color: (isReadOnly || isDisabled) ? '#999' : valueColor, outline: 'none', padding: 0, fontFamily: 'inherit' };
+                return (
+                  <React.Fragment key={key}>
+                    <div style={labelCellStyle}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: hasErr ? '#e74c3c' : '#123c56' }}>
+                        {label}{isRequired && <span style={{ color: '#e24b4a' }}> *</span>}
+                        {needInactive && <span style={{ fontSize: '10px', color: '#bbb', fontWeight: 400 }}> (เฉพาะ Closed)</span>}
+                      </span>
+                    </div>
+                    <div style={valueCellStyle}>
+                      {key === 'Inactive Date' ? (
+                        <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={inputBare} />
+                      ) : key === 'Branch Address' ? (
+                        <textarea value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
+                      ) : key === 'status' ? (
+                        <select value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inputBare, fontWeight: 600 }}>
+                          <option value="">เลือก Status</option>
+                          {(opts.length ? opts : ['Active', 'Closed', 'Relocate']).map((o, i) => <option key={i} value={o}>{o}</option>)}
+                        </select>
+                      ) : key === 'Branch Direct' ? (
+                        <input value={form[key] || ''} readOnly style={{ ...inputBare, color: '#999' }} />
+                      ) : BRANCH_COMBO.includes(key) ? (
+                        <div style={{ position: 'relative', width: '100%' }}>
+                          <input
+                            value={form[key] || ''}
+                            onChange={e => { setField(key, e.target.value); setOpenDropdown(key); }}
+                            onFocus={() => setOpenDropdown(key)}
+                            onBlur={() => setTimeout(() => setOpenDropdown(d => (d === key ? null : d)), 150)}
+                            placeholder={`เลือก ${label}`}
+                            style={inputBare}
+                          />
+                          {openDropdown === key && (() => {
+                            const filteredOpts = opts.filter(o => !form[key] || String(o).toLowerCase().includes(String(form[key]).toLowerCase()));
+                            return (
+                              <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: '-10px', right: '-10px', background: '#fff', border: '1px solid #dde', borderRadius: '6px', boxShadow: '0 4px 14px rgba(0,0,0,0.14)', maxHeight: '180px', overflowY: 'auto', zIndex: 30 }}>
+                                {filteredOpts.length === 0 ? (
+                                  <div style={{ padding: '8px 12px', fontSize: '12px', color: '#aaa' }}>ไม่พบข้อมูล</div>
+                                ) : filteredOpts.map((o, i) => (
+                                  <div key={i} onMouseDown={() => { setField(key, o); setOpenDropdown(null); }} style={{ padding: '8px 12px', fontSize: '13px', color: '#1a3a5c', cursor: 'pointer' }}
+                                    onMouseEnter={e => e.currentTarget.style.background = '#f0f4f8'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                    {o}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : undefined} style={inputBare} />
+                      )}
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          ))}
         </div>
         <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
           {isEdit && editTarget?.['updated_by'] ? (

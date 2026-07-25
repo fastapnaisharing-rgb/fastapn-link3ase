@@ -26,6 +26,12 @@ const MENU_LABELS = {
   'i-expense': 'I-Expense',
   'gl-functional': 'GL Functional',
   'i-pro-interface': 'I-Pro Interface',
+  'document-center': 'Document Center',
+  'ap-ocr': 'AP OCR',
+  'upload': 'Upload',
+  'users': 'จัดการ Users',
+  'vendor-apcode': 'Vendor AP Code',
+  'home': 'หน้าหลัก',
 };
 
 const NOTIF_ICON = {
