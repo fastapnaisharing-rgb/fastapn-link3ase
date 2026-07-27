@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 
 const WEBHOOK_URL = 'http://10.101.87.126:9000';
@@ -59,6 +59,19 @@ export default function DeployMonitor({ inline = false, onClose }) {
   const [elapsed, setElapsed]       = useState(0);
   const [health, setHealth]         = useState(null);
   const [deploying, setDeploying]   = useState(false);
+  // MARKER_DEPLOYMONITOR_SYSTEM_LOG
+  const [logSubTab, setLogSubTab] = useState('deploy'); // 'deploy' | 'cpu' | 'ram'
+  const [cpuLog, setCpuLog] = useState([]);
+  const [ramLog, setRamLog] = useState([]);
+
+  useEffect(() => {
+    if (logSubTab === 'cpu' && cpuLog.length === 0) {
+      authFetch('/system/cpu-history?hours=24').then(rows => setCpuLog(Array.isArray(rows) ? rows.slice().reverse() : [])).catch(err => console.error('CPU log fetch error:', err));
+    }
+    if (logSubTab === 'ram' && ramLog.length === 0) {
+      authFetch('/system/ram-history?hours=24').then(rows => setRamLog(Array.isArray(rows) ? rows.slice().reverse() : [])).catch(err => console.error('RAM log fetch error:', err));
+    }
+  }, [logSubTab]);
   const logRef   = useRef(null);
   const timerRef = useRef(null);
 
@@ -105,9 +118,13 @@ export default function DeployMonitor({ inline = false, onClose }) {
 
   // Poll /health every 30s
   useEffect(() => {
+    // MARKER_DEPLOYMONITOR_HEALTH_ERROR_LOG
     const fetch_ = async () => {
       try { const r = await fetch(HEALTH_URL); setHealth(await r.json()); }
-      catch { setHealth(null); }
+      catch (err) {
+        console.error('[Deploy Monitor] Health check failed (อาจเป็น CORS/Network — Backend อาจไม่ได้ Down จริง):', err.message);
+        setHealth(null);
+      }
     };
     fetch_();
     const iv = setInterval(fetch_, 30000);
@@ -148,7 +165,7 @@ export default function DeployMonitor({ inline = false, onClose }) {
       {/* Header */}
       <div style={{ padding:'8px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom:'0.5px solid #e0e0e0', flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
-          <span style={{ fontSize:'12px', fontWeight:'500', color:'#1a3a5c' }}>Deploy Monitor</span>
+          <span style={{ fontSize:'12px', fontWeight:'500', color:'#1a3a5c' }}>System Log</span>
           <span style={{ display:'inline-flex', alignItems:'center', gap:'4px', background: connected ? '#EAF3DE' : '#FCEBEB', color: connected ? '#0F6E56' : '#791F1F', fontSize:'10px', padding:'2px 8px', borderRadius:'20px', fontWeight:'500' }}>
             <span style={{ width:'5px', height:'5px', borderRadius:'50%', background: connected ? '#0F6E56' : '#c0392b', display:'inline-block' }} />
             {connected ? 'Connected' : 'Disconnected'}
@@ -168,6 +185,16 @@ export default function DeployMonitor({ inline = false, onClose }) {
           </span>
           {!inline && onClose && <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'#888', fontSize:'18px', lineHeight:1 }}>×</button>}
         </div>
+      </div>
+
+      {/* Sub-tab bar: Deploy Log / CPU Log / RAM Log */}
+      <div style={{ display:'flex', gap:'2px', padding:'0 14px', borderBottom:'0.5px solid #e0e0e0', flexShrink:0, background:'white' }}>
+        {[['deploy','Deploy Log'],['cpu','CPU Log'],['ram','RAM Log']].map(([key,label]) => (
+          <button key={key} onClick={() => setLogSubTab(key)}
+            style={{ padding:'7px 12px', border:'none', background:'transparent', color: logSubTab===key ? '#1a3a5c' : '#888', fontSize:'11px', fontWeight: logSubTab===key ? '500' : '400', cursor:'pointer', borderBottom: logSubTab===key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom:'-1px' }}>
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* 3-col body */}
@@ -198,7 +225,7 @@ export default function DeployMonitor({ inline = false, onClose }) {
 
         {/* Col 2: Log */}
         <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', background:'white', borderRight:'0.5px solid #e0e0e0' }}>
-          {selectedDeploy ? (
+          {logSubTab === 'deploy' && (selectedDeploy ? (
             <>
               <div style={{ padding:'6px 12px', borderBottom:'0.5px solid #e0e0e0', display:'flex', alignItems:'center', gap:'8px', background:'#f8f9fa', flexShrink:0 }}>
                 <span style={{ fontSize:'10px', color:'#888' }}>Started: {formatTimeFull(selectedDeploy.startedAt)}</span>
@@ -232,6 +259,66 @@ export default function DeployMonitor({ inline = false, onClose }) {
             </>
           ) : (
             <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'#aaa', fontSize:'12px' }}>เลือก deploy จากด้านซ้ายครับ</div>
+          ))}
+
+          {logSubTab === 'cpu' && (
+            <div style={{ flex:1, overflowY:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px' }}>
+                <thead>
+                  <tr style={{ background:'#fafaf8' }}>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>เวลา</th>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>CPU</th>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>Top Process</th>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>หมายเหตุ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cpuLog.length === 0 && <tr><td colSpan={4} style={{ padding:'20px', textAlign:'center', color:'#aaa' }}>ยังไม่มีข้อมูล</td></tr>}
+                  {cpuLog.map((row, i) => {
+                    const isSpike = row.cpu_pct >= 70;
+                    const topProc = (row.top_processes || [])[0]?.Name;
+                    return (
+                      <tr key={i}>
+                        <td style={{ padding:'7px 14px', color:'#555', borderBottom:'0.5px solid #f3f3f0' }}>{formatTimeFull(row.recorded_at)}</td>
+                        <td style={{ padding:'7px 14px', borderBottom:'0.5px solid #f3f3f0', color: isSpike ? '#791F1F' : '#27500A', fontWeight:600 }}>{row.cpu_pct}%</td>
+                        <td style={{ padding:'7px 14px', color:'#888', borderBottom:'0.5px solid #f3f3f0' }}>{topProc || '\u2014'}</td>
+                        <td style={{ padding:'7px 14px', borderBottom:'0.5px solid #f3f3f0' }}>{isSpike && <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'1px 6px', borderRadius:'8px', fontSize:'10px' }}>Spike</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {logSubTab === 'ram' && (
+            <div style={{ flex:1, overflowY:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px' }}>
+                <thead>
+                  <tr style={{ background:'#fafaf8' }}>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>เวลา</th>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>RAM</th>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>Top Process</th>
+                    <th style={{ textAlign:'left', padding:'8px 14px', color:'#999', fontWeight:500, borderBottom:'0.5px solid #eee' }}>หมายเหตุ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ramLog.length === 0 && <tr><td colSpan={4} style={{ padding:'20px', textAlign:'center', color:'#aaa' }}>ยังไม่มีข้อมูล</td></tr>}
+                  {ramLog.map((row, i) => {
+                    const isSpike = row.ram_pct >= 75;
+                    const topProc = (row.top_processes || [])[0]?.Name;
+                    return (
+                      <tr key={i}>
+                        <td style={{ padding:'7px 14px', color:'#555', borderBottom:'0.5px solid #f3f3f0' }}>{formatTimeFull(row.recorded_at)}</td>
+                        <td style={{ padding:'7px 14px', borderBottom:'0.5px solid #f3f3f0', color: isSpike ? '#791F1F' : '#27500A', fontWeight:600 }}>{row.ram_pct}%</td>
+                        <td style={{ padding:'7px 14px', color:'#888', borderBottom:'0.5px solid #f3f3f0' }}>{topProc || '\u2014'}</td>
+                        <td style={{ padding:'7px 14px', borderBottom:'0.5px solid #f3f3f0' }}>{isSpike && <span style={{ background:'#FCEBEB', color:'#791F1F', padding:'1px 6px', borderRadius:'8px', fontSize:'10px' }}>Spike</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
@@ -871,6 +958,152 @@ export function RAMDashboardTab() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// MARKER_CPU_DASHBOARD_TAB
+function CpuLineChart({ history: historyRaw }) {
+  const history = Array.isArray(historyRaw) ? historyRaw : [];
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !history.length) return;
+    const labels = history.map(h => formatTime(h.recorded_at));
+    const data = history.map(h => h.cpu_pct);
+
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(canvasRef.current, {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: 'line', label: 'CPU', data,
+            borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 5,
+            fill: false, tension: 0.35, order: 0,
+            segment: { borderColor: c => (c.p1.parsed.y >= 70 ? '#e24b4a' : '#185FA5') },
+            pointHoverBackgroundColor: c => (c.parsed.y >= 70 ? '#e24b4a' : '#185FA5'),
+          },
+          {
+            type: 'line', label: 'เกณฑ์ 70%', data: labels.map(() => 70),
+            borderColor: 'rgba(220,80,80,0.35)', borderWidth: 1,
+            borderDash: [4, 4], pointRadius: 0, fill: false, order: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#fcfcfb', titleColor: '#0b0b0b', bodyColor: '#52514e',
+            borderColor: '#e1e0d9', borderWidth: 1, padding: 10, cornerRadius: 8,
+            callbacks: {
+              label: c => (c.dataset.label === 'เกณฑ์ 70%' ? null : ` CPU: ${c.parsed.y}%`),
+            },
+          },
+        },
+        scales: {
+          y: { min: 0, max: 100, grid: { color: '#e8e7e1' }, ticks: { color: '#898781', font: { size: 11 }, callback: v => v + '%', stepSize: 25 } },
+          x: { grid: { display: false }, ticks: { color: '#898781', font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } },
+        },
+      },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [history]);
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '190px' }}>
+      <canvas ref={canvasRef} style={{ width: '100% !important', height: '100% !important' }} />
+    </div>
+  );
+}
+
+export function CPUDashboardTab() {
+  const [current, setCurrent] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [lastRefresh, setLastRefresh] = useState(Date.now());
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [cur, hist] = await Promise.all([
+        authFetch('/system/cpu-current'),
+        authFetch('/system/cpu-history?hours=24'),
+      ]);
+      setCurrent(cur);
+      setHistory(hist);
+      setLastRefresh(Date.now());
+    } catch (err) { console.error('CPU dashboard fetch error:', err); }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    const interval = setInterval(fetchAll, 60000);
+    return () => clearInterval(interval);
+  }, [fetchAll]);
+
+  if (!current) {
+    return (
+      <div style={{ padding: '20px 24px' }}>
+        <div style={{ width: '120px', height: '20px', background: '#f0efec', borderRadius: '4px', marginBottom: '20px' }} />
+        <div style={{ height: '80px', background: '#f0efec', borderRadius: '8px', marginBottom: '24px' }} />
+        <div style={{ height: '190px', background: '#f0efec', borderRadius: '8px' }} />
+      </div>
+    );
+  }
+
+  const pct = current.pct ?? 0;
+  const riskLabel = pct >= 70 ? 'เกินเกณฑ์วิกฤต' : pct >= 40 ? 'เข้าเกณฑ์เตือน' : 'ปกติ';
+  const riskColor = pct >= 70 ? '#791F1F' : pct >= 40 ? '#856404' : '#27500A';
+  const minutesAgo = Math.floor((Date.now() - lastRefresh) / 60000);
+
+  // ── หา Spike ล่าสุดที่มี top_processes เก็บไว้ (CPU >= 70% ตอนนั้น) ──
+  const lastSpike = [...history].reverse().find(h => h.top_processes && h.top_processes.length);
+
+  return (
+    <div style={{ padding: '20px 24px', overflowY: 'auto', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '18px' }}>⚡</span>
+          <span style={{ fontSize: '15px', fontWeight: '500' }}>CPU monitor</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '12px', color: '#888' }}>อัปเดตล่าสุด {minutesAgo < 1 ? 'เมื่อสักครู่' : `${minutesAgo} นาทีที่แล้ว`}</span>
+          <button onClick={fetchAll} style={{ fontSize: '13px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', cursor: 'pointer' }}>รีเฟรช</button>
+        </div>
+      </div>
+
+      <div style={{ background: '#fafaf8', borderRadius: '8px', padding: '16px 20px', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '10px' }}>
+          <span style={{ fontSize: '34px', fontWeight: '500', color: riskColor, lineHeight: 1 }}>{pct}<span style={{ fontSize: '16px' }}>%</span></span>
+          <span style={{ fontSize: '12px', color: riskColor }}>{riskLabel}</span>
+        </div>
+        <div style={{ height: '6px', background: '#f0f0f0', borderRadius: '3px', overflow: 'hidden', position: 'relative' }}>
+          <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: 'linear-gradient(90deg, #185FA5, #e24b4a)', borderRadius: '3px' }} />
+          <div style={{ position: 'absolute', left: '70%', top: '-2px', width: '1px', height: '10px', background: '#999' }} />
+        </div>
+      </div>
+
+      <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>CPU ย้อนหลัง 24 ชั่วโมง</p>
+      <div style={{ marginBottom: '24px' }}>
+        <CpuLineChart history={history} />
+      </div>
+
+      {lastSpike && (
+        <>
+          <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>Process ที่กิน CPU สูงสุดตอน Spike ล่าสุด ({formatTime(lastSpike.recorded_at)})</p>
+          <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '8px', overflow: 'hidden' }}>
+            {(lastSpike.top_processes || []).slice(0, 5).map((p, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: i < lastSpike.top_processes.length - 1 ? '0.5px solid #e8e8e8' : 'none' }}>
+                <span style={{ flex: 1, fontSize: '13px' }}>{p.Name}</span>
+                <span style={{ fontSize: '13px', color: '#888' }}>{p.CPU ? `${Number(p.CPU).toFixed(1)}s CPU time` : '-'}</span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

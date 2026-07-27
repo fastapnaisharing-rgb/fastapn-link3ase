@@ -1188,7 +1188,7 @@ function MainApp() {
       </div>
 
       {/* ── Content area ── */}
-      <div className="main-scroll" style={{ flex: 1, overflow: 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: flyoutOpen ? '164px' : '0', transition: 'margin-left 0.2s ease' }}>
+      <div className="main-scroll" style={{ flex: 1, overflow: activePage === 'upload' ? 'hidden' : 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: flyoutOpen ? '164px' : '0', transition: 'margin-left 0.2s ease', display: activePage === 'upload' ? 'flex' : 'block', flexDirection: 'column' }}>
         {renderPage()}
       </div>
 

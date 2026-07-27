@@ -6,7 +6,7 @@
  * (Concept: "เสร็จชุดไหน ปล่อยชุดนั้นออกมาเลย")
  * ================================================================
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { callGeminiSplitMerge, checkGeminiToggle } from "../utils/geminiSplitMerge";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -47,69 +47,279 @@ const SET_STATUS_LABEL = {
   approved: "อนุมัติแล้ว",
 };
 
-// ---------------- ส่วน Monitor: รายการ Batch ทั้งหมดที่เคย Upload ----------------
+// ---------------- Thumbnail: ไอคอนแนบไฟล์ กดแล้วเด้ง Popup รูปเต็มขนาด ----------------
+function SetThumbnail({ pageIds, onOpenPreview }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  const handleClick = async (e) => {
+    e.stopPropagation();
+    const ids = Array.isArray(pageIds) ? pageIds : [];
+    if (ids.length === 0 || loading) return;
+    setError(false);
+    setLoading(true);
+    try {
+      // ดึงทุกหน้าของชุดนี้มาพร้อมกัน (ไม่ใช่แค่หน้าแรก) ให้ Popup เลื่อนดู
+      // ได้ครบทุกหน้าจริง — ปกติชุดละ 2-3 หน้า โหลดพร้อมกันไม่หนักเกินไป
+      const blobUrls = await Promise.all(ids.map((id) => fetchImageBlobUrl(id)));
+      onOpenPreview(blobUrls);
+    } catch (err) {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={handleClick}
+      title="คลิกดูตัวอย่างเอกสาร (ทุกหน้า)"
+      style={{
+        width: 36, height: 46, flexShrink: 0, borderRadius: 4, background: "#f1f3f5",
+        border: "0.5px solid #ddd", display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", fontSize: 15, color: error ? "#d9534f" : "#8b94a0",
+      }}
+    >
+      {loading ? (
+        <span style={{ fontSize: 10 }}>...</span>
+      ) : error ? (
+        <span style={{ fontSize: 10 }}>พลาด</span>
+      ) : (
+        "📎"
+      )}
+    </div>
+  );
+}
+
+// ---------------- Popup แสดงรูปเต็มขนาด (Lightbox แบบเลื่อนดูได้หลายหน้า) ----------------
+function ImagePreviewModal({ urls, onClose }) {
+  const [index, setIndex] = useState(0);
+
+  // Reset กลับไปหน้าแรกทุกครั้งที่เปิด Popup ใหม่ (ชุดใหม่)
+  useEffect(() => {
+    setIndex(0);
+  }, [urls]);
+
+  if (!urls || urls.length === 0) return null;
+  const total = urls.length;
+  const safeIndex = Math.min(index, total - 1);
+
+  const goPrev = (e) => {
+    e.stopPropagation();
+    setIndex((i) => (i - 1 + total) % total);
+  };
+  const goNext = (e) => {
+    e.stopPropagation();
+    setIndex((i) => (i + 1) % total);
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+      }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh" }}>
+        <img
+          src={urls[safeIndex]}
+          alt={`ตัวอย่างเอกสารเต็มขนาด หน้า ${safeIndex + 1} จาก ${total}`}
+          style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 6, boxShadow: "0 4px 24px rgba(0,0,0,0.4)", display: "block" }}
+        />
+        <button
+          onClick={onClose}
+          style={{
+            position: "absolute", top: -14, right: -14, width: 30, height: 30, borderRadius: "50%",
+            background: "#fff", border: "0.5px solid #ddd", cursor: "pointer", fontSize: 16, lineHeight: 1,
+          }}
+        >
+          ×
+        </button>
+
+        {total > 1 && (
+          <>
+            <button
+              onClick={goPrev}
+              title="หน้าก่อนหน้า"
+              style={{
+                position: "absolute", top: "50%", left: -18, transform: "translateY(-50%)",
+                width: 36, height: 36, borderRadius: "50%", background: "#fff", border: "0.5px solid #ddd",
+                cursor: "pointer", fontSize: 16,
+              }}
+            >
+              ‹
+            </button>
+            <button
+              onClick={goNext}
+              title="หน้าถัดไป"
+              style={{
+                position: "absolute", top: "50%", right: -18, transform: "translateY(-50%)",
+                width: 36, height: 36, borderRadius: "50%", background: "#fff", border: "0.5px solid #ddd",
+                cursor: "pointer", fontSize: 16,
+              }}
+            >
+              ›
+            </button>
+            <div style={{
+              position: "absolute", bottom: -32, left: "50%", transform: "translateX(-50%)",
+              fontSize: 12, color: "#fff", background: "rgba(0,0,0,0.5)", padding: "3px 10px", borderRadius: 10,
+            }}>
+              หน้า {safeIndex + 1} จาก {total}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------- ส่วน Monitor: คิวแบบ Flat ตามชุดเอกสาร (Set) ไม่ใช่ตามไฟล์ ----------------
+// เหตุผล: "ชุด" (1 invoice) คือหน่วยของงานจริง ไม่ใช่ "ไฟล์" — ไฟล์หนึ่งอาจ
+// แบ่งเป็นหลายสิบชุด แต่ละชุดควรเข้าคิว/หลุดคิว/เลื่อน priority ได้อิสระ
+// ต่อกัน ไม่ต้องมีชื่อไฟล์ครอบเป็น container อีกต่อไป
+// เวลาเฉลี่ยต่อหน้า (จาก log จริงที่สังเกตได้ ~29.91s ต่อหน้า ปัดเป็น 30)
+// ใช้แค่ "ประมาณการ" ให้ Progress Bar ขยับต่อเนื่องระหว่างรอหน้าถัดไปเสร็จ
+// จริง — ไม่ใช่ตัวเลขจริงจาก Backend เพราะ % จริงกระโดดเป็นขั้นบันได
+// (0% -> 50% -> 100% สำหรับ Set 2 หน้า) ซึ่งดูเหมือนค้างจนกว่าจะเสร็จทันที
+const AVG_SECONDS_PER_PAGE = 30;
+
+// ---------------- Progress Bar ที่ประมาณการเวลาต่อเนื่อง (ไม่รอ Backend อย่างเดียว) ----------------
+function EstimatedSetProgress({ pagesDone, totalPages, isStarted, isPriority }) {
+  const [, forceTick] = useState(0);
+  const lastPagesDoneRef = useRef(pagesDone);
+  const sinceRef = useRef(Date.now());
+
+  // ทุกครั้งที่ pages_done จริงจาก Backend เปลี่ยน (เสร็จอีกหน้า) รีเซ็ต
+  // จุดเริ่มนับเวลาใหม่ ให้ประมาณการ "หน้าถัดไป" ต่อจากจุดนี้
+  useEffect(() => {
+    if (pagesDone !== lastPagesDoneRef.current) {
+      lastPagesDoneRef.current = pagesDone;
+      sinceRef.current = Date.now();
+    }
+  }, [pagesDone]);
+
+  // Tick ทุก 1 วินาทีตอนกำลังทำงานจริง เพื่อขยับแถบต่อเนื่อง (ไม่ต้องรอ Poll 3 วิ)
+  useEffect(() => {
+    if (!isStarted) return undefined;
+    const timer = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [isStarted]);
+
+  let pct;
+  let label;
+  if (!isStarted) {
+    pct = isPriority ? 100 : 0;
+    label = isPriority ? "รอคิวถัดไป" : "รอคิว";
+  } else {
+    const basePct = totalPages > 0 ? (pagesDone / totalPages) * 100 : 0;
+    const nextPct = totalPages > 0 ? Math.min(100, ((pagesDone + 1) / totalPages) * 100) : 100;
+    const elapsedSec = (Date.now() - sinceRef.current) / 1000;
+    const estimatedFraction = Math.min(1, elapsedSec / AVG_SECONDS_PER_PAGE);
+    pct = basePct + (nextPct - basePct) * estimatedFraction;
+    label = `~${Math.round(pct)}%`;
+  }
+
+  return (
+    <>
+      <span style={{ fontSize: 11, color: "#8b94a0" }}>{label}</span>
+      <div style={{ width: "100%", height: 5, background: "#eef0f2", borderRadius: 3, overflow: "hidden", marginTop: 6 }}>
+        <div
+          style={{
+            width: `${Math.min(100, pct)}%`,
+            height: "100%",
+            background: isStarted ? "#5b9279" : (isPriority ? "#c98a2c" : "#d8dde3"),
+            transition: "width 1s linear",
+          }}
+        />
+      </div>
+    </>
+  );
+}
+
 function BatchHistory({ onSelectBatch }) {
   const { userRole } = useAuth();
   const isOwner = String(userRole || "").toLowerCase() === "owner";
-  const [queueTab, setQueueTab] = useState("mine"); // "mine" | "all"
-  const [batches, setBatches] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [activeSets, setActiveSets] = useState([]);
+  // Default เป็น All Queue สำหรับ Owner — งานทั้งหมดรันบน Server ที่ใช้ร่วมกัน
+  // จริงๆ อยู่แล้ว (ไม่มี Local OCR แยกต่อเครื่อง) จึงควรเห็นภาพรวมทุกคนก่อน
+  // เป็นค่าเริ่มต้น ส่วนคนที่ไม่ใช่ Owner ไม่มี tab All Queue ให้เลือกอยู่แล้ว
+  // เลย default เป็น "mine" เหมือนเดิมไป
+  const [queueTab, setQueueTab] = useState(isOwner ? "all" : "mine"); // "mine" | "all"
 
-  const loadBatches = useCallback(async () => {
+  // แก้ race condition: useState เริ่มต้นด้านบนคำนวณค่าแค่ครั้งเดียวตอน
+  // mount — ถ้าตอนนั้น isOwner ยังไม่ resolve (userRole จาก useAuth() ยัง
+  // โหลดไม่เสร็จ) ค่าจะล็อกเป็น "mine" ตลอดไป แม้ isOwner จะกลายเป็น true
+  // ในเฟรมถัดไปก็ตาม (เห็น tab "All Queue" โผล่มา แต่ tab ที่ active ไม่ขยับ
+  // ตาม) ใช้ useEffect เซ็ตซ้ำอีกทีตอนที่รู้แน่ชัดว่าเป็น Owner แล้ว
+  // (ครั้งเดียวเท่านั้น กัน gate ไม่ให้ทับ ถ้าเจ้าตัวกดสลับ tab เองไปแล้ว)
+  const defaultTabAppliedRef = useRef(false);
+  useEffect(() => {
+    if (isOwner && !defaultTabAppliedRef.current) {
+      setQueueTab("all");
+      defaultTabAppliedRef.current = true;
+    }
+  }, [isOwner]);
+  const [activeSets, setActiveSets] = useState([]);
+  const [groupingBatches, setGroupingBatches] = useState([]); // Batch ที่ยังหาจุดตัดอยู่ (ยังไม่มี ocr_sets)
+  const [loading, setLoading] = useState(true);
+  const [prioritizing, setPrioritizing] = useState(null); // setId ที่กำลังกดเลื่อนอยู่
+  const [previewImages, setPreviewImages] = useState(null); // array ของ blob URL ทุกหน้าของชุดที่กำลัง Popup อยู่ (ถ้ามี)
+
+  const loadActiveSets = useCallback(async () => {
     try {
       const scopeParam = queueTab === "all" && isOwner ? "?scope=all" : "";
-      const data = await apiFetch(`${API_BASE}/batches${scopeParam}`);
-      setBatches(data.batches);
+      const [setsData, groupingData] = await Promise.all([
+        apiFetch(`${API_BASE}/active-sets${scopeParam}`),
+        apiFetch(`${API_BASE}/grouping-in-progress${scopeParam}`),
+      ]);
+      setActiveSets(setsData.activeSets || []);
+      setGroupingBatches(groupingData.batches || []);
     } catch (err) {
-      console.error("load batches error:", err);
+      console.error("load active sets error:", err);
     } finally {
       setLoading(false);
     }
   }, [queueTab, isOwner]);
 
-  // ---------------- ดึงชุดเอกสาร (Set) ที่กำลังทำงานอยู่ พร้อม % Progress ----------------
-  const loadActiveSets = useCallback(async () => {
-    try {
-      const data = await apiFetch(`${API_BASE}/active-sets`);
-      setActiveSets(data.activeSets || []);
-    } catch (err) {
-      console.error("load active sets error:", err);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadBatches();
-    const interval = setInterval(loadBatches, 5000); // อัพเดตทุก 5 วิ เผื่อมี Batch กำลังทำงานอยู่
-    return () => clearInterval(interval);
-  }, [loadBatches]);
-
   useEffect(() => {
     loadActiveSets();
-    const interval = setInterval(loadActiveSets, 3000); // ถี่กว่า Batch List ให้ % ขยับสด
+    const interval = setInterval(loadActiveSets, 3000); // ให้ % และลำดับ priority ขยับสด
     return () => clearInterval(interval);
   }, [loadActiveSets]);
 
-  if (loading) return <p style={{ color: "#888", marginTop: 24 }}>กำลังโหลดประวัติ...</p>;
-  if (batches.length === 0) return null;
-
-  const handleDeleteBatch = async (e, batchId, fileName) => {
-    e.stopPropagation(); // กัน Click ปุ่มลบไป Trigger onSelectBatch (เปิด Batch) พร้อมกัน
-    const ok = window.confirm(`ลบข้อมูล "${fileName || "ไฟล์นี้"}" ออกจากคิวทั้งหมด?\n\nการลบนี้ไม่สามารถย้อนกลับได้`);
-    if (!ok) return;
+  const handlePrioritize = async (e, setId) => {
+    e.stopPropagation();
+    setPrioritizing(setId);
     try {
-      await apiFetch(`${API_BASE}/batch/${batchId}`, { method: "DELETE" });
-      loadBatches(); // รีเฟรช List ทันทีหลังลบสำเร็จ
+      await apiFetch(`${API_BASE}/set/${setId}/prioritize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priority: 1 }),
+      });
+      loadActiveSets(); // รีเฟรชทันทีให้เห็นลำดับใหม่ ไม่ต้องรอ poll รอบถัดไป
     } catch (err) {
-      alert(`ลบไม่สำเร็จ: ${err.message}`);
+      alert(`เลื่อนคิวไม่สำเร็จ: ${err.message}`);
+    } finally {
+      setPrioritizing(null);
     }
   };
+
+  if (loading) return <p style={{ color: "#888", marginTop: 24 }}>กำลังโหลดคิว...</p>;
+
+  // เรียง: กำลังทำงานจริง (pages_done > 0) ก่อนเสมอ, ถัดมาตาม priority (สูงก่อน),
+  // เท่ากันแล้วเรียงตามลำดับที่ backend ส่งมา (created_at ASC อยู่แล้ว)
+  const sorted = [...activeSets].sort((a, b) => {
+    const aStarted = a.pages_done > 0 ? 1 : 0;
+    const bStarted = b.pages_done > 0 ? 1 : 0;
+    if (aStarted !== bStarted) return bStarted - aStarted;
+    return (b.priority || 0) - (a.priority || 0);
+  });
 
   return (
     <div style={{ marginTop: 32 }}>
       <div style={{ display: "flex", gap: 4, marginBottom: 12, borderBottom: "0.5px solid #eef0f2" }}>
         <div
-          onClick={() => setQueueTab("mine")}
+          onClick={() => { defaultTabAppliedRef.current = true; setQueueTab("mine"); }}
           style={{
             padding: "6px 14px", fontSize: 13, cursor: "pointer",
             fontWeight: queueTab === "mine" ? 500 : 400,
@@ -121,7 +331,7 @@ function BatchHistory({ onSelectBatch }) {
         </div>
         {isOwner && (
           <div
-            onClick={() => setQueueTab("all")}
+            onClick={() => { defaultTabAppliedRef.current = true; setQueueTab("all"); }}
             style={{
               padding: "6px 14px", fontSize: 13, cursor: "pointer",
               fontWeight: queueTab === "all" ? 500 : 400,
@@ -133,70 +343,124 @@ function BatchHistory({ onSelectBatch }) {
           </div>
         )}
       </div>
-      <p style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>ไฟล์ที่เคยอัพโหลด</p>
-      {batches.map((b) => {
-        const isProcessing = b.pages_done < b.total_pages;
+
+      <p style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>
+        คิว — {sorted.length} ชุดกำลังรอ
+        {groupingBatches.length > 0 && ` (+${groupingBatches.length} ไฟล์กำลังแบ่งกลุ่ม)`}
+      </p>
+
+      {sorted.length === 0 && groupingBatches.length === 0 && (
+        <p style={{ fontSize: 13, color: "#b0b6bd", padding: "20px 0", textAlign: "center" }}>
+          ไม่มีงานในคิว — ทุกไฟล์ประมวลผลเสร็จแล้ว ดูผลได้ที่ตาราง OCR Result
+        </p>
+      )}
+
+      {/* ไฟล์ที่ยังหาจุดตัดเอกสารอยู่ (ยังไม่มี ocr_sets เลยสักชุด) — โชว์แบบ
+          indeterminate (ไม่รู้ % เพราะยังไม่รู้ว่าจะแบ่งเป็นกี่ชุด) แทนที่จะ
+          ปล่อยให้คิวดูว่างเปล่าทั้งที่กำลังทำงานอยู่จริง */}
+      {groupingBatches.map((g) => (
+        <div
+          key={g.batch_id}
+          style={{
+            display: "flex", gap: 10, alignItems: "center",
+            padding: "10px 14px", border: "1px solid #ddd", borderRadius: 6,
+            marginBottom: 8, background: "#eef2fb",
+          }}
+        >
+          <div style={{
+            width: 36, height: 46, flexShrink: 0, borderRadius: 4, background: "#dde6f7",
+            border: "0.5px solid #c9d6ee", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15,
+          }}>
+            📄
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 13, color: "#1a3a5c" }}>
+                {g.source_file_name || "(ไม่ทราบชื่อไฟล์)"}
+                <span style={{ fontSize: 11, color: "#8b94a0", fontWeight: 400, marginLeft: 6 }}>
+                  ({g.pages_grouping} หน้า)
+                </span>
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {queueTab === "all" && g.uploaded_by_name && (
+                  <span style={{ fontSize: 11, color: "#8b94a0" }}>{g.uploaded_by_name}</span>
+                )}
+                <span style={{ fontSize: 11, color: "#3b5aa8" }}>กำลังแบ่งกลุ่มเอกสาร...</span>
+              </span>
+            </div>
+            <div style={{ width: "100%", height: 5, background: "#dde6f7", borderRadius: 3, overflow: "hidden" }}>
+              <div className="ocr-indeterminate-bar" style={{ height: "100%", width: "40%", background: "#3b5aa8" }} />
+            </div>
+          </div>
+        </div>
+      ))}
+      <style>{`
+        @keyframes ocr-indeterminate-slide {
+          0% { margin-left: -40%; }
+          100% { margin-left: 100%; }
+        }
+        .ocr-indeterminate-bar {
+          animation: ocr-indeterminate-slide 1.2s ease-in-out infinite;
+        }
+      `}</style>
+
+      {sorted.map((s) => {
+        const isStarted = s.pages_done > 0 || s.pages_processing > 0;
+        const isPriority = s.priority > 0;
         return (
           <div
-            key={b.batch_id}
-            onClick={() => onSelectBatch(b.batch_id)}
+            key={s.set_id}
+            onClick={() => onSelectBatch(s.batch_id)}
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "10px 14px",
-              border: "1px solid #ddd",
-              borderRadius: 6,
-              marginBottom: 8,
-              cursor: "pointer",
-              background: isProcessing ? "#fff8ec" : "#fff",
+              display: "flex", gap: 10, alignItems: "center",
+              padding: "10px 14px", border: "1px solid #ddd", borderRadius: 6,
+              marginBottom: 8, cursor: "pointer",
+              background: isStarted ? "#fff8ec" : "#fff",
             }}
           >
+            <SetThumbnail pageIds={s.page_ids} onOpenPreview={setPreviewImages} />
             <div style={{ flex: 1 }}>
-              <div>
-                {b.source_file_name || "(ไม่ทราบชื่อไฟล์)"} — {b.pages_done}/{b.total_pages} หน้า
-                {queueTab === "all" && b.uploaded_by_name && (
-                  <span style={{ fontSize: 11, color: "#8b94a0", marginLeft: 8 }}>
-                    (อัพโหลดโดย {b.uploaded_by_name})
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 13, color: "#1a3a5c" }}>
+                  {s.invoice_no ? `ชุด ${s.invoice_no}` : (s.source_file_name || "(ไม่ทราบชื่อไฟล์)")}
+                  <span style={{ fontSize: 11, color: "#8b94a0", fontWeight: 400, marginLeft: 6 }}>
+                    ({s.pages_done}/{s.total_pages} หน้า)
                   </span>
-                )}
-              </div>
-              {/* ---------------- ชุดเอกสาร (Set) ที่กำลังทำงานอยู่ พร้อม % Progress จริง ---------------- */}
-              {activeSets.filter((s) => s.batch_id === b.batch_id).map((s) => (
-                <div key={s.set_id} style={{ marginTop: 6, marginRight: 12 }} onClick={(e) => e.stopPropagation()}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8b94a0", marginBottom: 2 }}>
-                    <span>ชุดกำลังทำงาน ({s.pages_done}/{s.total_pages} หน้า)</span>
-                    <span>{s.display_progress_pct != null ? `${s.display_progress_pct}%` : "-"}</span>
-                  </div>
-                  <div style={{ width: "100%", height: 5, background: "#eef0f2", borderRadius: 3, overflow: "hidden" }}>
-                    <div
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {queueTab === "all" && s.uploaded_by_name && (
+                    <span style={{ fontSize: 11, color: "#8b94a0" }}>{s.uploaded_by_name}</span>
+                  )}
+                  {isPriority && !isStarted && (
+                    <span style={{ fontSize: 10, background: "#faeeda", color: "#854f0b", padding: "2px 7px", borderRadius: 8 }}>
+                      priority
+                    </span>
+                  )}
+                  {isOwner && !isStarted && !isPriority && (
+                    <button
+                      onClick={(e) => handlePrioritize(e, s.set_id)}
+                      disabled={prioritizing === s.set_id}
                       style={{
-                        width: `${Math.min(100, s.display_progress_pct || 0)}%`,
-                        height: "100%", background: "#5b9279", transition: "width 0.4s ease",
+                        fontSize: 11, padding: "3px 9px", borderRadius: 5, border: "0.5px solid #d8dde3",
+                        background: "#fafbfc", color: "#1a3a5c", cursor: prioritizing === s.set_id ? "wait" : "pointer",
                       }}
-                    />
-                  </div>
-                </div>
-              ))}
+                    >
+                      {prioritizing === s.set_id ? "..." : "เลื่อนคิว"}
+                    </button>
+                  )}
+                </span>
+              </div>
+              <EstimatedSetProgress
+                pagesDone={s.pages_done}
+                totalPages={s.total_pages}
+                isStarted={isStarted}
+                isPriority={isPriority}
+              />
             </div>
-            <span style={{ fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 8 }}>
-              {b.sets_ready > 0 && <span style={{ color: "#3c763d" }}>พร้อมตรวจ {b.sets_ready} • </span>}
-              {b.sets_approved > 0 && <span>อนุมัติแล้ว {b.sets_approved} • </span>}
-              {isProcessing ? "กำลังทำงาน..." : "เสร็จสมบูรณ์"}
-              <button
-                onClick={(e) => handleDeleteBatch(e, b.batch_id, b.source_file_name)}
-                title="ลบข้อมูลนี้ออกจากคิว"
-                style={{
-                  marginLeft: 6, fontSize: 11, color: "#c0392b", border: "1px solid #f0c4c0",
-                  background: "#fdf0ef", padding: "3px 8px", borderRadius: 5, cursor: "pointer",
-                }}
-              >
-                ลบ
-              </button>
-            </span>
           </div>
         );
       })}
+      <ImagePreviewModal urls={previewImages} onClose={() => setPreviewImages(null)} />
     </div>
   );
 }
@@ -205,6 +469,9 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   const { userRole } = useAuth();
   const isOwner = String(userRole || "").toLowerCase() === "owner";
   const [batchId, setBatchId] = useState(null);
+  useEffect(() => {
+    setSelectedSetIds(new Set());
+  }, [batchId]);
   const [phase, setPhase] = useState("upload"); // upload | processing
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null); // ไฟล์ที่เลือกไว้ รอกด Start Processing
@@ -214,6 +481,8 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   const [error, setError] = useState(null);
   const [previewSetId, setPreviewSetId] = useState(null);
   const [previewResult, setPreviewResult] = useState(null);
+  const [selectedSetIds, setSelectedSetIds] = useState(new Set()); // Set ของ set.id ที่ติ๊กเลือกไว้ในตาราง OCR Result
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [formValues, setFormValues] = useState({}); // { fieldName: currentValue } — แก้ไขได้ก่อน Approve
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState(null);
@@ -222,6 +491,39 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   const [historyLoading, setHistoryLoading] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true); // Default เปิดไว้ก่อน รอโหลดค่าจริงจาก Backend
   const [geminiToggleLoading, setGeminiToggleLoading] = useState(false);
+  const [queueBadgeCount, setQueueBadgeCount] = useState(0);
+
+  // ---------------- Badge ตัวเลขบนปุ่ม "Job queue" ----------------
+  // ใช้แหล่งข้อมูลเดียวกับที่ Modal (BatchHistory) ใช้จริง (/active-sets +
+  // /grouping-in-progress) แทนที่จะคำนวณแยกจาก /batches เอง — ก่อนหน้านี้
+  // Badge นับที่ระดับ "ไฟล์" ในขณะที่ Modal นับที่ระดับ "ชุด" ทำให้ตัวเลข
+  // ไม่ตรงกัน (เช่น Modal มี 8 ชุด แต่ Badge ไม่ขึ้นเลข) ต้อง Poll เองแยก
+  // จาก BatchHistory เพราะ BatchHistory component ถูก mount เฉพาะตอน
+  // Modal เปิดอยู่เท่านั้น — Badge ต้องรู้ค่าแม้ Modal จะปิดอยู่ก็ตาม
+  useEffect(() => {
+    let cancelled = false;
+    const loadQueueBadge = async () => {
+      try {
+        const scopeParam = isOwner ? "?scope=all" : "";
+        const [setsData, groupingData] = await Promise.all([
+          apiFetch(`${API_BASE}/active-sets${scopeParam}`),
+          apiFetch(`${API_BASE}/grouping-in-progress${scopeParam}`),
+        ]);
+        if (cancelled) return;
+        const setsCount = (setsData.activeSets || []).length;
+        const groupingCount = (groupingData.batches || []).length;
+        setQueueBadgeCount(setsCount + groupingCount);
+      } catch (err) {
+        console.error("load queue badge count error:", err);
+      }
+    };
+    loadQueueBadge();
+    const interval = setInterval(loadQueueBadge, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isOwner]);
 
   // ---------------- โหลดสถานะ Toggle Gemini ตอนเปิดหน้า ----------------
   useEffect(() => {
@@ -273,18 +575,66 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   }, [loadBatchHistory]);
 
   // ---------------- Auto-select Batch ล่าสุด ให้ตาราง OCR Result เป็น Default เสมอ ----------------
+  // Patch 91: เดิมเช็คแค่ !batchId (ทำงานครั้งเดียวตอนยังไม่เคยเลือก) ทำให้
+  // พอมี batchId ค้างจาก Batch เก่าแล้ว จะไม่ Auto-switch ไป Batch ใหม่อีกเลย
+  // แม้ batchHistory (poll ทุก 10 วิ) จะมี Batch ใหม่ขึ้นมาบนสุดแล้วก็ตาม --
+  // ผู้ใช้ต้องกด Refresh หน้าเว็บเองถึงจะเห็นงานที่เพิ่งเสร็จ (root cause ของ
+  // "ส่งงานมาแล้วไม่ขึ้นเอง") เปลี่ยนเป็นเทียบ batch_id ล่าสุดแทน ให้ Auto-switch
+  // ไป Batch ใหม่สุดเสมอทุกครั้งที่มีงานใหม่เข้ามา
   useEffect(() => {
-    if (!batchId && batchHistory.length > 0) {
+    if (batchHistory.length > 0 && batchHistory[0].batch_id !== batchId) {
       setBatchId(batchHistory[0].batch_id);
     }
-  }, [batchId, batchHistory]);
+  }, [batchHistory]);
 
   // ---------------- เลือกไฟล์ (ยังไม่ Upload — รอกด Start Processing) ----------------
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
+  const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024;
+
+  // ---------------- ตรวจสอบ+ตั้งไฟล์ที่เลือก (ใช้ร่วมกันทั้งคลิกเลือกและลากวาง) ----------------
+  const processFile = (file) => {
     if (!file) return;
+    if (file.type !== "application/pdf") {
+      setError("รองรับเฉพาะไฟล์ PDF เท่านั้น");
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setError("ไฟล์ใหญ่เกิน 15MB");
+      return;
+    }
     setSelectedFile(file);
     setError(null);
+  };
+
+  const handleFileSelect = (e) => {
+    processFile(e.target.files[0]);
+  };
+
+  // ---------------- Drag & Drop ----------------
+  // preventDefault() ต้องเรียกทั้ง onDragOver และ onDrop เสมอ ไม่งั้น browser
+  // จะ default ไปเปิดไฟล์แทนการยอมให้ drop (onDrop จะไม่ทำงานเลยถ้าลืมจุดนี้
+  // ใน onDragOver) — นี่คือสาเหตุที่ "ลาก PDF มาวางที่นี่" ไม่เคยทำงานมาก่อน
+  // เพราะไม่เคยมี Event Handler พวกนี้อยู่ในโค้ดเลยสักบรรทัดเดียว
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!uploading) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (uploading) return;
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    processFile(file);
   };
 
   // ---------------- Upload จริง: Trigger ตอนกดปุ่ม Start Processing ----------------
@@ -389,9 +739,48 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
     if (!ok) return;
     try {
       await apiFetch(`${API_BASE}/set/${setId}`, { method: "DELETE" });
+      // Patch 86: ถ้าชุดที่ลบตรงกับชุดที่ Panel "ผล OCR" กำลังโชว์ค้างอยู่
+      // ต้อง Clear State ปิด Panel ไปด้วยเสมอ ไม่งั้นจะเห็นข้อมูลค้าง (Stale)
+      // ทั้งที่ข้อมูลจริงถูกลบไปจาก Database แล้ว (previewSetId ยังกระทบ
+      // การคำนวณ Stepper ขั้นที่ 4 "Verify" ด้วย ถ้าไม่ Clear จะค้างผิด Step)
+      if (setId === previewSetId) {
+        setPreviewSetId(null);
+        setPreviewResult(null);
+      }
       poll(); // รีเฟรชตารางทันทีหลังลบสำเร็จ
     } catch (err) {
       alert(`ลบไม่สำเร็จ: ${err.message}`);
+    }
+  };
+
+  // ---------------- ลบหลายชุดพร้อมกัน (Select + Select All) ----------------
+  // ใช้ endpoint DELETE /set/:setId ตัวเดิมที่มีอยู่แล้ว แค่ยิงวนตามรายการ
+  // ที่เลือกไว้ ไม่ต้องสร้าง Endpoint ใหม่ฝั่ง Backend เลย
+  const handleDeleteSelected = async (selectedIds) => {
+    const count = selectedIds.length;
+    if (count === 0) return;
+    const ok = window.confirm(`ลบชุดเอกสารที่เลือกไว้ทั้งหมด ${count} รายการ?\n\nการลบนี้ไม่สามารถย้อนกลับได้`);
+    if (!ok) return;
+    setBulkDeleting(true);
+    const failed = [];
+    for (const setId of selectedIds) {
+      try {
+        await apiFetch(`${API_BASE}/set/${setId}`, { method: "DELETE" });
+      } catch (err) {
+        failed.push(setId);
+      }
+    }
+    setBulkDeleting(false);
+    setSelectedSetIds(new Set());
+    // Patch 86: เหมือนกับ handleDeleteSet — ถ้า Panel "ผล OCR" กำลังโชว์ชุด
+    // ที่เพิ่งถูกลบไป (อยู่ในรายการที่เลือกลบครั้งนี้) ต้อง Clear ปิด Panel ด้วย
+    if (previewSetId && selectedIds.includes(previewSetId)) {
+      setPreviewSetId(null);
+      setPreviewResult(null);
+    }
+    poll();
+    if (failed.length > 0) {
+      alert(`ลบไม่สำเร็จ ${failed.length} จาก ${count} รายการ`);
     }
   };
 
@@ -535,6 +924,14 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
             --ocr-dz-icon: 30px;
           }
         }
+        /* จอ Desktop ใหญ่ (>= 1800px) — 1400px เดิมเหลือขอบว่างข้างเยอะเกินไป
+           ขยายเพิ่มอีกชั้น ให้ตารางใช้พื้นที่ได้เต็มขึ้น โดยยังเว้นขอบซ้าย-ขวา
+           ไว้บ้างพอสมควร (ไม่ยืดเต็ม 100% เพราะแถวยาวเกินจะอ่านยาก) */
+        @media (min-width: 1800px) {
+          .ocr-widget-root {
+            --ocr-max-width: 1800px;
+          }
+        }
       `}</style>
       <div style={{ background: "#fff", borderRadius: 12, overflow: "hidden", border: "0.5px solid #d8dde3", marginBottom: 12 }}>
           {/* Header Banner */}
@@ -608,14 +1005,29 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
 
           {/* Body */}
           <div style={{ padding: "var(--ocr-body-pad)" }}>
-            <div style={{ border: "1px dashed #7fa0b8", background: "#e9f1f7", borderRadius: 10, padding: "8px 16px", marginBottom: 12 }}>
+            <div
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              style={{
+                border: isDragging ? "2px dashed #5b9279" : "1px dashed #7fa0b8",
+                background: isDragging ? "#e3f0e9" : "#e9f1f7",
+                borderRadius: 10, padding: "8px 16px", marginBottom: 12,
+                transition: "border 0.15s ease, background 0.15s ease",
+              }}
+            >
               <label style={{ cursor: uploading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 10 }}>
                 <input type="file" accept="application/pdf" onChange={handleFileSelect} disabled={uploading} style={{ display: "none" }} />
                 <div style={{ width: "var(--ocr-dz-icon)", height: "var(--ocr-dz-icon)", borderRadius: "50%", background: "#5b9279", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 12, color: "#fff" }}>
                   ⬆
                 </div>
                 <span style={{ fontSize: 13, color: "#1a3a5c", flex: 1 }}>
-                  {selectedFile ? selectedFile.name : (<>ลาก PDF มาวางที่นี่ หรือ <span style={{ color: "#5b9279", fontWeight: 500 }}>คลิกเพื่อเลือกไฟล์</span></>)}
+                  {isDragging
+                    ? "ปล่อยไฟล์ตรงนี้ได้เลย"
+                    : selectedFile
+                      ? selectedFile.name
+                      : (<>ลาก PDF มาวางที่นี่ หรือ <span style={{ color: "#5b9279", fontWeight: 500 }}>คลิกเพื่อเลือกไฟล์</span></>)}
                 </span>
                 <span style={{ fontSize: 11, color: "#7c8894", whiteSpace: "nowrap" }}>PDF · Max 15MB</span>
               </label>
@@ -625,17 +1037,21 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
             {error && <p style={{ color: "#d9534f", fontSize: 13 }}>เกิดข้อผิดพลาด: {error}</p>}
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <button
-                onClick={() => setShowJobQueue((v) => !v)}
-                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#1a3a5c", border: "0.5px solid #d8dde3", background: "#fafbfc", padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}
-              >
-                Job queue
-                {batchHistory.length > 0 && (
-                  <span style={{ background: "#e1eaf0", color: "#1a3a5c", fontSize: 11, padding: "1px 7px", borderRadius: 10 }}>
-                    {batchHistory.length}
-                  </span>
-                )}
-              </button>
+              {(() => {
+                return (
+                  <button
+                    onClick={() => setShowJobQueue((v) => !v)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#1a3a5c", border: "0.5px solid #d8dde3", background: "#fafbfc", padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}
+                  >
+                    Job queue
+                    {queueBadgeCount > 0 && (
+                      <span style={{ background: "#e1eaf0", color: "#1a3a5c", fontSize: 11, padding: "1px 7px", borderRadius: 10 }}>
+                        {queueBadgeCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
               <button
                 onClick={handleStartProcessing}
                 disabled={!selectedFile || uploading}
@@ -730,7 +1146,12 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
 
         {/* รายการชุดเอกสาร — Table เต็มความกว้าง เป็น Default เสมอ (ไม่ต้องรอ Process) */}
         {(() => {
-          const numberedSets = sets.map((s, i) => ({ ...s, _num: i + 1 }));
+          // OCR Result table = "ผลลัพธ์" เท่านั้น (ready_for_review ขึ้นไป) —
+          // ชุดที่ยัง processing (OCR เต็มรูปแบบยังไม่เสร็จ) อยู่ในคิว ไม่ใช่
+          // ผลลัพธ์ ให้ดูความคืบหน้าที่ Job Queue modal (มี progress bar
+          // อยู่แล้ว) แทน ไม่งั้นตารางนี้จะปนกันทั้ง "เสร็จแล้ว" กับ "กำลังทำ"
+          const resultSets = sets.filter((s) => s.status !== "processing");
+          const numberedSets = resultSets.map((s, i) => ({ ...s, _num: i + 1 }));
           const activeSets = numberedSets.filter((s) => s.status !== "approved");
           const completedSets = numberedSets.filter((s) => s.status === "approved");
 
@@ -764,14 +1185,41 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
               <span style={{ color: "#b0b6bd" }}>-</span>
             );
 
+          const allVisibleIds = [...activeSets, ...completedSets].map((s) => s.id);
+          const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedSetIds.has(id));
+
+          const toggleSelectOne = (id) => {
+            setSelectedSetIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            });
+          };
+
+          const toggleSelectAll = () => {
+            setSelectedSetIds((prev) => {
+              if (allSelected) return new Set();
+              return new Set(allVisibleIds);
+            });
+          };
+
           const renderRow = (s, isCompleted) => (
             <tr
               key={s.id}
               style={{
-                background: isCompleted ? "#fafcfa" : "#fff",
+                background: selectedSetIds.has(s.id) ? "#eef2f5" : (isCompleted ? "#fafcfa" : "#fff"),
                 borderBottom: "0.5px solid #f3f4f6",
               }}
             >
+              <td style={{ ...tdStyle, width: 36 }}>
+                <input
+                  type="checkbox"
+                  checked={selectedSetIds.has(s.id)}
+                  onChange={() => toggleSelectOne(s.id)}
+                  style={{ cursor: "pointer" }}
+                />
+              </td>
               <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c", fontWeight: 500 }}>{s.invoice_no || "-"}</td>
               <td style={{ ...tdStyle, color: isCompleted ? "#888" : "#1a3a5c" }}>{s.supplier_name || "-"}</td>
               <td style={{ ...tdStyle, color: "#4b5563" }}>{s.invoice_date || "-"}</td>
@@ -815,10 +1263,39 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
 
           return (
             <div style={{ width: "100%", background: "#fff", borderRadius: 12, border: "0.5px solid #d8dde3", overflow: "hidden" }}>
+              {selectedSetIds.size > 0 && (
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "8px 16px", background: "#fff8ec", borderBottom: "0.5px solid #eef0f2",
+                }}>
+                  <span style={{ fontSize: 12.5, color: "#1a3a5c" }}>เลือกไว้ {selectedSetIds.size} รายการ</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => setSelectedSetIds(new Set())}
+                      style={{ fontSize: 12, color: "#8b94a0", border: "0.5px solid #d8dde3", background: "#fff", padding: "5px 10px", borderRadius: 6, cursor: "pointer" }}
+                    >
+                      ยกเลิกเลือก
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSelected([...selectedSetIds])}
+                      disabled={bulkDeleting}
+                      style={{
+                        fontSize: 12, color: "#c0392b", border: "1px solid #f0c4c0", background: "#fdf0ef",
+                        padding: "5px 10px", borderRadius: 6, cursor: bulkDeleting ? "wait" : "pointer",
+                      }}
+                    >
+                      {bulkDeleting ? "กำลังลบ..." : `ลบที่เลือก (${selectedSetIds.size})`}
+                    </button>
+                  </div>
+                </div>
+              )}
               <div style={{ maxHeight: "60vh", overflowY: "auto", overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr>
+                      <th style={{ ...thStyle, width: 36 }}>
+                        <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} style={{ cursor: "pointer" }} />
+                      </th>
                       <th style={thStyle}>Invoice No.</th>
                       <th style={thStyle}>Supplier Name</th>
                       <th style={thStyle}>Doc Date</th>
@@ -833,8 +1310,15 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
                   <tbody>
                     {sets.length === 0 && (
                       <tr>
-                        <td colSpan={9} style={{ textAlign: "center", padding: "40px 16px", color: "#b0b6bd" }}>
+                        <td colSpan={10} style={{ textAlign: "center", padding: "40px 16px", color: "#b0b6bd" }}>
                           ยังไม่มีข้อมูล — อัพโหลดไฟล์เพื่อเริ่มต้น
+                        </td>
+                      </tr>
+                    )}
+                    {sets.length > 0 && resultSets.length === 0 && (
+                      <tr>
+                        <td colSpan={10} style={{ textAlign: "center", padding: "40px 16px", color: "#b0b6bd" }}>
+                          กำลังประมวลผลอยู่ — ดูความคืบหน้าที่ Job queue
                         </td>
                       </tr>
                     )}

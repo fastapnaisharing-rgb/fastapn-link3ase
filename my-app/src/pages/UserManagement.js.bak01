@@ -511,11 +511,6 @@
     const [progress, setProgress] = useState(0);
     const [progressLabel, setProgressLabel] = useState('');
     const [progressDone, setProgressDone] = useState(0);
-    // Patch 101: Pagination (แบ่งหน้าจาก bins ที่มีอยู่แล้วในเครื่อง ไม่ต้อง
-    // ยิง Request เพิ่มเลย เพราะ fetchBins() ดึงข้อมูลทั้งหมดมาไว้แล้ว)
-    const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(100);
-    const PAGE_SIZE_ALL = 'all';
 
     const fetchBins = async () => {
       let allData = [];
@@ -558,13 +553,6 @@ useEffect(() => {
       if (toDate && new Date(b.deleted_at) > new Date(toDate + 'T23:59:59')) return false;
       return true;
     }), [bins, filterTable, filterBy, fromDate, toDate]);
-
-    // Patch 101: แบ่งหน้าสำหรับแสดงผล (Selection/Bulk Action ยังทำงานกับ
-    // filtered ทั้งหมดเหมือนเดิม ไม่ถูกจำกัดแค่หน้าปัจจุบัน)
-    const pagedItems = pageSize === PAGE_SIZE_ALL ? filtered : filtered.slice((page - 1) * pageSize, page * pageSize);
-    const hasNextPage = pageSize !== PAGE_SIZE_ALL && page * pageSize < filtered.length;
-
-    useEffect(() => { setPage(1); }, [filterTable, filterBy, fromDate, toDate, pageSize]);
 
     const allSelected = filtered.length > 0 && filtered.every(i => selected.includes(i.id));
     const someSelected = filtered.some(i => selected.includes(i.id)) && !allSelected;
@@ -807,7 +795,7 @@ useEffect(() => {
             </thead>
             <tbody>
               {filtered.length === 0 && <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีรายการใน Recycle Bin</td></tr>}
-              {pagedItems.map(item => {
+              {filtered.map(item => {
                 const label = TABLE_LABELS[item.source_table] || item.source_table;
                 const daysLeft = getDaysLeft(item.deleted_at);
                 const isSelected = selected.includes(item.id);
@@ -835,32 +823,6 @@ useEffect(() => {
               })}
             </tbody>
           </table>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '0.5px solid #e8e8e8', borderTop: 'none', borderRadius: '0 0 8px 8px', flexShrink: 0, background: 'white' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '12px', color: '#888' }}>แสดง</span>
-            <select value={pageSize} onChange={e => { const v = e.target.value; setPageSize(v === PAGE_SIZE_ALL ? PAGE_SIZE_ALL : Number(v)); }} style={S.filterSelect}>
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={500}>500</option>
-              <option value={PAGE_SIZE_ALL}>ทั้งหมด</option>
-            </select>
-            <span style={{ fontSize: '12px', color: '#888' }}>แถว/หน้า</span>
-          </div>
-          {pageSize !== PAGE_SIZE_ALL && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-                style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: page <= 1 ? 'default' : 'pointer', background: page <= 1 ? '#f5f5f5' : 'white', color: page <= 1 ? '#ccc' : '#555' }}>◀ ก่อนหน้า</button>
-              <span style={{ fontSize: '12px', color: '#555' }}>
-                หน้า {page} จาก {Math.max(1, Math.ceil(filtered.length / pageSize))}
-              </span>
-              <button onClick={() => setPage(p => p + 1)} disabled={!hasNextPage}
-                style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: !hasNextPage ? 'default' : 'pointer', background: !hasNextPage ? '#f5f5f5' : 'white', color: !hasNextPage ? '#ccc' : '#555' }}>ถัดไป ▶</button>
-            </div>
-          )}
         </div>
 
         {viewItem && (

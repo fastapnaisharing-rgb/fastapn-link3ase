@@ -15,12 +15,36 @@ function getAuthToken() {
   return sessionStorage.getItem("fastapn_token");
 }
 
-async function apiFetch(url, options = {}) {
+// Timeout เริ่มต้นสำหรับ request ทั่วไป (toggle/budget/log) — เร็วอยู่แล้วปกติ
+const DEFAULT_TIMEOUT_MS = 15000;
+// Gemini เองอาจใช้เวลานานกว่าตามจำนวนหน้า/ขนาดภาพ ให้เวลามากกว่า
+const GEMINI_TIMEOUT_MS = 45000;
+
+// ห้าม await fetch() เฉยๆ ไม่มี timeout เด็ดขาด — ถ้า network ค้างเงียบๆ
+// (ไม่ error ไม่ resolve) ทั้ง resolveGrouping() จะไม่มีวันจบ แล้ว
+// apply-groups/skip-grouping จะไม่ถูกเรียกเลย หน้าจะค้างที่ pending_grouping
+// ตลอดไป (นี่คือสาเหตุของบั๊ก "0/20 ค้าง" ที่เจอ)
+function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+async function apiFetch(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const token = getAuthToken();
-  const res = await fetch(url, {
-    ...options,
-    headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
-  });
+  let res;
+  try {
+    res = await fetchWithTimeout(
+      url,
+      { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } },
+      timeoutMs
+    );
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(`request timed out after ${timeoutMs}ms: ${url}`);
+    }
+    throw err;
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `HTTP ${res.status}`);
@@ -166,7 +190,7 @@ export async function callGeminiSplitMerge(pages, batchId) {
   // 3) ยิง Gemini จริง
   let response, data;
   try {
-    response = await fetch(
+    response = await fetchWithTimeout(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
       {
         method: "POST",
@@ -178,7 +202,8 @@ export async function callGeminiSplitMerge(pages, batchId) {
           contents: [{ parts: [{ text: prompt }, ...parts] }],
           generationConfig: { responseMimeType: "application/json" },
         }),
-      }
+      },
+      GEMINI_TIMEOUT_MS
     );
 
     if (!response.ok) {
@@ -188,6 +213,9 @@ export async function callGeminiSplitMerge(pages, batchId) {
 
     data = await response.json();
   } catch (err) {
+    if (err.name === "AbortError") {
+      err = new Error(`Gemini API request timed out after ${GEMINI_TIMEOUT_MS}ms`);
+    }
     console.error("[geminiSplitMerge] เรียก Gemini ไม่สำเร็จ:", err);
     await logGeminiUsage({
       inputTokens: 0,
