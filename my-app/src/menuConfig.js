@@ -1,4 +1,4 @@
-// ══════════════════════════════════════════════════════════════════════════
+﻿// ══════════════════════════════════════════════════════════════════════════
 // menuConfig.js — Single source of truth สำหรับโครงสร้างเมนูทั้งระบบ
 // ══════════════════════════════════════════════════════════════════════════
 // ไฟล์นี้ export โครงสร้างเมนูกลางที่ทั้ง App.js (Sidebar/Flyout) และ
@@ -29,6 +29,7 @@ export const AP_CONTROLLER_MENU = {
     ]},
     { label: 'จัดการ', icon: '🗂️', items: [
       { id: 'ap-drafts', icon: '📄', label: 'Invoice History' },
+      { id: 'ap-batchctrl', icon: '📊', label: 'Batch Control' }, // MARKER_MENUCONFIG_ADD_BATCHCTRL
     ]},
   ],
 };

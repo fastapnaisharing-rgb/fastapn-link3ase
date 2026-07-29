@@ -6,11 +6,11 @@ import { useUserRole } from '../contexts/useUserRole';
 import { broadcastWs, subscribeWs } from '../wsManager';
 
 const DOC_FOLDERS = [
-  { key: 'ap',   label: 'AP Manual',       icon: '🧾', permKey: 'Manual', color: '#E6F1FB', textColor: '#0C447C', desc: 'ใบวางบิล, ใบเสร็จ, หนังสือยืนยัน' },
-  { key: 'vat',  label: 'VAT Control',     icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A', desc: 'ใบกำกับภาษี, รายงาน PP30' },
-  { key: 'ie',   label: 'I-Expense',       icon: '💸', permKey: 'IE',    color: '#FAEEDA', textColor: '#633806', desc: 'ใบเบิกค่าใช้จ่าย, ค่าเดินทาง, ค่าที่พัก' },
-  { key: 'gl',   label: 'GL Report',       icon: '📊', permKey: 'GL',    color: '#EEEDFE', textColor: '#3C3489', desc: 'รายงาน GL บัญชีแยกประเภท' },
-  { key: 'ipro', label: 'I-Pro Interface', icon: '🔗', permKey: 'I-Pro', color: '#FAECE7', textColor: '#712B13', desc: 'เอกสาร interface ระบบ · spec, mapping' },
+  { key: 'ap',   label: 'AP Manual',       icon: '🧾', permKey: 'Manual', color: '#E6F1FB', textColor: '#0C447C', desc: 'ใบวางบิล, ใบเสร็จ, หนังสือยืนยัน', docTypes: ['APN01','AP09','AP07'] },
+  { key: 'vat',  label: 'VAT Control',     icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A', desc: 'ใบกำกับภาษี, รายงาน PP30', docTypes: ['VAT'] },
+  { key: 'ie',   label: 'I-Expense',       icon: '💸', permKey: 'IE',    color: '#FAEEDA', textColor: '#633806', desc: 'ใบเบิกค่าใช้จ่าย, ค่าเดินทาง, ค่าที่พัก', docTypes: ['IE'] },
+  { key: 'gl',   label: 'GL Report',       icon: '📊', permKey: 'GL',    color: '#EEEDFE', textColor: '#3C3489', desc: 'รายงาน GL บัญชีแยกประเภท', docTypes: ['GL'] },
+  { key: 'ipro', label: 'I-Pro Interface', icon: '🔗', permKey: 'I-Pro', color: '#FAECE7', textColor: '#712B13', desc: 'เอกสาร interface ระบบ · spec, mapping', docTypes: ['IPRO'] },
 ];
 
 const FILE_TYPE_ICONS = {
@@ -97,6 +97,109 @@ async function checkDuplicateSerial(db, serialCode, docType) {
     .eq('doc_type', docType)
     .maybeSingle();
   return data || null;
+}
+
+// checkAllDuplicates: weighted scoring per row
+// APN01: Invoice Number(40%) + Batch Name(20%) + Branch(20%) + Vendor(10%) + Amount(10%)
+// AP09:  Tax Invoice No.(40%) + Branch(20%) + Vendor(20%) + ยอดรวม(20%)
+// confidence >= 60% = dup candidate, >=80% = dup
+async function checkAllDuplicates(db, rows, currentSerial) {
+  if (!rows || rows.length === 0) return [];
+  const norm = v => String(v||'').trim().toLowerCase();
+  const toNum = v => parseFloat(String(v||'0').replace(/,/g,''))||0;
+  try {
+    const { data: apn01 } = await db.from('doc_collection')
+      .select('serial_code,doc_type,rows,uploaded_by,created_at')
+      .eq('doc_type','APN01').neq('serial_code', currentSerial);
+    const { data: ap09 } = await db.from('doc_collection')
+      .select('serial_code,doc_type,rows,uploaded_by,created_at')
+      .eq('doc_type','AP09').neq('serial_code', currentSerial);
+
+    const bestByKey = {};
+
+    // ── APN01 rows ──
+    for (const r of rows) {
+      const inv    = norm(r['Invoice Number']||r['Invoice Num']);
+      const batch  = norm(r['Batch Name']||r['[ ]']);
+      const branch = norm(r['Branch']||r['Site']);
+      const vendor = norm(r['Vendor Name']||r['Supplier']);
+      const amt    = toNum(r['มูลค่ารวม']||r['Invoice Amount']);
+      if (!inv) continue;
+
+      for (const rec of (apn01||[])) {
+        for (const d of (rec.rows||[])) {
+          const dInv    = norm(d['Invoice Number']||d['Invoice Num']);
+          const dBatch  = norm(d['Batch Name']||d['[ ]']);
+          const dBranch = norm(d['Branch']||d['Site']);
+          const dVendor = norm(d['Vendor Name']||d['Supplier']);
+          const dAmt    = toNum(d['มูลค่ารวม']||d['Invoice Amount']);
+          if (!dInv) continue;
+
+          let score = 0;
+          if (inv === dInv)              score += 40;
+          if (batch && batch === dBatch) score += 20;
+          if (branch && branch === dBranch) score += 20;
+          if (vendor && dVendor && vendor === dVendor) score += 10;
+          if (amt && dAmt && Math.abs(amt-dAmt)<0.01) score += 10;
+
+          if (score >= 60) {
+            const key = inv;
+            const ex = bestByKey[key];
+            if (!ex || score > ex.confidence) {
+              bestByKey[key] = {
+                invoiceNo: inv, docType:'APN01', confidence: score,
+                supplier: d['Vendor Name']||d['Supplier']||'',
+                batch: d['Batch Name']||d['[ ]']||'',
+                serial: rec.serial_code, uploadedBy: rec.uploaded_by, createdAt: rec.created_at,
+              };
+            }
+          }
+        }
+      }
+    }
+
+    // ── AP09 rows ──
+    for (const r of rows) {
+      const tax    = norm(r['Tax Invoice No.']);
+      const branch = norm(r['Branch']||r['Site']);
+      const vendor = norm(r['Vendor Name']||r['Supplier']);
+      const amt    = toNum(r['ยอดรวม']);
+      if (!tax) continue;
+
+      for (const rec of (ap09||[])) {
+        for (const d of (rec.rows||[])) {
+          const dTax    = norm(d['Tax Invoice No.']);
+          const dBranch = norm(d['Branch']||d['Site']);
+          const dVendor = norm(d['Vendor Name']||d['Supplier']);
+          const dAmt    = toNum(d['ยอดรวม']);
+          if (!dTax) continue;
+
+          let score = 0;
+          if (tax === dTax)                score += 40;
+          if (branch && branch === dBranch) score += 20;
+          if (vendor && dVendor && vendor === dVendor) score += 20;
+          if (amt && dAmt && Math.abs(amt-dAmt)<0.01) score += 20;
+
+          if (score >= 60) {
+            const key = 'ap09|'+tax;
+            const ex = bestByKey[key];
+            if (!ex || score > ex.confidence) {
+              bestByKey[key] = {
+                invoiceNo: tax, docType:'AP09', confidence: score,
+                supplier: d['Vendor Name']||d['Supplier']||'',
+                batch: d['Batch Name']||'',
+                serial: rec.serial_code, uploadedBy: rec.uploaded_by, createdAt: rec.created_at,
+              };
+            }
+          }
+        }
+      }
+    }
+
+    const result = Object.values(bestByKey).filter(d=>d.confidence>=60);
+    console.log('[checkAllDuplicates] rows:',rows.length,'ap09 records:',(ap09||[]).length,'results:',result.length, result.map(r=>r.invoiceNo+'='+r.confidence+'%'));
+    return result;
+  } catch(e){console.error('checkAllDuplicates error:',e);return[];}
 }
 
 // ── Module-level AP09 row parser ─────────────────────────────────────────────
@@ -622,6 +725,15 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
 function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
   const [docType, setDocType] = React.useState('APN01');
   const [tab, setTab] = React.useState('paste');
+  const [pasteSubTab, setPasteSubTab] = React.useState('new');
+  const [dupWarnings, setDupWarnings] = React.useState([]);
+  const [drafts, setDrafts] = React.useState([]);
+  const [draftsLoading, setDraftsLoading] = React.useState(false);
+  const [selectedDraftIds, setSelectedDraftIds] = React.useState([]);
+  const [selectedDraft, setSelectedDraft] = React.useState(null);
+  const [dupModal, setDupModal] = React.useState(null);
+  const [previewDocType, setPreviewDocType] = React.useState('APN01');
+  const [saveDraftModal, setSaveDraftModal] = React.useState(false);
   // pdfQueue อยู่ที่นี่ เพื่อให้สลับ tab แล้วไม่หาย
   const [pdfQueue, setPdfQueue] = React.useState([]);
   const [pdfSelected, setPdfSelected] = React.useState(null);
@@ -674,7 +786,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     return { headers, rows };
   };
 
-  const handlePaste = (text) => {
+  const handlePaste = async (text) => {
     setPasteText(text);
     if (text.trim().length < 5) { setParsedRows([]); return; }
     // ── เช็ค Scientific Notation จาก raw text ก่อน parse ──
@@ -695,6 +807,13 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     }
     const { headers, rows } = parseTabText(text);
     setParsedHeaders(headers); setParsedRows(rows);
+    const _ap09Prev = parseAP09RowsFromRaw(rows);
+    const _ap09Ser = (serialCode||'').replace('APN01','AP09').replace('Invoice Register','Input Tax Invoice');
+    const [_d1,_d2] = await Promise.all([
+      checkAllDuplicates(db, rows, serialCode||''),
+      _ap09Prev.length>0 ? checkAllDuplicates(db, _ap09Prev, _ap09Ser||((serialCode||'')+'_AP09')) : Promise.resolve([]),
+    ]);
+    setDupWarnings([..._d1,..._d2]);
     // Tab paste = ไฟล์ดิบเสมอ → gen serial APN01 อัตโนมัติ ไม่ต้องให้ user เลือก
     if (!serialCode) {
       const bu = detectBU('', rows);
@@ -835,8 +954,95 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
     });
   };
 
+  const loadDrafts = React.useCallback(async () => {
+    setDraftsLoading(true);
+    try {
+      const { data } = await db.from('doc_collection')
+        .select('*').eq('status', 'draft');
+      setDrafts(data || []);
+    } catch(_) {}
+    setDraftsLoading(false);
+  }, [db]);
+
+  React.useEffect(() => { if (tab === 'paste' && pasteSubTab === 'draft') loadDrafts(); }, [tab, pasteSubTab, loadDrafts]);
+
+  const handleSaveDraft = async () => {
+    if (!serialCode.trim()) { setError('กรุณาระบุ Serial code'); return; }
+    if (parsedRows.length === 0) { setError('กรุณาวางข้อมูลก่อน'); return; }
+    const dupItems = await checkAllDuplicates(db, parsedRows, serialCode.trim());
+    if (dupItems.length > 0) {
+      setDupModal({ items: dupItems, onConfirm: null });
+      return;
+    }
+    const _ap09Check = parseAP09RowsFromRaw(parsedRows);
+    if (_ap09Check.length === 0) { doSaveDraft('APN01'); return; }
+    setSaveDraftModal(true);
+  };
+
+  const doSaveDraft = async (target) => {
+    setSaveDraftModal(false);
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const serial = serialCode.trim();
+      const buCode = serial.split('_')[0] || null;
+      let buCodeName=null, buNameThai=null;
+      if (buCode) {
+        const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', buCode).maybeSingle();
+        buCodeName = buData?.bu_code_name || null;
+        buNameThai = buData?.['THAI COMPANY NAME'] || null;
+      }
+      if (target === 'APN01' || target === 'Both') {
+        await db.from('doc_collection').insert([{
+          serial_code: serial, doc_type: 'APN01',
+          doc_name: 'Invoice Register',
+          bu_code: buCode, bu_code_name: buCodeName, bu_name: buNameThai,
+          rows: parsedRows, attachments: [], source: 'upload', status: 'draft',
+          file_date: parsedRows[0]?.['Invoice Date'] || parsedRows[0]?.['Receive Date'] || now.split('T')[0],
+          uploaded_by: userName || currentUser?.email || '',
+          created_at: now, updated_at: now,
+        }]);
+      }
+      if (target === 'AP09' || target === 'Both') {
+        const ap09Rows = parseAP09RowsFromRaw(parsedRows);
+        if (ap09Rows.length > 0) {
+          const ap09Serial = serial.replace('APN01','AP09').replace('Invoice Register','Input Tax Invoice');
+          await db.from('doc_collection').insert([{
+            serial_code: ap09Serial !== serial ? ap09Serial : serial+'_AP09',
+            doc_type: 'AP09', doc_name: 'Input Tax Invoice',
+            bu_code: buCode, bu_code_name: buCodeName, bu_name: buNameThai,
+            rows: ap09Rows, attachments: [], source: 'upload', status: 'draft',
+            file_date: ap09Rows[0]?.['Receive Date'] || now.split('T')[0],
+            uploaded_by: userName || currentUser?.email || '',
+            created_at: now, updated_at: now,
+          }]);
+        }
+      }
+      setPasteSubTab('draft');
+      loadDrafts();
+      onSave && onSave();
+    } catch(e) { setError('บันทึก Draft ไม่สำเร็จ: ' + e.message); }
+    setSaving(false);
+  };
+
+  const handleSubmitDraft = async (draftIds) => {
+    if (!draftIds || draftIds.length === 0) return;
+    setSaving(true);
+    try {
+      for (const id of draftIds) {
+        const { error: err } = await db.from('doc_collection')
+          .update({ status: 'active' }).eq('id', id);
+        if (err) throw err;
+      }
+      alert(`ยืนยัน ${draftIds.length} รายการสำเร็จ`);
+      loadDrafts();
+      setSelectedDraftIds([]);
+    } catch(e) { setError('ยืนยัน Draft ไม่สำเร็จ: ' + e.message); }
+    setSaving(false);
+  };
+
   const handleSave = async () => {
-    // ── Tab paste: ไฟล์ดิบ → Gen APN01 + AP09 เสมอ ──────────────────────
+    // ââ Tab paste: ไฟล์ดิบ → Gen APN01 + AP09 เสมอ ──────────────────────
     if (tab === 'paste') {
       if (!serialCode.trim()) { setError('กรุณาระบุ Serial code'); return; }
       if (parsedRows.length === 0) { setError('กรุณาวางข้อมูลก่อน'); return; }
@@ -857,11 +1063,22 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           buCodeName = buData?.bu_code_name || null;
           buNameThai = buData?.['THAI COMPANY NAME'] || null;
         }
-        // Duplicate check — serial + doc_type เท่านั้น
-        const dupAPN01 = await checkDuplicateSerial(db, serial, 'APN01');
-        if (dupAPN01) { setError(`Serial "${serial}" (APN01) มีในระบบแล้ว`); setSaving(false); return; }
+        const _apSer = serial.replace('APN01','AP09').replace('Invoice Register','Input Tax Invoice');
+        const _finalAP09 = _apSer !== serial ? _apSer : serial+'_AP09';
+        const _allAP09 = parseAP09RowsFromRaw(parsedRows);
+        const [_apn01Dups, _ap09Dups] = await Promise.all([
+          checkAllDuplicates(db, parsedRows, serial),
+          _allAP09.length>0 ? checkAllDuplicates(db, _allAP09, _finalAP09) : Promise.resolve([]),
+        ]);
+        const _dupInv = new Set(_apn01Dups.filter(d=>d.confidence>=80).map(d=>d.invoiceNo));
+        const _dupTax = new Set(_ap09Dups.filter(d=>d.confidence>=80).map(d=>d.invoiceNo));
+        const cleanRows = parsedRows.filter(r=>!_dupInv.has(String(r['Invoice Number']||r['Invoice Num']||'').trim().toLowerCase()));
+        const _cleanAP09 = _allAP09.filter(r=>!_dupTax.has(String(r['Tax Invoice No.']||'').trim().toLowerCase()));
+        if (cleanRows.length===0 && (_allAP09.length===0||_cleanAP09.length===0)) {
+          setPasteText(''); setParsedRows([]); setParsedHeaders([]); setSerialCode(''); setFormatWarning(''); setDupWarnings([]);
+          setSaving(false); onSave(); onClose(); return;
+        }
 
-        // Insert APN01 — ทุก rows (ข้อมูลตั้งหนี้)
         const { error: err } = await db.from('doc_collection').insert([{
           serial_code:  serial,
           bu_code:      buCode,
@@ -869,44 +1086,35 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           bu_name:      buNameThai,
           doc_type:     'APN01',
           doc_name:     DOC_TYPE_MAP['APN01'],
-          rows:         parsedRows,
+          rows:         cleanRows,
           attachments:  attachments,
           source:       'upload',
-          file_date:    now.split('T')[0],
+          file_date:    parsedRows[0]?.['Invoice Date'] || parsedRows[0]?.['Receive Date'] || now.split('T')[0],
           uploaded_by:  userName || currentUser?.email || '',
           created_at:   now,
           updated_at:   now,
         }]);
         if (err) throw err;
 
-        // Insert AP09 — เฉพาะแถวที่มี Yes (ใบกำกับภาษี) คนละประเภทกับ APN01 ไม่ใช่ duplicate
-        const ap09Rows = parseAP09RowsFromRaw(parsedRows);
-        if (ap09Rows.length > 0) {
-          // serial AP09 = แทน APN01→AP09 และ Invoice Register→Input Tax Invoice
-          const ap09Serial = serial
-            .replace('APN01', 'AP09')
-            .replace('Invoice Register', 'Input Tax Invoice');
-          const finalAP09Serial = ap09Serial !== serial ? ap09Serial : serial + '_AP09';
-          const dupAP09 = await checkDuplicateSerial(db, finalAP09Serial, 'AP09');
-          if (!dupAP09) {
+        if (_cleanAP09.length > 0) {
             const ap09Now = new Date().toISOString();
             await db.from('doc_collection').insert([{
-              serial_code:  finalAP09Serial,
+              serial_code:  _finalAP09,
               bu_code:      buCode,
               bu_code_name: buCodeName,
               bu_name:      buNameThai,
               doc_type:     'AP09',
               doc_name:     DOC_TYPE_MAP['AP09'],
-              rows:         ap09Rows,
+              rows:         _cleanAP09,
               attachments:  [],
               source:       'upload',
-              file_date:    ap09Now.split('T')[0],
+              file_date:    _cleanAP09[0]?.['Receive Date'] || ap09Now.split('T')[0],
               uploaded_by:  userName || currentUser?.email || '',
               created_at:   ap09Now,
               updated_at:   ap09Now,
             }]);
-          }
         }
+        setPasteText(''); setParsedRows([]); setParsedHeaders([]); setSerialCode(''); setFormatWarning(''); setDupWarnings([]);
         onSave(); onClose();
       } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
       setSaving(false);
@@ -975,13 +1183,42 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
   // docTypes ไม่จำเป็นแล้ว — Tab บอก intent ครบ (paste=raw→APN01+AP09, file=finished, pdf=OCR)
   const S = {
     overlay: { position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:999 },
-    modal: { background:'white',borderRadius:'12px',width:'calc(100vw - 80px)',maxWidth:'1400px',height:'92vh',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden' },
+    modal: { background:'white',borderRadius:'12px',width:'calc(100vw - 20px)',maxWidth:'1800px',height:'92vh',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden' },
     pill: (sel) => ({ display:'inline-flex',alignItems:'center',padding:'4px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',border:'0.5px solid',borderColor:sel?'#1a3a5c':'#ddd',background:sel?'#1a3a5c':'#f5f5f5',color:sel?'white':'#555',userSelect:'none' }),
     tab: (sel) => ({ flex:1,padding:'7px',fontSize:'12px',border:'0.5px solid #ddd',background:sel?'white':'#f5f5f5',color:sel?'#1a3a5c':'#888',cursor:'pointer',fontWeight:sel?'500':'400' }),
     inp: { padding:'5px 8px',borderRadius:'6px',border:'0.5px solid #d0d0d0',fontSize:'12px',width:'100%',boxSizing:'border-box',height:'30px' },
   };
 
+  const fmtDupDate = (d) => { if(!d) return '-'; try { return new Date(d).toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'2-digit'}); } catch(_) { return d.slice(0,10); } };
+  const logicColor = (l) => ({ A:{bg:'#FCEBEB',color:'#791F1F'}, B:{bg:'#FFF9E6',color:'#856404'}, C:{bg:'#FFF9E6',color:'#856404'}, D:{bg:'#E6F1FB',color:'#0C447C'}, E:{bg:'#E6F1FB',color:'#0C447C'}, F:{bg:'#EAF3DE',color:'#27500A'} }[l] || {bg:'#f5f5f5',color:'#555'});
+
   return (
+    <>
+    {saveDraftModal && (
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:100000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'340px',overflow:'hidden'}}>
+          <div style={{padding:'14px 18px',borderBottom:'0.5px solid #f0f0f0'}}>
+            <div style={{fontSize:'13px',fontWeight:'500',color:'#1a3a5c'}}>📂 เลือกประเภทที่จะ Save Draft</div>
+            <div style={{fontSize:'11px',color:'#888',marginTop:'3px'}}>บันทึกไว้เป็น Draft ผ่าน Dup Check แล้ว</div>
+          </div>
+          <div style={{padding:'14px 18px',display:'flex',flexDirection:'column',gap:'8px'}}>
+            {[
+              ['APN01','📄 APN01 เท่านั้น ('+parsedRows.length+' แถว)','#E6F1FB','#0C447C','#b5d4f4'],
+              ['AP09','📄 AP09 เท่านั้น ('+parseAP09RowsFromRaw(parsedRows).length+' แถว)','#EAF3DE','#27500A','#c0dd97'],
+              ['Both','📂 Both — APN01 + AP09','#1a3a5c','white','#1a3a5c'],
+            ].map(([v,label,bg,color,border])=>(
+              <button key={v} onClick={()=>doSaveDraft(v)}
+                style={{padding:'8px 14px',borderRadius:'8px',border:`0.5px solid ${border}`,background:bg,color,fontSize:'12px',cursor:'pointer',fontWeight:v==='Both'?'500':'400',textAlign:'left'}}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={{padding:'10px 18px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'flex-end'}}>
+            <button onClick={()=>setSaveDraftModal(false)} style={{padding:'5px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'11px',cursor:'pointer',color:'#555'}}>ยกเลิก</button>
+          </div>
+        </div>
+      </div>
+    )}
     <div style={S.overlay}>
       <div style={S.modal}>
         <div style={{ padding:'14px 18px',borderBottom:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0 }}>
@@ -997,9 +1234,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           return (
             <div style={{ padding:'6px 18px',borderBottom:'0.5px solid #f0f0f0',background:'#f0f6ff',flexShrink:0,display:'flex',alignItems:'center',gap:'10px' }}>
               <span style={{ fontSize:'11px',color:'#0C447C',fontWeight:'500' }}>จะ Gen:</span>
-              <span style={{ fontSize:'11px',padding:'2px 10px',borderRadius:'20px',background:'#1a3a5c',color:'white' }}>APN01</span>
+              <span onClick={()=>setPreviewDocType('APN01')} style={{ fontSize:'11px',padding:'2px 10px',borderRadius:'20px',background:previewDocType==='APN01'?'#1a3a5c':'#e8eef5',color:previewDocType==='APN01'?'white':'#1a3a5c',cursor:'pointer',border:'0.5px solid #1a3a5c' }}>APN01 ({parsedRows.length})</span>
               {ap09Count > 0 && (
-                <span style={{ fontSize:'11px',padding:'2px 10px',borderRadius:'20px',background:'#0F6E56',color:'white' }}>AP09 ({ap09Count} รายการ)</span>
+                <span onClick={()=>setPreviewDocType('AP09')} style={{ fontSize:'11px',padding:'2px 10px',borderRadius:'20px',background:previewDocType==='AP09'?'#0F6E56':'#e6f4f0',color:previewDocType==='AP09'?'white':'#0F6E56',cursor:'pointer',border:'0.5px solid #0F6E56' }}>AP09 ({ap09Count} รายการ)</span>
               )}
               <span style={{ fontSize:'11px',color:'#888',marginLeft:'4px' }}>— บันทึกอัตโนมัติทั้งคู่</span>
             </div>
@@ -1023,44 +1260,170 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
         <div style={{ padding:'0 18px 14px', overflowY:'auto', flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
           {tab==='paste' ? (
             <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
-              {parsedRows.length === 0 ? (
+              {/* sub-tabs: + New | Report / Draft */}
+              <div style={{ display:'flex',borderBottom:'0.5px solid #eee',flexShrink:0,margin:'0 -18px',padding:'0 18px',background:'#f8f9fa' }}>
+                <button onClick={()=>setPasteSubTab('new')}
+                  style={{ padding:'6px 14px',fontSize:'11px',background:'none',border:'none',borderBottom:`2px solid ${pasteSubTab==='new'?'#1a3a5c':'transparent'}`,color:pasteSubTab==='new'?'#1a3a5c':'#888',cursor:'pointer',fontWeight:pasteSubTab==='new'?'500':'400' }}>
+                  + New
+                </button>
+                <button onClick={()=>{ setPasteSubTab('draft'); loadDrafts(); }}
+                  style={{ padding:'6px 14px',fontSize:'11px',background:'none',border:'none',borderBottom:`2px solid ${pasteSubTab==='draft'?'#1a3a5c':'transparent'}`,color:pasteSubTab==='draft'?'#1a3a5c':'#888',cursor:'pointer',fontWeight:pasteSubTab==='draft'?'500':'400',display:'flex',alignItems:'center',gap:'5px' }}>
+                  Report / Draft
+                  {drafts.length>0 && <span style={{background:'#FFF9E6',color:'#856404',borderRadius:'3px',padding:'0 5px',fontSize:'9px',fontWeight:'600'}}>{drafts.length}</span>}
+                </button>
+              </div>
+              {pasteSubTab==='draft' ? (
+                <div style={{display:'flex',flex:1,minHeight:0,marginTop:'8px',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden'}}>
+                  {/* Left: list */}
+                  <div style={{width:'210px',flexShrink:0,borderRight:'0.5px solid #e0e0e0',overflowY:'auto',background:'#f8f9fa',display:'flex',flexDirection:'column'}}>
+                    {draftsLoading ? (
+                      <div style={{fontSize:'12px',color:'#888',padding:'20px',textAlign:'center'}}>กำลังโหลด...</div>
+                    ) : drafts.length===0 ? (
+                      <div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>ไม่มี Draft</div>
+                    ) : drafts.map(d=>(
+                      <div key={d.id} onClick={()=>setSelectedDraft(d)}
+                        style={{padding:'10px 12px',borderBottom:'0.5px solid #e8e8e8',cursor:'pointer',display:'flex',alignItems:'center',gap:'10px',background:selectedDraft?.id===d.id?'#e8f0fb':'white',borderLeft:selectedDraft?.id===d.id?'2.5px solid #1a3a5c':'2.5px solid transparent'}}>
+                        <div style={{width:'36px',height:'44px',borderRadius:'4px',background:'#1a3a5c',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                          <span style={{fontSize:'18px'}}>&#128196;</span>
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:'11px',fontWeight:'500',color:'#1a3a5c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.serial_code}</div>
+                          <div style={{fontSize:'10px',color:'#888',marginTop:'2px'}}>{d.created_at?.slice(0,10)} · {d.created_by||'-'}</div>
+                          <span style={{fontSize:'9px',padding:'1px 6px',borderRadius:'10px',background:'#e8f0fb',color:'#0C447C',marginTop:'3px',display:'inline-block'}}>{d.rows?.length||0} แถว</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Right: detail */}
+                  <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+                    {!selectedDraft ? (
+                      <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:'8px',color:'#aaa'}}>
+                        <span style={{fontSize:'28px'}}>&#128196;</span>
+                        <span style={{fontSize:'12px'}}>เลือก Draft ทางซ้ายเพื่อดู Preview</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{padding:'8px 14px',borderBottom:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
+                          <div>
+                            <span style={{fontSize:'12px',fontWeight:'500',color:'#1a3a5c'}}>{selectedDraft.serial_code}</span>
+                            <span style={{fontSize:'10px',color:'#888',marginLeft:'8px'}}>{selectedDraft.rows?.length||0} แถว · {selectedDraft.doc_type}</span>
+                          </div>
+                          <button onClick={async()=>{ if(!window.confirm('ลบ Draft นี้?')) return; await db.from('doc_collection').delete().eq('id',selectedDraft.id); setSelectedDraft(null); loadDrafts(); }}
+                            style={{fontSize:'11px',padding:'4px 10px',borderRadius:'6px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',color:'#791F1F',cursor:'pointer'}}>
+                            🗑 ลบ draft
+                          </button>
+                        </div>
+                        <div style={{flex:1,overflowX:'auto',overflowY:'auto'}}>
+                          <table style={{borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%'}}>
+                            <thead><tr>{(selectedDraft.rows?.[0] ? Object.keys(selectedDraft.rows[0]) : []).map((h,i)=>(
+                              <th key={i} style={{padding:'5px 10px',background:'#1a3a5c',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'left',position:'sticky',top:0,zIndex:1,borderRight:'0.5px solid rgba(255,255,255,0.1)'}}>{h}</th>
+                            ))}</tr></thead>
+                            <tbody>{(selectedDraft.rows||[]).map((row,i)=>(
+                              <tr key={i} style={{background:i%2===0?'white':'#f8f9fa'}}>
+                                {Object.keys(selectedDraft.rows[0]).map((h,j)=>(
+                                  <td key={j} style={{padding:'4px 10px',borderBottom:'0.5px solid #f0f0f0',borderRight:'0.5px solid #f5f5f5'}}>{row[h]||''}</td>
+                                ))}
+                              </tr>
+                            ))}</tbody>
+                          </table>
+                        </div>
+                        <div style={{padding:'8px 14px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'flex-end',flexShrink:0}}>
+                          <button onClick={()=>handleSubmitDraft([selectedDraft.id])} disabled={saving}
+                            style={{padding:'6px 16px',fontSize:'11px',borderRadius:'6px',background:saving?'#ccc':'#1a3a5c',color:'white',border:'none',cursor:'pointer',fontWeight:'500'}}>
+                            {saving?'กำลังยืนยัน...':'✅ ยืนยันเพื่อ Submit'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : (
+              <>{parsedRows.length === 0 ? (
                 <textarea placeholder="คลิกแล้ววาง (Ctrl+V) ข้อมูลจาก Excel หรือ Google Sheet ที่นี่ — ระบบจะแยกคอลัมน์ตาม Tab ให้อัตโนมัติ"
                   style={{ flex:1, width:'100%', minHeight:'200px', fontSize:'11px',borderRadius:'6px',border:'0.5px solid #d0d0d0',padding:'8px',boxSizing:'border-box',resize:'none',fontFamily:'monospace',lineHeight:1.5,whiteSpace:'pre',overflowX:'auto' }}
                   value={pasteText} onChange={e=>handlePaste(e.target.value)}/>
               ) : (
-                <div>
-                  <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 10px',background: formatWarning ? '#FCEBEB' : '#EAF3DE',borderRadius:'6px 6px 0 0',fontSize:'11px',color: formatWarning ? '#791F1F' : '#27500A' }}>
-                    <span>{formatWarning ? `⚠️ detect ได้ ${parsedRows.length} แถว — มี Format ผิด ${parsedRows.filter(r=>/^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(r['Invoice Num']||''))).length} รายการ` : `✅ detect ได้ ${parsedRows.length} แถว${docType==='AP09'?' (มีใบกำกับ '+parsedRows.filter(r=>String(r['[ ]']||'').split('.').some(s=>s.trim().toLowerCase()==='yes')).length+' รายการ)':''} ${parsedHeaders.length} คอลัมน์`}</span>
-                    <button onClick={()=>{setPasteText('');setParsedRows([]);setParsedHeaders([]);setSerialCode('');setFormatWarning('');}} style={{ fontSize:'10px',padding:'2px 8px',borderRadius:'4px',border:'0.5px solid #aaa',background:'white',cursor:'pointer',color:'#555' }}>✕ ล้าง</button>
-                  </div>
-                  <div style={{ overflowX:'auto',overflowY:'auto',maxHeight:'480px',border:'0.5px solid #d0d0d0',borderTop:'none',borderRadius:'0 0 6px 6px' }}>
-                    <table style={{ borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%' }}>
-                      <thead>
-                        <tr>{parsedHeaders.map((h,i)=>(
-                          <th key={i} style={{ padding:'5px 10px',background:'#1a3a5c',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'left',borderRight:'0.5px solid rgba(255,255,255,0.15)',position:'sticky',top:0,zIndex:1 }}>{h||'-'}</th>
-                        ))}</tr>
-                      </thead>
-                      <tbody>
-                        {(docType === 'AP09'
-                ? parsedRows.filter(r => String(r['[ ]']||'').split('.').some(s=>s.trim().toLowerCase()==='yes'))
-                : parsedRows
-              ).map((row,i)=>{
-                          const hasSci = /^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(row['Invoice Num']||''));
-                          const rowBg = hasSci ? '#FCEBEB' : i%2===0 ? 'white' : '#f8f9fa';
-                          return (
-                          <tr key={i} style={{ background: rowBg }}
-                            onMouseEnter={e=>e.currentTarget.style.background=hasSci?'#f7d0d0':'#f0f6ff'}
-                            onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
-                            {parsedHeaders.map((h,j)=>(
-                              <td key={j} style={{ padding:'4px 10px',borderRight:'0.5px solid #f0f0f0',borderBottom:'0.5px solid #f0f0f0',color: hasSci && h==='Invoice Num' ? '#c0392b' : '#333', fontWeight: hasSci && h==='Invoice Num' ? '600' : 'normal' }}>{row[h]||''}</td>
-                            ))}
-                          </tr>
-                          );
-                        })}
-                      </tbody>
+                <div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0}}>
+                  {(() => {
+                    const ap09Count = parseAP09RowsFromRaw(parsedRows).length;
+                    const sciCount = parsedRows.filter(r=>/^-?\d+\.?\d*[eE][+-]?\d+$/.test(String(r['Invoice Num']||''))).length;
+                    const hasDup = dupWarnings.length > 0;
+                    const hasSci = sciCount > 0;
+                    const apn01DupW = dupWarnings.filter(d=>d.docType==='APN01');
+                    const ap09DupW  = dupWarnings.filter(d=>d.docType==='AP09');
+                    const ap09TotalCnt = parseAP09RowsFromRaw(parsedRows).length;
+                    const allDup = hasDup && apn01DupW.length>=parsedRows.length && (ap09TotalCnt===0||ap09DupW.length>=ap09TotalCnt);
+                    const bg = hasSci||allDup?'#FCEBEB':hasDup?'#FFF9E6':'#EAF3DE';
+                    const border = hasSci||allDup?'#f7c1c1':hasDup?'#FFE082':'#c0dd97';
+                    const tc = hasSci||allDup?'#791F1F':hasDup?'#856404':'#27500A';
+                    return (
+                      <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'5px 10px',background:bg,border:`0.5px solid ${border}`,borderRadius:'6px 6px 0 0',fontSize:'10px',color:tc,flexShrink:0}}>
+                        <span>{hasSci||allDup?'🚨':hasDup?'⚠️':'✅'}</span>
+                        <span>
+                          {hasSci
+                            ? <><strong>Format ผิด {sciCount} แถว</strong> — ตรวจสอบ Invoice Num</>
+                            : hasDup
+                                                    ? <>{apn01DupW.length>0&&<span>APN01: <strong>ซ้ำ {apn01DupW.length}/{parsedRows.length} แถว</strong></span>}{apn01DupW.length>0&&ap09DupW.length>0&&<span style={{margin:'0 6px',color:'#ccc'}}>|</span>}{ap09DupW.length>0&&<span>AP09: <strong>ซ้ำ {ap09DupW.length}/{ap09TotalCnt} แถว</strong></span>}{allDup&&' — อาจเคย Upload �Dปแล้ว'}</>
+                              : <><strong>เอาเข้า {parsedRows.length} แถว</strong>{ap09Count>0?` · AP09 ${ap09Count} แถว`:''}</>
+                          }
+                        </span>
+                        <span style={{marginLeft:'auto',display:'flex',gap:'5px',alignItems:'center'}}>
+                          <button onClick={()=>setPreviewDocType('APN01')} style={{padding:'1px 7px',borderRadius:'20px',border:'0.5px solid #1a3a5c',background:previewDocType==='APN01'?'#1a3a5c':'white',color:previewDocType==='APN01'?'white':'#1a3a5c',fontSize:'9px',cursor:'pointer'}}>APN01</button>
+                          {ap09Count>0&&<button onClick={()=>setPreviewDocType('AP09')} style={{padding:'1px 7px',borderRadius:'20px',border:'0.5px solid #0F6E56',background:previewDocType==='AP09'?'#0F6E56':'white',color:previewDocType==='AP09'?'white':'#0F6E56',fontSize:'9px',cursor:'pointer'}}>AP09</button>}
+                          <button onClick={()=>{setPasteText('');setParsedRows([]);setParsedHeaders([]);setSerialCode('');setFormatWarning('');setDupWarnings([]);}} style={{fontSize:'9px',padding:'1px 6px',borderRadius:'4px',border:'0.5px solid #aaa',background:'white',cursor:'pointer',color:'#888'}}>✕ ล้าง</button>
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  <div style={{flex:1,overflowX:'auto',overflowY:'auto',minHeight:0,border:'0.5px solid #d0d0d0',borderTop:'none',borderRadius:'0 0 6px 6px'}}>
+                    <table style={{borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%'}}>
+                      {(()=>{
+                        const isAP09v = previewDocType==='AP09';
+                        const rawPrev = isAP09v ? parseAP09RowsFromRaw(parsedRows) : parsedRows;
+                        const APN01_COLS=['Branch','Vendor Name','GR Transaction No.','Invoice Number','Receive Date','รายการ','มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม','Batch Name'];
+                        const AP09_COLS=['Branch','Vendor Name','Receive Date','GRT No.','Tax Invoice Date','Tax Invoice No.','Description','ยอดก่อนภาษี','ยอดภาษี','ยอดรวม'];
+                        const COLS = isAP09v ? AP09_COLS : APN01_COLS;
+                        const NUM_COLS = isAP09v ? ['ยอดก่อนภาษี','ยอดภาษี','ยอดรวม'] : ['มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
+                        const mapped = rawPrev.map(r=>mapRowsForExcel([r],isAP09v?'AP09':'APN01')[0]||{});
+                        const dupMap = {}; dupWarnings.forEach(d=>{dupMap[d.invoiceNo]=d;});
+                        const thBg = isAP09v?'#0F6E56':'#1a3a5c';
+                        const fmtDate = (d)=>{ try{return new Date(d).toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'2-digit'});}catch(_){return d?.slice(0,10)||'—';} };
+                        return (<>
+                          <thead><tr>
+                            <th style={{padding:'5px 8px',background:thBg,color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'center',borderRight:'0.5px solid rgba(255,255,255,0.15)',position:'sticky',top:0,zIndex:1,width:'36px'}}>#</th>
+                            {COLS.map((h,i)=>(<th key={i} style={{padding:'5px 8px',background:thBg,color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:NUM_COLS.includes(h)?'right':'left',borderRight:'0.5px solid rgba(255,255,255,0.15)',position:'sticky',top:0,zIndex:1,maxWidth:h==='Description'||h==='รายการ'?'160px':'none',whiteSpace:'nowrap'}}>{h}</th>))}
+                            <th style={{padding:'5px 8px',background:'#633806',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'center',position:'sticky',top:0,zIndex:1}}>Dup %</th>
+                            <th style={{padding:'5px 8px',background:'#633806',color:'rgba(255,255,255,0.85)',fontWeight:'500',position:'sticky',top:0,zIndex:1}}>Updated by</th>
+                            <th style={{padding:'5px 8px',background:'#633806',color:'rgba(255,255,255,0.85)',fontWeight:'500',position:'sticky',top:0,zIndex:1,whiteSpace:'nowrap'}}>Updated at</th>
+                          </tr></thead>
+                          <tbody>{mapped.map((row,i)=>{
+                            const invKey=(isAP09v?(row['Tax Invoice No.']||''):(row['Invoice Number']||'')).trim().toLowerCase();
+                            const dup=dupMap[invKey];
+                            const isDupRow=!!dup&&dup.confidence>=80;
+                            const rowBg=isDupRow?'#FFFBF0':i%2===0?'white':'#f8f9fa';
+                            return (
+                              <tr key={i} style={{background:rowBg}} onMouseEnter={e=>e.currentTarget.style.background='#f0f6ff'} onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
+                                <td style={{padding:'4px 8px',textAlign:'center',borderRight:'0.5px solid #f0f0f0',borderBottom:'0.5px solid #f0f0f0',color:'#aaa',fontSize:'10px',width:'36px'}}>{i+1}</td>
+                                {COLS.map((h,j)=>{
+                                  const isNum=NUM_COLS.includes(h);
+                                  const isDesc=h==='Description'||h==='รายการ';
+                                  const v=row[h];
+                                  const fv=isNum&&v?Number(String(v).replace(/,/g,'')).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):(v||'');
+                                  return <td key={j} title={isDesc?fv:undefined} style={{padding:'4px 8px',borderRight:'0.5px solid #f0f0f0',borderBottom:'0.5px solid #f0f0f0',textAlign:isNum?'right':'left',maxWidth:isDesc?'160px':'none',overflow:isDesc?'hidden':'visible',textOverflow:isDesc?'ellipsis':'clip',whiteSpace:'nowrap'}}>{fv}</td>;
+                                })}
+                                <td style={{padding:'4px 8px',textAlign:'center',borderBottom:'0.5px solid #f0f0f0',fontWeight:'500',color:dup?(dup.confidence>=90?'#791F1F':'#856404'):'#ccc'}}>{dup?dup.confidence+'%':'—'}</td>
+                                <td style={{padding:'4px 8px',borderBottom:'0.5px solid #f0f0f0',fontSize:'10px',color:dup?'#555':'#ccc'}}>{dup?(dup.uploadedBy||'—'):'—'}</td>
+                                <td style={{padding:'4px 8px',borderBottom:'0.5px solid #f0f0f0',fontSize:'10px',color:dup?'#888':'#ccc',whiteSpace:'nowrap'}}>{dup?fmtDate(dup.createdAt):'—'}</td>
+                              </tr>
+                            );
+                          })}</tbody>
+                        </>);
+                      })()}
                     </table>
                   </div>
                 </div>
+              )}
+              </>
               )}
             </div>
           ) : (
@@ -1172,6 +1535,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
           <div style={{ display:'flex',gap:'8px',alignItems:'center',flexShrink:0,marginLeft:'auto' }}>
             {saving&&saveProgress>0 && <span style={{ fontSize:'11px',color:'#1a3a5c',fontWeight:'500' }}>{saveProgress}%</span>}
             <button style={{ padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer',color:'#555' }} onClick={onClose}>ยกเลิก</button>
+            {tab==='paste' && pasteSubTab==='new' && parsedRows.length>0 && (
+              <button style={{ padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #b5d4f4',background:'#E6F1FB',fontSize:'12px',cursor:'pointer',color:'#0C447C',fontWeight:'500' }}
+                onClick={handleSaveDraft} disabled={saving}>
+                📋 บันทึก Draft
+              </button>
+            )}
             <button style={{ padding:'6px 16px',borderRadius:'6px',border:'none',background:saving?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500' }}
               onClick={handleSave} disabled={saving}>
               {saving?`กำลังบันทึก...${saveProgress>0?` ${saveProgress}%`:'`'}`:'💾 บันทึก'}
@@ -1180,6 +1549,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser }) {
         </div>}
       </div>
     </div>
+    </>
   );
 }
 
@@ -1552,6 +1922,8 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const [lightbox, setLightbox] = useState(null); // { attachments:[], index:0 }
   const [attachModal, setAttachModal] = useState(null); // file object ที่กำลังแก้ไข attachment
   const [showQueue, setShowQueue] = useState(false);
+  const [qSideTab, setQSideTab]   = useState('dashboard');
+  const [qStatus,  setQStatus]    = useState('active');
   const [queueItems, setQueueItems] = useState([]);
   const [queueBadge, setQueueBadge] = useState(0);
   const [queueTab, setQueueTab] = useState('my'); // 'my' | 'all'
@@ -1594,7 +1966,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   useEffect(() => {
     fetchQueue(); // โหลดครั้งแรก
     const token = sessionStorage.getItem('fastapn_token');
-    const es = new EventSource(`${API_Q}/queue/stream`);
+    const es = new EventSource(`${API_Q}/queue/stream?token=${encodeURIComponent(token || "")}`);
     es.addEventListener('queue_update', (e) => {
       try {
         const { snapshot } = JSON.parse(e.data);
@@ -2007,7 +2379,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                       </td>
                     <td style={{ ...S.td,fontSize:'10px',maxWidth:'200px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#555' }} title={file.bu_code_name||''}>{file.bu_code_name||'-'}</td>
                     <td style={{ ...S.td,textAlign:'center' }}>{(() => { const c=getBuColor(file.bu_code); return <span style={{ display:'inline-block',padding:'2px 8px',borderRadius:'20px',fontSize:'10px',fontWeight:'700',background:c.bg,color:c.color,border:`1px solid ${c.border}`,letterSpacing:'0.3px' }}>{file.bu_code||'-'}</span>; })()}</td>
-                    <td style={S.td}>{fmtDate(receiveDate)}</td>
+                    <td style={{ ...S.td, textAlign:'center', width:'95px' }}>{fmtDate(receiveDate)}</td>
                     <td style={{ ...S.td,textAlign:'right' }}>{totalAmt>0?fmtNum(totalAmt):'-'}</td>
                     <td style={{ ...S.td,textAlign:'right' }}>{totalVat>0?fmtNum(totalVat):'-'}</td>
                     <td style={{ ...S.td,textAlign:'right',fontWeight:'500' }}>{(totalAll||totalAmt+totalVat)>0?fmtNum(totalAll||totalAmt+totalVat):'-'}</td>
@@ -2126,99 +2498,175 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
       )}
       {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={()=>{setShowAdd(false);fetchFiles();fetchQueue();}} userName={userName} currentUser={currentUser}/>}
 
-      {/* ── Queue Modal ── */}
+      {/* ── Queue Modal — Central Queue Monitor ── */}
       {showQueue && (() => {
-        const myItems  = queueItems.filter(q => ['pending','ocring','waiting_ap','error'].includes(q.status));
-        const allActive = queueItems.filter(q => ['pending','ocring','waiting_ap','error'].includes(q.status));
-        const items    = queueTab === 'my' ? myItems : allActive;
-        const pendingCount = queueItems.filter(q=>['pending','ocring','waiting_ap'].includes(q.status)).length;
-        const movePriority = async (id, dir) => {
-          const token = sessionStorage.getItem('fastapn_token');
-          await fetch(`${API_Q}/queue/${id}/priority`, {
-            method:'PATCH', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
-            body: JSON.stringify({ direction: dir }),
-          });
-          fetchQueue();
+        const MENU_ITEMS = [
+          { key:'ap_controller', label:'AP Controller' },
+          { key:'docenter',      label:'Document Center' },
+          { key:'vat_controller',label:'VAT Controller' },
+          { key:'i_expense',     label:'I-Expense' },
+          { key:'gl_functional', label:'GL Functional' },
+          { key:'i_pro',         label:'I-Pro Interface' },
+        ];
+
+        const getMenuCount = (key) => {
+          if (key === 'docenter') return queueItems.filter(q => !['done'].includes(q.status)).length;
+          if (key === 'ap_controller') return 0; // placeholder — AP OCR จะ hook เข้ามาในอนาคต
+          return 0;
         };
+        const activeCount = queueItems.filter(q => ['pending','ocring','waiting_ap','error'].includes(q.status)).length;
+        const totalCount  = queueItems.length;
+
+        const filteredItems = queueItems.filter(q => {
+          const matchSrc = qSideTab === 'dashboard' || (qSideTab === 'docenter');
+          const matchSt  = qStatus === 'all'
+            ? true
+            : qStatus === 'active' ? ['pending','ocring','waiting_ap'].includes(q.status)
+            : qStatus === 'done'   ? q.status === 'done'
+            : qStatus === 'error'  ? q.status === 'error'
+            : true;
+          return matchSrc && matchSt;
+        });
+
+        const getStatusTag = (status) => {
+          const map = {
+            ocring:     { label:'กำลัง OCR',    bg:'#E3F0FF', color:'#1a3a5c' },
+            pending:    { label:'รอคิว',         bg:'#F5F5F5', color:'#777' },
+            waiting_ap: { label:'รอ AP Controller', bg:'#F5EEF2', color:'#8D6B7E' },
+            done:       { label:'เสร็จแล้ว',    bg:'#EEF4EF', color:'#5A7C5E' },
+            error:      { label:'ผิดพลาด',       bg:'#FFEBEE', color:'#C62828' },
+          };
+          return map[status] || { label:status, bg:'#f0f0f0', color:'#666' };
+        };
+
         return (
-          <div style={{ position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1500 }}
+          <div style={{ position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1500 }}
             onClick={()=>setShowQueue(false)}>
             <div onClick={e=>e.stopPropagation()}
-              style={{ background:'white',borderRadius:'12px',width:'560px',maxHeight:'80vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.2)' }}>
+              style={{ background:'white',borderRadius:'12px',width:'900px',height:'580px',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.2)' }}>
+
               {/* Header */}
-              <div style={{ padding:'12px 16px',background:'#1a3a5c',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0 }}>
-                <span style={{ fontSize:'13px',fontWeight:'500',color:'white' }}>🔔 OCR Queue {pendingCount > 0 && <span style={{ background:'#E24B4A',borderRadius:'50%',width:'16px',height:'16px',fontSize:'10px',display:'inline-flex',alignItems:'center',justifyContent:'center',marginLeft:'6px' }}>{pendingCount}</span>}</span>
-                <button onClick={()=>setShowQueue(false)} style={{ background:'none',border:'none',cursor:'pointer',fontSize:'18px',color:'rgba(255,255,255,0.7)' }}>×</button>
-              </div>
-              {/* Tabs */}
-              <div style={{ display:'flex',borderBottom:'0.5px solid #f0f0f0',background:'#f8f9fa',flexShrink:0 }}>
-                <button onClick={()=>setQueueTab('my')} style={{ flex:1,padding:'8px',fontSize:'12px',border:'none',background:'none',borderBottom: queueTab==='my'?'2px solid #1a3a5c':'2px solid transparent',color: queueTab==='my'?'#1a3a5c':'#888',cursor:'pointer',fontWeight: queueTab==='my'?'500':'400' }}>
-                  My Queue {myItems.length > 0 && <span style={{ background:'#E24B4A',color:'white',borderRadius:'50%',width:'14px',height:'14px',fontSize:'9px',display:'inline-flex',alignItems:'center',justifyContent:'center',marginLeft:'3px' }}>{myItems.length}</span>}
-                </button>
-                {(isOwner || isAdmin) && (
-                  <button onClick={()=>setQueueTab('all')} style={{ flex:1,padding:'8px',fontSize:'12px',border:'none',background:'none',borderBottom: queueTab==='all'?'2px solid #854F0B':'2px solid transparent',color: queueTab==='all'?'#854F0B':'#888',cursor:'pointer',fontWeight: queueTab==='all'?'500':'400' }}>
-                    All Queue
-                  </button>
-                )}
-              </div>
-              {/* hint priority */}
-              {(isOwner || isAdmin) && queueTab === 'all' && (
-                <div style={{ padding:'5px 14px',background:'#fffbf0',borderBottom:'0.5px solid #f0f0f0',fontSize:'10px',color:'#856404',flexShrink:0 }}>
-                  กด ↑ เพื่อเลื่อน priority ขึ้น — item กำลังรันไม่สามารถเลื่อนได้
+              <div style={{ background:'#1a3a5c',padding:'13px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0 }}>
+                <div style={{ display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',fontWeight:'600',color:'white' }}>
+                  🖥️ Central Queue Monitor
+                  {activeCount > 0 && <span style={{ background:'#E24B4A',color:'white',borderRadius:'10px',padding:'1px 8px',fontSize:'10px',fontWeight:'700' }}>{activeCount}</span>}
                 </div>
-              )}
-              {/* List */}
-              <div style={{ flex:1,overflowY:'auto' }}>
-                {items.length === 0 ? (
-                  <div style={{ textAlign:'center',color:'#aaa',padding:'40px',fontSize:'13px' }}>ไม่มีรายการ</div>
-                ) : items.map((q, qi) => {
-                  const pos = q.queue_position || (qi+1);
-                  const statusIcon = q.status==='done'?'✅':q.status==='ocring'?'🔄':q.status==='error'?'❌':q.status==='waiting_ap'?'⏸️':'⏳';
-                  const statusBg = q.status==='ocring'?'#CCE5FF':q.status==='done'?'#D4EDDA':q.status==='error'?'#F8D7DA':q.status==='waiting_ap'?'#F3E5F5':'#f0f0f0';
-                  const statusColor = q.status==='ocring'?'#004085':q.status==='done'?'#155724':q.status==='error'?'#721C24':q.status==='waiting_ap'?'#4A148C':'#666';
-                  const statusLabel = q.status==='ocring'?'กำลัง OCR':q.status==='done'?'เสร็จ':q.status==='error'?'ผิดพลาด':q.status==='waiting_ap'?'รอ AP OCR':'รอคิว';
-                  return (
-                  <div key={q.id} style={{ padding:'10px 14px',borderBottom:'0.5px solid #f5f5f5',display:'flex',alignItems:'center',gap:'10px',background: q.status==='ocring'?'#f0f8ff':q.status==='done'?'#f0fff4':'white' }}>
-                    {/* queue position badge */}
-                    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'28px' }}>
-                      <span style={{ fontSize:'9px',fontWeight:'700',color:'#aaa' }}>#{pos}</span>
-                      <span style={{ fontSize:'10px',fontWeight:'600',minWidth:'20px',height:'20px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',background:statusBg,color:statusColor,marginTop:'1px' }}>
-                        {q.status==='done'?'✓':q.status==='error'?'!':pos}
-                      </span>
-                    </div>
-                    <span style={{ fontSize:'16px' }}>{statusIcon}</span>
-                    <div style={{ flex:1,minWidth:0 }}>
-                      <div style={{ fontSize:'11px',fontWeight:'500',color:'#1a3a5c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{q.file_name}</div>
-                      <div style={{ fontSize:'10px',color:'#888',marginTop:'2px',display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center' }}>
-                        <span style={{ background:statusBg,color:statusColor,padding:'1px 5px',borderRadius:'3px',fontWeight:'500' }}>{statusLabel}</span>
-                        {queueTab==='all' && <span style={{ background:'#EAF3DE',color:'#27500A',padding:'1px 5px',borderRadius:'3px' }}>{q.uploaded_by}</span>}
-                        <span>{new Date(q.created_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}</span>
-                        <span style={{ background:'#E6F1FB',color:'#0C447C',padding:'1px 5px',borderRadius:'3px' }}>{q.menu_id||'AP Manual'}</span>
-                        {q.status==='error' && <span style={{ color:'#c0392b' }}>{q.error_msg}</span>}
-                      </div>
-                    </div>
-                    <div style={{ display:'flex',gap:'4px',flexShrink:0 }}>
-                      {/* priority ↑ เฉพาะ Owner/Admin ใน All Queue และเฉพาะ pending */}
-                      {(isOwner || isAdmin) && queueTab==='all' && ['pending','waiting_ap'].includes(q.status) && (
-                        <button onClick={()=>movePriority(q.id,'up')} title="เลื่อน priority ขึ้น"
-                          style={{ padding:'3px 8px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',fontSize:'11px',cursor:'pointer',color:'#555' }}>↑</button>
-                      )}
-                      <button onClick={async()=>{
-                        const token = sessionStorage.getItem('fastapn_token');
-                        await fetch(`${API_Q}/queue/${q.id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
-                        fetchQueue();
-                      }} style={{ padding:'3px 8px',borderRadius:'4px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',color:'#c0392b',fontSize:'11px',cursor:'pointer' }}>✕</button>
+                <button onClick={()=>setShowQueue(false)} style={{ background:'none',border:'none',color:'rgba(255,255,255,0.6)',fontSize:'20px',cursor:'pointer',lineHeight:1 }}>×</button>
+              </div>
+
+              {/* Info bar */}
+              <div style={{ padding:'5px 16px',background:'#EEF3F7',borderBottom:'0.5px solid #C5CAE9',fontSize:'10px',color:'#4F6E8A',display:'flex',gap:'16px',alignItems:'center',flexShrink:0 }}>
+                <span><span style={{ width:'7px',height:'7px',borderRadius:'50%',background:'#E24B4A',display:'inline-block',marginRight:'3px' }}></span>AP Controller = Priority สูง</span>
+                <span><span style={{ width:'7px',height:'7px',borderRadius:'50%',background:'#4E8079',display:'inline-block',marginRight:'3px' }}></span>Document Center = Priority ปกติ</span>
+                {isOwner && <span style={{ marginLeft:'auto',color:'#856404',fontWeight:'500' }}>Owner: กด ↑ ลัดคิวได้</span>}
+              </div>
+
+              {/* Body */}
+              <div style={{ display:'flex',flex:1,overflow:'hidden' }}>
+
+                {/* Sidebar */}
+                <div style={{ width:'170px',flexShrink:0,borderRight:'0.5px solid #eee',background:'#fafafa',overflowY:'auto',display:'flex',flexDirection:'column' }}>
+                  {/* Dashboard */}
+                  <div style={{ padding:'10px 0' }}>
+                    <div onClick={()=>setQSideTab('dashboard')}
+                      style={{ display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 14px',cursor:'pointer',fontSize:'12px',fontWeight:'700',color:qSideTab==='dashboard'?'#455A64':'#444',background:qSideTab==='dashboard'?'#EEF3F7':'transparent',borderLeft:`2.5px solid ${qSideTab==='dashboard'?'#455A64':'transparent'}` }}>
+                      Dashboard
+                      {activeCount > 0 && <span style={{ background:'#E24B4A',color:'white',borderRadius:'8px',padding:'1px 6px',fontSize:'9px',fontWeight:'700' }}>{activeCount}</span>}
                     </div>
                   </div>
-                  );
-                })}
-              </div>
-              {/* Footer */}
-              <div style={{ padding:'8px 14px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0 }}>
-                <span style={{ fontSize:'11px',color:'#888' }}>
-                  {queueItems.filter(q=>q.status==='ocring').length > 0 ? `กำลัง OCR ${queueItems.filter(q=>q.status==='ocring').length} ไฟล์` : `${pendingCount} รอ`}
-                </span>
-                <button onClick={fetchQueue} style={{ padding:'4px 10px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'11px' }}>🔄 Refresh</button>
+                  <div style={{ borderTop:'0.5px solid #eee',margin:'0 14px' }}></div>
+                  <div style={{ padding:'8px 0' }}>
+                    <div style={{ fontSize:'9px',fontWeight:'600',color:'#bbb',padding:'4px 14px 6px',letterSpacing:'.5px',textTransform:'uppercase' }}>เมนู</div>
+                    {MENU_ITEMS.map(({ key, label }) => {
+                      const cnt = getMenuCount(key);
+                      const isOn = qSideTab === key;
+                      return (
+                        <div key={key} onClick={()=>cnt>0?setQSideTab(key):null}
+                          style={{ display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 14px',cursor:cnt>0?'pointer':'default',fontSize:'11px',color:isOn?'#455A64':cnt===0?'#bbb':'#555',background:isOn?'#EEF3F7':'transparent',borderLeft:`2.5px solid ${isOn?'#455A64':'transparent'}`,fontWeight:isOn?'600':'400' }}>
+                          {label}
+                          <span style={{ fontSize:'9px',borderRadius:'8px',padding:'1px 6px',background:cnt>0?'#E24B4A':'#E8ECEF',color:cnt>0?'white':'#aaa',fontWeight:'600' }}>{cnt}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Content */}
+                <div style={{ flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0 }}>
+
+                  {/* Status filter */}
+                  <div style={{ display:'flex',alignItems:'center',gap:'8px',padding:'8px 14px',borderBottom:'0.5px solid #eee',flexShrink:0,background:'#fafafa' }}>
+                    {[['active','กำลังทำงาน/รอ'],['done','Done'],['error','Error'],['all','ทั้งหมด']].map(([v,l]) => (
+                      <button key={v} onClick={()=>setQStatus(v)}
+                        style={{ padding:'5px 12px',fontSize:'11px',background:qStatus===v?'#455A64':'white',color:qStatus===v?'white':'#546E7A',border:'0.5px solid #CFD8DC',borderRadius:'6px',cursor:'pointer',fontWeight:qStatus===v?'500':'400',whiteSpace:'nowrap' }}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Table header */}
+                  <div style={{ display:'grid',gridTemplateColumns:'44px minmax(0,1fr) 100px 72px 90px 64px',padding:'6px 14px',background:'#F5F7F9',borderBottom:'0.5px solid #e8e8e8',flexShrink:0,gap:'4px' }}>
+                    {['#','ไฟล์','สถานะ','เวลา','อัปโหลดโดย','Action'].map((h,i) => (
+                      <div key={i} style={{ fontSize:'10px',fontWeight:'500',color:'#888',textAlign:i===5?'right':'left' }}>{h}</div>
+                    ))}
+                  </div>
+
+                  {/* List */}
+                  <div style={{ flex:1,overflowY:'auto',overflowX:'hidden' }}>
+                    {filteredItems.length === 0 ? (
+                      <div style={{ textAlign:'center',padding:'40px',color:'#aaa',fontSize:'12px' }}>
+                        <div style={{ fontSize:'28px',marginBottom:'8px' }}>✅</div>
+                        ไม่มีงานในคิว
+                      </div>
+                    ) : filteredItems.map((q, qi) => {
+                      const st = getStatusTag(q.status);
+                      const pos = q.queue_position || (qi+1);
+                      const isOcring = q.status === 'ocring';
+                      return (
+                        <div key={q.id} style={{ display:'grid',gridTemplateColumns:'44px minmax(0,1fr) 100px 72px 90px 64px',padding:'10px 14px',borderBottom:'0.5px solid #f5f5f5',alignItems:'center',gap:'4px',background:isOcring?'#f0f6ff':'white' }}>
+                          {/* # */}
+                          <div style={{ display:'flex',flexDirection:'column',alignItems:'center',gap:'1px' }}>
+                            <span style={{ fontSize:'8px',color:'#bbb',fontWeight:'700' }}>#{pos}</span>
+                            <span style={{ fontSize:'14px',lineHeight:1 }}>
+                              {q.status==='ocring'?'⚙️':q.status==='done'?'✅':q.status==='error'?'❌':q.status==='waiting_ap'?'⏸️':'⏳'}
+                            </span>
+                          </div>
+                          {/* ไฟล์ */}
+                          <div style={{ minWidth:0 }}>
+                            <div style={{ fontSize:'11px',fontWeight:'500',color:'#1a3a5c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{q.file_name}</div>
+                            <div style={{ display:'flex',gap:'3px',marginTop:'2px',flexWrap:'wrap' }}>
+                              <span style={{ fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:'#EDF5F4',color:'#4E8079',border:'1px solid #B2DFDB' }}>Document Center</span>
+                              <span style={{ fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color }}>{st.label}</span>
+                            </div>
+                            {isOcring && <div style={{ height:'3px',borderRadius:'2px',background:'#dce8fb',overflow:'hidden',marginTop:'4px' }}><div style={{ height:'100%',borderRadius:'2px',background:'#1a3a5c',animation:'ocrShimmer 1.5s ease-in-out infinite' }}/></div>}
+                          </div>
+                          {/* สถานะ */}
+                          <div><span style={{ fontSize:'9px',padding:'1px 6px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color,whiteSpace:'nowrap' }}>{st.label}</span></div>
+                          {/* เวลา */}
+                          <div style={{ fontSize:'10.5px',color:'#666' }}>{new Date(q.created_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}</div>
+                          {/* อัปโหลดโดย */}
+                          <div style={{ fontSize:'10.5px',color:'#666',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{q.uploaded_by||'-'}</div>
+                          {/* Action */}
+                          <div style={{ display:'flex',gap:'4px',justifyContent:'flex-end' }}>
+                            {isOwner && ['pending','waiting_ap'].includes(q.status) && (
+                              <button onClick={async()=>{ const token=sessionStorage.getItem('fastapn_token'); await fetch(`${API_Q}/queue/${q.id}/priority`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({direction:'up'})}); fetchQueue(); }}
+                                style={{ width:'24px',height:'24px',borderRadius:'4px',border:'0.5px solid #455A64',background:'#EEF0F2',color:'#455A64',fontSize:'11px',cursor:'pointer',fontWeight:'700',display:'flex',alignItems:'center',justifyContent:'center' }}>↑</button>
+                            )}
+                            <button onClick={async()=>{ const token=sessionStorage.getItem('fastapn_token'); await fetch(`${API_Q}/queue/${q.id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}}); fetchQueue(); }}
+                              style={{ width:'24px',height:'24px',borderRadius:'4px',border:'0.5px solid #FFCDD2',background:'#FFEBEE',color:'#C62828',fontSize:'11px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center' }}>✕</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer */}
+                  <div style={{ flexShrink:0,borderTop:'0.5px solid #eee',padding:'7px 14px',background:'#fafafa',fontSize:'10px',color:'#aaa',display:'flex',justifyContent:'space-between' }}>
+                    <span>แสดง {filteredItems.length} รายการ (24 ชั่วโมงล่าสุด)</span>
+                    <span>อัปเดตทันทีเมื่อมีการเปลี่ยนแปลง</span>
+                  </div>
+
+                </div>
               </div>
             </div>
           </div>
@@ -2247,6 +2695,10 @@ function DocumentCenter() {
   const [userRoleData, setUserRoleData] = useState(null);
   const [overrides, setOverrides] = useState([]);
   const [fileCounts, setFileCounts] = useState({});
+  const [folderBatches, setFolderBatches] = useState({});
+  const [detailFolder, setDetailFolder] = useState(null);
+  const [detailSearch, setDetailSearch] = useState('');
+  const [detailBU, setDetailBU] = useState('');
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [requesting, setRequesting] = useState({});
@@ -2267,11 +2719,24 @@ function DocumentCenter() {
         setOverrides(ovData || []);
         setRequests(reqData || []);
       }
-      const { data: countData } = await db.from('doc_files').select('folder_key');
+      const [{ data: countData }, { data: batchData }] = await Promise.all([
+        db.from('doc_files').select('folder_key'),
+        db.from('doc_collection').select('serial_code,doc_type,bu_code,bu_name,created_at,uploaded_by').neq('doc_type',''),
+      ]);
       if (countData) {
         const counts = {};
         countData.forEach(r => { counts[r.folder_key] = (counts[r.folder_key] || 0) + 1; });
+        if (batchData) counts['ap'] = (counts['ap']||0) + (batchData.filter(r=>r.doc_type==='APN01').length);
         setFileCounts(counts);
+      }
+      if (batchData) {
+        const allBatches = batchData||[];
+        console.log('[folderBatches] total:', allBatches.length);
+        const byFolder = {};
+        DOC_FOLDERS.forEach(f => {
+          if (f.docTypes) byFolder[f.key] = allBatches.filter(b=>(f.docTypes).includes(b.doc_type));
+        });
+        setFolderBatches(byFolder);
       }
     } catch (err) { console.error('fetchData error:', err); }
     setLoading(false);
@@ -2390,6 +2855,61 @@ function DocumentCenter() {
         <div style={{ position:'fixed', top:'20px', right:'20px', zIndex:9999, padding:'10px 16px', borderRadius:'8px', fontSize:'13px', fontWeight:'500', background: toast.type==='error'?'#FCEBEB':toast.type==='info'?'#e8f0fb':'#EAF3DE', color: toast.type==='error'?'#791F1F':toast.type==='info'?'#1a3a5c':'#27500A', border:`0.5px solid ${toast.type==='error'?'#f7c1c1':toast.type==='info'?'#b5d4f4':'#97C459'}`, boxShadow:'0 4px 12px rgba(0,0,0,0.1)' }}>{toast.msg}</div>
       )}
 
+      {detailFolder && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.35)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}}>
+          <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'600px',height:'520px',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+            <div style={{padding:'10px 12px',borderBottom:'0.5px solid #f0f0f0',display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
+              <span style={{fontSize:'11px',padding:'2px 8px',borderRadius:'20px',fontWeight:'500',background:detailFolder.color,color:detailFolder.textColor,whiteSpace:'nowrap'}}>{detailFolder.label}</span>
+              <div style={{flex:1,display:'flex',alignItems:'center',gap:'5px',background:'#f5f7f9',border:'0.5px solid #e0e0e0',borderRadius:'6px',padding:'5px 9px'}}>
+                <span style={{fontSize:'13px',color:'#aaa'}}>&#128269;</span>
+                <input autoFocus value={detailSearch} onChange={e=>setDetailSearch(e.target.value)} placeholder="Serial, Invoice, BU, Batch..." style={{flex:1,border:'none',background:'none',fontSize:'12px',outline:'none',color:'#333'}}/>
+                {detailSearch&&<span onClick={()=>setDetailSearch('')} style={{fontSize:'12px',color:'#aaa',cursor:'pointer'}}>&#x2715;</span>}
+              </div>
+              {(()=>{
+                const bus=[...new Set((folderBatches[detailFolder.key]||[]).map(b=>b.bu_code).filter(Boolean))].sort();
+                return bus.length>0&&(
+                  <select value={((detailFolder.docTypes||[]).includes(detailBU))?'':detailBU} onChange={e=>setDetailBU(e.target.value)}
+                    style={{fontSize:'11px',padding:'4px 8px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',color:'#555',cursor:'pointer',outline:'none',flexShrink:0}}>
+                    <option value="">BU</option>
+                    {bus.map(b=><option key={b} value={b}>{b}</option>)}
+                  </select>
+                );
+              })()}
+              <button onClick={()=>setDetailFolder(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:'18px',color:'#aaa',padding:0}}>&#x2715;</button>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:'5px',padding:'7px 12px',borderBottom:'0.5px solid #f0f0f0',flexShrink:0}}>
+              {[['','ทั้งหมด'], ...(detailFolder.docTypes||[]).map(t=>[t,t])].map(([v,l])=>(
+                <button key={v} onClick={()=>setDetailBU(v)} style={{fontSize:'10px',padding:'2px 8px',borderRadius:'20px',border:'0.5px solid #ddd',background:detailBU===v?'#1a3a5c':'white',color:detailBU===v?'white':'#555',cursor:'pointer'}}>{l}</button>
+              ))}
+            </div>
+            <div style={{flex:1,overflowY:'auto'}}>
+              {(()=>{
+                const s=detailSearch.toLowerCase();
+                const batches=(folderBatches[detailFolder.key]||[]).filter(b=>{
+                  const matchS=!s||(b.serial_code||'').toLowerCase().includes(s)||(b.bu_code||'').toLowerCase().includes(s)||(b.uploaded_by||'').toLowerCase().includes(s);
+                  const matchT=!detailBU||((detailFolder.docTypes||[]).includes(detailBU)?b.doc_type===detailBU:b.bu_code===detailBU);
+                  return matchS&&matchT;
+                });
+                if(!batches.length) return <div style={{padding:'40px',textAlign:'center',fontSize:'12px',color:'#aaa'}}>ไม่พบข้อมูล</div>;
+                return batches.map((b,i)=>(
+                  <div key={b.serial_code+i} style={{padding:'8px 12px',display:'flex',alignItems:'center',gap:'8px',borderBottom:'0.5px solid #f5f5f5'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:'11px',fontFamily:'monospace',color:'#0C447C',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.serial_code}</div>
+                      <div style={{fontSize:'10px',color:'#888',marginTop:'1px'}}>{b.bu_code||''}</div>
+                    </div>
+                    <span style={{fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:b.doc_type==='AP09'?'#EAF3DE':'#E6F1FB',color:b.doc_type==='AP09'?'#27500A':'#0C447C',flexShrink:0}}>{b.doc_type}</span>
+                    <span style={{fontSize:'10px',color:'#aaa',whiteSpace:'nowrap',flexShrink:0}}>{b.created_at?new Date(b.created_at).toLocaleDateString('th-TH',{day:'2-digit',month:'short'}):'—'}</span>
+                  </div>
+                ));
+              })()}
+            </div>
+            <div style={{padding:'7px 12px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
+              <span style={{fontSize:'10px',color:'#aaa'}}>{(folderBatches[detailFolder.key]||[]).length} batch ทั้งหมด</span>
+              <button onClick={()=>setDetailFolder(null)} style={{fontSize:'10px',padding:'2px 8px',borderRadius:'5px',border:'0.5px solid #ddd',background:'none',color:'#555',cursor:'pointer'}}>ปิด</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'16px' }}>
         <div>
           <h2 style={{ fontSize:'16px', fontWeight:'600', margin:'0 0 4px' }}>📁 Document Center</h2>
@@ -2426,9 +2946,14 @@ function DocumentCenter() {
               </div>
 
               <span style={{ fontSize:'11px', padding:'3px 10px', borderRadius:'20px', background:accessible?folder.color:'#f5f5f5', color:accessible?folder.textColor:'#aaa', display:'flex', alignItems:'center', gap:'4px', flexShrink:0, whiteSpace:'nowrap' }}>
-                📄 {count} ไฟล์
+                📄 {folderBatches[folder.key]!==undefined ? folderBatches[folder.key].filter(r=>r.doc_type!=='AP09').length : count} batch
               </span>
-
+              {folder.docTypes && (
+                <button onClick={e=>{ e.stopPropagation(); setDetailFolder(folder); setDetailSearch(''); setDetailBU(''); }}
+                  style={{ fontSize:'11px',padding:'3px 10px',borderRadius:'6px',border:'0.5px solid #d0d0d0',background:'white',color:'#555',cursor:'pointer',flexShrink:0,whiteSpace:'nowrap' }}>
+                  Detail
+                </button>
+              )}
               <span style={{ fontSize:'11px', color:'#aaa', flexShrink:0, minWidth:'80px', textAlign:'right' }}>—</span>
 
               {accessible ? (

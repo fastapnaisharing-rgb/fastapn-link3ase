@@ -10436,7 +10436,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
                 <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                   <span style={{ fontSize: '10.5px', fontWeight: '600', color: '#888', flexShrink: 0 }}>Template ที่บันทึกไว้แล้ว:</span>
                   {fullTemplates.map(tpl => (
-                    <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', minWidth: '180px', padding: '6px 10px 6px 14px', border: '0.5px solid #e5e5e0', borderRadius: '6px' }}> {/* MARKER_BATCH_CONTROL_CHIP_WIDEN */}
+                    <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 6px 4px 10px', border: '0.5px solid #e5e5e0', borderRadius: '6px' }}>
                       <span style={{ fontSize: '11.5px', fontWeight: '500', color: editingTemplateId === tpl.id ? '#1a73e8' : '#1a3a5c' }}>{tpl.name}{editingTemplateId === tpl.id ? ' (กำลังแก้ไข)' : ''}</span>
                       <button type="button" onClick={() => handleEditTemplate(tpl)} style={{ fontSize: '9.5px', padding: '3px 7px', border: '0.5px solid #ddd', borderRadius: '4px', background: '#fff', color: '#1a73e8', cursor: 'pointer' }}>✏️ แก้ไข</button>
                     </div>

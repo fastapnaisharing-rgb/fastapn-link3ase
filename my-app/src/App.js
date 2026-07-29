@@ -11,7 +11,7 @@ import ChartOfAccounts from './pages/ChartOfAccounts';
 import VendorMaster from './pages/VendorMaster';
 import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
-import APController, { InvoiceHistoryPage } from './pages/APController';
+import APController, { InvoiceHistoryPage, BatchControlPage } from './pages/APController'; // MARKER_APP_BATCH_CONTROL_PAGE_ROUTE
 import APScanOCR from './pages/APScanOCR';
 import VatController from './pages/VatController';
 import './App.css';
@@ -24,6 +24,7 @@ import BatchChatDrawer from './pages/BatchChatDrawer';
 import FilePreviewPopup from './FilePreviewPopup';
 import { confirmDialog } from './confirmDialog';
 import ConfirmDialogHost from './ConfirmDialogHost';
+import { ALL_FUNCTION_MENUS, AP_CONTROLLER_MENU, VAT_CONTROLLER_MENU } from './menuConfig'; // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 
@@ -878,13 +879,7 @@ function MainApp() {
   const handleMouseLeave   = () => { startCloseTimer(); };
   const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
 
-  const ALL_FUNCTION_MENUS = [
-    { id: 'ap-gr',         icon: '🧾', label: 'AP Controller',   permKey: 'Manual'   },
-    { id: 'vat-controller',icon: '💹', label: 'VAT Controller',  permKey: 'VAT'   },
-    { id: 'i-expense',     icon: '💸', label: 'I-Expense',       permKey: 'IE'    },
-    { id: 'gl-functional', icon: '📊', label: 'GL Functional',   permKey: 'GL'    },
-    { id: 'i-pro-interface',icon:'🔗', label: 'I-Pro Interface', permKey: 'I-Pro' },
-  ];
+  // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — ALL_FUNCTION_MENUS มาจาก menuConfig.js แล้ว (ลบ Local Array ซ้ำออก)
   const FUNCTION_MENUS = isOwner
     ? ALL_FUNCTION_MENUS
     : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(PAGE_MAINTENANCE_MAP[m.id] || m.id));
@@ -922,6 +917,11 @@ function MainApp() {
     case 'ap-drafts':
       return (isEditor || userPermissions?.['Manual'])
         ? <InvoiceHistoryPage currentUser={currentUser} userName={userName} isOwner={isOwner} isAdmin={isAdmin} />
+        : <NoAccessPage />;
+
+    case 'ap-batchctrl':
+      return (isEditor || userPermissions?.['Manual'])
+        ? <BatchControlPage currentUser={currentUser} userName={userName} />
         : <NoAccessPage />;
 
       // Functions (placeholder)
@@ -1127,13 +1127,14 @@ function MainApp() {
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>🧾 AP Controller</div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
-              {fpGroup('📥', 'Invoice Entry')}
-              {fpSub('ap-gr',   '📋', 'AP Manual')}
-              {fpSub('ap-ocr',  '🔍', 'Scan OCR')} 
-              {fpSub('ap-form', '📝', 'Purchase Order')}
-              {fpDiv()}
-              {fpGroup('🗂️', 'จัดการ')}
-              {fpSub('ap-drafts', '📄', 'Invoice History')}
+              {/* MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — Loop จาก menuConfig.js (AP_CONTROLLER_MENU.groups) เพิ่มเมนูใหม่ที่ menuConfig.js ที่เดียวพอ */}
+              {AP_CONTROLLER_MENU.groups.map((g, gi) => (
+                <React.Fragment key={g.label}>
+                  {gi > 0 && fpDiv()}
+                  {fpGroup(g.icon, g.label)}
+                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
+                </React.Fragment>
+              ))}
             </div>
           </div>
         )}
@@ -1146,13 +1147,14 @@ function MainApp() {
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>💹 VAT Controller</div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
-              {fpGroup('⚙️', 'Operation')}
-              {fpSub('vat-incomplete-report',   '📋', 'Incomplete Report')}
-              {fpSub('vat-amagno-reconcile',    '🔄', 'Amagno Reconcile')}
-              {fpDiv()}
-              {fpGroup('📊', 'Results')}
-              {fpSub('vat-popvat-report',       '📊', 'Popvat Report')}
-              {fpSub('vat-simple-input-report', '📄', 'Simple Input Report')}
+              {/* MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — Loop จาก menuConfig.js (VAT_CONTROLLER_MENU.groups) */}
+              {VAT_CONTROLLER_MENU.groups.map((g, gi) => (
+                <React.Fragment key={g.label}>
+                  {gi > 0 && fpDiv()}
+                  {fpGroup(g.icon, g.label)}
+                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
+                </React.Fragment>
+              ))}
             </div>
           </div>
         )}

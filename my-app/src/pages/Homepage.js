@@ -110,8 +110,6 @@ function Homepage({ onOpenInbox } = {}) {
   React.useEffect(() => {
     const role = isOwner ? 'owner' : isAdmin ? 'admin' : 'user';
     const token = sessionStorage.getItem('fastapn_token');
-
-    // โหลด central queue ครั้งแรก (AP OCR + DocCenter รวม)
     const fetchAll = async () => {
       try {
         const r = await fetch(`${API_QUEUE}/central-queue?role=${role}&limit=100`, {
@@ -123,9 +121,8 @@ function Homepage({ onOpenInbox } = {}) {
     };
     fetchAll();
 
-    // SSE: รับ push จาก backend เมื่อ DocCenter queue เปลี่ยน
-    // AP OCR จะ refetch ทั้งหมดเมื่อมี event เพราะต้อง merge ทั้งสองระบบ
-    const es = new EventSource(`${API_QUEUE}/queue/stream`);
+    // SSE: ส่ง token ใน query string เพราะ EventSource ไม่รองรับ custom header
+    const es = new EventSource(`${API_QUEUE}/queue/stream?token=${encodeURIComponent(token || '')}`);
     es.addEventListener('queue_update', () => { fetchAll(); });
     es.addEventListener('queue_done',   () => { fetchAll(); });
     es.addEventListener('queue_error',  () => { fetchAll(); });
@@ -135,6 +132,8 @@ function Homepage({ onOpenInbox } = {}) {
 
   const [queueModalFilter, setQueueModalFilter] = useState('active');
   const [queueModalSource, setQueueModalSource] = useState('all');
+  const [qSide,   setQSide]   = useState('dashboard');
+  const [qStatus, setQStatus] = useState('active');
 
   const handleQueueBoost = async (item) => {
     if (!isOwner || item.source !== 'docenter') return;
@@ -395,65 +394,110 @@ function Homepage({ onOpenInbox } = {}) {
 
         {/* ── Queue Modal (popup) ── */}
         {queueModal && (() => {
+          const MENU_ITEMS = [
+            { key:'ap_controller', label:'AP Controller' },
+            { key:'docenter',      label:'Document Center' },
+            { key:'vat_controller',label:'VAT Controller' },
+            { key:'i_expense',     label:'I-Expense' },
+            { key:'gl_functional', label:'GL Functional' },
+            { key:'i_pro',         label:'I-Pro Interface' },
+          ];
+          const getMenuCount = (key) => {
+            if (key === 'docenter') return queueItems.filter(q => ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
+            return 0;
+          };
+          const activeCount = queueItems.filter(q => ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
           const displayed = queueItems.filter(it => {
-            const okSrc = queueModalSource === 'all' || it.source === queueModalSource;
-            const okSt  = queueModalFilter === 'all' || ['pending','ocring','processing','waiting_ap'].includes(it.status);
-            return okSrc && okSt;
+            const matchSt = qStatus === 'all' ? true
+              : qStatus === 'active' ? ['pending','ocring','processing','waiting_ap'].includes(it.status)
+              : qStatus === 'done'   ? it.status === 'done'
+              : qStatus === 'error'  ? ['error','failed'].includes(it.status)
+              : true;
+            return matchSt;
           });
-          const activeCount = queueItems.filter(it => ['pending','ocring','processing','waiting_ap'].includes(it.status)).length;
+          const getStatusTag = (s) => ({ ocring:{label:'กำลัง OCR',bg:'#E3F0FF',color:'#1a3a5c'},processing:{label:'กำลังทำงาน',bg:'#E3F0FF',color:'#1a3a5c'},pending:{label:'รอคิว',bg:'#F5F5F5',color:'#777'},waiting_ap:{label:'รอ AP Controller',bg:'#F5EEF2',color:'#8D6B7E'},done:{label:'เสร็จแล้ว',bg:'#EEF4EF',color:'#5A7C5E'},error:{label:'ผิดพลาด',bg:'#FFEBEE',color:'#C62828'},failed:{label:'ผิดพลาด',bg:'#FFEBEE',color:'#C62828'} }[s] || {label:s,bg:'#f0f0f0',color:'#666'});
           return (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500 }} onClick={() => setQueueModal(false)}>
-              <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '12px', width: '620px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-                <div style={{ padding: '12px 16px', background: '#1a3a5c', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: '600', color: 'white' }}>🖥️ Central Queue Monitor</span>
-                    {activeCount > 0 && <span style={{ background: '#E24B4A', color: 'white', borderRadius: '10px', padding: '1px 7px', fontSize: '10px', fontWeight: '700' }}>{activeCount} รายการ</span>}
+            <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1500}} onClick={()=>setQueueModal(false)}>
+              <div onClick={e=>e.stopPropagation()} style={{background:'white',borderRadius:'12px',width:'900px',height:'580px',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
+                <div style={{background:'#1a3a5c',padding:'13px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',fontWeight:'600',color:'white'}}>
+                    🖥️ Central Queue Monitor
+                    {activeCount>0&&<span style={{background:'#E24B4A',color:'white',borderRadius:'10px',padding:'1px 8px',fontSize:'10px',fontWeight:'700'}}>{activeCount}</span>}
                   </div>
-                  <button onClick={() => setQueueModal(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: '18px', cursor: 'pointer' }}>×</button>
+                  <button onClick={()=>setQueueModal(false)} style={{background:'none',border:'none',color:'rgba(255,255,255,0.6)',fontSize:'20px',cursor:'pointer'}}>×</button>
                 </div>
-                <div style={{ padding: '5px 14px', background: '#f0f6ff', borderBottom: '0.5px solid #e0ebf7', fontSize: '10px', color: '#1a3a5c', flexShrink: 0, display: 'flex', gap: '12px' }}>
-                  <span>🔴 AP OCR = Priority สูง</span>
-                  <span>🟢 Document Center = Priority ปกติ</span>
-                  {isOwner && <span style={{ color: '#856404', fontWeight: '500' }}>Owner: กด ↑ ลัดคิวได้</span>}
-                  {isAdmin && !isOwner && <span style={{ color: '#555' }}>Admin: ดูได้ทั้งหมด ลัดคิวไม่ได้</span>}
+                <div style={{padding:'5px 16px',background:'#EEF3F7',borderBottom:'0.5px solid #C5CAE9',fontSize:'10px',color:'#4F6E8A',display:'flex',gap:'16px',alignItems:'center',flexShrink:0}}>
+                  <span><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#E24B4A',display:'inline-block',marginRight:'3px'}}></span>AP Controller = Priority สูง</span>
+                  <span><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#4E8079',display:'inline-block',marginRight:'3px'}}></span>Document Center = Priority ปกติ</span>
+                  {isOwner&&<span style={{marginLeft:'auto',color:'#856404',fontWeight:'500'}}>Owner: กด ↑ ลัดคิวได้</span>}
                 </div>
-                <div style={{ display: 'flex', borderBottom: '0.5px solid #eee', flexShrink: 0 }}>
-                  {[['active','กำลังทำงาน/รอ'],['all','ทั้งหมด']].map(([v,l]) => (
-                    <button key={v} onClick={() => setQueueModalFilter(v)} style={{ flex: 1, padding: '7px', fontSize: '11px', border: 'none', background: 'none', borderBottom: queueModalFilter===v?'2px solid #1a3a5c':'2px solid transparent', color: queueModalFilter===v?'#1a3a5c':'#888', cursor: 'pointer', fontWeight: queueModalFilter===v?'500':'400' }}>{l}</button>
-                  ))}
-                  {[['all','ทุกระบบ'],['ap_ocr','AP OCR'],['docenter','Document Center']].map(([v,l]) => (
-                    <button key={v} onClick={() => setQueueModalSource(v)} style={{ flex: 1, padding: '7px', fontSize: '11px', border: 'none', background: 'none', borderBottom: queueModalSource===v?'2px solid #E65100':'2px solid transparent', color: queueModalSource===v?'#E65100':'#888', cursor: 'pointer', fontWeight: queueModalSource===v?'500':'400' }}>{l}</button>
-                  ))}
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto' }}>
-                  {displayed.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '40px', color: '#aaa', fontSize: '12px' }}><div style={{ fontSize: '28px', marginBottom: '8px' }}>✅</div>ไม่มีงานในคิว</div>
-                  ) : displayed.map((item, i) => {
-                    const st  = QUEUE_STATUS_CONFIG[item.status] || { label: item.status, color: '#555', bg: '#f5f5f5', icon: '?' };
-                    const src = QUEUE_SOURCE_CONFIG[item.source] || { label: item.source, color: '#555', bg: '#f5f5f5' };
-                    return (
-                      <div key={`${item.source}-${item.source_id}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderBottom: '0.5px solid #f5f5f5', background: ['ocring','processing'].includes(item.status) ? '#f8fbff' : 'white' }}>
-                        <span style={{ fontSize: '14px', flexShrink: 0 }}>{st.icon}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#1a3a5c', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.file_name}>{queueFmtFile(item.file_name)}</div>
-                          <div style={{ display: 'flex', gap: '5px', marginTop: '2px', flexWrap: 'wrap', alignItems: 'center' }}>
-                            <span style={{ fontSize: '9px', fontWeight: '600', padding: '1px 5px', borderRadius: '3px', background: src.bg, color: src.color }}>{src.label}</span>
-                            <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', background: st.bg, color: st.color, fontWeight: '500' }}>{st.label}</span>
-                            <span style={{ fontSize: '9px', color: '#aaa' }}>{queueFmtTime(item.created_at)}</span>
-                            {(isOwner || isAdmin) && item.uploaded_by && <span style={{ fontSize: '9px', color: '#888' }}>{item.uploaded_by.split('@')[0]}</span>}
-                          </div>
-                          {item.error_msg && <div style={{ fontSize: '9px', color: '#c0392b', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.error_msg}</div>}
-                        </div>
-                        {isOwner && ['pending','waiting_ap'].includes(item.status) && item.source === 'docenter' && (
-                          <button onClick={() => handleQueueBoost(item)} title="ลัดคิว" style={{ width: '22px', height: '22px', borderRadius: '4px', border: '0.5px solid #1a3a5c', background: '#f0f6ff', color: '#1a3a5c', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>↑</button>
-                        )}
+                <div style={{display:'flex',flex:1,overflow:'hidden'}}>
+                  <div style={{width:'170px',flexShrink:0,borderRight:'0.5px solid #eee',background:'#fafafa',overflowY:'auto'}}>
+                    <div style={{padding:'10px 0'}}>
+                      <div onClick={()=>setQSide('dashboard')} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 14px',cursor:'pointer',fontSize:'12px',fontWeight:'700',color:qSide==='dashboard'?'#455A64':'#444',background:qSide==='dashboard'?'#EEF3F7':'transparent',borderLeft:`2.5px solid ${qSide==='dashboard'?'#455A64':'transparent'}`}}>
+                        Dashboard {activeCount>0&&<span style={{background:'#E24B4A',color:'white',borderRadius:'8px',padding:'1px 6px',fontSize:'9px',fontWeight:'700'}}>{activeCount}</span>}
                       </div>
-                    );
-                  })}
-                </div>
-                <div style={{ padding: '7px 14px', borderTop: '0.5px solid #eee', background: '#fafafa', flexShrink: 0, fontSize: '10px', color: '#aaa', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>แสดง {displayed.length} จาก {queueItems.length} รายการ (24 ชั่วโมงล่าสุด)</span>
-                  <span>อัปเดตทุก 15 วิ</span>
+                    </div>
+                    <div style={{borderTop:'0.5px solid #eee',margin:'0 14px'}}></div>
+                    <div style={{padding:'8px 0'}}>
+                      <div style={{fontSize:'9px',fontWeight:'600',color:'#bbb',padding:'4px 14px 6px',letterSpacing:'.5px',textTransform:'uppercase'}}>เมนู</div>
+                      {MENU_ITEMS.map(({key,label})=>{
+                        const cnt=getMenuCount(key); const isOn=qSide===key;
+                        return <div key={key} onClick={()=>cnt>0?setQSide(key):null} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 14px',cursor:cnt>0?'pointer':'default',fontSize:'11px',color:isOn?'#455A64':cnt===0?'#bbb':'#555',background:isOn?'#EEF3F7':'transparent',borderLeft:`2.5px solid ${isOn?'#455A64':'transparent'}`,fontWeight:isOn?'600':'400'}}>
+                          {label}<span style={{fontSize:'9px',borderRadius:'8px',padding:'1px 6px',background:cnt>0?'#E24B4A':'#E8ECEF',color:cnt>0?'white':'#aaa',fontWeight:'600'}}>{cnt}</span>
+                        </div>;
+                      })}
+                    </div>
+                  </div>
+                  <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 14px',borderBottom:'0.5px solid #eee',flexShrink:0,background:'#fafafa'}}>
+                      {[['active','กำลังทำงาน/รอ'],['done','Done'],['error','Error'],['all','ทั้งหมด']].map(([v,l])=>(
+                        <button key={v} onClick={()=>setQStatus(v)} style={{padding:'5px 12px',fontSize:'11px',background:qStatus===v?'#455A64':'white',color:qStatus===v?'white':'#546E7A',border:'0.5px solid #CFD8DC',borderRadius:'6px',cursor:'pointer',fontWeight:qStatus===v?'500':'400',whiteSpace:'nowrap'}}>{l}</button>
+                      ))}
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'44px minmax(0,1fr) 100px 72px 90px 64px',padding:'6px 14px',background:'#F5F7F9',borderBottom:'0.5px solid #e8e8e8',flexShrink:0,gap:'4px'}}>
+                      {['#','ไฟล์','สถานะ','เวลา','อัปโหลดโดย','Action'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:'500',color:'#888',textAlign:i===5?'right':'left'}}>{h}</div>)}
+                    </div>
+                    <div style={{flex:1,overflowY:'auto'}}>
+                      {displayed.length===0?(
+                        <div style={{textAlign:'center',padding:'40px',color:'#aaa',fontSize:'12px'}}><div style={{fontSize:'28px',marginBottom:'8px'}}>✅</div>ไม่มีงานในคิว</div>
+                      ):displayed.map((item,qi)=>{
+                        const st=getStatusTag(item.status);
+                        const src=item.source==='ap_ocr'?{label:'AP Controller',bg:'#EEF0F2',color:'#546E7A'}:{label:'Document Center',bg:'#EDF5F4',color:'#4E8079'};
+                        const pos=item.queue_position||(qi+1);
+                        const isOcring=['ocring','processing'].includes(item.status);
+                        return (
+                          <div key={`${item.source}-${item.source_id}-${qi}`} style={{display:'grid',gridTemplateColumns:'44px minmax(0,1fr) 100px 72px 90px 64px',padding:'10px 14px',borderBottom:'0.5px solid #f5f5f5',alignItems:'center',gap:'4px',background:isOcring?'#f0f6ff':'white'}}>
+                            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'1px'}}>
+                              <span style={{fontSize:'8px',color:'#bbb',fontWeight:'700'}}>#{pos}</span>
+                              <span style={{fontSize:'14px',lineHeight:1}}>{isOcring?'⚙️':item.status==='done'?'✅':['error','failed'].includes(item.status)?'❌':item.status==='waiting_ap'?'⏸️':'⏳'}</span>
+                            </div>
+                            <div style={{minWidth:0}}>
+                              <div style={{fontSize:'11px',fontWeight:'500',color:'#1a3a5c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={item.file_name}>{queueFmtFile(item.file_name)}</div>
+                              <div style={{display:'flex',gap:'3px',marginTop:'2px',flexWrap:'wrap'}}>
+                                <span style={{fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:src.bg,color:src.color}}>{src.label}</span>
+                                <span style={{fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color}}>{st.label}</span>
+                              </div>
+                              {isOcring&&<div style={{height:'3px',borderRadius:'2px',background:'#dce8fb',overflow:'hidden',marginTop:'4px'}}><div style={{height:'100%',borderRadius:'2px',background:'#1a3a5c',animation:'ocrShimmer 1.5s ease-in-out infinite'}}/></div>}
+                            </div>
+                            <div><span style={{fontSize:'9px',padding:'1px 6px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color,whiteSpace:'nowrap'}}>{st.label}</span></div>
+                            <div style={{fontSize:'10.5px',color:'#666'}}>{queueFmtTime(item.created_at)}</div>
+                            <div style={{fontSize:'10.5px',color:'#666',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.uploaded_by?.split('@')[0]||'-'}</div>
+                            <div style={{display:'flex',gap:'4px',justifyContent:'flex-end'}}>
+                              {isOwner&&['pending','waiting_ap'].includes(item.status)&&item.source==='docenter'&&(
+                                <button onClick={()=>handleQueueBoost(item)} style={{width:'24px',height:'24px',borderRadius:'4px',border:'0.5px solid #455A64',background:'#EEF0F2',color:'#455A64',fontSize:'11px',cursor:'pointer',fontWeight:'700',display:'flex',alignItems:'center',justifyContent:'center'}}>↑</button>
+                              )}
+                              <button style={{width:'24px',height:'24px',borderRadius:'4px',border:'0.5px solid #FFCDD2',background:'#FFEBEE',color:'#C62828',fontSize:'11px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{flexShrink:0,borderTop:'0.5px solid #eee',padding:'7px 14px',background:'#fafafa',fontSize:'10px',color:'#aaa',display:'flex',justifyContent:'space-between'}}>
+                      <span>แสดง {displayed.length} รายการ (24 ชั่วโมงล่าสุด)</span>
+                      <span>อัปเดตทันทีเมื่อมีการเปลี่ยนแปลง</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
