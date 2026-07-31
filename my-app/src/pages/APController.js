@@ -9998,8 +9998,30 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   );
 }
 
+// ── MARKER_BATCH_CONTROL_ZONEBOX_COMPONENT ──────────────────────────────────────────────────
+// Box กลางใช้ร่วมกันทั้ง Zone A / B / C — ปรับ Style จุดเดียวมีผลทั้ง 3 Zone
+// title: Label หัวกล่อง (ไม่ใส่ = ไม่มี Header แถบบน)
+// highlighted: true = แถบ Header สีฟ้า + ขอบสีฟ้า (ใช้กับ Zone C)
+// noPadding: true = ไม่เติม Padding ใน Body (ใช้กับ Zone A ที่มีตาราง Edge-to-edge)
+function ZoneBox({ title, highlighted, noPadding, children, style }) {
+  return (
+    <div style={{ background: '#fff', border: highlighted ? '0.5px solid #185FA5' : '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden', display: 'flex', flexDirection: 'column', ...style }}>
+      {title && (
+        <div style={{ padding: '9px 18px', borderBottom: '0.5px solid ' + (highlighted ? '#cfe3f7' : '#eee'), background: highlighted ? '#E6F1FB' : 'transparent', fontSize: '10.5px', fontWeight: '600', color: highlighted ? '#0C447C' : '#185FA5', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+          {title}
+        </div>
+      )}
+      <div style={{ padding: noPadding ? 0 : '16px 18px', flex: 1, minHeight: 0 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function BatchControlPage({ currentUser, userName = '' }) {
-  const { isOwner } = useUserRole();
+  const { isOwner, isAdmin } = useUserRole();
+  // MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS
+  const [batchControlSubTab, setBatchControlSubTab] = React.useState('mail');
   const [templates, setTemplates] = React.useState([]);
   const [activeTemplateId, setActiveTemplateId] = React.useState(null);
   const [batches, setBatches] = React.useState([]);
@@ -10115,10 +10137,11 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     (async () => {
       try {
         const { data } = await db.from('company_list').select('ap_to_fp').eq('bu', singleBu).single();
+        // ── MARKER_BATCH_CONTROL_STRING_GUARD_V1 ── Cast เป็น String เสมอ กันข้อมูลเพี้ยนใน DB (เช่น เผลอบันทึกตัวเลข) ทำ .trim() พัง
         const apToFp = data?.ap_to_fp || {};
-        setToEmail(apToFp.to || '');
-        setCcEmail(apToFp.cc || '');
-        setGreetingName(apToFp.greeting_name || '');
+        setToEmail(String(apToFp.to ?? ''));
+        setCcEmail(String(apToFp.cc ?? ''));
+        setGreetingName(String(apToFp.greeting_name ?? ''));
       } catch (err) { console.error('fetch ap_to_fp error:', err); }
     })();
   }, [singleBu]);
@@ -10198,12 +10221,15 @@ export function BatchControlPage({ currentUser, userName = '' }) {
   const [confirmingSent, setConfirmingSent] = React.useState(false);
 
   const handleOpenOutlook = () => {
-    if (!selectedIds.length || !toEmail.trim()) return;
+    // ── MARKER_BATCH_CONTROL_STRING_GUARD_V1 ── String(...) กันพังถ้า State ดันไม่ใช่ String
+    const toEmailStr = String(toEmail ?? '');
+    const ccEmailStr = String(ccEmail ?? '');
+    if (!selectedIds.length || !toEmailStr.trim()) return;
     const qs = [];
-    if (ccEmail.trim()) qs.push(`cc=${encodeURIComponent(ccEmail.trim())}`);
+    if (ccEmailStr.trim()) qs.push(`cc=${encodeURIComponent(ccEmailStr.trim())}`);
     qs.push(`subject=${encodeURIComponent(subject)}`);
     qs.push(`body=${encodeURIComponent(body)}`);
-    window.location.href = `mailto:${encodeURIComponent(toEmail.trim())}?${qs.join('&')}`;
+    window.location.href = `mailto:${encodeURIComponent(toEmailStr.trim())}?${qs.join('&')}`;
     setShowSendConfirm(true);
   };
 
@@ -10331,11 +10357,21 @@ export function BatchControlPage({ currentUser, userName = '' }) {
             </div>
           </div>
           {isOwner && (
-            <button onClick={() => setShowNewTemplate(true)} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#1a73e8', color: '#fff', fontSize: '12.5px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Template ใหม่</button>
+            <button onClick={() => setShowNewTemplate(true)} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: '#fff', fontSize: '12.5px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Template ใหม่</button>
           )}
         </div>
       </div>
 
+      {/* MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS — Tab ย่อย Mail Management / Dashboard */}
+      <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', gap: '4px' }}>
+        <div onClick={() => setBatchControlSubTab('mail')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'mail' ? '600' : '400', color: batchControlSubTab === 'mail' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'mail' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Mail Management</div>
+        {(isOwner || isAdmin) && (
+          <div onClick={() => setBatchControlSubTab('dashboard')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'dashboard' ? '600' : '400', color: batchControlSubTab === 'dashboard' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'dashboard' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Dashboard</div>
+        )}
+      </div>
+
+      {batchControlSubTab === 'mail' && (
+      <>
       {/* MARKER_BATCH_CONTROL_3COL_LAYOUT */}
       {showNewTemplate && isOwner && (
         <div style={{ padding: '16px 24px', background: '#f5f6f8', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, boxSizing: 'border-box' }}>
@@ -10459,7 +10495,8 @@ export function BatchControlPage({ currentUser, userName = '' }) {
       {/* MARKER_BATCH_CONTROL_FULLSCREEN_TEMPLATE */}
       {!showNewTemplate && (
         <>
-      <div style={{ padding: '16px 24px' }}>
+      {/* MARKER_BATCH_CONTROL_3ZONE_LAYOUT_V1 -- Zone A เต็มความกว้าง */}
+      <div style={{ padding: '16px 24px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#555', cursor: 'pointer' }}>
             <input type="checkbox" checked={visibleBatches.length > 0 && selectedIds.length === visibleBatches.length} onChange={toggleSelectAll} style={{ width: '14px', height: '14px' }} /> เลือกทั้งหมด
@@ -10471,7 +10508,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
           </select>
         </div>
 
-        <div style={{ border: '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden', background: '#fff' }}>
+        <ZoneBox noPadding>
           <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 100px 100px 1fr 110px', background: '#fafaf8', padding: '8px 16px', fontSize: '10.5px', color: '#999', fontWeight: '600', textTransform: 'uppercase' }}>
             <div></div><div>Batch</div><div>BU</div><div>Receive</div><div>Due</div><div>Status</div><div style={{ textAlign: 'right' }}>ยอดรวม</div>
           </div>
@@ -10487,57 +10524,82 @@ export function BatchControlPage({ currentUser, userName = '' }) {
               <div style={{ textAlign: 'right' }}>{Number(b.total_amount || 0).toLocaleString()}</div>
             </div>
           ))}
-        </div>
+        </ZoneBox>
       </div>
 
+      {/* Zone B (Config & Attachment) + Zone C (Outlook Layout Draft) คู่กัน */}
       {selectedIds.length > 0 && (
-        <div style={{ padding: '0 24px 20px' }}>
-          <div style={{ background: '#fff', border: '0.5px solid #e5e5e0', borderRadius: '10px', padding: '16px 20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c' }}>📡 Monitor</span>
-              <span style={{ fontSize: '11px', color: '#aaa' }}>เลือกไว้ {selectedIds.length} Batch · {selectedTotal.toLocaleString()} บาท</span>
-              {!singleBu && selectedBuList.length > 1 && (
-                <span style={{ fontSize: '10.5px', color: '#791F1F', background: '#FCEBEB', padding: '2px 8px', borderRadius: '8px' }}>⚠️ เลือกข้าม BU กัน — Auto-fill To/Cc/เรียน จะไม่ทำงาน กรอกเองได้</span>
-              )}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เรียน (Greeting Name)</div>
-                <input value={greetingName} onChange={e => setGreetingName(e.target.value)} onBlur={e => saveApToFp('greeting_name', e.target.value)} placeholder="เช่น คุณสมชาย" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>ถึง (To)</div>
-                <input value={toEmail} onChange={e => setToEmail(e.target.value)} onBlur={e => saveApToFp('to', e.target.value)} placeholder="กรอกอีเมลผู้รับ" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>สำเนา (Cc)</div>
-                <input value={ccEmail} onChange={e => setCcEmail(e.target.value)} onBlur={e => saveApToFp('cc', e.target.value)} placeholder="(ถ้ามี)" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box' }} />
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>หัวข้อ</div>
-                <input value={subject} onChange={e => setSubject(e.target.value)} style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เนื้อหา</div>
-                <textarea value={body} onChange={e => setBody(e.target.value)} onKeyDown={makeTabHandler(setBody)} style={{ width: '100%', height: '90px', padding: '8px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical' }} />
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px' }}>
-              <div style={{ background: '#FAEEDA', border: '0.5px solid #EF9F27', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#854F0B', flex: 1 }}>
+        <div style={{ padding: '16px 24px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c' }}>📡 Monitor</span>
+            <span style={{ fontSize: '11px', color: '#aaa' }}>เลือกไว้ {selectedIds.length} Batch · {selectedTotal.toLocaleString()} บาท</span>
+            {!singleBu && selectedBuList.length > 1 && (
+              <span style={{ fontSize: '10.5px', color: '#791F1F', background: '#FCEBEB', padding: '2px 8px', borderRadius: '8px' }}>⚠️ เลือกข้าม BU กัน — Auto-fill To/Cc/เรียน จะไม่ทำงาน กรอกเองได้</span>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
+            <ZoneBox title="⚙️ Config & Attachment">
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เรียน (Greeting Name)</div>
+              <input value={greetingName} onChange={e => setGreetingName(e.target.value)} onBlur={e => saveApToFp('greeting_name', e.target.value)} placeholder="เช่น คุณสมชาย" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>ถึง (To)</div>
+              <input value={toEmail} onChange={e => setToEmail(e.target.value)} onBlur={e => saveApToFp('to', e.target.value)} placeholder="กรอกอีเมลผู้รับ" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>สำเนา (Cc)</div>
+              <input value={ccEmail} onChange={e => setCcEmail(e.target.value)} onBlur={e => saveApToFp('cc', e.target.value)} placeholder="(ถ้ามี)" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>หัวข้อ</div>
+              <input value={subject} onChange={e => setSubject(e.target.value)} style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เนื้อหา</div>
+              <textarea value={body} onChange={e => setBody(e.target.value)} onKeyDown={makeTabHandler(setBody)} style={{ width: '100%', height: '90px', padding: '8px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', marginBottom: '10px' }} />
+              <div style={{ background: '#FAEEDA', border: '0.5px solid #EF9F27', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#854F0B' }}>
                 📎 ไฟล์แนบต้องดาวน์โหลดแล้วลากใส่ Outlook เอง (ข้อจำกัดของ Browser)
               </div>
-              {showSendConfirm ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '11.5px', color: '#666', whiteSpace: 'nowrap' }}>ส่งอีเมลใน Outlook เรียบร้อยหรือยัง?</span>
-                  <button onClick={handleCancelSendConfirm} disabled={confirmingSent}
-                    style={{ padding: '8px 14px', borderRadius: '8px', border: '0.5px solid #ddd', background: '#fff', color: '#666', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>ยกเลิก</button>
-                  <button onClick={handleConfirmSent} disabled={confirmingSent}
-                    style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: confirmingSent ? '#aaa' : '#27500A', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: confirmingSent ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
-                    {confirmingSent ? 'กำลังบันทึก...' : '✅ ยืนยันว่าส่งแล้ว'}
-                  </button>
-                </div>
-              ) : (
-                <button onClick={handleOpenOutlook} disabled={!toEmail.trim()} style={{ padding: '9px 22px', borderRadius: '8px', border: 'none', background: toEmail.trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: toEmail.trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 เปิด Outlook Draft →</button>
-              )}
-            </div>
+            </ZoneBox>
+
+            <ZoneBox title="👁️ Outlook Layout Draft" highlighted>
+              <div style={{ display: 'flex', fontSize: '11px', marginBottom: '8px' }}>
+                <span style={{ color: '#888', width: '48px', flexShrink: 0 }}>ถึง</span>
+                <span style={{ color: toEmail ? '#333' : '#ccc' }}>{toEmail || '(ยังไม่ได้กรอก)'}</span>
+              </div>
+              <div style={{ display: 'flex', fontSize: '11px', marginBottom: '8px' }}>
+                <span style={{ color: '#888', width: '48px', flexShrink: 0 }}>สำเนา</span>
+                <span style={{ color: ccEmail ? '#333' : '#ccc' }}>{ccEmail || '(ไม่มี)'}</span>
+              </div>
+              <div style={{ display: 'flex', fontSize: '11px', marginBottom: '10px' }}>
+                <span style={{ color: '#888', width: '48px', flexShrink: 0 }}>เรื่อง</span>
+                <span style={{ color: '#1a3a5c', fontWeight: '600' }}>{subject || <span style={{ color: '#ccc' }}>(ยังไม่ได้กรอก Subject)</span>}</span>
+              </div>
+              <div style={{ borderTop: '0.5px solid #eee', paddingTop: '10px', fontSize: '11.5px', color: '#333', whiteSpace: 'pre-wrap', lineHeight: '1.65' }}>
+                {body || <span style={{ color: '#ccc' }}>(ยังไม่ได้กรอก Body)</span>}
+              </div>
+            </ZoneBox>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            {showSendConfirm ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '11.5px', color: '#666', whiteSpace: 'nowrap' }}>ส่งอีเมลใน Outlook เรียบร้อยหรือยัง?</span>
+                <button onClick={handleCancelSendConfirm} disabled={confirmingSent}
+                  style={{ padding: '8px 14px', borderRadius: '8px', border: '0.5px solid #ddd', background: '#fff', color: '#666', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>ยกเลิก</button>
+                <button onClick={handleConfirmSent} disabled={confirmingSent}
+                  style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: confirmingSent ? '#aaa' : '#27500A', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: confirmingSent ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                  {confirmingSent ? 'กำลังบันทึก...' : '✅ ยืนยันว่าส่งแล้ว'}
+                </button>
+              </div>
+            ) : (
+              <button onClick={handleOpenOutlook} disabled={!String(toEmail ?? '').trim()} style={{ padding: '9px 22px', borderRadius: '8px', border: 'none', background: String(toEmail ?? '').trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: String(toEmail ?? '').trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 เปิด Outlook Draft →</button>
+            )}
           </div>
         </div>
       )}
         </>
+      )}
+      </>
+      )}
+
+      {batchControlSubTab === 'dashboard' && (isOwner || isAdmin) && (
+        <div style={{ padding: '60px 24px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+          📊 Dashboard — Coming soon
+        </div>
       )}
     </div>
   );

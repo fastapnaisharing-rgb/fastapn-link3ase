@@ -3,7 +3,6 @@ import Chart from 'chart.js/auto';
 
 const WEBHOOK_URL = 'http://10.101.87.126:9000';
 const HEALTH_URL  = 'http://10.101.87.126:4000/health';
-const POLL_MS     = 2000;
 
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
@@ -79,30 +78,59 @@ export default function DeployMonitor({ inline = false, onClose }) {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, []);
 
-  // Poll /status every 2s
+  // Deploy events via SSE (แทนที่ polling /status ทุก 2s)
   useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const r = await fetch(`${WEBHOOK_URL}/status`);
-        const data = await r.json();
-        if (cancelled) return;
-        setConnected(true);
-        setHistory(data.history || []);
-        setCurrent(data.current || null);
-        if (data.current) {
-          setSelectedId(data.current.id);
-          setTimeout(scrollBottom, 50);
-        } else if (!selectedId && data.history?.length) {
-          setSelectedId(data.history[0].id);
+    let es;
+    let retryTimer;
+
+    const connect = () => {
+      es = new EventSource(`${WEBHOOK_URL}/events`);
+
+      es.onopen = () => setConnected(true);
+
+      es.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+
+        if (msg.type === 'snapshot') {
+          // ข้อมูล ณ ตอนที่เพิ่ง connect เข้ามา (กันพลาด event ตอนปิดหน้าอยู่)
+          setHistory(msg.history || []);
+          setCurrent(msg.current || null);
+          if (msg.current) {
+            setSelectedId(msg.current.id);
+            setTimeout(scrollBottom, 50);
+          } else if (!selectedId && msg.history?.length) {
+            setSelectedId(msg.history[0].id);
+          }
         }
-      } catch {
-        if (!cancelled) setConnected(false);
-      }
+
+        if (msg.type === 'deploy-start') {
+          setCurrent(msg.deploy);
+          setHistory(h => [msg.deploy, ...h].slice(0, 20));
+          setSelectedId(msg.deploy.id);
+          setTimeout(scrollBottom, 50);
+        }
+
+        if (msg.type === 'deploy-log') {
+          setCurrent(c => (c && c.id === msg.deployId) ? { ...c, lines: [...c.lines, msg.entry] } : c);
+          setHistory(h => h.map(d => d.id === msg.deployId ? { ...d, lines: [...d.lines, msg.entry] } : d));
+          setTimeout(scrollBottom, 50);
+        }
+
+        if (msg.type === 'deploy-done' && msg.deploy) {
+          setCurrent(null);
+          setHistory(h => h.map(d => d.id === msg.deploy.id ? msg.deploy : d));
+        }
+      };
+
+      es.onerror = () => {
+        // EventSource พยายาม reconnect ให้เองอัตโนมัติ แต่ระหว่างหลุดให้โชว์ Disconnected
+        setConnected(false);
+      };
     };
-    poll();
-    const iv = setInterval(poll, POLL_MS);
-    return () => { cancelled = true; clearInterval(iv); };
+
+    connect();
+    return () => { es?.close(); clearTimeout(retryTimer); };
   }, [scrollBottom]);
 
   // Elapsed timer

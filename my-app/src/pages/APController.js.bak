@@ -9999,7 +9999,9 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 }
 
 export function BatchControlPage({ currentUser, userName = '' }) {
-  const { isOwner } = useUserRole();
+  const { isOwner, isAdmin } = useUserRole();
+  // MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS
+  const [batchControlSubTab, setBatchControlSubTab] = React.useState('mail');
   const [templates, setTemplates] = React.useState([]);
   const [activeTemplateId, setActiveTemplateId] = React.useState(null);
   const [batches, setBatches] = React.useState([]);
@@ -10336,6 +10338,16 @@ export function BatchControlPage({ currentUser, userName = '' }) {
         </div>
       </div>
 
+      {/* MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS — Tab ย่อย Mail Management / Dashboard */}
+      <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', gap: '4px' }}>
+        <div onClick={() => setBatchControlSubTab('mail')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'mail' ? '600' : '400', color: batchControlSubTab === 'mail' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'mail' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Mail Management</div>
+        {(isOwner || isAdmin) && (
+          <div onClick={() => setBatchControlSubTab('dashboard')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'dashboard' ? '600' : '400', color: batchControlSubTab === 'dashboard' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'dashboard' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Dashboard</div>
+        )}
+      </div>
+
+      {batchControlSubTab === 'mail' && (
+      <>
       {/* MARKER_BATCH_CONTROL_3COL_LAYOUT */}
       {showNewTemplate && isOwner && (
         <div style={{ padding: '16px 24px', background: '#f5f6f8', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, boxSizing: 'border-box' }}>
@@ -10436,7 +10448,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
                 <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                   <span style={{ fontSize: '10.5px', fontWeight: '600', color: '#888', flexShrink: 0 }}>Template ที่บันทึกไว้แล้ว:</span>
                   {fullTemplates.map(tpl => (
-                    <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 6px 4px 10px', border: '0.5px solid #e5e5e0', borderRadius: '6px' }}>
+                    <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', minWidth: '180px', padding: '6px 10px 6px 14px', border: '0.5px solid #e5e5e0', borderRadius: '6px' }}> {/* MARKER_BATCH_CONTROL_CHIP_WIDEN */}
                       <span style={{ fontSize: '11.5px', fontWeight: '500', color: editingTemplateId === tpl.id ? '#1a73e8' : '#1a3a5c' }}>{tpl.name}{editingTemplateId === tpl.id ? ' (กำลังแก้ไข)' : ''}</span>
                       <button type="button" onClick={() => handleEditTemplate(tpl)} style={{ fontSize: '9.5px', padding: '3px 7px', border: '0.5px solid #ddd', borderRadius: '4px', background: '#fff', color: '#1a73e8', cursor: 'pointer' }}>✏️ แก้ไข</button>
                     </div>
@@ -10538,6 +10550,14 @@ export function BatchControlPage({ currentUser, userName = '' }) {
         </div>
       )}
         </>
+      )}
+      </>
+      )}
+
+      {batchControlSubTab === 'dashboard' && (isOwner || isAdmin) && (
+        <div style={{ padding: '60px 24px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+          📊 Dashboard — Coming soon
+        </div>
       )}
     </div>
   );

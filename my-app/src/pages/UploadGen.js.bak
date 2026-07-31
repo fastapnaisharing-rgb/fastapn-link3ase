@@ -1716,7 +1716,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                           {hasSci
                             ? <><strong>Format ผิด {sciCount} แถว</strong> — ตรวจสอบ Invoice Num</>
                             : hasDup
-                                                    ? <>{apn01DupW.length>0&&<span>APN01: <strong>ซ้ำ {apn01DupW.length}/{parsedRows.length} แถว</strong></span>}{apn01DupW.length>0&&ap09DupW.length>0&&<span style={{margin:'0 6px',color:'#ccc'}}>|</span>}{ap09DupW.length>0&&<span>AP09: <strong>ซ้ำ {ap09DupW.length}/{ap09TotalCnt} แถว</strong></span>}{allDup&&' — อาจเคย Upload ไปแล้ว'}</>
+                                                    ? <>{apn01DupW.length>0&&<span>APN01: <strong>ซ้ำ {apn01DupW.length}/{parsedRows.length} แถว</strong></span>}{apn01DupW.length>0&&ap09DupW.length>0&&<span style={{margin:'0 6px',color:'#ccc'}}>|</span>}{ap09DupW.length>0&&<span>AP09: <strong>ซ้ำ {ap09DupW.length}/{ap09TotalCnt} แถว</strong></span>}{allDup&&' — อาจเคย Upload �Dปแล้ว'}</>
                               : <><strong>เอาเข้า {parsedRows.length} แถว</strong>{ap09Count>0?` · AP09 ${ap09Count} แถว`:''}</>
                           }
                         </span>
