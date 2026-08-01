@@ -12,62 +12,6 @@ import { useAuth } from "../contexts/AuthContext";
 
 const API_BASE = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '') + '/api/ocr';
 
-// ================================================================
-// Shared WebSocket singleton -- ใช้ connection เดียวทั้งไฟล์ ไม่ว่าจะมี
-// component ไหน subscribe พร้อมกันกี่ตัวก็ตาม (แทนที่แต่ละ component
-// จะเปิด connection แยกกันเอง) เชื่อมกับ wsBroadcast ฝั่ง Node.js backend
-// ที่ ocr_worker_v2.py ยิง event 'ap_ocr_progress' มาให้ตอนหน้าเสร็จ
-// ================================================================
-const WS_BASE = API_BASE.replace(/\/api\/ocr$/, '').replace(/^http/, 'ws');
-let _wsSocket = null;
-let _wsListeners = new Set();
-let _wsRefCount = 0;
-let _wsReconnectTimer = null;
-
-function _wsConnect() {
-  if (_wsSocket && (_wsSocket.readyState === WebSocket.OPEN || _wsSocket.readyState === WebSocket.CONNECTING)) return;
-  try {
-    _wsSocket = new WebSocket(WS_BASE);
-    _wsSocket.onmessage = (e) => {
-      let msg;
-      try { msg = JSON.parse(e.data); } catch (_) { return; }
-      _wsListeners.forEach((cb) => { try { cb(msg); } catch (_) {} });
-    };
-    _wsSocket.onclose = () => {
-      _wsSocket = null;
-      if (_wsRefCount > 0) {
-        clearTimeout(_wsReconnectTimer);
-        _wsReconnectTimer = setTimeout(_wsConnect, 3000); // reconnect ถ้ายังมีคน subscribe อยู่
-      }
-    };
-    _wsSocket.onerror = () => { try { _wsSocket && _wsSocket.close(); } catch (_) {} };
-  } catch (_) {
-    // เปิด WS ไม่สำเร็จเลย -- fallback poll (safety net) ที่แต่ละจุดยังทำงานต่อได้ปกติ
-  }
-}
-
-/** Subscribe รับ event จาก WS กลาง — ไม่ throw, ไม่บล็อกงานหลักถ้า WS ใช้ไม่ได้
- * (fallback poll ที่แต่ละจุดยังมีอยู่จะทำหน้าที่แทนโดยอัตโนมัติ) */
-function useApOcrSocket(onMessage) {
-  const cbRef = useRef(onMessage);
-  cbRef.current = onMessage;
-  useEffect(() => {
-    const wrapped = (msg) => cbRef.current(msg);
-    _wsListeners.add(wrapped);
-    _wsRefCount++;
-    _wsConnect();
-    return () => {
-      _wsListeners.delete(wrapped);
-      _wsRefCount--;
-      if (_wsRefCount <= 0 && _wsSocket) {
-        clearTimeout(_wsReconnectTimer);
-        try { _wsSocket.close(); } catch (_) {}
-        _wsSocket = null;
-      }
-    };
-  }, []);
-}
-
 function getAuthToken() {
   return sessionStorage.getItem("fastapn_token");
 }
@@ -339,16 +283,9 @@ function BatchHistory({ onSelectBatch }) {
 
   useEffect(() => {
     loadActiveSets();
-    // Fallback safety net เท่านั้น -- เดิม poll ทุก 3 วิ ตอนนี้ real-time
-    // จริงมาจาก WS ด้านล่างแล้ว (ap_ocr_progress event) ลดเหลือ 30 วิ
-    // เผื่อ WS หลุด/พลาด event ไป
-    const interval = setInterval(loadActiveSets, 30000);
+    const interval = setInterval(loadActiveSets, 3000); // ให้ % และลำดับ priority ขยับสด
     return () => clearInterval(interval);
   }, [loadActiveSets]);
-
-  useApOcrSocket(useCallback((msg) => {
-    if (msg?.event === 'ap_ocr_progress') loadActiveSets();
-  }, [loadActiveSets]));
 
   const handlePrioritize = async (e, setId) => {
     e.stopPropagation();
@@ -563,8 +500,6 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
   // ไม่ตรงกัน (เช่น Modal มี 8 ชุด แต่ Badge ไม่ขึ้นเลข) ต้อง Poll เองแยก
   // จาก BatchHistory เพราะ BatchHistory component ถูก mount เฉพาะตอน
   // Modal เปิดอยู่เท่านั้น — Badge ต้องรู้ค่าแม้ Modal จะปิดอยู่ก็ตาม
-  const loadQueueBadgeRef = useRef(null);
-
   useEffect(() => {
     let cancelled = false;
     const loadQueueBadge = async () => {
@@ -582,22 +517,13 @@ export default function OCRScanWidget({ documentType = "ap_invoice", onReadyToRe
         console.error("load queue badge count error:", err);
       }
     };
-    loadQueueBadgeRef.current = loadQueueBadge;
     loadQueueBadge();
-    // Fallback safety net เท่านั้น -- เดิม poll ทุก 3 วิ ตอนนี้ real-time
-    // จริงมาจาก WS ด้านล่างแล้ว (ap_ocr_progress event) ลดเหลือ 30 วิ
-    const interval = setInterval(loadQueueBadge, 30000);
+    const interval = setInterval(loadQueueBadge, 3000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
   }, [isOwner]);
-
-  useApOcrSocket(useCallback((msg) => {
-    if (msg?.event === 'ap_ocr_progress' && loadQueueBadgeRef.current) {
-      loadQueueBadgeRef.current();
-    }
-  }, []));
 
   // ---------------- โหลดสถานะ Toggle Gemini ตอนเปิดหน้า ----------------
   useEffect(() => {

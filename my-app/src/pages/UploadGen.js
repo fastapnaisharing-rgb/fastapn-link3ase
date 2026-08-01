@@ -306,32 +306,27 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
     loadPendingQueue();
   }, []);
 
-  // Poll status ทุก 5 วินาที สำหรับ pending/processing
+  // SSE: รับ push จาก backend เมื่อ queue status เปลี่ยน (แทน polling ทุก 5 วิ เดิม)
+  // ใช้ stream endpoint เดียวกับ Queue Monitor sidebar (FolderDetail) — backend เดียวกัน ไม่ต้อง poll ซ้ำ
+  const docTypeRef = React.useRef(docType); docTypeRef.current = docType;
+  const genSerialRef = React.useRef(genSerial); genSerialRef.current = genSerial;
   React.useEffect(() => {
-    const hasPending = pdfQueue.some(x => x.status === 'pending' || x.status === 'ocring');
-    if (!hasPending) return;
-    const interval = setInterval(async () => {
-      const pendingIds = pdfQueue.filter(x => x.status === 'pending' || x.status === 'ocring').map(x => x.id).filter(Boolean);
-      if (!pendingIds.length) { clearInterval(interval); return; }
+    const token = sessionStorage.getItem('fastapn_token');
+    const es = new EventSource(`http://10.101.87.126:4000/api/docenter/queue/stream?token=${encodeURIComponent(token || "")}`);
+    es.addEventListener('queue_update', (e) => {
       try {
-        const token = sessionStorage.getItem('fastapn_token');
-        const results = await Promise.all(
-          pendingIds.map(id =>
-            fetch(`http://10.101.87.126:4000/api/docenter/queue/${id}/result`, {
-              headers: { Authorization: `Bearer ${token}` },
-            }).then(r => r.json()).catch(() => null)
-          )
-        );
+        const { snapshot } = JSON.parse(e.data);
+        if (!Array.isArray(snapshot)) return;
         setPdfQueue(q => q.map(item => {
-          const updated = results.find(r => r?.id === item.id);
+          const updated = snapshot.find(r => r.id === item.id);
           if (!updated) return item;
           if (updated.status === 'done') {
             const buFromName = (() => {
               const m = (item.fileName||'').replace(/[.]pdf$/i,'').match(/^([A-Z]{2,6})[_-]/);
               return m ? m[1] : '';
             })();
-            const dtype  = updated.result_meta?.doc_type || docType;
-            const serial = updated.result_data?.serial_code || genSerial?.(buFromName||'XX', dtype) || item.fileName;
+            const dtype  = updated.result_meta?.doc_type || docTypeRef.current;
+            const serial = updated.result_data?.serial_code || genSerialRef.current?.(buFromName||'XX', dtype) || item.fileName;
             return { ...item, status:'done', result: updated.result_data, serial, error:'' };
           }
           if (updated.status === 'error') return { ...item, status:'error', error: updated.error_msg || 'OCR ล้มเหลว' };
@@ -339,9 +334,10 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
           return item;
         }));
       } catch(_) {}
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [pdfQueue]);
+    });
+    es.onerror = () => { es.close(); }; // close on error — จะ reconnect เองรอบหน้าที่ mount ใหม่
+    return () => { es.close(); };
+  }, []);
   const [attachments, setAttachments] = React.useState([]);
   const [pdfError, setPdfError]       = React.useState('');
   const pdfInputRef                   = React.useRef();
@@ -1053,6 +1049,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
   }, [db, draftViewAll, draftUserFilter, isOwner, isAdmin, userName, currentUser]);
 
   React.useEffect(() => { if ((tab === 'paste' || tab === 'file') && pasteSubTab === 'draft') loadDrafts(); }, [tab, pasteSubTab, draftUserFilter, loadDrafts]);
+  React.useEffect(() => { setError(''); }, [tab, pasteSubTab]); // เคลียร์ error ค้างจาก tab อื่นเมื่อสลับ tab
 
   const handleSaveDraft = async () => {
     if (!serialCode.trim()) { setError('กรุณาระบุ Serial code'); return; }
@@ -1138,6 +1135,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       buNameThai = buData?.['THAI COMPANY NAME'] || null;
 
       // insert batch ใหม่ status='done'
+      const _submitNow = new Date().toISOString();
+      const _fileDate = mergedRows[0]?.['Receive Date'] || mergedRows[0]?.['Invoice Date'] || _submitNow.split('T')[0];
       const { error: insErr } = await db.from('doc_collection').insert([{
         serial_code:   newSerial,
         bu_code:       bu,
@@ -1148,9 +1147,10 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         attachments:   [],
         source:        'draft_merge',
         status:        'done',
+        file_date:     _fileDate,
         uploaded_by:   userName || currentUser?.email || '',
-        created_at:    new Date().toISOString(),
-        updated_at:    new Date().toISOString(),
+        created_at:    _submitNow,
+        updated_at:    _submitNow,
       }]);
       if (insErr) throw insErr;
 
@@ -1527,12 +1527,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                 <div style={{display:'flex',flex:1,minHeight:0,marginTop:'8px',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden'}}>
                   {/* Left: list */}
                   <div style={{width:'210px',flexShrink:0,borderRight:'0.5px solid #e0e0e0',overflowY:'auto',background:'#f8f9fa',display:'flex',flexDirection:'column'}}>
-                    <div style={{padding:'5px 10px',borderBottom:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',gap:'6px',background:'#f0f2f5',flexShrink:0}}>
+                    <div style={{padding:'5px 10px',borderBottom:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',gap:'6px',background:'#f0f2f5',flexShrink:0,minHeight:'27px'}}>
                       {(()=>{
-                        const scopedDrafts = draftLevel===1 ? drafts
-                          : draftLevel===2 && draftDocType && !draftBU ? drafts.filter(d=>d.doc_type===draftDocType)
-                          : draftLevel===2 && draftDocType && draftBU ? drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU)
-                          : drafts;
+                        if (!(draftLevel===2 && draftDocType && draftBU)) {
+                          return <span style={{fontSize:'10px',color:'#bbb'}}>เลือก BU ก่อนจึงจะเลือกหลายรายการได้</span>;
+                        }
+                        const scopedDrafts = drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU);
                         const scopedIds = scopedDrafts.map(d=>d.id);
                         const selInScope = selectedDraftIds.filter(id=>scopedIds.includes(id));
                         const allChk = scopedDrafts.length>0 && selInScope.length===scopedDrafts.length;
@@ -1592,14 +1592,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                           <span style={{fontSize:'11px',color:'#ccc'}}>/</span>
                           <span style={{fontSize:'11px',fontWeight:'600',color:'#1a3a5c'}}>{draftBU}</span>
                         </div>
-                        <div style={{padding:'5px 10px',borderBottom:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',gap:'6px',background:'#f8f9fa',flexShrink:0}}>
-                          <input type='checkbox'
-                            checked={drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).every(d=>selectedDraftIds.includes(d.id))}
-                            onChange={e=>{ const ids=drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>d.id); setSelectedDraftIds(p=>e.target.checked?[...new Set([...p,...ids])]:p.filter(x=>!ids.includes(x))); }}
-                            style={{cursor:'pointer',width:'13px',height:'13px',flexShrink:0}}/>
-                          <span style={{fontSize:'10px',color:'#555'}}>เลือกทั้งหมด</span>
-                          {selectedDraftIds.filter(id=>drafts.find(d=>d.id===id&&d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU)).length>0&&<span style={{marginLeft:'auto',fontSize:'10px',color:'#0C447C',fontWeight:'500'}}>เลือก {selectedDraftIds.filter(id=>drafts.find(d=>d.id===id&&d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU)).length}</span>}
-                        </div>
+
                         <div style={{flex:1,overflowY:'auto'}}>
                           {drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
                             const isChk=selectedDraftIds.includes(d.id);
@@ -1813,12 +1806,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                 <div style={{display:'flex',flex:1,minHeight:0,marginTop:'8px',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden'}}>
                   {/* Left: list */}
                   <div style={{width:'210px',flexShrink:0,borderRight:'0.5px solid #e0e0e0',overflowY:'auto',background:'#f8f9fa',display:'flex',flexDirection:'column'}}>
-                    <div style={{padding:'5px 10px',borderBottom:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',gap:'6px',background:'#f0f2f5',flexShrink:0}}>
+                    <div style={{padding:'5px 10px',borderBottom:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',gap:'6px',background:'#f0f2f5',flexShrink:0,minHeight:'27px'}}>
                       {(()=>{
-                        const scopedDrafts = draftLevel===1 ? drafts
-                          : draftLevel===2 && draftDocType && !draftBU ? drafts.filter(d=>d.doc_type===draftDocType)
-                          : draftLevel===2 && draftDocType && draftBU ? drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU)
-                          : drafts;
+                        if (!(draftLevel===2 && draftDocType && draftBU)) {
+                          return <span style={{fontSize:'10px',color:'#bbb'}}>เลือก BU ก่อนจึงจะเลือกหลายรายการได้</span>;
+                        }
+                        const scopedDrafts = drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU);
                         const scopedIds = scopedDrafts.map(d=>d.id);
                         const selInScope = selectedDraftIds.filter(id=>scopedIds.includes(id));
                         const allChk = scopedDrafts.length>0 && selInScope.length===scopedDrafts.length;
@@ -1878,14 +1871,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                           <span style={{fontSize:'11px',color:'#ccc'}}>/</span>
                           <span style={{fontSize:'11px',fontWeight:'600',color:'#1a3a5c'}}>{draftBU}</span>
                         </div>
-                        <div style={{padding:'5px 10px',borderBottom:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',gap:'6px',background:'#f8f9fa',flexShrink:0}}>
-                          <input type='checkbox'
-                            checked={drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).every(d=>selectedDraftIds.includes(d.id))}
-                            onChange={e=>{ const ids=drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>d.id); setSelectedDraftIds(p=>e.target.checked?[...new Set([...p,...ids])]:p.filter(x=>!ids.includes(x))); }}
-                            style={{cursor:'pointer',width:'13px',height:'13px',flexShrink:0}}/>
-                          <span style={{fontSize:'10px',color:'#555'}}>เลือกทั้งหมด</span>
-                          {selectedDraftIds.filter(id=>drafts.find(d=>d.id===id&&d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU)).length>0&&<span style={{marginLeft:'auto',fontSize:'10px',color:'#0C447C',fontWeight:'500'}}>เลือก {selectedDraftIds.filter(id=>drafts.find(d=>d.id===id&&d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU)).length}</span>}
-                        </div>
+
                         <div style={{flex:1,overflowY:'auto'}}>
                           {drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
                             const isChk=selectedDraftIds.includes(d.id);
@@ -2124,7 +2110,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
             {saving&&saveProgress>0 && <span style={{ fontSize:'11px',color:'#1a3a5c',fontWeight:'500' }}>{saveProgress}%</span>}
             <button style={{ padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer',color:'#555' }} onClick={onClose}>ยกเลิก</button>
             {(()=>{
-              const isDraftTab = tab==='paste' && pasteSubTab==='draft';
+              const isDraftTab = pasteSubTab==='draft'; // ทั้ง Paste tab และ File tab ใช้ pasteSubTab ร่วมกัน
               const isNewTab = tab==='paste' && pasteSubTab==='new';
               const isFileTab = tab==='file';
               const readyFiles = fileQueue.filter(f=>f.status==='ready'&&!f.loading);
@@ -2545,7 +2531,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const [buFilter, setBuFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('updated_desc');
   const [currentPage, setCurrentPage] = useState(1);
-  const [perPage, setPerPage] = useState(10);
+  const [perPage, setPerPage] = useState(100);
   const [showAdd, setShowAdd] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [viewFile, setViewFile] = useState(null);
@@ -3103,8 +3089,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
               <select value={perPage} onChange={e=>{ setPerPage(Number(e.target.value)); setCurrentPage(1); }}
                 style={{ height:'26px',padding:'0 6px',border:'0.5px solid #ddd',borderRadius:'6px',fontSize:'11px',background:'white',color:'#333',cursor:'pointer' }}>
                 <option value={10}>10</option>
-                <option value={20}>20</option>
                 <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={500}>500</option>
+                <option value={999999}>ทั้งหมด</option>
               </select>
             </div>
           </div>

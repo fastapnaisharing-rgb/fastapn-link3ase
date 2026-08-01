@@ -3625,18 +3625,30 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   ]);
 
   const [showPeriodConfirm, setShowPeriodConfirm] = useState(false);
+  // MARKER_APCONTROLLER_PREVENT_DOUBLE_SUBMIT_V1
+  // ── กัน Submit ซ้ำจาก Double-click หรือกด Ctrl+Enter ซ้ำระหว่างรอ network ──
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const doActualSubmit = async () => {
-    const ok = await onSubmitInvoice(lines);
-    if (ok) {
-      setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
-      // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
-      // ── Clear Session ทุกครั้งที่ Submit สำเร็จ — เริ่ม Invoice ใหม่ = Session ใหม่ ──
-      setFlowActionSession([]);
-      onClose();
-      // MARKER_APCONTROLLER_FOCUS_SUPPLIER_AFTER_SUBMIT_V1
-      // ── Submit สำเร็จ -> กลับไป Focus ที่ Supplier code ให้ทันที ─────────────
-      setTimeout(() => { supplierCodeRef?.current?.focus(); }, 60);
+    if (submittingRef.current) return; // เช็คทันที ไม่รอ re-render
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const ok = await onSubmitInvoice(lines);
+      if (ok) {
+        setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+        // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+        // ── Clear Session ทุกครั้งที่ Submit สำเร็จ — เริ่ม Invoice ใหม่ = Session ใหม่ ──
+        setFlowActionSession([]);
+        onClose();
+        // MARKER_APCONTROLLER_FOCUS_SUPPLIER_AFTER_SUBMIT_V1
+        // ── Submit สำเร็จ -> กลับไป Focus ที่ Supplier code ให้ทันที ─────────────
+        setTimeout(() => { supplierCodeRef?.current?.focus(); }, 60);
+      }
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -3662,6 +3674,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       setShowPeriodConfirm(true);
       return;
     }
+    if (submittingRef.current) return;
     await doActualSubmit();
   };
 
@@ -4341,7 +4354,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     สร้างใหม่ {vendorFlows.length >= 5 && <span style={{ color: '#A32D2D' }}>(ครบ 5 แล้ว)</span>}
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                    <input type="radio" checked={saveFlowState.mode === 'replace'} onChange={() => setSaveFlowState(s => ({ ...s, mode: 'replace', targetId: vendorFlows[0]?.id || '' }))} />
+                    <input type="radio" checked={saveFlowState.mode === 'replace'} onChange={() => {
+                      // MARKER_APCONTROLLER_FLOW_REPLACE_AUTOFILL_NAME_V1
+                      // ── Bug Fix: เดิม set targetId เป็น Flow แรกให้ แต่ไม่เคย set ชื่อตาม ──
+                      // ── ทำให้ช่อง "ชื่อ Flow" ว่างจนกว่าจะไปเลือกใน dropdown ซ้ำอีกครั้ง ──
+                      const f0 = vendorFlows[0];
+                      setSaveFlowState(s => ({ ...s, mode: 'replace', targetId: f0?.id || '', name: f0?.flow_name || '' }));
+                    }} />
                     แทนที่ Flow เดิม
                   </label>
                 </div>
@@ -4355,8 +4374,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 </select>
               )}
               <label style={fieldLabel}>ชื่อ Flow</label>
-              <input type="text" value={saveFlowState.name} onChange={e => setSaveFlowState(s => ({ ...s, name: e.target.value }))}
-                style={{ ...inputStyle('100%'), marginBottom: '14px' }} />
+              {/* MARKER_APCONTROLLER_FLOW_NAME_CLEAR_BUTTON_V1 */}
+              {/* ── ปุ่ม × ล้างแค่ข้อความในช่องนี้ ไม่เกี่ยวกับการลบ Flow จริง ── */}
+              <div style={{ position: 'relative', marginBottom: '14px' }}>
+                <input type="text" value={saveFlowState.name} onChange={e => setSaveFlowState(s => ({ ...s, name: e.target.value }))}
+                  style={{ ...inputStyle('100%'), paddingRight: '28px' }} />
+                {saveFlowState.name && (
+                  <button type="button" onClick={() => setSaveFlowState(s => ({ ...s, name: '' }))} title="ล้างข้อความช่องนี้"
+                    style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', width: '18px', height: '18px', borderRadius: '50%', border: 'none', background: '#e8eaf0', color: '#888', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
+                )}
+              </div>
               <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '11px', color: '#666' }}>
                 จะจำ {flowActionSession.length} บรรทัด: {flowActionSession.map(l => l.itemCode).join(', ')}
                 <br />ไม่จำ Amount / Invoice No. / วันที่ — ต้องกรอกใหม่ทุกครั้ง
@@ -4462,9 +4489,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             <div style={{ borderTop: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
               {/* MARKER_APCONTROLLER_FLOW_BUTTON_LAYOUT_V1 */}
               <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button onClick={handleSubmit} title="Submit (Ctrl+Enter)" style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  Submit
-                  <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>
+                <button onClick={handleSubmit} disabled={isSubmitting} title="Submit (Ctrl+Enter)" style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: isSubmitting ? '#8a9bb0' : '#1a3a5c', color: 'white', fontSize: '12px', cursor: isSubmitting ? 'not-allowed' : 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {isSubmitting ? 'กำลัง Submit...' : 'Submit'}
+                  {!isSubmitting && <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>}
                 </button>
                 {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
                 {vendorNoForFlow && flowActionSession.length > 0 && (
@@ -5142,12 +5169,18 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     return String(raw + 1).padStart(dc, '0');
   };
 
-  const getPrefix = (type, biArg) => {
+  // MARKER_BATCHSETUP_GRT_PREFIX_3WAY_V1
+  // ── เพิ่ม mode param แยก 3 ทาง: current / prev (Override) / over (ข้ามเดือนล่วงหน้า) ──
+  // ── over ใช้เดือนจาก Receive Date ตรงๆ (คือเดือนที่กำลังจะข้ามไปคีย์) ──────────
+  const getPrefix = (type, biArg, mode = null) => {
     const bi = biArg;
-    const override = isOverride(bi);
+    const override = mode ? mode === 'prev' : isOverride(bi);
+    const isOver = mode === 'over';
     const patternKey = type === 'GRT' ? 'ap_grt_pattern' : 'ap_grn_pattern';
     const pattern = bi?.[patternKey] || (type === 'GRT' ? 'Y92MM0' : 'Y91MM0');
-    const refMonthStr = override ? bi?.ap_prev_month : getCurrentMonthStr(bi);
+    const refMonthStr = isOver
+      ? (receiveDate ? receiveDate.slice(0, 7) : null)
+      : (override ? bi?.ap_prev_month : getCurrentMonthStr(bi));
     const d = refMonthStr ? new Date(refMonthStr + '-01') : (receiveDate ? new Date(receiveDate) : new Date());
     const y = String(d.getFullYear()).slice(-1), mm = pad2(d.getMonth() + 1);
     return pattern.replace('Y', y).replace('MM', mm);
@@ -5297,6 +5330,16 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buInfo?.ap_period_mode]);
   const canToggleOverride = !!buInfo && (isOverride(buInfo) || canSelfOverride);
+
+  // MARKER_BATCHSETUP_GRT_PREFIX_REALTIME_PREVIEW_V1
+  // ── Preview เฉยๆ (ยังไม่ใช่การยืนยันจริง) — เช็ค Receive Date สดๆ ทุก Render ──
+  // ── เพื่อให้กล่อง Prefix GRT/GRN บน BuInfoPanel เปลี่ยนตาม MM ทันทีที่พิมพ์ ──
+  const isSkipAheadPreview = (() => {
+    if (isOverride(buInfo)) return false; // Override (ย้อนหลัง) ไม่เกี่ยวกับ Over (ข้ามล่วงหน้า)
+    const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
+    const recvMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
+    return !!(curMonthStr && recvMonthStr && recvMonthStr > curMonthStr);
+  })();
 
   useEffect(() => {
     if (buInfo && isBlocked && !hasPendingCloseRequest) setShowBlockedPopup(true);
@@ -5930,14 +5973,40 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 </div>
                 <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
                   // MARKER_SYNC_GRT_GRN_ON_START_BATCH_V1
+                  // MARKER_BATCHSETUP_OVER_MONTH_TRIGGER_V1
                   onClick={async () => {
                     if (isBlocked) { setShowBlockedPopup(true); return; }
+
+                    // ── เช็คว่าตั้ง Receive Date ข้ามไปเดือนถัดไปหรือไม่ ทั้งที่ Period ปัจจุบันยังไม่ปิด ──
+                    // ── (เฉพาะตอนไม่ได้เปิด Override อยู่แล้ว — Override คือย้อนหลัง คนละทิศทางกับ Over) ──
+                    const override = isOverride(buInfo);
+                    const currentMonthStr = getCurrentMonthStr(effectiveBuInfo);
+                    const receiveMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
+                    const isSkipAhead = !override && currentMonthStr && receiveMonthStr && receiveMonthStr > currentMonthStr;
+
+                    let mode = override ? 'prev' : 'current';
+                    if (isSkipAhead) {
+                      const confirmed = await confirmDialog.confirm(
+                        `Receive Date อยู่เดือน ${receiveMonthStr} ซึ่งเป็นเดือนถัดไปจาก Period ปัจจุบัน (${currentMonthStr}) ที่ยังไม่ปิด\n\nต้องการบันทึกข้าม Period ปัจจุบันหรือไม่?`,
+                        { confirmText: 'ข้าม Period', cancelText: 'ยกเลิก' }
+                      );
+                      if (!confirmed) return; // ── ไม่ข้าม -> ดีดกลับให้แก้วันที่ใหม่ ไม่ Start Batch ──
+                      mode = 'over';
+                    }
+
+                    // ── เลข Running ที่จะใช้จริง ตาม Track ที่เลือก (over ต้องดึงจาก buInfo สดๆ ──
+                    // ── เพราะ apGrtRunning/apGrnRunning ที่โชว์อยู่เป็นแค่ Current/Prev เท่านั้น) ──────
+                    const dc = getDigitCount(buInfo);
+                    const runningGrt = mode === 'over' ? String(buInfo?.ap_grt_ov ?? 0).padStart(dc, '0') : apGrtRunning;
+                    const runningGrn = mode === 'over' ? String(buInfo?.ap_grn_ov ?? 0).padStart(dc, '0') : apGrnRunning;
+
                     // ── Update เลข GRT/GRN เริ่มต้นกลับเข้า company_list ทันที (กันหายถ้าปิด Browser ก่อน Submit Invoice) ──
                     try {
-                      const override = isOverride(buInfo);
-                      const payload = override
-                        ? { ap_grt_prev: parseInt(apGrtRunning, 10) || 0, ap_grn_prev: parseInt(apGrnRunning, 10) || 0 }
-                        : { ap_grt: parseInt(apGrtRunning, 10) || 0, ap_grn: parseInt(apGrnRunning, 10) || 0 };
+                      const payload = mode === 'over'
+                        ? { ap_grt_ov: parseInt(runningGrt, 10) || 0, ap_grn_ov: parseInt(runningGrn, 10) || 0 }
+                        : mode === 'prev'
+                          ? { ap_grt_prev: parseInt(runningGrt, 10) || 0, ap_grn_prev: parseInt(runningGrn, 10) || 0 }
+                          : { ap_grt: parseInt(runningGrt, 10) || 0, ap_grn: parseInt(runningGrn, 10) || 0 };
                       const buId = buInfo?.id;
                       if (buId) {
                         await db.from('company_list').update(payload).eq('id', buId);
@@ -5947,12 +6016,20 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     } catch (e) {
                       console.error('[sync grt/grn on start batch]', e);
                     }
-                    onStart({ bu: bu || '-', receiveDate, dueDate, period: isOverride(buInfo) ? 'Override' : 'Current', apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT', buInfo), grnPrefix: getPrefix('GRN', buInfo), buInfo });
+                    // MARKER_BATCHSETUP_PERIODMODE_TO_BATCHCONFIG_V1
+                    onStart({
+                      bu: bu || '-', receiveDate, dueDate,
+                      period: mode === 'over' ? 'Over' : mode === 'prev' ? 'Override' : 'Current',
+                      periodMode: mode,
+                      apGrtRunning: runningGrt, apGrnRunning: runningGrn,
+                      grtPrefix: getPrefix('GRT', buInfo, mode), grnPrefix: getPrefix('GRN', buInfo, mode),
+                      buInfo,
+                    });
                   }}>▶ Start Batch</button>
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
-                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT', buInfo)} grnPrefix={getPrefix('GRN', buInfo)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningBlur={() => handleRunningBlur(setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningBlur={() => handleRunningBlur(setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningFocus={() => handleRunningFocus(setApGrtRunning)} onApGrnRunningFocus={() => handleRunningFocus(setApGrnRunning)} grtLocked={grtLocked} grnLocked={grnLocked} />
+                <BuInfoPanel buInfo={buInfo} apGrtRunning={isSkipAheadPreview ? String(buInfo?.ap_grt_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrtRunning} apGrnRunning={isSkipAheadPreview ? String(buInfo?.ap_grn_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrnRunning} grtPrefix={getPrefix('GRT', buInfo, isSkipAheadPreview ? 'over' : null)} grnPrefix={getPrefix('GRN', buInfo, isSkipAheadPreview ? 'over' : null)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningBlur={() => handleRunningBlur(setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningBlur={() => handleRunningBlur(setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningFocus={() => handleRunningFocus(setApGrtRunning)} onApGrnRunningFocus={() => handleRunningFocus(setApGrnRunning)} grtLocked={grtLocked || isSkipAheadPreview} grnLocked={grnLocked || isSkipAheadPreview} />
               </div>
             </div>
           </div>
@@ -7287,42 +7364,51 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     if (!pending.length) return;
     syncingRef.current = true;
     try {
-      // Send local_id with each row and upsert on it instead of plain insert.
-      // This makes syncing idempotent - safe to call more than once for the
-      // same item - which fixes duplicate rows caused by a race condition
-      // where the page unloads/refreshes before the previous sync result
-      // (the _synced flag) is saved back to localStorage.
-      // MARKER_APCONTROLLER_FIX_DUPWARNING_UPSERT_BUG_V1
-      // ── Bug Fix: Strip Field ชั่วคราวจาก Duplicate Check ออกก่อนส่งเข้า ──
-      // ── bucket_list — ถ้าไม่ Strip บางแถวมี Field เหล่านี้บางแถวไม่มี ──────
-      // ── ทำให้ Backend สร้าง SQL Column ไม่ตรงกันทุกแถว pg Driver Error ────
-      // ── ทันทีที่เจอ undefined (500 Internal Server Error) ─────────────────
-      const payloads = pending.map(({ _localId, _synced, id, _dupWarning, _dupConfirmedAt, _dupDetail, ...rest }) => ({
-        ...rest,
-        local_id: _localId,
-      }));
-      const { data, error } = await db
-        .from('bucket_list')
-        .upsert(payloads, { onConflict: 'local_id' })
-        .select();
-      if (error) throw error;
-      setInvoices(prev => {
-        // Match results back by local_id instead of array index - safer if
-        // the backend ever returns rows in a different order than sent.
-        const byLocalId = new Map((data || []).map(r => [r.local_id, r]));
-        const next = prev.map(inv => {
-          if (inv._synced) return inv;
-          const row = byLocalId.get(inv._localId);
-          // MARKER_APCONTROLLER_KEEP_DUPWARNING_AFTER_SYNC_V1
-          // ── เก็บ _dupWarning/_dupConfirmedAt/_dupDetail ไว้จาก State เดิม ──────
-          // ── (Frontend-Only Field ตั้งใจไม่บันทึกลง DB) ก่อนที่ก้อนนี้จะโดน ──────
-          // ── แทนที่ทั้งหมดด้วย row จาก Backend (ที่ไม่มี Field พวกนี้อยู่แล้ว) ──
-          // ── ไม่งั้นจุดสีเขียว/เหลืองในตาราง Batch Bucket จะหายไปหลัง Sync ──────
-          return row ? { ...row, _synced: true, _dupWarning: inv._dupWarning, _dupConfirmedAt: inv._dupConfirmedAt, _dupDetail: inv._dupDetail } : inv;
-        });
-        saveLocalBucket(next);
-        return next;
-      });
+      // MARKER_APCONTROLLER_SYNC_ONE_BY_ONE_DUP_GUARD_V1
+      // ── Sync ทีละแถว (ไม่ bulk เหมือนเดิม) — เพราะตอนนี้ DB มี Unique Constraint ──
+      // ── (invoice_no+branch_no+bu+amount, status='pending') กันซ้ำอยู่ ถ้ายิง ──
+      // ── เป็นก้อนเดียวแล้วมี 1 แถวชน Constraint จะทำให้ทั้งก้อน Error ไปด้วย ──────
+      // ── (แถวอื่นที่ไม่ซ้ำก็ Sync ไม่ขึ้น) เลยต้องแยกยิงทีละแถวแทน ─────────────────
+      for (const inv of pending) {
+        const { _localId, _synced, id, _dupWarning, _dupConfirmedAt, _dupDetail, ...rest } = inv;
+        const payload = { ...rest, local_id: _localId };
+        const { data, error } = await db
+          .from('bucket_list')
+          .upsert([payload], { onConflict: 'local_id' })
+          .select();
+
+        if (error) {
+          const msg = String(error.message || error.detail || error.code || '');
+          const isDupConstraint = error.code === '23505' || /duplicate key|already exists|violates unique/i.test(msg);
+          if (isDupConstraint) {
+            // ── DB ปฏิเสธเพราะซ้ำกับรายการที่มีอยู่แล้วจริง (เช่น ยิงพร้อมกันจาก 2 Tab) ──
+            // ── ตัดออกจาก Bucket ทันที ไม่ retry ซ้ำอีก + แจ้งเตือนให้ User รู้ ────────
+            console.warn('[DUP-BLOCKED-BY-DB] Invoice ซ้ำถูก DB ปฏิเสธ:', inv.invoice_no, inv.branch_no, inv.amount);
+            setInvoices(prev => {
+              const next = prev.filter(x => x._localId !== _localId);
+              saveLocalBucket(next);
+              return next;
+            });
+            confirmDialog.alert(
+              `Invoice "${inv.invoice_no}" ซ้ำกับรายการที่มีอยู่แล้ว — ระบบตัดออกจาก Batch Bucket ให้อัตโนมัติ`,
+              { variant: 'danger' }
+            );
+            continue; // ไปแถวถัดไป ไม่ throw กันทั้งก้อนพัง
+          }
+          throw error; // error แบบอื่นที่ไม่ใช่ dup — โยนต่อเหมือนเดิม
+        }
+
+        const row = (data || [])[0];
+        if (row) {
+          setInvoices(prev => {
+            const next = prev.map(x => x._localId === _localId
+              ? { ...row, _synced: true, _dupWarning: x._dupWarning, _dupConfirmedAt: x._dupConfirmedAt, _dupDetail: x._dupDetail }
+              : x);
+            saveLocalBucket(next);
+            return next;
+          });
+        }
+      }
     } catch (e) {
       console.error('syncPendingToBucket:', e);
     } finally {
@@ -7676,12 +7762,18 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       });
     });
 
+    // MARKER_HANDLESUBMIT_GRT_GRN_FIELD_3WAY_V1
+    // ── เลือก Column ที่จะขอเลขจริง ตาม Track ที่ตัดสินใจไว้ตอน Start Batch ──────
+    // ── (เดิม hardcode 'ap_grt'/'ap_grn' เสมอ ทำให้ Override ไม่เคยขอจาก ap_grt_prev จริง) ──
+    const grtField = batchConfig?.periodMode === 'over' ? 'ap_grt_ov' : batchConfig?.periodMode === 'prev' ? 'ap_grt_prev' : 'ap_grt';
+    const grnField = batchConfig?.periodMode === 'over' ? 'ap_grn_ov' : batchConfig?.periodMode === 'prev' ? 'ap_grn_prev' : 'ap_grn';
+
     // ── GRT: ขอ 1 เลขจาก backend (การันตีไม่ซ้ำ) ใช้ร่วมทุก Invoice ที่ split จาก submit นี้ ──
     let grtNumVal = form.grtNum;
     let bumpGrt = false;
     let grtRunningActual = nextGrtRunning;
     if (isAutoGrt) {
-      const res = await requestUniqueNumber('ap_grt', batchConfig?.grtPrefix || '', nextGrtRunning);
+      const res = await requestUniqueNumber(grtField, batchConfig?.grtPrefix || '', nextGrtRunning);
       grtNumVal = res.formatted;
       grtRunningActual = res.value;
       bumpGrt = true;
@@ -7705,7 +7797,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       const isVat = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
       let grnVal = '';
       if (isAutoGrt && isVat) {
-        const res = await requestUniqueNumber('ap_grn', batchConfig?.grnPrefix || '', grnRunningActual);
+        const res = await requestUniqueNumber(grnField, batchConfig?.grnPrefix || '', grnRunningActual);
         grnVal = res.formatted;
         grnRunningActual = res.value;
         grnBumpCount += 1;
@@ -9998,6 +10090,26 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   );
 }
 
+// ── MARKER_BATCH_CONTROL_ZONEBOX_COMPONENT ──────────────────────────────────────────────────
+// Box กลางใช้ร่วมกันทั้ง Zone A / B / C — ปรับ Style จุดเดียวมีผลทั้ง 3 Zone
+// title: Label หัวกล่อง (ไม่ใส่ = ไม่มี Header แถบบน)
+// highlighted: true = แถบ Header สีฟ้า + ขอบสีฟ้า (ใช้กับ Zone C)
+// noPadding: true = ไม่เติม Padding ใน Body (ใช้กับ Zone A ที่มีตาราง Edge-to-edge)
+function ZoneBox({ title, highlighted, noPadding, children, style }) {
+  return (
+    <div style={{ background: '#fff', border: highlighted ? '0.5px solid #185FA5' : '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden', display: 'flex', flexDirection: 'column', ...style }}>
+      {title && (
+        <div style={{ padding: '9px 18px', borderBottom: '0.5px solid ' + (highlighted ? '#cfe3f7' : '#eee'), background: highlighted ? '#E6F1FB' : 'transparent', fontSize: '10.5px', fontWeight: '600', color: highlighted ? '#0C447C' : '#185FA5', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+          {title}
+        </div>
+      )}
+      <div style={{ padding: noPadding ? 0 : '16px 18px', flex: 1, minHeight: 0 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function BatchControlPage({ currentUser, userName = '' }) {
   const { isOwner, isAdmin } = useUserRole();
   // MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS
@@ -10117,10 +10229,11 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     (async () => {
       try {
         const { data } = await db.from('company_list').select('ap_to_fp').eq('bu', singleBu).single();
+        // ── MARKER_BATCH_CONTROL_STRING_GUARD_V1 ── Cast เป็น String เสมอ กันข้อมูลเพี้ยนใน DB (เช่น เผลอบันทึกตัวเลข) ทำ .trim() พัง
         const apToFp = data?.ap_to_fp || {};
-        setToEmail(apToFp.to || '');
-        setCcEmail(apToFp.cc || '');
-        setGreetingName(apToFp.greeting_name || '');
+        setToEmail(String(apToFp.to ?? ''));
+        setCcEmail(String(apToFp.cc ?? ''));
+        setGreetingName(String(apToFp.greeting_name ?? ''));
       } catch (err) { console.error('fetch ap_to_fp error:', err); }
     })();
   }, [singleBu]);
@@ -10200,12 +10313,15 @@ export function BatchControlPage({ currentUser, userName = '' }) {
   const [confirmingSent, setConfirmingSent] = React.useState(false);
 
   const handleOpenOutlook = () => {
-    if (!selectedIds.length || !toEmail.trim()) return;
+    // ── MARKER_BATCH_CONTROL_STRING_GUARD_V1 ── String(...) กันพังถ้า State ดันไม่ใช่ String
+    const toEmailStr = String(toEmail ?? '');
+    const ccEmailStr = String(ccEmail ?? '');
+    if (!selectedIds.length || !toEmailStr.trim()) return;
     const qs = [];
-    if (ccEmail.trim()) qs.push(`cc=${encodeURIComponent(ccEmail.trim())}`);
+    if (ccEmailStr.trim()) qs.push(`cc=${encodeURIComponent(ccEmailStr.trim())}`);
     qs.push(`subject=${encodeURIComponent(subject)}`);
     qs.push(`body=${encodeURIComponent(body)}`);
-    window.location.href = `mailto:${encodeURIComponent(toEmail.trim())}?${qs.join('&')}`;
+    window.location.href = `mailto:${encodeURIComponent(toEmailStr.trim())}?${qs.join('&')}`;
     setShowSendConfirm(true);
   };
 
@@ -10333,7 +10449,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
             </div>
           </div>
           {isOwner && (
-            <button onClick={() => setShowNewTemplate(true)} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#1a73e8', color: '#fff', fontSize: '12.5px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Template ใหม่</button>
+            <button onClick={() => setShowNewTemplate(true)} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: '#fff', fontSize: '12.5px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Template ใหม่</button>
           )}
         </div>
       </div>
@@ -10471,7 +10587,8 @@ export function BatchControlPage({ currentUser, userName = '' }) {
       {/* MARKER_BATCH_CONTROL_FULLSCREEN_TEMPLATE */}
       {!showNewTemplate && (
         <>
-      <div style={{ padding: '16px 24px' }}>
+      {/* MARKER_BATCH_CONTROL_3ZONE_LAYOUT_V1 -- Zone A เต็มความกว้าง */}
+      <div style={{ padding: '16px 24px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#555', cursor: 'pointer' }}>
             <input type="checkbox" checked={visibleBatches.length > 0 && selectedIds.length === visibleBatches.length} onChange={toggleSelectAll} style={{ width: '14px', height: '14px' }} /> เลือกทั้งหมด
@@ -10483,7 +10600,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
           </select>
         </div>
 
-        <div style={{ border: '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden', background: '#fff' }}>
+        <ZoneBox noPadding>
           <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 100px 100px 1fr 110px', background: '#fafaf8', padding: '8px 16px', fontSize: '10.5px', color: '#999', fontWeight: '600', textTransform: 'uppercase' }}>
             <div></div><div>Batch</div><div>BU</div><div>Receive</div><div>Due</div><div>Status</div><div style={{ textAlign: 'right' }}>ยอดรวม</div>
           </div>
@@ -10499,53 +10616,70 @@ export function BatchControlPage({ currentUser, userName = '' }) {
               <div style={{ textAlign: 'right' }}>{Number(b.total_amount || 0).toLocaleString()}</div>
             </div>
           ))}
-        </div>
+        </ZoneBox>
       </div>
 
+      {/* Zone B (Config & Attachment) + Zone C (Outlook Layout Draft) คู่กัน */}
       {selectedIds.length > 0 && (
-        <div style={{ padding: '0 24px 20px' }}>
-          <div style={{ background: '#fff', border: '0.5px solid #e5e5e0', borderRadius: '10px', padding: '16px 20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c' }}>📡 Monitor</span>
-              <span style={{ fontSize: '11px', color: '#aaa' }}>เลือกไว้ {selectedIds.length} Batch · {selectedTotal.toLocaleString()} บาท</span>
-              {!singleBu && selectedBuList.length > 1 && (
-                <span style={{ fontSize: '10.5px', color: '#791F1F', background: '#FCEBEB', padding: '2px 8px', borderRadius: '8px' }}>⚠️ เลือกข้าม BU กัน — Auto-fill To/Cc/เรียน จะไม่ทำงาน กรอกเองได้</span>
-              )}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เรียน (Greeting Name)</div>
-                <input value={greetingName} onChange={e => setGreetingName(e.target.value)} onBlur={e => saveApToFp('greeting_name', e.target.value)} placeholder="เช่น คุณสมชาย" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>ถึง (To)</div>
-                <input value={toEmail} onChange={e => setToEmail(e.target.value)} onBlur={e => saveApToFp('to', e.target.value)} placeholder="กรอกอีเมลผู้รับ" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>สำเนา (Cc)</div>
-                <input value={ccEmail} onChange={e => setCcEmail(e.target.value)} onBlur={e => saveApToFp('cc', e.target.value)} placeholder="(ถ้ามี)" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box' }} />
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>หัวข้อ</div>
-                <input value={subject} onChange={e => setSubject(e.target.value)} style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เนื้อหา</div>
-                <textarea value={body} onChange={e => setBody(e.target.value)} onKeyDown={makeTabHandler(setBody)} style={{ width: '100%', height: '90px', padding: '8px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical' }} />
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px' }}>
-              <div style={{ background: '#FAEEDA', border: '0.5px solid #EF9F27', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#854F0B', flex: 1 }}>
+        <div style={{ padding: '16px 24px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c' }}>📡 Monitor</span>
+            <span style={{ fontSize: '11px', color: '#aaa' }}>เลือกไว้ {selectedIds.length} Batch · {selectedTotal.toLocaleString()} บาท</span>
+            {!singleBu && selectedBuList.length > 1 && (
+              <span style={{ fontSize: '10.5px', color: '#791F1F', background: '#FCEBEB', padding: '2px 8px', borderRadius: '8px' }}>⚠️ เลือกข้าม BU กัน — Auto-fill To/Cc/เรียน จะไม่ทำงาน กรอกเองได้</span>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
+            <ZoneBox title="⚙️ Config & Attachment">
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เรียน (Greeting Name)</div>
+              <input value={greetingName} onChange={e => setGreetingName(e.target.value)} onBlur={e => saveApToFp('greeting_name', e.target.value)} placeholder="เช่น คุณสมชาย" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>ถึง (To)</div>
+              <input value={toEmail} onChange={e => setToEmail(e.target.value)} onBlur={e => saveApToFp('to', e.target.value)} placeholder="กรอกอีเมลผู้รับ" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>สำเนา (Cc)</div>
+              <input value={ccEmail} onChange={e => setCcEmail(e.target.value)} onBlur={e => saveApToFp('cc', e.target.value)} placeholder="(ถ้ามี)" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>หัวข้อ</div>
+              <input value={subject} onChange={e => setSubject(e.target.value)} style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เนื้อหา</div>
+              <textarea value={body} onChange={e => setBody(e.target.value)} onKeyDown={makeTabHandler(setBody)} style={{ width: '100%', height: '90px', padding: '8px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', marginBottom: '10px' }} />
+              <div style={{ background: '#FAEEDA', border: '0.5px solid #EF9F27', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#854F0B' }}>
                 📎 ไฟล์แนบต้องดาวน์โหลดแล้วลากใส่ Outlook เอง (ข้อจำกัดของ Browser)
               </div>
-              {showSendConfirm ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '11.5px', color: '#666', whiteSpace: 'nowrap' }}>ส่งอีเมลใน Outlook เรียบร้อยหรือยัง?</span>
-                  <button onClick={handleCancelSendConfirm} disabled={confirmingSent}
-                    style={{ padding: '8px 14px', borderRadius: '8px', border: '0.5px solid #ddd', background: '#fff', color: '#666', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>ยกเลิก</button>
-                  <button onClick={handleConfirmSent} disabled={confirmingSent}
-                    style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: confirmingSent ? '#aaa' : '#27500A', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: confirmingSent ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
-                    {confirmingSent ? 'กำลังบันทึก...' : '✅ ยืนยันว่าส่งแล้ว'}
-                  </button>
-                </div>
-              ) : (
-                <button onClick={handleOpenOutlook} disabled={!toEmail.trim()} style={{ padding: '9px 22px', borderRadius: '8px', border: 'none', background: toEmail.trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: toEmail.trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 เปิด Outlook Draft →</button>
-              )}
-            </div>
+            </ZoneBox>
+
+            <ZoneBox title="👁️ Outlook Layout Draft" highlighted>
+              <div style={{ display: 'flex', fontSize: '11px', marginBottom: '8px' }}>
+                <span style={{ color: '#888', width: '48px', flexShrink: 0 }}>ถึง</span>
+                <span style={{ color: toEmail ? '#333' : '#ccc' }}>{toEmail || '(ยังไม่ได้กรอก)'}</span>
+              </div>
+              <div style={{ display: 'flex', fontSize: '11px', marginBottom: '8px' }}>
+                <span style={{ color: '#888', width: '48px', flexShrink: 0 }}>สำเนา</span>
+                <span style={{ color: ccEmail ? '#333' : '#ccc' }}>{ccEmail || '(ไม่มี)'}</span>
+              </div>
+              <div style={{ display: 'flex', fontSize: '11px', marginBottom: '10px' }}>
+                <span style={{ color: '#888', width: '48px', flexShrink: 0 }}>เรื่อง</span>
+                <span style={{ color: '#1a3a5c', fontWeight: '600' }}>{subject || <span style={{ color: '#ccc' }}>(ยังไม่ได้กรอก Subject)</span>}</span>
+              </div>
+              <div style={{ borderTop: '0.5px solid #eee', paddingTop: '10px', fontSize: '11.5px', color: '#333', whiteSpace: 'pre-wrap', lineHeight: '1.65' }}>
+                {body || <span style={{ color: '#ccc' }}>(ยังไม่ได้กรอก Body)</span>}
+              </div>
+            </ZoneBox>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            {showSendConfirm ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '11.5px', color: '#666', whiteSpace: 'nowrap' }}>ส่งอีเมลใน Outlook เรียบร้อยหรือยัง?</span>
+                <button onClick={handleCancelSendConfirm} disabled={confirmingSent}
+                  style={{ padding: '8px 14px', borderRadius: '8px', border: '0.5px solid #ddd', background: '#fff', color: '#666', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>ยกเลิก</button>
+                <button onClick={handleConfirmSent} disabled={confirmingSent}
+                  style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: confirmingSent ? '#aaa' : '#27500A', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: confirmingSent ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                  {confirmingSent ? 'กำลังบันทึก...' : '✅ ยืนยันว่าส่งแล้ว'}
+                </button>
+              </div>
+            ) : (
+              <button onClick={handleOpenOutlook} disabled={!String(toEmail ?? '').trim()} style={{ padding: '9px 22px', borderRadius: '8px', border: 'none', background: String(toEmail ?? '').trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: String(toEmail ?? '').trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 เปิด Outlook Draft →</button>
+            )}
           </div>
         </div>
       )}
@@ -10570,6 +10704,10 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
+  // MARKER_APCONTROLLER_BATCHSETUP_RESET_KEY_V1
+  // ── เปลี่ยนค่านี้เฉพาะตอนกด "+ New Batch" เพื่อบังคับ BatchSetup Remount ──
+  // ── (Reset State เจตนา) ส่วนกลับไปมาระหว่าง Step ปกติจะไม่ทำให้ค่านี้เปลี่ยน ──
+  const [batchSetupKey, setBatchSetupKey] = useState(0);
   const [invoices, setInvoices]       = useState([]);
   // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
@@ -10659,7 +10797,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
     setBatchConfig({ ...config, batchId: draftBatchId });
     setStep(2);
   };
-  const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
+  const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); setBatchSetupKey(k => k + 1); };
   const handleRunningChange = (bu, vals) => { if (!bu) return; setRunningOverride({ bu, ...vals }); };
 
   return (
@@ -10705,7 +10843,12 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
       )}
       <StepBar step={step} onGo={setStep} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} />}
+        {/* MARKER_APCONTROLLER_BATCHSETUP_NO_UNMOUNT_V1 */}
+        {/* ── ซ่อนด้วย CSS แทน Unmount กัน BU/Receive Date/Due Date/GRT-GRN Preview ── */}
+        {/* ── หายตอนกลับมา Step 1 (เดิม unmount ทุกครั้งที่ step !== 1 ทำให้ State หาย) ── */}
+        <div key={batchSetupKey} style={{ display: step === 1 ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} />
+        </div>
         {step === 2 && (
           <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)}
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}

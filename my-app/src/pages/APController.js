@@ -3625,18 +3625,30 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   ]);
 
   const [showPeriodConfirm, setShowPeriodConfirm] = useState(false);
+  // MARKER_APCONTROLLER_PREVENT_DOUBLE_SUBMIT_V1
+  // ── กัน Submit ซ้ำจาก Double-click หรือกด Ctrl+Enter ซ้ำระหว่างรอ network ──
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const doActualSubmit = async () => {
-    const ok = await onSubmitInvoice(lines);
-    if (ok) {
-      setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
-      // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
-      // ── Clear Session ทุกครั้งที่ Submit สำเร็จ — เริ่ม Invoice ใหม่ = Session ใหม่ ──
-      setFlowActionSession([]);
-      onClose();
-      // MARKER_APCONTROLLER_FOCUS_SUPPLIER_AFTER_SUBMIT_V1
-      // ── Submit สำเร็จ -> กลับไป Focus ที่ Supplier code ให้ทันที ─────────────
-      setTimeout(() => { supplierCodeRef?.current?.focus(); }, 60);
+    if (submittingRef.current) return; // เช็คทันที ไม่รอ re-render
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const ok = await onSubmitInvoice(lines);
+      if (ok) {
+        setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+        // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
+        // ── Clear Session ทุกครั้งที่ Submit สำเร็จ — เริ่ม Invoice ใหม่ = Session ใหม่ ──
+        setFlowActionSession([]);
+        onClose();
+        // MARKER_APCONTROLLER_FOCUS_SUPPLIER_AFTER_SUBMIT_V1
+        // ── Submit สำเร็จ -> กลับไป Focus ที่ Supplier code ให้ทันที ─────────────
+        setTimeout(() => { supplierCodeRef?.current?.focus(); }, 60);
+      }
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -3662,6 +3674,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       setShowPeriodConfirm(true);
       return;
     }
+    if (submittingRef.current) return;
     await doActualSubmit();
   };
 
@@ -4341,7 +4354,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     สร้างใหม่ {vendorFlows.length >= 5 && <span style={{ color: '#A32D2D' }}>(ครบ 5 แล้ว)</span>}
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                    <input type="radio" checked={saveFlowState.mode === 'replace'} onChange={() => setSaveFlowState(s => ({ ...s, mode: 'replace', targetId: vendorFlows[0]?.id || '' }))} />
+                    <input type="radio" checked={saveFlowState.mode === 'replace'} onChange={() => {
+                      // MARKER_APCONTROLLER_FLOW_REPLACE_AUTOFILL_NAME_V1
+                      // ── Bug Fix: เดิม set targetId เป็น Flow แรกให้ แต่ไม่เคย set ชื่อตาม ──
+                      // ── ทำให้ช่อง "ชื่อ Flow" ว่างจนกว่าจะไปเลือกใน dropdown ซ้ำอีกครั้ง ──
+                      const f0 = vendorFlows[0];
+                      setSaveFlowState(s => ({ ...s, mode: 'replace', targetId: f0?.id || '', name: f0?.flow_name || '' }));
+                    }} />
                     แทนที่ Flow เดิม
                   </label>
                 </div>
@@ -4355,8 +4374,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 </select>
               )}
               <label style={fieldLabel}>ชื่อ Flow</label>
-              <input type="text" value={saveFlowState.name} onChange={e => setSaveFlowState(s => ({ ...s, name: e.target.value }))}
-                style={{ ...inputStyle('100%'), marginBottom: '14px' }} />
+              {/* MARKER_APCONTROLLER_FLOW_NAME_CLEAR_BUTTON_V1 */}
+              {/* ── ปุ่ม × ล้างแค่ข้อความในช่องนี้ ไม่เกี่ยวกับการลบ Flow จริง ── */}
+              <div style={{ position: 'relative', marginBottom: '14px' }}>
+                <input type="text" value={saveFlowState.name} onChange={e => setSaveFlowState(s => ({ ...s, name: e.target.value }))}
+                  style={{ ...inputStyle('100%'), paddingRight: '28px' }} />
+                {saveFlowState.name && (
+                  <button type="button" onClick={() => setSaveFlowState(s => ({ ...s, name: '' }))} title="ล้างข้อความช่องนี้"
+                    style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', width: '18px', height: '18px', borderRadius: '50%', border: 'none', background: '#e8eaf0', color: '#888', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
+                )}
+              </div>
               <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '11px', color: '#666' }}>
                 จะจำ {flowActionSession.length} บรรทัด: {flowActionSession.map(l => l.itemCode).join(', ')}
                 <br />ไม่จำ Amount / Invoice No. / วันที่ — ต้องกรอกใหม่ทุกครั้ง
@@ -4462,9 +4489,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             <div style={{ borderTop: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
               {/* MARKER_APCONTROLLER_FLOW_BUTTON_LAYOUT_V1 */}
               <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button onClick={handleSubmit} title="Submit (Ctrl+Enter)" style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  Submit
-                  <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>
+                <button onClick={handleSubmit} disabled={isSubmitting} title="Submit (Ctrl+Enter)" style={{ padding: '6px 18px', borderRadius: '7px', border: 'none', background: isSubmitting ? '#8a9bb0' : '#1a3a5c', color: 'white', fontSize: '12px', cursor: isSubmitting ? 'not-allowed' : 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {isSubmitting ? 'กำลัง Submit...' : 'Submit'}
+                  {!isSubmitting && <span style={{ fontSize: '10px', opacity: 0.7, background: 'rgba(255,255,255,0.15)', borderRadius: '4px', padding: '1px 5px', fontFamily: 'monospace' }}>Ctrl+↵</span>}
                 </button>
                 {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
                 {vendorNoForFlow && flowActionSession.length > 0 && (
@@ -5142,12 +5169,18 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     return String(raw + 1).padStart(dc, '0');
   };
 
-  const getPrefix = (type, biArg) => {
+  // MARKER_BATCHSETUP_GRT_PREFIX_3WAY_V1
+  // ── เพิ่ม mode param แยก 3 ทาง: current / prev (Override) / over (ข้ามเดือนล่วงหน้า) ──
+  // ── over ใช้เดือนจาก Receive Date ตรงๆ (คือเดือนที่กำลังจะข้ามไปคีย์) ──────────
+  const getPrefix = (type, biArg, mode = null) => {
     const bi = biArg;
-    const override = isOverride(bi);
+    const override = mode ? mode === 'prev' : isOverride(bi);
+    const isOver = mode === 'over';
     const patternKey = type === 'GRT' ? 'ap_grt_pattern' : 'ap_grn_pattern';
     const pattern = bi?.[patternKey] || (type === 'GRT' ? 'Y92MM0' : 'Y91MM0');
-    const refMonthStr = override ? bi?.ap_prev_month : getCurrentMonthStr(bi);
+    const refMonthStr = isOver
+      ? (receiveDate ? receiveDate.slice(0, 7) : null)
+      : (override ? bi?.ap_prev_month : getCurrentMonthStr(bi));
     const d = refMonthStr ? new Date(refMonthStr + '-01') : (receiveDate ? new Date(receiveDate) : new Date());
     const y = String(d.getFullYear()).slice(-1), mm = pad2(d.getMonth() + 1);
     return pattern.replace('Y', y).replace('MM', mm);
@@ -5297,6 +5330,16 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buInfo?.ap_period_mode]);
   const canToggleOverride = !!buInfo && (isOverride(buInfo) || canSelfOverride);
+
+  // MARKER_BATCHSETUP_GRT_PREFIX_REALTIME_PREVIEW_V1
+  // ── Preview เฉยๆ (ยังไม่ใช่การยืนยันจริง) — เช็ค Receive Date สดๆ ทุก Render ──
+  // ── เพื่อให้กล่อง Prefix GRT/GRN บน BuInfoPanel เปลี่ยนตาม MM ทันทีที่พิมพ์ ──
+  const isSkipAheadPreview = (() => {
+    if (isOverride(buInfo)) return false; // Override (ย้อนหลัง) ไม่เกี่ยวกับ Over (ข้ามล่วงหน้า)
+    const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
+    const recvMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
+    return !!(curMonthStr && recvMonthStr && recvMonthStr > curMonthStr);
+  })();
 
   useEffect(() => {
     if (buInfo && isBlocked && !hasPendingCloseRequest) setShowBlockedPopup(true);
@@ -5905,7 +5948,23 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     <div style={fieldWrap}>
                       <label style={fieldLabel}>Receive date</label>
                       <input type="date" value={receiveDate}
-                        onChange={e => setReceiveDate(e.target.value)} style={{ ...inputBase }} />
+                        // MARKER_BATCHSETUP_OVER_MONTH_CONFIRM_ON_DATE_CHANGE_V1
+                        onChange={async e => {
+                          const newDate = e.target.value;
+                          const override = isOverride(buInfo);
+                          const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
+                          const newMonthStr = newDate ? newDate.slice(0, 7) : '';
+                          const isSkip = !override && curMonthStr && newMonthStr && newMonthStr > curMonthStr;
+                          if (isSkip) {
+                            const confirmed = await confirmDialog.confirm(
+                              `Receive Date อยู่เดือน ${newMonthStr} ซึ่งเป็นเดือนถัดไปจาก Period ปัจจุบัน (${curMonthStr}) ที่ยังไม่ปิด\n\nต้องการบันทึกข้าม Period ปัจจุบันหรือไม่?`,
+                              { confirmText: 'ข้าม Period', cancelText: 'ยกเลิก' }
+                            );
+                            // ── ไม่ข้าม -> ไม่รับค่าวันที่ใหม่ Input จะดีดกลับค่าเดิมเอง (Controlled Input) ──
+                            if (!confirmed) return;
+                          }
+                          setReceiveDate(newDate);
+                        }} style={{ ...inputBase }} />
                     </div>
                     <div style={fieldWrap}><label style={fieldLabel}>Due date</label><input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} /></div>
                   </div>
@@ -5930,14 +5989,29 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 </div>
                 <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
                   // MARKER_SYNC_GRT_GRN_ON_START_BATCH_V1
+                  // MARKER_BATCHSETUP_OVER_MONTH_TRIGGER_V1
                   onClick={async () => {
                     if (isBlocked) { setShowBlockedPopup(true); return; }
+
+                    // MARKER_BATCHSETUP_MODE_FROM_PREVIEW_V1
+                    // ── ไม่ต้องถามซ้ำแล้ว เพราะ Popup ยืนยันข้ามเดือนเกิดขึ้นตอนเปลี่ยน Receive Date ไปแล้ว ──
+                    // ── ใช้ isSkipAheadPreview (คำนวณสดจาก Receive Date ปัจจุบันที่ยืนยันแล้ว) ตัดสิน Track ──
+                    const override = isOverride(buInfo);
+                    const mode = override ? 'prev' : (isSkipAheadPreview ? 'over' : 'current');
+
+                    // ── เลข Running ที่จะใช้จริง ตาม Track ที่เลือก (over ต้องดึงจาก buInfo สดๆ ──
+                    // ── เพราะ apGrtRunning/apGrnRunning ที่โชว์อยู่เป็นแค่ Current/Prev เท่านั้น) ──────
+                    const dc = getDigitCount(buInfo);
+                    const runningGrt = mode === 'over' ? String(buInfo?.ap_grt_ov ?? 0).padStart(dc, '0') : apGrtRunning;
+                    const runningGrn = mode === 'over' ? String(buInfo?.ap_grn_ov ?? 0).padStart(dc, '0') : apGrnRunning;
+
                     // ── Update เลข GRT/GRN เริ่มต้นกลับเข้า company_list ทันที (กันหายถ้าปิด Browser ก่อน Submit Invoice) ──
                     try {
-                      const override = isOverride(buInfo);
-                      const payload = override
-                        ? { ap_grt_prev: parseInt(apGrtRunning, 10) || 0, ap_grn_prev: parseInt(apGrnRunning, 10) || 0 }
-                        : { ap_grt: parseInt(apGrtRunning, 10) || 0, ap_grn: parseInt(apGrnRunning, 10) || 0 };
+                      const payload = mode === 'over'
+                        ? { ap_grt_ov: parseInt(runningGrt, 10) || 0, ap_grn_ov: parseInt(runningGrn, 10) || 0 }
+                        : mode === 'prev'
+                          ? { ap_grt_prev: parseInt(runningGrt, 10) || 0, ap_grn_prev: parseInt(runningGrn, 10) || 0 }
+                          : { ap_grt: parseInt(runningGrt, 10) || 0, ap_grn: parseInt(runningGrn, 10) || 0 };
                       const buId = buInfo?.id;
                       if (buId) {
                         await db.from('company_list').update(payload).eq('id', buId);
@@ -5947,12 +6021,20 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     } catch (e) {
                       console.error('[sync grt/grn on start batch]', e);
                     }
-                    onStart({ bu: bu || '-', receiveDate, dueDate, period: isOverride(buInfo) ? 'Override' : 'Current', apGrtRunning, apGrnRunning, grtPrefix: getPrefix('GRT', buInfo), grnPrefix: getPrefix('GRN', buInfo), buInfo });
+                    // MARKER_BATCHSETUP_PERIODMODE_TO_BATCHCONFIG_V1
+                    onStart({
+                      bu: bu || '-', receiveDate, dueDate,
+                      period: mode === 'over' ? 'Over' : mode === 'prev' ? 'Override' : 'Current',
+                      periodMode: mode,
+                      apGrtRunning: runningGrt, apGrnRunning: runningGrn,
+                      grtPrefix: getPrefix('GRT', buInfo, mode), grnPrefix: getPrefix('GRN', buInfo, mode),
+                      buInfo,
+                    });
                   }}>▶ Start Batch</button>
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
-                <BuInfoPanel buInfo={buInfo} apGrtRunning={apGrtRunning} apGrnRunning={apGrnRunning} grtPrefix={getPrefix('GRT', buInfo)} grnPrefix={getPrefix('GRN', buInfo)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningBlur={() => handleRunningBlur(setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningBlur={() => handleRunningBlur(setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningFocus={() => handleRunningFocus(setApGrtRunning)} onApGrnRunningFocus={() => handleRunningFocus(setApGrnRunning)} grtLocked={grtLocked} grnLocked={grnLocked} />
+                <BuInfoPanel buInfo={buInfo} apGrtRunning={isSkipAheadPreview ? String(buInfo?.ap_grt_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrtRunning} apGrnRunning={isSkipAheadPreview ? String(buInfo?.ap_grn_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrnRunning} grtPrefix={getPrefix('GRT', buInfo, isSkipAheadPreview ? 'over' : null)} grnPrefix={getPrefix('GRN', buInfo, isSkipAheadPreview ? 'over' : null)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningBlur={() => handleRunningBlur(setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningBlur={() => handleRunningBlur(setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningFocus={() => handleRunningFocus(setApGrtRunning)} onApGrnRunningFocus={() => handleRunningFocus(setApGrnRunning)} grtLocked={grtLocked || isSkipAheadPreview} grnLocked={grnLocked || isSkipAheadPreview} />
               </div>
             </div>
           </div>
@@ -7287,42 +7369,51 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     if (!pending.length) return;
     syncingRef.current = true;
     try {
-      // Send local_id with each row and upsert on it instead of plain insert.
-      // This makes syncing idempotent - safe to call more than once for the
-      // same item - which fixes duplicate rows caused by a race condition
-      // where the page unloads/refreshes before the previous sync result
-      // (the _synced flag) is saved back to localStorage.
-      // MARKER_APCONTROLLER_FIX_DUPWARNING_UPSERT_BUG_V1
-      // ── Bug Fix: Strip Field ชั่วคราวจาก Duplicate Check ออกก่อนส่งเข้า ──
-      // ── bucket_list — ถ้าไม่ Strip บางแถวมี Field เหล่านี้บางแถวไม่มี ──────
-      // ── ทำให้ Backend สร้าง SQL Column ไม่ตรงกันทุกแถว pg Driver Error ────
-      // ── ทันทีที่เจอ undefined (500 Internal Server Error) ─────────────────
-      const payloads = pending.map(({ _localId, _synced, id, _dupWarning, _dupConfirmedAt, _dupDetail, ...rest }) => ({
-        ...rest,
-        local_id: _localId,
-      }));
-      const { data, error } = await db
-        .from('bucket_list')
-        .upsert(payloads, { onConflict: 'local_id' })
-        .select();
-      if (error) throw error;
-      setInvoices(prev => {
-        // Match results back by local_id instead of array index - safer if
-        // the backend ever returns rows in a different order than sent.
-        const byLocalId = new Map((data || []).map(r => [r.local_id, r]));
-        const next = prev.map(inv => {
-          if (inv._synced) return inv;
-          const row = byLocalId.get(inv._localId);
-          // MARKER_APCONTROLLER_KEEP_DUPWARNING_AFTER_SYNC_V1
-          // ── เก็บ _dupWarning/_dupConfirmedAt/_dupDetail ไว้จาก State เดิม ──────
-          // ── (Frontend-Only Field ตั้งใจไม่บันทึกลง DB) ก่อนที่ก้อนนี้จะโดน ──────
-          // ── แทนที่ทั้งหมดด้วย row จาก Backend (ที่ไม่มี Field พวกนี้อยู่แล้ว) ──
-          // ── ไม่งั้นจุดสีเขียว/เหลืองในตาราง Batch Bucket จะหายไปหลัง Sync ──────
-          return row ? { ...row, _synced: true, _dupWarning: inv._dupWarning, _dupConfirmedAt: inv._dupConfirmedAt, _dupDetail: inv._dupDetail } : inv;
-        });
-        saveLocalBucket(next);
-        return next;
-      });
+      // MARKER_APCONTROLLER_SYNC_ONE_BY_ONE_DUP_GUARD_V1
+      // ── Sync ทีละแถว (ไม่ bulk เหมือนเดิม) — เพราะตอนนี้ DB มี Unique Constraint ──
+      // ── (invoice_no+branch_no+bu+amount, status='pending') กันซ้ำอยู่ ถ้ายิง ──
+      // ── เป็นก้อนเดียวแล้วมี 1 แถวชน Constraint จะทำให้ทั้งก้อน Error ไปด้วย ──────
+      // ── (แถวอื่นที่ไม่ซ้ำก็ Sync ไม่ขึ้น) เลยต้องแยกยิงทีละแถวแทน ─────────────────
+      for (const inv of pending) {
+        const { _localId, _synced, id, _dupWarning, _dupConfirmedAt, _dupDetail, ...rest } = inv;
+        const payload = { ...rest, local_id: _localId };
+        const { data, error } = await db
+          .from('bucket_list')
+          .upsert([payload], { onConflict: 'local_id' })
+          .select();
+
+        if (error) {
+          const msg = String(error.message || error.detail || error.code || '');
+          const isDupConstraint = error.code === '23505' || /duplicate key|already exists|violates unique/i.test(msg);
+          if (isDupConstraint) {
+            // ── DB ปฏิเสธเพราะซ้ำกับรายการที่มีอยู่แล้วจริง (เช่น ยิงพร้อมกันจาก 2 Tab) ──
+            // ── ตัดออกจาก Bucket ทันที ไม่ retry ซ้ำอีก + แจ้งเตือนให้ User รู้ ────────
+            console.warn('[DUP-BLOCKED-BY-DB] Invoice ซ้ำถูก DB ปฏิเสธ:', inv.invoice_no, inv.branch_no, inv.amount);
+            setInvoices(prev => {
+              const next = prev.filter(x => x._localId !== _localId);
+              saveLocalBucket(next);
+              return next;
+            });
+            confirmDialog.alert(
+              `Invoice "${inv.invoice_no}" ซ้ำกับรายการที่มีอยู่แล้ว — ระบบตัดออกจาก Batch Bucket ให้อัตโนมัติ`,
+              { variant: 'danger' }
+            );
+            continue; // ไปแถวถัดไป ไม่ throw กันทั้งก้อนพัง
+          }
+          throw error; // error แบบอื่นที่ไม่ใช่ dup — โยนต่อเหมือนเดิม
+        }
+
+        const row = (data || [])[0];
+        if (row) {
+          setInvoices(prev => {
+            const next = prev.map(x => x._localId === _localId
+              ? { ...row, _synced: true, _dupWarning: x._dupWarning, _dupConfirmedAt: x._dupConfirmedAt, _dupDetail: x._dupDetail }
+              : x);
+            saveLocalBucket(next);
+            return next;
+          });
+        }
+      }
     } catch (e) {
       console.error('syncPendingToBucket:', e);
     } finally {
@@ -7676,12 +7767,18 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       });
     });
 
+    // MARKER_HANDLESUBMIT_GRT_GRN_FIELD_3WAY_V1
+    // ── เลือก Column ที่จะขอเลขจริง ตาม Track ที่ตัดสินใจไว้ตอน Start Batch ──────
+    // ── (เดิม hardcode 'ap_grt'/'ap_grn' เสมอ ทำให้ Override ไม่เคยขอจาก ap_grt_prev จริง) ──
+    const grtField = batchConfig?.periodMode === 'over' ? 'ap_grt_ov' : batchConfig?.periodMode === 'prev' ? 'ap_grt_prev' : 'ap_grt';
+    const grnField = batchConfig?.periodMode === 'over' ? 'ap_grn_ov' : batchConfig?.periodMode === 'prev' ? 'ap_grn_prev' : 'ap_grn';
+
     // ── GRT: ขอ 1 เลขจาก backend (การันตีไม่ซ้ำ) ใช้ร่วมทุก Invoice ที่ split จาก submit นี้ ──
     let grtNumVal = form.grtNum;
     let bumpGrt = false;
     let grtRunningActual = nextGrtRunning;
     if (isAutoGrt) {
-      const res = await requestUniqueNumber('ap_grt', batchConfig?.grtPrefix || '', nextGrtRunning);
+      const res = await requestUniqueNumber(grtField, batchConfig?.grtPrefix || '', nextGrtRunning);
       grtNumVal = res.formatted;
       grtRunningActual = res.value;
       bumpGrt = true;
@@ -7705,7 +7802,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       const isVat = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
       let grnVal = '';
       if (isAutoGrt && isVat) {
-        const res = await requestUniqueNumber('ap_grn', batchConfig?.grnPrefix || '', grnRunningActual);
+        const res = await requestUniqueNumber(grnField, batchConfig?.grnPrefix || '', grnRunningActual);
         grnVal = res.formatted;
         grnRunningActual = res.value;
         grnBumpCount += 1;
@@ -10612,6 +10709,10 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
+  // MARKER_APCONTROLLER_BATCHSETUP_RESET_KEY_V1
+  // ── เปลี่ยนค่านี้เฉพาะตอนกด "+ New Batch" เพื่อบังคับ BatchSetup Remount ──
+  // ── (Reset State เจตนา) ส่วนกลับไปมาระหว่าง Step ปกติจะไม่ทำให้ค่านี้เปลี่ยน ──
+  const [batchSetupKey, setBatchSetupKey] = useState(0);
   const [invoices, setInvoices]       = useState([]);
   // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
@@ -10701,7 +10802,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
     setBatchConfig({ ...config, batchId: draftBatchId });
     setStep(2);
   };
-  const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); };
+  const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); setBatchSetupKey(k => k + 1); };
   const handleRunningChange = (bu, vals) => { if (!bu) return; setRunningOverride({ bu, ...vals }); };
 
   return (
@@ -10747,7 +10848,12 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
       )}
       <StepBar step={step} onGo={setStep} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {step === 1 && <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} />}
+        {/* MARKER_APCONTROLLER_BATCHSETUP_NO_UNMOUNT_V1 */}
+        {/* ── ซ่อนด้วย CSS แทน Unmount กัน BU/Receive Date/Due Date/GRT-GRN Preview ── */}
+        {/* ── หายตอนกลับมา Step 1 (เดิม unmount ทุกครั้งที่ step !== 1 ทำให้ State หาย) ── */}
+        <div key={batchSetupKey} style={{ display: step === 1 ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} />
+        </div>
         {step === 2 && (
           <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)}
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}
