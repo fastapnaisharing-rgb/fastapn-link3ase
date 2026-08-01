@@ -2,10 +2,6 @@
 import Chart from 'chart.js/auto';
 
 const WEBHOOK_URL = 'http://10.101.87.126:9000';
-// webhook.js รัน WebSocket server แยกที่ port 9001 (คนละ port จาก HTTP :9000)
-// เดิม frontend เคยต่อ EventSource ไปที่ :9000/events ซึ่งไม่มี route นี้อยู่จริง
-// ใน backend เลย (มีแต่ /status, POST /) ทำให้ Disconnected ตลอด แก้เป็น WS แทน
-const WEBHOOK_WS_URL = 'ws://10.101.87.126:9001';
 const HEALTH_URL  = 'http://10.101.87.126:4000/health';
 
 function formatDuration(sec) {
@@ -82,26 +78,21 @@ export default function DeployMonitor({ inline = false, onClose }) {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, []);
 
-  // Deploy events via WebSocket (ตรงกับ backend webhook.js ที่รัน WS บน :9001)
-  // เดิมใช้ EventSource ไปที่ :9000/events ซึ่งไม่มี route นี้จริง เปลี่ยนมาใช้ WS
-  // ให้ตรงกับที่ backend ส่งจริง พร้อม manual reconnect (WebSocket ไม่ auto-reconnect
-  // เหมือน EventSource ต้องทำเอง)
+  // Deploy events via SSE (แทนที่ polling /status ทุก 2s)
   useEffect(() => {
-    let ws;
+    let es;
     let retryTimer;
-    let cancelled = false;
 
     const connect = () => {
-      if (cancelled) return;
-      ws = new WebSocket(WEBHOOK_WS_URL);
+      es = new EventSource(`${WEBHOOK_URL}/events`);
 
-      ws.onopen = () => setConnected(true);
+      es.onopen = () => setConnected(true);
 
-      ws.onmessage = (e) => {
+      es.onmessage = (e) => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
 
-        if (msg.type === 'init') {
+        if (msg.type === 'snapshot') {
           // ข้อมูล ณ ตอนที่เพิ่ง connect เข้ามา (กันพลาด event ตอนปิดหน้าอยู่)
           setHistory(msg.history || []);
           setCurrent(msg.current || null);
@@ -113,41 +104,33 @@ export default function DeployMonitor({ inline = false, onClose }) {
           }
         }
 
-        if (msg.type === 'deploy_start') {
+        if (msg.type === 'deploy-start') {
           setCurrent(msg.deploy);
           setHistory(h => [msg.deploy, ...h].slice(0, 20));
           setSelectedId(msg.deploy.id);
           setTimeout(scrollBottom, 50);
         }
 
-        if (msg.type === 'log') {
-          setCurrent(c => (c && c.id === msg.deployId) ? { ...c, lines: [...c.lines, msg.line] } : c);
-          setHistory(h => h.map(d => d.id === msg.deployId ? { ...d, lines: [...d.lines, msg.line] } : d));
+        if (msg.type === 'deploy-log') {
+          setCurrent(c => (c && c.id === msg.deployId) ? { ...c, lines: [...c.lines, msg.entry] } : c);
+          setHistory(h => h.map(d => d.id === msg.deployId ? { ...d, lines: [...d.lines, msg.entry] } : d));
           setTimeout(scrollBottom, 50);
         }
 
-        if (msg.type === 'deploy_end' && msg.deploy) {
+        if (msg.type === 'deploy-done' && msg.deploy) {
           setCurrent(null);
           setHistory(h => h.map(d => d.id === msg.deploy.id ? msg.deploy : d));
         }
       };
 
-      ws.onerror = () => {
+      es.onerror = () => {
+        // EventSource พยายาม reconnect ให้เองอัตโนมัติ แต่ระหว่างหลุดให้โชว์ Disconnected
         setConnected(false);
-      };
-
-      ws.onclose = () => {
-        setConnected(false);
-        if (!cancelled) retryTimer = setTimeout(connect, 3000); // reconnect เอง ทุก 3 วิ
       };
     };
 
     connect();
-    return () => {
-      cancelled = true;
-      clearTimeout(retryTimer);
-      ws?.close();
-    };
+    return () => { es?.close(); clearTimeout(retryTimer); };
   }, [scrollBottom]);
 
   // Elapsed timer
