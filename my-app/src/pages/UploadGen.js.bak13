@@ -167,8 +167,9 @@ async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
             const dAmt    = toNum(d['ยอดรวม']);
             if (!dTax) continue;
 
-            if (tax === dTax && branch === dBranch && Math.abs(amt - dAmt) < 0.01) {
-              const key = 'ap09|' + tax + '|' + branch;
+            // เช็คแค่ Tax Invoice No. — unique อยู่แล้ว ไม่ต้องรวม Branch
+            if (tax === dTax) {
+              const key = 'ap09|' + tax;
               if (!found[key]) {
                 found[key] = {
                   invoiceNo: tax, docType: 'AP09', confidence: 100,
@@ -306,32 +307,54 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
     loadPendingQueue();
   }, []);
 
-  // Poll status ทุก 5 วินาที สำหรับ pending/processing
+  // SSE: รับ push จาก backend เมื่อ queue status เปลี่ยน (แทน polling ทุก 5 วิ เดิม)
+  // ใช้ stream endpoint เดียวกับ Queue Monitor sidebar (FolderDetail) — backend เดียวกัน ไม่ต้อง poll ซ้ำ
+  const docTypeRef = React.useRef(docType); docTypeRef.current = docType;
+  const genSerialRef = React.useRef(genSerial); genSerialRef.current = genSerial;
+
+  // Initial load: โหลด queue ของ user จาก DB ตอนเปิด modal ใหม่
   React.useEffect(() => {
-    const hasPending = pdfQueue.some(x => x.status === 'pending' || x.status === 'ocring');
-    if (!hasPending) return;
-    const interval = setInterval(async () => {
-      const pendingIds = pdfQueue.filter(x => x.status === 'pending' || x.status === 'ocring').map(x => x.id).filter(Boolean);
-      if (!pendingIds.length) { clearInterval(interval); return; }
+    const token = sessionStorage.getItem('fastapn_token');
+    fetch('http://10.101.87.126:4000/api/docenter/queue', {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(r => r.json()).then(items => {
+      if (!Array.isArray(items)) return;
+      const mapped = items.map(row => ({
+        id: row.id,
+        fileName: row.file_name,
+        status: row.status,
+        error: row.error_msg || '',
+        result: row.result_data || null,
+        serial: row.serial_code || row.result_meta?.serial_code || row.result_data?.serial_code || '',
+        file: null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+      setPdfQueue(prev => {
+        const prevIds = new Set(prev.map(x => x.id).filter(Boolean));
+        const newItems = mapped.filter(x => !prevIds.has(x.id));
+        return [...prev, ...newItems];
+      });
+    }).catch(() => {});
+  }, []);
+
+  React.useEffect(() => {
+    const token = sessionStorage.getItem('fastapn_token');
+    const es = new EventSource(`http://10.101.87.126:4000/api/docenter/queue/stream?token=${encodeURIComponent(token || "")}`);
+    es.addEventListener('queue_update', (e) => {
       try {
-        const token = sessionStorage.getItem('fastapn_token');
-        const results = await Promise.all(
-          pendingIds.map(id =>
-            fetch(`http://10.101.87.126:4000/api/docenter/queue/${id}/result`, {
-              headers: { Authorization: `Bearer ${token}` },
-            }).then(r => r.json()).catch(() => null)
-          )
-        );
+        const { snapshot } = JSON.parse(e.data);
+        if (!Array.isArray(snapshot)) return;
         setPdfQueue(q => q.map(item => {
-          const updated = results.find(r => r?.id === item.id);
+          const updated = snapshot.find(r => r.id === item.id);
           if (!updated) return item;
           if (updated.status === 'done') {
             const buFromName = (() => {
               const m = (item.fileName||'').replace(/[.]pdf$/i,'').match(/^([A-Z]{2,6})[_-]/);
               return m ? m[1] : '';
             })();
-            const dtype  = updated.result_meta?.doc_type || docType;
-            const serial = updated.result_data?.serial_code || genSerial?.(buFromName||'XX', dtype) || item.fileName;
+            const dtype  = updated.result_meta?.doc_type || docTypeRef.current;
+            const serial = updated.result_data?.serial_code || genSerialRef.current?.(buFromName||'XX', dtype) || item.fileName;
             return { ...item, status:'done', result: updated.result_data, serial, error:'' };
           }
           if (updated.status === 'error') return { ...item, status:'error', error: updated.error_msg || 'OCR ล้มเหลว' };
@@ -339,9 +362,10 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
           return item;
         }));
       } catch(_) {}
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [pdfQueue]);
+    });
+    es.onerror = () => { es.close(); }; // close on error — จะ reconnect เองรอบหน้าที่ mount ใหม่
+    return () => { es.close(); };
+  }, []);
   const [attachments, setAttachments] = React.useState([]);
   const [pdfError, setPdfError]       = React.useState('');
   const pdfInputRef                   = React.useRef();
@@ -634,7 +658,17 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:'11px', fontWeight:'500', color:'#1a3a5c', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={item.fileName||item.file?.name}>{item.fileName||item.file?.name}</div>
                   <div style={{ fontSize:'10px', color: item.status==='error'?'#c0392b':'#888', marginTop:'2px' }}>
-                    {item.status==='done' ? `${item.result?.total_rows||0} รายการ · ${item.result?.pages||0} หน้า` :
+                    {item.status==='done' ? (() => {
+                      const rows = item.result?.total_rows || 0;
+                      const pages = item.result?.pages || 0;
+                      const dur = item.createdAt && item.updatedAt
+                        ? Math.round((new Date(item.updatedAt) - new Date(item.createdAt)) / 1000)
+                        : null;
+                      const durStr = dur !== null
+                        ? dur >= 60 ? `${Math.floor(dur/60)} นาที ${dur%60} วิ` : `${dur} วิ`
+                        : '';
+                      return `${rows} รายการ · ${pages} หน้า${durStr ? ' · ' + durStr : ''}`;
+                    })() :
                      item.status==='error' ? item.error :
                      item.status==='ocring' ? (
                        <div>
@@ -764,6 +798,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
   const [dupModal, setDupModal] = React.useState(null);
   const [previewDocType, setPreviewDocType] = React.useState('APN01');
   const [saveDraftModal, setSaveDraftModal] = React.useState(false);
+  const [ap09Duplicated, setAp09Duplicated] = React.useState(false); // AP09 ซ้ำ → ซ่อน AP09/Both ใน modal
   // pdfQueue อยู่ที่นี่ เพื่อให้สลับ tab แล้วไม่หาย
   const [pdfQueue, setPdfQueue] = React.useState([]);
   const [pdfSelected, setPdfSelected] = React.useState(null);
@@ -865,7 +900,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       checkAllDuplicates(db, rows, serialCode||'', 'APN01'),
       _ap09Prev.length>0 ? checkAllDuplicates(db, _ap09Prev, _ap09Ser||((serialCode||'')+'_AP09'), 'AP09') : Promise.resolve([]),
     ]);
-    setDupWarnings([..._d1,..._d2]);
+    // เก็บ dup ทั้ง APN01 และ AP09 — render filter ตาม docType ของแต่ละ view
+    setDupWarnings([..._d1, ..._d2]);
     // Tab paste = ไฟล์ดิบเสมอ → gen serial APN01 อัตโนมัติ ไม่ต้องให้ user เลือก
     if (!serialCode) {
       const bu = detectBU('', rows);
@@ -1065,6 +1101,14 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
     }
     const _ap09Check = parseAP09RowsFromRaw(parsedRows);
     if (_ap09Check.length === 0) { doSaveDraft('APN01'); return; }
+    // เช็ค AP09 dup แยก doctype
+    const _ap09Serial = serialCode.trim().replace('APN01','AP09').replace('Invoice Register','Input Tax Invoice');
+    const ap09DupItems = await checkAllDuplicates(db, _ap09Check, _ap09Serial !== serialCode.trim() ? _ap09Serial : serialCode.trim()+'_AP09', 'AP09');
+    if (ap09DupItems.length > 0) {
+      // AP09 ซ้ำ → บันทึก APN01 อัตโนมัติเลย ไม่ต้องแสดง modal
+      doSaveDraft('APN01');
+      return;
+    }
     setSaveDraftModal(true);
   };
 
@@ -1445,10 +1489,17 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
             <div style={{fontSize:'11px',color:'#888',marginTop:'3px'}}>บันทึกไว้เป็น Draft ผ่าน Dup Check แล้ว</div>
           </div>
           <div style={{padding:'14px 18px',display:'flex',flexDirection:'column',gap:'8px'}}>
+            {ap09Duplicated && (
+              <div style={{fontSize:'11px',color:'#b45309',background:'#FEF3C7',borderRadius:'6px',padding:'6px 10px',marginBottom:'4px'}}>
+                ⚠️ AP09 ซ้ำกับที่มีอยู่แล้ว — บันทึกได้เฉพาะ APN01
+              </div>
+            )}
             {[
               ['APN01','📄 APN01 เท่านั้น ('+parsedRows.length+' แถว)','#E6F1FB','#0C447C','#b5d4f4'],
-              ['AP09','📄 AP09 เท่านั้น ('+parseAP09RowsFromRaw(parsedRows).length+' แถว)','#EAF3DE','#27500A','#c0dd97'],
-              ['Both','📂 Both — APN01 + AP09','#1a3a5c','white','#1a3a5c'],
+              ...(!ap09Duplicated ? [
+                ['AP09','📄 AP09 เท่านั้น ('+parseAP09RowsFromRaw(parsedRows).length+' แถว)','#EAF3DE','#27500A','#c0dd97'],
+                ['Both','📂 Both — APN01 + AP09','#1a3a5c','white','#1a3a5c'],
+              ] : []),
             ].map(([v,label,bg,color,border])=>(
               <button key={v} onClick={()=>doSaveDraft(v)}
                 style={{padding:'8px 14px',borderRadius:'8px',border:`0.5px solid ${border}`,background:bg,color,fontSize:'12px',cursor:'pointer',fontWeight:v==='Both'?'500':'400',textAlign:'left'}}>
@@ -1735,7 +1786,11 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                         const COLS = isAP09v ? AP09_COLS : APN01_COLS;
                         const NUM_COLS = isAP09v ? ['ยอดก่อนภาษี','ยอดภาษี','ยอดรวม'] : ['มูลค่าก่อนภาษี','มูลค่าภาษี','มูลค่ารวม'];
                         const mapped = rawPrev.map(r=>mapRowsForExcel([r],isAP09v?'AP09':'APN01')[0]||{});
-                        const dupMap = {}; dupWarnings.forEach(d=>{dupMap[d.invoiceNo]=d;});
+                        // filter dupWarnings ตาม docType ของ view — APN01 เห็นเฉพาะ APN01 dup, AP09 เห็นเฉพาะ AP09 dup
+                        const dupMap = {};
+                        dupWarnings
+                          .filter(d => isAP09v ? d.docType === 'AP09' : d.docType !== 'AP09')
+                          .forEach(d => { dupMap[d.invoiceNo] = d; });
                         const thBg = isAP09v?'#0F6E56':'#1a3a5c';
                         const fmtDate = (d)=>{ try{return new Date(d).toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'2-digit'});}catch(_){return d?.slice(0,10)||'—';} };
                         return (<>
@@ -2144,10 +2199,27 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                 );
               }
               return (
-                <button style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:saving?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}
-                  onClick={handleSave} disabled={saving}>
-                  {saving?`กำลังบันทึก...${saveProgress>0?` ${saveProgress}%`:'`'}`:'💾 บันทึก'}
-                </button>
+                <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+                  {selectedDraftIds.length > 0 && (
+                    <button
+                      style={{padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',color:'#791F1F',fontSize:'12px',cursor:'pointer'}}
+                      onClick={async()=>{
+                        if(!window.confirm(`ลบ Draft ที่เลือก ${selectedDraftIds.length} รายการ?`)) return;
+                        for(const id of selectedDraftIds){
+                          await db.from('doc_collection').delete().eq('id',id);
+                        }
+                        setSelectedDraft(null);
+                        setSelectedDraftIds([]);
+                        loadDrafts();
+                      }}>
+                      🗑 ลบที่เลือก ({selectedDraftIds.length})
+                    </button>
+                  )}
+                  <button style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:saving?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}
+                    onClick={handleSave} disabled={saving}>
+                    {saving?`กำลังบันทึก...${saveProgress>0?` ${saveProgress}%`:'`'}`:'💾 บันทึก'}
+                  </button>
+                </div>
               );
             })()}
           </div>

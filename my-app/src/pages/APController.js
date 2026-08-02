@@ -12,6 +12,57 @@ import { confirmDialog } from '../confirmDialog';
 // MARKER_REJECT_CHAT_DRAWER_V1
 import BatchChatDrawer from './BatchChatDrawer';
 
+// MARKER_FLEXIBLE_DATE_PARSER_V1
+// ── รับพิมพ์วันที่ได้หลาย Format (DDMMYYYY, DD/MM/YYYY, MM/DD/YYYY, ────────
+// ── DD-MMM-YYYY, YYYY-MM-DD) แล้วแปลงเป็น ISO (YYYY-MM-DD) ให้เอง ────────
+const isoIfValidFlexDate = (y, mo, d) => {
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1000 || y > 9999) return null;
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+};
+const parseFlexibleDate = (str) => {
+  if (!str) return null;
+  const s = String(str).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return isoIfValidFlexDate(+m[1], +m[2], +m[3]);
+  // MARKER_8DIGIT_DUAL_ORDER_FALLBACK_V1
+  m = s.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m) {
+    // ── ลอง DDMMYYYY ก่อน (2 หลักแรก=วัน) ถ้าไม่ผ่าน ลอง MMDDYYYY แทน ──
+    const ddmm = isoIfValidFlexDate(+m[3], +m[2], +m[1]);
+    if (ddmm) return ddmm;
+    return isoIfValidFlexDate(+m[3], +m[1], +m[2]);
+  }
+  m = s.match(/^(\d{1,2})[\s\-\/]([A-Za-z]{3,})[\s\-\/](\d{4})$/);
+  if (m) {
+    const monthNames = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const idx = monthNames.indexOf(m[2].slice(0, 3).toLowerCase());
+    return idx >= 0 ? isoIfValidFlexDate(+m[3], idx + 1, +m[1]) : null;
+  }
+  // MARKER_DOT_SEPARATOR_SUPPORT_V1
+  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (m) {
+    const a = +m[1], b = +m[2], y = +m[3];
+    if (a > 12 && b <= 12) return isoIfValidFlexDate(y, b, a);
+    if (b > 12 && a <= 12) return isoIfValidFlexDate(y, a, b);
+    return isoIfValidFlexDate(y, a, b); // MARKER_MDY_STANDARD_V1 — กำกวม -> Default MM/DD/YYYY (มาตรฐานใหม่)
+  }
+  return null;
+};
+const formatDateDisplayDMY = (iso) => {
+  if (!iso) return '';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+};
+// MARKER_FORMAT_DATE_MDY_V1
+// ── Format มาตรฐานเดียวทั้งระบบ: MM/DD/YYYY ──────────────────────────────
+const formatDateDisplayMDY = (iso) => {
+  if (!iso) return '';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : iso;
+};
+
 const PERIOD_OPTIONS = ['Current', 'Pre-Close', 'Override'];
 
 const buildDisGDesc = (disG, bd1, bd2, bd3) => {
@@ -482,7 +533,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                     </div>
                     <div style={valueCellStyle}>
                       {key === 'Inactive Date' ? (
-                        <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={inputBare} />
+                        <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => setField(key, e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={inputBare} />
                       ) : key === 'Branch Address' ? (
                         <textarea value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
                       ) : key === 'status' ? (
@@ -2869,7 +2920,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
             </div>
             <div>
               <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '4px' }}>Tax Invoice Date</label>
-              <input type="date" value={manualVendor.taxInvoiceDate} onChange={e => setManualVendor(m => ({ ...m, taxInvoiceDate: e.target.value }))}
+              <input type="date" value={manualVendor.taxInvoiceDate} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} onChange={e => setManualVendor(m => ({ ...m, taxInvoiceDate: e.target.value }))}
                 style={{ width: '100%', height: '32px', padding: '0 10px', fontSize: '12px', border: '1.5px solid #e2e6ed', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', background: 'white', color: '#1a3a5c' }}
                 onFocus={e => e.target.style.borderColor = '#1a3a5c'} onBlur={e => e.target.style.borderColor = '#e2e6ed'} />
             </div>
@@ -3251,6 +3302,17 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // ── ใช้แทน lines.filter(...) ตอน "บันทึกเป็น Flow" กัน Auto-Add ติดเข้า Flow ──
   const [flowActionSession, setFlowActionSession] = useState([]);
   const [flowStep, setFlowStep] = useState(0);
+  // MARKER_FLOW_STEP_ADVANCE_GUARD_V1
+  // ── Guard กลาง: Flow เดินหน้าได้แค่ 1 ครั้งต่อ 1 Step เท่านั้น ไม่ว่าจะมี ──
+  // ── บั๊กอะไรมา Trigger ซ้ำก็ตาม — Reset ก็ต่อเมื่อเลือก/ล้าง Flow ใหม่เท่านั้น ──
+  const lastAdvancedStepRef = useRef(-1);
+  const tryAdvanceFlowStep = () => {
+    if (lastAdvancedStepRef.current === flowStep) return false; // กันเดินหน้าซ้ำ Step เดิม
+    lastAdvancedStepRef.current = flowStep;
+    setFlowStep(s => s + 1);
+    return true;
+  };
+  const resetFlowStepGuard = () => { lastAdvancedStepRef.current = -1; };
   const [showSaveFlowModal, setShowSaveFlowModal] = useState(false);
   const [saveFlowState, setSaveFlowState] = useState({ name: '', mode: 'new', targetId: '', saving: false, error: null });
   const [showDeleteFlowConfirm, setShowDeleteFlowConfirm] = useState(false);
@@ -3264,7 +3326,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // ── ดึง Flow ของ Vendor นี้ทุกครั้งที่เปลี่ยน Vendor + จำ Flow ล่าสุดที่เคยใช้ ──
   // ── ในรอบ Batch นี้ (flowMemory เป็นความจำฝั่ง Frontend เท่านั้น ไม่ลง DB) ────
   useEffect(() => {
-    if (!vendorNoForFlow) { setVendorFlows([]); setSelectedFlow(null); setFlowStep(0); return; }
+    if (!vendorNoForFlow) { setVendorFlows([]); setSelectedFlow(null); setFlowStep(0); resetFlowStepGuard(); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -3296,6 +3358,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     if (!flow?.items?.length) return;
     setSelectedFlow(flow);
     setFlowStep(0);
+    resetFlowStepGuard();
     setFlowMemory?.(prev => ({ ...prev, [vendorNoForFlow]: { id: flow.id, flow_name: flow.flow_name } }));
   };
 
@@ -3353,7 +3416,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       // ── อัปเดต selectedFlow (ตัวที่กำลัง Active ใช้ Auto-Fill อยู่ตอนนี้) ────
       // ── พอ "แทนที่ Flow เดิม" (Replace) สำเร็จ selectedFlow ยังค้างชี้ไปที่ ──
       // ── ข้อมูลเก่าก่อน Replace ใน Memory ทำให้ Auto-Fill ดึงของเก่าผิดๆ ──────
-      if (isReplace) { setSelectedFlow(data); setFlowStep(0); }
+      if (isReplace) { setSelectedFlow(data); setFlowStep(0); resetFlowStepGuard(); }
     } catch (e) {
       setSaveFlowState(s => ({ ...s, saving: false, error: e.message }));
     }
@@ -3373,6 +3436,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       setVendorFlows(prev => prev.filter(f => f.id !== selectedFlow.id));
       setSelectedFlow(null);
       setFlowStep(0);
+      resetFlowStepGuard();
       setShowDeleteFlowConfirm(false);
     } catch (e) {
       alert(e.message);
@@ -3402,10 +3466,24 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // ── Default Focus: Inv Date เมื่อเปิด Popup "Invoice Detail" ────────────────
   const invDateRef = useRef(null);
   useEffect(() => {
-    if (show) setTimeout(() => invDateRef.current?.focus(), 80);
+    if (show) {
+      setTimeout(() => invDateRef.current?.focus(), 80);
+      // MARKER_MODAL_OPEN_RESET_FLOW_STATE_V1
+      // ── Reset State ของ Flow/Real Vendor + Guard ทุกครั้งที่เปิด Modal ใหม่ ──
+      // ── กัน State ค้างจาก Invoice ใบก่อนหน้า (Modal ไม่ได้ Remount ใหม่) ──────
+      setRealVendorLineIdx(-1);
+      setFlowStep(0);
+      if (typeof resetFlowStepGuard === 'function') resetFlowStepGuard();
+      if (typeof lineVrvProcessedRef !== 'undefined' && lineVrvProcessedRef.current) lineVrvProcessedRef.current = [];
+    }
   }, [show]);
   const lineAmountRefs   = useRef([]);
   const lineRealInvoiceRefs = useRef([]);
+  // MARKER_LINE_TAXDATE_TEXT_REFS_V1
+  const lineTaxDateTextRefs = useRef([]);
+  // MARKER_LINE_VRV_PROCESSED_REF_V1
+  // ── Guard กัน V-RV Auto-Add H+L Row ซ้ำ ต่อ 1 บรรทัดเท่านั้น ────────────
+  const lineVrvProcessedRef = useRef([]);
   // ══════════════════════════════════════════════════════════════════════════════
   // FLOW + REAL VENDOR INTERACTION PATTERN
   // ══════════════════════════════════════════════════════════════════════════════
@@ -3450,7 +3528,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         }, 30);
         return next;
       });
-      setFlowStep(s => s + 1);
+      tryAdvanceFlowStep();
       return;
     }
     setLines(prev => {
@@ -3495,6 +3573,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           };
           return next;
           });
+          // MARKER_VRV_REALVENDORLINEIDX_FIX_V1
+          // ── เดิมไม่เคยเรียกอันนี้ ทำให้ Guard "realVendorLineIdx === -1" ที่ ──
+          // ── Auto-Tab ไป Flow Step ถัดไป มองไม่เห็นว่ามี Real Vendor Sub-row ──
+          // ── เปิดค้างอยู่ (Tax Invoice Date ยังว่าง) เลยปล่อยให้ Auto-Tab ──────
+          // ── ทะลุข้ามไปได้ทั้งที่ยังกรอกไม่ครบ ─────────────────────────────
+          setRealVendorLineIdx(idx);
           setTimeout(() => lineRealInvoiceRefs.current[idx]?.focus(), 150);  // ← ตรงนี้
           return;
       }
@@ -3776,10 +3860,49 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     </svg>
                     <select
                       value={selectedFlow?.id || ''}
-                      onChange={e => {
+                      onChange={async e => {
                         const flow = vendorFlows.find(f => f.id === e.target.value);
-                        if (flow) applyFlowStep0(flow);
-                        else { setSelectedFlow(null); setFlowStep(0); }
+                        if (!flow) { setSelectedFlow(null); setFlowStep(0); resetFlowStepGuard(); return; }
+
+                        // MARKER_FLOW_SWITCH_MIDWAY_V1
+                        const hasProgress = lines.some(l => l.itemCode?.trim() || l.amount?.trim());
+                        if (!hasProgress || !selectedFlow) { applyFlowStep0(flow); return; }
+
+                        const adjustChoice = await confirmDialog.confirm(
+                          `กำลังเปลี่ยน Flow จาก "${selectedFlow.flow_name}" เป็น "${flow.flow_name}" ทั้งที่กรอกข้อมูลไปแล้ว\n\nต้องการทำอย่างไร?`,
+                          { confirmText: 'ปรับ Item Code ตาม Flow ใหม่ (เก็บยอดเงินไว้)', cancelText: 'เริ่มใหม่ทั้งหมด' }
+                        );
+
+                        if (adjustChoice) {
+                          const newItems = flow.items || [];
+                          const maxLen = Math.min(lines.length, newItems.length);
+                          const remapped = [];
+                          for (let i = 0; i < maxLen; i++) {
+                            const newItemCode = newItems[i]?.itemCode || '';
+                            const newLine = calcLine({ ...lines[i], itemCode: newItemCode }, itemcodeItems, vendorInfo, form);
+                            remapped.push(newLine);
+                            const newItemData = itemcodeItems.find(it => String(it.code ?? '').trim().toUpperCase() === newItemCode?.toUpperCase());
+                            const newIsVRV = String(newItemData?.value ?? '').trim().toUpperCase() === 'V-RV';
+                            if (realVendorLineIdx === i && !newIsVRV) setRealVendorLineIdx(-1);
+                          }
+                          setLines(remapped);
+                          setSelectedFlow(flow);
+                          setFlowStep(maxLen);
+                          resetFlowStepGuard();
+                        } else {
+                          const firstItemCode = flow.items?.[0]?.itemCode || '';
+                          const freshLine = calcLine({
+                            hl: flow.items?.[0]?.hl || 'H', itemCode: firstItemCode, amount: '',
+                            tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '',
+                          }, itemcodeItems, vendorInfo, form);
+                          setLines([freshLine]);
+                          setRealVendorLineIdx(-1);
+                          setSelectedFlow(flow);
+                          setFlowStep(1);
+                          resetFlowStepGuard();
+                          setTimeout(() => lineAmountRefs.current[0]?.focus(), 60);
+                        }
+                        setFlowMemory?.(prev => ({ ...prev, [vendorNoForFlow]: { id: flow.id, flow_name: flow.flow_name } }));
                       }}
                       style={{ flex: 1, fontSize: '11px', color: '#185FA5', border: '0.5px solid #c5d8f0', borderRadius: '5px', padding: '4px 6px', background: 'white' }}>
                       <option value="">— ไม่ใช้ Flow —</option>
@@ -4176,22 +4299,33 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Tax Invoice Date</span>
-                              <input type="date" value={line.realVendorTaxDate || ''}
-                                // MARKER_APCONTROLLER_REALTAXDATE_ONCHANGE_TRIGGER_V1
-                                // ── ย้าย Logic จาก onKeyDown(Tab) มาเป็น onChange แทน — เดิมกด Tab ──
-                                // ── เท่านั้นถึงจะ Trigger V-RV Auto-Add/Flow ต่อ แต่เลือกวันที่ผ่าน ──
-                                // ── Calendar Picker (คลิกเมาส์) ไม่มีการกด Tab เกิดขึ้นเลย เลยไม่ ──
-                                // ── ทำงาน — onChange ของ input date ยิงครั้งเดียวตอนค่าสมบูรณ์ ────
-                                // ── (ไม่ว่าจะพิมพ์เองจนครบหรือคลิก Calendar) เลยไม่มีความเสี่ยง ────
-                                // ── Trigger ซ้ำ 2 ครั้งถ้าพิมพ์เองแล้วกด Tab ต่อ ──────────────────
-                                onChange={e => {
-                                  const v = e.target.value;
+                              {/* MARKER_TAXINVOICEDATE_HYBRID_V1 */}
+                              {/* ── Hybrid: พิมพ์ Format ไหนก็ได้ + กดไอคอน Calendar เลือกได้ด้วย ──── */}
+                              <div style={{ position: 'relative' }}>
+                              <input type="text" ref={el => lineTaxDateTextRefs.current[idx] = el}
+                                defaultValue={formatDateDisplayMDY(line.realVendorTaxDate)}
+                                placeholder="MM/DD/YYYY"
+                                onBlur={e => {
+                                  const parsed = parseFlexibleDate(e.target.value);
+                                  if (!parsed) {
+                                    if (!e.target.value.trim()) {
+                                      idx === 0 ? setLine1Field('realVendorTaxDate', '') : setLineField(idx, 'realVendorTaxDate', '');
+                                    } else {
+                                      e.target.value = formatDateDisplayMDY(line.realVendorTaxDate);
+                                    }
+                                    return;
+                                  }
+                                  e.target.value = formatDateDisplayMDY(parsed);
+                                  const v = parsed;
                                   idx === 0 ? setLine1Field('realVendorTaxDate', v) : setLineField(idx, 'realVendorTaxDate', v);
-                                  if (v && line.realInvoiceNo?.trim()) {
+                                  if (v && line.realInvoiceNo?.trim() && !lineVrvProcessedRef.current[idx]) {
                                     const itemCodeVrv = line.itemCode?.trim();
                                     const itemDataVrv = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCodeVrv?.toUpperCase());
                                     const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
                                     if (isVRV) {
+                                      // MARKER_VRV_PERLINE_GUARD_V1
+                                      // ── Mark ว่าบรรทัดนี้เพิ่ม H+L ไปแล้ว กันเพิ่มซ้ำไม่ว่า Event จะยิงกี่ครั้ง ──
+                                      lineVrvProcessedRef.current[idx] = true;
                                       const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
                                       const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
                                       const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -4212,13 +4346,24 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                         setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
                                         return next;
                                       });
+                                      if (selectedFlow && flowStep < selectedFlow.items.length) {
+                                        tryAdvanceFlowStep();
+                                      }
                                     } else if (selectedFlow && flowStep < selectedFlow.items.length) {
-                                      // ── ถ้าใช้ Flow อยู่ และ Real Vendor ครบแล้ว → add Row ถัดไปของ Flow ──
                                       addLineAndFocus();
                                     }
                                   }
                                 }}
-                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                                style={{ height: '26px', padding: '0 22px 0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                              <input type="date" tabIndex={-1} value={line.realVendorTaxDate || ''}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (lineTaxDateTextRefs.current[idx]) lineTaxDateTextRefs.current[idx].value = formatDateDisplayMDY(v);
+                                  idx === 0 ? setLine1Field('realVendorTaxDate', v) : setLineField(idx, 'realVendorTaxDate', v);
+                                }}
+                                style={{ position: 'absolute', right: 0, top: 0, width: '20px', height: '26px', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }} />
+                              <span aria-hidden="true" style={{ position: 'absolute', right: '5px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#97C459', pointerEvents: 'none' }}>&#128197;</span>
+                              </div>
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Company Name</span>
@@ -4558,6 +4703,9 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const isView = mode === 'view';
   const emptyLine = () => ({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
 
+  // MARKER_HOTFIX_INVDATEREF_SCOPE_V1
+  // ── ประกาศ invDateRef ใหม่ในนี้ (คนละตัวกับใน InvoiceDetailPopup โดยสิ้นเชิง) ──
+  const invDateRef = useRef(null);
   const [form, setForm]     = useState({});
   const [lines, setLines]   = useState([emptyLine()]);
   const [saving, setSaving] = useState(false);
@@ -4739,7 +4887,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                 ))}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flex: 1 }}>
                   <span style={{ fontSize: '11px', color: '#999' }}>Due Date</span>
-                  <input type="date" value={form.dueDate || ''} disabled={isView} onChange={e => setField('dueDate', e.target.value)}
+                  <input type="date" value={form.dueDate || ''} disabled={isView} onChange={e => setField('dueDate', e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`}
                     style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', border: 'none', outline: 'none', background: 'transparent', padding: 0, width: '112px', cursor: isView ? 'default' : 'pointer' }} />
                 </div>
               </div>
@@ -4772,7 +4920,9 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                   <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Tax Invoice Date</label>
-                  <input type="date" value={form.realVendorTaxDate || ''} disabled={isView} onChange={e => setField('realVendorTaxDate', e.target.value)} style={inputStyle('100%', isView)} />
+                  <input type="date" value={form.realVendorTaxDate || ''} disabled={isView} onChange={e => setField('realVendorTaxDate', e.target.value)}
+                    min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`}
+                    style={inputStyle('100%', isView)} />
                 </div>
               </div>
             </div>
@@ -4782,7 +4932,34 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', marginBottom: '14px', flexShrink: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 110px' }}>
               <label style={fieldLabel}>Inv date</label>
-              <input type="date" value={form.invDate || ''} disabled={isView} onChange={e => setField('invDate', e.target.value)} style={inputStyle('100%', isView)} />
+              {/* MARKER_INVDATE_HYBRID_V1 */}
+              {/* ── Hybrid: พิมพ์ Format ไหนก็ได้ + กดไอคอน Calendar เลือกได้ด้วย ──── */}
+              {/* ── ใช้ invDateRef เดิม (ที่มีอยู่แล้วสำหรับ Auto-focus ตอนเปิด ──────── */}
+              {/* ── Modal แต่ไม่เคยถูกผูกกับ Field ไหนเลย) แทนการสร้าง Ref ใหม่ ──────── */}
+              <div style={{ position: 'relative' }}>
+              <input type="text" ref={invDateRef} defaultValue={formatDateDisplayMDY(form.invDate)}
+                disabled={isView} placeholder="MM/DD/YYYY"
+                onBlur={e => {
+                  const parsed = parseFlexibleDate(e.target.value);
+                  if (parsed) {
+                    e.target.value = formatDateDisplayMDY(parsed);
+                    setField('invDate', parsed);
+                  } else if (!e.target.value.trim()) {
+                    setField('invDate', '');
+                  } else {
+                    e.target.value = formatDateDisplayMDY(form.invDate);
+                  }
+                }}
+                style={{ ...inputStyle('100%', isView), paddingRight: '22px', boxSizing: 'border-box' }} />
+              <input type="date" tabIndex={-1} value={form.invDate || ''} disabled={isView}
+                onChange={e => {
+                  const v = e.target.value;
+                  if (invDateRef.current) invDateRef.current.value = formatDateDisplayMDY(v);
+                  setField('invDate', v);
+                }}
+                style={{ position: 'absolute', right: 0, top: 0, width: '20px', height: '100%', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }} />
+              <span aria-hidden="true" style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', fontSize: '12px', pointerEvents: 'none' }}>&#128197;</span>
+              </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 130px' }}>
               <label style={fieldLabel}>Invoice num</label>
@@ -5106,6 +5283,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const pad2  = (n) => String(n).padStart(2, '0');
   const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
   const [receiveDate, setReceiveDate] = useState(todayStr);
+  // MARKER_RECEIVEDATE_BEFORE_EDIT_REF_V3
+  // ── เก็บค่า Receive Date ไว้ตอน Focus เข้า Field เพื่อเทียบ/Revert ตอน Blur ──
+  const receiveDateBeforeEditRef = useRef(todayStr);
 
   // ── Default Focus: BU code ตอนเปิดหน้า Batch Setup ──
   const buInputRef = useRef(null);
@@ -5195,6 +5375,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [showPopup, setShowPopup]       = useState(false);
   const [apGrtRunning, setApGrtRunning] = useState('0000');
   const [grtLocked, setGrtLocked] = useState(false); // Semi-Auto: Lock ถ้ามี Invoice ค้างใน Batch Bucket ของ BU นี้
+
   // MARKER_SEPARATE_GRN_LOCK_V1
   // ── GRN Lock แยกจาก GRT: Lock เสมอสำหรับ Auto/Semi-Auto (ไม่เช็ค Pending เลย) / Manual แก้ได้เสมอ ──
   const grnLocked = (() => {
@@ -5230,34 +5411,6 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     });
     return unsubscribe;
   }, [bu, buInfo]);
-
-  // MARKER_UNIFIED_GRT_GRN_LOCK_V1
-  // ── Lock เลขเริ่มต้น GRT/GRN (ใช้ Lock เดียวกันทั้งคู่) ตาม GRT Control ──────
-  // ── Auto -> Lock เสมอ / Manual -> ไม่ Lock เลย ─────────────────────────
-  // ── Semi-Auto -> Lock เฉพาะถ้ามี Invoice ค้างใน Batch Bucket ของ BU นี้ ──
-  useEffect(() => {
-    let cancelled = false;
-    const computeRunningNumLock = async () => {
-      const grtControl = buInfo?.['AP GRT Control'] || '';
-      if (grtControl === 'Auto') { if (!cancelled) setGrtLocked(true); return; }
-      if (grtControl === 'Manual') { if (!cancelled) setGrtLocked(false); return; }
-      if (grtControl === 'Semi-Auto') {
-        if (!bu) { if (!cancelled) setGrtLocked(false); return; }
-        try {
-          const { data } = await db.from('bucket_list').select('id').eq('bu', bu).eq('status', 'pending').limit(1);
-          if (!cancelled) setGrtLocked((data || []).length > 0);
-        } catch (e) {
-          console.error('[check semi-auto running num lock]', e);
-          if (!cancelled) setGrtLocked(false);
-        }
-        return;
-      }
-      // ── ไม่ได้ตั้งค่า (Empty/ค่าอื่น) -> ไม่ Lock (พฤติกรรมเดิมก่อนมี Feature นี้) ──
-      if (!cancelled) setGrtLocked(false);
-    };
-    computeRunningNumLock();
-    return () => { cancelled = true; };
-  }, [buInfo, bu]);
 
   // ── กัน Popup Blocked เด้งซ้ำ — ดึงจาก Endpoint เล็กๆ แยก ใช้ได้ทุก User ไม่ต้องมี Permission Manual ──
   const [hasPendingCloseRequest, setHasPendingCloseRequest] = useState(false);
@@ -5300,23 +5453,78 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     ? endOfMonth(getCurrentMonthStr(effectiveBuInfo))
     : null;
 
+  // MARKER_ISSKIPAHEADPREVIEW_MOVED_UP_V1
+  // ── ย้ายมาไว้ตรงนี้ (แต่เดิมอยู่ล่างกว่า) เพราะ Period useEffect ด้านล่าง ──
+  // ── ต้องใช้ตัวแปรนี้ใน Dependency Array ซึ่งถูกคำนวณทันทีตอน Render ──────
+  // ── (ไม่ใช่ตอน Effect ทำงานทีหลัง) ต้องประกาศ "ก่อน" จุดที่ใช้เสมอ ──────
+  const isSkipAheadPreview = (() => {
+    if (isOverride(buInfo)) return false; // Override (ย้อนหลัง) ไม่เกี่ยวกับ Over (ข้ามล่วงหน้า)
+    const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
+    const recvMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
+    return !!(curMonthStr && recvMonthStr && recvMonthStr > curMonthStr);
+  })();
+
+  // MARKER_LOCK_EFFECT_PERIOD_MODE_V1
+  // ── ย้าย Lock Effect มาไว้หลัง isSkipAheadPreview เพราะต้องใช้คำนวณ Mode ปัจจุบัน ──────────
+  // ── (current/prev/over) เดิมกรองด้วยช่วงเดือนของ receive_date อย่างเดียว ไม่แม่น ──────────
+  // ── ตอน Override เพราะ Receive Date แก้ไขได้อิสระ ไม่ได้ล็อกอยู่ในเดือน Prev เสมอไป ──────
+  // ── เปลี่ยนเป็นเช็ค period_mode ที่บันทึกไว้ตรงๆ ตอน Submit Invoice แทน ─────────────────
+  // ── (NULL = ถือเป็น 'current' สำหรับ Record เก่าก่อน Migration Column นี้) ─────────────
+  useEffect(() => {
+    let cancelled = false;
+    const computeRunningNumLock = async () => {
+      const grtControl = buInfo?.['AP GRT Control'] || '';
+      if (grtControl === 'Auto') { if (!cancelled) setGrtLocked(true); return; }
+      if (grtControl === 'Manual') { if (!cancelled) setGrtLocked(false); return; }
+      if (grtControl === 'Semi-Auto') {
+        if (!bu) { if (!cancelled) setGrtLocked(false); return; }
+        const mode = isOverride(buInfo) ? 'prev' : (isSkipAheadPreview ? 'over' : 'current');
+        try {
+          const { data } = await db.from('bucket_list').select('id, period_mode')
+            .eq('bu', bu).eq('status', 'pending');
+          const hasOutstanding = (data || []).some(r => (r.period_mode || 'current') === mode);
+          if (!cancelled) setGrtLocked(hasOutstanding);
+        } catch (e) {
+          console.error('[check semi-auto running num lock]', e);
+          if (!cancelled) setGrtLocked(false);
+        }
+        return;
+      }
+      // ── ไม่ได้ตั้งค่า (Empty/ค่าอื่น) -> ไม่ Lock (พฤติกรรมเดิมก่อนมี Feature นี้) ──
+      if (!cancelled) setGrtLocked(false);
+    };
+    computeRunningNumLock();
+    return () => { cancelled = true; };
+  }, [buInfo, bu, receiveDate, isSkipAheadPreview]);
+
   // ── Period Dropdown: แก้ไขเองได้ปกติ แค่ Default ค่าเริ่มต้นตามสถานะจริง ──
   // ── เช็ค Override ก่อนเสมอ เพราะสำคัญกว่า Pre-close/Blocked/Current ──
   const [period, setPeriod] = useState('Current');
   useEffect(() => {
+    // MARKER_PERIOD_LABEL_NEXT_PERIOD_V1
+    // ── เช็ค isSkipAheadPreview ก่อน Pre-close/Blocked เพราะถ้า Receive Date ──
+    // ── ข้ามเดือนไปแล้ว ป้ายต้องโชว์ Next Period ไม่ใช่ Pre-Close (ให้ตรงกับ ──
+    // ── Track ที่ Start Batch จะเลือกจริงตอนกด) ─────────────────────────
     if (isOverride(buInfo)) {
       setPeriod('Override');
+    } else if (isSkipAheadPreview) {
+      setPeriod('Next Period');
     } else if (buStatus === 'Pre-close' || buStatus === 'Blocked') {
       setPeriod('Pre-Close');
     } else {
       setPeriod('Current');
     }
-  }, [buStatus, buInfo]);
+  }, [buStatus, buInfo, isSkipAheadPreview]);
 
+  // MARKER_ONPROCESS_RESUME_SKIP_LOCK_V1
+  // ── กัน Effect ตัวนี้บังคับทับค่าที่เพิ่ง Resume มาจาก On Process ───────────
+  const resumeSkipLockRef = useRef(false);
   // ── Receive Date: ไม่ล็อก แก้ไขได้อิสระเสมอ แค่ Default ตามสถานะจริง ──
   // ── Pre-close/Blocked = สิ้นเดือน Current, Current/Open = วันนี้ ──
   useEffect(() => {
     if (isOverride(buInfo)) return; // Override มี useEffect ของตัวเองจัดการอยู่แล้ว
+    // MARKER_ONPROCESS_RESUME_SKIP_LOCK_CHECK_V1
+    if (resumeSkipLockRef.current) { resumeSkipLockRef.current = false; return; } // ── เพิ่ง Resume มา ไม่ต้องบังคับทับ ──
     setReceiveDate(lockedReceiveDate || todayStr);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buStatus, effectiveBuInfo]);
@@ -5330,16 +5538,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buInfo?.ap_period_mode]);
   const canToggleOverride = !!buInfo && (isOverride(buInfo) || canSelfOverride);
-
-  // MARKER_BATCHSETUP_GRT_PREFIX_REALTIME_PREVIEW_V1
-  // ── Preview เฉยๆ (ยังไม่ใช่การยืนยันจริง) — เช็ค Receive Date สดๆ ทุก Render ──
-  // ── เพื่อให้กล่อง Prefix GRT/GRN บน BuInfoPanel เปลี่ยนตาม MM ทันทีที่พิมพ์ ──
-  const isSkipAheadPreview = (() => {
-    if (isOverride(buInfo)) return false; // Override (ย้อนหลัง) ไม่เกี่ยวกับ Over (ข้ามล่วงหน้า)
-    const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
-    const recvMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
-    return !!(curMonthStr && recvMonthStr && recvMonthStr > curMonthStr);
-  })();
+  // MARKER_BATCHSETUP_GRT_PREFIX_REALTIME_PREVIEW_V1 (ย้าย isSkipAheadPreview ไปไว้ด้านบนแล้ว)
 
   useEffect(() => {
     if (buInfo && isBlocked && !hasPendingCloseRequest) setShowBlockedPopup(true);
@@ -5393,6 +5592,100 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       confirmDialog.alert('Reopen ไม่สำเร็จ: ' + (e.message || 'เกิดข้อผิดพลาด'), { variant: 'danger' });
     }
     setSelfOverrideLoading(false);
+  };
+
+  // MARKER_ONPROCESS_FETCH_GROUPS_V1
+  // ── ดึง Invoice Pending ทั้งหมด (ทุก BU ทุก User) มา Group ตาม BU+เดือน ──
+  // ── เพื่อโชว์ใน Popup "On process" — ให้กด "เข้าไปทำต่อ" กลับเข้า Batch ค้างได้ ──
+  const [onProcessGroups, setOnProcessGroups] = useState([]);
+  const [onProcessLoading, setOnProcessLoading] = useState(false);
+  const [showOnProcess, setShowOnProcess] = useState(false);
+
+  const fetchOnProcessGroups = async () => {
+    setOnProcessLoading(true);
+    try {
+      const { data, error } = await db.from('bucket_list').select('*').eq('status', 'pending');
+      if (error) throw error;
+      const groups = {};
+      (data || []).forEach(row => {
+        const rd = row.receive_date ? String(row.receive_date).slice(0, 7) : '';
+        const key = `${row.bu}|${rd}`;
+        if (!groups[key]) {
+          groups[key] = { bu: row.bu, month: rd, receiveDate: row.receive_date, dueDate: row.form_data?.dueDate || '', count: 0, amount: 0, user: row.created_by, createdAt: row.created_at };
+        }
+        groups[key].count += 1;
+        groups[key].amount += parseFloat(row.amount) || 0;
+        if (row.created_at && (!groups[key].createdAt || row.created_at < groups[key].createdAt)) groups[key].createdAt = row.created_at;
+      });
+      const list = Object.values(groups).map(g => {
+        const bi = infoItems.find(i => i['bu'] === g.bu);
+        const curMonth = getCurrentMonthStr(bi);
+        let track = 'Current';
+        if (curMonth && g.month) {
+          if (g.month < curMonth) track = 'Prev';
+          else if (g.month > curMonth) track = 'Next Period';
+        }
+        return { ...g, track };
+      }).sort((a, b) => a.bu.localeCompare(b.bu) || a.month.localeCompare(b.month));
+      setOnProcessGroups(list);
+    } catch (e) {
+      console.error('[on process fetch]', e);
+      setOnProcessGroups([]);
+    } finally {
+      setOnProcessLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchOnProcessGroups(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // MARKER_ONPROCESS_GO_TO_STEP2_V1
+  // ── "เข้าไปทำต่อ" พาไป Invoice Entry (Step 2) ทันที ไม่ต้องกด Start Batch ──
+  // ── ซ้ำ — คำนวณ mode/Running/Prefix เองตรงนี้เลย (ไม่พึ่ง State ที่ยังไม่ ──
+  // ── Re-render เพราะ setState เป็น Async อ่านค่าเก่าไม่ได้ทันที) ────────
+  const handleResumeOnProcess = (g) => {
+    const matched = infoItems.find(i => i['bu'] === g.bu);
+    const mode = g.track === 'Prev' ? 'prev' : g.track === 'Next Period' ? 'over' : 'current';
+    const dc = getDigitCount(matched);
+    const runningGrt = mode === 'over' ? String(matched?.ap_grt_ov ?? 0).padStart(dc, '0')
+                      : mode === 'prev' ? String(matched?.ap_grt_prev ?? 0).padStart(dc, '0')
+                      : String(matched?.ap_grt ?? 0).padStart(dc, '0');
+    const runningGrn = mode === 'over' ? String(matched?.ap_grn_ov ?? 0).padStart(dc, '0')
+                      : mode === 'prev' ? String(matched?.ap_grn_prev ?? 0).padStart(dc, '0')
+                      : String(matched?.ap_grn ?? 0).padStart(dc, '0');
+    const resumedReceiveDate = g.receiveDate ? String(g.receiveDate).slice(0, 10) : '';
+    const resumedDueDate = g.dueDate ? String(g.dueDate).slice(0, 10) : '';
+    const refMonthStr = mode === 'over' ? g.month : mode === 'prev' ? matched?.ap_prev_month : getCurrentMonthStr(matched);
+    const buildResumePrefix = (type) => {
+      const patternKey = type === 'GRT' ? 'ap_grt_pattern' : 'ap_grn_pattern';
+      const pattern = matched?.[patternKey] || (type === 'GRT' ? 'Y92MM0' : 'Y91MM0');
+      const d = refMonthStr ? new Date(refMonthStr + '-01') : new Date();
+      const y = String(d.getFullYear()).slice(-1), mm = String(d.getMonth() + 1).padStart(2, '0');
+      return pattern.replace('Y', y).replace('MM', mm);
+    };
+
+    resumeSkipLockRef.current = true; // ── กันเผื่อกลับมา Step 1 ทีหลัง Effect จะไม่บังคับทับ ──
+    setBu(g.bu);
+    setBuInfo(matched || null);
+    setReceiveDate(resumedReceiveDate);
+    setDueDate(resumedDueDate);
+    setShowOnProcess(false);
+
+    onStart({
+      bu: g.bu || '-', receiveDate: resumedReceiveDate, dueDate: resumedDueDate,
+      period: mode === 'over' ? 'Next Period' : mode === 'prev' ? 'Override' : 'Current',
+      periodMode: mode,
+      apGrtRunning: runningGrt, apGrnRunning: runningGrn,
+      grtPrefix: buildResumePrefix('GRT'), grnPrefix: buildResumePrefix('GRN'),
+      buInfo: matched,
+    });
+  };
+
+  const fmtOnProcessNum = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtOnProcessDate = (d) => {
+    if (!d) return '-';
+    const s = String(d).slice(0, 10);
+    const parts = s.split('-');
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}` : '-';
   };
 
   const [historyTab, setHistoryTab]     = useState(initialHistoryTab === 'inbox' ? 'inbox' : 'mine');
@@ -5947,26 +6240,56 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
                     <div style={fieldWrap}>
                       <label style={fieldLabel}>Receive date</label>
-                      <input type="date" value={receiveDate}
-                        // MARKER_BATCHSETUP_OVER_MONTH_CONFIRM_ON_DATE_CHANGE_V1
-                        onChange={async e => {
-                          const newDate = e.target.value;
+                      <input type="date" value={receiveDate} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`}
+                        // MARKER_BATCHSETUP_OVER_MONTH_CONFIRM_ON_BLUR_V3
+                        // ── onChange แค่อัพเดท State เฉยๆ ไม่ Popup (กันขึ้นระหว่าง Navigate) ──
+                        // ── Fire แค่ตอน Blur (Focus หลุดออกจาก Field จริงๆ) เท่านั้น ──────────
+                        onChange={e => setReceiveDate(e.target.value)}
+                        onFocus={() => { receiveDateBeforeEditRef.current = receiveDate; }}
+                        onBlur={async () => {
+                          const prevDate = receiveDateBeforeEditRef.current;
+                          if (receiveDate === prevDate) return; // ไม่มีการเปลี่ยนแปลงจริง ไม่ต้องเช็คอะไร
                           const override = isOverride(buInfo);
                           const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
-                          const newMonthStr = newDate ? newDate.slice(0, 7) : '';
+                          const newMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
                           const isSkip = !override && curMonthStr && newMonthStr && newMonthStr > curMonthStr;
                           if (isSkip) {
                             const confirmed = await confirmDialog.confirm(
                               `Receive Date อยู่เดือน ${newMonthStr} ซึ่งเป็นเดือนถัดไปจาก Period ปัจจุบัน (${curMonthStr}) ที่ยังไม่ปิด\n\nต้องการบันทึกข้าม Period ปัจจุบันหรือไม่?`,
                               { confirmText: 'ข้าม Period', cancelText: 'ยกเลิก' }
                             );
-                            // ── ไม่ข้าม -> ไม่รับค่าวันที่ใหม่ Input จะดีดกลับค่าเดิมเอง (Controlled Input) ──
-                            if (!confirmed) return;
+                            // ── ไม่ข้าม -> ดีดกลับเป็นค่าก่อนแก้ไข ──
+                            if (!confirmed) { setReceiveDate(prevDate); return; }
+
+                            // MARKER_SKIP_CONFIRM_GO_TO_STEP2_V1
+                            // ── กด "ข้าม Period" แล้ว -> พาไป Invoice Entry ทันที (รวม Logic ──
+                            // ── เดียวกับปุ่ม Start Batch ไว้ตรงนี้เลย ไม่ต้องกดซ้ำอีกรอบ) ──────
+                            if (isBlocked) { setShowBlockedPopup(true); return; }
+                            const dc = getDigitCount(buInfo);
+                            const runningGrt = String(buInfo?.ap_grt_ov ?? 0).padStart(dc, '0');
+                            const runningGrn = String(buInfo?.ap_grn_ov ?? 0).padStart(dc, '0');
+                            try {
+                              const payload = { ap_grt_ov: parseInt(runningGrt, 10) || 0, ap_grn_ov: parseInt(runningGrn, 10) || 0 };
+                              const buId = buInfo?.id;
+                              if (buId) {
+                                await db.from('company_list').update(payload).eq('id', buId);
+                              } else if (bu) {
+                                await db.from('company_list').update(payload).eq('bu', bu);
+                              }
+                            } catch (e) {
+                              console.error('[sync grt/grn on skip period confirm]', e);
+                            }
+                            onStart({
+                              bu: bu || '-', receiveDate, dueDate,
+                              period: 'Next Period', periodMode: 'over',
+                              apGrtRunning: runningGrt, apGrnRunning: runningGrn,
+                              grtPrefix: getPrefix('GRT', buInfo, 'over'), grnPrefix: getPrefix('GRN', buInfo, 'over'),
+                              buInfo,
+                            });
                           }
-                          setReceiveDate(newDate);
                         }} style={{ ...inputBase }} />
                     </div>
-                    <div style={fieldWrap}><label style={fieldLabel}>Due date</label><input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputBase} /></div>
+                    <div style={fieldWrap}><label style={fieldLabel}>Due date</label><input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={inputBase} /></div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' }}>
                     <div style={fieldWrap}>
@@ -5987,7 +6310,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     </div>
                   </div>
                 </div>
-                <button style={{ ...btnPrimary, width: '100%', justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
+                {/* MARKER_ONPROCESS_BUTTON_ROW_V1 */}
+                <div style={{ display: 'flex', gap: '10px' }}>
+                <button style={{ ...btnPrimary, flex: 1, justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
                   // MARKER_SYNC_GRT_GRN_ON_START_BATCH_V1
                   // MARKER_BATCHSETUP_OVER_MONTH_TRIGGER_V1
                   onClick={async () => {
@@ -6024,13 +6349,20 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     // MARKER_BATCHSETUP_PERIODMODE_TO_BATCHCONFIG_V1
                     onStart({
                       bu: bu || '-', receiveDate, dueDate,
-                      period: mode === 'over' ? 'Over' : mode === 'prev' ? 'Override' : 'Current',
+                      // MARKER_BATCHSETUP_LABEL_NEXT_PERIOD_V1
+                      period: mode === 'over' ? 'Next Period' : mode === 'prev' ? 'Override' : 'Current',
                       periodMode: mode,
                       apGrtRunning: runningGrt, apGrnRunning: runningGrn,
                       grtPrefix: getPrefix('GRT', buInfo, mode), grnPrefix: getPrefix('GRN', buInfo, mode),
                       buInfo,
                     });
                   }}>▶ Start Batch</button>
+                <button onClick={() => { fetchOnProcessGroups(); setShowOnProcess(true); }}
+                  style={{ padding: '0 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', fontSize: '13px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                  ⏱ On process
+                  {onProcessGroups.length > 0 && <span style={{ background: '#FCEBEB', color: '#791F1F', fontSize: '10px', fontWeight: '500', padding: '1px 6px', borderRadius: '20px' }}>{onProcessGroups.length}</span>}
+                </button>
+                </div>
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
@@ -6222,6 +6554,66 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 <button onClick={handleRequestClose} disabled={requestCloseLoading} style={{ padding: '7px 14px', borderRadius: '6px', border: 'none', background: requestCloseLoading ? '#ccc' : '#791F1F', color: 'white', fontSize: '13px', fontWeight: '500', cursor: requestCloseLoading ? 'default' : 'pointer' }}>
                   {requestCloseLoading ? 'กำลังส่ง...' : 'Request to Close Period'}
                 </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MARKER_ONPROCESS_MODAL_V1 */}
+      {showOnProcess && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowOnProcess(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '92vw', maxWidth: '780px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '16px 20px', borderBottom: '0.5px solid #e8eaf0', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c' }}>Batch ที่ยังไม่เสร็จ</div>
+                <button onClick={() => setShowOnProcess(false)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999' }}>✕</button>
+              </div>
+              <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                {onProcessGroups.length} batch · {onProcessGroups.reduce((s, g) => s + g.count, 0)} invoice · {fmtOnProcessNum(onProcessGroups.reduce((s, g) => s + g.amount, 0))} บาท
+              </div>
+            </div>
+            <div style={{ overflow: 'auto', flex: 1, padding: '0 20px' }}>
+              {onProcessLoading ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: '#888', fontSize: '13px' }}>กำลังโหลด...</div>
+              ) : onProcessGroups.length === 0 ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: '#888', fontSize: '13px' }}>ไม่มี Batch ค้างอยู่</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ color: '#999', textTransform: 'uppercase', fontSize: '9px' }}>
+                      <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>BU</th>
+                      <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>Receive</th>
+                      <th style={{ textAlign: 'right', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>Inv</th>
+                      <th style={{ textAlign: 'right', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>Amount</th>
+                      <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>Due</th>
+                      <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>GRT/GRN</th>
+                      <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>User</th>
+                      <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>Created</th>
+                      <th style={{ padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {onProcessGroups.map((g, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', fontWeight: '500' }}>{g.bu}</td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', color: '#666' }}>{fmtOnProcessDate(g.receiveDate)}</td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', textAlign: 'right' }}>{g.count}</td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', textAlign: 'right' }}>{fmtOnProcessNum(g.amount)}</td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', color: '#666' }}>{fmtOnProcessDate(g.dueDate)}</td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5' }}>
+                          <span style={{ background: g.track === 'Current' ? '#E6F1FB' : g.track === 'Prev' ? '#F1EFE8' : '#FAEEDA', color: g.track === 'Current' ? '#0C447C' : g.track === 'Prev' ? '#5F5E5A' : '#854F0B', fontSize: '10px', padding: '2px 7px', borderRadius: '20px' }}>{g.track}</span>
+                        </td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5' }}>{g.user || '-'}</td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', color: '#888' }}>{fmtOnProcessDate(g.createdAt)}</td>
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5' }}>
+                          <button onClick={() => handleResumeOnProcess(g)} style={{ padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '11px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>เข้าไปทำต่อ</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
@@ -7291,11 +7683,16 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
 
   // ── โหลด Bucket: pending ทั้งหมดของ BU + user นี้ จาก bucket_list ────────
   // (ไม่ filter ด้วย batch_id แล้ว ครอบคลุมของค้างจาก session ก่อนหน้าด้วย)
+  // MARKER_BUCKET_FILTER_BY_TRACK_MONTH_V1
+  // ── กรองเฉพาะ Invoice ที่อยู่เดือน/Track เดียวกับ Batch นี้ (batchConfig.receiveDate) ──
+  // ── กัน Invoice คนละเดือน (เช่น Current เดือน 7 ปนกับ Over เดือน 8) โผล่มาปนกัน ──
+  const batchMonthStr = batchConfig?.receiveDate ? String(batchConfig.receiveDate).slice(0, 7) : null;
+  const matchesTrack = (inv) => !batchMonthStr || !inv?.receive_date || String(inv.receive_date).slice(0, 7) === batchMonthStr;
   useEffect(() => {
     if (!bu || !me) return;
     let active = true;
     (async () => {
-      const local = loadLocalBucket();
+      const local = loadLocalBucket().filter(matchesTrack);
       if (active && local.length) setInvoices(local);
       try {
         const { data, error } = await db
@@ -7306,7 +7703,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
           .in('status', ['pending', 'sent', 'rejected'])
           .order('created_at', { ascending: true });
         if (error || !active) return;
-        const synced = (data || []).map(r => ({ ...r, _synced: true }));
+        const synced = (data || []).map(r => ({ ...r, _synced: true })).filter(matchesTrack);
         const pendingOnly = local.filter(l => !l._synced);
         const merged = [...synced, ...pendingOnly];
         setInvoices(merged);
@@ -7848,6 +8245,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         },
         lines:           groupLines,
         status:          'pending',
+        period_mode:     batchConfig?.periodMode || 'current',
         created_by:      userName || currentUser?.email || '',
         created_by_role: roleLabel,
         _localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}-${gi}`,
@@ -7862,26 +8260,48 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     // ── เหลือง (has_warning) = Popup ให้เลือก Accept/Reject เอง ───────────────
     const dupToken = sessionStorage.getItem('fastapn_token');
     const dupApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
-    const finalItems = [];
+    // MARKER_DUPLICATE_CHECK_BASE_GROUP_PARALLEL_V1
+    // ── Group Item ตาม Invoice หลัก (ตัด /N ท้ายออก) เช็คแค่ 1 ครั้งต่อกลุ่ม ──
+    // ── ไม่แยกเช็ค/แยกถาม Popup ทีละใบย่อย (Base/1/2 ที่จริงเป็น Invoice ──────
+    // ── เดียวกัน) — และยิง Request ของทุกกลุ่มพร้อมกัน (Parallel) ด้วย ────────
+    const baseInvoiceNoOf = (item) => String(item.invoice_no || '').replace(/\/\d+$/, '');
+    const baseGroups = new Map();
     for (const item of newItems) {
+      const key = baseInvoiceNoOf(item);
+      if (!baseGroups.has(key)) baseGroups.set(key, []);
+      baseGroups.get(key).push(item);
+    }
+
+    const dupResults = await Promise.all(Array.from(baseGroups.entries()).map(async ([baseNo, groupItems]) => {
+      const rep = groupItems[0];
       try {
         const params = new URLSearchParams({
-          vendor_no: item.vendor_no || '',
-          invoice_no: item.invoice_no || '',
-          amount: item.net != null ? String(item.net) : '',
+          vendor_no: rep.vendor_no || '',
+          invoice_no: baseNo,
+          amount: rep.net != null ? String(rep.net) : '',
         });
-        if (item.form_data?.poNum) params.set('po_num', item.form_data.poNum);
+        if (rep.form_data?.poNum) params.set('po_num', rep.form_data.poNum);
         const dupRes = await fetch(`${dupApiBase}/api/invoice-duplicate-check?${params.toString()}`, {
           headers: { Authorization: `Bearer ${dupToken}` },
         });
         const dupData = dupRes.ok
           ? await dupRes.json()
           : { is_duplicate: false, has_warning: false, matches: [], related_by_po: [], related_by_amount: [] };
+        return { baseNo, groupItems, dupData, error: null };
+      } catch (e) {
+        return { baseNo, groupItems, dupData: null, error: e };
+      }
+    }));
+
+    const finalItems = [];
+    for (const { baseNo, groupItems, dupData, error } of dupResults) {
+      try {
+        if (error) throw error;
 
         if (dupData.is_duplicate) {
           const m = dupData.matches[0] || {};
           await confirmDialog.alert(
-            `Invoice "${item.invoice_no}" ซ้ำกับข้อมูลที่มีอยู่แล้ว\n` +
+            `Invoice "${baseNo}" ซ้ำกับข้อมูลที่มีอยู่แล้ว\n` +
             `Vendor: ${m.vendor_name || m.vendor_no || '-'}\nAmount: ${m.amount ?? '-'}\n` +
             `Ref: ${m.ref || '-'} (${m.record_type === 'legacy' ? 'ข้อมูลเก่า' : 'Batch ระบบใหม่'})\n\n` +
             `รายการนี้จะไม่ถูกเพิ่มเข้า Batch — กรุณาตรวจสอบก่อนคีย์ใหม่`,
@@ -7895,25 +8315,25 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
           const detailLines = relatedList.slice(0, 3).map(r =>
             `  • Invoice: ${r.invoice_no} | Vendor: ${r.vendor_name || r.vendor_no} | Amount: ${r.amount}`
           ).join('\n');
-          // TODO: ตรวจสอบว่า confirmDialog.confirm รองรับ cancelText ไหม ถ้าไม่รองรับ
-          // ปุ่ม Cancel จะขึ้น Label Default แทน (ยังทำงานถูกต้อง แค่ Label อาจไม่ตรง)
           const accepted = await confirmDialog.confirm(
-            `Invoice "${item.invoice_no}" มีรายการที่น่าสงสัยว่าอาจซ้ำ:\n${detailLines}\n\n` +
+            `Invoice "${baseNo}" มีรายการที่น่าสงสัยว่าอาจซ้ำ:\n${detailLines}\n\n` +
             `ต้องการยืนยันบันทึกรายการนี้ต่อหรือไม่?`,
             { variant: 'warning', confirmText: 'Accept (ยืนยันไม่ซ้ำ)', cancelText: 'Reject (ตัดออก)' }
           );
           if (!accepted) continue;
-          item._dupWarning = 'yellow';
-          item._dupConfirmedAt = new Date().toISOString();
-          item._dupDetail = relatedList.slice(0, 5);
+          groupItems.forEach(item => {
+            item._dupWarning = 'yellow';
+            item._dupConfirmedAt = new Date().toISOString();
+            item._dupDetail = relatedList.slice(0, 5);
+          });
         } else {
-          item._dupWarning = 'green';
+          groupItems.forEach(item => { item._dupWarning = 'green'; });
         }
       } catch (dupErr) {
         console.error('duplicate check:', dupErr);
-        item._dupWarning = null; // เช็คไม่สำเร็จ — ปล่อยผ่าน ไม่ Block (กัน Backend ล่มแล้วคีย์ไม่ได้เลย)
+        groupItems.forEach(item => { item._dupWarning = null; });
       }
-      finalItems.push(item);
+      finalItems.push(...groupItems);
     }
 
     setInvoices(prev => {
@@ -9720,9 +10140,9 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', width: '260px', flexShrink: 0 }} />
           <span style={{ fontSize: '12px', color: '#888' }}>Receive Date</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
           <span style={{ fontSize: '12px', color: '#888' }}>ถึง</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
           {canSeeAll && selectedRows.size > 0 && (

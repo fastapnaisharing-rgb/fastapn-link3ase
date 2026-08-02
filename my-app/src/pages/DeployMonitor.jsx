@@ -1067,28 +1067,128 @@ function CpuLineChart({ history: historyRaw }) {
   );
 }
 
+const CORE_COLORS = ['#185FA5','#0F6E56','#D85A30','#993C1D','#534AB7','#993556','#3B6D11','#854F0B'];
+
+function PerCoreLineChart({ history: historyRaw }) {
+  const history = Array.isArray(historyRaw) ? historyRaw : [];
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const rowsWithCore = history.filter(h => Array.isArray(h.per_core) && h.per_core.length);
+    if (chartRef.current) chartRef.current.destroy();
+    if (!rowsWithCore.length) return;
+
+    const labels = history.map(h => formatTime(h.recorded_at));
+    const coreCount = Math.max(...rowsWithCore.map(h => h.per_core.length));
+
+    const datasets = [];
+    for (let i = 0; i < coreCount; i++) {
+      datasets.push({
+        type: 'line', label: `Core ${i}`,
+        data: history.map(h => {
+          const entry = Array.isArray(h.per_core) ? h.per_core.find(c => c.core === i) : null;
+          return entry ? entry.pct : null;
+        }),
+        borderColor: CORE_COLORS[i % CORE_COLORS.length],
+        backgroundColor: CORE_COLORS[i % CORE_COLORS.length],
+        borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4,
+        fill: false, tension: 0.3, spanGaps: true,
+      });
+    }
+
+    chartRef.current = new Chart(canvasRef.current, {
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 10 }, color: '#898781' } },
+          tooltip: {
+            backgroundColor: '#fcfcfb', titleColor: '#0b0b0b', bodyColor: '#52514e',
+            borderColor: '#e1e0d9', borderWidth: 1, padding: 10, cornerRadius: 8,
+            callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y}%` },
+          },
+        },
+        scales: {
+          y: { min: 0, max: 100, grid: { color: '#e8e7e1' }, ticks: { color: '#898781', font: { size: 11 }, callback: v => v + '%', stepSize: 25 } },
+          x: { grid: { display: false }, ticks: { color: '#898781', font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } },
+        },
+      },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [history]);
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '220px' }}>
+      <canvas ref={canvasRef} style={{ width: '100% !important', height: '100% !important' }} />
+    </div>
+  );
+}
+
 export function CPUDashboardTab() {
   const [current, setCurrent] = useState(null);
   const [history, setHistory] = useState([]);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [topProcesses, setTopProcesses] = useState([]);
+  const [coreProcesses, setCoreProcesses] = useState([]); // process per core (live)
+  const [liveCores, setLiveCores] = useState([]); // live % per core จาก /cpu-cores
+  const [junkItems, setJunkItems] = useState([]);
+  const [junkTotal, setJunkTotal] = useState('');
+  const [junkLoading, setJunkLoading] = useState(false);
+  const [junkClearing, setJunkClearing] = useState(false);
+  const [junkResult, setJunkResult] = useState(null); // {ok, deletedLabel}
 
   const fetchAll = useCallback(async () => {
     try {
-      const [cur, hist] = await Promise.all([
+      const [cur, hist, cores] = await Promise.all([
         authFetch('/system/cpu-current'),
         authFetch('/system/cpu-history?hours=24'),
+        authFetch('/system/cpu-cores').catch(() => null),
       ]);
       setCurrent(cur);
       setHistory(hist);
+      if (cores?.topProcesses) setTopProcesses(cores.topProcesses);
+      if (cores?.coreProcesses) setCoreProcesses(cores.coreProcesses);
+      if (cores?.cores) setLiveCores(cores.cores);
+      // sync totalPct จาก /cpu-cores (วัดพร้อมกับ per core ใน call เดียว)
+      if (cores?.totalPct != null) setCurrent(prev => prev ? { ...prev, pct: cores.totalPct } : prev);
       setLastRefresh(Date.now());
     } catch (err) { console.error('CPU dashboard fetch error:', err); }
   }, []);
 
+  const fetchJunk = useCallback(async () => {
+    setJunkLoading(true);
+    setJunkResult(null);
+    try {
+      const data = await authFetch('/system/disk-junk/scan');
+      setJunkItems(data.items || []);
+      setJunkTotal(data.totalLabel || '');
+    } catch (err) { console.error('junk scan error:', err); }
+    finally { setJunkLoading(false); }
+  }, []);
+
+  const clearJunk = useCallback(async (categories) => {
+    setJunkClearing(true);
+    try {
+      const data = await authFetch('/system/disk-junk/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categories }),
+      });
+      setJunkResult(data);
+      await fetchJunk();
+    } catch (err) { console.error('junk clear error:', err); }
+    finally { setJunkClearing(false); }
+  }, [fetchJunk]);
+
   useEffect(() => {
     fetchAll();
-    const interval = setInterval(fetchAll, 60000);
+    fetchJunk();
+    const interval = setInterval(fetchAll, 300000); // 5 นาที
     return () => clearInterval(interval);
-  }, [fetchAll]);
+  }, [fetchAll, fetchJunk]);
 
   if (!current) {
     return (
@@ -1104,6 +1204,14 @@ export function CPUDashboardTab() {
   const riskLabel = pct >= 70 ? 'เกินเกณฑ์วิกฤต' : pct >= 40 ? 'เข้าเกณฑ์เตือน' : 'ปกติ';
   const riskColor = pct >= 70 ? '#791F1F' : pct >= 40 ? '#856404' : '#27500A';
   const minutesAgo = Math.floor((Date.now() - lastRefresh) / 60000);
+
+  // เติม "live point" จาก current.pct ต่อท้าย history เสมอ -- history จาก DB
+  // อาจย้อนหลังได้ถึง 5 นาที (รอบ cron) และไม่ insert ถ้าค่าไม่เปลี่ยน (dedup)
+  // ทำให้จุดขวาสุดของกราฟไม่ตรงกับตัวเลขใหญ่ (current) ที่เป็น live เป๊ะ ๆ
+  // แก้โดยให้จุดขวาสุดอ้างอิง current.pct เสมอ -- จะได้ไม่มีวันไม่ sync กัน
+  const historyWithLive = current
+    ? [...history, { recorded_at: new Date().toISOString(), cpu_pct: pct, top_processes: null, per_core: [] }]
+    : history;
 
   // ── หา Spike ล่าสุดที่มี top_processes เก็บไว้ (CPU >= 70% ตอนนั้น) ──
   const lastSpike = [...history].reverse().find(h => h.top_processes && h.top_processes.length);
@@ -1134,8 +1242,154 @@ export function CPUDashboardTab() {
 
       <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>CPU ย้อนหลัง 24 ชั่วโมง</p>
       <div style={{ marginBottom: '24px' }}>
-        <CpuLineChart history={history} />
+        <CpuLineChart history={historyWithLive} />
       </div>
+
+      <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>CPU แต่ละ Core ย้อนหลัง 24 ชั่วโมง</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '10px', marginBottom: '24px' }}>
+        {(() => {
+          const rowsWithCore = history.filter(h => Array.isArray(h.per_core) && h.per_core.length > 0);
+          const coreCount = rowsWithCore.length > 0 ? Math.max(...rowsWithCore.map(h => h.per_core.length)) : 4;
+          const COLORS = ['#185FA5','#0F6E56','#D85A30','#E24B4A'];
+          return Array.from({ length: coreCount }, (_, i) => {
+            const color = COLORS[i % COLORS.length];
+            // ใช้ live % จาก /cpu-cores ก่อน ถ้าไม่มีค่อย fallback ไป snapshot
+            const liveEntry = liveCores.find(c => c.core === i || c.InstanceName === String(i));
+            const latestPct = liveEntry
+              ? Math.round(liveEntry.CookedValue ?? liveEntry.pct ?? 0)
+              : (() => {
+                  for (let j = history.length - 1; j >= 0; j--) {
+                    const e = (history[j].per_core || []).find(c => c.core === i);
+                    if (e) return e.pct;
+                  }
+                  return null;
+                })();
+            // สร้าง sparkline points จาก history ย้อนหลัง 20 จุดล่าสุด
+            const pts = history.slice(-20).map((h, idx) => {
+              const e = (h.per_core || []).find(c => c.core === i);
+              const pct = e ? e.pct : null;
+              return { x: idx, y: pct };
+            }).filter(p => p.y !== null);
+            const W = 110, H = 34;
+            const toSvgY = p => H - (p / 100) * H;
+            const polyPts = pts.map((p, idx) => `${(idx / Math.max(pts.length - 1, 1)) * W},${toSvgY(p.y)}`).join(' ');
+            const fillPts = pts.length > 0
+              ? `${polyPts} ${(pts.length - 1) / Math.max(pts.length - 1, 1) * W},${H} 0,${H}`
+              : '';
+            // process ที่รันบน core นี้ (จาก live coreProcesses)
+            const procs = coreProcesses.filter(p => p.core === i).slice(0, 3);
+            return (
+              <div key={i} style={{ background: '#fafaf8', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '12px 13px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                  <span style={{ fontSize: '11px', color: '#666', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: color, display: 'inline-block' }} />
+                    Core {i}
+                  </span>
+                  <span style={{ fontSize: '17px', fontWeight: '500', color: latestPct !== null ? color : '#bbb' }}>
+                    {latestPct !== null ? `${latestPct}%` : '—'}
+                  </span>
+                </div>
+                <div style={{ height: '3px', background: '#eee', borderRadius: '2px', marginBottom: '7px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${latestPct ?? 0}%`, background: color, borderRadius: '2px' }} />
+                </div>
+                {pts.length > 1 ? (
+                  <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: 'block' }}>
+                    <polyline points={polyPts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+                    {fillPts && <polygon points={fillPts} fill={color} fillOpacity="0.08" stroke="none" />}
+                  </svg>
+                ) : (
+                  <div style={{ height: `${H}px`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: '10px', color: '#bbb' }}>รอข้อมูล...</span>
+                  </div>
+                )}
+                <div style={{ borderTop: '0.5px solid #eee', paddingTop: '6px', marginTop: '4px' }}>
+                  {procs.length > 0 ? procs.map((p, pi) => (
+                    <div key={pi} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#888', lineHeight: '1.9' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>{p.name}</span>
+                      <span style={{ fontWeight: '500', color, flexShrink: 0 }}>{p.pct}%</span>
+                    </div>
+                  )) : (
+                    <span style={{ fontSize: '10px', color: '#bbb' }}>ไม่มีข้อมูล process</span>
+                  )}
+                </div>
+              </div>
+            );
+          });
+        })()}
+      </div>
+
+      {/* ── Disk Junk Section ── */}
+      <div style={{ borderTop: '0.5px solid #e8e8e8', margin: '0 0 18px' }} />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '13px' }}>🗑</span>
+          <span style={{ fontSize: '13px', fontWeight: '500' }}>Disk junk</span>
+          {junkLoading && <span style={{ fontSize: '11px', color: '#aaa' }}>กำลังสแกน...</span>}
+          {!junkLoading && junkTotal && <span style={{ fontSize: '11px', color: '#aaa' }}>พบ {junkTotal}</span>}
+        </div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={fetchJunk} disabled={junkLoading} style={{ fontSize: '12px', padding: '5px 11px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', cursor: 'pointer' }}>
+            สแกนใหม่
+          </button>
+          <button
+            onClick={() => clearJunk(junkItems.filter(j => j.bytes > 0).map(j => j.id))}
+            disabled={junkClearing || junkLoading || junkItems.filter(j => j.bytes > 0).length === 0}
+            style={{ fontSize: '12px', padding: '5px 11px', borderRadius: '6px', border: 'none', background: junkItems.filter(j=>j.bytes>0).length>0 ? '#791F1F' : '#ccc', color: 'white', cursor: 'pointer' }}
+          >
+            {junkClearing ? 'กำลังเคลียร์...' : `เคลียร์ทั้งหมด${junkTotal ? ` (${junkTotal})` : ''}`}
+          </button>
+        </div>
+      </div>
+
+      {junkResult && (
+        <div style={{ background: junkResult.ok ? '#EAF3DE' : '#FCEBEB', border: `0.5px solid ${junkResult.ok ? '#C0DD97' : '#F7C1C1'}`, borderRadius: '8px', padding: '10px 14px', marginBottom: '12px', fontSize: '12px', color: junkResult.ok ? '#085041' : '#791F1F' }}>
+          {junkResult.ok ? `✓ เคลียร์เรียบร้อย คืน disk ได้ ${junkResult.deletedLabel} (${junkResult.deletedFiles} ไฟล์)` : 'เกิดข้อผิดพลาด'}
+        </div>
+      )}
+
+      {junkItems.length > 0 && (
+        <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '8px', overflow: 'hidden', marginBottom: '24px' }}>
+          {junkItems.map((item, i) => {
+            const badgeColor = item.level === 'safe' ? { bg: '#EAF3DE', color: '#27500A' } : { bg: '#FAEEDA', color: '#633806' };
+            return (
+              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px', borderBottom: i < junkItems.length - 1 ? '0.5px solid #e8e8e8' : 'none' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '500' }}>{item.name}</span>
+                    <span style={{ fontSize: '10px', padding: '1px 7px', borderRadius: '20px', background: badgeColor.bg, color: badgeColor.color }}>{item.badge}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#aaa', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {item.paths.join(' · ')}
+                  </div>
+                </div>
+                <span style={{ fontSize: '13px', fontWeight: '500', color: item.bytes > 0 ? '#791F1F' : '#bbb', width: '60px', textAlign: 'right', flexShrink: 0 }}>{item.sizeLabel}</span>
+                <button
+                  onClick={() => clearJunk([item.id])}
+                  disabled={junkClearing || item.bytes === 0}
+                  style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: item.bytes > 0 ? '#333' : '#bbb', cursor: item.bytes > 0 ? 'pointer' : 'default', flexShrink: 0 }}
+                >
+                  เคลียร์
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {topProcesses.length > 0 && (
+        <>
+          <p style={{ fontSize: '13px', fontWeight: '500', margin: '0 0 8px' }}>Process ที่กิน CPU สูงสุด (ตอนนี้)</p>
+          <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '8px', overflow: 'hidden', marginBottom: '24px' }}>
+            {topProcesses.slice(0, 8).map((p, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '8px 14px', borderBottom: i < topProcesses.length - 1 ? '0.5px solid #e8e8e8' : 'none' }}>
+                <span style={{ flex: 1, fontSize: '12px' }}>{p.Name}</span>
+                <span style={{ fontSize: '11px', color: '#aaa', marginRight: '10px' }}>PID {p.Id}</span>
+                <span style={{ fontSize: '12px', color: '#888' }}>{p.CPU ? `${Number(p.CPU).toFixed(1)}s` : '-'}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {lastSpike && (
         <>
