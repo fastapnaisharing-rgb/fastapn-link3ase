@@ -118,7 +118,6 @@ const BRANCH_FORM_ROWS = [
   ['cpc', 'Branch Direct'],
   ['Inactive Date'],
 ];
-// MARKER_BRANCH_FORM_REQUIRED_COLOR_POPUP_V1
 const BRANCH_FIELD_COLOR = {
   'Branch Code': '#FCF3D5',
   'status': '#FCF3D5',
@@ -126,11 +125,9 @@ const BRANCH_FIELD_COLOR = {
   'bu': '#FCF3D5',
   'Group-P': '#FCF3D5',
   'BU-TaxID': '#FCF3D5',
-  'BU-Branch': '#FCF3D5',
   '%': '#DCEAF1',
-  'Branch Direct': '#DCEAF1',
 };
-const BRANCH_REQUIRED_KEYS = ['Branch Code', 'status', 'Company for Show in Report Display', 'bu', 'Group-P', 'BU-TaxID', 'BU-Branch'];
+const BRANCH_REQUIRED_KEYS = ['Branch Code', 'status', 'Company for Show in Report Display', 'bu', 'Group-P', 'BU-TaxID'];
 
 const formatBranchLabel = (item) =>
   `${item?.['Branch Code'] ?? ''}-${item?.['Company for Show in Report Display'] ?? ''}`;
@@ -374,9 +371,17 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
-  // MARKER_BUBRANCH_BLUR_PAD5_V1
-  // ── ย้ายจาก useEffect Real-time (คำนวณทุก Keystroke) มาเป็น Onblur เท่านั้น ──
-  // ── ผูกกับ Input ของ 'BU-Branch' ด้านล่าง (Fallback Generic Input Section) ──
+  // MARKER_BRANCH_FORM_DIRECT_AUTOFILL_V4_FIXED
+  useEffect(() => {
+    if (view !== 'new' && view !== 'edit') return;
+    const buVal = String(form['bu'] || '').trim();
+    const branchVal = String(form['BU-Branch'] || '').trim();
+    if (!buVal || !branchVal) return;
+    const computed = `${buVal}-${branchVal.padStart(5, '0')}`;
+    if (form['Branch Direct'] !== computed) {
+      setForm(f => ({ ...f, 'Branch Direct': computed }));
+    }
+  }, [view, form['bu'], form['BU-Branch']]);
 
   if (!show) return null;
 
@@ -419,15 +424,14 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
   };
   // MARKER_BRANCH_DUPLICATE_CHECK
   const handleSave = async () => {
-    const err = validateForm(form);
-    if (err) { confirmDialog.alert(err, { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
+    const err = validateForm(form); if (err) { setFormError(err); return; }
     if (view !== 'edit') {
       const dupBranch = branchItems.find(b => String(b['Branch Code'] || '').trim() === String(form['Branch Code'] || '').trim());
-      if (dupBranch) { confirmDialog.alert(`Branch Code "${form['Branch Code']}" มีอยู่แล้วในระบบ`, { variant: 'danger', title: 'ซ้ำในระบบ' }); return; }
+      if (dupBranch) { setFormError(`Branch Code "${form['Branch Code']}" มีอยู่แล้วในระบบ`); return; }
     }
     setSaving(true);
     try { await onSaveBranch({ form, isEdit: view === 'edit', editTarget }); handleBack(); }
-    catch (e) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
+    catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
   const setField = (key, val) => { setForm(f => ({ ...f, [key]: val })); setFormError(''); };
@@ -451,17 +455,6 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
       'BU-TaxID': String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || ''),
       '%': String(f['%'] || '').trim() ? f['%'] : (match['%'] || ''),
       'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || ''),
-    }));
-  };
-  const handleBuBranchBlur = () => {
-    const buVal = String(form['bu'] || '').trim();
-    const branchValRaw = String(form['BU-Branch'] || '').trim();
-    if (!branchValRaw) return;
-    const padded = branchValRaw.padStart(5, '0');
-    setForm(f => ({
-      ...f,
-      'BU-Branch': padded,
-      'Branch Direct': buVal ? `${buVal}-${padded}` : f['Branch Direct'],
     }));
   };
   const handleCompanyBlur = () => {
@@ -577,7 +570,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                           })()}
                         </div>
                       ) : (
-                        <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : key === 'BU-Branch' ? handleBuBranchBlur : undefined} style={inputBare} />
+                        <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : undefined} style={inputBare} />
                       )}
                     </div>
                   </React.Fragment>
@@ -5297,6 +5290,10 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const pad2  = (n) => String(n).padStart(2, '0');
   const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
   const [receiveDate, setReceiveDate] = useState(todayStr);
+  // MARKER_RECEIVEDATE_BEFORE_EDIT_REF_V3
+  // ── เก็บค่า Receive Date ไว้ตอน Focus เข้า Field เพื่อเทียบ/Revert ตอน Blur ──
+  const receiveDateBeforeEditRef = useRef(todayStr);
+
   // ── Default Focus: BU code ตอนเปิดหน้า Batch Setup ──
   const buInputRef = useRef(null);
   useEffect(() => { setTimeout(() => buInputRef.current?.focus(), 80); }, []);
@@ -6261,11 +6258,53 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     <div style={fieldWrap}>
                       <label style={fieldLabel}>Receive date</label>
                       <input type="date" value={receiveDate} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`}
-                        // MARKER_BATCHSETUP_OVER_MONTH_TRIGGER_START_BATCH_V1
-                        // ── ย้าย Popup ข้าม Period ไปอยู่ที่ปุ่ม Start Batch แล้ว (กัน False Trigger ──
-                        // ── จาก Blur Event ที่ไม่ได้มาจาก User แก้ Receive Date จริง) เหลือแค่ onChange ──
+                        // MARKER_BATCHSETUP_OVER_MONTH_CONFIRM_ON_BLUR_V3
+                        // ── onChange แค่อัพเดท State เฉยๆ ไม่ Popup (กันขึ้นระหว่าง Navigate) ──
+                        // ── Fire แค่ตอน Blur (Focus หลุดออกจาก Field จริงๆ) เท่านั้น ──────────
                         onChange={e => setReceiveDate(e.target.value)}
-                        style={{ ...inputBase }} />
+                        onFocus={() => { receiveDateBeforeEditRef.current = receiveDate; }}
+                        onBlur={async () => {
+                          const prevDate = receiveDateBeforeEditRef.current;
+                          if (receiveDate === prevDate) return; // ไม่มีการเปลี่ยนแปลงจริง ไม่ต้องเช็คอะไร
+                          const override = isOverride(buInfo);
+                          const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
+                          const newMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
+                          const isSkip = !override && curMonthStr && newMonthStr && newMonthStr > curMonthStr;
+                          if (isSkip) {
+                            const confirmed = await confirmDialog.confirm(
+                              `Receive Date อยู่เดือน ${newMonthStr} ซึ่งเป็นเดือนถัดไปจาก Period ปัจจุบัน (${curMonthStr}) ที่ยังไม่ปิด\n\nต้องการบันทึกข้าม Period ปัจจุบันหรือไม่?`,
+                              { confirmText: 'ข้าม Period', cancelText: 'ยกเลิก' }
+                            );
+                            // ── ไม่ข้าม -> ดีดกลับเป็นค่าก่อนแก้ไข ──
+                            if (!confirmed) { setReceiveDate(prevDate); return; }
+
+                            // MARKER_SKIP_CONFIRM_GO_TO_STEP2_V1
+                            // ── กด "ข้าม Period" แล้ว -> พาไป Invoice Entry ทันที (รวม Logic ──
+                            // ── เดียวกับปุ่ม Start Batch ไว้ตรงนี้เลย ไม่ต้องกดซ้ำอีกรอบ) ──────
+                            if (isBlocked) { setShowBlockedPopup(true); return; }
+                            const dc = getDigitCount(buInfo);
+                            const runningGrt = String(buInfo?.ap_grt_ov ?? 0).padStart(dc, '0');
+                            const runningGrn = String(buInfo?.ap_grn_ov ?? 0).padStart(dc, '0');
+                            try {
+                              const payload = { ap_grt_ov: parseInt(runningGrt, 10) || 0, ap_grn_ov: parseInt(runningGrn, 10) || 0 };
+                              const buId = buInfo?.id;
+                              if (buId) {
+                                await db.from('company_list').update(payload).eq('id', buId);
+                              } else if (bu) {
+                                await db.from('company_list').update(payload).eq('bu', bu);
+                              }
+                            } catch (e) {
+                              console.error('[sync grt/grn on skip period confirm]', e);
+                            }
+                            onStart({
+                              bu: bu || '-', receiveDate, dueDate,
+                              period: 'Next Period', periodMode: 'over',
+                              apGrtRunning: runningGrt, apGrnRunning: runningGrn,
+                              grtPrefix: getPrefix('GRT', buInfo, 'over'), grnPrefix: getPrefix('GRN', buInfo, 'over'),
+                              buInfo,
+                            });
+                          }
+                        }} style={{ ...inputBase }} />
                     </div>
                     <div style={fieldWrap}><label style={fieldLabel}>Due date</label><input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={inputBase} /></div>
                   </div>
@@ -6296,19 +6335,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                   onClick={async () => {
                     if (isBlocked) { setShowBlockedPopup(true); return; }
 
-                    // ── ย้าย Popup ยืนยันข้าม Period มาไว้ตรงนี้ (จาก onBlur Receive Date เดิม) ──
-                    // ── กัน False Trigger จาก Re-render/Blur ที่ไม่ได้มาจาก User แก้ไข จริง ──────
-                    if (isSkipAheadPreview) {
-                      const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
-                      const newMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
-                      const confirmed = await confirmDialog.confirm(
-                        `Receive Date อยู่เดือน ${newMonthStr} ซึ่งเป็นเดือนถัดไปจาก Period ปัจจุบัน (${curMonthStr}) ที่ยังไม่ปิด\n\nต้องการบันทึกข้าม Period ปัจจุบันหรือไม่?`,
-                        { confirmText: 'ข้าม Period', cancelText: 'ยกเลิก' }
-                      );
-                      if (!confirmed) return;
-                    }
-
                     // MARKER_BATCHSETUP_MODE_FROM_PREVIEW_V1
+                    // ── ไม่ต้องถามซ้ำแล้ว เพราะ Popup ยืนยันข้ามเดือนเกิดขึ้นตอนเปลี่ยน Receive Date ไปแล้ว ──
                     // ── ใช้ isSkipAheadPreview (คำนวณสดจาก Receive Date ปัจจุบันที่ยืนยันแล้ว) ตัดสิน Track ──
                     const override = isOverride(buInfo);
                     const mode = override ? 'prev' : (isSkipAheadPreview ? 'over' : 'current');
@@ -7653,14 +7681,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     return '';
   })();
 
-  // MARKER_BRANCH_LIST_REALTIME_WS_V1
   const handleSaveBranch = async ({ form: branchForm, isEdit, editTarget }) => {
     const meta = { updated_by: userName, updated_at: new Date().toISOString() };
     if (isEdit) { const { error } = await db.from('branch_list').update({ ...branchForm, ...meta }).eq('id', editTarget.id); if (error) throw error; }
     else { const { error } = await db.from('branch_list').insert([{ ...branchForm, ...meta }]); if (error) throw error; }
     await fetchCollection('BranchList', true);
-    // ── แจ้ง Client อื่นที่เปิดหน้าค้างอยู่ ให้ Refetch BranchList ด้วย (Real-time) ──
-    try { broadcastWs('branch_list_updated', { bu: branchForm['bu'] || '' }); } catch (e) { console.error('[broadcast branch_list_updated]', e); }
   };
 
   const matchedRule = getMatchedRule(vendorInfo);
@@ -11124,15 +11149,6 @@ export function BatchControlPage({ currentUser, userName = '' }) {
 // MARKER_INITIAL_HISTORY_TAB_V1
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, initialHistoryTab }) {
   const { fetchCollection, getCached } = useDataCache();
-
-  // ── Real-time: คนอื่น Save Branch (New/Edit) ที่ไหนก็ตาม -> Refetch BranchList ──
-  // ── Cache ให้ทุก Client ที่เปิดหน้าค้างอยู่เห็นข้อมูลล่าสุดโดยไม่ต้อง Refresh เอง ──
-  useEffect(() => {
-    const unsubscribe = subscribeWs(['branch_list_updated'], () => {
-      fetchCollection('BranchList', true);
-    });
-    return unsubscribe;
-  }, [fetchCollection]);
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);

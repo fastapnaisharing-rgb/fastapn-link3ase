@@ -234,10 +234,13 @@ function parseAP09RowsFromRaw(rawRows) {
       const branch   = numParts[1] || '';
 
       // Vendor Name: ใช้ r['Supplier'] เป็นหลัก (Vendor จริง)
-      const taxVendor = ((parts[1] || '').trim() || r['Supplier'] || r['Vendor Name'] || '').trim();
+      // parts[1] = vendor slot (format: AP Manual.{vendor}.{GRT}.{branch}...)
+      // if empty/numeric -> fallback r['Supplier'] (column B)
+      const _vpRef = (parts[1] && !/^\d+$/.test(parts[1])) ? parts[1] : '';
+      const taxVendor = (_vpRef || r['Supplier'] || r['Vendor Name'] || '').trim();
 
       // ข้อมูลหลัง Yes
-      const receiveDate = yesIdx >= 0 ? (parts[yesIdx + 1] || '').trim() : '';
+      const receiveDate = (yesIdx >= 0 ? (parts[yesIdx + 1] || '').trim() : '') || r['Receive Date'] || r['Invoice Date'] || '';
       const grtNo       = yesIdx >= 0 ? (parts[yesIdx + 2] || '').trim() : '';
       const taxInvDate  = yesIdx >= 0 ? (parts[yesIdx + 3] || '').trim() : '';
       const taxInvNo    = yesIdx >= 0 ? (parts[yesIdx + 4] || '').trim() : '';
@@ -372,57 +375,28 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
   const attachInputRef                = React.useRef();
 
   const runOcr = async (file, idx, retryCount = 0, rotation = 0) => {
-    setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'ocring', error:''} : x));
+    // ใช้ queue system แทน ocr-pdf โดยตรง — SSE จะ push status update มาให้ frontend
+    setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'pending', error:''} : x));
     try {
       const token = sessionStorage.getItem('fastapn_token');
-      const fd = new FormData(); fd.append('file', file);
+      const fd = new FormData();
+      fd.append('file', file);
       if (rotation) fd.append('rotation', String(rotation));
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 300000); // 5 นาที (รอ server queue ได้)
-      let res;
-      try {
-        res = await fetch('http://10.101.87.126:4000/api/docenter/ocr-pdf', {
-          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+      fd.append('doc_type', docType || 'APN01');
+      const res = await fetch('http://10.101.87.126:4000/api/docenter/queue/add', {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+      });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.detail || data.error || 'OCR ล้มเหลว');
-      const buShort = data.metadata?.bu_short || data.metadata?.bu_code?.split('-')[0]?.trim() || '';
-      const dtype   = data.doc_type || data.metadata?.doc_type || docType;
-      // Lookup bu จาก company_list เพื่อเอา bu code (MPS, LKS) มา genSerial
-      // ดึง BU จากชื่อไฟล์ — รองรับทั้ง "MPS_..." และ "MPS - APN01 - ..."
-      const nameNoExt = file.name.replace(/\.pdf$/i, '');
-      const buFromName = (() => {
-        const m1 = nameNoExt.match(/^([A-Z]{2,6})_/);
-        if (m1) return m1[1];
-        const m2 = nameNoExt.match(/^([A-Z]{2,6})[ -]/);
-        if (m2) return m2[1];
-        return '';
-      })();
-      let buCode = buFromName || buShort || 'XX';
-      // Lookup company_list ด้วย bu_code_name ถ้ามี buShort (0568)
-      if (buShort && !buFromName) {
-        try {
-          const r = await db.from('company_list').select('bu').ilike('bu_code_name', buShort + '%').maybeSingle();
-          if (r?.data?.bu) buCode = r.data.bu;
-        } catch(_) {}
-      }
-      const serial = genSerial ? genSerial(buCode, dtype) : (data.serial_code || file.name);
-      setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'done', result:data, serial} : x));
-      if (idx === 0 || selected === idx) {
-        setSelected(idx);
-        setSerialCode(serial);
-      }
+      if (!res.ok) throw new Error(data.error || 'ส่ง queue ไม่สำเร็จ');
+      // set id จาก queue ทันที — SSE จะ push status update มาหา item นี้
+      const queueId = data.id || data.queue_id;
+      setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'pending', id: queueId, fileName: file.name} : x));
     } catch(err) {
-      const msg = err.name === 'AbortError' ? 'หมดเวลา — server ใช้เวลานานเกิน 5 นาที' : err.message;
-      // retry เฉพาะ network error (ไม่ใช่ abort หรือ server error)
-      if (retryCount === 0 && err.name !== 'AbortError' && err.message === 'Failed to fetch') {
-        setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'ocring', error:'กำลัง retry...'} : x));
+      const msg = err.message;
+      if (retryCount === 0 && err.message === 'Failed to fetch') {
+        setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'pending', error:'กำลัง retry...'} : x));
         await new Promise(r => setTimeout(r, 3000));
-        return runOcr(file, idx, 1);
+        return runOcr(file, idx, 1, rotation);
       }
       setPdfQueue(q => q.map((x,i) => i===idx ? {...x, status:'error', error:msg} : x));
     }
@@ -796,6 +770,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
   const [selectedDraftIds, setSelectedDraftIds] = React.useState([]);
   const [selectedDraft, setSelectedDraft] = React.useState(null);
   const [dupModal, setDupModal] = React.useState(null);
+  const [confirmDraftDelete, setConfirmDraftDelete] = React.useState(null);
   const [previewDocType, setPreviewDocType] = React.useState('APN01');
   const [saveDraftModal, setSaveDraftModal] = React.useState(false);
   const [ap09Duplicated, setAp09Duplicated] = React.useState(false); // AP09 ซ้ำ → ซ่อน AP09/Both ใน modal
@@ -842,10 +817,14 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
   };
 
   // genSerial: CDS_Invoice Register_APN01-260419.2256
+  const _genSerialCounter = React.useRef(0);
   const genSerial = (bu, type) => {
     const now = new Date();
     const p = (n) => String(n).padStart(2,'0');
     const yy=String(now.getFullYear()).slice(2),mm=p(now.getMonth()+1),dd=p(now.getDate()),hh=p(now.getHours()),mi=p(now.getMinutes());
+    const ss=p(now.getSeconds());
+    _genSerialCounter.current = (_genSerialCounter.current + 1) % 100;
+    const seq = _genSerialCounter.current > 0 ? `.${_genSerialCounter.current}` : '';
     return `${bu||'XX'}_${DOC_TYPE_MAP[type]||type}_${type}-${yy}${mm}${dd}.${hh}${mi}`;
   };
 
@@ -1078,6 +1057,25 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       }
       const { data } = await q;
       setDrafts(data || []);
+      // auto-back: if current BU has no drafts left -> go back to DocType level
+      setDraftBU(prevBU => {
+        if (!prevBU) return prevBU;
+        setDraftDocType(prevDocType => {
+          if (!prevDocType) return prevDocType;
+          const stillHas = (data||[]).some(d =>
+            d.doc_type === prevDocType &&
+            (d.bu_code || (d.serial_code||'').split('_')[0] || '?') === prevBU
+          );
+          if (!stillHas) {
+            setDraftLevel(2);
+            setSelectedDraftIds([]);
+            setSelectedDraft(null);
+            return null;
+          }
+          return prevDocType;
+        });
+        return prevBU;
+      });
       // สร้าง user list จาก drafts ทั้งหมด (Owner/Admin)
       if (canViewAll) {
         const allQ = await db.from('doc_collection').select('uploaded_by').eq('status','draft');
@@ -1151,12 +1149,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           }]);
         }
       }
-      setPasteText(''); setParsedRows([]); setParsedHeaders([]); setSerialCode(''); setFormatWarning(''); setDupWarnings([]);
+      setPasteText(''); setParsedRows([]); setParsedHeaders([]); setFormatWarning(''); setDupWarnings([]);
+      setSerialCode(genSerial(buCode || 'XX', 'APN01'));
       showToast('บันทึก Draft สำเร็จ');
-      setPasteSubTab('draft'); setDraftLevel(1); setDraftDocType(null); setDraftBU(null);
       loadDrafts();
       // Draft saved — ไม่ปิด modal
-    } catch(e) { setError('บันทึก Draft ไม่สำเร็จ: ' + e.message); }
+    } catch(e) { setError('บันทึก Draft ไม่สำเร็จ: ' + (e?.message || e?.details || e?.hint || JSON.stringify(e))); }
     setSaving(false);
   };
 
@@ -1173,8 +1171,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       const bu = firstDraft.bu_code || (firstDraft.serial_code||'').split('_')[0] || 'XX';
       const docType = firstDraft.doc_type || 'APN01';
 
-      // gen serial ใหม่ (ใช้ serial code ที่แสดงใน field ถ้ามี ไม่งั้น gen ใหม่)
-      const newSerial = serialCode.trim() || genSerial(bu, docType);
+      // always gen new serial on submit draft
+      const newSerial = genSerial(bu, docType);
 
       // lookup BU info
       let buCodeName = null, buNameThai = null;
@@ -1182,7 +1180,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       buCodeName = buData?.bu_code_name || null;
       buNameThai = buData?.['THAI COMPANY NAME'] || null;
 
-      // insert batch ใหม่ status='done'
+      // insert batch ใหม่ status='active'
       const _submitNow = new Date().toISOString();
       const _fileDate = mergedRows[0]?.['Receive Date'] || mergedRows[0]?.['Invoice Date'] || _submitNow.split('T')[0];
       const { error: insErr } = await db.from('doc_collection').insert([{
@@ -1193,8 +1191,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         doc_type:      docType,
         rows:          mergedRows,
         attachments:   [],
-        source:        'draft_merge',
-        status:        'done',
+        source:        'upload',
+        doc_name:      ({APN01:'Invoice Register',AP07:'Input Tax Invoice',AP09:'Input Tax Invoice',TRANS:'Transaction AP'}[docType])||'Invoice Register',
+        status:        'active',
         file_date:     _fileDate,
         uploaded_by:   userName || currentUser?.email || '',
         created_at:    _submitNow,
@@ -1226,9 +1225,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         const now         = new Date().toISOString();
         const docType     = f.detectedType || 'APN01';
         const buCodeShort = f.bu || (f.metaBuCode ? f.metaBuCode.split('-')[0].trim() : '') || 'XX';
-        // ตรวจ serial format: BU_..._TYPE-YYMMDD.HHmm — ถ้าไม่ตรง gen ใหม่
-        const isValidSerial = /^[A-Z]{2,6}_.*_[A-Z0-9]+-\d{6}\.\d{4}$/.test(f.serialCode || '');
-        const serial = isValidSerial ? f.serialCode : genSerial(buCodeShort, docType);
+        // serial priority: 1) input field (serialCode) 2) f.serialCode 3) gen new
+        const SERIAL_RE = /^[A-Z]{2,6}_.*_[A-Z0-9]+-\d{6}[.\d]*$/;
+        const _userSerial = (serialCode||'').trim();
+        const serial = SERIAL_RE.test(_userSerial) ? _userSerial
+          : SERIAL_RE.test(f.serialCode||'') ? f.serialCode
+          : genSerial(buCodeShort, docType);
         let buNameThai = f.metaBuName || null;
         let buCodeName = f.metaBuCode || null;
         if (buCodeShort && buCodeShort !== 'XX') {
@@ -1283,11 +1285,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       }
       showToast(`บันทึก Draft ${readyFiles.length} ไฟล์สำเร็จ`);
       setFileQueue([]); setSelectedFileIdx(0);
-      setTab('paste'); setPasteSubTab('draft');
-      setDraftLevel(1); setDraftDocType(null); setDraftBU(null);
-      setSelectedDraftIds([]); setSelectedDraft(null);
       loadDrafts();
-    } catch(e) { setError('บันทึก Draft ไม่สำเร็จ: ' + e.message); }
+    } catch(e) { setError('บันทึก Draft ไม่สำเร็จ: ' + (e?.message || e?.details || e?.hint || JSON.stringify(e))); }
     setSaving(false);
   };
 
@@ -1383,9 +1382,12 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           const now         = new Date().toISOString();
           const docType     = f.detectedType || 'APN01';
           const buCodeShort = f.bu || (f.metaBuCode ? f.metaBuCode.split('-')[0].trim() : '') || 'XX';
-          // ตรวจ serial format: BU_..._TYPE-YYMMDD.HHmm — ถ้าไม่ตรง (เช่นชื่อไฟล์ดิบ) gen ใหม่
-          const isValidSerial = /^[A-Z]{2,6}_.*_[A-Z0-9]+-\d{6}\.\d{4}$/.test(f.serialCode || '');
-          const serial = isValidSerial ? f.serialCode : genSerial(buCodeShort, docType);
+          // serial priority: 1) input field (serialCode) 2) f.serialCode 3) gen new
+          const SERIAL_RE2 = /^[A-Z]{2,6}_.*_[A-Z0-9]+-\d{6}[.\d]*$/;
+          const _userSerial2 = (serialCode||'').trim();
+          const serial = SERIAL_RE2.test(_userSerial2) ? _userSerial2
+            : SERIAL_RE2.test(f.serialCode||'') ? f.serialCode
+            : genSerial(buCodeShort, docType);
           let buNameThai    = f.metaBuName || null;
           let buCodeName    = f.metaBuCode || null;
           if (buCodeShort && buCodeShort !== 'XX') {
@@ -1479,6 +1481,37 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
     {toast && (
       <div style={{position:'fixed',bottom:'24px',left:'50%',transform:'translateX(-50%)',zIndex:200000,background:toast.type==='warning'?'#856404':toast.type==='error'?'#791F1F':'#1a3a5c',color:'white',padding:'10px 20px',borderRadius:'8px',fontSize:'13px',fontWeight:'500',boxShadow:'0 4px 12px rgba(0,0,0,0.2)',whiteSpace:'nowrap'}}>
         {toast.type==='warning'?'⚠️':toast.type==='error'?'❌':'✅'} {toast.msg}
+      </div>
+    )}
+    {confirmDraftDelete && (
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.45)',zIndex:100001,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'360px',boxShadow:'0 8px 32px rgba(0,0,0,0.18)',overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'0.5px solid #f0f0f0',display:'flex',alignItems:'center',gap:'10px'}}>
+            <span style={{fontSize:'20px'}}>&#128465;</span>
+            <div style={{fontSize:'13px',fontWeight:'600',color:'#1a3a5c'}}>ยืนยันการลบ</div>
+          </div>
+          <div style={{padding:'16px 20px'}}>
+            <div style={{fontSize:'12px',color:'#555',lineHeight:1.7}}>
+              {confirmDraftDelete.multi
+                ? <>ลบ <strong>{confirmDraftDelete.serial}</strong> ออกจากระบบ? </>
+                : <>ลบ <strong style={{color:'#c0392b'}}>{confirmDraftDelete.serial}</strong><br/>ออกจากระบบ? </>
+              }
+            </div>
+          </div>
+          <div style={{padding:'12px 20px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'flex-end',gap:'8px'}}>
+            <button onClick={()=>setConfirmDraftDelete(null)} style={{padding:'6px 16px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer'}}>ยกเลิก</button>
+            <button onClick={async()=>{
+              if(confirmDraftDelete.multi){
+                for(const id of confirmDraftDelete.ids){ await db.from('doc_collection').delete().eq('id',id); }
+                setSelectedDraftIds([]); setSelectedDraft(null);
+              } else {
+                await db.from('doc_collection').delete().eq('id',confirmDraftDelete.id);
+                setSelectedDraft(null); setSelectedDraftIds([]);
+              }
+              setConfirmDraftDelete(null); loadDrafts();
+            }} style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:'#c0392b',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}>ลบ</button>
+          </div>
+        </div>
       </div>
     )}
     {saveDraftModal && (
@@ -1603,7 +1636,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                     {draftLevel===1&&(
                       <div style={{flex:1,overflowY:'auto'}}>
                         {draftsLoading&&<div style={{fontSize:'12px',color:'#888',padding:'20px',textAlign:'center'}}>กำลังโหลด...</div>}
-                        {!draftsLoading&&drafts.length===0&&<div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>�Dม่มี Draft</div>}
+                        {!draftsLoading&&drafts.length===0&&<div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>No Draft</div>}
                         {['APN01','AP09','AP07'].filter(t=>drafts.some(d=>d.doc_type===t)).map(t=>{
                           const cnt=drafts.filter(d=>d.doc_type===t).length;
                           const label=t==='AP09'?'AP09 - Tax Invoice':t==='AP07'?'AP07':t+' - Invoice Register';
@@ -1699,7 +1732,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                               const me = userName || currentUser?.email || '';
                               const canDel = isOwner || firstDraft.uploaded_by===me;
                               return (
-                                <button onClick={async()=>{ if(!canDel) return; if(!window.confirm('ลบ Draft นี้?')) return; await db.from('doc_collection').delete().eq('id',firstDraft.id); setSelectedDraft(null); setSelectedDraftIds([]); loadDrafts(); }}
+                                <button onClick={async()=>{ if(!canDel) return; setConfirmDraftDelete({id:firstDraft.id,serial:firstDraft.serial_code,multi:false}); }}
                                   disabled={!canDel}
                                   title={!canDel?'Admin ดูได้อย่างเดียว':''}
                                   style={{fontSize:'11px',padding:'4px 10px',borderRadius:'6px',border:'0.5px solid #f7c1c1',background:canDel?'#FCEBEB':'#f5f5f5',color:canDel?'#791F1F':'#bbb',cursor:canDel?'pointer':'not-allowed',flexShrink:0}}>
@@ -1886,7 +1919,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                     {draftLevel===1&&(
                       <div style={{flex:1,overflowY:'auto'}}>
                         {draftsLoading&&<div style={{fontSize:'12px',color:'#888',padding:'20px',textAlign:'center'}}>กำลังโหลด...</div>}
-                        {!draftsLoading&&drafts.length===0&&<div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>ไม่มี Draft</div>}
+                        {!draftsLoading&&drafts.length===0&&<div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>No Draft</div>}
                         {['APN01','AP09','AP07'].filter(t=>drafts.some(d=>d.doc_type===t)).map(t=>{
                           const cnt=drafts.filter(d=>d.doc_type===t).length;
                           const label=t==='AP09'?'AP09 - Tax Invoice':t==='AP07'?'AP07':t+' - Invoice Register';
@@ -1982,7 +2015,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                               const me = userName || currentUser?.email || '';
                               const canDel = isOwner || firstDraft.uploaded_by===me;
                               return (
-                                <button onClick={async()=>{ if(!canDel) return; if(!window.confirm('ลบ Draft นี้?')) return; await db.from('doc_collection').delete().eq('id',firstDraft.id); setSelectedDraft(null); setSelectedDraftIds([]); loadDrafts(); }}
+                                <button onClick={async()=>{ if(!canDel) return; setConfirmDraftDelete({id:firstDraft.id,serial:firstDraft.serial_code,multi:false}); }}
                                   disabled={!canDel}
                                   title={!canDel?'Admin ดูได้อย่างเดียว':''}
                                   style={{fontSize:'11px',padding:'4px 10px',borderRadius:'6px',border:'0.5px solid #f7c1c1',background:canDel?'#FCEBEB':'#f5f5f5',color:canDel?'#791F1F':'#bbb',cursor:canDel?'pointer':'not-allowed',flexShrink:0}}>
@@ -2204,10 +2237,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                     <button
                       style={{padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',color:'#791F1F',fontSize:'12px',cursor:'pointer'}}
                       onClick={async()=>{
-                        if(!window.confirm(`ลบ Draft ที่เลือก ${selectedDraftIds.length} รายการ?`)) return;
-                        for(const id of selectedDraftIds){
-                          await db.from('doc_collection').delete().eq('id',id);
-                        }
+                        setConfirmDraftDelete({ids:selectedDraftIds,serial:`${selectedDraftIds.length} Draft`,multi:true});
                         setSelectedDraft(null);
                         setSelectedDraftIds([]);
                         loadDrafts();
@@ -2642,6 +2672,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   }, []);
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
+  useEffect(() => {
+    const unsub = subscribeWs(['doc_collection_updated'], () => fetchFiles());
+    return unsub;
+  }, [fetchFiles]);
 
   // ── Queue: ดึงรายการและนับ pending/ocring ────────────────────────────────
   const fetchQueue = React.useCallback(async () => {
@@ -2682,6 +2716,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     try {
       await db.from('doc_collection').delete().eq('id', file.id);
       await logActivity('delete_file', file.serial_code, { folder:folder.key });
+      broadcastWs('doc_collection_updated', { action:'delete', serial:file.serial_code });
       setConfirmDelete(null); fetchFiles();
     } catch(e){ alert('ลบไม่สำเร็จ: '+e.message); }
   };
@@ -3125,7 +3160,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                         }
                         <button title="Download" onClick={()=>handleRowDownload(file)} disabled={downloadingRow===file.id} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background: downloadingRow===file.id ? '#eee' : 'white',cursor: downloadingRow===file.id ? 'default' : 'pointer',fontSize:'12px' }}>⬇</button>
                         <button title="จัดการรูปแนบ" onClick={()=>setAttachModal(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #1a3a5c',background:'white',cursor:'pointer',fontSize:'12px' }}>📎</button>
-                        {canDelete && <button title="ลบ" onClick={()=>setConfirmDelete(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',cursor:'pointer',fontSize:'12px' }}>🗑</button>}
+                        {(isOwner || isAdmin || file.uploaded_by===(userName||currentUser?.email||'')) && <button title="ลบ" onClick={()=>setConfirmDelete(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',cursor:'pointer',fontSize:'12px' }}>🗑</button>}
                       </div>
                     </td>
                     <td style={{ ...S.td,textAlign:'center',fontWeight:'500',color:'#1a3a5c' }}>{rows.length}</td>
@@ -3211,7 +3246,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
           <div style={{fontSize:'11px',color:'rgba(255,255,255,0.5)'}}>{lightbox.attachments[lightbox.index].name}</div>
         </div>
       )}
-      {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={()=>{setShowAdd(false);fetchFiles();fetchQueue();}} userName={userName} currentUser={currentUser} isOwner={isOwner} isAdmin={isAdmin}/>}
+      {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={()=>{setShowAdd(false);fetchFiles();fetchQueue();broadcastWs('doc_collection_updated',{action:'save'});}} userName={userName} currentUser={currentUser} isOwner={isOwner} isAdmin={isAdmin}/>}
 
       {/* ── Queue Modal — Central Queue Monitor ── */}
       {showQueue && (() => {
@@ -3553,7 +3588,7 @@ function DocumentCenter() {
           onBack={() => { setActiveFolder(null); fetchData(); }}
           userName={userName}
           currentUser={currentUser}
-          canDelete={isOwner || isAdmin}
+          canDelete={true}
           isOwner={isOwner}
           isAdmin={isAdmin}
         />

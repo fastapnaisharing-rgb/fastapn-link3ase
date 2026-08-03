@@ -825,21 +825,6 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
     const ss=p(now.getSeconds());
     _genSerialCounter.current = (_genSerialCounter.current + 1) % 100;
     const seq = _genSerialCounter.current > 0 ? `.${_genSerialCounter.current}` : '';
-    return `${bu||'XX'}_${DOC_TYPE_MAP[type]||type}_${type}-${yy}${mm}${dd}.${hh}${mi}`;
-  };
-
-  // MARKER_GEN_DRAFT_SERIAL_HHMMSS_SEQ_V1
-  // ── ใช้เฉพาะตอน Save Draft หลายไฟล์พร้อมกัน (Loop) กัน Serial Code ชนกันเอง ──
-  // ── ระหว่างไฟล์ในรอบ Save เดียวกัน — มี ss+seq การันตีไม่ซ้ำ แม้ Loop จะรัน ──
-  // ── เร็วจนอยู่ในนาทีเดียวกันหมด — ตอน Confirm จะ Regenerate ใหม่ด้วย ──────
-  // ── genSerial() (Format เดิม ไม่มี ss/seq) เสมอ ไม่เกี่ยวกับตัวนี้เลย ──────
-  const genDraftSerial = (bu, type) => {
-    const now = new Date();
-    const p = (n) => String(n).padStart(2,'0');
-    const yy=String(now.getFullYear()).slice(2),mm=p(now.getMonth()+1),dd=p(now.getDate()),hh=p(now.getHours()),mi=p(now.getMinutes());
-    const ss=p(now.getSeconds());
-    _genSerialCounter.current = (_genSerialCounter.current + 1) % 100;
-    const seq = _genSerialCounter.current > 0 ? `.${_genSerialCounter.current}` : '';
     return `${bu||'XX'}_${DOC_TYPE_MAP[type]||type}_${type}-${yy}${mm}${dd}.${hh}${mi}${ss}${seq}`;
   };
 
@@ -1186,8 +1171,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       const bu = firstDraft.bu_code || (firstDraft.serial_code||'').split('_')[0] || 'XX';
       const docType = firstDraft.doc_type || 'APN01';
 
-      // always gen new serial on submit draft
-      const newSerial = genSerial(bu, docType);
+      // gen serial ใหม่ (ใช้ serial code ที่แสดงใน field ถ้ามี ไม่งั้น gen ใหม่)
+      const newSerial = serialCode.trim() || genSerial(bu, docType);
 
       // lookup BU info
       let buCodeName = null, buNameThai = null;
@@ -1206,8 +1191,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         doc_type:      docType,
         rows:          mergedRows,
         attachments:   [],
-        source:        'upload',
-        doc_name:      ({APN01:'Invoice Register',AP07:'Input Tax Invoice',AP09:'Input Tax Invoice',TRANS:'Transaction AP'}[docType])||'Invoice Register',
+        source:        'draft_merge',
         status:        'active',
         file_date:     _fileDate,
         uploaded_by:   userName || currentUser?.email || '',
@@ -1245,7 +1229,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         const _userSerial = (serialCode||'').trim();
         const serial = SERIAL_RE.test(_userSerial) ? _userSerial
           : SERIAL_RE.test(f.serialCode||'') ? f.serialCode
-          : genDraftSerial(buCodeShort, docType);
+          : genSerial(buCodeShort, docType);
         let buNameThai = f.metaBuName || null;
         let buCodeName = f.metaBuCode || null;
         if (buCodeShort && buCodeShort !== 'XX') {
@@ -1402,7 +1386,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           const _userSerial2 = (serialCode||'').trim();
           const serial = SERIAL_RE2.test(_userSerial2) ? _userSerial2
             : SERIAL_RE2.test(f.serialCode||'') ? f.serialCode
-            : genDraftSerial(buCodeShort, docType);
+            : genSerial(buCodeShort, docType);
           let buNameThai    = f.metaBuName || null;
           let buCodeName    = f.metaBuCode || null;
           if (buCodeShort && buCodeShort !== 'XX') {

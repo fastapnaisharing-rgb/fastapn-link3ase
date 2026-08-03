@@ -7653,14 +7653,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     return '';
   })();
 
-  // MARKER_BRANCH_LIST_REALTIME_WS_V1
   const handleSaveBranch = async ({ form: branchForm, isEdit, editTarget }) => {
     const meta = { updated_by: userName, updated_at: new Date().toISOString() };
     if (isEdit) { const { error } = await db.from('branch_list').update({ ...branchForm, ...meta }).eq('id', editTarget.id); if (error) throw error; }
     else { const { error } = await db.from('branch_list').insert([{ ...branchForm, ...meta }]); if (error) throw error; }
     await fetchCollection('BranchList', true);
-    // ── แจ้ง Client อื่นที่เปิดหน้าค้างอยู่ ให้ Refetch BranchList ด้วย (Real-time) ──
-    try { broadcastWs('branch_list_updated', { bu: branchForm['bu'] || '' }); } catch (e) { console.error('[broadcast branch_list_updated]', e); }
   };
 
   const matchedRule = getMatchedRule(vendorInfo);
@@ -11124,15 +11121,6 @@ export function BatchControlPage({ currentUser, userName = '' }) {
 // MARKER_INITIAL_HISTORY_TAB_V1
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, initialHistoryTab }) {
   const { fetchCollection, getCached } = useDataCache();
-
-  // ── Real-time: คนอื่น Save Branch (New/Edit) ที่ไหนก็ตาม -> Refetch BranchList ──
-  // ── Cache ให้ทุก Client ที่เปิดหน้าค้างอยู่เห็นข้อมูลล่าสุดโดยไม่ต้อง Refresh เอง ──
-  useEffect(() => {
-    const unsubscribe = subscribeWs(['branch_list_updated'], () => {
-      fetchCollection('BranchList', true);
-    });
-    return unsubscribe;
-  }, [fetchCollection]);
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);

@@ -258,20 +258,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     'bu': '#FCF3D5', 'Group-P': '#FCF3D5', 'BU-TaxID': '#FCF3D5', 'BU-Branch': '#FCF3D5',
     '%': '#DCEAF1', 'Branch Direct': '#DCEAF1',
   };
-  // MARKER_BUSINESSUNIT_ROWLAYOUT_PORT_V1 -- Layout Row เดียวกับ APController.js เป๊ะ
-  const BRANCH_FORM_ROWS = [
-    ['Branch Code', 'status'],
-    ['Company for Show in Report Display'],
-    ['bu', 'Group-P'],
-    ['BU-TaxID', 'BU-Branch'],
-    ['%', 'DB(%)'],
-    ['Simple Company'],
-    ['Simple Brand Code'],
-    ['Branch Address'],
-    ['BU Code', 'Branch Allocate'],
-    ['cpc', 'Branch Direct'],
-    ['Inactive Date'],
-  ];
   const BRANCH_EDIT = [
     ['Branch Code','Branch Code'],['Branch Direct','Branch Direct'],
     ['Branch Allocate','Branch Allocate'],['BU Code','BU Code'],
@@ -831,6 +817,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   ];
 
   const renderBranchFormFields = (form, setForm, error, setError, editMode=true) => {
+    const cols = isMobile ? 2 : 4;
     // ── Auto-Fill Branch Direct = BU + "-" + BU-Branch (Pad 5 หลัก) ตอน Blur ──
     const handleBuBranchBlur = () => {
       const buVal = String(form['bu'] || '').trim();
@@ -843,58 +830,35 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         'Branch Direct': buVal ? `${buVal}-${padded}` : form['Branch Direct'],
       });
     };
+    const fld = (key, label, span, isReq, hasErr) => {
+      const bg = BRANCH_FIELD_COLOR[key];
+      return (
+      <div key={key} style={{ gridColumn:`span ${span}` }}>
+        <label style={{ fontSize:'11px', color:hasErr?'#e74c3c':'#888', display:'block', marginBottom:'3px' }}>
+          {label}{isReq&&<span style={{ color:'#e74c3c' }}> *</span>}
+        </label>
+        {editMode?(
+          key==='Inactive Date'
+            ?<input type="date" style={hasErr?{...S.input,border:'0.5px solid #e74c3c'}:S.input} value={form[key]||''} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}}/>
+            :BRANCH_COMBO.includes(key)
+              ?<ComboBox value={form[key]||''} onChange={val=>{setForm({...form,[key]:val});setError('');}} options={getBranchOptions(key)} placeholder={`เลือก ${label.replace(' *','')}`}/>
+              :<input style={{...(hasErr?{...S.input,border:'0.5px solid #e74c3c'}:S.input), background: hasErr?undefined:(bg||undefined)}} value={form[key]||''} onChange={e=>{setForm({...form,[key]:e.target.value});setError('');}} onBlur={key==='BU-Branch'?handleBuBranchBlur:undefined}/>
+        ):<div style={{...S.inputReadonly}}>{key==='status'?statusBadge(form[key]):(form[key]||'-')}</div>}
+      </div>
+      );
+    };
     return (
-      <div style={{ padding: '16px 20px', overflow: 'visible' }}>
-        {BRANCH_FORM_ROWS.map((rowKeys, ri) => (
-          <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative', zIndex: ri }}>
-            {rowKeys.map((key, ki) => {
-              const label = (BRANCH_LAYOUT.find(([k]) => k === key) || [null, key])[1];
-              const needInactive = key === 'Inactive Date';
-              const isDisabled = needInactive && form['status'] !== 'Closed';
-              const isReq = BRANCH_REQUIRED_KEYS.includes(key) || (key === 'Inactive Date' && form['status'] === 'Closed') || (key === 'Branch Allocate' && form['status'] === 'Relocate');
-              const hasErr = !!(error && isReq && !form[key]);
-              const isFullRow = rowKeys.length === 1;
-              const bg = needInactive ? '#eef1f3' : (BRANCH_FIELD_COLOR[key] || '#fff');
-              const valueColor = BRANCH_FIELD_COLOR[key] ? '#5c5636' : '#333';
-              const labelCellStyle = { flex: isFullRow ? '0 0 160px' : (ki === 0 ? '0 0 160px' : '0 0 120px'), border: hasErr ? '1px dashed #e74c3c' : '1px dashed #2c5f7c', marginLeft: ki === 0 ? 0 : '-1px', padding: '8px 10px', display: 'flex', alignItems: key === 'Branch Address' ? 'flex-start' : 'center', paddingTop: key === 'Branch Address' ? '10px' : '8px', opacity: isDisabled ? 0.6 : 1, boxSizing: 'border-box', position: 'relative', zIndex: ki * 2 };
-              const valueCellStyle = { flex: 1, background: editMode ? bg : '#fafbfc', border: hasErr ? '1px dashed #e74c3c' : '1px dashed #2c5f7c', marginLeft: '-1px', padding: '8px 10px', display: 'flex', alignItems: 'center', minHeight: key === 'Branch Address' ? '56px' : undefined, opacity: isDisabled ? 0.7 : 1, boxSizing: 'border-box', position: 'relative', zIndex: ki * 2 + 1 };
-              const inputBare = { width: '100%', border: 'none', background: 'transparent', fontSize: '13px', color: isDisabled ? '#999' : valueColor, outline: 'none', padding: 0, fontFamily: 'inherit' };
-              return (
-                <React.Fragment key={key}>
-                  <div style={labelCellStyle}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: hasErr ? '#e74c3c' : '#123c56' }}>
-                      {label}{isReq && <span style={{ color: '#e24b4a' }}> *</span>}
-                      {needInactive && <span style={{ fontSize: '10px', color: '#bbb', fontWeight: 400 }}> (เฉพาะ Closed)</span>}
-                    </span>
-                  </div>
-                  <div style={valueCellStyle}>
-                    {editMode ? (
-                      key === 'Inactive Date' ? (
-                        <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={inputBare} />
-                      ) : key === 'Branch Address' ? (
-                        <textarea value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
-                      ) : key === 'status' ? (
-                        <select value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={{ ...inputBare, fontWeight: 600 }}>
-                          <option value="">เลือก Status</option>
-                          {['Active', 'Closed', 'Relocate'].map((o, i) => <option key={i} value={o}>{o}</option>)}
-                        </select>
-                      ) : key === 'Branch Direct' ? (
-                        <input value={form[key] || ''} readOnly style={{ ...inputBare, color: '#999' }} />
-                      ) : BRANCH_COMBO.includes(key) ? (
-                        <ComboBox value={form[key] || ''} onChange={val => { setForm({ ...form, [key]: val }); setError(''); }} options={getBranchOptions(key)} placeholder={`เลือก ${label}`} />
-                      ) : (
-                        <input value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} onBlur={key === 'BU-Branch' ? handleBuBranchBlur : undefined} style={inputBare} />
-                      )
-                    ) : (
-                      <span style={{ ...inputBare, color: '#333' }}>{key === 'status' ? statusBadge(form[key]) : (form[key] || '-')}</span>
-                    )}
-                  </div>
-                </React.Fragment>
-              );
+      <>
+        <div style={{ padding:'14px 16px 16px', overflow:'visible' }}>
+          <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:'10px 12px' }}>
+            {BRANCH_LAYOUT.map(([key, label, span]) => {
+              const isReq = BRANCH_REQUIRED_KEYS.includes(key) || (key==='Inactive Date'&&form['status']==='Closed')||(key==='Branch Allocate'&&form['status']==='Relocate');
+              const hasErr = !!(error&&isReq&&!form[key]);
+              return fld(key, label, Math.min(span, cols), isReq, hasErr);
             })}
           </div>
-        ))}
-      </div>
+        </div>
+      </>
     );
   };
 

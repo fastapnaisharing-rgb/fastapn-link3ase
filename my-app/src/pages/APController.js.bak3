@@ -371,17 +371,9 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
-  // MARKER_BRANCH_FORM_DIRECT_AUTOFILL_V4_FIXED
-  useEffect(() => {
-    if (view !== 'new' && view !== 'edit') return;
-    const buVal = String(form['bu'] || '').trim();
-    const branchVal = String(form['BU-Branch'] || '').trim();
-    if (!buVal || !branchVal) return;
-    const computed = `${buVal}-${branchVal.padStart(5, '0')}`;
-    if (form['Branch Direct'] !== computed) {
-      setForm(f => ({ ...f, 'Branch Direct': computed }));
-    }
-  }, [view, form['bu'], form['BU-Branch']]);
+  // MARKER_BUBRANCH_BLUR_PAD5_V1
+  // ── ย้ายจาก useEffect Real-time (คำนวณทุก Keystroke) มาเป็น Onblur เท่านั้น ──
+  // ── ผูกกับ Input ของ 'BU-Branch' ด้านล่าง (Fallback Generic Input Section) ──
 
   if (!show) return null;
 
@@ -455,6 +447,17 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
       'BU-TaxID': String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || ''),
       '%': String(f['%'] || '').trim() ? f['%'] : (match['%'] || ''),
       'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || ''),
+    }));
+  };
+  const handleBuBranchBlur = () => {
+    const buVal = String(form['bu'] || '').trim();
+    const branchValRaw = String(form['BU-Branch'] || '').trim();
+    if (!branchValRaw) return;
+    const padded = branchValRaw.padStart(5, '0');
+    setForm(f => ({
+      ...f,
+      'BU-Branch': padded,
+      'Branch Direct': buVal ? `${buVal}-${padded}` : f['Branch Direct'],
     }));
   };
   const handleCompanyBlur = () => {
@@ -570,7 +573,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                           })()}
                         </div>
                       ) : (
-                        <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : undefined} style={inputBare} />
+                        <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : key === 'BU-Branch' ? handleBuBranchBlur : undefined} style={inputBare} />
                       )}
                     </div>
                   </React.Fragment>
@@ -4580,15 +4583,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 </div>
               </div>
               {(() => {
+                // MARKER_CUSTOMIZE_PREVIEW_LIVE_RECALC_V1
+                // ── Bug เดิม: previewLine.desc เป็นค่าค้างจากรอบก่อน ไม่ได้ Build ใหม่ ──
+                // ── จาก customizePeriod/customizePercent ที่เพิ่งกรอก ทำให้ Preview ไม่ Sync ──
+                // ── Fix: เรียก calcInvoiceLine() ซ้ำด้วย form ปัจจุบัน (Reuse Logic จริง) ──────
                 const cParts = [];
                 if (form?.customizePeriod) cParts.push(`งวดที่ ${form.customizePeriod}`);
                 if (form?.customizePercent) cParts.push(`จำนวน ${form.customizePercent}%`);
-                const previewLine = lines.find(l => l.itemCode?.trim() && l.desc?.trim());
+                const previewLineRaw = lines.find(l => l.itemCode?.trim() && l.desc?.trim());
+                const previewDesc = previewLineRaw
+                  ? calcInvoiceLine(previewLineRaw, itemcodeItems, vendorInfo, form)?.desc
+                  : '';
                 return (
                   <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px' }}>
                     <div style={{ fontSize: '10px', color: '#999', marginBottom: '4px' }}>ตัวอย่าง Description ที่จะได้</div>
                     <div style={{ fontSize: '12px', color: cParts.length ? '#1a3a5c' : '#ccc', fontStyle: cParts.length ? 'normal' : 'italic' }}>
-                      {previewLine ? previewLine.desc : (cParts.length ? cParts.join(' ') : 'ยังไม่มี Item Code ให้ Preview')}
+                      {previewDesc ? previewDesc : (cParts.length ? cParts.join(' ') : 'ยังไม่มี Item Code ให้ Preview')}
                     </div>
                   </div>
                 );
@@ -5283,10 +5293,6 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const pad2  = (n) => String(n).padStart(2, '0');
   const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
   const [receiveDate, setReceiveDate] = useState(todayStr);
-  // MARKER_RECEIVEDATE_BEFORE_EDIT_REF_V3
-  // ── เก็บค่า Receive Date ไว้ตอน Focus เข้า Field เพื่อเทียบ/Revert ตอน Blur ──
-  const receiveDateBeforeEditRef = useRef(todayStr);
-
   // ── Default Focus: BU code ตอนเปิดหน้า Batch Setup ──
   const buInputRef = useRef(null);
   useEffect(() => { setTimeout(() => buInputRef.current?.focus(), 80); }, []);
@@ -5375,6 +5381,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [showPopup, setShowPopup]       = useState(false);
   const [apGrtRunning, setApGrtRunning] = useState('0000');
   const [grtLocked, setGrtLocked] = useState(false); // Semi-Auto: Lock ถ้ามี Invoice ค้างใน Batch Bucket ของ BU นี้
+
   // MARKER_SEPARATE_GRN_LOCK_V1
   // ── GRN Lock แยกจาก GRT: Lock เสมอสำหรับ Auto/Semi-Auto (ไม่เช็ค Pending เลย) / Manual แก้ได้เสมอ ──
   const grnLocked = (() => {
@@ -5410,45 +5417,6 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     });
     return unsubscribe;
   }, [bu, buInfo]);
-
-  // MARKER_UNIFIED_GRT_GRN_LOCK_V1
-  // ── Lock เลขเริ่มต้น GRT/GRN (ใช้ Lock เดียวกันทั้งคู่) ตาม GRT Control ──────
-  // ── Auto -> Lock เสมอ / Manual -> ไม่ Lock เลย ─────────────────────────
-  // ── Semi-Auto -> Lock เฉพาะถ้ามี Invoice ค้างใน Batch Bucket ของ BU นี้ ──
-  // ── (เฉพาะเดือน/Track เดียวกับ Receive Date ปัจจุบันเท่านั้น — Track อื่น ──
-  // ── มี Invoice ค้างอยู่ก็ไม่เกี่ยว ไม่ควร Lock ข้าม Track กัน) ──────────
-  useEffect(() => {
-    let cancelled = false;
-    const computeRunningNumLock = async () => {
-      const grtControl = buInfo?.['AP GRT Control'] || '';
-      if (grtControl === 'Auto') { if (!cancelled) setGrtLocked(true); return; }
-      if (grtControl === 'Manual') { if (!cancelled) setGrtLocked(false); return; }
-      if (grtControl === 'Semi-Auto') {
-        if (!bu) { if (!cancelled) setGrtLocked(false); return; }
-        // MARKER_SEMIAUTO_LOCK_TRACK_FILTER_V1
-        const monthStr = receiveDate ? receiveDate.slice(0, 7) : '';
-        if (!monthStr) { if (!cancelled) setGrtLocked(false); return; }
-        const [my, mm] = monthStr.split('-').map(Number);
-        const monthStart = `${monthStr}-01`;
-        const nextMonthStart = mm === 12 ? `${my + 1}-01-01` : `${my}-${String(mm + 1).padStart(2, '0')}-01`;
-        try {
-          const { data } = await db.from('bucket_list').select('id')
-            .eq('bu', bu).eq('status', 'pending')
-            .gte('receive_date', monthStart).lt('receive_date', nextMonthStart)
-            .limit(1);
-          if (!cancelled) setGrtLocked((data || []).length > 0);
-        } catch (e) {
-          console.error('[check semi-auto running num lock]', e);
-          if (!cancelled) setGrtLocked(false);
-        }
-        return;
-      }
-      // ── ไม่ได้ตั้งค่า (Empty/ค่าอื่น) -> ไม่ Lock (พฤติกรรมเดิมก่อนมี Feature นี้) ──
-      if (!cancelled) setGrtLocked(false);
-    };
-    computeRunningNumLock();
-    return () => { cancelled = true; };
-  }, [buInfo, bu, receiveDate]);
 
   // ── กัน Popup Blocked เด้งซ้ำ — ดึงจาก Endpoint เล็กๆ แยก ใช้ได้ทุก User ไม่ต้องมี Permission Manual ──
   const [hasPendingCloseRequest, setHasPendingCloseRequest] = useState(false);
@@ -5501,6 +5469,39 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
     const recvMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
     return !!(curMonthStr && recvMonthStr && recvMonthStr > curMonthStr);
   })();
+
+  // MARKER_LOCK_EFFECT_PERIOD_MODE_V1
+  // ── ย้าย Lock Effect มาไว้หลัง isSkipAheadPreview เพราะต้องใช้คำนวณ Mode ปัจจุบัน ──────────
+  // ── (current/prev/over) เดิมกรองด้วยช่วงเดือนของ receive_date อย่างเดียว ไม่แม่น ──────────
+  // ── ตอน Override เพราะ Receive Date แก้ไขได้อิสระ ไม่ได้ล็อกอยู่ในเดือน Prev เสมอไป ──────
+  // ── เปลี่ยนเป็นเช็ค period_mode ที่บันทึกไว้ตรงๆ ตอน Submit Invoice แทน ─────────────────
+  // ── (NULL = ถือเป็น 'current' สำหรับ Record เก่าก่อน Migration Column นี้) ─────────────
+  useEffect(() => {
+    let cancelled = false;
+    const computeRunningNumLock = async () => {
+      const grtControl = buInfo?.['AP GRT Control'] || '';
+      if (grtControl === 'Auto') { if (!cancelled) setGrtLocked(true); return; }
+      if (grtControl === 'Manual') { if (!cancelled) setGrtLocked(false); return; }
+      if (grtControl === 'Semi-Auto') {
+        if (!bu) { if (!cancelled) setGrtLocked(false); return; }
+        const mode = isOverride(buInfo) ? 'prev' : (isSkipAheadPreview ? 'over' : 'current');
+        try {
+          const { data } = await db.from('bucket_list').select('id, period_mode')
+            .eq('bu', bu).eq('status', 'pending');
+          const hasOutstanding = (data || []).some(r => (r.period_mode || 'current') === mode);
+          if (!cancelled) setGrtLocked(hasOutstanding);
+        } catch (e) {
+          console.error('[check semi-auto running num lock]', e);
+          if (!cancelled) setGrtLocked(false);
+        }
+        return;
+      }
+      // ── ไม่ได้ตั้งค่า (Empty/ค่าอื่น) -> ไม่ Lock (พฤติกรรมเดิมก่อนมี Feature นี้) ──
+      if (!cancelled) setGrtLocked(false);
+    };
+    computeRunningNumLock();
+    return () => { cancelled = true; };
+  }, [buInfo, bu, receiveDate, isSkipAheadPreview]);
 
   // ── Period Dropdown: แก้ไขเองได้ปกติ แค่ Default ค่าเริ่มต้นตามสถานะจริง ──
   // ── เช็ค Override ก่อนเสมอ เพราะสำคัญกว่า Pre-close/Blocked/Current ──
@@ -5605,6 +5606,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [onProcessGroups, setOnProcessGroups] = useState([]);
   const [onProcessLoading, setOnProcessLoading] = useState(false);
   const [showOnProcess, setShowOnProcess] = useState(false);
+  // MARKER_ONPROCESS_MYJOBS_ALLJOBS_TAB_V1
+  // ── Tab My Jobs/All Jobs สำหรับ Popup "Batch ที่ยังไม่เสร็จ" ─────────────
+  const [onProcessTab, setOnProcessTab] = useState('mine'); // 'mine' | 'all'
+  const myOnProcessIdentity = userName || currentUser?.email || '';
+  const filteredOnProcessGroups = onProcessTab === 'mine'
+    ? onProcessGroups.filter(g => (g.user || '') === myOnProcessIdentity)
+    : onProcessGroups;
 
   const fetchOnProcessGroups = async () => {
     setOnProcessLoading(true);
@@ -5614,7 +5622,10 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       const groups = {};
       (data || []).forEach(row => {
         const rd = row.receive_date ? String(row.receive_date).slice(0, 7) : '';
-        const key = `${row.bu}|${rd}`;
+        // ── แยก Group ตาม created_by ด้วย ไม่ใช่แค่ bu|เดือน ────────────
+        // ── กัน Invoice ของคนละ User ปนกันเป็น Batch เดียว ทำให้ Filter ──
+        // ── My Jobs/All Jobs ทำได้แม่นยำ ไม่ต้องเดาว่าในกลุ่มมีใครบ้าง ──
+        const key = `${row.bu}|${rd}|${row.created_by || ''}`;
         if (!groups[key]) {
           groups[key] = { bu: row.bu, month: rd, receiveDate: row.receive_date, dueDate: row.form_data?.dueDate || '', count: 0, amount: 0, user: row.created_by, createdAt: row.created_at };
         }
@@ -6246,53 +6257,11 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     <div style={fieldWrap}>
                       <label style={fieldLabel}>Receive date</label>
                       <input type="date" value={receiveDate} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`}
-                        // MARKER_BATCHSETUP_OVER_MONTH_CONFIRM_ON_BLUR_V3
-                        // ── onChange แค่อัพเดท State เฉยๆ ไม่ Popup (กันขึ้นระหว่าง Navigate) ──
-                        // ── Fire แค่ตอน Blur (Focus หลุดออกจาก Field จริงๆ) เท่านั้น ──────────
+                        // MARKER_BATCHSETUP_OVER_MONTH_TRIGGER_START_BATCH_V1
+                        // ── ย้าย Popup ข้าม Period ไปอยู่ที่ปุ่ม Start Batch แล้ว (กัน False Trigger ──
+                        // ── จาก Blur Event ที่ไม่ได้มาจาก User แก้ Receive Date จริง) เหลือแค่ onChange ──
                         onChange={e => setReceiveDate(e.target.value)}
-                        onFocus={() => { receiveDateBeforeEditRef.current = receiveDate; }}
-                        onBlur={async () => {
-                          const prevDate = receiveDateBeforeEditRef.current;
-                          if (receiveDate === prevDate) return; // ไม่มีการเปลี่ยนแปลงจริง ไม่ต้องเช็คอะไร
-                          const override = isOverride(buInfo);
-                          const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
-                          const newMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
-                          const isSkip = !override && curMonthStr && newMonthStr && newMonthStr > curMonthStr;
-                          if (isSkip) {
-                            const confirmed = await confirmDialog.confirm(
-                              `Receive Date อยู่เดือน ${newMonthStr} ซึ่งเป็นเดือนถัดไปจาก Period ปัจจุบัน (${curMonthStr}) ที่ยังไม่ปิด\n\nต้องการบันทึกข้าม Period ปัจจุบันหรือไม่?`,
-                              { confirmText: 'ข้าม Period', cancelText: 'ยกเลิก' }
-                            );
-                            // ── ไม่ข้าม -> ดีดกลับเป็นค่าก่อนแก้ไข ──
-                            if (!confirmed) { setReceiveDate(prevDate); return; }
-
-                            // MARKER_SKIP_CONFIRM_GO_TO_STEP2_V1
-                            // ── กด "ข้าม Period" แล้ว -> พาไป Invoice Entry ทันที (รวม Logic ──
-                            // ── เดียวกับปุ่ม Start Batch ไว้ตรงนี้เลย ไม่ต้องกดซ้ำอีกรอบ) ──────
-                            if (isBlocked) { setShowBlockedPopup(true); return; }
-                            const dc = getDigitCount(buInfo);
-                            const runningGrt = String(buInfo?.ap_grt_ov ?? 0).padStart(dc, '0');
-                            const runningGrn = String(buInfo?.ap_grn_ov ?? 0).padStart(dc, '0');
-                            try {
-                              const payload = { ap_grt_ov: parseInt(runningGrt, 10) || 0, ap_grn_ov: parseInt(runningGrn, 10) || 0 };
-                              const buId = buInfo?.id;
-                              if (buId) {
-                                await db.from('company_list').update(payload).eq('id', buId);
-                              } else if (bu) {
-                                await db.from('company_list').update(payload).eq('bu', bu);
-                              }
-                            } catch (e) {
-                              console.error('[sync grt/grn on skip period confirm]', e);
-                            }
-                            onStart({
-                              bu: bu || '-', receiveDate, dueDate,
-                              period: 'Next Period', periodMode: 'over',
-                              apGrtRunning: runningGrt, apGrnRunning: runningGrn,
-                              grtPrefix: getPrefix('GRT', buInfo, 'over'), grnPrefix: getPrefix('GRN', buInfo, 'over'),
-                              buInfo,
-                            });
-                          }
-                        }} style={{ ...inputBase }} />
+                        style={{ ...inputBase }} />
                     </div>
                     <div style={fieldWrap}><label style={fieldLabel}>Due date</label><input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={inputBase} /></div>
                   </div>
@@ -6323,8 +6292,19 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                   onClick={async () => {
                     if (isBlocked) { setShowBlockedPopup(true); return; }
 
+                    // ── ย้าย Popup ยืนยันข้าม Period มาไว้ตรงนี้ (จาก onBlur Receive Date เดิม) ──
+                    // ── กัน False Trigger จาก Re-render/Blur ที่ไม่ได้มาจาก User แก้ไข จริง ──────
+                    if (isSkipAheadPreview) {
+                      const curMonthStr = getCurrentMonthStr(effectiveBuInfo);
+                      const newMonthStr = receiveDate ? receiveDate.slice(0, 7) : '';
+                      const confirmed = await confirmDialog.confirm(
+                        `Receive Date อยู่เดือน ${newMonthStr} ซึ่งเป็นเดือนถัดไปจาก Period ปัจจุบัน (${curMonthStr}) ที่ยังไม่ปิด\n\nต้องการบันทึกข้าม Period ปัจจุบันหรือไม่?`,
+                        { confirmText: 'ข้าม Period', cancelText: 'ยกเลิก' }
+                      );
+                      if (!confirmed) return;
+                    }
+
                     // MARKER_BATCHSETUP_MODE_FROM_PREVIEW_V1
-                    // ── ไม่ต้องถามซ้ำแล้ว เพราะ Popup ยืนยันข้ามเดือนเกิดขึ้นตอนเปลี่ยน Receive Date ไปแล้ว ──
                     // ── ใช้ isSkipAheadPreview (คำนวณสดจาก Receive Date ปัจจุบันที่ยืนยันแล้ว) ตัดสิน Track ──
                     const override = isOverride(buInfo);
                     const mode = override ? 'prev' : (isSkipAheadPreview ? 'over' : 'current');
@@ -6365,13 +6345,15 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 <button onClick={() => { fetchOnProcessGroups(); setShowOnProcess(true); }}
                   style={{ padding: '0 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', fontSize: '13px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                   ⏱ On process
-                  {onProcessGroups.length > 0 && <span style={{ background: '#FCEBEB', color: '#791F1F', fontSize: '10px', fontWeight: '500', padding: '1px 6px', borderRadius: '20px' }}>{onProcessGroups.length}</span>}
+                  {/* MARKER_ONPROCESS_BADGE_SYNC_FILTERED_V1 */}
+                  {filteredOnProcessGroups.length > 0 && <span style={{ background: '#FCEBEB', color: '#791F1F', fontSize: '10px', fontWeight: '500', padding: '1px 6px', borderRadius: '20px' }}>{filteredOnProcessGroups.length}</span>}
                 </button>
                 </div>
               </div>
               <div>
                 <div style={{ fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>BU Info</div>
-                <BuInfoPanel buInfo={buInfo} apGrtRunning={isSkipAheadPreview ? String(buInfo?.ap_grt_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrtRunning} apGrnRunning={isSkipAheadPreview ? String(buInfo?.ap_grn_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrnRunning} grtPrefix={getPrefix('GRT', buInfo, isSkipAheadPreview ? 'over' : null)} grnPrefix={getPrefix('GRN', buInfo, isSkipAheadPreview ? 'over' : null)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningBlur={() => handleRunningBlur(setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningBlur={() => handleRunningBlur(setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningFocus={() => handleRunningFocus(setApGrtRunning)} onApGrnRunningFocus={() => handleRunningFocus(setApGrnRunning)} grtLocked={grtLocked || isSkipAheadPreview} grnLocked={grnLocked || isSkipAheadPreview} />
+                {/* MARKER_REMOVE_SKIPAHEAD_FORCE_LOCK_V1 */}
+                <BuInfoPanel buInfo={buInfo} apGrtRunning={isSkipAheadPreview ? String(buInfo?.ap_grt_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrtRunning} apGrnRunning={isSkipAheadPreview ? String(buInfo?.ap_grn_ov ?? 0).padStart(getDigitCount(buInfo), '0') : apGrnRunning} grtPrefix={getPrefix('GRT', buInfo, isSkipAheadPreview ? 'over' : null)} grnPrefix={getPrefix('GRN', buInfo, isSkipAheadPreview ? 'over' : null)} onApGrtRunningChange={v => handleRunningChange(v, setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningChange={v => handleRunningChange(v, setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningBlur={() => handleRunningBlur(setApGrtRunning, getDigitCount(buInfo))} onApGrnRunningBlur={() => handleRunningBlur(setApGrnRunning, getDigitCount(buInfo))} onApGrtRunningFocus={() => handleRunningFocus(setApGrtRunning)} onApGrnRunningFocus={() => handleRunningFocus(setApGrnRunning)} grtLocked={grtLocked} grnLocked={grnLocked} />
               </div>
             </div>
           </div>
@@ -6575,14 +6557,19 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c' }}>Batch ที่ยังไม่เสร็จ</div>
                 <button onClick={() => setShowOnProcess(false)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999' }}>✕</button>
               </div>
-              <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
-                {onProcessGroups.length} batch · {onProcessGroups.reduce((s, g) => s + g.count, 0)} invoice · {fmtOnProcessNum(onProcessGroups.reduce((s, g) => s + g.amount, 0))} บาท
+              {/* MARKER_ONPROCESS_MYJOBS_ALLJOBS_TAB_V1 */}
+              <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                <button onClick={() => setOnProcessTab('mine')} style={{ fontSize: '11px', padding: '5px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: onProcessTab === 'mine' ? '#E6F1FB' : 'transparent', color: onProcessTab === 'mine' ? '#0C447C' : '#888', fontWeight: onProcessTab === 'mine' ? '600' : '400' }}>👤 My Jobs</button>
+                <button onClick={() => setOnProcessTab('all')} style={{ fontSize: '11px', padding: '5px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: onProcessTab === 'all' ? '#E6F1FB' : 'transparent', color: onProcessTab === 'all' ? '#0C447C' : '#888', fontWeight: onProcessTab === 'all' ? '600' : '400' }}>👥 All Jobs</button>
+              </div>
+              <div style={{ fontSize: '11px', color: '#888', marginTop: '8px' }}>
+                {filteredOnProcessGroups.length} batch · {filteredOnProcessGroups.reduce((s, g) => s + g.count, 0)} invoice · {fmtOnProcessNum(filteredOnProcessGroups.reduce((s, g) => s + g.amount, 0))} บาท
               </div>
             </div>
             <div style={{ overflow: 'auto', flex: 1, padding: '0 20px' }}>
               {onProcessLoading ? (
                 <div style={{ padding: '30px', textAlign: 'center', color: '#888', fontSize: '13px' }}>กำลังโหลด...</div>
-              ) : onProcessGroups.length === 0 ? (
+              ) : filteredOnProcessGroups.length === 0 ? (
                 <div style={{ padding: '30px', textAlign: 'center', color: '#888', fontSize: '13px' }}>ไม่มี Batch ค้างอยู่</div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
@@ -6600,7 +6587,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {onProcessGroups.map((g, i) => (
+                    {filteredOnProcessGroups.map((g, i) => (
                       <tr key={i}>
                         <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', fontWeight: '500' }}>{g.bu}</td>
                         <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', color: '#666' }}>{fmtOnProcessDate(g.receiveDate)}</td>
@@ -8250,6 +8237,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         },
         lines:           groupLines,
         status:          'pending',
+        period_mode:     batchConfig?.periodMode || 'current',
         created_by:      userName || currentUser?.email || '',
         created_by_role: roleLabel,
         _localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}-${gi}`,
@@ -8374,14 +8362,13 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       // ── Reset CPC/Account/SubAcc (รวม branchCpc ค่าซ่อนจาก Branch) ทุก Invoice ใหม่ ──────────
       headerCpc: '', headerAccount: '', headerSubAcc: '', branchCpc: '',
     }));
+    // MARKER_SYNC_AFTER_SUBMIT_DEDUP_V1
+    // ── เดิมเรียก syncPendingToBucket()+wsNotifyInEntry() ซ้ำ 3 รอบติดกัน ──────
+    // ── (คาดว่ามาจาก Patch ซ้อน Patch คนละรอบ) รอบ 2-3 ไม่มีผลอะไรเพิ่มเพราะ ──
+    // ── syncPendingToBucket เช็ค Pending Queue ก่อนทำงานอยู่แล้ว เหลือ 1 รอบพอ ──
     // ── Sync ทันทีหลัง Submit และรอให้เสร็จจริงๆ ก่อน return ──────────────────
     await syncPendingToBucket();
     // ── Broadcast ให้ทุก client รู้ว่ามี Invoice ใหม่ ──────────────────────────
-    wsNotifyInEntry('batch_updated', batchConfig?.batchId, 'pending');
-    await syncPendingToBucket();
-    wsNotifyInEntry('batch_updated', batchConfig?.batchId, 'pending');
-    // ── Sync ทันทีหลัง Submit รอให้เสร็จก่อน return ────────────────────────────
-    await syncPendingToBucket();
     wsNotifyInEntry('batch_updated', batchConfig?.batchId, 'pending');
     return true;
   };
