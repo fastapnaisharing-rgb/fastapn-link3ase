@@ -1,7 +1,11 @@
 ﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
+import ReactDOM from 'react-dom'; // MARKER_STATUSDROPDOWN_PORTAL_FIX_V1
 import { db } from '../lib/db';
 import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
+// MARKER_BATCH_CONTROL_ZIP_ATTACHMENTS_V1 — ใช้รวมไฟล์แนบของ Batch ที่เลือกเป็น .zip ไฟล์เดียว
+// ตอนกด "เปิด Outlook Draft" ⚠️ ต้องรัน `npm install jszip` ในโปรเจกต์ก่อน ไม่งั้น Build จะพังหา Package ไม่เจอ
+import JSZip from 'jszip';
 import { useDataCache } from '../contexts/DataCacheContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
@@ -67,8 +71,14 @@ const PERIOD_OPTIONS = ['Current', 'Pre-Close', 'Override'];
 
 const buildDisGDesc = (disG, bd1, bd2, bd3) => {
   const bParts = [bd1 || '', bd2 || '', bd3 || ''];
-  if (!disG?.trim()) return bParts.filter(Boolean).join(' ');
-  const cParts = disG.split('|');
+  const disGTrim = disG?.trim() || '';
+  // MARKER_APCONTROLLER_BUILDDISGDESC_SINGLE_VALUE_FIX_V1
+  // ── Fix: dis_g ถูกกรอกผ่าน ICCombo แบบเลือกได้ทีละค่าเดียว (ไม่ใช่ 3 ส่วน ──
+  // ── คั่น "|" อย่างที่ Logic เดิมคาดหวัง) ค่าที่พบบ่อยที่สุดคือค่า Default "-" เฉยๆ ──
+  // ── ทำให้ split แล้วเจอ "-" ตัวเดียว โดน Filter ทิ้งหมด ──
+  // ── ทั้งที่ User กรอก Back Description มาครบ 3 ช่องแล้วจริง ────
+  if (!disGTrim || !disGTrim.includes('|')) return bParts.filter(Boolean).join(' ');
+  const cParts = disGTrim.split('|');
   const parts = cParts
     .map((c, i) => {
       const cVal = c.trim();
@@ -163,8 +173,11 @@ function useWindowSize() {
 function ComboInput({ value, onChange, options = [], placeholder = '' }) {
   const [open, setOpen] = useState(false);
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
+  // MARKER_COMBOINPUT_KEYBOARD_NAV_V1 -- เพิ่ม Keyboard Navigation (เดิมไม่มี onKeyDown เลย)
+  const [activeIdx, setActiveIdx] = useState(-1);
   const inputRef = useRef(null);
   const ref = useRef(null);
+  const listRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -176,23 +189,46 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
   const q = String(value || '').trim().toLowerCase();
   const filtered = q ? options.filter(o => o.toLowerCase().includes(q)) : options;
 
+  useEffect(() => { setActiveIdx(-1); }, [q, open]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) { const r = inputRef.current?.getBoundingClientRect(); if (r) setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); return; }
+      setActiveIdx(i => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIdx(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (open && activeIdx >= 0 && filtered[activeIdx] !== undefined) {
+        e.preventDefault();
+        onChange(filtered[activeIdx]);
+        setOpen(false);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
   return (
     <div ref={ref} style={{ position: 'relative', width: '100%' }}>
       <input
+        ref={inputRef}
         value={value || ''}
         onChange={e => onChange(e.target.value)}
         onFocus={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); }}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
         style={{ height: '28px', padding: '0 20px 0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }}
       />
       <svg style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', color: '#bbb', pointerEvents: 'none' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
         {open && options.length > 0 && (
-          <div style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '180px', overflowY: 'auto' }}>
+          <div ref={listRef} style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '180px', overflowY: 'auto' }}>
           {filtered.map((o, i) => (
             <div key={i} onMouseDown={(e) => { e.preventDefault(); onChange(o); setOpen(false); }}
-              style={{ padding: '6px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: o === value ? '#eef3fb' : 'white' }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#eef3fb'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = o === value ? '#eef3fb' : 'white'; }}
+              style={{ padding: '6px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: (i === activeIdx || o === value) ? '#eef3fb' : 'white' }}
+              onMouseEnter={e => { setActiveIdx(i); e.currentTarget.style.background = '#eef3fb'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = (i === activeIdx || o === value) ? '#eef3fb' : 'white'; }}
             >{o}</div>
           ))}
         </div>
@@ -343,6 +379,70 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // BranchSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
+// MARKER_STATUS_DROPDOWN_CUSTOM_V1
+function StatusDropdown({ value, onChange, options, style }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  // MARKER_STATUSDROPDOWN_KEYBOARD_TABINDEX_V1 -- เพิ่ม activeIdx สำหรับ Highlight ตอนกด Arrow
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const triggerRef = useRef(null);
+  const listRef = useRef(null);
+  useEffect(() => {
+    const h = (e) => {
+      if (triggerRef.current && triggerRef.current.contains(e.target)) return;
+      if (listRef.current && listRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const openDropdown = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    }
+    setActiveIdx(Math.max(0, options.indexOf(value)));
+    setOpen(true);
+  };
+  const handleToggle = () => { if (open) setOpen(false); else openDropdown(); };
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) { openDropdown(); return; }
+      setActiveIdx(i => Math.min(i + 1, options.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) { openDropdown(); return; }
+      setActiveIdx(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (!open) { openDropdown(); return; }
+      if (activeIdx >= 0 && options[activeIdx] !== undefined) { onChange(options[activeIdx]); setOpen(false); }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+  return (
+    <React.Fragment>
+      <div ref={triggerRef} tabIndex={0} onClick={handleToggle} onKeyDown={handleKeyDown} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>
+        <span>{value || 'เลือก Status'}</span>
+        <span style={{ fontSize: '10px', color: '#888', marginLeft: '6px' }}>{open ? '\u25b2' : '\u25bc'}</span>
+      </div>
+      {open && ReactDOM.createPortal(
+        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.18)', zIndex: 99999, overflow: 'hidden' }}>
+          {options.map((o, i) => (
+            <div key={i} onMouseDown={() => { onChange(o); setOpen(false); }}
+              style={{ padding: '8px 10px', fontSize: '13px', cursor: 'pointer', borderBottom: i < options.length - 1 ? '0.5px solid #f5f5f5' : 'none', background: i === activeIdx ? '#f0f7ff' : 'white' }}
+              onMouseEnter={e => { setActiveIdx(i); e.currentTarget.style.background = '#f0f7ff'; }}
+              onMouseLeave={e => e.currentTarget.style.background = i === activeIdx ? '#f0f7ff' : 'white'}>{o}</div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </React.Fragment>
+  );
+}
+
 function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onSaveBranch, branchOptions = {} }) {
   const [query, setQuery]         = useState('');
   const [active, setActive]       = useState(-1);
@@ -513,7 +613,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
         <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px', background: '#fff' }}>
           {BRANCH_FORM_ROWS.map((rowKeys, ri) => (
             // MARKER_BRANCH_FORM_ROW_GAP_V8
-            <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative', zIndex: ri }}>
+            <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative' }} /* MARKER_BRANCHFORM_FIX_ROW_ZINDEX_TRAP_V1 */>
               {rowKeys.map((key, ki) => {
                 const label = (BRANCH_EDIT.find(([k]) => k === key) || [null, key])[1];
                 const isReadOnly = key === 'Branch Code' && isEdit;
@@ -544,10 +644,8 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                       ) : key === 'Branch Address' ? (
                         <textarea value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
                       ) : key === 'status' ? (
-                        <select value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inputBare, fontWeight: 600 }}>
-                          <option value="">เลือก Status</option>
-                          {(opts.length ? opts : ['Active', 'Closed', 'Relocate']).map((o, i) => <option key={i} value={o}>{o}</option>)}
-                        </select>
+                        // MARKER_STATUS_FIXED_LIST_NOT_FROM_DATA_V1
+                        <StatusDropdown value={form[key] || ''} onChange={val => setField(key, val)} options={['Active', 'Closed', 'Relocate', 'Temporary']} style={{ ...inputBare, fontWeight: 600 }} />
                       ) : key === 'Branch Direct' ? (
                         <input value={form[key] || ''} readOnly style={{ ...inputBare, color: '#999' }} />
                       ) : BRANCH_COMBO.includes(key) ? (
@@ -3299,6 +3397,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   }, [grnPreviewByLineIdx]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [showContractPopup, setShowContractPopup]     = useState(false);
+  // MARKER_APCONTROLLER_DESC_EXPAND_EDIT_V1
+  // ── Double-click ที่ Field Description ในตาราง -> เปิด Popup แก้ไขแบบเต็ม ──
+  const [expandEditIdx, setExpandEditIdx] = useState(null);
+  const [expandEditVal, setExpandEditVal] = useState('');
+  const expandEditCancelRef = useRef(false);
   // MARKER_APCONTROLLER_INVOICE_FLOW_V1
   // ── Invoice Entry Flow — จำชุด Item Code (H/L) ที่ใช้ซ้ำบ่อยต่อ Vendor ──────
   const [vendorFlows, setVendorFlows] = useState([]);
@@ -3673,7 +3776,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
     const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
     const disGDesc = buildDisGDesc(itemData?.dis_g, form?.backDesc1, form?.backDesc2, form?.backDesc3);
-    const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
+    // MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_SYNC_FIX_V1
+    // ── Sync Fix: calcLine (ตัวที่ recalc จริงใน InvoiceDetailPopup) ไม่เคย ──
+    // ── รู้จัก customizePeriod/customizePercent เลย ตอนเพิ่ม Customize Invoice ──
+    // ── มีคนแก้แค่ calcInvoiceLine (ใช้ใน BucketItemPopup + Preview กล่อง) ──
+    // ── Desc จริงในตารางเลย "ไม่เด้ง" ตาม แม้ Preview ในกล่องจะถูกต้อง ────
+    const customizeParts = [];
+    if (form?.customizePeriod) customizeParts.push(`งวดที่ ${form.customizePeriod}`);
+    if (form?.customizePercent) customizeParts.push(`จำนวน ${form.customizePercent}%`);
+    const customizeText = customizeParts.join(' ');
+    const descVal = [ibPrefix, customizeText, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
     const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
     const hasITC   = notices.includes('ITC');
     const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
@@ -3712,6 +3824,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     form?.backDesc1, form?.backDesc2, form?.backDesc3,
     form?.branchNo, form?.branchDirectLabel, form?.branchIBLabel,
     form?.headerCpc, form?.branchCpc,
+    form?.customizePeriod, form?.customizePercent, // MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_SYNC_FIX_V1
     vendorInfo, itemcodeItems?.length,
   ]);
 
@@ -3975,7 +4088,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 <label style={fieldLabel}>{label}</label>
                 {key === 'invoiceNum' && vendorInfo?.['Digit'] ? (
                   <div style={{ ...inputStyle(w), display: 'flex', alignItems: 'center', padding: 0, overflow: 'hidden' }}>
-                    <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                    <input type={type} value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
                       style={{ flex: 1, minWidth: 0, height: '100%', border: 'none', outline: 'none', background: 'transparent', padding: '0 8px', fontSize: '12px', color: 'inherit', boxSizing: 'border-box' }} />
                     <div title="Digit (จาก Vendor Master)"
                       style={{ flexShrink: 0, height: '100%', display: 'flex', alignItems: 'center', padding: '0 8px', background: '#f0f3f8', borderLeft: '0.5px solid #e0e0e0', fontSize: '11px', fontWeight: '500', color: '#0C447C', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
@@ -3983,7 +4096,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     </div>
                   </div>
                 ) : (
-                  <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                  <input type={type} value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
                     ref={key === 'invDate' ? invDateRef : undefined}
                     onKeyDown={key === 'invDate' ? (e) => {
                       // ── Inv Date Cache: กด "*" ตอน Field ว่าง -> เติมค่า Inv Date ล่าสุดที่เคยกรอกใน Batch นี้ ──
@@ -4000,6 +4113,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <input
                 type="text"
                 value={form?.invTax || ''}
+                title={form?.invTax || ''}
                 onChange={e => setField('invTax', e.target.value.toUpperCase())}
                 onClick={() => { setTaxHdrOpen(true); setTaxHdrActiveIdx(TAX_TYPE_OPTS.indexOf(form?.invTax || '')); }}
                 onKeyDown={e => {
@@ -4053,7 +4167,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
                 <label style={fieldLabel}>{label}</label>
-                <input type="text" value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                <input type="text" value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
                   onBlur={key === 'backDesc1' ? (e) => handleBackDesc1Blur(e.target.value) : undefined}
                   onKeyDown={key === 'backDesc3' ? (e) => {
                     if (e.key === 'Tab') {
@@ -4103,7 +4217,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             idx === 0 ? (
                               <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line.hl}</div>
                             ) : (
-                              <input type="text" value={line.hl} onChange={e => setLineField(idx, 'hl', e.target.value.slice(0,1).toUpperCase())} maxLength={1}
+                              <input type="text" value={line.hl} title={line.hl} onChange={e => setLineField(idx, 'hl', e.target.value.slice(0,1).toUpperCase())} maxLength={1}
                                 style={{ width: '100%', height: '28px', padding: '0 4px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'center' }} />
                             )
                           ) : key === 'itemCode' ? (
@@ -4111,6 +4225,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               <input type="text" maxLength={8}
                                 ref={el => { lineItemCodeRefs.current[idx] = el; if (idx === 0) itemCodeRef.current = el; }}
                                 value={line[key]}
+                                title={line[key]}
                                 onFocus={() => { setActiveLineIdx(idx); if (idx === 0) applyFlowToFirstLine(); }}
                                 onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
                                 onBlur={e => {
@@ -4145,6 +4260,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               {/* MARKER_APCONTROLLER_TAX_DROPDOWN_FIX_V1 */}
                               <input
                                 type="text" value={line[key]}
+                                title={line[key]}
                                 onChange={e => { const v = e.target.value.toUpperCase(); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
                                 onClick={() => { setTaxDropdownIdx(idx); setTaxLineActiveIdx(TAX_TYPE_OPTS.indexOf(line[key])); }}
                                 onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
@@ -4206,6 +4322,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               </button>
                               <input
                                 type="text" inputMode="decimal" value={line[key]}
+                                title={line[key]}
                                 ref={el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }}
                                 onChange={e => { handleMoneyChange(idx, key, e.target.value); }}
                                 onFocus={() => handleMoneyFocus(idx, key, line[key])}
@@ -4223,12 +4340,15 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 style={{ width: '100%', height: '28px', padding: '0 6px 0 26px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'right' }} />
                             </div>
                           ) : (
+                          <div style={{ position: 'relative' }}>
                           <input
                               type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
+                              title={key === 'desc' ? (line[key] ? line[key] + ' (Double-click เพื่อแก้ไขแบบเต็ม)' : '' ) : line[key]}
                               ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }) : undefined}
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
+                              onDoubleClick={key === 'desc' ? () => { setExpandEditIdx(idx); setExpandEditVal(line[key] || ''); } : undefined}
                               onKeyDown={['total','amount','desc'].includes(key) ? (e) => {
                                 if (e.key === 'Enter') {
                                   const l = lines[idx];
@@ -4236,6 +4356,34 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 }
                               } : undefined}
                               style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
+                          {/* MARKER_APCONTROLLER_DESC_EXPAND_EDIT_V1 */}
+                          {key === 'desc' && expandEditIdx === idx && (
+                            <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, width: '100%', minWidth: '280px', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 4px 14px rgba(26,58,92,0.15)', padding: '8px', zIndex: 20, boxSizing: 'border-box' }}>
+                              <textarea
+                                autoFocus
+                                value={expandEditVal}
+                                onChange={e => setExpandEditVal(e.target.value)}
+                                onFocus={e => e.target.select()}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
+                                    setExpandEditIdx(null);
+                                  } else if (e.key === 'Escape') {
+                                    expandEditCancelRef.current = true;
+                                    setExpandEditIdx(null);
+                                  }
+                                }}
+                                onBlur={() => {
+                                  if (expandEditCancelRef.current) { expandEditCancelRef.current = false; return; }
+                                  idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
+                                  setExpandEditIdx(null);
+                                }}
+                                style={{ width: '100%', minHeight: '60px', fontSize: '12px', padding: '6px 8px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', color: '#1a3a5c', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
+                              <div style={{ fontSize: '10px', color: '#999', marginTop: '5px' }}>Enter เพื่อบันทึก · Esc เพื่อยกเลิก</div>
+                            </div>
+                          )}
+                          </div>
                           )}
                         </td>
                       ))}
@@ -4300,6 +4448,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Real Tax Invoice No.</span>
                               <input type="text" value={line.realInvoiceNo || ''}
+                                title={line.realInvoiceNo || ''}
                                 ref={el => lineRealInvoiceRefs.current[idx] = el}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
@@ -4310,6 +4459,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               {/* ── Hybrid: พิมพ์ Format ไหนก็ได้ + กดไอคอน Calendar เลือกได้ด้วย ──── */}
                               <div style={{ position: 'relative' }}>
                               <input type="text" ref={el => lineTaxDateTextRefs.current[idx] = el}
+                                title={formatDateDisplayMDY(line.realVendorTaxDate)}
                                 defaultValue={formatDateDisplayMDY(line.realVendorTaxDate)}
                                 placeholder="MM/DD/YYYY"
                                 onBlur={e => {
@@ -4374,25 +4524,25 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Company Name</span>
-                              <input type="text" value={line.realVendorName || ''}
+                              <input type="text" value={line.realVendorName || ''} title={line.realVendorName || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorName', v) : setLineField(idx, 'realVendorName', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Tax ID</span>
-                              <input type="text" value={line.realVendorTaxid || ''}
+                              <input type="text" value={line.realVendorTaxid || ''} title={line.realVendorTaxid || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorTaxid', v) : setLineField(idx, 'realVendorTaxid', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'monospace' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Branch</span>
-                              <input type="text" value={line.realVendorBranch || ''}
+                              <input type="text" value={line.realVendorBranch || ''} title={line.realVendorBranch || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorBranch', v) : setLineField(idx, 'realVendorBranch', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', textAlign: 'center' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>GRN</span>
-                              <input type="text" value={line.realGrn || ''}
+                              <input type="text" value={line.realGrn || ''} title={line.realGrn || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realGrn', v) : setLineField(idx, 'realGrn', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'monospace' }} />
                             </div>
@@ -7514,7 +7664,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     'Branch Direct': [...new Set(branchItems.map(b => b['Branch Direct']).filter(Boolean))],
     'bu':            [...new Set(branchItems.map(b => b['bu']).filter(Boolean))],
     'Group-P':       [...new Set(branchItems.map(b => b['Group-P']).filter(Boolean))],
-    'status':        ['Active', 'Closed', 'Relocate'],
+    'status':        ['Active', 'Closed', 'Relocate', 'Temporary'], // MARKER_BRANCH_STATUS_ADD_TEMPORARY_V1
   };
 
   const getMatchedRule = (vendor) => {
@@ -7691,8 +7841,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     if (!bu || !me) return;
     let active = true;
     (async () => {
-      const local = loadLocalBucket().filter(matchesTrack);
-      if (active && local.length) setInvoices(local);
+      // MARKER_CUT_LOCAL_LOAD_DB_ONLY_V1
+      // ── ตัด Local ออกจากจุดนี้ -- ไม่ Optimistic Load จาก LocalStorage และ ────
+      // ── ไม่ Merge กับ DB อีกต่อไป (เดิมเป็นสาเหตุ Invoice ซ้ำถ้า Flag _synced ──
+      // ── ใน LocalStorage ผิดพลาด) -- invoices มาจาก DB โดยตรงเท่านั้นเสมอ ──────
+      // ── saveLocalBucket ยังเรียกไว้ เป็น Backup ให้จุดอื่นอ่านต่อได้ตามปกติ ────
       try {
         const { data, error } = await db
           .from('bucket_list')
@@ -7703,10 +7856,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
           .order('created_at', { ascending: true });
         if (error || !active) return;
         const synced = (data || []).map(r => ({ ...r, _synced: true })).filter(matchesTrack);
-        const pendingOnly = local.filter(l => !l._synced);
-        const merged = [...synced, ...pendingOnly];
-        setInvoices(merged);
-        saveLocalBucket(merged);
+        setInvoices(synced);
+        saveLocalBucket(synced);
         // ── กู้เลข running GRT/GRN ต่อจากที่ใช้ไปแล้วในตะกร้านี้ (เผื่อ refresh) ──
         if (isAutoGrt) {
           const extractRunning = (val, prefix) => {
@@ -7714,8 +7865,9 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
             const n = parseInt(String(val).slice(prefix.length), 10);
             return isNaN(n) ? null : n;
           };
-          const grtNums = merged.map(inv => extractRunning(inv.form_data?.grtNum, batchConfig.grtPrefix)).filter(n => n !== null);
-          const grnNums = merged.map(inv => extractRunning(inv.form_data?.grn, batchConfig.grnPrefix)).filter(n => n !== null);
+          // MARKER_FIX_MERGED_UNDEFINED_V1 -- merged ไม่มีแล้วหลังตัด Local Merge ออก ใช้ synced แทน
+          const grtNums = synced.map(inv => extractRunning(inv.form_data?.grtNum, batchConfig.grtPrefix)).filter(n => n !== null);
+          const grnNums = synced.map(inv => extractRunning(inv.form_data?.grn, batchConfig.grnPrefix)).filter(n => n !== null);
           if (grtNums.length) setNextGrtRunning(Math.max(...grtNums));
           if (grnNums.length) setNextGrnRunning(Math.max(...grnNums));
         }
@@ -8163,6 +8315,24 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       });
     });
 
+    // MARKER_APCONTROLLER_EARLY_DUPLICATE_BLOCK_V1
+    // ── Early Duplicate Guard: เช็คก่อนขอเลข GRT/GRN และก่อนยิง API ใดๆ ──
+    // ── กันไม่ให้ "เบิ้ล" ตั้งแต่ต้นทาง ไม่ใช่แค่กรองทีหลัง ──
+    const normAmtEarly = (v) => String(parseFloat(String(v ?? '').replace(/,/g, '')) || 0);
+    const baseInvoiceNoEarly = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) || '';
+    const existingKeysEarly = new Set(
+      invoices.map(inv => `${inv.invoice_no}|${inv.branch_no}|${normAmtEarly(inv.amount)}`)
+    );
+    const allDuplicateEarly = groups.length > 0 && groups.every((g, gi) => {
+      const suffix = gi === 0 ? '' : `/${gi}`;
+      const key = `${baseInvoiceNoEarly}${suffix}|${form.branchNo || ''}|${normAmtEarly(sumField(g.lines, 'amount'))}`;
+      return existingKeysEarly.has(key);
+    });
+    if (allDuplicateEarly) {
+      confirmDialog.alert(`Invoice "${baseInvoiceNoEarly}" มีอยู่แล้วใน Batch Bucket — ไม่ได้เพิ่มซ้ำ`, { variant: 'danger', title: 'ซ้ำในระบบ' });
+      return;
+    }
+
     // MARKER_HANDLESUBMIT_GRT_GRN_FIELD_3WAY_V1
     // ── เลือก Column ที่จะขอเลขจริง ตาม Track ที่ตัดสินใจไว้ตอน Start Batch ──────
     // ── (เดิม hardcode 'ap_grt'/'ap_grn' เสมอ ทำให้ Override ไม่เคยขอจาก ap_grt_prev จริง) ──
@@ -8292,6 +8462,17 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       }
     }));
 
+    // ── Safety Net: กัน newItems มี invoice_no ซ้ำกันเอง (ไม่ควรเกิดตามปกติ ──
+    // ── เพราะ invoiceNo derive จาก gi Index ที่ไม่ซ้ำอยู่แล้ว แต่กันไว้อีกชั้น) ──
+    {
+      const seenNo = new Set();
+      const before = newItems.length;
+      for (let i = newItems.length - 1; i >= 0; i--) {
+        if (seenNo.has(newItems[i].invoice_no)) newItems.splice(i, 1);
+        else seenNo.add(newItems[i].invoice_no);
+      }
+      if (newItems.length !== before) console.warn('[Split Dedup] ตัด Invoice ซ้ำในขั้นตอน Split ออก', before - newItems.length, 'รายการ');
+    }
     const finalItems = [];
     for (const { baseNo, groupItems, dupData, error } of dupResults) {
       try {
@@ -8338,11 +8519,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     setInvoices(prev => {
       // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
       // เปรียบ invoice_no + branch_no + amount ของ item ใหม่กับที่มีอยู่แล้ว
+      // MARKER_APCONTROLLER_DEDUP_AMOUNT_NORMALIZE_FIX_V1
+      // ── Fix: ต้อง Normalize Amount ก่อนเทียบ ไม่งั้น String ที่หน้าตาไม่ตรงกัน ──
+      // ── (เช่น "210" vs "210.00") จะทำให้ Key ไม่ตรงกัน แม้ค่าจริงเท่ากัน ทำให้ Dedup Guard ไม่เคย Block อะไรไล่ ────
+      const normAmt = (v) => String(parseFloat(String(v ?? '').replace(/,/g, '')) || 0);
       const existingKeys = new Set(
-        prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${inv.amount}`)
+        prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${normAmt(inv.amount)}`)
       );
       const deduped = finalItems.filter(
-        item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${item.amount}`)
+        item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${normAmt(item.amount)}`)
       );
       if (!deduped.length) return prev;
       const next = [...prev, ...deduped];
@@ -10626,15 +10811,35 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     setLoading(true);
     try {
       const data = await apiFetch(`/batch-control/pending/${activeTemplateId}`);
-      setBatches(Array.isArray(data) ? data : []);
-      setSelectedIds([]);
+      const list = Array.isArray(data) ? data : [];
+      setBatches(list);
+      // MARKER_BATCH_CONTROL_KEEP_SELECTION_ON_REFRESH_FIX_V1 — Bug: "Back กลับเองโดยไม่ได้กด เหมือนมี Timeout"
+      // สาเหตุจริง: ไม่ใช่ Timeout — fetchPending() นี้ถูกเรียกซ้ำจาก Realtime Refresh
+      // (useRealtimeRefresh(['batch_control_sent'], fetchPending) ด้านล่าง) ทุกครั้งที่ "ใครก็ตาม" กด Confirm
+      // ส่ง Batch อื่นสำเร็จ ไม่จำเป็นต้องเป็น Batch ที่ User คนนี้เลือกอยู่เลย แต่โค้ดเดิม setSelectedIds([])
+      // แบบไม่มีเงื่อนไข ทำให้ Selection ที่ User กำลังเลือก/อยู่หน้า Confirm ถูกล้างทิ้งกลางทางทันที
+      // (ซึ่งไปเข้าเงื่อนไข useEffect ที่ดีดกลับไปหน้ารายการ Batch อัตโนมัติ) — แก้เป็น "กรองเฉพาะ Batch ที่ยังอยู่จริง"
+      // แทนการล้างทั้งหมด ถ้า Batch ที่เลือกไว้ยังไม่ถูกส่ง ก็จะยังเลือกอยู่ ไม่ถูกดีดกลับ
+      setSelectedIds(prev => prev.filter(id => list.some(b => b.id === id)));
     } catch (err) { console.error('fetchPending error:', err); setBatches([]); }
     setLoading(false);
   }, [activeTemplateId]);
 
   React.useEffect(() => { fetchPending(); }, [fetchPending]);
+  // MARKER_BATCH_CONTROL_RESET_SELECTION_ON_TEMPLATE_SWITCH_V1 — สลับ Template Tab ถือเป็นเจตนาเปลี่ยนเรื่อง
+  // จึงยัง Reset Selection ตรงนี้แทน (ต่างจาก Refresh ปกติที่ไม่ควรล้าง Selection ทิ้งแบบไม่ตั้งใจ)
+  React.useEffect(() => { setSelectedIds([]); }, [activeTemplateId]);
 
-  const activeTemplate = templates.find(t => t.id === activeTemplateId);
+  // MARKER_BATCH_CONTROL_ACTIVETEMPLATE_FULLDATA_FIX_V1 — Bug: กด Confirm แล้ว Subject/Body จาก Template ไม่ขึ้น
+  // สาเหตุ: `templates` มาจาก /batch-control/counts ซึ่งมีแค่ id/name/count (ไม่มี subject/body)
+  // ส่วน `fullTemplates` มาจาก /email_templates ซึ่งมี subject/body ครบ — ต้องใช้อันนี้เป็นหลัก
+  const activeTemplate = fullTemplates.find(t => t.id === activeTemplateId) || templates.find(t => t.id === activeTemplateId);
+  // MARKER_BATCH_CONTROL_CONFIG_DYNAMIC_PLACEHOLDER_V1 — Zone Config เดิมโชว์ช่อง Greeting Name ตายตัวเสมอ
+  // ทั้งที่บาง Template อาจไม่มี Placeholder {greeting_name} อยู่ใน Subject/Body เลย — เปลี่ยนเป็นเช็คว่า
+  // Template ที่เลือกอยู่ "ใช้" Placeholder อะไรบ้างจริงๆ (ไม่ใช่แค่ greeting_name — ตามที่ทักท้วงมา Template
+  // จริงมี {batch_list} กับ {due_date_range} ด้วย) แล้วค่อยโชว์ช่องนั้นๆ ใน Config Zone (ดู PLACEHOLDER_FIELD_DEFS/
+  // activePlaceholderFields ด้านล่าง ใกล้ fillPlaceholders) — To/Cc ยังคงโชว์เสมอ เพราะเป็นข้อมูลผู้รับอีเมล
+  // ไม่ใช่ Placeholder ในเนื้อหา ต้องกรอกทุกครั้งไม่ว่า Template จะเป็นอะไร
 
   const buList = [...new Set(batches.map(b => b.bu).filter(Boolean))].sort();
   const visibleBatches = buFilter ? batches.filter(b => b.bu === buFilter) : batches;
@@ -10692,8 +10897,10 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     }).join('\n');
   };
 
-  const fillPlaceholders = React.useCallback((text) => {
-    if (!text) return '';
+  // MARKER_BATCH_CONTROL_PLACEHOLDER_MAP_SHARED_V1 — ดึงการคำนวณค่า Placeholder ทั้งหมดออกมาเป็น
+  // useMemo กลาง (เดิมอยู่ในตัว fillPlaceholders อย่างเดียว) เพื่อให้ Config Zone ใช้โชว์ค่าที่จะแทนจริง
+  // (เช่น {batch_list}, {due_date_range}) ให้เห็นก่อนส่งได้ด้วย ไม่ใช่แค่ใช้แทนค่าเงียบๆ ตอน Preview ฝั่งขวา
+  const placeholderMap = React.useMemo(() => {
     const total = selectedBatches.reduce((s, b) => s + (parseFloat(b.total_amount) || 0), 0); // MARKER_BATCH_CONTROL_FIX_TOTAL_FIELD
     const receiveDates = selectedBatches.map(b => b.receive_date).filter(Boolean).sort();
     const dueDatesFirst = selectedBatches.map(b => b.due_date_first).filter(Boolean).sort();
@@ -10703,7 +10910,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     const dueFirst = dueDatesFirst[0];
     const dueLast = dueDatesLast[dueDatesLast.length - 1];
 
-    const map = {
+    return {
       '{greeting_name}': greetingName || '',
       '{bu}': selectedBuList.join(', '),
       '{today_date}': new Date().toLocaleDateString('th-TH'),
@@ -10720,8 +10927,44 @@ export function BatchControlPage({ currentUser, userName = '' }) {
       '{batch_list}': selectedBatches.map(b => `- ${b.batch_name || b.batch_id || b.id} (${b.bu || ''}) — ${Number(b.total_amount || 0).toLocaleString()} บาท — ครบกำหนด ${b.due_date_last ? fmtDate(b.due_date_last) : '-'}`).join('\n'),
       '{total}': total.toLocaleString(),
     };
-    return fillPlaceholdersIndentAware(text, map);
   }, [selectedBatches, greetingName, selectedBuList]);
+
+  // MARKER_BATCH_CONTROL_PLACEHOLDER_EDITABLE_V1 — เดิมช่อง Auto-fill (BU/Batch List/Due Range ฯลฯ) เป็น
+  // Preview อ่านอย่างเดียว ผู้ใช้แจ้งว่าต้องแก้ไขได้ (เผื่อ Auto-fill ผิด หรืออยากปรับคำก่อนส่งจริง) — เปลี่ยนเป็น
+  // เก็บค่าที่ผู้ใช้แก้ไว้ต่างหากใน placeholderOverrides (คีย์ตรงกับ Placeholder) ผสมทับค่า Auto-fill เดิม
+  // (placeholderMap) ด้วย effectivePlaceholderMap ด้านล่าง — รีเซ็ตทุกครั้งที่เปลี่ยน Batch ที่เลือก/เปลี่ยน
+  // Template เพราะค่าที่แก้ไว้ผูกกับ Batch ชุดเดิม ถ้าเปลี่ยน Batch แล้วค่าที่แก้ไว้เก่าอาจไม่ตรงกับชุดใหม่แล้ว
+  const [placeholderOverrides, setPlaceholderOverrides] = React.useState({});
+  React.useEffect(() => { setPlaceholderOverrides({}); }, [selectedIds, activeTemplateId]);
+  const effectivePlaceholderMap = React.useMemo(
+    () => ({ ...placeholderMap, ...placeholderOverrides }),
+    [placeholderMap, placeholderOverrides]
+  );
+  const setPlaceholderOverride = (key, val) => setPlaceholderOverrides(prev => ({ ...prev, [key]: val }));
+
+  const fillPlaceholders = React.useCallback((text) => {
+    if (!text) return '';
+    return fillPlaceholdersIndentAware(text, effectivePlaceholderMap);
+  }, [effectivePlaceholderMap]);
+
+  // MARKER_BATCH_CONTROL_PLACEHOLDER_MAP_SHARED_V1 — รายชื่อ Placeholder ทั้งหมดที่รองรับ พร้อม Label
+  // ภาษาไทยสำหรับโชว์ใน Config Zone — เรียงตามลำดับที่ขอ (Greeting → BU → Due Range → Batch List → อื่นๆ)
+  // editable: true มีแค่ {greeting_name} ที่ใช้ State greetingName เดิม (มี saveApToFp ผูกอยู่แล้ว) ที่เหลือ
+  // แก้ผ่าน placeholderOverrides ทั้งหมด (ไม่ใช่ Read-only อีกต่อไป)
+  const PLACEHOLDER_FIELD_DEFS = [
+    { key: '{greeting_name}', label: 'เรียน (Greeting Name)', editable: true },
+    { key: '{bu}', label: 'BU', editable: true },
+    { key: '{due_date_range}', label: 'ช่วงวันครบกำหนด (Due)', editable: true },
+    { key: '{batch_list}', label: 'รายการ Batch (Batch List)', editable: true, multiline: true },
+    { key: '{batch_count}', label: 'จำนวน Batch', editable: true },
+    { key: '{receive_date_first}', label: 'วัน Receive แรกสุด', editable: true },
+    { key: '{receive_date_range}', label: 'ช่วงวัน Receive', editable: true },
+    { key: '{due_date_first}', label: 'วันครบกำหนดแรกสุด (Due)', editable: true },
+    { key: '{total}', label: 'ยอดรวม', editable: true },
+    { key: '{today_date}', label: 'วันที่วันนี้', editable: true },
+  ];
+  const templateText = `${activeTemplate?.subject || ''}\n${activeTemplate?.body || ''}`;
+  const activePlaceholderFields = PLACEHOLDER_FIELD_DEFS.filter(f => templateText.includes(f.key));
 
   React.useEffect(() => {
     if (!activeTemplate) return;
@@ -10735,6 +10978,118 @@ export function BatchControlPage({ currentUser, userName = '' }) {
   const [showSendConfirm, setShowSendConfirm] = React.useState(false);
   const [confirmingSent, setConfirmingSent] = React.useState(false);
 
+  // MARKER_BATCH_CONTROL_ATTACHMENT_DOWNLOAD_V1 — Helper โหลดไฟล์แนบเฉพาะของหน้านี้
+  // (เดิมพยายามเรียก handleFileAction ของ Component BatchSetup ผิด Scope — ฟังก์ชันนั้นอยู่ใน
+  // BatchSetup คนละ Component กับ BatchControlPage เรียกจากตรงนี้ไม่ได้ จะพัง "handleFileAction is not
+  // defined" ตอน Runtime — เขียน Helper ย่อยเฉพาะ "Download" ไว้ในนี้แทน โดยยึด Endpoint เดียวกัน
+  // MARKER_BATCH_CONTROL_ATTACHMENT_HELPERS_SHARED_V1 — ดึง Logic หาไฟล์แนบ + Fetch Blob ออกมาเป็น
+  // Helper กลาง ใช้ร่วมกันทั้งตาราง Batch List, ปุ่ม View/Download, กล่องรายการไฟล์แนบใน Config Zone,
+  // และตอนรวมไฟล์เป็น Zip (เดิมมี Logic เดียวกันซ้ำอยู่หลายที่ ถ้าแก้ตรงหนึ่งแล้วลืมแก้อีกที่จะไม่ตรงกัน)
+  const getBatchAttachment = (b) => {
+    const useInvoiceRegister = !!b.invoice_register_file_id && ['reviewing', 'approved'].includes(b.status);
+    return {
+      attachId: useInvoiceRegister ? b.invoice_register_file_id : b.file_url,
+      attachName: useInvoiceRegister ? b.invoice_register_file_name : b.file_name,
+    };
+  };
+  const fetchAttachmentBlob = async (fileId) => {
+    const token = sessionStorage.getItem('fastapn_token');
+    const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+    const res = await fetch(`${apiBase}/api/file-storage/${fileId}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'โหลดไฟล์ไม่สำเร็จ');
+    }
+    return res.blob();
+  };
+
+  const handleDownloadAttachment = async (fileId, suggestedFileName) => {
+    if (!fileId) return;
+    try {
+      const blob = await fetchAttachmentBlob(fileId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = suggestedFileName || ''; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      console.error('[BatchControlPage download attachment]', err);
+    }
+  };
+
+  // MARKER_BATCH_CONTROL_ATTACHMENT_VIEW_V1 — เพิ่มปุ่ม View ให้ครบเหมือน Batch History (All Jobs)
+  // ตาม Pattern เดียวกับ handleFileAction(mode:'view') ของ BatchSetup แต่ทำ Preview Modal แยกไว้ในหน้านี้เอง
+  const [filePreview, setFilePreview] = React.useState(null); // { fileName, rows }
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const handleViewAttachment = async (fileId, suggestedFileName) => {
+    if (!fileId) return;
+    setPreviewLoading(true);
+    try {
+      const blob = await fetchAttachmentBlob(fileId);
+      const arrayBuffer = await blob.arrayBuffer();
+      const wb = XLSX.read(arrayBuffer, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      setFilePreview({ fileName: suggestedFileName || 'preview.xls', rows });
+    } catch (err) {
+      console.error('[BatchControlPage view attachment]', err);
+    }
+    setPreviewLoading(false);
+  };
+
+  // MARKER_BATCH_CONTROL_ZIP_ATTACHMENTS_V1 — รวมไฟล์แนบของ Batch ที่ติ๊กเลือกทั้งหมดเป็น .zip ไฟล์เดียว
+  // ยิงพร้อมกันตอนกด "เปิด Outlook Draft" (ไม่บล็อกการเปิด Outlook — mailto: เปิดทันที ส่วน Zip ค่อยๆ
+  // รวมแล้วดาวน์โหลดตามมา) ผู้ใช้แค่ลากไฟล์ Zip ไฟล์เดียวใส่ Outlook แทนต้องลากทีละไฟล์
+  // ⚠️ ต้องมี Package "jszip" ในโปรเจกต์ (npm install jszip) ไม่งั้น Build จะพังหา Module ไม่เจอ
+  const [zippingAttachments, setZippingAttachments] = React.useState(false);
+  const handleZipAttachments = async () => {
+    const files = selectedBatches.map(getBatchAttachment).filter(f => f.attachId);
+    if (!files.length) return;
+    setZippingAttachments(true);
+    try {
+      const zip = new JSZip();
+      const usedNames = new Set();
+      await Promise.all(files.map(async (f, idx) => {
+        try {
+          const blob = await fetchAttachmentBlob(f.attachId);
+          let name = f.attachName || `attachment_${idx + 1}`;
+          if (usedNames.has(name)) {
+            const dot = name.lastIndexOf('.');
+            name = dot > -1 ? `${name.slice(0, dot)}_${idx + 1}${name.slice(dot)}` : `${name}_${idx + 1}`;
+          }
+          usedNames.add(name);
+          zip.file(name, blob);
+        } catch (err) {
+          console.error('[BatchControlPage zip attachment]', f, err);
+        }
+      }));
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = window.URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      a.href = url; a.download = `attachments_${stamp}.zip`; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      console.error('[BatchControlPage zip attachments]', err);
+    }
+    setZippingAttachments(false);
+  };
+
+  // MARKER_BATCH_CONTROL_CONFIRM_SWITCH_VIEW_V1 — เดิม Zone B/C (กรอก Email) โชว์ Inline ทันทีที่ติ๊กเลือก Batch
+  // เปลี่ยนเป็น: ต้องกดปุ่ม "Confirm" ที่ Footer ของกล่อง Batch ก่อน แล้วค่อย "สลับหน้า" (ไม่ใช่ Popup)
+  // ไปโชว์ 2 Columns (Config & Attachment / Outlook Layout Draft) เต็มพื้นที่ พร้อมปุ่ม "← Back" กลับมาที่นี่
+  const [showEmailConfirm, setShowEmailConfirm] = React.useState(false);
+  const handleBackFromEmailConfirm = () => setShowEmailConfirm(false);
+  // MARKER_BATCH_CONTROL_CONFIRM_AUTORESET_BUG_FIX_V1 — Bug: หน้าจอ "หายไปหมด" (ทั้ง Zone A และ Zone B ไม่โชว์)
+  // สาเหตุ: ตอน showEmailConfirm=true ค้างอยู่ (เพิ่งกด Confirm) แล้วมีอะไรมา Reset selectedIds เป็น []
+  // ทีหลัง (เช่น fetchPending รันซ้ำจาก Realtime Refresh/สลับ Template Tab) — ตอนนั้น Zone A จะยังไม่โชว์
+  // (เพราะ showEmailConfirm ยังเป็น true) แต่ Zone B ก็ไม่โชว์ด้วย (เพราะ selectedIds.length === 0 แล้ว)
+  // ผลคือจอเปล่าทั้งหมด — Fix: พอ selectedIds ว่างเมื่อไหร่ ให้บังคับกลับไปหน้ารายการ Batch (Zone A) เสมอ
+  React.useEffect(() => {
+    if (selectedIds.length === 0) setShowEmailConfirm(false);
+  }, [selectedIds]);
+
   const handleOpenOutlook = () => {
     // ── MARKER_BATCH_CONTROL_STRING_GUARD_V1 ── String(...) กันพังถ้า State ดันไม่ใช่ String
     const toEmailStr = String(toEmail ?? '');
@@ -10746,6 +11101,9 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     qs.push(`body=${encodeURIComponent(body)}`);
     window.location.href = `mailto:${encodeURIComponent(toEmailStr.trim())}?${qs.join('&')}`;
     setShowSendConfirm(true);
+    // MARKER_BATCH_CONTROL_ZIP_ATTACHMENTS_V1 — ยิงรวม Zip พร้อมกันตอนเปิด Outlook ไม่ต้อง await
+    // (ไม่บล็อกการเปิด Outlook — ปล่อยให้ Zip ทยอยรวม/ดาวน์โหลดตามมาเบื้องหลัง)
+    handleZipAttachments();
   };
 
   const handleConfirmSent = async () => {
@@ -10758,6 +11116,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
       try { await broadcastWs('batch_control_sent', { batchIds: selectedIds }); } catch {}
       setShowSendConfirm(false);
       setSelectedIds([]);
+      setShowEmailConfirm(false); // MARKER_BATCH_CONTROL_CONFIRM_SWITCH_VIEW_V1 — ส่งสำเร็จแล้วกลับไปหน้ารายการ Batch
       fetchPending();
       fetchTemplates();
     } catch (err) { console.error('mark-sent error:', err); }
@@ -10862,18 +11221,15 @@ export function BatchControlPage({ currentUser, userName = '' }) {
       {/* MARKER_BATCH_CONTROL_RESIZEOBSERVER_HEADER — ห่อ Header+Tab Bar ด้วย ref
           เพื่อวัดความสูงจริง (Pattern เดียวกับ System Console) */}
       <div ref={batchctrlHeaderRef} style={{ flexShrink: 0 }}>
-        {/* MARKER_BATCH_CONTROL_NEWTEMPLATE_TOPRIGHT — ย้ายปุ่ม +Template ใหม่ มาอยู่มุมขวาบน + เอาแถบ Tab AP TO FP ออก (ไม่ใช่ Tab จริง เป็นข้อมูล Template — รอทำ Dropdown ในขั้นถัดไป) */}
-        <div style={{ background: '#fff', padding: '14px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📊</div>
-            <div>
-              <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c' }}>Batch Control</div>
-              <div style={{ fontSize: '11px', color: '#999' }}>Batch ที่ Approve แล้ว — เลือกส่ง Email ตามเรื่อง</div>
-            </div>
+        {/* MARKER_BATCH_CONTROL_NEWTEMPLATE_BACK_TO_TABROW_V1 — ย้ายปุ่ม +Template ใหม่ ออกจาก Header กลับไป
+            อยู่ที่แถว Template Tab (ตำแหน่งเดิมก่อนจะย้ายขึ้นมาไว้มุมขวาบนตามคอมเมนต์เดิม
+            MARKER_BATCH_CONTROL_NEWTEMPLATE_TOPRIGHT) — เหลือ Header ไว้แค่ Icon/Title เฉยๆ */}
+        <div style={{ background: '#fff', padding: '14px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📊</div>
+          <div>
+            <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c' }}>Batch Control</div>
+            <div style={{ fontSize: '11px', color: '#999' }}>Batch ที่ Approve แล้ว — เลือกส่ง Email ตามเรื่อง</div>
           </div>
-          {isOwner && (
-            <button onClick={() => setShowNewTemplate(true)} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: '#fff', fontSize: '12.5px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Template ใหม่</button>
-          )}
         </div>
       </div>
 
@@ -10884,6 +11240,39 @@ export function BatchControlPage({ currentUser, userName = '' }) {
           <div onClick={() => setBatchControlSubTab('dashboard')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'dashboard' ? '600' : '400', color: batchControlSubTab === 'dashboard' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'dashboard' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Dashboard</div>
         )}
       </div>
+
+      {/* MARKER_BATCH_CONTROL_TEMPLATE_TABS_V1 — Sub-tab แยกตาม "เรื่อง" = 1 Email Template ต่อ 1 Tab
+          Dynamic ตาม templates ที่มีอยู่จริง (มาจาก /batch-control/counts)
+          MARKER_BATCH_CONTROL_NEWTEMPLATE_BACK_TO_TABROW_V1 — เอาปุ่ม "+ Template ใหม่" มาไว้ชิดขวาสุดของแถวนี้
+          แทน (ตำแหน่งเดิม) และเอาเงื่อนไข templates.length > 0 ออก เพื่อให้แถวนี้ (และปุ่ม) โผล่มาเสมอตอนยังไม่มี
+          Template เลยด้วย — ไม่งั้นตอน Template ยังไม่มีเลย จะไม่มีปุ่มที่กดสร้าง Template แรกได้ */}
+      {batchControlSubTab === 'mail' && !showNewTemplate && (
+        <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', flex: 1, minWidth: 0 }}>
+            {templates.length === 0 ? (
+              <div style={{ padding: '10px 0', fontSize: '11.5px', color: '#aaa' }}>ยังไม่มี Template — กด "+ Template ใหม่" เพื่อเริ่มสร้าง</div>
+            ) : templates.map(tpl => {
+              const isActive = activeTemplateId === tpl.id;
+              // MARKER_BATCH_CONTROL_TEMPLATE_TABS_BADGE — ชื่อ field จำนวน Batch รอส่งของแต่ละ Template
+              // ยังไม่ทราบ field name จริงจาก /batch-control/counts เดา fallback ไว้หลายชื่อ
+              // ให้ตรวจสอบ Response จริงอีกครั้งแล้วตัดชื่อที่ไม่ใช้ออก
+              const pendingCount = tpl.pending_count ?? tpl.count ?? tpl.batch_count ?? tpl.total ?? null;
+              return (
+                <div key={tpl.id} onClick={() => setActiveTemplateId(tpl.id)}
+                  style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: isActive ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: isActive ? '#1a3a5c' : '#888', fontWeight: isActive ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                  {tpl.name || `Template #${tpl.id}`}
+                  {pendingCount != null && (
+                    <span style={{ background: isActive ? '#1a3a5c' : '#e8e8e8', color: isActive ? 'white' : '#888', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{pendingCount}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {isOwner && (
+            <button onClick={() => setShowNewTemplate(true)} style={{ flexShrink: 0, padding: '7px 14px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: '#fff', fontSize: '12px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Template ใหม่</button>
+          )}
+        </div>
+      )}
 
       {batchControlSubTab === 'mail' && (
       <>
@@ -11011,64 +11400,206 @@ export function BatchControlPage({ currentUser, userName = '' }) {
       {!showNewTemplate && (
         <>
       {/* MARKER_BATCH_CONTROL_3ZONE_LAYOUT_V1 -- Zone A เต็มความกว้าง */}
-      <div style={{ padding: '16px 24px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#555', cursor: 'pointer' }}>
-            <input type="checkbox" checked={visibleBatches.length > 0 && selectedIds.length === visibleBatches.length} onChange={toggleSelectAll} style={{ width: '14px', height: '14px' }} /> เลือกทั้งหมด
-          </label>
-          <span style={{ fontSize: '11px', color: '#aaa' }}>{loading ? 'กำลังโหลด...' : `${visibleBatches.length} Batch รอส่ง`}</span>
-          <select value={buFilter} onChange={e => setBuFilter(e.target.value)} style={{ marginLeft: 'auto', fontSize: '12px', padding: '6px 10px', border: '0.5px solid #ddd', borderRadius: '6px', color: '#666' }}>
-            <option value="">ทุก BU</option>
-            {buList.map(bu => <option key={bu} value={bu}>{bu}</option>)}
-          </select>
-        </div>
+      {/* MARKER_BATCH_CONTROL_DOCBOX_V1 — เปลี่ยนจาก Toolbar+ZoneBox แยกกัน มาเป็นกล่องเดียว
+          (BU Pill Filter + ตาราง Header เข้ม + Footer เป็นปุ่ม Confirm) สไตล์อ้างอิงจากกล่อง AP Manual/Document Center
+          ซ่อนกล่องนี้ทั้งหมดตอนกด Confirm แล้ว (สลับไปหน้า Config Email เต็มจอแทน ไม่ใช่ Popup) */}
+      {!showEmailConfirm && (
+      <div style={{ padding: '16px 24px 20px' }}>
+        <div style={{ background: '#fff', border: '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '14px 18px 10px' }}>
+            <div style={{ fontSize: '13.5px', fontWeight: '700', color: '#1a3a5c' }}>{activeTemplate?.name || 'Batch'}</div>
+            <div style={{ fontSize: '11px', color: '#999' }}>{loading ? 'กำลังโหลด...' : `${visibleBatches.length} Batch รอส่ง`}</div>
+          </div>
 
-        <ZoneBox noPadding>
-          <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 100px 100px 1fr 110px', background: '#fafaf8', padding: '8px 16px', fontSize: '10.5px', color: '#999', fontWeight: '600', textTransform: 'uppercase' }}>
-            <div></div><div>Batch</div><div>BU</div><div>Receive</div><div>Due</div><div>Status</div><div style={{ textAlign: 'right' }}>ยอดรวม</div>
+          {/* MARKER_BATCH_CONTROL_BU_PILLS_V1 — เปลี่ยนจาก Dropdown "ทุก BU" มาเป็น Pill Filter มีตัวเลขนับ ต่อ BU */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 18px 14px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '10.5px', fontWeight: '600', color: '#999', textTransform: 'uppercase', marginRight: '2px' }}>BU</span>
+            <button onClick={() => setBuFilter('')} style={{ border: 'none', borderRadius: '20px', padding: '5px 10px 5px 14px', fontSize: '12px', fontWeight: '500', background: !buFilter ? '#1a3a5c' : '#f0f1f3', color: !buFilter ? '#fff' : '#555', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              ทั้งหมด <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '20px', background: !buFilter ? 'rgba(255,255,255,0.25)' : '#e2e4e8', color: !buFilter ? '#fff' : '#777' }}>{batches.length}</span>
+            </button>
+            {buList.map(bu => {
+              const isActive = buFilter === bu;
+              return (
+                <button key={bu} onClick={() => setBuFilter(bu)} style={{ border: 'none', borderRadius: '20px', padding: '5px 10px 5px 14px', fontSize: '12px', fontWeight: '500', background: isActive ? '#1a3a5c' : '#f0f1f3', color: isActive ? '#fff' : '#555', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  {bu} <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '20px', background: isActive ? 'rgba(255,255,255,0.25)' : '#e2e4e8', color: isActive ? '#fff' : '#777' }}>{batches.filter(b => b.bu === bu).length}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* MARKER_BATCH_CONTROL_SELECTALL_IN_HEADER_V1 — ย้าย Checkbox "เลือกทั้งหมด" จาก Label ลอยด้านบนกล่อง
+              มาไว้ที่ช่อง Checkbox ของหัวตารางเลย (Pattern เดียวกับตาราง Data ทั่วไป) */}
+          {/* MARKER_BATCH_CONTROL_ATTACHMENT_COLUMN_V1 — เพิ่ม Filename/Attachment เหมือนตาราง Batch History
+              (My Jobs/All Jobs) ใช้ Logic การหาไฟล์แนบอันเดียวกัน (invoice_register_file_id ตอน reviewing/approved
+              ไม่งั้น fallback ไป file_url) และปุ่ม View/Download เดียวกัน เพื่อความสอดคล้อง
+              ⚠️ ฟิลด์นี้ต้องมาจาก batch_list (b.file_name / b.file_url / b.invoice_register_file_id /
+              b.invoice_register_file_name / b.amount / b.vat / b.created_by) — Batch History ดึงตรงจาก Supabase
+              (select('*')) เลยมีครบ แต่หน้านี้ดึงผ่าน backend endpoint /batch-control/pending/:id ซึ่งอาจ SELECT
+              เฉพาะบาง Column — ถ้าคอลัมน์ไหนไม่ขึ้น (เป็น "—" ทั้งที่ Batch History มีค่า) ต้องไปแก้ Backend endpoint
+              นี้ให้ SELECT คอลัมน์เพิ่มด้วย ผมไม่มีโค้ด Backend เลยแก้ให้เฉพาะฝั่ง Frontend เท่านั้น */}
+          {/* MARKER_BATCH_CONTROL_MATCH_ALLJOBS_COLUMNS_V1 — เพิ่ม Created By ให้ครบตาม All Jobs
+              (ยกเว้น Icon Chat ✉️ และปุ่ม Action ส่งตรวจ/อนุมัติ 📤 ตามที่ขอ เพราะ Batch ในหน้านี้ Approved แล้วทั้งหมด
+              ไม่ได้อยู่ในขั้นตอนตรวจ/รอตรวจ — ยังคงคอลัมน์ "Due" ไว้เพิ่มจาก All Jobs เพราะมีประโยชน์กับหน้านี้โดยตรง
+              (วันครบกำหนดจ่าย) ถ้าไม่ต้องการคอลัมน์นี้แจ้งได้ครับ)
+              MARKER_BATCH_CONTROL_REMOVE_AMOUNT_VAT_V1 — เอา Amount/Vat ออกตามที่ขอ เหลือแค่ "ยอดรวม" (Total)
+              และเพิ่ม columnGap ระหว่างคอลัมน์ (เดิมไม่มี Gap เลย ทำให้ตัวเลข "ยอดรวม" (ชิดขวา) กับ "Filename"
+              (ชิดซ้าย) ของคอลัมน์ติดกัน มาเบียดจนดูเหมือนตัวอักษรควบกัน — นี่คือสาเหตุจริงของปัญหา "ยอดรวมFILENAME"
+              ที่เห็นในภาพ ไม่ใช่ Bug คำนวณคอลัมน์ผิด) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '40px 1.3fr 70px 90px 90px 120px 1fr 96px 150px 110px', columnGap: '16px', background: '#16324f', padding: '10px 16px', fontSize: '10.5px', color: '#fff', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+            <input type="checkbox" title="เลือกทั้งหมด" checked={visibleBatches.length > 0 && selectedIds.length === visibleBatches.length} onChange={toggleSelectAll} style={{ width: '14px', height: '14px' }} />
+            <div>Batch</div><div>BU</div><div>Receive</div><div>Due</div>
+            <div style={{ textAlign: 'right' }}>ยอดรวม</div>
+            <div>Filename</div><div>Attachment</div><div>Status</div><div>Created By</div>
           </div>
           {visibleBatches.length === 0 && !loading && <div style={{ padding: '30px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>ไม่มี Batch รอส่งเรื่องนี้</div>}
-          {visibleBatches.map(b => (
-            <div key={b.id} style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 100px 100px 1fr 110px', padding: '10px 16px', alignItems: 'center', borderTop: '0.5px solid #f0f0ee', fontSize: '12px', background: selectedIds.includes(b.id) ? '#EAF3FB' : 'transparent' }}>
+          {visibleBatches.map(b => {
+            // MARKER_BATCH_CONTROL_ATTACHMENT_COLUMN_V1 — Logic เดียวกับ Batch History (My Jobs/All Jobs)
+            // (ใช้ Helper กลาง getBatchAttachment ร่วมกับตอน Zip ด้านล่าง — MARKER_BATCH_CONTROL_ATTACHMENT_HELPERS_SHARED_V1)
+            const { attachId, attachName } = getBatchAttachment(b);
+            return (
+            <div key={b.id} style={{ display: 'grid', gridTemplateColumns: '40px 1.3fr 70px 90px 90px 120px 1fr 96px 150px 110px', columnGap: '16px', padding: '11px 16px', alignItems: 'center', borderTop: '0.5px solid #eef0f2', fontSize: '12.5px', background: selectedIds.includes(b.id) ? '#EAF3FB' : 'transparent' }}>
               <input type="checkbox" checked={selectedIds.includes(b.id)} onChange={() => toggleSelect(b.id)} style={{ width: '14px', height: '14px' }} />
-              <div style={{ color: '#1a3a5c', fontWeight: '500' }}>{b.batch_name || b.batch_id || b.id}</div>
+              <div style={{ color: '#1a3a5c', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.batch_name || b.batch_id || b.id}>{b.batch_name || b.batch_id || b.id}</div>
               <div style={{ color: '#666' }}>{b.bu}</div>
               <div style={{ color: '#666' }}>{fmtDate(b.receive_date)}</div>
               <div style={{ color: '#666' }}>{b.due_date_last ? fmtDate(b.due_date_last) : '-'}</div>
-              <div style={{ color: '#27500A', fontSize: '11px' }}>{b.approved_by ? `Approved by ${b.approved_by}` : 'Approved'}</div>
-              <div style={{ textAlign: 'right' }}>{Number(b.total_amount || 0).toLocaleString()}</div>
+              <div style={{ textAlign: 'right', fontWeight: '600', color: '#1a3a5c' }}>{b.total_amount ? `฿${Math.round(b.total_amount).toLocaleString('th-TH')}` : '—'}</div>
+              <div style={{ color: '#555', fontFamily: 'monospace', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={attachName || ''}>
+                {attachName || <span style={{ color: '#ccc', fontFamily: 'sans-serif' }}>—</span>}
+              </div>
+              <div>
+                {attachId ? (
+                  <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                    <button onClick={() => handleViewAttachment(attachId, attachName)} title="View"
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '13px', cursor: 'pointer' }}>👁</button>
+                    <button onClick={() => handleDownloadAttachment(attachId, attachName)} title="Download"
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '13px', cursor: 'pointer' }}>⬇</button>
+                  </div>
+                ) : <span style={{ fontSize: '10.5px', color: '#ccc' }}>No file</span>}
+              </div>
+              <div>
+                <span style={{ background: '#EAF3DE', color: '#27500A', padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '500', whiteSpace: 'nowrap' }}>{b.approved_by ? `Approved by ${b.approved_by}` : 'Approved'}</span>
+              </div>
+              <div style={{ color: '#666', fontSize: '11.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.created_by || ''}>{b.created_by || '-'}</div>
             </div>
-          ))}
-        </ZoneBox>
-      </div>
+            );
+          })}
 
-      {/* Zone B (Config & Attachment) + Zone C (Outlook Layout Draft) คู่กัน */}
-      {selectedIds.length > 0 && (
-        <div style={{ padding: '16px 24px 20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+          {/* MARKER_BATCH_CONTROL_DOCBOX_FOOTER_CONFIRM_V1 — Footer ของกล่อง = สรุปที่เลือก + ปุ่ม Confirm (ไม่ทำ Pagination) */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 18px', borderTop: '0.5px solid #eee', background: '#fafaf8', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '11.5px', color: '#666' }}>
+              {selectedIds.length > 0 ? `เลือกไว้ ${selectedIds.length} Batch · ${selectedTotal.toLocaleString()} บาท` : 'ยังไม่ได้เลือก Batch'}
+            </span>
+            <button onClick={() => setShowEmailConfirm(true)} disabled={selectedIds.length === 0}
+              style={{ padding: '9px 22px', borderRadius: '8px', border: 'none', background: selectedIds.length > 0 ? '#1a3a5c' : '#ccc', color: '#fff', fontSize: '12.5px', fontWeight: '500', cursor: selectedIds.length > 0 ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>
+              Confirm →
+            </button>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {/* Zone B (Config & Attachment) + Zone C (Outlook Layout Draft) — สลับมาเต็มจอหลังกด Confirm (ไม่ใช่ Popup) */}
+      {/* MARKER_BATCH_CONTROL_EMAILCONFIRM_FULLHEIGHT_V1 — ขยายเต็มความสูงจอ ชนขอบล่าง (Gap ~0, ไม่มี Padding ล่าง
+          เพราะ CSS ไม่มีค่า Padding ติดลบจริง — ตีความ "Gap -20" เป็น "ชิดขอบสุดที่ทำได้") + ย้ายปุ่ม
+          เปิด Outlook Draft / ยืนยันว่าส่งแล้ว ขึ้นมาไว้แถวบนฝั่งขวา แทนมุมขวาล่างเดิม */}
+      {showEmailConfirm && selectedIds.length > 0 && (
+        <div style={{ padding: '16px 24px 0', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap', flexShrink: 0 }}>
+            <button onClick={handleBackFromEmailConfirm} disabled={showSendConfirm}
+              style={{ padding: '7px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#fff', color: '#1a3a5c', fontSize: '12px', fontWeight: '500', cursor: showSendConfirm ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>← Back</button>
             <span style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c' }}>📡 Monitor</span>
             <span style={{ fontSize: '11px', color: '#aaa' }}>เลือกไว้ {selectedIds.length} Batch · {selectedTotal.toLocaleString()} บาท</span>
             {!singleBu && selectedBuList.length > 1 && (
               <span style={{ fontSize: '10.5px', color: '#791F1F', background: '#FCEBEB', padding: '2px 8px', borderRadius: '8px' }}>⚠️ เลือกข้าม BU กัน — Auto-fill To/Cc/เรียน จะไม่ทำงาน กรอกเองได้</span>
             )}
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {showSendConfirm ? (
+                <>
+                  <span style={{ fontSize: '11.5px', color: '#666', whiteSpace: 'nowrap' }}>ส่งอีเมลใน Outlook เรียบร้อยหรือยัง?</span>
+                  <button onClick={handleCancelSendConfirm} disabled={confirmingSent}
+                    style={{ padding: '7px 14px', borderRadius: '8px', border: '0.5px solid #ddd', background: '#fff', color: '#666', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>ยกเลิก</button>
+                  <button onClick={handleConfirmSent} disabled={confirmingSent}
+                    style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: confirmingSent ? '#aaa' : '#27500A', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: confirmingSent ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                    {confirmingSent ? 'กำลังบันทึก...' : '✅ ยืนยันว่าส่งแล้ว'}
+                  </button>
+                </>
+              ) : (
+                <button onClick={handleOpenOutlook} disabled={!String(toEmail ?? '').trim()}
+                  style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: String(toEmail ?? '').trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: String(toEmail ?? '').trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 เปิด Outlook Draft →</button>
+              )}
+            </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
-            <ZoneBox title="⚙️ Config & Attachment">
-              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เรียน (Greeting Name)</div>
-              <input value={greetingName} onChange={e => setGreetingName(e.target.value)} onBlur={e => saveApToFp('greeting_name', e.target.value)} placeholder="เช่น คุณสมชาย" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>ถึง (To)</div>
-              <input value={toEmail} onChange={e => setToEmail(e.target.value)} onBlur={e => saveApToFp('to', e.target.value)} placeholder="กรอกอีเมลผู้รับ" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>สำเนา (Cc)</div>
-              <input value={ccEmail} onChange={e => setCcEmail(e.target.value)} onBlur={e => saveApToFp('cc', e.target.value)} placeholder="(ถ้ามี)" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>หัวข้อ</div>
-              <input value={subject} onChange={e => setSubject(e.target.value)} style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
-              <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>เนื้อหา</div>
-              <textarea value={body} onChange={e => setBody(e.target.value)} onKeyDown={makeTabHandler(setBody)} style={{ width: '100%', height: '90px', padding: '8px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', marginBottom: '10px' }} />
-              <div style={{ background: '#FAEEDA', border: '0.5px solid #EF9F27', borderRadius: '7px', padding: '8px 12px', fontSize: '11px', color: '#854F0B' }}>
-                📎 ไฟล์แนบต้องดาวน์โหลดแล้วลากใส่ Outlook เอง (ข้อจำกัดของ Browser)
-              </div>
-            </ZoneBox>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', flex: 1, minHeight: 0, paddingBottom: '16px' }}>
+            {/* MARKER_BATCH_CONTROL_CONFIG_ATTACHMENT_SPLIT_BOXES_V1 — แยก "Config & Attachment" ที่เดิมยำ
+                รวมกันเป็นกล่องเดียว ออกเป็น 2 กล่องจริงๆ ซ้อนกันแนวตั้ง (⚙️ Config กับ 📎 Attachment แยกกันชัดเจน
+                มีขอบ/หัวเรื่องของตัวเอง ไม่ใช่แค่ Label ลอยอยู่ในกล่องเดียวกัน) ตามที่ขอ */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', minHeight: 0 }}>
+              <ZoneBox title="⚙️ Config">
+                {/* MARKER_BATCH_CONTROL_CONFIG_FIELD_ORDER_V1 — เรียงลำดับช่องตามที่ระบุ: ถึง(1) สำเนา(2)
+                    แล้วตามด้วย Placeholder ของ Template นี้ตามลำดับ Greeting(3.1) → BU → Due Range(3.2) →
+                    Batch List(4) → ที่เหลือ (ถ้ามี) — ดู PLACEHOLDER_FIELD_DEFS ด้านบนที่เรียงลำดับตามนี้ไว้แล้ว */}
+                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>ถึง (To)</div>
+                <input value={toEmail} onChange={e => setToEmail(e.target.value)} onBlur={e => saveApToFp('to', e.target.value)} placeholder="กรอกอีเมลผู้รับ" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+                <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>สำเนา (Cc)</div>
+                <input value={ccEmail} onChange={e => setCcEmail(e.target.value)} onBlur={e => saveApToFp('cc', e.target.value)} placeholder="(ถ้ามี)" style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '14px' }} />
+
+                {/* MARKER_BATCH_CONTROL_PLACEHOLDER_EDITABLE_V1 — เดิมช่อง Auto-fill เป็น Preview อ่านอย่างเดียว
+                    แก้ไม่ได้ ผู้ใช้แจ้งว่าต้องแก้ได้ (เผื่อ Auto-fill ผิดหรืออยากปรับก่อนส่งจริง) — เปลี่ยนเป็นช่อง
+                    กรอก/แก้ไขได้ทั้งหมด ค่าเริ่มต้น = Auto-fill จาก Batch ที่เลือกไว้ (placeholderMap) ผู้ใช้แก้ทับ
+                    ได้ผ่าน placeholderOverrides แล้วไปมีผลจริงตอนแทนค่าใน Subject/Body ที่จะส่ง (fillPlaceholders) */}
+                {activePlaceholderFields.map(f => {
+                  const isGreeting = f.key === '{greeting_name}';
+                  const value = isGreeting ? greetingName : (effectivePlaceholderMap[f.key] ?? '');
+                  const handleChange = (val) => {
+                    if (isGreeting) setGreetingName(val);
+                    else setPlaceholderOverride(f.key, val);
+                  };
+                  const handleBlur = () => { if (isGreeting) saveApToFp('greeting_name', greetingName); };
+                  return (
+                    <React.Fragment key={f.key}>
+                      <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '5px' }}>{f.label}</div>
+                      {f.multiline ? (
+                        <textarea value={value} onChange={e => handleChange(e.target.value)} onBlur={handleBlur}
+                          style={{ width: '100%', height: '80px', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '11.5px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', marginBottom: '10px' }} />
+                      ) : (
+                        <input value={value} onChange={e => handleChange(e.target.value)} onBlur={handleBlur} placeholder={isGreeting ? 'เช่น คุณสมชาย' : ''}
+                          style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #ddd', borderRadius: '6px', fontSize: '12px', boxSizing: 'border-box', marginBottom: '10px' }} />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </ZoneBox>
+
+              {/* MARKER_BATCH_CONTROL_ATTACHMENT_BOX_SEPARATE_V1 — กล่อง "Attachment" แยกเป็นกล่องของตัวเอง
+                  (มีขอบ/หัวเรื่อง ไม่ได้ฝากอยู่ในกล่อง Config เหมือนเดิม) ตามที่ขอให้ "ทำกล่องขึ้นมาเพิ่ม"
+                  ใช้ Helper กลาง getBatchAttachment — MARKER_BATCH_CONTROL_ATTACHMENT_HELPERS_SHARED_V1 — ไฟล์
+                  ทั้งหมดในกล่องนี้จะถูกรวมเป็น .zip ไฟล์เดียวอัตโนมัติตอนกด "เปิด Outlook Draft" (handleZipAttachments)
+                  ความสูงเผื่อ Default ไว้ 10 แถวก่อน เกิน 10 แถวค่อย Scroll (แถว ~34px/แถว → 340px) */}
+              <ZoneBox title="📎 Attachment" noPadding style={{ flexShrink: 0, maxHeight: '400px' }}>
+                <div style={{ padding: '14px 18px 10px', fontSize: '11px', fontWeight: '600', color: '#888' }}>
+                  ไฟล์แนบที่จะรวมส่ง ({selectedBatches.filter(b => getBatchAttachment(b).attachId).length}/{selectedBatches.length})
+                  {zippingAttachments && <span style={{ color: '#854F0B', fontWeight: '500', marginLeft: '8px' }}>⏳ กำลังรวมเป็น Zip...</span>}
+                </div>
+                <div style={{ margin: '0 18px 14px', border: '0.5px solid #eee', borderRadius: '7px', overflow: 'hidden', maxHeight: '340px', overflowY: 'auto' }}>
+                  {selectedBatches.map(b => {
+                    const { attachId, attachName } = getBatchAttachment(b);
+                    return (
+                      <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 10px', borderTop: '0.5px solid #f2f2f0', fontSize: '11px' }}>
+                        <span style={{ fontFamily: 'monospace', color: attachId ? '#555' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={attachName || ''}>
+                          {attachName || 'ไม่มีไฟล์แนบ'}
+                        </span>
+                        {attachId && (
+                          <button onClick={() => handleViewAttachment(attachId, attachName)} title="View"
+                            style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '22px', height: '22px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer' }}>👁</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </ZoneBox>
+            </div>
 
             <ZoneBox title="👁️ Outlook Layout Draft" highlighted>
               <div style={{ display: 'flex', fontSize: '11px', marginBottom: '8px' }}>
@@ -11088,22 +11619,6 @@ export function BatchControlPage({ currentUser, userName = '' }) {
               </div>
             </ZoneBox>
           </div>
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            {showSendConfirm ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '11.5px', color: '#666', whiteSpace: 'nowrap' }}>ส่งอีเมลใน Outlook เรียบร้อยหรือยัง?</span>
-                <button onClick={handleCancelSendConfirm} disabled={confirmingSent}
-                  style={{ padding: '8px 14px', borderRadius: '8px', border: '0.5px solid #ddd', background: '#fff', color: '#666', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>ยกเลิก</button>
-                <button onClick={handleConfirmSent} disabled={confirmingSent}
-                  style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: confirmingSent ? '#aaa' : '#27500A', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: confirmingSent ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
-                  {confirmingSent ? 'กำลังบันทึก...' : '✅ ยืนยันว่าส่งแล้ว'}
-                </button>
-              </div>
-            ) : (
-              <button onClick={handleOpenOutlook} disabled={!String(toEmail ?? '').trim()} style={{ padding: '9px 22px', borderRadius: '8px', border: 'none', background: String(toEmail ?? '').trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: String(toEmail ?? '').trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 เปิด Outlook Draft →</button>
-            )}
-          </div>
         </div>
       )}
         </>
@@ -11114,6 +11629,38 @@ export function BatchControlPage({ currentUser, userName = '' }) {
       {batchControlSubTab === 'dashboard' && (isOwner || isAdmin) && (
         <div style={{ padding: '60px 24px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
           📊 Dashboard — Coming soon
+        </div>
+      )}
+
+      {/* MARKER_BATCH_CONTROL_ATTACHMENT_VIEW_MODAL_V1 — Modal Preview อ่านอย่างเดียว (Read-only) สำหรับปุ่ม 👁 View
+          ในคอลัมน์ Attachment เฉพาะของหน้านี้ (ไม่แก้ไข/บันทึกกลับได้ ต่างจาก Modal Preview แบบ Editable
+          ของ BatchSetup) เพราะหน้านี้แค่ต้องดูไฟล์คร่าวๆ ก่อนตัดสินใจส่ง ไม่ได้ทำหน้าที่แก้ไขไฟล์ */}
+      {previewLoading && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '20px 28px', fontSize: '13px', color: '#666' }}>กำลังโหลดไฟล์...</div>
+        </div>
+      )}
+      {filePreview && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }} onClick={() => setFilePreview(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '10px', width: '90%', maxWidth: '1100px', height: '82%', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderBottom: '0.5px solid #e5e5e0', flexShrink: 0 }}>
+              <div style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>📄 {filePreview.fileName}</div>
+              <button onClick={() => setFilePreview(null)} style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#fff', color: '#666', fontSize: '12px', cursor: 'pointer' }}>✕ ปิด</button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 14px' }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: '11.5px', width: '100%' }}>
+                <tbody>
+                  {filePreview.rows.map((row, ri) => (
+                    <tr key={ri}>
+                      {row.map((cell, ci) => (
+                        <td key={ci} style={{ border: '0.5px solid #eee', padding: '4px 8px', whiteSpace: 'nowrap', color: '#333' }}>{cell === '' || cell == null ? '' : String(cell)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>

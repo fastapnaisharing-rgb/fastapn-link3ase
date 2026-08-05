@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 import { useDataCache } from '../contexts/DataCacheContext';
+import ReactDOM from 'react-dom'; // MARKER_STATUSDROPDOWN_PORTAL_FIX_V1
 // MARKER_BUSINESSUNIT_APPLY_APCONTROLLER_STYLE_V1
 import { confirmDialog } from '../confirmDialog';
 
@@ -15,6 +16,49 @@ function useWindowWidth() {
     return () => window.removeEventListener('resize', handler);
   }, []);
   return width;
+}
+
+// MARKER_STATUS_DROPDOWN_CUSTOM_V1
+function StatusDropdown({ value, onChange, options, style }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const triggerRef = useRef(null);
+  const listRef = useRef(null);
+  useEffect(() => {
+    const h = (e) => {
+      if (triggerRef.current && triggerRef.current.contains(e.target)) return;
+      if (listRef.current && listRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const handleToggle = () => {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    }
+    setOpen(o => !o);
+  };
+  return (
+    <React.Fragment>
+      <div ref={triggerRef} onClick={handleToggle} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>
+        <span>{value || 'เลือก Status'}</span>
+        <span style={{ fontSize: '10px', color: '#888', marginLeft: '6px' }}>{open ? '\u25b2' : '\u25bc'}</span>
+      </div>
+      {open && ReactDOM.createPortal(
+        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.18)', zIndex: 99999, overflow: 'hidden' }}>
+          {options.map((o, i) => (
+            <div key={i} onMouseDown={() => { onChange(o); setOpen(false); }}
+              style={{ padding: '8px 10px', fontSize: '13px', cursor: 'pointer', borderBottom: i < options.length - 1 ? '0.5px solid #f5f5f5' : 'none' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f0f7ff'}
+              onMouseLeave={e => e.currentTarget.style.background = 'white'}>{o}</div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </React.Fragment>
+  );
 }
 
 function ComboBox({ value, onChange, options, placeholder }) {
@@ -181,6 +225,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [branchDetailForm, setBranchDetailForm] = useState({});
   const [branchDetailError, setBranchDetailError] = useState('');
   const [showBranchNew, setShowBranchNew] = useState(false);
+  // MARKER_BRANCHPASTE_PREVIEW_POPUP_V1
+  // ── เก็บค่าที่ Parse ได้จาก Paste + Reference form/setForm ปัจจุบัน ──────────
+  // ── ไว้ Apply ตอนกด "ยืนยัน" ใน Popup (แก้ไขค่าใน Popup ได้ก่อนยืนยัน) ──────
+  const [branchPastePreview, setBranchPastePreview] = useState(null);
   const [branchNewForm, setBranchNewForm] = useState({});
   const [branchNewError, setBranchNewError] = useState('');
   const [showBranchPreview, setShowBranchPreview] = useState(false);
@@ -250,7 +298,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const BRANCH_FIELDS = ['Branch Code','Branch Direct','Branch Allocate','BU Code','Company for Show in Report Display','Simple Company','BU-TaxID','BU-Branch','Simple Brand Code','%','DB(%)','cpc','Branch Address','Group-P','bu','status','Inactive Date','updated_by','updated_at'];
   const BRANCH_KEY = 'Branch Code';
-  const BRANCH_COMBO = ['Branch Direct','bu','Group-P','status'];
+  // MARKER_BUSINESSUNIT_REMOVE_COMBO_MATCH_APCONTROLLER_V1 -- ตรงกับ APController.js (เอา ComboBox ออกหมด)
+  const BRANCH_COMBO = [];
   // ── Pattern เดียวกับ APController.js (BRANCH_REQUIRED_KEYS/BRANCH_FIELD_COLOR) ──
   const BRANCH_REQUIRED_KEYS = ['Branch Code','status','Company for Show in Report Display','bu','Group-P','BU-TaxID','BU-Branch'];
   const BRANCH_FIELD_COLOR = {
@@ -544,6 +593,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleBranchNewSave = async () => {
     const err = validateBranchForm(branchNewForm);
     if (err) { confirmDialog.alert(err, { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
+    const dupBranch = branches.find(b => String(b['Branch Code'] || '').trim() === String(branchNewForm['Branch Code'] || '').trim());
+    if (dupBranch) { confirmDialog.alert(`Branch Code "${branchNewForm['Branch Code']}" มีอยู่แล้วในระบบ`, { variant: 'danger', title: 'ซ้ำในระบบ' }); return; }
     const { data: inserted, error } = await db.from('branch_list').insert([{ ...branchNewForm, ...metaFields }]).select().single();
     if (error) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + error.message, { variant: 'danger' }); return; }
     setBranches(prev => [...prev, inserted]);
@@ -796,7 +847,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     inputReadonly: { padding:'5px 8px', borderRadius:'5px', border:'0.5px solid #e8e8e8', fontSize:'12px', width:'100%', marginBottom:'0', boxSizing:'border-box', background:'#fafafa', color:'#333', height:'30px', display:'flex', alignItems:'center' },
     overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
     // ✅ modal — auto height, no scroll needed with compact layout
-    modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'900px', maxWidth:'96vw', display:'flex', flexDirection:'column' },
+    // MARKER_BUSINESSUNIT_MODAL_HEIGHT_MATCH_APCONTROLLER_V1
+    modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'900px', maxWidth:'96vw', height:isMobile?'92vh':'88vh', display:'flex', flexDirection:'column', overflow:'hidden' },
     modalMd: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'700px', maxWidth:'96vw', display:'flex', flexDirection:'column' },
     pageBtn: (active,disabled) => ({ padding:'3px 7px', borderRadius:'5px', border:'0.5px solid #ddd', fontSize:'11px', cursor:disabled?'default':'pointer', background:active?'#1a3a5c':'white', color:disabled?'#ccc':active?'white':'#555', minWidth:'26px', textAlign:'center' }),
     iconBtn: (color,bg,border) => ({ background:bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
@@ -843,10 +895,71 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         'Branch Direct': buVal ? `${buVal}-${padded}` : form['Branch Direct'],
       });
     };
+    // MARKER_BUSINESSUNIT_PORT_BLUR_AUTOFILL_DUP_V1
+    // ── Port จาก APController.js: Auto-Fill จาก Head Office Lookup ──────────
+    const handleBranchCodeBlur = () => {
+      const code = String(form['Branch Code'] || '').trim();
+      if (code.length < 3) return;
+      const hoCode = code.slice(0, -2) + '01';
+      const match = branches.find(b => String(b['Branch Code'] || '').trim() === hoCode);
+      if (!match) return;
+      setForm(f => ({
+        ...f,
+        'bu': String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || ''),
+        'Group-P': String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || ''),
+        'BU-TaxID': String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || ''),
+        '%': String(f['%'] || '').trim() ? f['%'] : (match['%'] || ''),
+        'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || ''),
+      }));
+    };
+    // ── Port จาก APController.js: Auto-Fill จาก Company Name ที่ตรงกัน ───────
+    const handleCompanyBlur = () => {
+      const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const rawName = String(form['Company for Show in Report Display'] || '').trim();
+      const name = norm(rawName);
+      const branchCodeVal = String(form['Branch Code'] || '').trim();
+      const match = name ? branches.find(b => norm(b['Company for Show in Report Display']) === name) : null;
+      setForm(f => {
+        const next = { ...f };
+        if (match) {
+          next['bu'] = String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || '');
+          next['Group-P'] = String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || '');
+          next['BU-TaxID'] = String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || '');
+          next['%'] = String(f['%'] || '').trim() ? f['%'] : (match['%'] || '');
+          next['Simple Company'] = String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || '');
+        }
+        if (!String(f['Simple Brand Code'] || '').trim() && branchCodeVal && rawName) {
+          next['Simple Brand Code'] = `${branchCodeVal}-${rawName}`;
+        }
+        return next;
+      });
+      handleBranchCodeBlur();
+    };
+    // MARKER_BRANCHCODE_PASTE_EXCEL_AUTOFILL_V1
+    // ── วาง 1 แถวที่ Copy มาจาก Excel (Copy_of_Seg4_All_BU.xlsx Format) ──────
+    // ── ที่ช่อง Branch Code -> Detect ว่ามี Tab คั่น (Multi-Column) หรือไม่ ──
+    // ── ถ้าใช่ Auto-Fill Branch Code/Company/BU Branch/Address ให้ทันที ──────
+    const handlePasteBranchRow = (e) => {
+      const clip = e.clipboardData || window.clipboardData;
+      const raw = clip ? clip.getData('text') : '';
+      if (!raw || !raw.includes('\t')) return; // ไม่ใช่ Multi-Column -> Paste ปกติ
+      e.preventDefault();
+      const cols = raw.split('\n')[0].split('\t');
+      const branchCode = (cols[1] || '').trim();
+      const company = (cols[2] || '').trim();
+      const buBranchRaw = (cols[5] || '').trim();
+      const address = (cols[6] || '').trim();
+      // MARKER_BRANCHPASTE_PREVIEW_POPUP_V1
+      // ── เปิด Popup Preview ให้แก้ไขได้ก่อน แทนที่จะ setForm เข้าฟอร์มตรงๆ ──────
+      setBranchPastePreview({
+        branchCode, company, buBranch: buBranchRaw, address,
+        applyTo: setForm, currentForm: form,
+      });
+    };
     return (
-      <div style={{ padding: '16px 20px', overflow: 'visible' }}>
+      <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
         {BRANCH_FORM_ROWS.map((rowKeys, ri) => (
-          <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative', zIndex: ri }}>
+          <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative' }} /* MARKER_BRANCHFORM_FIX_ROW_ZINDEX_TRAP_V1 */>
             {rowKeys.map((key, ki) => {
               const label = (BRANCH_LAYOUT.find(([k]) => k === key) || [null, key])[1];
               const needInactive = key === 'Inactive Date';
@@ -874,16 +987,13 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                       ) : key === 'Branch Address' ? (
                         <textarea value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
                       ) : key === 'status' ? (
-                        <select value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={{ ...inputBare, fontWeight: 600 }}>
-                          <option value="">เลือก Status</option>
-                          {['Active', 'Closed', 'Relocate'].map((o, i) => <option key={i} value={o}>{o}</option>)}
-                        </select>
+                        <StatusDropdown value={form[key] || ''} onChange={val => { setForm({ ...form, [key]: val }); setError(''); }} options={['Active', 'Closed', 'Relocate', 'Temporary']} style={{ ...inputBare, fontWeight: 600 }} />
                       ) : key === 'Branch Direct' ? (
                         <input value={form[key] || ''} readOnly style={{ ...inputBare, color: '#999' }} />
                       ) : BRANCH_COMBO.includes(key) ? (
                         <ComboBox value={form[key] || ''} onChange={val => { setForm({ ...form, [key]: val }); setError(''); }} options={getBranchOptions(key)} placeholder={`เลือก ${label}`} />
                       ) : (
-                        <input value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} onBlur={key === 'BU-Branch' ? handleBuBranchBlur : undefined} style={inputBare} />
+                        <input value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} onBlur={key === 'BU-Branch' ? handleBuBranchBlur : key === 'Branch Code' ? handleBranchCodeBlur : key === 'Company for Show in Report Display' ? handleCompanyBlur : undefined} onPaste={key === 'Branch Code' ? handlePasteBranchRow : undefined} style={inputBare} />
                       )
                     ) : (
                       <span style={{ ...inputBare, color: '#333' }}>{key === 'status' ? statusBadge(form[key]) : (form[key] || '-')}</span>
@@ -1147,6 +1257,48 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               </div>
             </div>
             {renderBranchFormFields(branchNewForm,setBranchNewForm,branchNewError,setBranchNewError,true)}
+          </div>
+        </div>
+      )}
+
+      {/* MARKER_BRANCHPASTE_PREVIEW_POPUP_V1 */}
+      {branchPastePreview&&(
+        <div style={{...S.overlay,zIndex:1100}}>
+          <div style={{ background:'white', borderRadius:'12px', width:isMobile?'92vw':'440px', padding:'22px' }}>
+            <h3 style={{ fontSize:'15px', margin:'0 0 4px' }}>ตรวจสอบข้อมูลก่อนนำเข้า</h3>
+            <div style={{ fontSize:'11px', color:'#888', marginBottom:'16px' }}>แก้ไขค่าได้ก่อนกด "ยืนยัน"</div>
+            {[
+              ['branchCode', 'Branch Code'],
+              ['company', 'Company for Report'],
+              ['buBranch', 'BU Branch'],
+              ['address', 'Branch Address'],
+            ].map(([k, label]) => (
+              <div key={k} style={{ marginBottom: '10px' }}>
+                <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>{label}</label>
+                {k === 'address' ? (
+                  <textarea value={branchPastePreview[k] || ''} onChange={e => setBranchPastePreview(p => ({ ...p, [k]: e.target.value }))} style={{ ...S.input, height: '60px', resize: 'vertical' }} />
+                ) : (
+                  <input value={branchPastePreview[k] || ''} onChange={e => setBranchPastePreview(p => ({ ...p, [k]: e.target.value }))} style={S.input} />
+                )}
+              </div>
+            ))}
+            <div style={{ display:'flex', gap:'8px', justifyContent:'flex-end', marginTop:'8px' }}>
+              <button style={{...S.btn,background:'#f0f0f0',marginLeft:0}} onClick={()=>setBranchPastePreview(null)}>ยกเลิก</button>
+              <button style={{...S.btn,background:'#1a3a5c',color:'white',marginLeft:0}} onClick={()=>{
+                const p = branchPastePreview;
+                const buVal = String(p.currentForm['bu'] || '').trim();
+                const buBranchPadded = p.buBranch ? String(p.buBranch).trim().padStart(5, '0') : p.currentForm['BU-Branch'];
+                p.applyTo({
+                  ...p.currentForm,
+                  'Branch Code': p.branchCode || p.currentForm['Branch Code'],
+                  'Company for Show in Report Display': p.company || p.currentForm['Company for Show in Report Display'],
+                  'BU-Branch': buBranchPadded,
+                  'Branch Address': p.address || p.currentForm['Branch Address'],
+                  'Branch Direct': (buVal && buBranchPadded) ? `${buVal}-${buBranchPadded}` : p.currentForm['Branch Direct'],
+                });
+                setBranchPastePreview(null);
+              }}>ยืนยัน</button>
+            </div>
           </div>
         </div>
       )}

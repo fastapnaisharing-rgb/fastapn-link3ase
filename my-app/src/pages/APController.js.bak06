@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
+import ReactDOM from 'react-dom'; // MARKER_STATUSDROPDOWN_PORTAL_FIX_V1
 import { db } from '../lib/db';
 import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
@@ -67,8 +68,14 @@ const PERIOD_OPTIONS = ['Current', 'Pre-Close', 'Override'];
 
 const buildDisGDesc = (disG, bd1, bd2, bd3) => {
   const bParts = [bd1 || '', bd2 || '', bd3 || ''];
-  if (!disG?.trim()) return bParts.filter(Boolean).join(' ');
-  const cParts = disG.split('|');
+  const disGTrim = disG?.trim() || '';
+  // MARKER_APCONTROLLER_BUILDDISGDESC_SINGLE_VALUE_FIX_V1
+  // ── Fix: dis_g ถูกกรอกผ่าน ICCombo แบบเลือกได้ทีละค่าเดียว (ไม่ใช่ 3 ส่วน ──
+  // ── คั่น "|" อย่างที่ Logic เดิมคาดหวัง) ค่าที่พบบ่อยที่สุดคือค่า Default "-" เฉยๆ ──
+  // ── ทำให้ split แล้วเจอ "-" ตัวเดียว โดน Filter ทิ้งหมด ──
+  // ── ทั้งที่ User กรอก Back Description มาครบ 3 ช่องแล้วจริง ────
+  if (!disGTrim || !disGTrim.includes('|')) return bParts.filter(Boolean).join(' ');
+  const cParts = disGTrim.split('|');
   const parts = cParts
     .map((c, i) => {
       const cVal = c.trim();
@@ -118,6 +125,7 @@ const BRANCH_FORM_ROWS = [
   ['cpc', 'Branch Direct'],
   ['Inactive Date'],
 ];
+// MARKER_BRANCH_FORM_REQUIRED_COLOR_POPUP_V1
 const BRANCH_FIELD_COLOR = {
   'Branch Code': '#FCF3D5',
   'status': '#FCF3D5',
@@ -125,9 +133,11 @@ const BRANCH_FIELD_COLOR = {
   'bu': '#FCF3D5',
   'Group-P': '#FCF3D5',
   'BU-TaxID': '#FCF3D5',
+  'BU-Branch': '#FCF3D5',
   '%': '#DCEAF1',
+  'Branch Direct': '#DCEAF1',
 };
-const BRANCH_REQUIRED_KEYS = ['Branch Code', 'status', 'Company for Show in Report Display', 'bu', 'Group-P', 'BU-TaxID'];
+const BRANCH_REQUIRED_KEYS = ['Branch Code', 'status', 'Company for Show in Report Display', 'bu', 'Group-P', 'BU-TaxID', 'BU-Branch'];
 
 const formatBranchLabel = (item) =>
   `${item?.['Branch Code'] ?? ''}-${item?.['Company for Show in Report Display'] ?? ''}`;
@@ -340,6 +350,49 @@ function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // BranchSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
+// MARKER_STATUS_DROPDOWN_CUSTOM_V1
+function StatusDropdown({ value, onChange, options, style }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const triggerRef = useRef(null);
+  const listRef = useRef(null);
+  useEffect(() => {
+    const h = (e) => {
+      if (triggerRef.current && triggerRef.current.contains(e.target)) return;
+      if (listRef.current && listRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const handleToggle = () => {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    }
+    setOpen(o => !o);
+  };
+  return (
+    <React.Fragment>
+      <div ref={triggerRef} onClick={handleToggle} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>
+        <span>{value || 'เลือก Status'}</span>
+        <span style={{ fontSize: '10px', color: '#888', marginLeft: '6px' }}>{open ? '\u25b2' : '\u25bc'}</span>
+      </div>
+      {open && ReactDOM.createPortal(
+        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.18)', zIndex: 99999, overflow: 'hidden' }}>
+          {options.map((o, i) => (
+            <div key={i} onMouseDown={() => { onChange(o); setOpen(false); }}
+              style={{ padding: '8px 10px', fontSize: '13px', cursor: 'pointer', borderBottom: i < options.length - 1 ? '0.5px solid #f5f5f5' : 'none' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f0f7ff'}
+              onMouseLeave={e => e.currentTarget.style.background = 'white'}>{o}</div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </React.Fragment>
+  );
+}
+
 function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onSaveBranch, branchOptions = {} }) {
   const [query, setQuery]         = useState('');
   const [active, setActive]       = useState(-1);
@@ -416,14 +469,15 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
   };
   // MARKER_BRANCH_DUPLICATE_CHECK
   const handleSave = async () => {
-    const err = validateForm(form); if (err) { setFormError(err); return; }
+    const err = validateForm(form);
+    if (err) { confirmDialog.alert(err, { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
     if (view !== 'edit') {
       const dupBranch = branchItems.find(b => String(b['Branch Code'] || '').trim() === String(form['Branch Code'] || '').trim());
-      if (dupBranch) { setFormError(`Branch Code "${form['Branch Code']}" มีอยู่แล้วในระบบ`); return; }
+      if (dupBranch) { confirmDialog.alert(`Branch Code "${form['Branch Code']}" มีอยู่แล้วในระบบ`, { variant: 'danger', title: 'ซ้ำในระบบ' }); return; }
     }
     setSaving(true);
     try { await onSaveBranch({ form, isEdit: view === 'edit', editTarget }); handleBack(); }
-    catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
+    catch (e) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setSaving(false);
   };
   const setField = (key, val) => { setForm(f => ({ ...f, [key]: val })); setFormError(''); };
@@ -509,7 +563,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
         <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px', background: '#fff' }}>
           {BRANCH_FORM_ROWS.map((rowKeys, ri) => (
             // MARKER_BRANCH_FORM_ROW_GAP_V8
-            <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative', zIndex: ri }}>
+            <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative' }} /* MARKER_BRANCHFORM_FIX_ROW_ZINDEX_TRAP_V1 */>
               {rowKeys.map((key, ki) => {
                 const label = (BRANCH_EDIT.find(([k]) => k === key) || [null, key])[1];
                 const isReadOnly = key === 'Branch Code' && isEdit;
@@ -540,10 +594,8 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                       ) : key === 'Branch Address' ? (
                         <textarea value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
                       ) : key === 'status' ? (
-                        <select value={form[key] || ''} onChange={e => setField(key, e.target.value)} style={{ ...inputBare, fontWeight: 600 }}>
-                          <option value="">เลือก Status</option>
-                          {(opts.length ? opts : ['Active', 'Closed', 'Relocate']).map((o, i) => <option key={i} value={o}>{o}</option>)}
-                        </select>
+                        // MARKER_STATUS_FIXED_LIST_NOT_FROM_DATA_V1
+                        <StatusDropdown value={form[key] || ''} onChange={val => setField(key, val)} options={['Active', 'Closed', 'Relocate', 'Temporary']} style={{ ...inputBare, fontWeight: 600 }} />
                       ) : key === 'Branch Direct' ? (
                         <input value={form[key] || ''} readOnly style={{ ...inputBare, color: '#999' }} />
                       ) : BRANCH_COMBO.includes(key) ? (
@@ -3295,6 +3347,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   }, [grnPreviewByLineIdx]);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [showContractPopup, setShowContractPopup]     = useState(false);
+  // MARKER_APCONTROLLER_DESC_EXPAND_EDIT_V1
+  // ── Double-click ที่ Field Description ในตาราง -> เปิด Popup แก้ไขแบบเต็ม ──
+  const [expandEditIdx, setExpandEditIdx] = useState(null);
+  const [expandEditVal, setExpandEditVal] = useState('');
+  const expandEditCancelRef = useRef(false);
   // MARKER_APCONTROLLER_INVOICE_FLOW_V1
   // ── Invoice Entry Flow — จำชุด Item Code (H/L) ที่ใช้ซ้ำบ่อยต่อ Vendor ──────
   const [vendorFlows, setVendorFlows] = useState([]);
@@ -3669,7 +3726,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
     const ibLabel = hasIB && !isIBAll ? `สาขา ${String(form?.branchIBLabel ?? '').split('-').slice(1).join('-').trim()}` : '';
     const disGDesc = buildDisGDesc(itemData?.dis_g, form?.backDesc1, form?.backDesc2, form?.backDesc3);
-    const descVal = [ibPrefix, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
+    // MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_SYNC_FIX_V1
+    // ── Sync Fix: calcLine (ตัวที่ recalc จริงใน InvoiceDetailPopup) ไม่เคย ──
+    // ── รู้จัก customizePeriod/customizePercent เลย ตอนเพิ่ม Customize Invoice ──
+    // ── มีคนแก้แค่ calcInvoiceLine (ใช้ใน BucketItemPopup + Preview กล่อง) ──
+    // ── Desc จริงในตารางเลย "ไม่เด้ง" ตาม แม้ Preview ในกล่องจะถูกต้อง ────
+    const customizeParts = [];
+    if (form?.customizePeriod) customizeParts.push(`งวดที่ ${form.customizePeriod}`);
+    if (form?.customizePercent) customizeParts.push(`จำนวน ${form.customizePercent}%`);
+    const customizeText = customizeParts.join(' ');
+    const descVal = [ibPrefix, customizeText, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
     const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
     const hasITC   = notices.includes('ITC');
     const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
@@ -3708,6 +3774,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     form?.backDesc1, form?.backDesc2, form?.backDesc3,
     form?.branchNo, form?.branchDirectLabel, form?.branchIBLabel,
     form?.headerCpc, form?.branchCpc,
+    form?.customizePeriod, form?.customizePercent, // MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_SYNC_FIX_V1
     vendorInfo, itemcodeItems?.length,
   ]);
 
@@ -3971,7 +4038,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 <label style={fieldLabel}>{label}</label>
                 {key === 'invoiceNum' && vendorInfo?.['Digit'] ? (
                   <div style={{ ...inputStyle(w), display: 'flex', alignItems: 'center', padding: 0, overflow: 'hidden' }}>
-                    <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                    <input type={type} value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
                       style={{ flex: 1, minWidth: 0, height: '100%', border: 'none', outline: 'none', background: 'transparent', padding: '0 8px', fontSize: '12px', color: 'inherit', boxSizing: 'border-box' }} />
                     <div title="Digit (จาก Vendor Master)"
                       style={{ flexShrink: 0, height: '100%', display: 'flex', alignItems: 'center', padding: '0 8px', background: '#f0f3f8', borderLeft: '0.5px solid #e0e0e0', fontSize: '11px', fontWeight: '500', color: '#0C447C', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
@@ -3979,7 +4046,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     </div>
                   </div>
                 ) : (
-                  <input type={type} value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                  <input type={type} value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
                     ref={key === 'invDate' ? invDateRef : undefined}
                     onKeyDown={key === 'invDate' ? (e) => {
                       // ── Inv Date Cache: กด "*" ตอน Field ว่าง -> เติมค่า Inv Date ล่าสุดที่เคยกรอกใน Batch นี้ ──
@@ -3996,6 +4063,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <input
                 type="text"
                 value={form?.invTax || ''}
+                title={form?.invTax || ''}
                 onChange={e => setField('invTax', e.target.value.toUpperCase())}
                 onClick={() => { setTaxHdrOpen(true); setTaxHdrActiveIdx(TAX_TYPE_OPTS.indexOf(form?.invTax || '')); }}
                 onKeyDown={e => {
@@ -4049,7 +4117,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             {[['Back Description 1','backDesc1'],['Back Description 2','backDesc2'],['Back Description 3','backDesc3']].map(([label, key]) => (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 120px', minWidth: '120px' }}>
                 <label style={fieldLabel}>{label}</label>
-                <input type="text" value={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                <input type="text" value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
                   onBlur={key === 'backDesc1' ? (e) => handleBackDesc1Blur(e.target.value) : undefined}
                   onKeyDown={key === 'backDesc3' ? (e) => {
                     if (e.key === 'Tab') {
@@ -4099,7 +4167,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             idx === 0 ? (
                               <div style={{ width: '100%', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', border: '0.5px solid #e8e8e8', borderRadius: '5px', background: '#f5f5f5', color: '#888', boxSizing: 'border-box' }}>{line.hl}</div>
                             ) : (
-                              <input type="text" value={line.hl} onChange={e => setLineField(idx, 'hl', e.target.value.slice(0,1).toUpperCase())} maxLength={1}
+                              <input type="text" value={line.hl} title={line.hl} onChange={e => setLineField(idx, 'hl', e.target.value.slice(0,1).toUpperCase())} maxLength={1}
                                 style={{ width: '100%', height: '28px', padding: '0 4px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'center' }} />
                             )
                           ) : key === 'itemCode' ? (
@@ -4107,6 +4175,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               <input type="text" maxLength={8}
                                 ref={el => { lineItemCodeRefs.current[idx] = el; if (idx === 0) itemCodeRef.current = el; }}
                                 value={line[key]}
+                                title={line[key]}
                                 onFocus={() => { setActiveLineIdx(idx); if (idx === 0) applyFlowToFirstLine(); }}
                                 onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
                                 onBlur={e => {
@@ -4141,6 +4210,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               {/* MARKER_APCONTROLLER_TAX_DROPDOWN_FIX_V1 */}
                               <input
                                 type="text" value={line[key]}
+                                title={line[key]}
                                 onChange={e => { const v = e.target.value.toUpperCase(); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
                                 onClick={() => { setTaxDropdownIdx(idx); setTaxLineActiveIdx(TAX_TYPE_OPTS.indexOf(line[key])); }}
                                 onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
@@ -4202,6 +4272,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               </button>
                               <input
                                 type="text" inputMode="decimal" value={line[key]}
+                                title={line[key]}
                                 ref={el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }}
                                 onChange={e => { handleMoneyChange(idx, key, e.target.value); }}
                                 onFocus={() => handleMoneyFocus(idx, key, line[key])}
@@ -4219,12 +4290,15 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 style={{ width: '100%', height: '28px', padding: '0 6px 0 26px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', textAlign: 'right' }} />
                             </div>
                           ) : (
+                          <div style={{ position: 'relative' }}>
                           <input
                               type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
+                              title={key === 'desc' ? (line[key] ? line[key] + ' (Double-click เพื่อแก้ไขแบบเต็ม)' : '' ) : line[key]}
                               ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }) : undefined}
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
+                              onDoubleClick={key === 'desc' ? () => { setExpandEditIdx(idx); setExpandEditVal(line[key] || ''); } : undefined}
                               onKeyDown={['total','amount','desc'].includes(key) ? (e) => {
                                 if (e.key === 'Enter') {
                                   const l = lines[idx];
@@ -4232,6 +4306,34 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 }
                               } : undefined}
                               style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
+                          {/* MARKER_APCONTROLLER_DESC_EXPAND_EDIT_V1 */}
+                          {key === 'desc' && expandEditIdx === idx && (
+                            <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, width: '100%', minWidth: '280px', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 4px 14px rgba(26,58,92,0.15)', padding: '8px', zIndex: 20, boxSizing: 'border-box' }}>
+                              <textarea
+                                autoFocus
+                                value={expandEditVal}
+                                onChange={e => setExpandEditVal(e.target.value)}
+                                onFocus={e => e.target.select()}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
+                                    setExpandEditIdx(null);
+                                  } else if (e.key === 'Escape') {
+                                    expandEditCancelRef.current = true;
+                                    setExpandEditIdx(null);
+                                  }
+                                }}
+                                onBlur={() => {
+                                  if (expandEditCancelRef.current) { expandEditCancelRef.current = false; return; }
+                                  idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
+                                  setExpandEditIdx(null);
+                                }}
+                                style={{ width: '100%', minHeight: '60px', fontSize: '12px', padding: '6px 8px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', color: '#1a3a5c', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
+                              <div style={{ fontSize: '10px', color: '#999', marginTop: '5px' }}>Enter เพื่อบันทึก · Esc เพื่อยกเลิก</div>
+                            </div>
+                          )}
+                          </div>
                           )}
                         </td>
                       ))}
@@ -4296,6 +4398,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Real Tax Invoice No.</span>
                               <input type="text" value={line.realInvoiceNo || ''}
+                                title={line.realInvoiceNo || ''}
                                 ref={el => lineRealInvoiceRefs.current[idx] = el}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
@@ -4306,6 +4409,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               {/* ── Hybrid: พิมพ์ Format ไหนก็ได้ + กดไอคอน Calendar เลือกได้ด้วย ──── */}
                               <div style={{ position: 'relative' }}>
                               <input type="text" ref={el => lineTaxDateTextRefs.current[idx] = el}
+                                title={formatDateDisplayMDY(line.realVendorTaxDate)}
                                 defaultValue={formatDateDisplayMDY(line.realVendorTaxDate)}
                                 placeholder="MM/DD/YYYY"
                                 onBlur={e => {
@@ -4370,25 +4474,25 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Company Name</span>
-                              <input type="text" value={line.realVendorName || ''}
+                              <input type="text" value={line.realVendorName || ''} title={line.realVendorName || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorName', v) : setLineField(idx, 'realVendorName', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Tax ID</span>
-                              <input type="text" value={line.realVendorTaxid || ''}
+                              <input type="text" value={line.realVendorTaxid || ''} title={line.realVendorTaxid || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorTaxid', v) : setLineField(idx, 'realVendorTaxid', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'monospace' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Branch</span>
-                              <input type="text" value={line.realVendorBranch || ''}
+                              <input type="text" value={line.realVendorBranch || ''} title={line.realVendorBranch || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorBranch', v) : setLineField(idx, 'realVendorBranch', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', textAlign: 'center' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>GRN</span>
-                              <input type="text" value={line.realGrn || ''}
+                              <input type="text" value={line.realGrn || ''} title={line.realGrn || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realGrn', v) : setLineField(idx, 'realGrn', v); }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: 'monospace' }} />
                             </div>
@@ -7510,7 +7614,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     'Branch Direct': [...new Set(branchItems.map(b => b['Branch Direct']).filter(Boolean))],
     'bu':            [...new Set(branchItems.map(b => b['bu']).filter(Boolean))],
     'Group-P':       [...new Set(branchItems.map(b => b['Group-P']).filter(Boolean))],
-    'status':        ['Active', 'Closed', 'Relocate'],
+    'status':        ['Active', 'Closed', 'Relocate', 'Temporary'], // MARKER_BRANCH_STATUS_ADD_TEMPORARY_V1
   };
 
   const getMatchedRule = (vendor) => {
@@ -7649,11 +7753,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     return '';
   })();
 
+  // MARKER_BRANCH_LIST_REALTIME_WS_V1
   const handleSaveBranch = async ({ form: branchForm, isEdit, editTarget }) => {
     const meta = { updated_by: userName, updated_at: new Date().toISOString() };
     if (isEdit) { const { error } = await db.from('branch_list').update({ ...branchForm, ...meta }).eq('id', editTarget.id); if (error) throw error; }
     else { const { error } = await db.from('branch_list').insert([{ ...branchForm, ...meta }]); if (error) throw error; }
     await fetchCollection('BranchList', true);
+    // ── แจ้ง Client อื่นที่เปิดหน้าค้างอยู่ ให้ Refetch BranchList ด้วย (Real-time) ──
+    try { broadcastWs('branch_list_updated', { bu: branchForm['bu'] || '' }); } catch (e) { console.error('[broadcast branch_list_updated]', e); }
   };
 
   const matchedRule = getMatchedRule(vendorInfo);
@@ -8331,11 +8438,15 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     setInvoices(prev => {
       // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
       // เปรียบ invoice_no + branch_no + amount ของ item ใหม่กับที่มีอยู่แล้ว
+      // MARKER_APCONTROLLER_DEDUP_AMOUNT_NORMALIZE_FIX_V1
+      // ── Fix: ต้อง Normalize Amount ก่อนเทียบ ไม่งั้น String ที่หน้าตาไม่ตรงกัน ──
+      // ── (เช่น "210" vs "210.00") จะทำให้ Key ไม่ตรงกัน แม้ค่าจริงเท่ากัน ทำให้ Dedup Guard ไม่เคย Block อะไรไล่ ────
+      const normAmt = (v) => String(parseFloat(String(v ?? '').replace(/,/g, '')) || 0);
       const existingKeys = new Set(
-        prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${inv.amount}`)
+        prev.map(inv => `${inv.invoice_no}|${inv.branch_no}|${normAmt(inv.amount)}`)
       );
       const deduped = finalItems.filter(
-        item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${item.amount}`)
+        item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${normAmt(item.amount)}`)
       );
       if (!deduped.length) return prev;
       const next = [...prev, ...deduped];
@@ -11117,6 +11228,15 @@ export function BatchControlPage({ currentUser, userName = '' }) {
 // MARKER_INITIAL_HISTORY_TAB_V1
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, initialHistoryTab }) {
   const { fetchCollection, getCached } = useDataCache();
+
+  // ── Real-time: คนอื่น Save Branch (New/Edit) ที่ไหนก็ตาม -> Refetch BranchList ──
+  // ── Cache ให้ทุก Client ที่เปิดหน้าค้างอยู่เห็นข้อมูลล่าสุดโดยไม่ต้อง Refresh เอง ──
+  useEffect(() => {
+    const unsubscribe = subscribeWs(['branch_list_updated'], () => {
+      fetchCollection('BranchList', true);
+    });
+    return unsubscribe;
+  }, [fetchCollection]);
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
