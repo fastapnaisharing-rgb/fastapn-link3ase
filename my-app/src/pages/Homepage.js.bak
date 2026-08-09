@@ -163,22 +163,7 @@ function Homepage({ onOpenInbox } = {}) {
       try {
         const { data } = await db.from('batch_notifications').select('*').eq('recipient_username', me).order('created_at', { ascending: false }).limit(50);
         const list = data || [];
-
-        // MARKER_HOMEPAGE_SUPPORT_NOTIFICATIONS_V1
-        // ── ผสม Notification ของ Support & Feedback (ตาราง notifications) เข้าการ์ดเดียวกัน ──
-        let supportList = [];
-        try {
-          const { data: mineData } = await db.from('notifications').select('*').eq('category', 'support-feedback').eq('recipient_username', me).order('created_at', { ascending: false }).limit(50);
-          supportList = mineData || [];
-          if (isOwner) {
-            const { data: ownerData } = await db.from('notifications').select('*').eq('category', 'support-feedback').eq('target_role', 'Owner').order('created_at', { ascending: false }).limit(50);
-            supportList = [...supportList, ...(ownerData || [])];
-          }
-        } catch (supportErr) { console.error('[load support notifications]', supportErr); }
-
-        const combined = [...list, ...supportList].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        setNotifications(combined);
-
+        setNotifications(list);
         // ── Join batch_list เอา bu/status จริงมาโชว์ Badge (ไม่ใช้ Status ที่ Freeze ไว้ตอน Insert) ──
         const batchIds = [...new Set(list.map(n => n.batch_id).filter(Boolean))];
         if (batchIds.length > 0) {
@@ -195,7 +180,7 @@ function Homepage({ onOpenInbox } = {}) {
     loadNotif();
     const iv = setInterval(loadNotif, 30000);
     return () => clearInterval(iv);
-  }, [me, isOwner]);
+  }, [me]);
 
   useEffect(() => {
     const loadTeam = async () => {
@@ -310,20 +295,6 @@ function Homepage({ onOpenInbox } = {}) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {notifications.slice(0, 8).map(n => {
-                if (n.category === 'support-feedback') {
-                  const isResolvedNotif = n.action_type === 'resolved';
-                  return (
-                    <div key={n.id}
-                      style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #eee', borderRadius: '10px', cursor: 'default', background: '#fafbfc' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: isResolvedNotif ? '#EAF3DE' : '#FAEEDA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{isResolvedNotif ? '✅' : '💬'}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{n.title || '-'}</span>
-                        <p style={{ fontSize: '11px', color: '#777', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.message || '-'}</p>
-                      </div>
-                      <span style={{ fontSize: '9px', color: '#bbb', flexShrink: 0 }}>{formatAgo(n.created_at)}</span>
-                    </div>
-                  );
-                }
                 const bMeta = batchMeta[n.batch_id];
                 const statusKey = bMeta?.status || 'reviewing';
                 const st = BATCH_STATUS_STYLE[statusKey] || BATCH_STATUS_STYLE.reviewing;

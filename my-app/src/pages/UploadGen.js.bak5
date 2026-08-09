@@ -59,13 +59,6 @@ function formatDate(ts) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getFullYear()).slice(2)}`;
 }
 
-// MARKER_SUPPORT_LIST_INBOX_STYLE_V1
-function formatDateTime(ts) {
-  if (!ts) return '—';
-  const d = new Date(ts);
-  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getFullYear()).slice(2)} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-}
-
 // ─── Add File Modal ───────────────────────────────────────────────────────────
 function AttachDropZone({ attachments, setAttachments }) {
   const [dragOver, setDragOver] = React.useState(false);
@@ -2380,13 +2373,6 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
   const API_BASE = 'http://10.101.87.126:4000/api';
   const [downloading, setDownloading] = useState(false);
 
-  // MARKER_APMANUAL_VIEW_MODAL_UX_V1
-  useEffect(() => {
-    const fn = e => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', fn);
-    return () => window.removeEventListener('keydown', fn);
-  }, [onClose]);
-
   const handleDownloadExcel = async () => {
     if (downloading) return;
     setDownloading(true);
@@ -3579,18 +3565,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const [recycleBinThreads, setRecycleBinThreads] = useState([]);
   const [recycleBinLoading, setRecycleBinLoading] = useState(false);
   const [deletingThreadId, setDeletingThreadId] = useState(null);
-  // MARKER_SUPPORT_CONFIRM_MODAL_V1
-  const [confirmDialog, setConfirmDialog] = useState(null); // { message, onConfirm }
-  // MARKER_SUPPORT_CONFIRM_MODAL_KEYBOARD_V1
-  useEffect(() => {
-    if (!confirmDialog) return;
-    const fn = e => {
-      if (e.key === 'Enter') confirmDialog.onConfirm();
-      else if (e.key === 'Escape') setConfirmDialog(null);
-    };
-    window.addEventListener('keydown', fn);
-    return () => window.removeEventListener('keydown', fn);
-  }, [confirmDialog]);
 
   // MARKER_SUPPORT_EXPORT_WORD_FRONTEND_V1
   const [showExportReport, setShowExportReport] = useState(false);
@@ -3604,17 +3578,8 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const [threadDetailLoading, setThreadDetailLoading] = useState(false);
   const [threadComments, setThreadComments] = useState([]);
   const [threadImageUrls, setThreadImageUrls] = useState({});
-  // MARKER_SUPPORT_COMMENT_IMAGES_V1
-  const [threadImages, setThreadImages] = useState([]); // Raw List พร้อม sub_ref_id ไว้แยกรูปตาม Comment
   // MARKER_SUPPORT_IMAGE_LIGHTBOX_V1
   const [lightboxImageUrl, setLightboxImageUrl] = useState(null);
-  // MARKER_SUPPORT_THREAD_FULLPAGE_V1
-  useEffect(() => {
-    if (!lightboxImageUrl) return;
-    const fn = e => { if (e.key === 'Escape') setLightboxImageUrl(null); };
-    window.addEventListener('keydown', fn);
-    return () => window.removeEventListener('keydown', fn);
-  }, [lightboxImageUrl]);
   const [newCommentText, setNewCommentText] = useState('');
   const [newCommentAttachments, setNewCommentAttachments] = useState([]);
   const [postingComment, setPostingComment] = useState(false);
@@ -3684,29 +3649,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   useEffect(() => { if (activeTab === 'support') fetchSupportThreads(); }, [activeTab, fetchSupportThreads]);
 
   // ── Support & Feedback: ตั้งกระทู้ใหม่ + อัปโหลดรูปแนบ (ถ้ามี) ──
-  // MARKER_SUPPORT_PASTE_IMAGE_V1
-  // ── Paste รูปจาก Clipboard (Ctrl+V) เข้าช่องแนบรูปโดยตรง ไม่ต้องกดปุ่มแนบ ──
-  const handleImagePaste = (e, attachments, setAttachments, maxImages = 5) => {
-    const items = e.clipboardData && e.clipboardData.items;
-    if (!items) return;
-    const imageItems = Array.from(items).filter(item => item.type && item.type.startsWith('image/'));
-    if (imageItems.length === 0) return;
-    e.preventDefault();
-    if (attachments.length + imageItems.length > maxImages) {
-      alert(`แนบได้สูงสุด ${maxImages} รูปครับ`);
-      return;
-    }
-    imageItems.slice(0, maxImages - attachments.length).forEach(item => {
-      const file = item.getAsFile();
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = ev => {
-        setAttachments(prev => [...prev, { name: file.name || 'pasted-image.png', data: ev.target.result, mime: file.type }]);
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleCreateThread = async () => {
     if (!newThreadTitle.trim() || !newThreadBody.trim() || !newThreadMenuSource) {
       alert('กรุณากรอกหัวข้อ รายละเอียด และเลือกเมนูที่เกี่ยวข้อง'); return;
@@ -3755,38 +3697,22 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     return true;
   });
 
-  // ── Unread: เฉพาะ Tab In process — เทียบ last_activity_at กับ read_at ของฝั่งตัวเอง ──
-  const isThreadUnread = (t) => {
-    if (t.status !== 'in_process' || !t.last_activity_at) return false;
-    const readAt = isOwner ? t.owner_last_read_at : t.creator_last_read_at;
-    return !readAt || new Date(t.last_activity_at) > new Date(readAt);
-  };
-
-  const sortedFilteredSupportThreads = supportStatusTab === 'in_process'
-    ? [...filteredSupportThreads].sort((a, b) => (isThreadUnread(b) ? 1 : 0) - (isThreadUnread(a) ? 1 : 0))
-    : filteredSupportThreads;
-
   // ── Support & Feedback: ลบกระทู้ (Soft Delete เข้า Recycle Bin) ──
-  const handleDeleteThread = (threadId) => {
-    setConfirmDialog({
-      message: 'ลบกระทู้นี้เข้า Recycle Bin? (กู้คืนได้ภายใน 3 วัน)',
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        setDeletingThreadId(threadId);
-        try {
-          const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
-          const token = sessionStorage.getItem('fastapn_token');
-          const res = await fetch(`${apiBase}/api/support/threads/${threadId}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          const data = await res.json();
-          if (!data.ok) { alert('ลบไม่สำเร็จ: ' + (data.error || '')); setDeletingThreadId(null); return; }
-          fetchSupportThreads();
-        } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
-        setDeletingThreadId(null);
-      },
-    });
+  const handleDeleteThread = async (threadId) => {
+    if (!window.confirm('ลบกระทู้นี้เข้า Recycle Bin? (กู้คืนได้ภายใน 3 วัน)')) return;
+    setDeletingThreadId(threadId);
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${threadId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!data.ok) { alert('ลบไม่สำเร็จ: ' + (data.error || '')); setDeletingThreadId(null); return; }
+      fetchSupportThreads();
+    } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
+    setDeletingThreadId(null);
   };
 
   const canDeleteThread = (t) => {
@@ -3869,7 +3795,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       } catch (err) { console.error('load thread image error:', err); }
     }
     setThreadImageUrls(urls);
-    setThreadImages(images);
   };
 
   // ── Thread Detail: เปิดกระทู้ + (ถ้าเป็น Owner) เรียก /view ทันที + จับ Timer 30 วิ ──
@@ -3878,7 +3803,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     setSelectedThread({ id: threadId });
     setThreadComments([]);
     setThreadImageUrls({});
-    setThreadImages([]);
     setNewCommentText('');
     setNewCommentAttachments([]);
     try {
@@ -3920,7 +3844,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     setSelectedThread(null);
     setThreadComments([]);
     setThreadImageUrls({});
-    setThreadImages([]);
     fetchSupportThreads();
   };
 
@@ -3932,7 +3855,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const token = sessionStorage.getItem('fastapn_token');
 
-      let newCommentId = null;
       if (newCommentText.trim()) {
         const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/comments`, {
           method: 'POST',
@@ -3941,16 +3863,14 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         });
         const data = await res.json();
         if (!data.ok) { alert('ส่งข้อความไม่สำเร็จ: ' + (data.error || '')); setPostingComment(false); return; }
-        newCommentId = data.comment && data.comment.id;
       }
 
-      // ── รูปแนบผูกกับ Comment นี้โดยตรง (subRefId) — ถ้าไม่มีข้อความ (มีแต่รูป) จะผูกกับกระทู้รวมแทน ──
       for (const att of newCommentAttachments) {
         const base64 = att.data.split(',')[1];
         await fetch(`${apiBase}/api/file-storage/upload-image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ module: 'support-feedback', refId: selectedThread.id, subRefId: newCommentId, fileBase64: base64 }),
+          body: JSON.stringify({ module: 'support-feedback', refId: selectedThread.id, fileBase64: base64 }),
         });
       }
 
@@ -3968,23 +3888,18 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   };
 
   // ── Thread Detail: Owner กด Finish -> Resolve ──
-  const handleFinishThread = () => {
-    setConfirmDialog({
-      message: 'ยืนยันปิดกระทู้นี้เป็น Resolve?',
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        setFinishingThread(true);
-        try {
-          const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
-          const token = sessionStorage.getItem('fastapn_token');
-          const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/finish`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-          const data = await res.json();
-          if (!data.ok) { alert('ปิดกระทู้ไม่สำเร็จ: ' + (data.error || '')); setFinishingThread(false); return; }
-          setSelectedThread(prev => (prev ? { ...prev, status: 'resolved' } : prev));
-        } catch (err) { alert('ปิดกระทู้ไม่สำเร็จ: ' + err.message); }
-        setFinishingThread(false);
-      },
-    });
+  const handleFinishThread = async () => {
+    if (!window.confirm('ยืนยันปิดกระทู้นี้เป็น Resolve?')) return;
+    setFinishingThread(true);
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/finish`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (!data.ok) { alert('ปิดกระทู้ไม่สำเร็จ: ' + (data.error || '')); setFinishingThread(false); return; }
+      setSelectedThread(prev => (prev ? { ...prev, status: 'resolved' } : prev));
+    } catch (err) { alert('ปิดกระทู้ไม่สำเร็จ: ' + err.message); }
+    setFinishingThread(false);
   };
 
   // ── Track active session + Auto start/stop OCR service ───────────────
@@ -4065,28 +3980,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     setRequesting(prev => ({ ...prev, [folder.key]: false }));
   };
 
-  // MARKER_DOCUMENTCENTER_COMING_SOON_V1
-  // ── เฉพาะ AP Manual (folder.key==='ap') ที่มี Feature จริง — Module อื่นยังไม่เคยถูกสร้าง ──
-  // ── ไม่เกี่ยวกับ Permission (canAccess) เลย — แค่ตัดสินว่า "เข้าไปแล้วเจออะไร" ──
-  if (activeFolder && activeFolder.key !== 'ap') {
-    return (
-      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
-        <div style={{ display:'flex',alignItems:'center',gap:'12px',padding:'16px 20px',borderBottom:'0.5px solid #eee' }}>
-          <button onClick={()=>{ setActiveFolder(null); fetchData(); }} style={{ width:'32px',height:'32px',borderRadius:'50%',background:'#f5f5f5',border:'none',cursor:'pointer',fontSize:'16px',color:'#555',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center' }}>←</button>
-          <div>
-            <p style={{ fontSize:'15px',fontWeight:'500',margin:0,color:'#1a3a5c' }}>{activeFolder.label}</p>
-            <p style={{ fontSize:'12px',color:'#999',margin:'2px 0 0' }}>Document Center</p>
-          </div>
-        </div>
-        <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'64px 20px',gap:'12px',flex:1 }}>
-          <div style={{ fontSize:'32px' }}>🛠️</div>
-          <p style={{ fontSize:'15px',fontWeight:'500',margin:0,color:'#1a3a5c' }}>Module นี้ยังไม่เปิดใช้งาน</p>
-          <p style={{ fontSize:'13px',color:'#666',margin:0,textAlign:'center',maxWidth:'320px' }}>{activeFolder.label} ยังอยู่ระหว่างออกแบบ จะเปิดให้ใช้งานในเฟสถัดไป</p>
-        </div>
-      </div>
-    );
-  }
-
   if (activeFolder) {
     return (
       <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
@@ -4121,7 +4014,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         <div style={{ position:'fixed', top:'20px', right:'20px', zIndex:9999, padding:'10px 16px', borderRadius:'8px', fontSize:'13px', fontWeight:'500', background: toast.type==='error'?'#FCEBEB':toast.type==='info'?'#e8f0fb':'#EAF3DE', color: toast.type==='error'?'#791F1F':toast.type==='info'?'#1a3a5c':'#27500A', border:`0.5px solid ${toast.type==='error'?'#f7c1c1':toast.type==='info'?'#b5d4f4':'#97C459'}`, boxShadow:'0 4px 12px rgba(0,0,0,0.1)' }}>{toast.msg}</div>
       )}
 
-      {detailFolder && !detailViewFile && (
+      {detailFolder && (
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.35)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}}>
           <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'600px',height:'520px',display:'flex',flexDirection:'column',overflow:'hidden'}}>
             <div style={{padding:'10px 12px',borderBottom:'0.5px solid #f0f0f0',display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
@@ -4300,124 +4193,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       </div>
       )}
 
-      {activeTab==='support' && selectedThread && (
-      // MARKER_SUPPORT_THREAD_REDESIGN_V1
-      <div style={{ display:'flex', flexDirection:'column', minHeight:'calc(100vh - 280px)', background:'white', border:'0.5px solid #e8e8e8', borderRadius:'12px', overflow:'hidden' }}>
-        {threadDetailLoading ? (
-          <div style={{ textAlign:'center', padding:'40px', color:'#999', fontSize:'13px' }}>กำลังโหลด...</div>
-        ) : (
-          <>
-            <div style={{ display:'flex', alignItems:'center', gap:'12px', padding:'16px 20px', borderBottom:'0.5px solid #eee' }}>
-              <button onClick={closeThreadDetail} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#f5f5f5', border:'none', cursor:'pointer', fontSize:'16px', color:'#555', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:'16px', fontWeight:'500', color:'#1a3a5c', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedThread.title}</div>
-                <div style={{ fontSize:'12px', color:'#999', marginTop:'3px' }}>{selectedThread.menu_source} · {selectedThread.created_by}</div>
-              </div>
-              <span style={{
-                fontSize:'12px', padding:'5px 14px', borderRadius:'20px', flexShrink:0, fontWeight:'500',
-                background: selectedThread.status==='new' ? '#FCEBEB' : selectedThread.status==='in_process' ? '#FAEEDA' : '#EAF3DE',
-                color: selectedThread.status==='new' ? '#791F1F' : selectedThread.status==='in_process' ? '#633806' : '#27500A',
-              }}>
-                {selectedThread.status==='new' ? 'ใหม่' : selectedThread.status==='in_process' ? 'กำลังดำเนินการ' : 'แก้ไขแล้ว'}
-              </span>
-              {isOwner && selectedThread.status !== 'resolved' && (
-                <button onClick={handleFinishThread} disabled={finishingThread}
-                  style={{ fontSize:'13px', padding:'9px 18px', borderRadius:'20px', border:'none', background:'#27500A', color:'white', cursor:'pointer', opacity:finishingThread?0.6:1, flexShrink:0, fontWeight:'500' }}>
-                  {finishingThread ? '...' : 'Finish'}
-                </button>
-              )}
-            </div>
-
-            <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column', gap:'20px', padding:'24px 20px', background:'#fafbfc' }}>
-              {(() => {
-                const postImages = threadImages.filter(img => !img.sub_ref_id);
-                return (
-                  <div style={{ display:'flex', gap:'10px', maxWidth:'75%' }}>
-                    <div style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#E6F1FB', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'12px', fontWeight:'500', color:'#0C447C', flexShrink:0 }}>
-                      {(selectedThread.created_by||'?').slice(0,2).toUpperCase()}
-                    </div>
-                    <div style={{ minWidth:0 }}>
-                      <div style={{ fontSize:'12px', color:'#999', marginBottom:'5px' }}>{selectedThread.created_by} · {formatDate(selectedThread.created_at)}</div>
-                      <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'16px', borderTopLeftRadius:'4px', padding:'12px 14px' }}>
-                        <div style={{ fontSize:'13px', color:'#333', lineHeight:'1.6', whiteSpace:'pre-wrap', marginBottom: postImages.length>0 ? '10px' : '0' }}>{selectedThread.body}</div>
-                        {postImages.length > 0 && (
-                          <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
-                            {postImages.map(img => (
-                              <img key={img.id} src={threadImageUrls[img.id]} alt="แนบ" onClick={()=>setLightboxImageUrl(threadImageUrls[img.id])}
-                                style={{ width:'110px', height:'78px', borderRadius:'10px', objectFit:'cover', border:'0.5px solid #ddd', cursor:'pointer' }}/>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {threadComments.map(c => {
-                const isFromCreator = c.username === selectedThread.created_by;
-                const commentImages = threadImages.filter(img => img.sub_ref_id === c.id);
-                return (
-                  <div key={c.id} style={{ display:'flex', gap:'10px', maxWidth:'75%', marginLeft: isFromCreator?'0':'auto', flexDirection: isFromCreator?'row':'row-reverse' }}>
-                    <div style={{ width:'32px', height:'32px', borderRadius:'50%', background: isFromCreator?'#E6F1FB':'#27500A', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'12px', fontWeight:'500', color: isFromCreator?'#0C447C':'white', flexShrink:0 }}>
-                      {(c.username||'?').slice(0,2).toUpperCase()}
-                    </div>
-                    <div style={{ minWidth:0 }}>
-                      <div style={{ fontSize:'12px', color:'#999', marginBottom:'5px', textAlign: isFromCreator?'left':'right' }}>{c.username}{!isFromCreator?' (Owner)':''} · {formatDate(c.created_at)}</div>
-                      <div style={{
-                        background: isFromCreator?'white':'#27500A', border: isFromCreator?'0.5px solid #e8e8e8':'none', borderRadius:'16px', padding:'12px 14px',
-                        borderTopLeftRadius: isFromCreator?'4px':'16px', borderTopRightRadius: isFromCreator?'16px':'4px',
-                      }}>
-                        <div style={{ fontSize:'13px', color: isFromCreator?'#333':'white', lineHeight:'1.6', whiteSpace:'pre-wrap', marginBottom: commentImages.length>0 ? '8px' : '0' }}>{c.message}</div>
-                        {commentImages.length > 0 && (
-                          <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
-                            {commentImages.map(img => (
-                              <img key={img.id} src={threadImageUrls[img.id]} alt="แนบ" onClick={()=>setLightboxImageUrl(threadImageUrls[img.id])}
-                                style={{ width:'100px', height:'70px', borderRadius:'10px', objectFit:'cover', border: isFromCreator?'0.5px solid #ddd':'0.5px solid rgba(255,255,255,0.4)', cursor:'pointer' }}/>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {threadComments.length === 0 && (
-                <div style={{ fontSize:'12px', color:'#bbb', textAlign:'center', padding:'10px' }}>ยังไม่มีการตอบกลับ</div>
-              )}
-            </div>
-
-            {selectedThread.status !== 'resolved' && (
-              <div style={{ borderTop:'0.5px solid #eee', padding:'14px 20px', flexShrink:0, background:'white' }}>
-                <div style={{ display:'flex', alignItems:'flex-end', gap:'8px' }}>
-                  {/* MARKER_SUPPORT_REMOVE_ATTACH_BUTTON_V1 */}
-                  {/* ── ตัดปุ่ม "แนบรูป" ออก เพราะ Paste (Ctrl+V) ครอบคลุมแล้ว — เหลือแค่ Thumbnail + ปุ่มลบเผื่อ Paste ผิด ── */}
-                  {newCommentAttachments.length > 0 && (
-                    <div style={{ display:'flex', gap:'6px', flexShrink:0 }}>
-                      {newCommentAttachments.map((a,i)=>(
-                        <div key={i} style={{ position:'relative', flexShrink:0 }}>
-                          <img src={a.data} alt={a.name} style={{ width:'36px',height:'36px',borderRadius:'6px',objectFit:'cover',border:'0.5px solid #ddd' }}/>
-                          <button onClick={()=>setNewCommentAttachments(prev=>prev.filter((_,j)=>j!==i))}
-                            style={{ position:'absolute',top:'-5px',right:'-5px',width:'15px',height:'15px',borderRadius:'50%',border:'none',background:'#c0392b',color:'white',cursor:'pointer',fontSize:'9px',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <textarea value={newCommentText} onChange={e=>setNewCommentText(e.target.value)} onPaste={e=>handleImagePaste(e, newCommentAttachments, setNewCommentAttachments)} rows={1} placeholder="พิมพ์ข้อความตอบกลับ... (Paste รูปได้เลย)"
-                    style={{ flex:1, padding:'10px 16px', borderRadius:'20px', border:'0.5px solid #ddd', fontSize:'13px', boxSizing:'border-box', resize:'none' }}/>
-                  <button onClick={handlePostComment} disabled={postingComment}
-                    style={{ fontSize:'13px', padding:'10px 20px', borderRadius:'20px', border:'none', background:'#1a3a5c', color:'white', cursor:'pointer', opacity:postingComment?0.6:1, flexShrink:0, fontWeight:'500' }}>
-                    {postingComment ? '...' : 'ส่ง'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-      )}
-
-      {activeTab==='support' && !selectedThread && (
+      {activeTab==='support' && (
       <div style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'10px' }}>
           <div style={{ display:'flex', gap:'6px' }}>
@@ -4462,49 +4238,26 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         ) : filteredSupportThreads.length === 0 ? (
           <div style={{ textAlign:'center', padding:'40px', color:'#999', fontSize:'13px' }}>ยังไม่มีกระทู้ในสถานะนี้</div>
         ) : (
-// MARKER_SUPPORT_LIST_INBOX_STYLE_V1
           <div style={{ display:'flex', flexDirection:'column', border:'0.5px solid #e8e8e8', borderRadius:'10px', overflow:'hidden' }}>
-            <div style={{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 14px', background:'#f7f9fb', borderBottom:'0.5px solid #e8e8e8' }}>
-              <div style={{ width:'26px', flexShrink:0 }}></div>
-              <div style={{ flex:1, minWidth:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>หัวข้อ / ข้อความล่าสุด</div>
-              <div style={{ width:'110px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>เมนู</div>
-              <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>อัปเดตล่าสุด</div>
-              <div style={{ width:'34px', flexShrink:0 }}></div>
-            </div>
-            <div style={{ maxHeight:'420px', overflowY:'auto' }}>
-              {sortedFilteredSupportThreads.map((t, i) => {
-                const unread = isThreadUnread(t);
-                const previewText = t.last_message ? `${t.last_message_by}: ${t.last_message}` : t.body;
-                return (
-                  <div key={t.id} onClick={()=>openThreadDetail(t.id)}
-                    style={{ display:'flex', alignItems:'center', gap:'10px', padding:'10px 14px', borderBottom: i<sortedFilteredSupportThreads.length-1?'0.5px solid #f0f0f0':'none', cursor:'pointer', background: unread?'#E6F1FB':'white' }}>
-                    <div style={{ width:'26px', height:'26px', borderRadius:'50%', background:'#E6F1FB', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10px', fontWeight:'500', color:'#0C447C', flexShrink:0 }}>
-                      {(t.created_by||'?').slice(0,2).toUpperCase()}
-                    </div>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
-                        <span title={t.menu_source} style={{ flexShrink:0, fontSize:'11px' }}>{MENU_SOURCE_ICONS[t.menu_source] || '🧩'}</span>
-                        <span style={{ fontSize:'12px', fontWeight: unread?'600':'500', color:'#1a3a5c', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.title}</span>
-                        {unread && (
-                          <span style={{ fontSize:'9px', background:'#378ADD', color:'white', padding:'1px 6px', borderRadius:'8px', flexShrink:0 }}>New</span>
-                        )}
-                      </div>
-                      <p style={{ fontSize:'11px', color:'#888', margin:'2px 0 0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{previewText}</p>
-                    </div>
-                    <div style={{ width:'110px', flexShrink:0, fontSize:'11px', color:'#666', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.menu_source}</div>
-                    <div style={{ width:'100px', flexShrink:0, fontSize:'10px', color:'#999' }}>{formatDateTime(t.last_activity_at || t.created_at)}</div>
-                    <div style={{ width:'34px', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'flex-end' }}>
-                      {canDeleteThread(t) && (
-                        <button onClick={e=>{ e.stopPropagation(); handleDeleteThread(t.id); }} disabled={deletingThreadId===t.id}
-                          style={{ fontSize:'11px', padding:'2px 6px', borderRadius:'6px', border:'0.5px solid #f0c0c0', background:'#FCEBEB', color:'#791F1F', cursor:'pointer', opacity:deletingThreadId===t.id?0.5:1 }}>
-                          {deletingThreadId===t.id ? '...' : '🗑️'}
-                        </button>
-                      )}
-                    </div>
+            {filteredSupportThreads.map((t, i) => (
+              <div key={t.id} onClick={()=>openThreadDetail(t.id)}
+                style={{ display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom: i<filteredSupportThreads.length-1?'0.5px solid #f0f0f0':'none', cursor:'pointer', background:'white' }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c', display:'flex', alignItems:'center', gap:'6px' }}>
+                    <span title={t.menu_source}>{MENU_SOURCE_ICONS[t.menu_source] || '🧩'}</span>
+                    {t.title}
                   </div>
-                );
-              })}
-            </div>
+                  <div style={{ fontSize:'11px', color:'#999', marginTop:'2px' }}>{t.created_by} · {t.menu_source} · {formatDate(t.created_at)}</div>
+                </div>
+                {canDeleteThread(t) && (
+                  <button onClick={e=>{ e.stopPropagation(); handleDeleteThread(t.id); }} disabled={deletingThreadId===t.id}
+                    style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'6px', border:'0.5px solid #f0c0c0', background:'#FCEBEB', color:'#791F1F', cursor:'pointer', flexShrink:0, opacity:deletingThreadId===t.id?0.5:1 }}>
+                    {deletingThreadId===t.id ? '...' : '🗑️ ลบ'}
+                  </button>
+                )}
+                <span style={{ fontSize:'16px', color:'#ccc' }}>›</span>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -4532,7 +4285,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 
             <div style={{ marginBottom:'12px' }}>
               <label style={{ fontSize:'12px', color:'#666', display:'block', marginBottom:'4px' }}>รายละเอียด</label>
-              <textarea value={newThreadBody} onChange={e=>setNewThreadBody(e.target.value)} onPaste={e=>handleImagePaste(e, newThreadAttachments, setNewThreadAttachments)} rows={4} placeholder="อธิบายปัญหาที่พบ... (Paste รูปได้เลย)"
+              <textarea value={newThreadBody} onChange={e=>setNewThreadBody(e.target.value)} rows={4} placeholder="อธิบายปัญหาที่พบ..."
                 style={{ width:'100%', padding:'8px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'13px', boxSizing:'border-box', resize:'vertical' }}/>
             </div>
 
@@ -4553,17 +4306,76 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         </div>
       )}
 
-      {confirmDialog && (
-        <div onClick={()=>setConfirmDialog(null)}
-          style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:10001, display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <div onClick={e=>e.stopPropagation()} style={{ background:'white', borderRadius:'12px', width:'360px', maxWidth:'90vw', padding:'20px' }}>
-            <p style={{ fontSize:'14px', color:'#333', margin:'0 0 20px', lineHeight:'1.6' }}>{confirmDialog.message}</p>
-            <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px' }}>
-              <button onClick={()=>setConfirmDialog(null)}
-                style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer' }}>ยกเลิก</button>
-              <button onClick={confirmDialog.onConfirm}
-                style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', cursor:'pointer' }}>ยืนยัน</button>
-            </div>
+      {selectedThread && (
+        <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div style={{ background:'white', borderRadius:'12px', width:'560px', maxWidth:'90vw', maxHeight:'85vh', overflowY:'auto', padding:'24px', display:'flex', flexDirection:'column' }}>
+            {threadDetailLoading ? (
+              <div style={{ textAlign:'center', padding:'40px', color:'#999', fontSize:'13px' }}>กำลังโหลด...</div>
+            ) : (
+              <>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'4px', gap:'10px' }}>
+                  <div style={{ fontSize:'16px', fontWeight:'600', color:'#1a3a5c' }}>{selectedThread.title}</div>
+                  <button onClick={closeThreadDetail} style={{ fontSize:'13px', padding:'4px 10px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer', flexShrink:0 }}>ปิด</button>
+                </div>
+
+                <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'14px', flexWrap:'wrap' }}>
+                  <span style={{
+                    fontSize:'11px', padding:'2px 10px', borderRadius:'12px',
+                    background: selectedThread.status==='new' ? '#FCEBEB' : selectedThread.status==='in_process' ? '#FAEEDA' : '#EAF3DE',
+                    color: selectedThread.status==='new' ? '#791F1F' : selectedThread.status==='in_process' ? '#633806' : '#27500A',
+                  }}>
+                    {selectedThread.status==='new' ? 'ใหม่' : selectedThread.status==='in_process' ? 'กำลังดำเนินการ' : 'แก้ไขแล้ว'}
+                  </span>
+                  <span style={{ fontSize:'11px', color:'#999' }}>{selectedThread.created_by} · {selectedThread.menu_source} · {formatDate(selectedThread.created_at)}</span>
+                </div>
+
+                <div style={{ fontSize:'13px', color:'#333', lineHeight:'1.6', marginBottom:'14px', whiteSpace:'pre-wrap' }}>{selectedThread.body}</div>
+
+                {Object.keys(threadImageUrls).length > 0 && (
+                  <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'18px' }}>
+                    {Object.entries(threadImageUrls).map(([imgId, url]) => (
+                      <img key={imgId} src={url} alt="แนบ" onClick={()=>setLightboxImageUrl(url)}
+                        style={{ width:'72px', height:'72px', borderRadius:'8px', objectFit:'cover', border:'0.5px solid #ddd', cursor:'pointer' }}/>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ borderTop:'0.5px solid #f0f0f0', paddingTop:'14px', display:'flex', flexDirection:'column', gap:'10px', marginBottom:'14px' }}>
+                  {threadComments.map(c => (
+                    <div key={c.id} style={{ background:'#f7f9fb', borderRadius:'10px', padding:'10px 12px' }}>
+                      <div style={{ fontSize:'11px', color:'#999', marginBottom:'4px' }}><b style={{ color:'#1a3a5c' }}>{c.username}</b> · {formatDate(c.created_at)}</div>
+                      <div style={{ fontSize:'13px', color:'#333', whiteSpace:'pre-wrap' }}>{c.message}</div>
+                    </div>
+                  ))}
+                  {threadComments.length === 0 && (
+                    <div style={{ fontSize:'12px', color:'#bbb', textAlign:'center', padding:'10px' }}>ยังไม่มีการตอบกลับ</div>
+                  )}
+                </div>
+
+                {selectedThread.status !== 'resolved' && (
+                  <div style={{ borderTop:'0.5px solid #f0f0f0', paddingTop:'14px' }}>
+                    <textarea value={newCommentText} onChange={e=>setNewCommentText(e.target.value)} rows={2} placeholder="พิมพ์ข้อความตอบกลับ..."
+                      style={{ width:'100%', padding:'8px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'13px', boxSizing:'border-box', resize:'vertical', marginBottom:'8px' }}/>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:'8px' }}>
+                      <SupportAttachDropZone attachments={newCommentAttachments} setAttachments={setNewCommentAttachments} maxImages={5}/>
+                      <button onClick={handlePostComment} disabled={postingComment}
+                        style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', cursor:'pointer', opacity:postingComment?0.6:1, flexShrink:0 }}>
+                        {postingComment ? 'กำลังส่ง...' : 'ส่ง'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {isOwner && selectedThread.status !== 'resolved' && (
+                  <div style={{ borderTop:'0.5px solid #f0f0f0', marginTop:'14px', paddingTop:'14px', textAlign:'right' }}>
+                    <button onClick={handleFinishThread} disabled={finishingThread}
+                      style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'none', background:'#27500A', color:'white', cursor:'pointer', opacity:finishingThread?0.6:1 }}>
+                      {finishingThread ? 'กำลังปิดกระทู้...' : '✓ Finish'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}

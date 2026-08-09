@@ -217,6 +217,9 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
         value={value || ''}
         onChange={e => onChange(e.target.value)}
         onFocus={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); }}
+        // MARKER_COMBOINPUT_ONBLUR_CLOSE_V1 -- ปิด Dropdown ตอน Focus หลุด (เช่น Tab ออก)
+        // ── หน่วง 150ms กัน Race Condition กับคลิกเลือก Option ด้วยเมาส์ ──────
+        onBlur={() => { setTimeout(() => setOpen(false), 150); }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         style={{ height: '28px', padding: '0 20px 0 8px', fontSize: '12px', outline: 'none', border: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' }}
@@ -237,10 +240,26 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
   );
 }
 
+// MARKER_APCONTROLLER_POPUP_OPEN_COUNTER_V1
+// ── Counter กลาง สำหรับ Escape Layer Stack ──────────────────────────────────
+// ── ทุก Popup Component เรียก usePopupOpenTracker(show) เป็นบรรทัดแรกของ ──────
+// ── ตัวเอง (เปิด = +1, ปิด = -1 อัตโนมัติ) — ตัวนอกสุด (InvoiceDetailPopup, ──
+// ── InvoiceEntry) แค่เช็ค openPopupCount > 0 ตัวเดียว ไม่ต้องจำ List ชื่อ ─────
+// ── Popup อีกต่อไป — Popup ใหม่ในอนาคตแค่เรียก Hook นี้ 1 บรรทัดก็เข้าระบบเอง ──
+let openPopupCount = 0;
+function usePopupOpenTracker(isOpen) {
+  useEffect(() => {
+    if (!isOpen) return;
+    openPopupCount++;
+    return () => { openPopupCount--; };
+  }, [isOpen]);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BUSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
 function BUSearchPopup({ show, onClose, onSelect, infoItems = [] }) {
+  usePopupOpenTracker(show);
   const [query, setQuery]   = useState('');
   const [active, setActive] = useState(-1);
   const inputRef            = useRef(null);
@@ -424,7 +443,8 @@ function StatusDropdown({ value, onChange, options, style }) {
   };
   return (
     <React.Fragment>
-      <div ref={triggerRef} tabIndex={0} onClick={handleToggle} onKeyDown={handleKeyDown} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>
+      {/* MARKER_STATUSDROPDOWN_ONBLUR_CLOSE_V1 -- onBlur ปิด Dropdown ตอน Tab ออก */}
+      <div ref={triggerRef} tabIndex={0} onClick={handleToggle} onKeyDown={handleKeyDown} onBlur={() => { setTimeout(() => setOpen(false), 150); }} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>
         <span>{value || 'เลือก Status'}</span>
         <span style={{ fontSize: '10px', color: '#888', marginLeft: '6px' }}>{open ? '\u25b2' : '\u25bc'}</span>
       </div>
@@ -444,6 +464,7 @@ function StatusDropdown({ value, onChange, options, style }) {
 }
 
 function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onSaveBranch, branchOptions = {} }) {
+  usePopupOpenTracker(show);
   const [query, setQuery]         = useState('');
   const [active, setActive]       = useState(-1);
   const [view, setView]           = useState('search');
@@ -822,11 +843,159 @@ function ICCombo({ value, options, readOnly, onChange }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DescriptionBankPopup -- MARKER_APCONTROLLER_ATDES_DESC_BANK_V1
+// ── คลัง Description สำหรับ Item ที่มี SPI-1 = ATDes -- แยกตาม BU +      ──
+// ── Supplier + Item Code ให้เลือกของเดิม หรือพิมพ์ใหม่แล้วบันทึกในนี้   ──
+// ── เท่านั้น (ผูกกับ Code+Supplier ได้ถูกต้อง ไม่ใช่ Auto-save เงียบๆ)   ──
+// ─────────────────────────────────────────────────────────────────────────────
+function DescriptionBankPopup({ show, onClose, onSelect, bu = '', supplierCode = '', itemCode = '', userName = '', currentUser }) {
+  usePopupOpenTracker(show);
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_MISSING_V1 (DescriptionBankPopup)
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [newDesc, setNewDesc] = useState('');
+  // MARKER_APCONTROLLER_ATDES_DESC_BANK_UX_V2
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const newDescRef = useRef(null);
+  const MIN_ROWS = 5;
+  // MARKER_APCONTROLLER_ATDES_DESC_BANK_HELP_V1
+  const [showHelp, setShowHelp] = useState(false);
+
+  useEffect(() => {
+    if (!show) return;
+    setLoading(true);
+    setNewDesc('');
+    setActiveIdx(-1);
+    const qs = `?eq_bu=${encodeURIComponent(bu)}&eq_supplier_code=${encodeURIComponent(supplierCode)}&eq_item_code=${encodeURIComponent(itemCode)}&order=created_at.desc`;
+    apiFetch(`/item_description_favorites${qs}`)
+      .then(data => setList(Array.isArray(data) ? data : []))
+      .catch(e => { console.error('[desc bank fetch]', e); setList([]); })
+      .finally(() => setLoading(false));
+    // ── Set Focus ที่ช่อง Description เสมอตอนเปิด Popup ────────────────────
+    setTimeout(() => newDescRef.current?.focus(), 60);
+  }, [show, bu, supplierCode, itemCode]);
+
+  const handleSave = async () => {
+    const v = newDesc.trim();
+    if (!v) return;
+    try {
+      const saved = await apiFetch('/item_description_favorites', {
+        method: 'POST',
+        body: JSON.stringify({
+          bu, supplier_code: supplierCode, item_code: itemCode, description: v,
+          created_by: userName || currentUser?.email || '',
+        }),
+      });
+      setList(prev => [saved, ...prev]);
+      setNewDesc('');
+    } catch (e) { console.error('[desc bank save]', e); }
+  };
+
+  // MARKER_APCONTROLLER_ATDES_DESC_BANK_UX_V2
+  // ── ลบ Description ที่เคยบันทึกไว้ ออกจากคลังถาวร ─────────────
+  const handleDelete = async (id) => {
+    try {
+      await db.from('item_description_favorites').delete().eq('id', id);
+      setList(prev => prev.filter(item => item.id !== id));
+    } catch (e) { console.error('[desc bank delete]', e); }
+  };
+
+  // ── ↑↓ เลื่อนเลือกรายการเดิม, Enter ยืนยันรายการที่เลือกอยู่ (ถ้ามี) ──
+  // ── หรือบันทึก Description ใหม่ (ถ้ายังไม่ได้เลือกรายการไหน) ─────
+  const handleInputKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(list.length - 1, i + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(0, i - 1)); }
+    else if (e.key === 'Enter') {
+      if (activeIdx >= 0 && list[activeIdx]) onSelect(list[activeIdx].description);
+      else handleSave();
+    }
+  };
+
+  if (!show) return null;
+  // MARKER_APCONTROLLER_ATDES_DESC_BANK_UX_V2
+  // ── เติมแถวว่างให้ครบอย่างน้อย MIN_ROWS แถว เพื่อให้กล่องมีความสูงคงที่แน่นอน
+  // ── แม้กรณียังไม่มีข้อมูลจริงเลย (ไม่นับรวมกับ Loading/List ว่าง) ─────
+  const emptyRowCount = !loading && list.length < MIN_ROWS ? MIN_ROWS - list.length : 0;
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10005, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}>
+      <div style={{ background: 'white', borderRadius: '10px', width: '460px', maxWidth: '92vw', padding: '20px 22px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c', marginBottom: '2px' }}>คลัง Description</div>
+        <div style={{ fontSize: '11px', color: '#888', marginBottom: '12px' }}>{itemCode} · {supplierCode} · BU {bu}</div>
+        <div style={{ minHeight: '260px', maxHeight: '260px', overflowY: 'auto', border: '0.5px solid #eee', borderRadius: '6px', marginBottom: '10px' }}>
+          {loading ? (
+            <div style={{ padding: '10px', fontSize: '11px', color: '#999' }}>กำลังโหลด...</div>
+          ) : (
+            <>
+              {list.length === 0 && (
+                <div style={{ padding: '10px', fontSize: '11px', color: '#999' }}>ยังไม่มี Description ที่บันทึกไว้สำหรับรายการนี้</div>
+              )}
+              {list.map((item, i) => (
+                <div key={item.id}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', borderBottom: '0.5px solid #f2f2f2', background: i === activeIdx ? '#E6F1FB' : 'white' }}>
+                  <span onClick={() => onSelect(item.description)} style={{ flex: 1 }}>{item.description}</span>
+                  <button onClick={() => handleDelete(item.id)} title="ลบ Description นี้"
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#A32D2D', padding: '2px 6px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                  </button>
+                </div>
+              ))}
+              {Array.from({ length: emptyRowCount }).map((_, i) => (
+                <div key={`empty-${i}`} style={{ padding: '8px 10px', fontSize: '12px', color: '#ccc', borderBottom: '0.5px solid #f6f6f6' }}>—</div>
+              ))}
+            </>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <input ref={newDescRef} value={newDesc} onChange={e => setNewDesc(e.target.value)}
+            placeholder="พิมพ์ Description ใหม่"
+            onKeyDown={handleInputKeyDown}
+            style={{ flex: 1, height: '32px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', color: '#1a3a5c', boxSizing: 'border-box' }} />
+          <button onClick={handleSave}
+            style={{ padding: '0 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+            บันทึก
+          </button>
+        </div>
+        <div style={{ marginTop: '4px', fontSize: '10px', color: '#aaa' }}>↑↓ เลือก · Enter ยืนยัน/บันทึก</div>
+        {/* MARKER_APCONTROLLER_ATDES_DESC_BANK_HELP_V1 */}
+        {showHelp && (
+          <div style={{ marginTop: '10px', padding: '10px 12px', background: '#F5F8FB', border: '0.5px solid #dde6ee', borderRadius: '6px', fontSize: '11px', color: '#3a5872', lineHeight: '1.6' }}>
+            <div style={{ fontWeight: '600', marginBottom: '4px', color: '#1a3a5c' }}>วิธีใช้คลัง Description</div>
+            <div>• พิมพ์ Description ใหม่ แล้วกด "บันทึก" หรือ Enter เพื่อเก็บไว้ใช้ซ้ำครั้งต่อไป</div>
+            <div>• คลิกที่รายการในลิสต์ หรือกด ↑↓ เลือกแล้ว Enter เพื่อดึงมาใช้ทันที</div>
+            <div>• กดไอคอนถังขยะข้างรายการ เพื่อลบ Description ที่ไม่ใช้แล้วออกจากคลัง</div>
+            <div>• คลังนี้แยกเฉพาะ Item Code + Supplier + BU ชุดนี้เท่านั้น ไม่ปนกับ Vendor หรือ BU อื่น</div>
+          </div>
+        )}
+        <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button onClick={() => setShowHelp(v => !v)}
+            style={{ padding: '6px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: showHelp ? '#F5F8FB' : 'white', color: '#666', fontSize: '11px', cursor: 'pointer' }}>
+            ⓘ วิธีใช้
+          </button>
+          <button onClick={onClose}
+            style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>
+            ปิด
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ItemCodeSearchPopup
 // ─────────────────────────────────────────────────────────────────────────────
 const ITEM_COMBO_FIELDS = ['dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
 
-function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '', vendorTaxId = '' }) {
+function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetchCollection, userName = '', currentUser, bu = '', vendorTaxId = '', initialSearch = '' }) {
+  usePopupOpenTracker(show);
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const canEdit = isOwner || isAdmin || isEditor;
   const canDelete = isOwner || isAdmin;
@@ -876,7 +1045,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
     setFavUpdating(null);
   };
 
-  useEffect(() => { if (show) { setQuery(''); setActive(-1); setView('search'); setViewTarget(null); setTimeout(() => inputRef.current?.focus(), 60); } }, [show]);
+  useEffect(() => { if (show) { setQuery(initialSearch || ''); setActive(-1); setView('search'); setViewTarget(null); setTimeout(() => inputRef.current?.focus(), 60); } }, [show, initialSearch]);
   useEffect(() => {
     if (!show) return;
     const h = (e) => { if (e.key === 'Escape') { if (view === 'search') onClose(); else { setView('search'); setViewTarget(null); } } };
@@ -1235,7 +1404,10 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
   if (!itemData) return line;
   const rawSub = String(itemData.sub ?? '').trim();
-  const subVal = rawSub.toUpperCase() === 'SUB' ? String(vendorInfo?.['Sub Acc'] ?? '').trim() : rawSub;
+  // MARKER_APCONTROLLER_SUBACC_DEFAULT_999999_V1
+  // ── Vendor ไม่มี Sub Acc กำหนดไว้ (ว่าง/"-") -> Default เป็น 999999 ──────
+  const rawSubAcc = String(vendorInfo?.['Sub Acc'] ?? '').trim();
+  const subVal = rawSub.toUpperCase() === 'SUB' ? ((!rawSubAcc || rawSubAcc === '-') ? '999999' : rawSubAcc) : rawSub;
   const rawCpc = String(itemData.cpc ?? '').trim();
   const spi1 = String(itemData.spi1 ?? '').trim().toUpperCase();
   const effectiveCpc = form?.branchCpc?.trim()? form.branchCpc.trim(): (spi1 === 'C-CPC' && form?.headerCpc?.trim())? form.headerCpc.trim(): rawCpc;
@@ -1359,7 +1531,8 @@ const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
 const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
 
 
-function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', bookFilter = '', fetchCollection, userName = '', quickVendors = [] }) {
+function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', bookFilter = '', fetchCollection, userName = '', quickVendors = [], initialViewCode = '' }) {
+  usePopupOpenTracker(show);
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const canEdit = isOwner || isAdmin || isEditor;
   const canDelete = isOwner || isAdmin;
@@ -1384,8 +1557,23 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   };
 
   useEffect(() => {
-    if (show) { setQuery(''); setActive(-1); setView('search'); setEditTarget(null); setFormState({}); setFormError(''); setTimeout(() => inputRef.current?.focus(), 60); }
-  }, [show]);
+    if (show) {
+      setQuery(''); setActive(-1); setFormError('');
+      // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3
+      // ── มี initialViewCode ส่งมา -> กระโดดตรงไป View Mode ของ Supplier นั้นเลย ──
+      // ── ไม่ต้องเริ่มจาก Search (ใช้ตอนกด "Detail" จาก Invoice Detail) ─────────
+      const viewItem = initialViewCode ? supplierItems.find(i => String(i['Code'] ?? '').trim().toUpperCase() === String(initialViewCode).trim().toUpperCase()) : null;
+      if (viewItem) {
+        const f = emptyForm();
+        SUPPLIER_FIELDS.forEach(([key]) => { f[key] = viewItem[key] || ''; });
+        f['BU Code'] = viewItem['BU Code'] || String(viewItem['Code'] ?? '').split('-')[0] || bu || '';
+        setEditTarget(viewItem); setFormState(f); setView('view');
+      } else {
+        setView('search'); setEditTarget(null); setFormState({});
+      }
+      setTimeout(() => inputRef.current?.focus(), 60);
+    }
+  }, [show, initialViewCode]);
 
   useEffect(() => {
     if (!show) return;
@@ -1461,7 +1649,15 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     f['BU Code'] = item['BU Code'] || String(item['Code'] ?? '').split('-')[0] || bu || '';
     setEditTarget(item); setFormState(f); setFormError(''); setView(viewOnly ? 'view' : 'edit');
   };
-  const handleBack = () => { setView('search'); setEditTarget(null); setFormState({}); setFormError(''); setTimeout(() => inputRef.current?.focus(), 60); };
+  // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V4
+  // ── เปิดผ่านปุ่ม Detail (initialViewCode) ไม่มี "หน้า Search" ให้กลับไป ────
+  // ── เพราะข้ามขั้นตอนนั้นไปตรงๆตั้งแต่แรก -- กด Back ต้องปิด Popup ทั้งหมด ────
+  // ── กลับไป Invoice Detail แทนการเด้งไปหน้า Search เปล่าๆ ที่ไม่มีความหมาย ────
+  const handleBack = () => {
+    if (initialViewCode) { onClose(); return; }
+    setView('search'); setEditTarget(null); setFormState({}); setFormError('');
+    setTimeout(() => inputRef.current?.focus(), 60);
+  };
 
   const setField = (key, val) => { setFormState(f => ({ ...f, [key]: val })); setFormError(''); };
 
@@ -1491,6 +1687,10 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
         if (error) throw error;
       }
       if (fetchCollection) await fetchCollection('SupplierList', true);
+      // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3
+      // ── Broadcast ให้ Tab/User อื่นที่กำลังเปิด Vendor ตัวนี้อยู่รู้ด้วยว่า ────
+      // ── ข้อมูลอัปเดตแล้ว (Invoice Entry จะดัก Event นี้แล้ว lookupVendor ใหม่) ──
+      broadcastWs('supplier_list_updated', { code: payload['Code'] || '' });
       handleBack();
     } catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
@@ -1518,11 +1718,17 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const baseInput = { height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' };
   const isEdit = view === 'edit';
 
-  // ── getOpts: ดึง unique non-empty values จาก supplierItems ทั้งหมด (ไม่ filter BU) ──
-  // ── merge กับ hardcoded defaults สำหรับ field ที่มี master list คงที่ ──────────────
+  // MARKER_SUPPLIER_SITE_FILTER_BY_BU_V1
+  // ── getOpts: ดึง unique non-empty values จาก supplierItems ──────────────
+  // ── merge กับ hardcoded defaults สำหรับ field ที่มี master list คงที่ ──────
+  // ── Supplier Site: กรองเฉพาะ Supplier ของ BU (Book) ปัจจุบันเท่านั้น ─────
+  // ── (เดิมดึงจากทุก BU ปนกันหมด ทำให้เห็น Site ของ BU อื่นที่ไม่เกี่ยวข้อง) ──
   const getOpts = (key) => {
     const allSuppliers = supplierItems.length > 0 ? supplierItems : (() => { try { return JSON.parse(sessionStorage.getItem('fastapn_cache'))?.SupplierList || []; } catch { return []; } })();
-    const fromCache = allSuppliers.map(i => String(i[key] ?? '').trim()).filter(Boolean);
+    const scopedSuppliers = key === 'Supplier Site'
+      ? allSuppliers.filter(i => String(i['bu'] ?? '').trim() === String(bu ?? '').trim())
+      : allSuppliers;
+    const fromCache = scopedSuppliers.map(i => String(i[key] ?? '').trim()).filter(Boolean);
     let defaults = [];
     if (key === 'Tax-Type')   defaults = TAX_TYPE_OPTS;
     if (key === 'Digit')      defaults = DIGIT_OPTS_DEFAULT;
@@ -1620,6 +1826,19 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
               {/* ── Row 1-3: ใช้ grid columns เดียวกัน '110px 1fr 110px 1fr 110px 1fr' ──── */}
               {/* ── ทำให้คอลัมน์ของทั้ง 3 แถวตรงกันเหมือนตาราง — Code / Supplier   ──── */}
               {/* ── Name / Supplier Number / Supplier Site / BU Code = พื้นเหลือง  ──── */}
+              {/* MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3 */}
+              {/* ── ย้าย Address ขึ้นมาก่อนสุด (เพราะย้ายมาจาก Invoice Detail ─────────── */}
+              {/* Row 8: Address */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 5fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
+                {lbl('Address', { alignItems: 'flex-start', paddingTop: '8px' })}
+                <div style={{ padding: '4px 6px' }}><textarea rows={3} value={form['Address'] || ''} onChange={e => setField('Address', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', height: 'auto' }} /></div>
+              </div>
+
+              {/* ── ซ่อน Code/Supplier Name/No./Site/BU/Tax ID/Branch No./Tax-Type ─────── */}
+              {/* ── เฉพาะตอนเปิดผ่านปุ่ม "Detail" จาก Invoice Detail (initialViewCode) ──── */}
+              {/* ── เพราะข้อมูลชุดนี้เห็นซ้ำอยู่แล้วทั้งใน Invoice Detail และ Search Popup ── */}
+              {!initialViewCode && (
+                <>
 
               {/* Row 1: Code + Supplier Name */}
               <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 110px 1fr 110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
@@ -1652,6 +1871,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 {combo('Tax-Type')}
               </div>
 
+                </>
+              )}
               {/* Row 4+5: Invoice Rule section — headers + values (Format เดียวกับ Contact) */}
               {/* ── 6 คอลัมน์เท่ากัน — Digit + Due Date รวมอยู่ในคอลัมน์เดียวกัน (แบ่งซ้าย-ขวา) ── */}
               <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
@@ -1692,12 +1913,6 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 {cell('Sub Acc')}
                 {lbl('Supplier Ref.')}
                 <div style={{ padding: '4px 6px' }}><input value={form['Supplier Ref.'] || ''} onChange={e => setField('Supplier Ref.', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
-              </div>
-
-              {/* Row 8: Address */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 5fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
-                {lbl('Address', { alignItems: 'flex-start', paddingTop: '8px' })}
-                <div style={{ padding: '4px 6px' }}><textarea rows={3} value={form['Address'] || ''} onChange={e => setField('Address', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', height: 'auto' }} /></div>
               </div>
 
               {/* Row 9: Rule Description + Notice Description */}
@@ -2070,6 +2285,7 @@ const CONTRACT_FIELDS = [
 const CONTRACT_RUN_OPTS = ['SC','D1','D2','D3','D4'];
 
 function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetchCollection, userName = '' }) {
+  usePopupOpenTracker(show);
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const canEdit = isOwner || isAdmin || isEditor;
 
@@ -2080,6 +2296,13 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
   const [editTarget, setEditTarget] = useState(null);
   const [form, setFormState]      = useState({});
   const [formError, setFormError] = useState('');
+  // MARKER_HOTFIX_CONTRACTPOPUP_VIEW_TDZ_V1 (ย้ายมาไว้หลัง State ทั้งหมดประกาศแล้ว)
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') { if (view === 'search') onClose(); else { setView('search'); setEditTarget(null); setFormState({}); setFormError(''); } } };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose, view]);
   const [saving, setSaving]       = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
@@ -2463,6 +2686,7 @@ function SmComboBox({ value, onChange, options = [], center = false }) {
 }
 
 function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxId = '', fetchCollection, branchItems = [], userName = '', categoryItems = [] }) {
+  usePopupOpenTracker(show);
   const [query, setQuery]                 = useState('');
   const [active, setActive]               = useState(-1);
   const [realInvoiceNo, setRealInvoiceNo] = useState('');
@@ -3140,6 +3364,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
 // CalcPopup — mini calculator popup สำหรับ Amount field
 // ─────────────────────────────────────────────────────────────────────────────
 function CalcPopup({ show, anchorPos, initValue = '', onApply, onClose }) {
+  usePopupOpenTracker(show);
   
   
   const [display, setDisplay] = useState('0');
@@ -3322,7 +3547,8 @@ return (
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '', flowMemory = {}, setFlowMemory = () => {}, supplierCodeRef }) {
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '', flowMemory = {}, setFlowMemory = () => {}, supplierCodeRef, matchedRule = null, onOpenSupplierDetail = () => {}, vendorRuleItems = [] }) {
+  usePopupOpenTracker(show);
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
@@ -3400,6 +3626,414 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // MARKER_APCONTROLLER_DESC_EXPAND_EDIT_V1
   // ── Double-click ที่ Field Description ในตาราง -> เปิด Popup แก้ไขแบบเต็ม ──
   const [expandEditIdx, setExpandEditIdx] = useState(null);
+  // MARKER_ACCOUNT_CPC_POPUP_PHASE2_V1 -- State สำหรับ Popup ตั้งค่า CPC/Account/SubAcc
+  const [accountConfigIdx, setAccountConfigIdx] = useState(null);
+  // MARKER_APCONTROLLER_RULE_FIELD_CHOICE_V1
+  // ── Choice ลอยสำหรับ Method/Paygroup/Par -- ดับเบิลคลิกแต่ละช่องแยกอิสระ ────
+  const [ruleChoiceField, setRuleChoiceField] = useState(null); // null | 'Method' | 'Paygroup' | 'Par'
+  const ruleChoiceRef = useRef(null);
+  // MARKER_APCONTROLLER_RULE_FIELD_CHOICE_CLICK_ARROWNAV_V1
+  // -- Index ตัวเลือกที่ Highlight อยู่ตอนนี้ ควบคุมด้วย Arrow Up/Down --------
+  const [rcActiveIdx, setRcActiveIdx] = useState(0);
+  // MARKER_APCONTROLLER_RULE_FIELD_CHOICE_PORTAL_FIX_V1
+  // -- ตำแหน่งจริงบนจอ (คำนวณจาก getBoundingClientRect ตอนคลิก) ใช้กับ ------
+  // -- Popup ที่ Portal ไปแปะที่ document.body (position:fixed ต้องใช้ค่านี้) --
+  const [rcPos, setRcPos] = useState({ top: 0, left: 0 });
+  useEffect(() => {
+    if (!ruleChoiceField) return;
+    const h = (e) => { if (ruleChoiceRef.current && !ruleChoiceRef.current.contains(e.target)) setRuleChoiceField(null); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [ruleChoiceField]);
+  // MARKER_APCONTROLLER_RULE_FIELD_CHOICE_CLICK_ARROWNAV_V1 (Keyboard Nav) ---
+  useEffect(() => {
+    if (!ruleChoiceField) return;
+    const opts = ruleFieldOptions(ruleChoiceField);
+    const handleKey = (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setRcActiveIdx(i => Math.min(i + 1, opts.length - 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setRcActiveIdx(i => Math.max(i - 1, 0)); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (opts[rcActiveIdx]) handlePickRuleField(ruleChoiceField, opts[rcActiveIdx]); }
+      else if (e.key === 'Escape') { setRuleChoiceField(null); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [ruleChoiceField, rcActiveIdx]);
+  // ── ดึง Unique Value จาก Vendor_rule ทั้งระบบ (กรองค่าว่าง/'-' ออก) ─────────
+  // MARKER_APCONTROLLER_RULE_FIELD_OPTIONS_CASING_FIX_V1
+  // -- Bug เดิม: r?.[field] อ่าน Key ตรงตัวเป๊ะ ถ้าบางแถวใน DB มี Key ไม่ตรง --
+  // -- Case/มีช่องว่างเกิน (เช่น 'PayGroup' vs 'Paygroup') ค่าจะหลุดหายเงียบๆ --
+  // -- แก้โดยค้นหา Key แบบ case-insensitive + trim ก่อนอ่านค่าเสมอ ------------
+  const ruleFieldOptions = (field) => {
+    const fieldLower = field.trim().toLowerCase();
+    // MARKER_APCONTROLLER_RULE_FIELD_OPTIONS_DEBUGLOG_TEMP_V1 (DEBUG ชั่วคราว -- ลบทิ้งทีหลัง)
+    console.log('[DEBUG ruleFieldOptions]', { field, vendorRuleItemsCount: (vendorRuleItems||[]).length, vendorRuleItemsRaw: vendorRuleItems, sampleKeys: (vendorRuleItems||[])[0] ? Object.keys(vendorRuleItems[0]) : [] });
+    const vals = (vendorRuleItems || []).map(r => {
+      if (!r) return '';
+      const matchKey = Object.keys(r).find(k => k.trim().toLowerCase() === fieldLower);
+      return matchKey ? String(r[matchKey] ?? '').trim() : '';
+    }).filter(v => v && v !== '-' && v !== '—');
+    return [...new Set(vals)];
+  };
+  // ── เลือกค่าแล้วเก็บลง form (ไหลเข้า form_data ตอน Submit อัตโนมัติ) ───────
+  // ── กฎพิเศษ: เปลี่ยน Paygroup เป็น "ALREADY PAID" ต้องถาม Par = 77 ด้วยไหม ───
+  // MARKER_APCONTROLLER_RULE_FIELD_CONFIRMDIALOG_V1
+  // -- เปลี่ยนจาก window.confirm() (Native Popup เบราว์เซอร์ แก้ Style ไม่ได้) --
+  // -- เป็น confirmDialog.confirm() (Custom Dialog ของระบบเอง ใช้ Pattern ------
+  // -- เดียวกับที่ใช้ทั่วทั้งไฟล์) -- ต้องเป็น async เพราะคืนค่าเป็น Promise -----
+  const handlePickRuleField = async (field, value) => {
+    const key = field.toLowerCase();
+    setField(key, value);
+    setRuleChoiceField(null);
+    if (field === 'Paygroup') {
+      if (value.trim().toUpperCase() === 'ALREADY PAID') {
+        if (await confirmDialog.confirm('ต้องการเปลี่ยน Par เป็น 77 ด้วยหรือไม่?')) {
+          setField('par', '77');
+        }
+      } else {
+        // MARKER_APCONTROLLER_RULE_FIELD_PAR_AUTOCLEAR_V1
+        // -- เปลี่ยน Paygroup เป็นอย่างอื่นที่ไม่ใช่ ALREADY PAID -> Auto Clear --
+        // -- Par กัน 77 ค้างจากตอนเคยเลือก ALREADY PAID ไว้ก่อนหน้า -------------
+        setField('par', '');
+      }
+    }
+  };
+  const [accCfgCpc, setAccCfgCpc] = useState('');
+  const [accCfgAccount, setAccCfgAccount] = useState('');
+  const [accCfgSubAcc, setAccCfgSubAcc] = useState('');
+  // MARKER_ACCOUNT_LEVEL_VALIDATION_V1 -- เก็บ Account เดิมตอนเปิด Popup ไว้เทียบตอน Save ระดับ Account
+  const [originalAccountKey, setOriginalAccountKey] = useState('');
+  // MARKER_ACCOUNT_CPC_HELP_POPUP_PHASE6_V1 -- State เปิด/ปิด Help Popup
+  const [showAccountCpcHelp, setShowAccountCpcHelp] = useState(false);
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1
+  useEffect(() => {
+    if (!showAccountCpcHelp) return;
+    const h = (e) => { if (e.key === 'Escape') setShowAccountCpcHelp(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showAccountCpcHelp]);
+  const openAccountConfig = (idx, currentVal) => {
+    const parts = String(currentVal || '').split('-');
+    setAccCfgCpc(parts[0] || '');
+    setAccCfgAccount(parts[1] || '');
+    setAccCfgSubAcc(parts[2] || '');
+    setOriginalAccountKey(parts[1] || '');
+    setAccountConfigIdx(idx);
+  };
+  // MARKER_ACCOUNT_CPC_SETUP_BOXES_PHASE3_V1 -- State เก็บ Rule ที่มีอยู่แล้ว (null = ยังไม่เคย Setup)
+  const [itemCodeRule, setItemCodeRule] = useState(null);
+  const [accountRule, setAccountRule] = useState(null);
+  const [savingRuleType, setSavingRuleType] = useState(null);
+
+  useEffect(() => {
+    if (accountConfigIdx === null) { setItemCodeRule(null); setAccountRule(null); return; }
+    const line = lines[accountConfigIdx];
+    if (!line) return;
+    let active = true;
+    (async () => {
+      try {
+        const { data: icData } = await db.from('account_cpc_rules').select('*')
+          .eq('bu', bu).eq('rule_type', 'item_code').eq('item_code', line.itemCode || '').limit(1);
+        if (active) setItemCodeRule(icData && icData[0] ? icData[0] : null);
+      } catch (e) { console.error('[AccountCpcRules] โหลด Item Code Rule ผิดพลาด', e); }
+      try {
+        const accParts = String(line.account || '').split('-');
+        const accKey = accParts[1] || '';
+        const { data: accData } = await db.from('account_cpc_rules').select('*')
+          .eq('bu', bu).eq('rule_type', 'account').eq('account', accKey).limit(1);
+        if (active) setAccountRule(accData && accData[0] ? accData[0] : null);
+      } catch (e) { console.error('[AccountCpcRules] โหลด Account Rule ผิดพลาด', e); }
+    })();
+    return () => { active = false; };
+  }, [accountConfigIdx]);
+
+  const saveAccountCpcRule = async (ruleType) => {
+    if (accountConfigIdx === null) return;
+    const line = lines[accountConfigIdx];
+    if (!line) return;
+    // MARKER_ACCOUNT_LEVEL_VALIDATION_V1 -- ระดับ Account: Account Code ห้ามเปลี่ยนจากค่าเดิม (เป็น Key หลัก)
+    if (ruleType === 'account' && accCfgAccount.trim() !== originalAccountKey.trim()) {
+      await confirmDialog.alert(
+        `ระบบไม่อนุญาตให้ Save เนื่องจากไม่ตรงตามเงื่อนไข\n\n` +
+        `Account Code ถูกเปลี่ยนจาก "${originalAccountKey}" เป็น "${accCfgAccount}" — ระดับ Account ต้องใช้ Account Code เดิมเป็น Key เสมอ\n\n` +
+        `เหตุผล/Impact:\n` +
+        `• Account Code คือตัวที่ระบบใช้ค้นหา Rule นี้ (Key หลัก) เปลี่ยนแล้ว Rule จะผูกผิด Account\n` +
+        `• ถ้าต้องการให้ Account อื่นได้ CPC/SubAcc นี้ด้วย ให้เปิด Popup จาก Account นั้นแล้ว Setup แยกต่างหาก\n` +
+        `• ถ้าต้องการเปลี่ยน Account ของ Item Code นี้ถาวร ให้ใช้ปุ่ม "Setup - Item Code" แทน (ผูกกับ Item Code ไม่ใช่ Account)`,
+        { variant: 'danger', title: 'บันทึกไม่สำเร็จ' }
+      );
+      return;
+    }
+    // MARKER_ACCOUNT_LEVEL_CONFIRM_STEP_V1 -- ระดับ Account ผ่าน Validation แล้ว ยังต้องกด Confirm อีกชั้น
+    if (ruleType === 'account') {
+      const confirmed = await confirmDialog.confirm(
+        `การ Setup นี้จะมีผลกับทุก Invoice ใน BU "${bu}" ที่เรียกใช้ Account "${accCfgAccount}" ทั้งหมด ไม่ว่าจะเป็น Supplier รายใดก็ตาม\n\n` +
+        `ยืนยันว่า CPC "${accCfgCpc}" / Sub Acc "${accCfgSubAcc}" เป็นมาตรฐานจริงของ Account นี้สำหรับ BU นี้ ใช่หรือไม่?`,
+        { confirmText: 'ยืนยัน Setup', title: 'ยืนยันการตั้งค่าระดับ Account' }
+      );
+      if (!confirmed) return;
+    }
+    setSavingRuleType(ruleType);
+    try {
+      // MARKER_ACCOUNT_CPC_ROLE_AND_DUPLICATE_FIX_V1 -- Query สดจาก DB ก่อน Insert เสมอ (กัน Local State Stale -> Duplicate)
+      let existing = ruleType === 'item_code' ? itemCodeRule : accountRule;
+      const freshQuery = ruleType === 'item_code'
+        ? db.from('account_cpc_rules').select('*').eq('bu', bu).eq('rule_type', 'item_code').eq('item_code', line.itemCode || '').limit(1)
+        : db.from('account_cpc_rules').select('*').eq('bu', bu).eq('rule_type', 'account').eq('account', accCfgAccount).limit(1);
+      const { data: freshData } = await freshQuery;
+      if (freshData && freshData[0]) existing = freshData[0];
+      const payload = {
+        bu,
+        rule_type: ruleType,
+        cpc: accCfgCpc,
+        account: accCfgAccount,
+        sub_acc: accCfgSubAcc,
+        item_code: ruleType === 'item_code' ? (line.itemCode || '') : null,
+        supplier_code: null,
+        created_by: userName || currentUser?.email || '',
+        updated_at: new Date().toISOString(),
+      };
+      if (existing?.id) {
+        const { error } = await db.from('account_cpc_rules').update(payload).eq('id', existing.id);
+        if (error) throw error;
+        const updated = { ...existing, ...payload };
+        ruleType === 'item_code' ? setItemCodeRule(updated) : setAccountRule(updated);
+      } else {
+        const { data, error } = await db.from('account_cpc_rules').insert([payload]).select().single();
+        if (error) throw error;
+        ruleType === 'item_code' ? setItemCodeRule(data) : setAccountRule(data);
+      }
+    } catch (e) {
+      console.error('[AccountCpcRules] บันทึก Rule ผิดพลาด', e);
+      confirmDialog.alert('บันทึกไม่สำเร็จ กรุณาลองใหม่', { variant: 'danger' });
+    } finally {
+      setSavingRuleType(null);
+    }
+  };
+
+  // MARKER_ACCOUNT_CPC_SUPPLIER_LIST_PHASE4_V1 -- State + Logic สำหรับ Account List ระดับ Supplier
+  const [supplierRules, setSupplierRules] = useState([]);
+  const [savingSupplierRule, setSavingSupplierRule] = useState(false);
+
+  const loadSupplierRules = async () => {
+    if (accountConfigIdx === null) return;
+    const supCode = form?.supplierCode || '';
+    if (!supCode) { setSupplierRules([]); return; }
+    try {
+      const { data } = await db.from('account_cpc_rules').select('*')
+        .eq('bu', bu).eq('rule_type', 'supplier').eq('supplier_code', supCode)
+        .order('created_at', { ascending: false });
+      setSupplierRules(data || []);
+    } catch (e) { console.error('[AccountCpcRules] โหลด Supplier List ผิดพลาด', e); }
+  };
+
+  useEffect(() => {
+    if (accountConfigIdx === null) { setSupplierRules([]); return; }
+    loadSupplierRules();
+  }, [accountConfigIdx]);
+
+  const saveSupplierAccountRule = async () => {
+    const supCode = form?.supplierCode || '';
+    if (!supCode) { confirmDialog.alert('ไม่พบ Supplier Code ของ Invoice นี้', { variant: 'danger' }); return; }
+    const combined = `${accCfgCpc}-${accCfgAccount}-${accCfgSubAcc}`;
+    const isDup = supplierRules.some(r => `${r.cpc}-${r.account}-${r.sub_acc}` === combined);
+    if (isDup) {
+      confirmDialog.alert('ค่านี้มีอยู่แล้วใน Account List — ไม่เพิ่มซ้ำ', { variant: 'danger', title: 'ซ้ำในระบบ' });
+      return;
+    }
+    setSavingSupplierRule(true);
+    try {
+      const payload = {
+        bu, rule_type: 'supplier', cpc: accCfgCpc, account: accCfgAccount, sub_acc: accCfgSubAcc,
+        item_code: null, supplier_code: supCode,
+        created_by: userName || currentUser?.email || '',
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await db.from('account_cpc_rules').insert([payload]);
+      if (error) throw error;
+      await loadSupplierRules();
+    } catch (e) {
+      console.error('[AccountCpcRules] บันทึก Supplier Rule ผิดพลาด', e);
+      confirmDialog.alert('บันทึกไม่สำเร็จ กรุณาลองใหม่', { variant: 'danger' });
+    } finally {
+      setSavingSupplierRule(false);
+    }
+  };
+
+  const loadSupplierRuleToFields = (rule) => {
+    setAccCfgCpc(rule.cpc || '');
+    setAccCfgAccount(rule.account || '');
+    setAccCfgSubAcc(rule.sub_acc || '');
+  };
+
+  const deleteSupplierRule = async (rule) => {
+    if (!(await confirmDialog.confirm('ต้องการลบ Rule นี้ใช่หรือไม่?', { variant: 'danger', confirmText: 'ลบ' }))) return;
+    try {
+      const { error } = await db.from('account_cpc_rules').delete().eq('id', rule.id);
+      if (error) throw error;
+      await loadSupplierRules();
+    } catch (e) {
+      console.error('[AccountCpcRules] ลบ Supplier Rule ผิดพลาด', e);
+      confirmDialog.alert('ลบไม่สำเร็จ กรุณาลองใหม่', { variant: 'danger' });
+    }
+  };
+
+  // MARKER_FIX_ACCOUNTCONFIGPOPUP_REMOUNT_BUG_V1 -- เปลี่ยนจาก Component ซ้อน (สาเหตุ Cursor เด้ง) เป็น JSX Value
+  const accountConfigPopupJsx = (() => {
+    if (accountConfigIdx === null) return null;
+    const line = lines[accountConfigIdx];
+    if (!line) return null;
+    const applyToLine = () => {
+      const combined = `${accCfgCpc}-${accCfgAccount}-${accCfgSubAcc}`;
+      accountConfigIdx === 0 ? setLine1Field('account', combined) : setLineField(accountConfigIdx, 'account', combined);
+      setAccountConfigIdx(null);
+    };
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onMouseDown={e => { if (e.target === e.currentTarget) setAccountConfigIdx(null); }}>
+        <div style={{ background: 'white', borderRadius: '12px', maxWidth: '480px', width: '92%', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+          <div style={{ background: '#f7f8fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px', fontSize: '12px', color: '#666' }}>
+            Item Code: <b style={{ color: '#1a3a5c' }}>{line.itemCode || '-'}</b> &middot; BU: <b style={{ color: '#1a3a5c' }}>{bu}</b> &middot; Supplier: <b style={{ color: '#1a3a5c' }}>{form?.supplierCode || '-'}</b>
+          </div>
+          <div style={{ fontSize: '15px', fontWeight: 500, marginBottom: '14px', color: '#1a3a5c' }}>แก้ค่า CPC / Account / Sub Acc</div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>CPC</label>
+              <input value={accCfgCpc} onChange={e => setAccCfgCpc(e.target.value)}
+                style={{ width: '100%', height: '32px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>Account</label>
+              <input value={accCfgAccount} onChange={e => setAccCfgAccount(e.target.value)}
+                style={{ width: '100%', height: '32px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>Sub Acc</label>
+              <input value={accCfgSubAcc} onChange={e => setAccCfgSubAcc(e.target.value)}
+                style={{ width: '100%', height: '32px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+          </div>
+          <button onClick={applyToLine}
+            style={{ width: '100%', height: '36px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' }}>
+            Apply — ใช้ค่านี้กับบรรทัดนี้
+          </button>
+
+          {/* MARKER_ACCOUNT_CPC_SETUP_BOXES_PHASE3_V1 -- กล่อง Setup/Edit Item Code + Account */}
+          <div style={{ fontSize: '12px', color: '#888', margin: '14px 0 8px' }}>บันทึกเป็น Rule ถาวร (ใช้ค่าใน 3 ช่องด้านบนซ้ำได้)</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            <div onClick={() => savingRuleType !== 'item_code' && saveAccountCpcRule('item_code')}
+              style={{ cursor: savingRuleType ? 'default' : 'pointer', opacity: savingRuleType === 'item_code' ? 0.6 : 1, background: '#eef8ee', border: '1px dashed #97C459', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '10px', color: '#5a8a3a', marginBottom: '2px' }}>Item Code</div>
+                <b style={{ color: '#3a6a2a' }}>{itemCodeRule ? `${itemCodeRule.cpc}-${itemCodeRule.account}-${itemCodeRule.sub_acc}` : (savingRuleType === 'item_code' ? 'กำลังบันทึก...' : 'ยังไม่เคย Setup')}</b>
+              </div>
+              <span style={{ fontSize: '16px', color: '#5a8a3a' }}>{itemCodeRule ? '✎' : '+'}</span>
+            </div>
+            <div onClick={() => savingRuleType !== 'account' && saveAccountCpcRule('account')}
+              style={{ cursor: savingRuleType ? 'default' : 'pointer', opacity: savingRuleType === 'account' ? 0.6 : 1, background: '#eaf2fb', border: '1px dashed #6d9fd8', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '10px', color: '#3a6a9a', marginBottom: '2px' }}>Account</div>
+                <b style={{ color: '#1a4a7a' }}>{accountRule ? `${accountRule.cpc}-${accountRule.account}-${accountRule.sub_acc}` : (savingRuleType === 'account' ? 'กำลังบันทึก...' : 'ยังไม่เคย Setup')}</b>
+              </div>
+              <span style={{ fontSize: '16px', color: '#3a6a9a' }}>{accountRule ? '✎' : '+'}</span>
+            </div>
+          </div>
+
+          {/* MARKER_ACCOUNT_CPC_SUPPLIER_LIST_PHASE4_V1 -- Account List ระดับ Supplier */}
+          <div style={{ borderTop: '0.5px solid #eee', paddingTop: '14px', marginTop: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 500, color: '#1a3a5c' }}>Account List</div>
+              <button onClick={saveSupplierAccountRule} disabled={savingSupplierRule}
+                style={{ background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '12px', padding: '4px 12px', fontSize: '11px', fontWeight: 500, cursor: savingSupplierRule ? 'default' : 'pointer', opacity: savingSupplierRule ? 0.6 : 1 }}>
+                {supplierRules.length} record
+              </button>
+            </div>
+            <div style={{ fontSize: '10px', color: '#999', marginBottom: '8px' }}>คลิก = โหลดเข้า 3 ช่อง &middot; ดับเบิลคลิก = Apply ทันที</div>
+            <div style={{ border: '0.5px solid #ddd', borderRadius: '8px', height: '110px', overflowY: 'auto' }}>
+              {supplierRules.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', fontSize: '12px', color: '#999' }}>ยังไม่มี Rule</div>
+              ) : supplierRules.map((r, i) => (
+                <div key={r.id || i}
+                  onClick={() => loadSupplierRuleToFields(r)}
+                  onDoubleClick={() => { loadSupplierRuleToFields(r); setTimeout(applyToLine, 0); }}
+                  style={{ padding: '7px 12px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', borderBottom: i < supplierRules.length - 1 ? '0.5px solid #eee' : 'none', gap: '6px' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f7f8fa'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.cpc}-{r.account}-{r.sub_acc}</span>
+                  {/* MARKER_ACCOUNTLIST_INVOICE_ONLY_BUTTON_V1 -- เหลือแค่ Invoice + ลบ (ตัด Line ออก) */}
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button title="เอา CPC + Sub Acc ไปใส่ Invoice Setup (Fallback ทั้งใบ)" onClick={e => {
+                        e.stopPropagation();
+                        setField('headerCpc', r.cpc || '');
+                        setField('headerSubAcc', r.sub_acc || '');
+                        setAccountConfigIdx(null);
+                      }}
+                      style={{ padding: '3px 8px', background: '#eef8ee', color: '#3a8a3a', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Invoice</button>
+                    <button title="ลบ Rule นี้" onClick={e => { e.stopPropagation(); deleteSupplierRule(r); }}
+                      style={{ padding: '3px 8px', background: '#fbeaea', color: '#c0392b', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>🗑</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* MARKER_ACCOUNT_CPC_HELP_POPUP_PHASE6_V1 -- ปุ่มเปิด Help Popup */}
+          <button onClick={() => setShowAccountCpcHelp(true)}
+            style={{ width: '100%', height: '30px', background: 'none', border: '1px dashed #ddd', color: '#888', fontSize: '12px', marginTop: '14px', cursor: 'pointer', borderRadius: '6px' }}>
+            ⓘ วิธีใช้งานฟอร์มนี้
+          </button>
+
+          <button onClick={() => setAccountConfigIdx(null)}
+            style={{ width: '100%', height: '32px', background: 'none', color: '#888', border: 'none', fontSize: '12px', marginTop: '8px', cursor: 'pointer' }}>
+            ปิด
+          </button>
+        </div>
+
+        {showAccountCpcHelp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 999999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onMouseDown={e => { if (e.target === e.currentTarget) setShowAccountCpcHelp(false); }}>
+            <div style={{ background: 'white', borderRadius: '12px', maxWidth: '380px', width: '90%', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+              <div style={{ fontWeight: 500, color: '#1a3a5c', fontSize: '14px', marginBottom: '14px' }}>ลำดับความสำคัญ (Priority)</div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#eaf2fb', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ background: '#1a3a5c', color: 'white', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0 }}>1</div>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>Supplier</div>
+                    <div style={{ fontSize: '11px', color: '#666' }}>เจาะจงสุด — แต่ Apply ได้ก็ต่อเมื่อมีการเลือกใช้จริง</div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', color: '#999', fontSize: '11px' }}>↓ ถ้าไม่เจอ ค่อยดูระดับถัดไป</div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#f7f8fa', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ background: '#888', color: 'white', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0 }}>2</div>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>Item Code</div>
+                    <div style={{ fontSize: '11px', color: '#666' }}>ตั้งได้แค่ 1 ค่าต่อ BU (ไม่มี Supplier ย่อยซ้อนในนี้อีก)</div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', color: '#999', fontSize: '11px' }}>↓ ถ้าไม่เจอ ค่อยดูระดับถัดไป</div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#f7f8fa', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ background: '#aaa', color: 'white', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0 }}>3</div>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>Account</div>
+                    <div style={{ fontSize: '11px', color: '#666' }}>ตั้งได้แค่ 1 ค่าต่อ Account — พอตั้งแล้วจะโชว์อัตโนมัติทุกครั้งที่เรียก Account นี้ซ้ำ</div>
+                  </div>
+                </div>
+              </div>
+
+              <button onClick={() => setShowAccountCpcHelp(false)}
+                style={{ width: '100%', height: '34px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', marginTop: '16px', cursor: 'pointer' }}>
+                เข้าใจแล้ว
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  })();
   const [expandEditVal, setExpandEditVal] = useState('');
   const expandEditCancelRef = useRef(false);
   // MARKER_APCONTROLLER_INVOICE_FLOW_V1
@@ -3425,8 +4059,24 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const resetFlowStepGuard = () => { lastAdvancedStepRef.current = -1; };
   const [showSaveFlowModal, setShowSaveFlowModal] = useState(false);
   const [saveFlowState, setSaveFlowState] = useState({ name: '', mode: 'new', targetId: '', saving: false, error: null });
+  // MARKER_HOTFIX_SAVEFLOWSTATE_TDZ_V1 (ย้ายมาไว้หลัง saveFlowState ประกาศแล้ว)
+  useEffect(() => {
+    if (!showSaveFlowModal) return;
+    const h = (e) => { if (e.key === 'Escape' && !saveFlowState.saving) setShowSaveFlowModal(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showSaveFlowModal, saveFlowState.saving]);
   const [showDeleteFlowConfirm, setShowDeleteFlowConfirm] = useState(false);
-  const isFlowAdmin = userName && (currentUser?.appRole === 'Owner' || currentUser?.appRole === 'Admin');
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1
+  useEffect(() => {
+    if (!showDeleteFlowConfirm) return;
+    const h = (e) => { if (e.key === 'Escape') setShowDeleteFlowConfirm(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showDeleteFlowConfirm]);
+  // MARKER_ACCOUNT_CPC_ROLE_AND_DUPLICATE_FIX_V1 -- Bug เดิม: currentUser?.appRole ไม่มีจริงในระบบ ใช้ useUserRole() แทน
+  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin } = useUserRole();
+  const isFlowAdmin = userName && (isInvoicePopupOwner || isInvoicePopupAdmin);
 
   const flowApiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
   const flowToken = () => sessionStorage.getItem('fastapn_token');
@@ -3572,6 +4222,39 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const amountRef   = useRef(null);
   const itemCodeRef = useRef(null);
+  // MARKER_APCONTROLLER_ITEMCODE_SMART_SEARCH_V1
+  // ── State สำหรับ "/" Favorites Dropdown + Auto-match คำอธิบาย ──────────
+  const [favDropdownIdx, setFavDropdownIdx] = useState(null);
+  const [favActiveIdx, setFavActiveIdx] = useState(0);
+  const [itemCodeInitialSearch, setItemCodeInitialSearch] = useState('');
+  // MARKER_APCONTROLLER_ATDES_DESC_BANK_V1
+  const [descBankOpen, setDescBankOpen] = useState(false);
+  const [descBankContext, setDescBankContext] = useState(null); // { lineIdx, itemCode }
+  // ── เลือก Item จาก Favorites -- ถ้า SPI-1 = ATDes เปิดคลัง Description ──
+  // ── ต่อ (ต้องมี Favorite ก่อนเสมอ ตามที่ตกลงไว้ ไม่ทำกับ Path อื่น) ──────
+  const selectFavoriteItem = (f, lineIdx, key) => {
+    const code = f.code || '';
+    lineIdx === 0 ? setLine1Field(key, code) : setLineField(lineIdx, key, code);
+    setFavDropdownIdx(null);
+    if (String(f.spi1 ?? '').toUpperCase().includes('ATDES')) {
+      setDescBankContext({ lineIdx, itemCode: code });
+      setDescBankOpen(true);
+    }
+  };
+  const handleDescBankSelect = (descText) => {
+    if (!descBankContext) return;
+    const { lineIdx, itemCode: descBankItemCode } = descBankContext;
+    const base = String(lines[lineIdx]?.desc || '').trim();
+    const combined = base ? `${base} ${descText}` : descText;
+    lineIdx === 0 ? setLine1Field('desc', combined) : setLineField(lineIdx, 'desc', combined);
+    // MARKER_APCONTROLLER_DESC_LOCK_ON_MANUAL_EDIT_V2
+    // ── เก็บแค่ "ส่วนต่อท้าย" แยกไว้ต่างหาก (ไม่ Lock ทั้งก้อนเหมือน V1) ──────
+    // ── ให้ calcLine ต่อท้ายให้สดทุกครั้งที่คำนวณใหม่ (Period/BDes อัปเดตได้) ──
+    const lockCode = String(descBankItemCode ?? '').trim().toUpperCase();
+    lineIdx === 0 ? setLine1Field('_atdesSuffix', descText) : setLineField(lineIdx, '_atdesSuffix', descText);
+    lineIdx === 0 ? setLine1Field('_atdesSuffixForCode', lockCode) : setLineField(lineIdx, '_atdesSuffixForCode', lockCode);
+    setDescBankOpen(false);
+  };
   const lineItemCodeRefs = useRef([]);
   // ── Default Focus: Inv Date เมื่อเปิด Popup "Invoice Detail" ────────────────
   const invDateRef = useRef(null);
@@ -3761,16 +4444,65 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   // ── Auto-calculate ALL line fields (every row) ───────────────────────────
-  const calcLine = (line, itemcodeItems, vendorInfo, form) => {
+  // MARKER_ACCOUNT_CPC_PRIORITY_LOOKUP_PHASE5_V1 -- Fetch account_cpc_rules ทั้งหมดของ BU มาเก็บไว้ Local
+  const [allAccountCpcRules, setAllAccountCpcRules] = useState([]);
+  useEffect(() => {
+    if (!bu) { setAllAccountCpcRules([]); return; }
+    let active = true;
+    (async () => {
+      try {
+        const { data } = await db.from('account_cpc_rules').select('*').eq('bu', bu);
+        if (active) setAllAccountCpcRules(data || []);
+      } catch (e) { console.error('[AccountCpcRules] โหลด Rules ทั้งหมดผิดพลาด', e); }
+    })();
+    return () => { active = false; };
+  }, [bu]);
+
+  const lookupAccountCpcPriority = (rules, itemCode, supplierCode, defaultAccount) => {
+    let account = null;
+    let cpc = null;
+    let subAcc = null;
+
+    const icRule = rules.find(r => r.rule_type === 'item_code' && String(r.item_code || '').trim().toUpperCase() === String(itemCode || '').trim().toUpperCase());
+    if (icRule) { account = icRule.account; cpc = icRule.cpc; subAcc = icRule.sub_acc; }
+
+    const accountForLookup = account || defaultAccount;
+
+    const supRule = rules.find(r => r.rule_type === 'supplier'
+      && String(r.supplier_code || '').trim() === String(supplierCode || '').trim()
+      && String(r.account || '').trim() === String(accountForLookup || '').trim());
+    if (supRule) {
+      cpc = supRule.cpc; subAcc = supRule.sub_acc;
+    } else {
+      const accRule = rules.find(r => r.rule_type === 'account' && String(r.account || '').trim() === String(accountForLookup || '').trim());
+      if (accRule) { cpc = accRule.cpc; subAcc = accRule.sub_acc; }
+    }
+
+    return { account, cpc, subAcc };
+  };
+
+  const calcLine = (line, itemcodeItems, vendorInfo, form, accountCpcRules = []) => {
     if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
     const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
     if (!itemData) return line;
     const rawSub = String(itemData.sub ?? '').trim();
-    const subVal = rawSub.toUpperCase() === 'SUB' ? String(vendorInfo?.['Sub Acc'] ?? '').trim() : rawSub;
+    // MARKER_APCONTROLLER_SUBACC_DEFAULT_999999_V1
+    // ── Vendor ไม่มี Sub Acc กำหนดไว้ (ว่าง/"-") -> Default เป็น 999999 ────
+    const rawSubAcc = String(vendorInfo?.['Sub Acc'] ?? '').trim();
+    const subVal = rawSub.toUpperCase() === 'SUB' ? ((!rawSubAcc || rawSubAcc === '-') ? '999999' : rawSubAcc) : rawSub;
     const rawCpc = String(itemData.cpc ?? '').trim();
     const spi1 = String(itemData.spi1 ?? '').trim().toUpperCase();
     const effectiveCpc = form?.branchCpc?.trim() ? form.branchCpc.trim(): (spi1 === 'C-CPC' && form?.headerCpc?.trim()) ? form.headerCpc.trim() : rawCpc;
-    const accountVal = [effectiveCpc, String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
+    let accountVal = [effectiveCpc, String(itemData.account ?? '').trim(), subVal].filter(Boolean).join('-');
+    // MARKER_ACCOUNT_CPC_PRIORITY_LOOKUP_PHASE5_V1 -- Apply Priority Lookup (Supplier > Item Code > Account) ทับค่า Default
+    if (accountCpcRules.length > 0) {
+      const defaultAccountPart = String(itemData.account ?? '').trim();
+      const priorityResult = lookupAccountCpcPriority(accountCpcRules, line.itemCode, form?.supplierCode, defaultAccountPart);
+      const finalCpc = priorityResult.cpc ?? effectiveCpc;
+      const finalAccount = priorityResult.account ?? defaultAccountPart;
+      const finalSubAcc = priorityResult.subAcc ?? subVal;
+      accountVal = [finalCpc, finalAccount, finalSubAcc].filter(Boolean).join('-');
+    }
     const hasIB = form?.branchIBLabel && form.branchIBLabel !== '-';
     const isIBAll = form?.branchIBLabel === 'IB-ALL';
     const ibPrefix = isIBAll ? 'IB-ALL' : hasIB ? `${form?.branchNo ?? ''}-IB` : '';
@@ -3785,7 +4517,15 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     if (form?.customizePeriod) customizeParts.push(`งวดที่ ${form.customizePeriod}`);
     if (form?.customizePercent) customizeParts.push(`จำนวน ${form.customizePercent}%`);
     const customizeText = customizeParts.join(' ');
-    const descVal = [ibPrefix, customizeText, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
+    // MARKER_APCONTROLLER_DESC_LOCK_ON_MANUAL_EDIT_V3
+    // ── ย้าย ATDes Suffix มาแทรก "ก่อน" disGDesc (BDes1/2/3) แทนการต่อท้ายสุด ──
+    // ── เพราะ ATDes คือส่วนหนึ่งของคำอธิบายหลัก (บอกว่ารายการนี้คืออะไร) ────
+    // ── ส่วน BDes1-3 เป็นรหัสอ้างอิง ควรอยู่ท้ายสุดเสมอ ─────────────────────
+    const itemCodeUpper = String(line.itemCode ?? '').trim().toUpperCase();
+    const isFullyLocked = line._descLockedForCode && line._descLockedForCode === itemCodeUpper;
+    const hasAtdesSuffix = !isFullyLocked && line._atdesSuffixForCode && line._atdesSuffixForCode === itemCodeUpper;
+    const descVal = [ibPrefix, customizeText, form?.period ?? '', String(itemData.description ?? '').trim(), hasAtdesSuffix ? line._atdesSuffix : '', disGDesc, ibLabel].filter(Boolean).join(' ');
+    const finalDescVal = isFullyLocked ? line.desc : descVal;
     const notices = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
     const hasITC   = notices.includes('ITC');
     const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
@@ -3804,12 +4544,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
     const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
     const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
-    return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
+    return { ...line, desc: finalDescVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
   };
 
   useEffect(() => {
     setLines(prev => {
-      const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form));
+      const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form, allAccountCpcRules));
       const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
       return calculated.map(l => ({
         ...l,
@@ -3825,10 +4565,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     form?.branchNo, form?.branchDirectLabel, form?.branchIBLabel,
     form?.headerCpc, form?.branchCpc,
     form?.customizePeriod, form?.customizePercent, // MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_SYNC_FIX_V1
+    allAccountCpcRules, // MARKER_ACCOUNT_CPC_PRIORITY_LOOKUP_PHASE5_V1
     vendorInfo, itemcodeItems?.length,
   ]);
 
   const [showPeriodConfirm, setShowPeriodConfirm] = useState(false);
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1
+  useEffect(() => {
+    if (!showPeriodConfirm) return;
+    const h = (e) => { if (e.key === 'Escape') setShowPeriodConfirm(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showPeriodConfirm]);
   // MARKER_APCONTROLLER_PREVENT_DOUBLE_SUBMIT_V1
   // ── กัน Submit ซ้ำจาก Double-click หรือกด Ctrl+Enter ซ้ำระหว่างรอ network ──
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -3862,6 +4610,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       confirmDialog.alert('กรุณาเลือก Branch ก่อน Submit — ไม่สามารถ Submit Invoice ที่ไม่มีข้อมูล Branch ได้');
       return;
     }
+    // MARKER_APCONTROLLER_INVDATE_INVNUM_REQUIRED_V1
+    // ── Block Submit: ไม่มี Inv date หรือ Invoice num ห้าม Submit เด็ดขาด ──
+    // ── (คู่กับ Field สีเหลืองที่เน้นไว้ในหน้าจอ) ─────────────────────────────
+    if (!form?.invDate?.trim() || !form?.invoiceNum?.trim()) {
+      confirmDialog.alert('ไม่สามารถเพิ่มข้อมูลได้ เนื่องจากยังไม่ได้กรอก Inv date และ Invoice num ให้ครบ กรุณากรอกก่อน Submit', { variant: 'danger', title: 'ข้อมูลไม่ครบ' });
+      return;
+    }
     if (!lines[0]?.itemCode?.trim() || !lines[0]?.amount?.trim()) {
       confirmDialog.alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
       return;
@@ -3885,7 +4640,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   useEffect(() => {
     if (!show) return;
     const h = (e) => {
-      if (e.key === 'Escape') { if (calcOpen) { setCalcOpen(false); return; } onClose(); }
+      if (e.key === 'Escape') {
+        // MARKER_APCONTROLLER_POPUP_OPEN_COUNTER_V2
+        // ── ใช้ Counter กลางแทนการจำ List ชื่อ Popup ทีละตัว ─────────────────────
+        // ── openPopupCount นับรวมตัวเอง (InvoiceDetailPopup) ด้วย 1 เสมอตอนเปิดอยู่ ──
+        // ── เพราะงั้นเช็ค > 1 (มี Popup ลูกเปิดซ้อนอยู่จริง) ไม่ใช่ > 0 ────────────
+        // ── ตัวไหนที่เป็น "State ภายใน" ไม่ใช่ Popup Component แยก (ไม่มีจุดเรียก ──
+        // ── usePopupOpenTracker ของตัวเอง) ต้องมาเช็คเพิ่มเองตรงนี้ทุกตัว ─────────
+        // ── (favDropdownIdx, accountConfigIdx, showAccountCpcHelp, ruleChoiceField) ─
+        if (favDropdownIdx !== null) { setFavDropdownIdx(null); return; }
+        if (showAccountCpcHelp) { setShowAccountCpcHelp(false); return; }
+        if (accountConfigIdx !== null) { setAccountConfigIdx(null); return; }
+        if (ruleChoiceField !== null) { setRuleChoiceField(null); return; }
+        if (openPopupCount > 1) return;
+        onClose();
+      }
       if (e.key === 'Enter'  && e.ctrlKey) handleSubmit();
       // Ctrl+Delete → Clear form (lines + header fields)
       if (e.key === 'Delete' && e.ctrlKey) {
@@ -3906,7 +4675,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [show, onClose]);
+  // MARKER_ESCAPE_LOGIC_FULL_FIX_V1 (Dependency Array แก้ให้ถูกหลัก กัน Stale Closure)
+  }, [show, onClose, favDropdownIdx, showAccountCpcHelp, accountConfigIdx, ruleChoiceField]);
 
   if (!show) return null;
 
@@ -3966,11 +4736,63 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     </div>
                   ))}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
-                  <span style={{ fontSize: '11px', color: '#999', width: '72px', flexShrink: 0, paddingTop: '1px' }}>Address</span>
-                  <span style={{ fontSize: '12px', color: vendorInfo?.['Address'] ? '#1a3a5c' : '#ccc', fontStyle: vendorInfo?.['Address'] ? 'normal' : 'italic', flex: 1, lineHeight: '1.6', wordBreak: 'break-word', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                    {vendorInfo?.['Address'] || '—'}
-                  </span>
+                {/* MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3 */}
+                {/* ── แทนที่แถว Address เดิม -- ไม่แตะ Block ด้านบน (Vendor Code/Site/ ── */}
+                {/* ── Tax ID/No.) เลย ตามที่ตกลงไว้ -- แค่แถวนี้แบ่งเป็น 4 ช่องเท่ากัน ── */}
+                {/* ── Method | Paygroup | Par | ปุ่ม Detail (เปิด Supplier ตัวเต็ม) ───── */}
+                {/* MARKER_APCONTROLLER_RULE_FIELD_CHOICE_V1 */}
+                {/* ── ดับเบิลคลิกทีละช่อง (Method/Paygroup/Par) เปิด Choice ลอยแยก ────── */}
+                {/* ── อิสระต่อกัน -- เลือกแล้วเก็บลง form ทันที (ไหลเข้า Submit อัตโนมัติ) ── */}
+                <div style={{ display: 'flex', padding: '4px 0', borderTop: '0.5px solid #f5f5f5' }}>
+                  {['Method', 'Paygroup', 'Par'].map(field => {
+                    const key = field.toLowerCase();
+                    const displayVal = form?.[key] || matchedRule?.[field] || '';
+                    return (
+                      <div key={field}
+                        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', cursor: 'pointer', position: 'relative' }}
+                        onClick={(e) => {
+                          const rcRect = e.currentTarget.getBoundingClientRect();
+                          setRcPos({ top: rcRect.bottom + 6, left: rcRect.left + rcRect.width / 2 });
+                          const rcOpts = ruleFieldOptions(field);
+                          const rcCur = form?.[key] || matchedRule?.[field] || '';
+                          const rcIdx = rcOpts.indexOf(rcCur);
+                          setRcActiveIdx(rcIdx >= 0 ? rcIdx : 0);
+                          setRuleChoiceField(field);
+                        }}>
+                        <span style={{ fontSize: '10px', color: '#999' }}>{field}</span>
+                        <span style={{ fontSize: '12px', color: displayVal ? '#1a3a5c' : '#ccc' }}>{displayVal || '—'}</span>
+                        {/* MARKER_APCONTROLLER_RULE_FIELD_CHOICE_PORTAL_FIX_V1 -- Portal ไป document.body กัน Element อื่นบังเด็ดขาด */}
+                        {ruleChoiceField === field && ReactDOM.createPortal(
+                          <div ref={ruleChoiceRef} style={{ position: 'fixed', top: rcPos.top, left: rcPos.left, transform: 'translateX(-50%)', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 6px 20px rgba(26,58,92,0.12)', zIndex: 99999, padding: '8px', minWidth: '90px' }}>
+                            <div style={{ fontSize: '9px', fontWeight: '600', color: '#999', letterSpacing: '0.05em', marginBottom: '6px', textAlign: 'center' }}>{field.toUpperCase()}</div>
+                            {/* MARKER_APCONTROLLER_RULE_FIELD_CHOICE_SCROLL_V1 */}
+                            {/* -- จำกัดสูงสุด ~5 รายการแล้ว Scroll (ซ่อน Scrollbar ทุก Browser) -- */}
+                            <style>{`.apc-rule-choice-scroll::-webkit-scrollbar{display:none;width:0;height:0}`}</style>
+                            <div className="apc-rule-choice-scroll" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', maxHeight: '132px', overflowY: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                              {ruleFieldOptions(field).map((opt, optIdx) => (
+                                <span key={opt} onClick={() => handlePickRuleField(field, opt)}
+                                  style={{ padding: '3px 12px', borderRadius: '14px', border: optIdx === rcActiveIdx ? '1.5px solid #185FA5' : '0.5px solid ' + (opt === displayVal ? '#1a3a5c' : '#ddd'), background: opt === displayVal ? '#1a3a5c' : 'white', color: opt === displayVal ? 'white' : '#666', fontSize: '10px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  {opt}
+                                </span>
+                              ))}
+                              {ruleFieldOptions(field).length === 0 && (
+                                <div style={{ fontSize: '10px', color: '#999', padding: '4px 8px' }}>ไม่มีตัวเลือก</div>
+                              )}
+                            </div>
+                          </div>,
+                          document.body
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {vendorInfo?.['Supplier Name'] && (
+                      <button type="button" onClick={onOpenSupplierDetail}
+                        style={{ padding: '3px 10px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', color: '#185FA5', fontSize: '10px', cursor: 'pointer' }}>
+                        Detail →
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
                 {vendorNoForFlow && (
@@ -3999,7 +4821,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                           const remapped = [];
                           for (let i = 0; i < maxLen; i++) {
                             const newItemCode = newItems[i]?.itemCode || '';
-                            const newLine = calcLine({ ...lines[i], itemCode: newItemCode }, itemcodeItems, vendorInfo, form);
+                            const newLine = calcLine({ ...lines[i], itemCode: newItemCode }, itemcodeItems, vendorInfo, form, allAccountCpcRules);
                             remapped.push(newLine);
                             const newItemData = itemcodeItems.find(it => String(it.code ?? '').trim().toUpperCase() === newItemCode?.toUpperCase());
                             const newIsVRV = String(newItemData?.value ?? '').trim().toUpperCase() === 'V-RV';
@@ -4014,7 +4836,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                           const freshLine = calcLine({
                             hl: flow.items?.[0]?.hl || 'H', itemCode: firstItemCode, amount: '',
                             tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '',
-                          }, itemcodeItems, vendorInfo, form);
+                          }, itemcodeItems, vendorInfo, form, allAccountCpcRules);
                           setLines([freshLine]);
                           setRealVendorLineIdx(-1);
                           setSelectedFlow(flow);
@@ -4087,7 +4909,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
                 <label style={fieldLabel}>{label}</label>
                 {key === 'invoiceNum' && vendorInfo?.['Digit'] ? (
-                  <div style={{ ...inputStyle(w), display: 'flex', alignItems: 'center', padding: 0, overflow: 'hidden' }}>
+                  // MARKER_APCONTROLLER_INVDATE_INVNUM_YELLOW_FIELD_V1
+                  <div style={{ ...inputStyle(w), display: 'flex', alignItems: 'center', padding: 0, overflow: 'hidden', background: '#FFF3CD' }}>
                     <input type={type} value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
                       style={{ flex: 1, minWidth: 0, height: '100%', border: 'none', outline: 'none', background: 'transparent', padding: '0 8px', fontSize: '12px', color: 'inherit', boxSizing: 'border-box' }} />
                     <div title="Digit (จาก Vendor Master)"
@@ -4102,7 +4925,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                       // ── Inv Date Cache: กด "*" ตอน Field ว่าง -> เติมค่า Inv Date ล่าสุดที่เคยกรอกใน Batch นี้ ──
                       if (e.key === '*' && !form?.invDate) { e.preventDefault(); setField('invDate', '*'); }
                     } : undefined}
-                    style={inputStyle(w)} />
+                    // MARKER_APCONTROLLER_INVDATE_INVNUM_YELLOW_FIELD_V1
+                    style={{ ...inputStyle(w), ...((key === 'invDate' || key === 'invoiceNum') ? { background: '#FFF3CD' } : {}) }} />
                 )}
               </div>
             ))}
@@ -4222,19 +5046,70 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             )
                           ) : key === 'itemCode' ? (
                             <div style={{ position: 'relative' }}>
-                              <input type="text" maxLength={8}
+                              {/* MARKER_APCONTROLLER_ITEMCODE_SMART_SEARCH_V1 */}
+                              <input type="text" maxLength={40}
                                 ref={el => { lineItemCodeRefs.current[idx] = el; if (idx === 0) itemCodeRef.current = el; }}
                                 value={line[key]}
                                 title={line[key]}
+                                // MARKER_APCONTROLLER_ITEMCODE_FAV_PLACEHOLDER_V1
+                                // ── Placeholder "พิมพ์ /" แสดงเฉพาะตอน Vendor นี้มี Favorite จริงเท่านั้น ──
+                                placeholder={itemcodeItems.some(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(vendorInfo?.['Tax ID'] || '')) ? 'พิมพ์ /' : undefined}
                                 onFocus={() => { setActiveLineIdx(idx); if (idx === 0) applyFlowToFirstLine(); }}
-                                onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v); }}
+                                onChange={e => {
+                                  const raw = e.target.value;
+                                  if (raw === '/') {
+                                    setFavDropdownIdx(idx); setFavActiveIdx(0);
+                                    idx === 0 ? setLine1Field(key, raw) : setLineField(idx, key, raw);
+                                    return;
+                                  }
+                                  if (favDropdownIdx === idx) setFavDropdownIdx(null);
+                                  const v = raw.replace(/[a-z]/g, c => c.toUpperCase());
+                                  idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v);
+                                }}
+                                onKeyDown={e => {
+                                  if (favDropdownIdx !== idx) return;
+                                  const favList = itemcodeItems
+                                    .filter(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(vendorInfo?.['Tax ID'] || ''))
+                                    .sort((a, b) => String(a.code ?? '').localeCompare(String(b.code ?? ''), undefined, { numeric: true, sensitivity: 'base' }));
+                                  if (e.key === 'ArrowDown') { e.preventDefault(); setFavActiveIdx(a => Math.min(favList.length - 1, a + 1)); }
+                                  else if (e.key === 'ArrowUp') { e.preventDefault(); setFavActiveIdx(a => Math.max(0, a - 1)); }
+                                  else if (e.key === 'Enter' && favList[favActiveIdx]) {
+                                    e.preventDefault();
+                                    selectFavoriteItem(favList[favActiveIdx], idx, key);
+                                  } else if (e.key === 'Escape') {
+                                    setFavDropdownIdx(null);
+                                  }
+                                }}
                                 onBlur={e => {
-                                  // auto-pad: "787" → "C0000787" (กรอกตัวเลข 1-7 หลัก ไม่มีตัวอักษรปน)
+                                  setTimeout(() => setFavDropdownIdx(null), 150);
                                   const raw = e.target.value.trim();
+                                  if (!raw || raw === '/') return;
                                   let finalVal = raw;
-                                  if (raw && /^\d{1,7}$/.test(raw)) {
+                                  const directMatch = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === raw.toUpperCase());
+                                  if (directMatch) {
+                                    // auto-pad: "787" → "C0000787" (กรอกตัวเลข 1-7 หลัก ไม่มีตัวอักษรปน)
+                                    finalVal = String(directMatch.code).toUpperCase();
+                                    idx === 0 ? setLine1Field(key, finalVal) : setLineField(idx, key, finalVal);
+                                  } else if (/^\d{1,7}$/.test(raw)) {
                                     finalVal = 'C' + raw.padStart(7, '0');
                                     idx === 0 ? setLine1Field(key, finalVal) : setLineField(idx, key, finalVal);
+                                  } else if (!/^[A-Z0-9]+$/.test(raw)) {
+                                    // MARKER_APCONTROLLER_ITEMCODE_FAV_ONLY_MATCH_V1
+                                    // ── ไม่ใช่รหัส A-Z0-9 ล้วน -- ถือว่าเป็นคำอธิบาย ค้นเฉพาะใน ──────
+                                    // ── Favorite ของ Vendor เท่านั้น (ไม่ใช่ทั้ง 666 รายการ) ─────────
+                                    // ── กันจับคู่ผิดจาก Item ที่ไม่เกี่ยวข้อง — ไม่เจอใน Favorite ──────
+                                    // ── ค่อยเปิด Popup ให้ค้นหาทั้งหมดแทน ───────────────────────────
+                                    const favOnly = itemcodeItems.filter(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(vendorInfo?.['Tax ID'] || ''));
+                                    const kwMatches = favOnly.filter(i => String(i.description ?? '').includes(raw));
+                                    if (kwMatches.length === 1) {
+                                      finalVal = kwMatches[0].code || '';
+                                      idx === 0 ? setLine1Field(key, finalVal) : setLineField(idx, key, finalVal);
+                                    } else {
+                                      setActiveLineIdx(idx);
+                                      setItemCodeInitialSearch(raw);
+                                      setShowItemCodePopup(true);
+                                      return;
+                                    }
                                   }
                                   // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
                                   // ── บันทึกเข้า Session เฉพาะตอน User พิมพ์เอง + Blur ออกจากช่องนี้ ──
@@ -4250,10 +5125,37 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                   }
                                 }}
                                 style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
-                              <button type="button" title="Search item code" onClick={() => { setActiveLineIdx(idx); setShowItemCodePopup(true); }}
+                              <button type="button" title="Search item code" onClick={() => { setActiveLineIdx(idx); setItemCodeInitialSearch(''); setShowItemCodePopup(true); }}
                                 style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                               </button>
+                              {favDropdownIdx === idx && (() => {
+                                const favList = itemcodeItems
+                                  .filter(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(vendorInfo?.['Tax ID'] || ''))
+                                  .sort((a, b) => String(a.code ?? '').localeCompare(String(b.code ?? ''), undefined, { numeric: true, sensitivity: 'base' }));
+                                if (favList.length === 0) return null;
+                                return (
+                                  <div style={{ position: 'absolute', top: '100%', left: 0, width: '440px', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 4px 14px rgba(26,58,92,0.15)', zIndex: 20, maxHeight: '260px', overflowY: 'auto' }}>
+                                    {/* MARKER_APCONTROLLER_ITEMCODE_FAV_DROPDOWN_HEADER_V1 */}
+                                    {/* ── Header ไม่ได้อยู่ใน favList ที่ใช้เลื่อนด้วยลูกศร ────────── */}
+                                    {/* ── กด ↑↓ จึงข้าม Header ไปเองโดยอัตโนมัติ ไม่ต้องกันเพิ่ม ────── */}
+                                    <div style={{ padding: '5px 10px', fontSize: '10px', fontWeight: '600', color: '#e6a800', background: '#FFFBEB', borderBottom: '0.5px solid #f0f0f0' }}>★ FAVORITE ({favList.length})</div>
+                                    {favList.map((f, fi) => (
+                                      <div key={f.code || fi}
+                                        // MARKER_APCONTROLLER_ITEMCODE_FAV_AUTOSCROLL_V1
+                                        // ── เลื่อนด้วยลูกศรแล้ว Scroll ตามให้แถวที่เลือกอยู่ในขอบเขตที่เห็นเสมอ ──
+                                        ref={el => { if (fi === favActiveIdx) el?.scrollIntoView({ block: 'nearest' }); }}
+                                        onMouseDown={() => selectFavoriteItem(f, idx, key)}
+                                        style={{ padding: '6px 10px', cursor: 'pointer', background: fi === favActiveIdx ? '#E6F1FB' : 'white', borderBottom: '0.5px solid #f0f0f0' }}>
+                                        {/* MARKER_APCONTROLLER_ITEMCODE_FAV_ACCOUNTCODE_V1 */}
+                                        {/* ── บรรทัดที่ 2: รวม CPC-Account-Sub เป็น Account Code เดียว + TX ── */}
+                                        <div style={{ fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><span style={{ color: '#0C447C', fontWeight: '500' }}>{f.code}</span> {f.description}</div>
+                                        <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>{[f.cpc, f.account, f.sub].filter(Boolean).join('-')} · {f.spec_tx}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           ) : key === 'tax' ? (
                             <div style={{ position: 'relative' }}>
@@ -4348,7 +5250,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
-                              onDoubleClick={key === 'desc' ? () => { setExpandEditIdx(idx); setExpandEditVal(line[key] || ''); } : undefined}
+                              onDoubleClick={key === 'desc' ? () => { setExpandEditIdx(idx); setExpandEditVal(line[key] || ''); } : key === 'account' ? () => openAccountConfig(idx, line[key]) : undefined}
                               onKeyDown={['total','amount','desc'].includes(key) ? (e) => {
                                 if (e.key === 'Enter') {
                                   const l = lines[idx];
@@ -4368,6 +5270,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                   if (e.key === 'Enter' && !e.shiftKey) {
                                     e.preventDefault();
                                     idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
+                                    // MARKER_APCONTROLLER_DESC_LOCK_ON_MANUAL_EDIT_V1
+                                    { const lockCode = String(lines[idx]?.itemCode ?? '').trim().toUpperCase(); idx === 0 ? setLine1Field('_descLockedForCode', lockCode) : setLineField(idx, '_descLockedForCode', lockCode); }
                                     setExpandEditIdx(null);
                                   } else if (e.key === 'Escape') {
                                     expandEditCancelRef.current = true;
@@ -4377,12 +5281,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onBlur={() => {
                                   if (expandEditCancelRef.current) { expandEditCancelRef.current = false; return; }
                                   idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
+                                  // MARKER_APCONTROLLER_DESC_LOCK_ON_MANUAL_EDIT_V1
+                                  { const lockCode = String(lines[idx]?.itemCode ?? '').trim().toUpperCase(); idx === 0 ? setLine1Field('_descLockedForCode', lockCode) : setLineField(idx, '_descLockedForCode', lockCode); }
                                   setExpandEditIdx(null);
                                 }}
                                 style={{ width: '100%', minHeight: '60px', fontSize: '12px', padding: '6px 8px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', color: '#1a3a5c', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
                               <div style={{ fontSize: '10px', color: '#999', marginTop: '5px' }}>Enter เพื่อบันทึก · Esc เพื่อยกเลิก</div>
                             </div>
                           )}
+                          {/* MARKER_ACCOUNT_CPC_POPUP_PHASE2_V1 */}
+                          {key === 'account' && accountConfigIdx === idx && accountConfigPopupJsx}
                           </div>
                           )}
                         </td>
@@ -4786,6 +5694,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           }}
           itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
           vendorTaxId={vendorInfo?.['Tax ID'] || ''}
+          initialSearch={itemCodeInitialSearch}
+        />
+        {/* MARKER_APCONTROLLER_ATDES_DESC_BANK_V1 */}
+        <DescriptionBankPopup
+          show={descBankOpen}
+          onClose={() => setDescBankOpen(false)}
+          onSelect={handleDescBankSelect}
+          bu={bu || ''}
+          supplierCode={form?.supplierCode || ''}
+          itemCode={descBankContext?.itemCode || ''}
+          userName={userName}
+          currentUser={currentUser}
         />
 
         {/* ── Footer: summary + Close ── */}
@@ -4864,6 +5784,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 // BucketItemPopup — View / Edit ของรายการใน Batch Bucket
 // ─────────────────────────────────────────────────────────────────────────────
 function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave }) {
+  usePopupOpenTracker(show);
   const isView = mode === 'view';
   const emptyLine = () => ({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
 
@@ -5450,6 +6371,34 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   // ── Default Focus: BU code ตอนเปิดหน้า Batch Setup ──
   const buInputRef = useRef(null);
   useEffect(() => { setTimeout(() => buInputRef.current?.focus(), 80); }, []);
+  // MARKER_BATCHSETUP_KEYBOARD_SHORTCUT_V1
+  // -- Ref ของ Root Container (เช็ค Step นี้กำลังแสดงอยู่จริงไหมก่อนทำงาน) ----
+  const batchSetupRootRef = useRef(null);
+  const startBatchBtnRef = useRef(null);
+  const onProcessBtnRef = useRef(null);
+  useEffect(() => {
+    const handleShortcutKey = (e) => {
+      // ── ข้ามถ้า Step นี้ถูกซ่อนอยู่ (display:none จาก Ancestor) ──────────────
+      if (!batchSetupRootRef.current || batchSetupRootRef.current.offsetParent === null) return;
+      // MARKER_ESCAPE_LOGIC_FULL_FIX_V1 (Enter/Home ต้องเช็ค Popup ก่อนทำงาน)
+      // ── มี Popup ไหนเปิดอยู่ (On Process/Account-CPC Rules/Prefix ฯลฯ) ────────
+      // ── ห้าม Trigger Start Batch/On Process ทะลุ Popup ไปเด็ดขาด ─────────────
+      if (openPopupCount > 0) return;
+      if (e.key === 'Enter') {
+        // MARKER_BATCHSETUP_ENTER_SINGLE_PRESS_FIX_V1
+        // -- เอา Skip Logic เดิมออก (เคยข้ามถ้า Focus อยู่ที่ช่อง BU ทำให้ต้องกด --
+        // -- Enter 2 ครั้งถึงจะ Start Batch) -- ตอนนี้กดครั้งเดียวทำงานทั้ง 2 อย่าง --
+        // -- พร้อมกันได้เลย (Match BU ของช่องเดิม + Start Batch) ไม่ชนกัน ----------
+        e.preventDefault();
+        startBatchBtnRef.current?.click();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        onProcessBtnRef.current?.click();
+      }
+    };
+    document.addEventListener('keydown', handleShortcutKey);
+    return () => document.removeEventListener('keydown', handleShortcutKey);
+  }, []);
 
   const isOverride = (val) => val?.ap_period_mode === 'prev';
 
@@ -5605,6 +6554,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const canSelfOverride = daysSinceOverrideDeadline !== null && daysSinceOverrideDeadline >= 0 && daysSinceOverrideDeadline <= 7;
   const isBlocked = buStatus === 'Blocked';
   const [showBlockedPopup, setShowBlockedPopup] = useState(false);
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1
+  useEffect(() => {
+    if (!showBlockedPopup) return;
+    const h = (e) => { if (e.key === 'Escape') setShowBlockedPopup(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showBlockedPopup]);
   const [requestCloseLoading, setRequestCloseLoading] = useState(false);
   const [selfOverrideLoading, setSelfOverrideLoading] = useState(false);
 
@@ -5760,6 +6716,14 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   const [onProcessGroups, setOnProcessGroups] = useState([]);
   const [onProcessLoading, setOnProcessLoading] = useState(false);
   const [showOnProcess, setShowOnProcess] = useState(false);
+  // MARKER_ESCAPE_LOGIC_FULL_FIX_V1 (showOnProcess)
+  usePopupOpenTracker(showOnProcess);
+  useEffect(() => {
+    if (!showOnProcess) return;
+    const h = (e) => { if (e.key === 'Escape') setShowOnProcess(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showOnProcess]);
   // MARKER_ONPROCESS_MYJOBS_ALLJOBS_TAB_V1
   // ── Tab My Jobs/All Jobs สำหรับ Popup "Batch ที่ยังไม่เสร็จ" ─────────────
   const [onProcessTab, setOnProcessTab] = useState('mine'); // 'mine' | 'all'
@@ -6233,6 +7197,26 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
       // 3. Mark notifications approved
       try { await markNotificationsApproved(batch.batch_id); } catch (nErr) { console.error('[mark notifications approved]', nErr); }
 
+      // 3.5 MARKER_APCONTROLLER_BELL_APPROVE_NOTIFY_BACK_V1
+      // ── Mark access_requests เดิมของผู้รับเป็น Handled + แจ้งกลับไปที่ Bell ผู้ส่ง ──
+      // ── (อ้างอิงเป็น BU ไม่ใช่ Batch ID ตามที่ตกลงไว้) ─────────────────────────
+      try {
+        const { data: oldBR } = await db.from('access_requests').select('id, ref_batch_ids').eq('request_type', 'batch_review');
+        const oldBRMatch = (oldBR || []).filter(r => (r.ref_batch_ids || []).includes(batch.batch_id));
+        if (oldBRMatch.length > 0) {
+          await db.from('access_requests').update({
+            status: 'approved', handled_by: approvedBy, handled_at: approvedAt,
+          }).in('id', oldBRMatch.map(r => r.id));
+        }
+        await db.from('access_requests').insert([{
+          request_type: 'batch_review', requester_name: approvedBy, target_username: batch.created_by || '',
+          ref_batch_ids: [batch.batch_id], status: 'approved', handled_by: approvedBy, handled_at: approvedAt,
+          created_at: approvedAt,
+          message: `อนุมัติ Batch ของ BU ${batch.bu || '-'} เรียบร้อยแล้ว`,
+        }]);
+        broadcastWs('access_request_new', { target_username: batch.created_by || '' });
+      } catch (nErr) { console.error('[notify sender on approve]', nErr); }
+
       // 4. บันทึก activity_log — Approve Stamp
       try {
         const token = sessionStorage.getItem('fastapn_token');
@@ -6328,6 +7312,27 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
           if (senderIds.length > 0) await db.from('batch_notifications').update({ status: 'rejected' }).in('id', senderIds);
         }
       } catch (nErr) { console.error('[update notifications on reject]', nErr); }
+      // MARKER_APCONTROLLER_BELL_REJECT_NOTIFY_BACK_V1
+      // ── Mark access_requests เดิมของผู้รับเป็น Handled (rejected) + แจ้งกลับผู้ส่ง ──
+      // ── (อ้างอิงเป็น BU ไม่ใช่ Batch ID เหมือนตอน Approve) ─────────────────────
+      try {
+        const rejectedBy = userName || currentUser?.email || '';
+        const rejectedAt = new Date().toISOString();
+        const { data: oldBR } = await db.from('access_requests').select('id, ref_batch_ids').eq('request_type', 'batch_review');
+        const oldBRMatch = (oldBR || []).filter(r => (r.ref_batch_ids || []).includes(batch.batch_id));
+        if (oldBRMatch.length > 0) {
+          await db.from('access_requests').update({
+            status: 'rejected', handled_by: rejectedBy, handled_at: rejectedAt,
+          }).in('id', oldBRMatch.map(r => r.id));
+        }
+        await db.from('access_requests').insert([{
+          request_type: 'batch_review', requester_name: rejectedBy, target_username: batch.created_by || '',
+          ref_batch_ids: [batch.batch_id], status: 'rejected', handled_by: rejectedBy, handled_at: rejectedAt,
+          created_at: rejectedAt,
+          message: `ตีกลับ Batch ของ BU ${batch.bu || '-'} — กรุณาตรวจสอบ`,
+        }]);
+        broadcastWs('access_request_new', { target_username: batch.created_by || '' });
+      } catch (nErr) { console.error('[notify sender on reject]', nErr); }
     } catch (e) { confirmDialog.alert('ปฏิเสธไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
   const canSeeAll = isOwner || isAdmin;
@@ -6389,7 +7394,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
   return (
     <>
       <BUSearchPopup show={showPopup} onClose={() => setShowPopup(false)} onSelect={handleSelectBU} infoItems={infoItems} />
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
+      <div ref={batchSetupRootRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
         <div style={card}>
           <div style={cardHead}><span style={cardLabel}>Batch setup</span></div>
           <div style={cardBody}>
@@ -6440,7 +7445,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 </div>
                 {/* MARKER_ONPROCESS_BUTTON_ROW_V1 */}
                 <div style={{ display: 'flex', gap: '10px' }}>
-                <button style={{ ...btnPrimary, flex: 1, justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
+                <button ref={startBatchBtnRef} title="กด Enter เพื่อ Start Batch ได้ทันที (Shortcut)" style={{ ...btnPrimary, flex: 1, justifyContent: 'center', ...(isBlocked ? { background: '#ccc', cursor: 'not-allowed' } : {}) }}
                   // MARKER_SYNC_GRT_GRN_ON_START_BATCH_V1
                   // MARKER_BATCHSETUP_OVER_MONTH_TRIGGER_V1
                   onClick={async () => {
@@ -6496,7 +7501,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                       buInfo,
                     });
                   }}>▶ Start Batch</button>
-                <button onClick={() => { fetchOnProcessGroups(); setShowOnProcess(true); }}
+                <button ref={onProcessBtnRef} title="กด Home เพื่อดู On process ได้ทันที (Shortcut)" onClick={() => { fetchOnProcessGroups(); setShowOnProcess(true); }}
                   style={{ padding: '0 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', fontSize: '13px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                   ⏱ On process
                   {/* MARKER_ONPROCESS_BADGE_SYNC_FILTERED_V1 */}
@@ -6560,7 +7565,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                 <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : historyTab === 'inbox' ? 'ยังไม่มีงานส่งเข้ามา' : 'No batch history'}</td></tr>
               ) : (historyTab === 'mine' ? historyMine : historyTab === 'inbox' ? historyInbox : historyAll).map(b => {
                 const approvedLabel = b.approved_by ? `Approved by ${b.approved_by}` : 'Approved';
-                const statusMap = { done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, approved: { bg: '#EAF3DE', color: '#27500A', label: approvedLabel }, reviewing: { bg: '#FAEEDA', color: '#633806', label: `Reviewing by ${b.reported_to_username || '...'}` }, rejected: { bg: '#FCEBEB', color: '#791F1F', label: 'Rejected' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
+                const statusMap = { end_process: { bg: '#EAF3DE', color: '#27500A', label: 'ส่งแล้ว' }, done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, approved: { bg: '#EAF3DE', color: '#27500A', label: approvedLabel }, reviewing: { bg: '#FAEEDA', color: '#633806', label: `Reviewing by ${b.reported_to_username || '...'}` }, rejected: { bg: '#FCEBEB', color: '#791F1F', label: 'Rejected' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
                 const ra = b.receive_date ? new Date(b.receive_date) : null;
                 const p2 = (n) => String(n).padStart(2, '0');
@@ -6610,12 +7615,12 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
                                 {/* ── Report to ผู้ตรวจ / อนุมัติ: Popup เดียว ปุ่มเปลี่ยนความหมายเองข้างใน ── */}
                                 {/* ── (My Jobs เท่านั้น) — ถ้ามีสิทธิ์ ApproveBatch และ Batch นี้ถูกส่งให้ ──── */}
                                 {/* ── คนอื่นตรวจไปแล้ว (reviewing) ไม่ต้องโชว์ปุ่มอีก ปล่อยตาม Flow ปกติ ──── */}
-                                {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved'
+                                {historyTab === 'mine' && b.status !== 'done' && b.status !== 'approved' && b.status !== 'end_process'
                                   && !(canApproveBatch && b.status === 'reviewing') && (
                                   <button onClick={() => setReportPopupBatch(b)} title="ส่งตรวจ / อนุมัติ"
                                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #f7dfa8', background: '#fff8ec', color: '#854F0B', fontSize: '14px', cursor: 'pointer' }}>📤</button>
                                 )}
-                                {b.status === 'approved' && (
+                                {['approved', 'end_process'].includes(b.status) && (
                                   <button onClick={() => setViewChatBatch(b)} title="ดู Chat ย้อนหลัง"
                                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #85B7EB', background: '#E6F1FB', color: '#0C447C', fontSize: '14px', cursor: 'pointer' }}>✉️</button>
                                 )}
@@ -7036,6 +8041,14 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab }) {
 // ── Popup ส่งตรวจ พร้อมแนบไฟล์ Invoice Register (Paste จาก Excel/Sheet หรือ Upload ไฟล์ Excel) ──
 // MARKER_INVOICE_REGISTER_REUSE_EXISTING_V1
 function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone, canApproveBatch = false, currentUsername = '' }) {
+  usePopupOpenTracker(show);
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_MISSING_V1 (ReportToInvoiceRegisterPopup)
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
   const [toUsername, setToUsername] = useState('');
   const [mode, setMode] = useState('paste');
   const [pastedText, setPastedText] = useState('');
@@ -7219,7 +8232,12 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         await db.from('access_requests').insert([{
           request_type: 'batch_review', requester_name: senderUsername, target_username: toUsername,
           ref_batch_ids: [batchIdKey], status: 'pending', created_at: new Date().toISOString(),
+          message: `${senderUsername} ส่งตรวจ Batch ${batchIdKey} มาให้`,
         }]);
+        // MARKER_APCONTROLLER_BELL_REALTIME_NOTIFY_V1
+        // ── Broadcast Event ให้ตรงกับที่ Bell (App.js) ฟังอยู่จริง (access_request_new) ──
+        // ── เดิม Broadcast แค่ batch_sent ซึ่ง Bell ไม่รู้จัก เลยไม่ Refresh ทันที ────────
+        try { broadcastWs('access_request_new', { target_username: toUsername }); } catch {}
       } catch (nErr) { console.error('[insert batch_notifications on report-to]', nErr); }
       }
       onDone({ id: batch.id, batch_id: batch.batch_id, status: isSelfApprove ? 'approved' : 'reviewing', reported_to_username: isSelfApprove ? currentUsername : toUsername, invoice_register_file_id: fileId, invoice_register_file_name: fileName });
@@ -7388,7 +8406,8 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
                 }
                 if (e.key === 'Enter' || e.key === 'Tab') onSupplierBlur(form.supplierCode);
               }}
-              style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+              // MARKER_APCONTROLLER_SUPPLIER_BRANCH_YELLOW_REQUIRED_V1
+              style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: '#FFF3CD', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
             <button onClick={onSupplierSearch} title="Search Supplier"
               style={{ position: 'absolute', right: 0, top: 0, height: '30px', width: '28px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -7418,7 +8437,8 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
                 if (e.key === 'Enter') { e.preventDefault(); onBranchNoBlur(e.target.value); }
                 if (e.key === 'Tab') onBranchNoKeyDown(e);
               }}
-              style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
+              // MARKER_APCONTROLLER_SUPPLIER_BRANCH_YELLOW_REQUIRED_V1
+              style={{ height: '30px', padding: '0 28px 0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: '#FFF3CD', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }} />
             <button onClick={onBranchSearch} style={{ position: 'absolute', right: 0, top: 0, height: '30px', width: '28px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             </button>
@@ -7515,7 +8535,16 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : 'auto', flexWrap: 'wrap' }}>
           {fld('GRT Status', 'grt',     { readOnly: true, width: '80px'  })}
           {fld('Due date',   'dueDate', { type: 'date',  width: '130px' })}
-          <button onClick={onInvoiceDetail} style={{ width: isMobile ? '100%' : 'auto', justifyContent: 'center', height: '30px', padding: '0 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {/* MARKER_APCONTROLLER_SUPPLIER_BRANCH_YELLOW_REQUIRED_V1 */}
+          {/* ── Block เปิด Invoice Detail ถ้า Supplier code / Branch no. ยังไม่ได้กรอก ── */}
+          <button onClick={() => {
+            if (!form.supplierCode?.trim() || !form.branchNo?.trim()) {
+              confirmDialog.alert('กรุณากรอก Supplier code และ Branch no. ให้ครบก่อนเปิด Invoice Detail', { variant: 'danger', title: 'ข้อมูลไม่ครบ' });
+              return;
+            }
+            onInvoiceDetail();
+          }}
+            style={{ width: isMobile ? '100%' : 'auto', justifyContent: 'center', height: '30px', padding: '0 16px', borderRadius: '6px', border: 'none', background: (!form.supplierCode?.trim() || !form.branchNo?.trim()) ? '#B0B8C1' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
             Invoice Detail<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
           </button>
         </div>
@@ -7555,6 +8584,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   const [showBranchPopup, setShowBranchPopup]     = useState(false);
   const [showInvoiceDetail, setShowInvoiceDetail] = useState(false);
   const [showSupplierPopup, setShowSupplierPopup] = useState(false); // ✅ supplier search
+  // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3
+  const [supplierViewCode, setSupplierViewCode] = useState('');
   const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', rowKey: null });
   const [selectedRows, setSelectedRows] = useState(new Set()); // ✅ Batch Bucket: เลือกแถวสำหรับ bulk delete
   // ── Batch Bucket: ปุ่มสลับ View Invoice/Summary — Default เป็น Invoice เสมอทุกครั้งที่เปิดหน้า ──
@@ -7585,13 +8616,25 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
 
       if (e.key === 'Enter') {
         const active = document.activeElement;
-        const isSupplierOrBranchField = active === supplierCodeRef.current || active === branchNoRef.current;
-        if (isSupplierOrBranchField && form.supplierCode?.trim() && form.branchNo?.trim()) {
+        // MARKER_APCONTROLLER_ENTER_HEADER_OPEN_DETAIL_V1
+        // ── ขยาย Scope จากเดิมที่มีแค่ Supplier code/Branch no. ให้ครอบคลุม ──
+        // ── CPC/Account/SubAcc ด้วย -- Focus อยู่ช่องไหนใน Header ก็ตาม ถ้าข้อมูล ──
+        // ── Supplier code + Branch no. ครบแล้ว กด Enter เปิด Invoice Detail ได้เลย ──
+        const isHeaderField = [
+          supplierCodeRef.current, branchNoRef.current,
+          headerCpcRef.current, headerAccountRef.current, headerSubAccRef.current,
+        ].includes(active);
+        if (isHeaderField && form.supplierCode?.trim() && form.branchNo?.trim()) {
           setShowInvoiceDetail(true);
         }
         return;
       }
       if (e.key === 'Escape') {
+        // MARKER_APCONTROLLER_POPUP_OPEN_COUNTER_V1
+        // ── ใช้ Counter กลางแทนการจำ List ชื่อ Popup ทีละตัว -- InvoiceEntry เอง ────
+        // ── ไม่เรียก usePopupOpenTracker ให้ตัวเอง เพราะฉะนั้นเช็ค > 0 ตรงๆ ได้เลย ────
+        // ── (Popup ลูกทุกตัว รวม InvoiceDetailPopup เอง มี Tracker ของตัวเองอยู่แล้ว) ──
+        if (openPopupCount > 0) return;
         onBack();
         return;
       }
@@ -7720,6 +8763,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       setField('supplierCode', found['Code']);
     }
   };
+  // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3
+  // ── มีคนแก้ Supplier ตัวไหนก็ตาม (ผ่านปุ่ม Detail หรือ Master Data) ────────
+  // ── ถ้าเป็น Vendor ที่กำลังเปิดอยู่ในหน้านี้พอดี ให้รีเฟรชสดทันที ───────────
+  useRealtimeRefresh(['supplier_list_updated'], async () => {
+    if (!form.supplierCode?.trim()) return;
+    if (fetchCollection) await fetchCollection('SupplierList', true);
+    lookupVendor(form.supplierCode);
+  });
 
   // ── Invoice เก่าที่ยังไม่มี vendor_tax_id/vendor_no (Field เพิ่งเพิ่มใหม่) ──
   // ── ดึงมาจาก Supplier Code สด ๆ ตอนแสดงผลแทน ไม่ต้อง Backfill Database ──
@@ -8271,6 +9322,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
 
   const handleSubmitInvoice = async (lines) => {
     const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
+    // MARKER_APCONTROLLER_ROUND2_ON_SUBMIT_V1
+    // ── ปัดเศษให้เหลือ 2 ตำแหน่งจริงๆ ก่อนบันทึกเข้า DB (Round Half Up) ──────
+    // ── กัน Floating Point Error สะสมจากการบวกทศนิยมหลายรายการ ──────────────
+    // ── (เช่น 14.699999999999999 แทนที่จะเป็น 14.70 พอดี) ─────────────────────
+    const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
     const roleLabel = isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer';
 
     // ── Bug Fix: กรองบรรทัดว่างทิ้งก่อน Group (กัน Ghost Line เข้ากลุ่ม Tax Code ว่าง) ──
@@ -8390,10 +9446,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         inv_date:        form.invDate || null,
         period:          form.period || '',
         description:     hLine?.desc || '',
-        amount:          sumField(groupLines, 'amount'),
-        vat:             sumField(groupLines, 'vat'),
-        wht:             sumField(groupLines, 'wht'),
-        net:             sumField(groupLines, 'total'),
+        // MARKER_APCONTROLLER_ROUND2_ON_SUBMIT_V1
+        amount:          round2(sumField(groupLines, 'amount')),
+        vat:             round2(sumField(groupLines, 'vat')),
+        wht:             round2(sumField(groupLines, 'wht')),
+        net:             round2(sumField(groupLines, 'total')),
         // MARKER_RESTORE_SEMIAUTO_AND_FIX_REALGRN_V1
         form_data:       {
           ...form,
@@ -8727,10 +9784,11 @@ const handleSelectBranch = (item, meta = {}) => {
       {/* Batch Bucket Flex Layout: หดความสูงให้พอดีกับพื้นที่ที่เหลือจริง */}
       <SupplierSearchPopup
         show={showSupplierPopup}
-        onClose={() => setShowSupplierPopup(false)}
+        onClose={() => { setShowSupplierPopup(false); setSupplierViewCode(''); }}
         onSelect={(item) => {
           setField('supplierCode', item['Code'] || '');
           setShowSupplierPopup(false);
+          setSupplierViewCode('');
           lookupVendor(item['Code'] || '');
           // ── Smart Focus: ไป Field ว่างตัวถัดไปอัตโนมัติหลังเลือก Supplier ──
           setTimeout(() => focusNextEmptyHeaderField('supplierCode'), 80);
@@ -8741,6 +9799,7 @@ const handleSelectBranch = (item, meta = {}) => {
         fetchCollection={fetchCollection}
         userName={userName || currentUser?.email || ''}
         quickVendors={quickVendors}
+        initialViewCode={supplierViewCode}
       />
       <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
 
@@ -8769,7 +9828,7 @@ const handleSelectBranch = (item, meta = {}) => {
       
       <div style={{ ...card, overflow: 'visible', flexShrink: 0 }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} recentHeaderCpc={recentHeaderCpc} recentHeaderAccount={recentHeaderAccount} recentHeaderSubAcc={recentHeaderSubAcc} recentSupplierCode={recentSupplierCode} supplierCodeRef={supplierCodeRef} branchNoRef={branchNoRef} headerCpcRef={headerCpcRef} headerAccountRef={headerAccountRef} headerSubAccRef={headerSubAccRef} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} flowMemory={flowMemory} setFlowMemory={setFlowMemory} supplierCodeRef={supplierCodeRef} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} flowMemory={flowMemory} setFlowMemory={setFlowMemory} supplierCodeRef={supplierCodeRef} matchedRule={matchedRule} onOpenSupplierDetail={() => { setSupplierViewCode(form.supplierCode || ''); setShowSupplierPopup(true); }} vendorRuleItems={vendorRuleItems} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
@@ -9176,6 +10235,14 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
   const [batchName, setBatchName] = useState('');
   const [showExportModal, setShowExportModal] = useState(false);
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1 (showExportModal)
+  // -- Respect เงื่อนไขเดิม: ห้ามปิดระหว่างกำลัง Export อยู่ (!exporting) --------
+  useEffect(() => {
+    if (!showExportModal) return;
+    const h = (e) => { if (e.key === 'Escape' && !exporting) setShowExportModal(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showExportModal, exporting]);
   const [reservingRunning, setReservingRunning] = useState(false);
 
   // ── ส่วนคงที่ของ Batch Name: {BU}-NMR-{YYYYMMDD}-OTH (NMR/OTH เป็นค่า Fix ตายตัว) ──
@@ -9810,6 +10877,14 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
 // SendToModal — ส่ง Batch Bucket ให้ user อื่นในระบบ
 // ─────────────────────────────────────────────────────────────────────────────
 function SendToModal({ show, onClose, onSend, selectedCount, totalAmount, currentUserId }) {
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1 (SendToModal)
+  usePopupOpenTracker(show);
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show, onClose]);
   const [users, setUsers]       = useState([]);
   const [toUserId, setToUserId] = useState('');
   const [note, setNote]         = useState('');
@@ -10464,11 +11539,15 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                       {mainTab === 'invoicehistory' && <td style={{ padding: '8px 10px' }}></td>}
                     </tr>
                     {/* ── Invoice ข้างใน Batch — โชว์เมื่อกางเท่านั้น, มี Batch name/Receive Date ซ้ำในแถวด้วย ── */}
-                    {isOpen && g.items.map(inv => {
+                    {isOpen && g.items.map((inv, invIdx) => {
                       const invRd = inv.receive_date ? new Date(inv.receive_date) : null;
                       const invEa = inv.exported_at ? new Date(inv.exported_at) : null;
                       return (
-                        <tr key={inv.id} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+                        // MARKER_APCONTROLLER_BUCKET_ROW_KEY_FALLBACK_V1
+                        // ── เดิมใช้ inv.id เพียวๆ -- ถ้า id ยังไม่กลับมาจาก DB (undefined) เหมือนกัน
+                        // ── พร้อมกัน 2 แถว React จะซ่อนแถวที่ Key ซ้ำไปแถวหนึ่งทันที
+                        // ── (ข้อมูลยังอยู่ใน DB ปกติ แต่หัน้าจอแสดงหายไป 1 รายการ) ─────
+                        <tr key={inv.id || inv._localId || `bk-${invIdx}`} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
                           {canSeeAll && (
                             <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                               {inv.record_type !== 'legacy' && (
@@ -10718,7 +11797,7 @@ function ZoneBox({ title, highlighted, noPadding, children, style }) {
   );
 }
 
-export function BatchControlPage({ currentUser, userName = '' }) {
+export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetup }) {
   const { isOwner, isAdmin } = useUserRole();
   // MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS
   const [batchControlSubTab, setBatchControlSubTab] = React.useState('mail');
@@ -10728,6 +11807,10 @@ export function BatchControlPage({ currentUser, userName = '' }) {
   const [selectedIds, setSelectedIds] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [buFilter, setBuFilter] = React.useState('');
+  const [editBuPanel, setEditBuPanel] = React.useState(null);
+  const [editTo, setEditTo] = React.useState('');
+  const [editCc, setEditCc] = React.useState('');
+  const [editGreeting, setEditGreeting] = React.useState('');
   const [toEmail, setToEmail] = React.useState('');
   const [ccEmail, setCcEmail] = React.useState('');
   const [greetingName, setGreetingName] = React.useState('');
@@ -10842,7 +11925,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
   // ไม่ใช่ Placeholder ในเนื้อหา ต้องกรอกทุกครั้งไม่ว่า Template จะเป็นอะไร
 
   const buList = [...new Set(batches.map(b => b.bu).filter(Boolean))].sort();
-  const visibleBatches = buFilter ? batches.filter(b => b.bu === buFilter) : batches;
+  const visibleBatches = buFilter ? batches.filter(b => b.bu === buFilter) : [];
 
   const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleSelectAll = () => setSelectedIds(selectedIds.length === visibleBatches.length ? [] : visibleBatches.map(b => b.id));
@@ -10955,7 +12038,6 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     { key: '{greeting_name}', label: 'เรียน (Greeting Name)', editable: true },
     { key: '{bu}', label: 'BU', editable: true },
     { key: '{due_date_range}', label: 'ช่วงวันครบกำหนด (Due)', editable: true },
-    { key: '{batch_list}', label: 'รายการ Batch (Batch List)', editable: true, multiline: true },
     { key: '{batch_count}', label: 'จำนวน Batch', editable: true },
     { key: '{receive_date_first}', label: 'วัน Receive แรกสุด', editable: true },
     { key: '{receive_date_range}', label: 'ช่วงวัน Receive', editable: true },
@@ -11080,6 +12162,7 @@ export function BatchControlPage({ currentUser, userName = '' }) {
   // เปลี่ยนเป็น: ต้องกดปุ่ม "Confirm" ที่ Footer ของกล่อง Batch ก่อน แล้วค่อย "สลับหน้า" (ไม่ใช่ Popup)
   // ไปโชว์ 2 Columns (Config & Attachment / Outlook Layout Draft) เต็มพื้นที่ พร้อมปุ่ม "← Back" กลับมาที่นี่
   const [showEmailConfirm, setShowEmailConfirm] = React.useState(false);
+  const [showInstallGuide, setShowInstallGuide] = React.useState(false);
   const handleBackFromEmailConfirm = () => setShowEmailConfirm(false);
   // MARKER_BATCH_CONTROL_CONFIRM_AUTORESET_BUG_FIX_V1 — Bug: หน้าจอ "หายไปหมด" (ทั้ง Zone A และ Zone B ไม่โชว์)
   // สาเหตุ: ตอน showEmailConfirm=true ค้างอยู่ (เพิ่งกด Confirm) แล้วมีอะไรมา Reset selectedIds เป็น []
@@ -11090,20 +12173,35 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     if (selectedIds.length === 0) setShowEmailConfirm(false);
   }, [selectedIds]);
 
-  const handleOpenOutlook = () => {
-    // ── MARKER_BATCH_CONTROL_STRING_GUARD_V1 ── String(...) กันพังถ้า State ดันไม่ใช่ String
+  const handleOpenOutlook = (sendMode = 'draft') => {
     const toEmailStr = String(toEmail ?? '');
     const ccEmailStr = String(ccEmail ?? '');
     if (!selectedIds.length || !toEmailStr.trim()) return;
-    const qs = [];
-    if (ccEmailStr.trim()) qs.push(`cc=${encodeURIComponent(ccEmailStr.trim())}`);
-    qs.push(`subject=${encodeURIComponent(subject)}`);
-    qs.push(`body=${encodeURIComponent(body)}`);
-    window.location.href = `mailto:${encodeURIComponent(toEmailStr.trim())}?${qs.join('&')}`;
-    setShowSendConfirm(true);
-    // MARKER_BATCH_CONTROL_ZIP_ATTACHMENTS_V1 — ยิงรวม Zip พร้อมกันตอนเปิด Outlook ไม่ต้อง await
-    // (ไม่บล็อกการเปิด Outlook — ปล่อยให้ Zip ทยอยรวม/ดาวน์โหลดตามมาเบื้องหลัง)
-    handleZipAttachments();
+    const token = sessionStorage.getItem('fastapn_token');
+    const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+    const attachFiles = selectedBatches.map(getBatchAttachment).filter(f => f.attachId);
+    const attachIds = attachFiles.map(f => f.attachId).join(',');
+    const attachNames = attachFiles.map(f => encodeURIComponent(f.attachName || '')).join(',');
+    const params = [
+      `to=${encodeURIComponent(toEmailStr.trim())}`,
+      ccEmailStr.trim() ? `cc=${encodeURIComponent(ccEmailStr.trim())}` : null,
+      `subject=${encodeURIComponent(subject)}`,
+      `body=${encodeURIComponent(body)}`,
+      `attachIds=${encodeURIComponent(attachIds)}`,
+      `attachNames=${encodeURIComponent(attachNames)}`,
+      `token=${encodeURIComponent(token||'')}`,
+      `apiBase=${encodeURIComponent(apiBase)}`,
+      `sendMode=${encodeURIComponent(sendMode)}`,
+    ].filter(Boolean).join('&');
+    const uri = `fastapn://${params}`;
+    // detect fastapn:// protocol via window blur
+    let handled = false;
+    const t = setTimeout(() => { if (!handled) setShowInstallGuide(true); }, 1500);
+    window.addEventListener('blur', function onBlur() {
+      handled = true; clearTimeout(t); setShowSendConfirm(true);
+      window.removeEventListener('blur', onBlur);
+    }, { once: true });
+    window.location.href = uri;
   };
 
   const handleConfirmSent = async () => {
@@ -11218,6 +12316,25 @@ export function BatchControlPage({ currentUser, userName = '' }) {
     // ให้พื้นที่ตรงกลาง (Panel สร้าง Template) ขยาย/หดตามจอจริงอัตโนมัติ
     // ไม่ต้องเดา Offset จาก 100vh อีกเลย
     <div style={{ background: '#f5f6f8', height: '100%', display: 'flex', flexDirection: 'column' }}> {/* MARKER_BATCH_CONTROL_ROOT_FLEX_NO_CALC */}
+      {showInstallGuide && (
+        <div onClick={()=>setShowInstallGuide(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:99999,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div onClick={ev=>ev.stopPropagation()} style={{background:'white',borderRadius:'12px',width:'480px',padding:'24px',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
+            <div style={{fontSize:'15px',fontWeight:'600',color:'#1a3a5c',marginBottom:'8px'}}>&#128187; ติดตั้ง FastAPN Outlook Handler</div>
+            <div style={{fontSize:'12px',color:'#555',marginBottom:'16px'}}>ยังไม่ได้ติดตั้ง handler — ติดตั้งครั้งเดียวใช้ได้ตลอด</div>
+            <div style={{background:'#f5f7fa',borderRadius:'8px',padding:'14px 16px',marginBottom:'16px',fontSize:'12px',lineHeight:2}}>
+              <div><strong>1.</strong> กดปุ่ม Download ด้านล่าง</div>
+              <div><strong>2.</strong> แตกไฟล์ zip</div>
+              <div><strong>3.</strong> คลิกขวาไฟล์ <code>setup-fastapn-outlook.ps1</code> → Run with PowerShell</div>
+              <div><strong>4.</strong> รอจนขึ้น "ติดตั้งสำเร็จ!" แล้วกด Enter</div>
+              <div><strong>5.</strong> กลับมากดปุ่ม เปิด Outlook Draft อีกครั้ง</div>
+            </div>
+            <div style={{display:'flex',justifyContent:'flex-end',gap:'8px'}}>
+              <button onClick={()=>setShowInstallGuide(false)} style={{padding:'7px 16px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer'}}>ปิด</button>
+              <button onClick={()=>{ const apiBase=(process.env.REACT_APP_API_URL||'http://10.101.87.126:4000/api').replace(/\/api$/,''); const token=sessionStorage.getItem('fastapn_token'); fetch(`${apiBase}/api/file-storage/outlook-handler`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.blob()).then(blob=>{ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='fastapn-outlook-handler.zip'; a.click(); URL.revokeObjectURL(url); }); }} style={{padding:'7px 16px',borderRadius:'6px',border:'none',background:'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}>&#11015; Download</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* MARKER_BATCH_CONTROL_RESIZEOBSERVER_HEADER — ห่อ Header+Tab Bar ด้วย ref
           เพื่อวัดความสูงจริง (Pattern เดียวกับ System Console) */}
       <div ref={batchctrlHeaderRef} style={{ flexShrink: 0 }}>
@@ -11248,10 +12365,11 @@ export function BatchControlPage({ currentUser, userName = '' }) {
           Template เลยด้วย — ไม่งั้นตอน Template ยังไม่มีเลย จะไม่มีปุ่มที่กดสร้าง Template แรกได้ */}
       {batchControlSubTab === 'mail' && !showNewTemplate && (
         <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', flex: 1, minWidth: 0 }}>
-            {templates.length === 0 ? (
-              <div style={{ padding: '10px 0', fontSize: '11.5px', color: '#aaa' }}>ยังไม่มี Template — กด "+ Template ใหม่" เพื่อเริ่มสร้าง</div>
-            ) : templates.map(tpl => {
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflowX: 'auto', flex: 1, minWidth: 0 }}>
+            {templates.length === 0 && (
+              <div style={{ padding: '10px 0', fontSize: '11.5px', color: '#aaa' }}>ยังไม่มี Template — กด "+" เพื่อเริ่มสร้าง</div>
+            )}
+            {templates.map(tpl => {
               const isActive = activeTemplateId === tpl.id;
               // MARKER_BATCH_CONTROL_TEMPLATE_TABS_BADGE — ชื่อ field จำนวน Batch รอส่งของแต่ละ Template
               // ยังไม่ทราบ field name จริงจาก /batch-control/counts เดา fallback ไว้หลายชื่อ
@@ -11267,10 +12385,10 @@ export function BatchControlPage({ currentUser, userName = '' }) {
                 </div>
               );
             })}
+            {isOwner && (
+              <button onClick={() => setShowNewTemplate(true)} title="เพิ่ม Template ใหม่" style={{ flexShrink: 0, width: '26px', height: '26px', borderRadius: '6px', border: '0.5px dashed #bbb', background: 'transparent', color: '#1a3a5c', fontSize: '15px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: '4px', marginBottom: '-0.5px' }}>+</button>
+            )}
           </div>
-          {isOwner && (
-            <button onClick={() => setShowNewTemplate(true)} style={{ flexShrink: 0, padding: '7px 14px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: '#fff', fontSize: '12px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Template ใหม่</button>
-          )}
         </div>
       )}
 
@@ -11414,19 +12532,57 @@ export function BatchControlPage({ currentUser, userName = '' }) {
           {/* MARKER_BATCH_CONTROL_BU_PILLS_V1 — เปลี่ยนจาก Dropdown "ทุก BU" มาเป็น Pill Filter มีตัวเลขนับ ต่อ BU */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 18px 14px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '10.5px', fontWeight: '600', color: '#999', textTransform: 'uppercase', marginRight: '2px' }}>BU</span>
-            <button onClick={() => setBuFilter('')} style={{ border: 'none', borderRadius: '20px', padding: '5px 10px 5px 14px', fontSize: '12px', fontWeight: '500', background: !buFilter ? '#1a3a5c' : '#f0f1f3', color: !buFilter ? '#fff' : '#555', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              ทั้งหมด <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '20px', background: !buFilter ? 'rgba(255,255,255,0.25)' : '#e2e4e8', color: !buFilter ? '#fff' : '#777' }}>{batches.length}</span>
-            </button>
             {buList.map(bu => {
               const isActive = buFilter === bu;
               return (
-                <button key={bu} onClick={() => setBuFilter(bu)} style={{ border: 'none', borderRadius: '20px', padding: '5px 10px 5px 14px', fontSize: '12px', fontWeight: '500', background: isActive ? '#1a3a5c' : '#f0f1f3', color: isActive ? '#fff' : '#555', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <button key={bu} onClick={() => setBuFilter(bu)} onDoubleClick={async(e)=>{ e.stopPropagation(); setBuFilter(bu);
+                  try { const {data} = await db.from('company_list').select('ap_to_fp').eq('bu',bu).single();
+                    const a = data?.ap_to_fp||{};
+                    setEditGreeting(String(a.greeting_name??''));
+                    const toArr = Array.isArray(a.to)?a.to:(String(a.to??'')).split(';').map(x=>x.trim()).filter(Boolean);
+                    const ccArr = Array.isArray(a.cc)?a.cc:(String(a.cc??'')).split(';').map(x=>x.trim()).filter(Boolean);
+                    setEditTo(toArr.join('\n')); setEditCc(ccArr.join('\n'));
+                  } catch(err){} setEditBuPanel(bu); }} title="double-click to edit email config" style={{ border: 'none', borderRadius: '20px', padding: '5px 10px 5px 14px', fontSize: '12px', fontWeight: '500', background: isActive ? '#1a3a5c' : '#f0f1f3', color: isActive ? '#fff' : '#555', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                   {bu} <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '20px', background: isActive ? 'rgba(255,255,255,0.25)' : '#e2e4e8', color: isActive ? '#fff' : '#777' }}>{batches.filter(b => b.bu === bu).length}</span>
                 </button>
               );
             })}
           </div>
 
+          {editBuPanel && (
+            <div onClick={()=>setEditBuPanel(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.45)',zIndex:99999,display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <div onClick={ev=>ev.stopPropagation()} style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'480px',boxShadow:'0 8px 32px rgba(0,0,0,0.18)',overflow:'hidden'}}>
+                <div style={{background:'#eef2f7',borderBottom:'0.5px solid #e0e4ea',padding:'14px 18px',display:'flex',alignItems:'center',gap:'8px'}}>
+                  <span style={{fontSize:'13px',fontWeight:'600',color:'#1a3a5c'}}>{editBuPanel} — Email config</span>
+                  <button onClick={()=>setEditBuPanel(null)} style={{marginLeft:'auto',padding:'3px 10px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'11px',color:'#666',cursor:'pointer'}}>x ปิด</button>
+                </div>
+                <div style={{padding:'16px 18px',display:'flex',flexDirection:'column',gap:'14px'}}>
+                  <div>
+                    <div style={{fontSize:'11px',fontWeight:'600',color:'#888',marginBottom:'5px',textTransform:'uppercase',letterSpacing:'0.4px'}}>Greeting name</div>
+                    <input value={editGreeting} onChange={ev=>setEditGreeting(ev.target.value)} placeholder="เช่น คุณสมชาย" style={{width:'100%',boxSizing:'border-box',padding:'7px 10px',border:'0.5px solid #ddd',borderRadius:'6px',fontSize:'13px'}} />
+                  </div>
+                  <div>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'5px'}}>
+                      <div style={{fontSize:'11px',fontWeight:'600',color:'#888',textTransform:'uppercase',letterSpacing:'0.4px'}}>To</div>
+                      <div style={{fontSize:'10px',color:'#aaa',fontFamily:'monospace',maxWidth:'280px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{editTo.split('\n').map(x=>x.trim()).filter(Boolean).join('; ')||'—'}</div>
+                    </div>
+                    <textarea value={editTo} onChange={ev=>setEditTo(ev.target.value)} rows={5} placeholder="1 email ต่อบรรทัด" style={{width:'100%',boxSizing:'border-box',padding:'7px 10px',border:'0.5px solid #ddd',borderRadius:'6px',fontSize:'12px',fontFamily:'monospace',resize:'vertical',lineHeight:1.8}} />
+                  </div>
+                  <div>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'5px'}}>
+                      <div style={{fontSize:'11px',fontWeight:'600',color:'#888',textTransform:'uppercase',letterSpacing:'0.4px'}}>CC</div>
+                      <div style={{fontSize:'10px',color:'#aaa',fontFamily:'monospace',maxWidth:'280px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{editCc.split('\n').map(x=>x.trim()).filter(Boolean).join('; ')||'—'}</div>
+                    </div>
+                    <textarea value={editCc} onChange={ev=>setEditCc(ev.target.value)} rows={5} placeholder="1 email ต่อบรรทัด" style={{width:'100%',boxSizing:'border-box',padding:'7px 10px',border:'0.5px solid #ddd',borderRadius:'6px',fontSize:'12px',fontFamily:'monospace',resize:'vertical',lineHeight:1.8}} />
+                  </div>
+                </div>
+                <div style={{padding:'12px 18px 16px',borderTop:'0.5px solid #f0f0f0',display:'flex',justifyContent:'flex-end',gap:'8px'}}>
+                  <button onClick={()=>{setEditGreeting('');setEditTo('');setEditCc('');}} style={{padding:'6px 16px',borderRadius:'6px',border:'0.5px solid #ccc',background:'white',fontSize:'12px',color:'#666',cursor:'pointer'}}>เคลียร์</button>
+                  <button onClick={async()=>{ const toStr=editTo.split('\n').map(x=>x.trim()).filter(Boolean).join('; '); const ccStr=editCc.split('\n').map(x=>x.trim()).filter(Boolean).join('; '); try { const {data:row}=await db.from('company_list').select('id,ap_to_fp').eq('bu',editBuPanel).single(); if(!row?.id) throw new Error('BU not found'); const cur=row?.ap_to_fp||{}; await db.from('company_list').update({ap_to_fp:{...cur,to:toStr,cc:ccStr,greeting_name:editGreeting}}).eq('id',row.id); if(editBuPanel===singleBu){setToEmail(toStr);setCcEmail(ccStr);setGreetingName(editGreeting);} setEditBuPanel(null); } catch(err){console.error(err);} }} style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:'#1a3a5c',fontSize:'12px',color:'white',fontWeight:'500',cursor:'pointer'}}>บันทึก</button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* MARKER_BATCH_CONTROL_SELECTALL_IN_HEADER_V1 — ย้าย Checkbox "เลือกทั้งหมด" จาก Label ลอยด้านบนกล่อง
               มาไว้ที่ช่อง Checkbox ของหัวตารางเลย (Pattern เดียวกับตาราง Data ทั่วไป) */}
           {/* MARKER_BATCH_CONTROL_ATTACHMENT_COLUMN_V1 — เพิ่ม Filename/Attachment เหมือนตาราง Batch History
@@ -11525,8 +12681,17 @@ export function BatchControlPage({ currentUser, userName = '' }) {
                   </button>
                 </>
               ) : (
-                <button onClick={handleOpenOutlook} disabled={!String(toEmail ?? '').trim()}
-                  style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: String(toEmail ?? '').trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: String(toEmail ?? '').trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 เปิด Outlook Draft →</button>
+                (typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('fastapn_handler_ready') === '1') ? (
+                <>
+                <button onClick={()=>handleOpenOutlook('draft')} disabled={!String(toEmail ?? '').trim()}
+                  style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: String(toEmail ?? '').trim() ? '#1a3a5c' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: String(toEmail ?? '').trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📧 Draft</button>
+                <button onClick={()=>handleOpenOutlook('send')} disabled={!String(toEmail ?? '').trim()}
+                  style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: String(toEmail ?? '').trim() ? '#27500A' : '#aaa', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: String(toEmail ?? '').trim() ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>📤 Send</button>
+                </>
+                ) : (
+                <button onClick={onGotoOutlookSetup}
+                  style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#8a6d00', color: 'white', fontSize: '12.5px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>⚙️ Install Handler →</button>
+                )
               )}
             </div>
           </div>
@@ -11577,12 +12742,12 @@ export function BatchControlPage({ currentUser, userName = '' }) {
                   ใช้ Helper กลาง getBatchAttachment — MARKER_BATCH_CONTROL_ATTACHMENT_HELPERS_SHARED_V1 — ไฟล์
                   ทั้งหมดในกล่องนี้จะถูกรวมเป็น .zip ไฟล์เดียวอัตโนมัติตอนกด "เปิด Outlook Draft" (handleZipAttachments)
                   ความสูงเผื่อ Default ไว้ 10 แถวก่อน เกิน 10 แถวค่อย Scroll (แถว ~34px/แถว → 340px) */}
-              <ZoneBox title="📎 Attachment" noPadding style={{ flexShrink: 0, maxHeight: '400px' }}>
+              <ZoneBox title="📎 Attachment" noPadding style={{ flexShrink: 0, maxHeight: '600px' }}>
                 <div style={{ padding: '14px 18px 10px', fontSize: '11px', fontWeight: '600', color: '#888' }}>
                   ไฟล์แนบที่จะรวมส่ง ({selectedBatches.filter(b => getBatchAttachment(b).attachId).length}/{selectedBatches.length})
                   {zippingAttachments && <span style={{ color: '#854F0B', fontWeight: '500', marginLeft: '8px' }}>⏳ กำลังรวมเป็น Zip...</span>}
                 </div>
-                <div style={{ margin: '0 18px 14px', border: '0.5px solid #eee', borderRadius: '7px', overflow: 'hidden', maxHeight: '340px', overflowY: 'auto' }}>
+                <div style={{ margin: '0 18px 14px', border: '0.5px solid #eee', borderRadius: '7px', overflow: 'hidden', maxHeight: '530px', overflowY: 'auto' }}>
                   {selectedBatches.map(b => {
                     const { attachId, attachName } = getBatchAttachment(b);
                     return (
@@ -11688,6 +12853,11 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   // ── (Reset State เจตนา) ส่วนกลับไปมาระหว่าง Step ปกติจะไม่ทำให้ค่านี้เปลี่ยน ──
   const [batchSetupKey, setBatchSetupKey] = useState(0);
   const [invoices, setInvoices]       = useState([]);
+  // MARKER_APCONTROLLER_USERROLE_SCOPE_FIX_V1
+  // -- Bug: isInvoicePopupOwner/isInvoicePopupAdmin ถูก declare อยู่ scope ของ --
+  // -- InvoiceDetailPopup เท่านั้น แต่ isAccountCpcAdmin (ใน APController)  --
+  // -- เรียกใช้ตัวแปรนี้ข้าม scope มา -> ReferenceError. แก้โดย declare ในนี้เอง --
+  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin } = useUserRole();
   // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
 
@@ -11696,6 +12866,15 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   const [systemPrefix, setSystemPrefix] = useState('');
   const [prefixLoaded, setPrefixLoaded] = useState(false);
   const [showPrefixModal, setShowPrefixModal] = useState(false);
+  // MARKER_ESCAPE_LOGIC_FULL_FIX_V1 (showPrefixModal)
+  // -- Respect เงื่อนไขเดิม: ยังไม่เคยตั้ง Prefix (systemPrefix ว่าง) ห้ามปิดได้ --
+  usePopupOpenTracker(showPrefixModal);
+  useEffect(() => {
+    if (!showPrefixModal) return;
+    const h = (e) => { if (e.key === 'Escape' && systemPrefix) setShowPrefixModal(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showPrefixModal, systemPrefix]);
   const [prefixInput, setPrefixInput] = useState('');
   const [savingPrefix, setSavingPrefix] = useState(false);
   const [userRoleRowId, setUserRoleRowId] = useState(null);
@@ -11779,6 +12958,76 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   const handleNewBatch = () => { setBatchConfig(null); setInvoices([]); setStep(1); setBatchSetupKey(k => k + 1); };
   const handleRunningChange = (bu, vals) => { if (!bu) return; setRunningOverride({ bu, ...vals }); };
 
+  // MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- State + Logic สำหรับ Popup จัดการ Account/CPC Rules ทั้งหมด
+  const [showAccountCpcManage, setShowAccountCpcManage] = useState(false);
+  // MARKER_ESCAPE_LOGIC_FULL_FIX_V1 (showAccountCpcManage)
+  usePopupOpenTracker(showAccountCpcManage);
+  useEffect(() => {
+    if (!showAccountCpcManage) return;
+    const h = (e) => { if (e.key === 'Escape') setShowAccountCpcManage(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showAccountCpcManage]);
+  const [manageTab, setManageTab] = useState('supplier');
+  const [manageSearch, setManageSearch] = useState('');
+  const [manageFilterBu, setManageFilterBu] = useState('');
+  const [manageRules, setManageRules] = useState([]);
+  const [manageLoading, setManageLoading] = useState(false);
+  // MARKER_MANAGE_RULES_HEIGHT_AND_BU_FILTER_V1
+  // -- BU ที่มี Rule อยู่จริงใน Tab ปัจจุบัน (แยกจาก manageRules ที่ถูก --------
+  // -- Filter อยู่ กัน Chicken-Egg Problem: ตอนเปิด Popup ครั้งแรกยังไม่มี ------
+  // -- ผลลัพธ์ให้ดึง Option จากตรงนั้นได้) --------------------------------------
+  const [manageAvailableBus, setManageAvailableBus] = useState([]);
+  const loadManageAvailableBus = async () => {
+    try {
+      const { data } = await db.from('account_cpc_rules').select('bu').eq('rule_type', manageTab);
+      setManageAvailableBus([...new Set((data || []).map(r => r.bu).filter(Boolean))].sort());
+    } catch (e) { console.error('[AccountCpcRules] โหลดรายชื่อ BU ผิดพลาด', e); }
+  };
+  useEffect(() => {
+    if (showAccountCpcManage) loadManageAvailableBus();
+  }, [showAccountCpcManage, manageTab]);
+  const isAccountCpcAdmin = userName && (isInvoicePopupOwner || isInvoicePopupAdmin);
+
+  const loadManageRules = async () => {
+    setManageLoading(true);
+    try {
+      let q = db.from('account_cpc_rules').select('*').eq('rule_type', manageTab).order('created_at', { ascending: false });
+      if (manageFilterBu.trim()) q = q.eq('bu', manageFilterBu.trim().toUpperCase());
+      const { data } = await q;
+      let rows = data || [];
+      if (manageSearch.trim()) {
+        const s = manageSearch.trim().toLowerCase();
+        rows = rows.filter(r =>
+          String(r.item_code || '').toLowerCase().includes(s) ||
+          String(r.account || '').toLowerCase().includes(s) ||
+          String(r.supplier_code || '').toLowerCase().includes(s) ||
+          String(r.created_by || '').toLowerCase().includes(s) ||
+          String(r.cpc || '').toLowerCase().includes(s)
+        );
+      }
+      setManageRules(rows);
+    } catch (e) { console.error('[AccountCpcRules] โหลด Manage List ผิดพลาด', e); }
+    finally { setManageLoading(false); }
+  };
+
+  useEffect(() => {
+    if (showAccountCpcManage) loadManageRules();
+  }, [showAccountCpcManage, manageTab, manageFilterBu]);
+
+  const deleteManageRule = async (rule) => {
+    if (!isAccountCpcAdmin) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบ Rule นี้ใช่หรือไม่? (${rule.cpc}-${rule.account}-${rule.sub_acc})`, { variant: 'danger', confirmText: 'ลบ' }))) return;
+    try {
+      const { error } = await db.from('account_cpc_rules').delete().eq('id', rule.id);
+      if (error) throw error;
+      await loadManageRules();
+    } catch (e) {
+      console.error('[AccountCpcRules] ลบผิดพลาด', e);
+      confirmDialog.alert('ลบไม่สำเร็จ กรุณาลองใหม่', { variant: 'danger' });
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
       <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
@@ -11792,7 +13041,75 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
           <span>🏷️ Prefix: <strong>{systemPrefix || '—'}</strong></span>
           <span style={{ fontSize: '10px' }}>✎</span>
         </button>
+        {/* MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- ปุ่มจัดการ Account/CPC Rules ทั้งหมด */}
+        <button onClick={() => setShowAccountCpcManage(true)}
+          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
+          🔗 Account/CPC Rules
+        </button>
       </div>
+
+      {showAccountCpcManage && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseDown={e => { if (e.target === e.currentTarget) setShowAccountCpcManage(false); }}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '640px', maxWidth: '94vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ fontSize: '15px', fontWeight: 500, color: '#1a3a5c' }}>Account -- Combination Control System</div>
+              <button onClick={() => setShowAccountCpcManage(false)} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#999', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '18px', borderBottom: '1px solid #eee', marginBottom: '12px' }}>
+              {[['supplier', 'Supplier'], ['item_code', 'Item Code'], ['account', 'Account']].map(([key, label]) => (
+                <button key={key} onClick={() => setManageTab(key)}
+                  style={{ background: 'none', border: 'none', padding: '6px 2px 8px', fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+                    color: manageTab === key ? '#1a3a5c' : '#888', borderBottom: manageTab === key ? '2px solid #1a3a5c' : '2px solid transparent' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <input value={manageSearch} onChange={e => setManageSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadManageRules()}
+                placeholder="ค้นหา Item Code / Account / Supplier / User..." style={{ flex: 1 }} />
+              {/* MARKER_MANAGE_BU_SMCOMBO_V2 -- SmComboBox กางลงล่างเสมอ แทน native select */}
+              <div style={{ width: '130px', height: '30px', border: '0.5px solid #ddd', borderRadius: '6px', boxSizing: 'border-box', display: 'flex', alignItems: 'center' }}>
+                <SmComboBox
+                  value={manageFilterBu || 'ทุก BU'}
+                  onChange={val => setManageFilterBu(val === 'ทุก BU' ? '' : val)}
+                  options={['ทุก BU', ...manageAvailableBus]}
+                />
+              </div>
+              <button onClick={loadManageRules} style={{ padding: '0 14px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>ค้นหา</button>
+            </div>
+
+            <div style={{ flex: 1, minHeight: '480px', maxHeight: '480px', overflowY: 'auto', border: '0.5px solid #ddd', borderRadius: '8px' }}>
+              {manageLoading ? (
+                <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: '#999' }}>กำลังโหลด...</div>
+              ) : manageRules.length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: '#999' }}>ไม่พบ Rule</div>
+              ) : manageRules.map((r, i) => (
+                <div key={r.id} style={{ padding: '9px 12px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: i < manageRules.length - 1 ? '0.5px solid #eee' : 'none' }}>
+                  <div>
+                    <div style={{ color: '#1a3a5c', fontWeight: 500 }}>
+                      BU: {r.bu} &middot; {manageTab === 'item_code' ? `Item Code: ${r.item_code}` : manageTab === 'supplier' ? `Supplier: ${r.supplier_code} · Account: ${r.account}` : `Account: ${r.account}`}
+                    </div>
+                    <div style={{ color: '#666', fontSize: '11px', marginTop: '2px' }}>
+                      {r.cpc}-{r.account}-{r.sub_acc} &middot; ผูกโดย: {r.created_by || '-'} &middot; {r.created_at ? new Date(r.created_at).toLocaleDateString('th-TH') : '-'}
+                    </div>
+                  </div>
+                  {isAccountCpcAdmin && (
+                    <button onClick={() => deleteManageRule(r)}
+                      style={{ padding: '4px 10px', background: '#fbeaea', color: '#c0392b', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>🗑 ลบ</button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {!isAccountCpcAdmin && (
+              <div style={{ fontSize: '11px', color: '#999', marginTop: '8px' }}>เฉพาะ Admin/Owner เท่านั้นที่ลบ Rule ได้</div>
+            )}
+          </div>
+        </div>
+      )}
       {showPrefixModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => { if (systemPrefix) setShowPrefixModal(false); }}>

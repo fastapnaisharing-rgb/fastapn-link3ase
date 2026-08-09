@@ -4065,28 +4065,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     setRequesting(prev => ({ ...prev, [folder.key]: false }));
   };
 
-  // MARKER_DOCUMENTCENTER_COMING_SOON_V1
-  // ── เฉพาะ AP Manual (folder.key==='ap') ที่มี Feature จริง — Module อื่นยังไม่เคยถูกสร้าง ──
-  // ── ไม่เกี่ยวกับ Permission (canAccess) เลย — แค่ตัดสินว่า "เข้าไปแล้วเจออะไร" ──
-  if (activeFolder && activeFolder.key !== 'ap') {
-    return (
-      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
-        <div style={{ display:'flex',alignItems:'center',gap:'12px',padding:'16px 20px',borderBottom:'0.5px solid #eee' }}>
-          <button onClick={()=>{ setActiveFolder(null); fetchData(); }} style={{ width:'32px',height:'32px',borderRadius:'50%',background:'#f5f5f5',border:'none',cursor:'pointer',fontSize:'16px',color:'#555',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center' }}>←</button>
-          <div>
-            <p style={{ fontSize:'15px',fontWeight:'500',margin:0,color:'#1a3a5c' }}>{activeFolder.label}</p>
-            <p style={{ fontSize:'12px',color:'#999',margin:'2px 0 0' }}>Document Center</p>
-          </div>
-        </div>
-        <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'64px 20px',gap:'12px',flex:1 }}>
-          <div style={{ fontSize:'32px' }}>🛠️</div>
-          <p style={{ fontSize:'15px',fontWeight:'500',margin:0,color:'#1a3a5c' }}>Module นี้ยังไม่เปิดใช้งาน</p>
-          <p style={{ fontSize:'13px',color:'#666',margin:0,textAlign:'center',maxWidth:'320px' }}>{activeFolder.label} ยังอยู่ระหว่างออกแบบ จะเปิดให้ใช้งานในเฟสถัดไป</p>
-        </div>
-      </div>
-    );
-  }
-
   if (activeFolder) {
     return (
       <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
@@ -4390,19 +4368,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
             {selectedThread.status !== 'resolved' && (
               <div style={{ borderTop:'0.5px solid #eee', padding:'14px 20px', flexShrink:0, background:'white' }}>
                 <div style={{ display:'flex', alignItems:'flex-end', gap:'8px' }}>
-                  {/* MARKER_SUPPORT_REMOVE_ATTACH_BUTTON_V1 */}
-                  {/* ── ตัดปุ่ม "แนบรูป" ออก เพราะ Paste (Ctrl+V) ครอบคลุมแล้ว — เหลือแค่ Thumbnail + ปุ่มลบเผื่อ Paste ผิด ── */}
-                  {newCommentAttachments.length > 0 && (
-                    <div style={{ display:'flex', gap:'6px', flexShrink:0 }}>
-                      {newCommentAttachments.map((a,i)=>(
-                        <div key={i} style={{ position:'relative', flexShrink:0 }}>
-                          <img src={a.data} alt={a.name} style={{ width:'36px',height:'36px',borderRadius:'6px',objectFit:'cover',border:'0.5px solid #ddd' }}/>
-                          <button onClick={()=>setNewCommentAttachments(prev=>prev.filter((_,j)=>j!==i))}
-                            style={{ position:'absolute',top:'-5px',right:'-5px',width:'15px',height:'15px',borderRadius:'50%',border:'none',background:'#c0392b',color:'white',cursor:'pointer',fontSize:'9px',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <SupportAttachDropZone attachments={newCommentAttachments} setAttachments={setNewCommentAttachments} maxImages={5}/>
                   <textarea value={newCommentText} onChange={e=>setNewCommentText(e.target.value)} onPaste={e=>handleImagePaste(e, newCommentAttachments, setNewCommentAttachments)} rows={1} placeholder="พิมพ์ข้อความตอบกลับ... (Paste รูปได้เลย)"
                     style={{ flex:1, padding:'10px 16px', borderRadius:'20px', border:'0.5px solid #ddd', fontSize:'13px', boxSizing:'border-box', resize:'none' }}/>
                   <button onClick={handlePostComment} disabled={postingComment}

@@ -24,6 +24,38 @@
     itemcode_list: 'Item Code', supplier_list: 'Vendor', vendor_category: 'Vendor Category',
     account_list: 'Account', cpc_list: 'Cost Center', sub_acc_list: 'Sub Account',
     branch_list: 'Branch', company_list: 'Company',
+    // MARKER_USERMANAGEMENT_RECYCLEBIN_SUMMARY_V2
+    batch_list: 'Batch', batch_notifications: 'Batch Noti', bucket_list: 'Invoice',
+  };
+
+  // MARKER_USERMANAGEMENT_RECYCLEBIN_SUMMARY_V2
+  // ── Config-driven: กำหนด "สูตรสรุปข้อมูล" ของแต่ละ Table ไว้ที่เดียว ────────
+  // ── (ประเภท = คอลัมน์ "Table" ที่มี TABLE_LABELS อยู่แล้วด้านบน, ────────────
+  // ── ตัวนี้ทำหน้าที่แค่ "สรุปเนื้อหา" ให้อ่านง่ายตามประเภทนั้นๆ) ─────────────
+  // ── Table ใหม่ในอนาคต: เพิ่ม 1 บรรทัดในนี้พอ ไม่ต้องแก้จุดอื่น ─────────────
+  // ── ไม่มีใน Dictionary หรือ Field ที่ระบุว่างเปล่า -> Fallback เป็น JSON ดิบ ──
+  const RECYCLE_BIN_SUMMARIZERS = {
+    batch_list: (d) => {
+      const b = d.batch || d;
+      return [b.bu && `BU ${b.bu}`, b.created_by && `สร้างโดย ${b.created_by}`, b.status]
+        .filter(Boolean).join(' · ');
+    },
+    batch_notifications: (d) => d.title || d.batch_id,
+    bucket_list: (d) => d.description,
+    company_list: (d) => d['THAI COMPANY NAME'] || d.Name,
+    account_list: (d) => d['Account_Name'] || d.Name,
+    itemcode_list: (d) => d.description || d.Name,
+    supplier_list: (d) => d.Name || d['THAI COMPANY NAME'],
+    vendor_category: (d) => d.Name,
+    cpc_list: (d) => d.Name || d.description,
+    sub_acc_list: (d) => d.Name || d.description,
+    branch_list: (d) => d['Branch Code'] || d.Name,
+  };
+  const summarizeRecycleBinData = (item) => {
+    const d = item.data || {};
+    const summarizer = RECYCLE_BIN_SUMMARIZERS[item.source_table];
+    const result = summarizer ? summarizer(d) : null;
+    return result || JSON.stringify(d).slice(0, 60) + '...';
   };
 
   const HARD_DELETE_TABLES = [];
@@ -819,7 +851,7 @@ useEffect(() => {
                     <td style={S.td}><span style={{ background: '#f0f0f0', color: '#555', fontSize: '10px', padding: '2px 8px', borderRadius: '20px' }}>{label}</span></td>
                     <td style={{ ...S.td, fontFamily: 'monospace', fontSize: '11px' }}>{item.source_key || '-'}</td>
                     <td style={{ ...S.td, color: '#666', fontSize: '11px', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {item.data?.description || item.data?.['Account_Name'] || item.data?.Name || item.data?.['THAI COMPANY NAME'] || item.data?.['Branch Code'] || JSON.stringify(item.data).slice(0,60) + '...'}
+                      {summarizeRecycleBinData(item)}
                     </td>
                     <td style={{ ...S.td, fontSize: '11px' }}>{item.deleted_by || '-'}</td>
                     <td style={{ ...S.td, fontSize: '11px' }}>{formatDate(item.deleted_at)}<DaysLeftBadge deletedAt={item.deleted_at} /></td>

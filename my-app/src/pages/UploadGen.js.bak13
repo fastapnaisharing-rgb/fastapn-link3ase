@@ -4065,28 +4065,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     setRequesting(prev => ({ ...prev, [folder.key]: false }));
   };
 
-  // MARKER_DOCUMENTCENTER_COMING_SOON_V1
-  // ── เฉพาะ AP Manual (folder.key==='ap') ที่มี Feature จริง — Module อื่นยังไม่เคยถูกสร้าง ──
-  // ── ไม่เกี่ยวกับ Permission (canAccess) เลย — แค่ตัดสินว่า "เข้าไปแล้วเจออะไร" ──
-  if (activeFolder && activeFolder.key !== 'ap') {
-    return (
-      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
-        <div style={{ display:'flex',alignItems:'center',gap:'12px',padding:'16px 20px',borderBottom:'0.5px solid #eee' }}>
-          <button onClick={()=>{ setActiveFolder(null); fetchData(); }} style={{ width:'32px',height:'32px',borderRadius:'50%',background:'#f5f5f5',border:'none',cursor:'pointer',fontSize:'16px',color:'#555',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center' }}>←</button>
-          <div>
-            <p style={{ fontSize:'15px',fontWeight:'500',margin:0,color:'#1a3a5c' }}>{activeFolder.label}</p>
-            <p style={{ fontSize:'12px',color:'#999',margin:'2px 0 0' }}>Document Center</p>
-          </div>
-        </div>
-        <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'64px 20px',gap:'12px',flex:1 }}>
-          <div style={{ fontSize:'32px' }}>🛠️</div>
-          <p style={{ fontSize:'15px',fontWeight:'500',margin:0,color:'#1a3a5c' }}>Module นี้ยังไม่เปิดใช้งาน</p>
-          <p style={{ fontSize:'13px',color:'#666',margin:0,textAlign:'center',maxWidth:'320px' }}>{activeFolder.label} ยังอยู่ระหว่างออกแบบ จะเปิดให้ใช้งานในเฟสถัดไป</p>
-        </div>
-      </div>
-    );
-  }
-
   if (activeFolder) {
     return (
       <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>

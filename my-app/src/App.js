@@ -103,14 +103,27 @@ const BellIcon = () => (
 
 const DOC_FOLDER_LABELS = { ap: 'AP Manual', vat: 'VAT Control', ie: 'I-Expense', gl: 'GL Report', ipro: 'I-Pro Interface' };
 
-function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe, onClosePeriod, onGotoBatch, onOpenChatBatch, onRejectBatch, onPreviewFile }) {
+function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe, onClosePeriod, onGotoBatch, onOpenChatBatch, onRejectBatch, onPreviewFile, onDismissHandled }) {
   const pendingCount = requests.filter(r => r.status === 'pending').length;
-  const pendingReqs = requests.filter(r => r.status === 'pending');
+  // MARKER_APP_BELL_BATCH_REVIEW_TIMEOUT_V1
+  // ── batch_review หมดอายุใน 2 ชม.นับจาก created_at ถ้าไม่มีการกดคลิก ──────
+  // ── (Type อื่น เช่น signup/doc access ไม่กระทบ ยังไม่มี Timeout เหมือนเดิม) ──
+  const pendingReqs = requests.filter(r => {
+    if (r.status !== 'pending') return false;
+    if (r.request_type === 'batch_review') {
+      const hoursSinceCreated = (Date.now() - new Date(r.created_at).getTime()) / (1000 * 60 * 60);
+      return hoursSinceCreated < 2;
+    }
+    return true;
+  });
   // ── แก้ Bug: เดิมไม่มี Filter 24 ชม. เลย ทำให้ Request เก่าค้างอยู่ตลอดไป ──
   const handledReqs = requests.filter(r => {
     if (r.status === 'pending') return false;
     if (!r.handled_at) return true; // กันกรณีไม่มี handled_at (Bug เดิม) ให้โชว์ไปก่อน
     const hoursSinceHandled = (Date.now() - new Date(r.handled_at).getTime()) / (1000 * 60 * 60);
+    // MARKER_APP_BELL_BATCH_REVIEW_TIMEOUT_V1
+    // ── batch_review ใช้ 2 ชม. (ตามที่ตกลง) ส่วน Type อื่นคง 24 ชม. เดิมไว้ ──
+    if (r.request_type === 'batch_review') return hoursSinceHandled < 2;
     return hoursSinceHandled < 24;
   });
 
@@ -235,12 +248,18 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
                 const initial = (req.requester_name || '?')[0].toUpperCase();
                 const isApproved = req.status === 'approved';
                 return (
-                  <div key={req.id} style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0' }}>
+                  // MARKER_APP_BELL_DISMISS_HANDLED_V1
+                  // ── คลิก Notification ที่ "จัดการแล้ว" (แค่แจ้งเพื่อทราบ) -> หายทันที ──────
+                  // ── ไม่ต้องรอ Auto-expire 1 ชม. เหมือน Pending ที่ต้อง Goto/Approve ก่อน ──────
+                  <div key={req.id} onClick={() => onDismissHandled?.(req)} title="คลิกเพื่อปิดการแจ้งเตือนนี้" style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', cursor: 'pointer' }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                       <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#f5f5f5', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '13px', color: '#555', marginBottom: '4px' }}>
-                          {isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`}
+                          {/* MARKER_APP_BELL_HANDLED_MESSAGE_FALLBACK_V1 */}
+                          {/* ── ใช้ req.message ตรงๆ ถ้ามี (เช่น batch_review) — เดิม Fallback ── */}
+                          {/* ── ไปใช้ข้อความ "ขอสิทธิ์เข้า Folder" เสมอ ทั้งที่บาง Type ไม่เกี่ยว ── */}
+                          {req.message || (isOwner ? `${req.requester_name} ขอสิทธิ์เข้า ${folderLabel}` : `คำขอเข้า ${folderLabel}`)}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: isApproved ? '#EAF3DE' : '#FCEBEB', color: isApproved ? '#27500A' : '#791F1F' }}>
@@ -516,6 +535,10 @@ const getBuildVersion = () => {
 function MainApp() {
   const { fetchCollection } = useDataCache(); // ── ใช้ Force Refresh Cache หลัง Action ที่กระทบ CompanyList ──
   const [activePage, setActivePage] = useState('home');
+  const [setupReturnPage, setSetupReturnPage] = useState(null);
+  const [setupJumpToken, setSetupJumpToken] = useState(0);
+  const goToOutlookSetup = () => { setSetupReturnPage(activePage); setSetupJumpToken(t => t + 1); setActivePage('upload'); };
+  const backFromOutlookSetup = () => { if (setupReturnPage) { setActivePage(setupReturnPage); setSetupReturnPage(null); } };
   // MARKER_APP_OPEN_INBOX_FROM_NOTIF_V1
   // ── จำว่าต้องเปิด Tab ไหนใน APController หลัง Navigate มาจาก Notification ──
   const [pendingHistoryTab, setPendingHistoryTab] = useState(null);
@@ -525,6 +548,9 @@ function MainApp() {
   const [requests, setRequests] = useState([]);
   // MARKER_APP_BATCH_REVIEW_BELL_V1
   const [rejectChatReq, setRejectChatReq] = useState(null); // { batch_id } สำหรับ Reject จาก Bell
+  // MARKER_APP_BELL_REJECT_CHOICE_DIALOG_V1
+  // ── เก็บ req เต็มไว้ ระหว่างรอเลือกว่าจะใส่ Comment หรือปฏิเสธเฉยๆ ──────
+  const [rejectChoiceReq, setRejectChoiceReq] = useState(null);
   const [viewChatBatchId, setViewChatBatchId] = useState(null); // Batch ID สำหรับดู Chat อย่างเดียว
   const [previewFile, setPreviewFile] = useState(null); // { fileId, fileName }
   const [apNotifications, setApNotifications] = useState([]);
@@ -634,6 +660,18 @@ function MainApp() {
   };
 
   // ── กด "ปิด Period" ในกระดิ่ง (Owner/Admin เท่านั้น) — ลบออกจาก List ทันที กันกดซ้ำ ──
+  // MARKER_APP_BELL_DISMISS_HANDLED_V1
+  // ── คลิก Notification ที่ "จัดการแล้ว" (แค่แจ้งเพื่อทราบ เช่น Approve แล้ว) ──
+  // ── ให้หายทันที ไม่ต้องรอ Auto-expire 1 ชม. เหมือน Pending ที่ต้อง Goto/Approve ก่อน ──
+  const handleDismissNotif = async (req) => {
+    setRequests(prev => prev.filter(r => r.id !== req.id));
+    try {
+      await db.from('access_requests').delete().eq('id', req.id);
+    } catch (err) {
+      console.error('[dismiss notif]', err);
+    }
+  };
+
   const handleClosePeriodFromBell = async (notifId) => {
     setApNotifications(prev => prev.filter(n => n.id !== notifId));
     try {
@@ -747,12 +785,27 @@ function MainApp() {
         broadcastWs('signup_approved', { user_id: req.ref_user_id });
       } else if (req.request_type === 'batch_review') {
         const batchId = (req.ref_batch_ids || [])[0];
+        const meNow = userName || currentUser?.email || '';
+        const nowIso = new Date().toISOString();
+        const { data: batchRow } = await db.from('batch_list').select('bu, created_by').eq('batch_id', batchId).single();
         await db.from('batch_list').update({
-          status: 'approved', approved_at: new Date().toISOString(),
+          status: 'approved', approved_at: nowIso,
         }).eq('batch_id', batchId);
         await db.from('access_requests').update({
-          status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString(),
+          status: 'approved', handled_by: meNow, handled_at: nowIso,
         }).eq('id', req.id);
+        // MARKER_APP_BELL_APPROVE_NOTIFY_BACK_V1
+        // ── Bell กับหน้า Inbox หลัก เป็นคนละ Code Path กัน -- ต้องเพิ่ม Notify-back ──
+        // ── (อ้างอิงเป็น BU) ให้ตรงกับที่ทำไว้ใน handleApproveReview แยกอีกจุด ──────
+        try {
+          await db.from('access_requests').insert([{
+            request_type: 'batch_review', requester_name: meNow, target_username: batchRow?.created_by || '',
+            ref_batch_ids: [batchId], status: 'approved', handled_by: meNow, handled_at: nowIso,
+            created_at: nowIso,
+            message: `อนุมัติ Batch ของ BU ${batchRow?.bu || '-'} เรียบร้อยแล้ว`,
+          }]);
+          broadcastWs('access_request_new', { target_username: batchRow?.created_by || '' });
+        } catch (nErr) { console.error('[notify sender on approve from bell]', nErr); }
         broadcastWs('batch_approved', { batch_id: batchId });
       } else {
         await db.from('doc_access_override').upsert({
@@ -772,14 +825,44 @@ function MainApp() {
 
   const handleGotoBatch = () => { handleOpenInbox('inbox'); setShowBell(false); };
   const handleOpenChatBatch = (batchId) => setViewChatBatchId(batchId);
+  // MARKER_APP_BELL_REJECT_CHOICE_DIALOG_V1
+  // ── เปิด Choice Dialog ("ใส่ Comment หรือไม่") ก่อนเสมอ -- แบบเดียวกับหน้า Inbox ──
+  // ── หลัก (rejectChoiceBatch ใน APController.js) แทนที่จะเด้งเข้า Chat ตรงๆ ──────
   const handleRejectBatchFromBell = (req) => {
-    const batchId = (req.ref_batch_ids || [])[0];
-    setRejectChatReq({ id: req.id, batch_id: batchId });
+    setRejectChoiceReq(req);
+  };
+  const handleRejectChoiceComment = (req) => {
+    setRejectChoiceReq(null);
+    setRejectChatReq({ id: req.id, batch_id: (req.ref_batch_ids || [])[0] });
+  };
+  const handleRejectChoiceDirect = async (req) => {
+    setRejectChoiceReq(null);
+    await handleRejectConfirmedFromBell({ id: req.id, batch_id: (req.ref_batch_ids || [])[0] });
   };
   const handleRejectConfirmedFromBell = async (batch) => {
     try {
+      const meNow = userName || currentUser?.email || '';
+      const nowIso = new Date().toISOString();
+      const { data: batchRow } = await db.from('batch_list').select('bu, created_by').eq('batch_id', batch.batch_id).single();
       await db.from('batch_list').update({ status: 'rejected', approved_at: null }).eq('batch_id', batch.batch_id);
       broadcastWs('batch_rejected', { batch_id: batch.batch_id });
+      // MARKER_APP_BELL_REJECT_NOTIFY_BACK_V1
+      // ── เดิมไม่เคย Update access_requests ของผู้รับเลย (ค้าง pending ตลอดไป) ──
+      // ── และไม่เคยแจ้งกลับผู้ส่งด้วย -- เพิ่มให้ตรงกับ handleRejectReview ────────
+      if (batch.id) {
+        await db.from('access_requests').update({
+          status: 'rejected', handled_by: meNow, handled_at: nowIso,
+        }).eq('id', batch.id);
+      }
+      try {
+        await db.from('access_requests').insert([{
+          request_type: 'batch_review', requester_name: meNow, target_username: batchRow?.created_by || '',
+          ref_batch_ids: [batch.batch_id], status: 'rejected', handled_by: meNow, handled_at: nowIso,
+          created_at: nowIso,
+          message: `ตีกลับ Batch ของ BU ${batchRow?.bu || '-'} — กรุณาตรวจสอบ`,
+        }]);
+        broadcastWs('access_request_new', { target_username: batchRow?.created_by || '' });
+      } catch (nErr) { console.error('[notify sender on reject from bell]', nErr); }
     } catch (e) { console.error('[reject batch from bell]', e); }
     setRejectChatReq(null);
     fetchRequests();
@@ -921,7 +1004,7 @@ function MainApp() {
 
     case 'ap-batchctrl':
       return (isEditor || userPermissions?.['Manual'])
-        ? <BatchControlPage currentUser={currentUser} userName={userName} />
+        ? <BatchControlPage currentUser={currentUser} userName={userName} onGotoOutlookSetup={goToOutlookSetup} />
         : <NoAccessPage />;
 
       // Functions (placeholder)
@@ -965,7 +1048,7 @@ function MainApp() {
 
       case 'upload':
       return (isOwner || hasAnyDocAccess)
-        ? <UploadGen />
+        ? <UploadGen jumpToSetupToken={setupJumpToken} returnPage={setupReturnPage} onBackToCaller={backFromOutlookSetup} />
         : <NoAccessPage />;
       case 'users':           return <UserManagement />;
       case 'home':
@@ -1065,7 +1148,7 @@ function MainApp() {
             </div>
 
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-            {navItem('upload', '📁', 'Document Center')}
+            {navItem('upload', '📁', 'Resource Center')}
           </nav>
 
           {/* Bottom */}
@@ -1208,7 +1291,33 @@ function MainApp() {
           onOpenChatBatch={handleOpenChatBatch}
           onRejectBatch={handleRejectBatchFromBell}
           onPreviewFile={handlePreviewFileForReq}
+          onDismissHandled={handleDismissNotif}
         />
+      )}
+      {/* MARKER_APP_BELL_REJECT_CHOICE_DIALOG_V1 */}
+      {rejectChoiceReq && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setRejectChoiceReq(null)}>
+          <div style={{ background: 'white', borderRadius: '10px', width: '340px', maxWidth: '92vw', padding: '18px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c', marginBottom: '4px' }}>ปฏิเสธ Batch นี้</div>
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: '16px' }}>ต้องการใส่ Comment บอกเหตุผลด้วยไหม?</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button onClick={() => handleRejectChoiceComment(rejectChoiceReq)}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                💬 ใส่ Comment
+              </button>
+              <button onClick={() => handleRejectChoiceDirect(rejectChoiceReq)}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                ✗ ปฏิเสธเฉยๆ (ไม่ใส่ Comment)
+              </button>
+              <button onClick={() => setRejectChoiceReq(null)}
+                style={{ padding: '8px 14px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {rejectChatReq && (
         <BatchChatDrawer

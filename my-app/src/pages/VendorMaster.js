@@ -18,11 +18,13 @@
     return width;
   }
 
+  // MARKER_VENDORMASTER_COMBO_FIX_V1
   function ComboBox({ value, onChange, options, placeholder, center }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(value || '');
   useEffect(() => { setInput(value || ''); }, [value]);
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 }); // ✅ เพิ่ม
+  const [activeIdx, setActiveIdx] = useState(-1); // ── เพิ่ม Keyboard Navigation ──
   const ref = useRef(null);
   
   useEffect(() => { setInput(value || ''); }, [value]);
@@ -44,13 +46,33 @@
   };
 
   const filtered = [...new Set(options.filter(o => o && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
-  
+  useEffect(() => { setActiveIdx(-1); }, [input, open]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) { handleFocus(); return; }
+      setActiveIdx(i => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIdx(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (open && activeIdx >= 0 && filtered[activeIdx] !== undefined) {
+        e.preventDefault();
+        setInput(filtered[activeIdx]); onChange(filtered[activeIdx]); setOpen(false);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
   return (
     <div ref={ref} style={{ position: 'relative', width: '100%' }}>
       <input 
         value={input} 
         onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }} 
         onFocus={handleFocus}  // ✅ เปลี่ยนจาก () => setOpen(true)
+        onKeyDown={handleKeyDown}
         placeholder={placeholder || ''}
         style={{ height: '28px', padding: '0 8px', fontSize: '12px', outline: 'none', 
           border: 'none', background: 'transparent', color: '#1a3a5c', 
@@ -71,9 +93,9 @@
             <div key={i} 
               onMouseDown={() => { setInput(opt); onChange(opt); setOpen(false); }}
               style={{ padding: '7px 10px', fontSize: '12px', cursor: 'pointer', 
-                borderBottom: '0.5px solid #f5f5f5' }}
-              onMouseEnter={e => e.target.style.background = '#f0f7ff'}
-              onMouseLeave={e => e.target.style.background = 'white'}
+                borderBottom: '0.5px solid #f5f5f5', background: i === activeIdx ? '#f0f7ff' : 'white' }}
+              onMouseEnter={e => { setActiveIdx(i); e.target.style.background = '#f0f7ff'; }}
+              onMouseLeave={e => e.target.style.background = i === activeIdx ? '#f0f7ff' : 'white'}
             >{opt}</div>
           ))}
         </div>
@@ -437,7 +459,7 @@ const computeNextSyRunning = async () => {
     const [tab, setTab] = useState(activeSubTab || 'apcode');
     const { currentUser, userName, userPermissions } = useAuth();
     const { isAdmin, isEditor, isOwner } = useUserRole();
-    const { invalidate } = useDataCache();
+    const { invalidate, getCached } = useDataCache();
     const canEdit = isAdmin || isEditor;
     const screenWidth = useWindowWidth();
     const isMobile = screenWidth < 768;
@@ -562,7 +584,28 @@ const computeNextSyRunning = async () => {
     useEffect(() => { if (tab === 'iecode') refreshNextSyRunning(); }, [tab]);
 
     const handleTabChange = (t) => { setTab(t); };
-    const getOptions = (field) => [...new Set((dataMap[tab] || []).map(i => i[field] || '').filter(v => v))];
+    // ── Lookup Book ของ BU จาก company_list (bu -> BOOK) ──────────────────
+    const getBookOfBu = (buCode) => {
+      if (!buCode) return '';
+      const companyItems = getCached('CompanyList') || [];
+      const match = companyItems.find(i => String(i['bu'] || '').toLowerCase() === String(buCode).trim().toLowerCase());
+      return match?.['BOOK'] || '';
+    };
+    // ── getOptions: Supplier Site Generate จาก Book ({BOOK}-INTERCOM/NONMER) ──
+    // ── + รวมกับค่าที่มีอยู่จริงใน DB ที่ตรงกับ Book Prefix เดียวกัน ──────────
+    const getOptions = (field, formData) => {
+      if (field === 'Supplier Site' && formData) {
+        const book = getBookOfBu(formData['BU Code']);
+        if (book) {
+          const pattern = [`${book}-INTERCOM`, `${book}-NONMER`];
+          const fromDb = (dataMap[tab] || [])
+            .map(i => String(i[field] || '').trim())
+            .filter(v => v && v.toUpperCase().startsWith(`${book.toUpperCase()}-`));
+          return [...new Set([...pattern, ...fromDb])];
+        }
+      }
+      return [...new Set((dataMap[tab] || []).map(i => i[field] || '').filter(v => v))];
+    };
 
     // ── ส่วนที่เหลือ (buildPreviewRows, exportToExcel, handlers, render) เหมือนเดิมทุกอย่าง ──
     const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
@@ -1126,7 +1169,7 @@ const computeNextSyRunning = async () => {
               );
               const key = c.key;
               const isCombo = !c.noCombo && (cfg.combo.includes(key) || c.combo);
-              const opts = c.opts || getOptions(key);
+              const opts = c.opts || getOptions(key, formData);
               const cellHasError = showErrors && c.required && !String(formData[key]||'').trim();
               return (
                 <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center',justifyContent: c.center ? 'center' : 'flex-start', borderRight:br, overflow:'visible', background: cellHasError ? '#FCEBEB' : (c.bg || 'transparent'), boxShadow: cellHasError ? 'inset 0 0 0 1px #791F1F' : 'none' }}>
@@ -1353,7 +1396,7 @@ const computeNextSyRunning = async () => {
                 <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', overflow:'visible' }}>
                   {editMode
                     ? cfg.combo.includes(key1)
-                      ? <ComboBox key={`exp-${formData['Short Name']}-${formData[key1]||'empty'}`} value={formData[key1]||''} onChange={val=>setFormData({...formData,[key1]:val})} options={key1==='Expense Type' ? [...new Set(['63047000-ค่าบริการอื่นๆ',...getOptions(key1)])] : getOptions(key1)} placeholder='เลือก' />
+                      ? <ComboBox key={`exp-${formData['Short Name']}-${formData[key1]||'empty'}`} value={formData[key1]||''} onChange={val=>setFormData({...formData,[key1]:val})} options={key1==='Expense Type' ? [...new Set(['63047000-ค่าบริการอื่นๆ',...getOptions(key1, formData)])] : getOptions(key1, formData)} placeholder='เลือก' />
                       : <input value={formData[key1]||''} onChange={e=>setFormData({...formData,[key1]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
                     : <div style={{ fontSize:'12px', color: formData[key1] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key1]||'—'}</div>
                   }
@@ -1362,7 +1405,7 @@ const computeNextSyRunning = async () => {
                 <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', overflow:'visible' }}>
                   {editMode
                     ? cfg.combo.includes(key2)
-                      ? <ComboBox value={formData[key2]||''} onChange={val=>setFormData({...formData,[key2]:val})} options={getOptions(key2)} placeholder='เลือก' />
+                      ? <ComboBox value={formData[key2]||''} onChange={val=>setFormData({...formData,[key2]:val})} options={getOptions(key2, formData)} placeholder='เลือก' />
                       : <input value={formData[key2]||''} onChange={e=>setFormData({...formData,[key2]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
                     : <div style={{ fontSize:'12px', color: formData[key2] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key2]||'—'}</div>
                   }
@@ -1430,7 +1473,7 @@ if (tab === 'apcode' || tab === 'iecode') {
             <div style={{ padding:'4px 6px', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0', background: cellBg, border: cellBorder, boxSizing:'border-box' }}>
               {editMode
                 ? isCombo
-                  ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`เลือก`} />
+                  ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key, formData)} placeholder={`เลือก`} />
                   : <input style={inputSt} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} />
                 : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
               }
@@ -1489,7 +1532,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                   <div key={key} style={{ padding:'4px 6px', borderRight:'0.5px solid #e8eaf0' }}>
                     {editMode
                       ? cfg.combo.includes(key)
-                        ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder='-' />
+                        ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key, formData)} placeholder='-' />
                         : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
                       : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
                     }
@@ -1500,7 +1543,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                     <div key={key} style={{ padding:'4px 6px', borderRight: i===0 ? '0.5px solid #e8eaf0' : 'none' }}>
                       {editMode
                         ? cfg.combo.includes(key)
-                          ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder='-' />
+                          ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key, formData)} placeholder='-' />
                           : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
                         : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
                       }
@@ -1509,7 +1552,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                 </div>
                 <div style={{ padding:'4px 6px' }}>
                   {editMode
-                    ? <ComboBox value={formData['Notice']||''} onChange={val=>setFormData({...formData,'Notice':val})} options={getOptions('Notice')} placeholder='-' />
+                    ? <ComboBox value={formData['Notice']||''} onChange={val=>setFormData({...formData,'Notice':val})} options={getOptions('Notice', formData)} placeholder='-' />
                     : <div style={{ fontSize:'12px', color: formData['Notice'] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData['Notice']||'—'}</div>
                   }
                 </div>
@@ -1571,7 +1614,7 @@ if (tab === 'apcode' || tab === 'iecode') {
           {cfg.edit.map(([key, label]) => (
             <div key={key} style={{ marginBottom:'4px' }}>
               <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'2px' }}>{label}</label>
-              {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={S.inputReadonly}>{key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}</div>}
+              {editMode ? cfg.combo.includes(key) ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key, formData)} placeholder={`พิมพ์หรือเลือก ${label}`} /> : <input style={S.input} value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} /> : <div style={S.inputReadonly}>{key==='TYPE'||key==='SUB TYPE' ? noticeBadge(formData[key]) : (formData[key]||'-')}</div>}
             </div>
           ))}
         </div>
