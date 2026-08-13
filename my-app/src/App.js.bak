@@ -1111,8 +1111,8 @@ function MainApp() {
       case 'vat-backup-tax-invoice':
         return (isOwner || userPermissions?.['VAT'])
           ? <VatController
-              activeSubTab={activePage}
-              onSubTabChange={sub => setActivePage(sub)}
+              activeSubTab={activePage.replace('vat-', '')}
+              onSubTabChange={sub => setActivePage(`vat-${sub}`)}
               flyoutOpen={openMenu === 'vat'}
             />
           : <NoAccessPage />;

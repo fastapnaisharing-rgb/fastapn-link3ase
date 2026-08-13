@@ -55,6 +55,41 @@ function ComboBox({ value, onChange, options, placeholder }) {
   );
 }
 
+// ✅ vbModeless-style Drag: ลาก Form ได้อิสระ จับที่แถบหัวข้อแล้วลากได้เลย
+function useDraggable() {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null); // null = คืนตำแหน่ง Default (กึ่งกลาง)
+  const dragState = useRef(null);
+
+  const startDrag = (e) => {
+    if (!ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    dragState.current = { startX: e.clientX, startY: e.clientY, startLeft: rect.left, startTop: rect.top };
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragState.current) return;
+      const dx = e.clientX - dragState.current.startX;
+      const dy = e.clientY - dragState.current.startY;
+      setPos({
+        left: Math.max(0, dragState.current.startLeft + dx),
+        top: Math.max(0, dragState.current.startTop + dy),
+      });
+    };
+    const onUp = () => { dragState.current = null; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  return { ref, pos, setPos, startDrag };
+}
+
 // ✅ Columns ตรงกับ schema จริง (ตัด itemcode2 ออก)
 const COLUMNS = [
   { key: 'code',        label: 'Code',        w: 100, sortable: true },
@@ -92,12 +127,73 @@ const COMBO_FIELDS = ['bu', 'sub', 'dis_g', 'i_and_g', 'value', 'oth', 'spi1', '
 // ✅ Template columns ตรง schema (ตัด itemcode2 ออก)
 const TEMPLATE_COLS = ['bu','description','cpc','account','sub','dis_g','i_and_g','value','oth','spi1','spec_tx','keyword'];
 
+// ✅ Duplicate Check: Field หลักสำหรับเทียบเป็น Record เดียวกัน (Partial Match Key)
+const DUP_KEY_FIELDS = ['bu', 'description', 'account', 'cpc'];
+// ✅ Field ที่ใช้เทียบเพื่อหา Duplicate/Partial จริงๆ (ตัด keyword ออก — keyword ไม่นับเป็นเงื่อนไขการซ้ำ)
+const COMPARE_FIELDS = TEMPLATE_COLS.filter(f => f !== 'keyword');
+// Field ที่เคย Default เป็น '-' ตอน Import จริง (ต้องทำตอน Classify ด้วย ไม่งั้นเทียบผิด)
+const DASH_DEFAULT_FIELDS = ['dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
+const ALT_KEYS = { i_and_g: 'I & G', spi1: 'SPI-1' };
+
+function normalizeRawRow(row) {
+  const out = {};
+  TEMPLATE_COLS.forEach(f => {
+    const alt = ALT_KEYS[f];
+    let v = String(row[f] ?? (alt ? row[alt] : undefined) ?? '').trim();
+    if (!v && DASH_DEFAULT_FIELDS.includes(f)) v = '-';
+    out[f] = v;
+  });
+  return out;
+}
+
+// ✅ Classify แต่ละแถวจากไฟล์: new / partial (ซ้ำ Field หลัก แต่ Field อื่นต่าง) / exact (ซ้ำทุก Field หรือซ้ำกันเองในไฟล์)
+function classifyImportRows(rawRows, existingItems) {
+  const existingMap = new Map();
+  existingItems.forEach(item => {
+    const key = DUP_KEY_FIELDS.map(f => String(item[f] ?? '').trim().toLowerCase()).join('|');
+    if (!existingMap.has(key)) existingMap.set(key, []);
+    existingMap.get(key).push(item);
+  });
+  const seenKeys = new Set();
+  return rawRows.map(rawRow => {
+    const row = normalizeRawRow(rawRow);
+    const dupKey = DUP_KEY_FIELDS.map(f => row[f].toLowerCase()).join('|');
+    const candidates = existingMap.get(dupKey) || [];
+    let matched = candidates[0] || null;
+    let isExact = false;
+    for (const item of candidates) {
+      const allMatch = COMPARE_FIELDS.every(f => String(item[f] ?? '').trim().toLowerCase() === row[f].toLowerCase());
+      if (allMatch) { matched = item; isExact = true; break; }
+    }
+    const isFileDup = seenKeys.has(dupKey);
+    seenKeys.add(dupKey);
+    if (isExact || isFileDup) {
+      return { ...row, _status: 'exact', _existing: matched, _diffs: [], _imported: false, _junked: false };
+    }
+    if (matched) {
+      const diffs = COMPARE_FIELDS
+        .filter(f => String(matched[f] ?? '').trim().toLowerCase() !== row[f].toLowerCase())
+        .map(f => ({ field: f, old: matched[f] || '-', new: row[f] || '-' }));
+      return { ...row, _status: 'partial', _existing: matched, _diffs: diffs, _imported: false, _junked: false };
+    }
+    return { ...row, _status: 'new', _existing: null, _diffs: [], _imported: false, _junked: false };
+  });
+}
+
 function ItemCodeList() {
   const [items, setItems] = useState([]);
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [previewData, setPreviewData] = useState([]);
+  const [previewRows, setPreviewRows] = useState([]); // classified: new / partial / exact
+  const [previewSelected, setPreviewSelected] = useState(new Set()); // index ที่ถูกเลือกเพื่อ Import
+  const [previewTab, setPreviewTab] = useState('new'); // 'new' | 'duplicate'
+  const [previewOpenDetail, setPreviewOpenDetail] = useState(null);
+  const formDrag = useDraggable();
+  const previewDrag = useDraggable();
+  useEffect(() => { if (showForm) formDrag.setPos(null); }, [showForm]); // eslint-disable-line
+  useEffect(() => { if (showPreview) previewDrag.setPos(null); }, [showPreview]); // eslint-disable-line
+  const [junkConfirm, setJunkConfirm] = useState(null); // { idx: number[], count } | null
   const [importing, setImporting] = useState(false);
   const [editId, setEditId] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
@@ -365,44 +461,95 @@ function ItemCodeList() {
     const reader = new FileReader();
     reader.onload = (evt) => {
       const wb = XLSX.read(evt.target.result, { type: 'binary' });
-      setPreviewData(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
+      const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      const classified = classifyImportRows(rawRows, items);
+      setPreviewRows(classified);
+      setPreviewSelected(new Set(classified.map((r, i) => i).filter(i => classified[i]._status === 'new')));
+      setPreviewTab('new');
+      setPreviewOpenDetail(null);
       setShowPreview(true);
     };
     reader.readAsBinaryString(file);
     e.target.value = '';
   };
 
-  // ✅ Import — ใช้ field ตรงกับ schema, ตัด itemcode2/username/last_update ออก
+  // ✅ Tab views + Selection helpers สำหรับ Preview
+  const previewNew = useMemo(
+    () => previewRows.map((r, i) => ({ ...r, _idx: i })).filter(r => r._status === 'new' && !r._imported && !r._junked),
+    [previewRows]
+  );
+  const previewDup = useMemo(
+    () => previewRows.map((r, i) => ({ ...r, _idx: i })).filter(r => r._status !== 'new' && !r._imported && !r._junked),
+    [previewRows]
+  );
+  // ✅ เฉพาะแถวที่เลือกไว้ ใน Tab ที่กำลังดูอยู่เท่านั้น (แยก Confirm ต่อ Tab)
+  const activeSelectedRows = useMemo(() => {
+    const activeList = previewTab === 'new' ? previewNew : previewDup;
+    return activeList.filter(r => previewSelected.has(r._idx));
+  }, [previewTab, previewNew, previewDup, previewSelected]);
+  const togglePreviewSelect = (idx) => {
+    setPreviewSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  };
+  // ✅ Checkbox ที่หัวตาราง: เลือก/ยกเลิกทั้งหมดใน Tab ที่กำลังดูอยู่ (ใช้ได้ทั้ง 2 Tab)
+  const activeVisibleList = previewTab === 'new' ? previewNew : previewDup;
+  const isAllVisibleSelected = activeVisibleList.length > 0 && activeVisibleList.every(r => previewSelected.has(r._idx));
+  const toggleSelectAllVisible = () => setPreviewSelected(prev => {
+    const next = new Set(prev);
+    if (isAllVisibleSelected) {
+      activeVisibleList.forEach(r => next.delete(r._idx));
+    } else {
+      activeVisibleList.forEach(r => next.add(r._idx));
+    }
+    return next;
+  });
+  // ✅ ลบทิ้ง (Junk) แถวที่เลือกออกจาก Preview — ไม่ Import และไม่แสดงอีก (ใช้ Flag เหมือน _imported กัน Index เพี้ยน)
+  const handleJunkSelected = () => {
+    const idx = activeVisibleList.filter(r => previewSelected.has(r._idx)).map(r => r._idx);
+    if (idx.length === 0) return;
+    setJunkConfirm({ idx, count: idx.length });
+  };
+  const confirmJunk = () => {
+    if (!junkConfirm) return;
+    const idxSet = new Set(junkConfirm.idx);
+    setPreviewRows(prev => prev.map((r, i) => idxSet.has(i) ? { ...r, _junked: true } : r));
+    setPreviewSelected(prev => {
+      const next = new Set(prev);
+      idxSet.forEach(i => next.delete(i));
+      return next;
+    });
+    setJunkConfirm(null);
+  };
+
+  // ✅ Import — เฉพาะแถวที่เลือกใน Tab ที่กำลังดูอยู่ (แยก Confirm ต่อ Tab ได้)
   const handleConfirmImport = async () => {
+    const rowsToImport = activeSelectedRows;
+    if (rowsToImport.length === 0) { alert('กรุณาเลือกอย่างน้อย 1 รายการ'); return; }
     setImporting(true);
     try {
-      let allCodesData = [];
-      let from = 0;
-      while (true) {
-        const { data } = await db.from('itemcode_list').select('code').range(from, from + 999);
-        if (!data || data.length === 0) break;
-        allCodesData = [...allCodesData, ...data];
-        if (data.length < 1000) break;
-        from += 1000;
-      }
-      const getNextCode = getCodePool(allCodesData);
+      // ✅ Fix Bug เดิม: db.from().range() เวอร์ชันนี้ไม่ Apply Offset จริง ทำให้วนลูปไม่รู้จบ → เปลี่ยนไปใช้ apiFetch แบบเดียวกับ fetchData/loadItemsAndNextCode
+      const allCodesData = await apiFetch('/itemcode_list');
+      const getNextCode = getCodePool(allCodesData || []);
       const now = new Date().toISOString();
 
-      for (let i = 0; i < previewData.length; i += 500) {
-        const batch = previewData.slice(i, i + 500).map(row => ({
+      for (let i = 0; i < rowsToImport.length; i += 500) {
+        const batch = rowsToImport.slice(i, i + 500).map(row => ({
           code:        getNextCode(),
-          bu:          String(row['bu']          ?? ''),
-          description: String(row['description'] ?? ''),
-          cpc:         String(row['cpc']         ?? ''),
-          account:     String(row['account']     ?? ''),
-          sub:         String(row['sub']         ?? ''),
-          dis_g:       String(row['dis_g']       ?? '').trim() || '-',
-          i_and_g:     String(row['i_and_g']     ?? row['I & G'] ?? '').trim() || '-',
-          value:       String(row['value']       ?? '').trim() || '-',
-          oth:         String(row['oth']         ?? '').trim() || '-',
-          spi1:        String(row['spi1']        ?? row['SPI-1'] ?? '').trim() || '-',
-          spec_tx:     String(row['spec_tx']     ?? '').trim() || '-',
-          keyword:     String(row['keyword']     ?? ''),
+          bu:          row.bu,
+          description: row.description,
+          cpc:         row.cpc,
+          account:     row.account,
+          sub:         row.sub,
+          dis_g:       row.dis_g,
+          i_and_g:     row.i_and_g,
+          value:       row.value,
+          oth:         row.oth,
+          spi1:        row.spi1,
+          spec_tx:     row.spec_tx,
+          keyword:     row.keyword,
           updated_by:  userName || currentUser?.email || '',  // ✅ ตรงกับ schema
           updated_at:  now,                                   // ✅ ตรงกับ schema
         }));
@@ -410,11 +557,25 @@ function ItemCodeList() {
         if (error) throw error;
       }
 
-      setShowPreview(false);
-      setPreviewData([]);
+      const importedIdx = new Set(rowsToImport.map(r => r._idx));
+      const nextPreviewRows = previewRows.map((r, i) => importedIdx.has(i) ? { ...r, _imported: true } : r);
+      setPreviewRows(nextPreviewRows);
+      setPreviewSelected(prev => {
+        const next = new Set(prev);
+        importedIdx.forEach(idx => next.delete(idx));
+        return next;
+      });
+
+      const stillRemaining = nextPreviewRows.some(r => !r._imported && !r._junked);
+      if (!stillRemaining) {
+        setShowPreview(false);
+        setPreviewRows([]);
+        setPreviewSelected(new Set());
+      }
+
       loadItemsAndNextCode();
       invalidate('ItemcodeList');
-      alert(`✅ Import สำเร็จ ${previewData.length} รายการ`);
+      alert(`✅ Import สำเร็จ ${rowsToImport.length} รายการ`);
     } catch (err) {
       alert('เกิดข้อผิดพลาด: ' + err.message);
     }
@@ -476,8 +637,10 @@ function ItemCodeList() {
     tdCenter: { padding: '6px 8px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center' },
     input: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', marginBottom: '8px', boxSizing: 'border-box' },
     inputDisabled: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #eee', fontSize: '13px', width: '100%', marginBottom: '8px', boxSizing: 'border-box', background: '#f5f5f5', color: '#999' },
-    overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
-    modal: { background: 'white', borderRadius: '10px', width: isMobile ? '95vw' : '500px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' },
+    // ✅ vbModeless: เอา Backdrop ออก (pointerEvents none) กดด้านหลังได้ ส่วน Form เองเปิด pointerEvents auto เฉพาะตัว
+    overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'transparent', pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
+    modal: { background: 'white', borderRadius: '10px', width: isMobile ? '95vw' : '500px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 28px rgba(0,0,0,0.22)', pointerEvents: 'auto' },
+    dragHeader: { cursor: 'move', userSelect: 'none' },
     iconBtn: (color, bg, border) => ({ background: bg || 'none', border: `0.5px solid ${border || color}`, borderRadius: '4px', cursor: 'pointer', padding: '3px 6px', color, fontSize: '12px', lineHeight: 1 }),
     pageBtn: (active, disabled) => ({ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: disabled ? 'default' : 'pointer', background: active ? '#1a3a5c' : 'white', color: disabled ? '#ccc' : active ? 'white' : '#555', minWidth: '28px', textAlign: 'center' }),
   };
@@ -618,9 +781,9 @@ function ItemCodeList() {
 
       {showForm && (
         <div style={S.overlay}>
-          <div style={S.modal}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <h3 style={{ fontSize: '15px', margin: 0 }}>{editId ? '✏️ Edit Item Code' : '+ New Item Code'}</h3>
+          <div ref={formDrag.ref} style={{ ...S.modal, ...(formDrag.pos ? { position: 'fixed', left: formDrag.pos.left, top: formDrag.pos.top, margin: 0 } : {}) }}>
+            <div style={{ ...S.dragHeader, padding: '16px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }} onMouseDown={formDrag.startDrag}>
+              <h3 style={{ fontSize: '15px', margin: 0 }}>✥ {editId ? '✏️ Edit Item Code' : '+ New Item Code'}</h3>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowForm(false)}>Cancel</button>
                 <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleSave}>Save</button>
@@ -647,46 +810,140 @@ function ItemCodeList() {
 
       {showPreview && (
         <div style={S.overlay}>
-          <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: '90vw', maxWidth: '1000px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ fontSize: '15px', margin: 0 }}>📋 Preview ข้อมูลที่จะ Import</h3>
-              <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{previewData.length} รายการ</span>
+          <div ref={previewDrag.ref} style={{ background: 'white', borderRadius: '10px', padding: '20px', width: '95vw', maxWidth: '1500px', height: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 28px rgba(0,0,0,0.22)', pointerEvents: 'auto', ...(previewDrag.pos ? { position: 'fixed', left: previewDrag.pos.left, top: previewDrag.pos.top, margin: 0 } : {}) }}>
+            <div style={{ ...S.dragHeader, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }} onMouseDown={previewDrag.startDrag}>
+              <h3 style={{ fontSize: '15px', margin: 0 }}>✥ 📋 Preview ข้อมูลที่จะ Import</h3>
+              <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{previewRows.length} รายการ</span>
             </div>
-            <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
               ⚠️ Code จะถูก Auto Running, Updated By และ Updated At จะถูก Auto ใส่ให้ครับ
             </div>
+
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', borderBottom: '1px solid #eee' }}>
+              <button
+                onClick={() => setPreviewTab('new')}
+                style={{ padding: '8px 16px', borderRadius: '6px 6px 0 0', border: 'none', borderBottom: previewTab === 'new' ? '3px solid #0F6E56' : '3px solid transparent', background: previewTab === 'new' ? '#f0f7f5' : 'transparent', fontWeight: previewTab === 'new' ? '600' : '400', fontSize: '13px', cursor: 'pointer', color: '#333' }}
+              >
+                New ({previewNew.length}{previewRows.length > 0 ? ` · ${Math.round(previewNew.length / previewRows.length * 100)}%` : ''})
+              </button>
+              <button
+                onClick={() => setPreviewTab('duplicate')}
+                style={{ padding: '8px 16px', borderRadius: '6px 6px 0 0', border: 'none', borderBottom: previewTab === 'duplicate' ? '3px solid #B54708' : '3px solid transparent', background: previewTab === 'duplicate' ? '#FFF7ED' : 'transparent', fontWeight: previewTab === 'duplicate' ? '600' : '400', fontSize: '13px', cursor: 'pointer', color: '#333' }}
+              >
+                Duplicates ({previewDup.length}{previewRows.length > 0 ? ` · ${Math.round(previewDup.length / previewRows.length * 100)}%` : ''})
+              </button>
+            </div>
+
+            {activeSelectedRows.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                <button onClick={handleJunkSelected} style={{ ...S.btn, background: '#FCEBEB', color: '#791F1F', border: '0.5px solid #f7c1c1', fontSize: '12px', padding: '5px 10px', marginLeft: 0 }}>
+                  🗑️ ลบทิ้ง {activeSelectedRows.length} รายการ
+                </button>
+              </div>
+            )}
+
             <div style={{ overflow: 'auto', flex: 1, marginBottom: '16px', border: '0.5px solid #e8e8e8', borderRadius: '6px' }}>
               <table style={{ borderCollapse: 'collapse', fontSize: '11px', width: '100%' }}>
                 <thead>
                   <tr>
+                    <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', position: 'sticky', top: 0, width: '32px', textAlign: 'center' }}>
+                      <input type="checkbox" checked={isAllVisibleSelected} onChange={toggleSelectAllVisible} />
+                    </th>
+                    {previewTab === 'duplicate' && <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', position: 'sticky', top: 0, whiteSpace: 'nowrap' }}>สถานะ</th>}
                     {TEMPLATE_COLS.map(f => (
                       <th key={f} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>{f}</th>
                     ))}
+                    {previewTab === 'duplicate' && <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', position: 'sticky', top: 0, whiteSpace: 'nowrap' }}>บันทึกโดย</th>}
+                    {previewTab === 'duplicate' && <th style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', position: 'sticky', top: 0 }}></th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {previewData.slice(0, 50).map((row, i) => (
-                    <tr key={i}>
-                      {TEMPLATE_COLS.map(f => (
-                        <td key={f} style={{ padding: '7px 10px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {String(row[f] ?? '') || '-'}
+                  {(previewTab === 'new' ? previewNew : previewDup).slice(0, 200).map((row) => (
+                    <React.Fragment key={row._idx}>
+                      <tr>
+                        <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                          <input type="checkbox" checked={previewSelected.has(row._idx)} onChange={() => togglePreviewSelect(row._idx)} />
                         </td>
-                      ))}
-                    </tr>
+                        {previewTab === 'duplicate' && (
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                            {row._status === 'exact'
+                              ? <span style={{ color: '#B42318', fontWeight: 600 }}>🔴 ซ้ำทั้งหมด</span>
+                              : <span style={{ color: '#B54708', fontWeight: 600 }}>🟡 อาจซ้ำ</span>}
+                          </td>
+                        )}
+                        {TEMPLATE_COLS.map(f => (
+                          <td key={f} style={{ padding: '7px 10px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {String(row[f] ?? '') || '-'}
+                          </td>
+                        ))}
+                        {previewTab === 'duplicate' && (
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontSize: '11px', color: '#666' }}>
+                            {row._existing?.updated_by || '-'}
+                          </td>
+                        )}
+                        {previewTab === 'duplicate' && (
+                          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                            {row._status === 'partial' && (
+                              <button onClick={() => setPreviewOpenDetail(previewOpenDetail === row._idx ? null : row._idx)} style={{ fontSize: '11px', color: '#1a5fb4', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                                {previewOpenDetail === row._idx ? 'ซ่อน' : 'ดูรายละเอียด'}
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                      {previewOpenDetail === row._idx && row._diffs && row._diffs.length > 0 && (
+                        <tr>
+                          <td colSpan={TEMPLATE_COLS.length + 3} style={{ padding: '8px 14px', background: '#FFFBEB', borderBottom: '0.5px solid #f0f0f0' }}>
+                            <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+                              Record เดิม บันทึกล่าสุดโดย <b>{row._existing?.updated_by || '-'}</b> เมื่อ {row._existing?.updated_at ? new Date(row._existing.updated_at).toLocaleString('th-TH') : '-'}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                              {row._diffs.map(d => (
+                                <div key={d.field} style={{ fontSize: '11px', background: 'white', border: '0.5px solid #eee', borderRadius: '4px', padding: '4px 8px' }}>
+                                  <b>{d.field}</b>: <span style={{ color: '#999', textDecoration: 'line-through' }}>{d.old}</span> → <span style={{ color: '#0F6E56', fontWeight: 600 }}>{d.new}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
-              {previewData.length > 50 && (
+              {(previewTab === 'new' ? previewNew : previewDup).length === 0 && (
+                <div style={{ textAlign: 'center', padding: '20px', fontSize: '12px', color: '#888' }}>ไม่มีรายการ</div>
+              )}
+              {(previewTab === 'new' ? previewNew : previewDup).length > 200 && (
                 <div style={{ textAlign: 'center', padding: '8px', fontSize: '12px', color: '#888' }}>
-                  แสดง 50 แถวแรก จากทั้งหมด {previewData.length} แถว
+                  แสดง 200 แถวแรก
                 </div>
               )}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button style={{ ...S.btn, background: '#f0f0f0' }} onClick={() => { setShowPreview(false); setPreviewData([]); }}>Cancel</button>
-              <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={handleConfirmImport} disabled={importing}>
-                {importing ? 'กำลัง Import...' : `✅ Confirm Import ${previewData.length} รายการ`}
+              <button style={{ ...S.btn, background: '#f0f0f0' }} onClick={() => { setShowPreview(false); setPreviewRows([]); setPreviewSelected(new Set()); }}>Cancel</button>
+              <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={handleConfirmImport} disabled={importing || activeSelectedRows.length === 0}>
+                {importing ? 'กำลัง Import...' : `✅ Confirm Import ${activeSelectedRows.length} รายการ (${previewTab === 'new' ? 'New' : 'Duplicates'})`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {junkConfirm && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+          <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: '360px', boxShadow: '0 8px 28px rgba(0,0,0,0.22)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <span style={{ fontSize: '22px' }}>🗑️</span>
+              <h3 style={{ fontSize: '15px', margin: 0 }}>ยืนยันการลบทิ้ง</h3>
+            </div>
+            <p style={{ fontSize: '13px', color: '#555', margin: '0 0 20px', lineHeight: 1.6 }}>
+              ตัด <b>{junkConfirm.count}</b> รายการนี้ออกจาก Import ใช่ไหม?<br />
+              (จะไม่ถูก Import และจะหายจากรายการนี้)
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setJunkConfirm(null)}>Cancel</button>
+              <button style={{ ...S.btn, background: '#c0392b', color: 'white', marginLeft: 0 }} onClick={confirmJunk}>ลบทิ้ง</button>
             </div>
           </div>
         </div>

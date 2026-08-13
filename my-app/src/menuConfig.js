@@ -35,19 +35,41 @@ export const AP_CONTROLLER_MENU = {
 };
 
 // ── VAT Controller: เมนูย่อยแบ่งเป็นกลุ่ม (ใช้สร้าง Flyout) ───────────────
+// MARKER_VAT_MENU_RESTRUCTURE_V2 — 4 กลุ่ม: OPERATION / RECONCILE / RESULTS / BACKUP
 export const VAT_CONTROLLER_MENU = {
   id: 'vat-controller', icon: '💹', label: 'VAT Controller', color: '#EAF3DE',
   groups: [
     { label: 'Operation', icon: '⚙️', items: [
-      { id: 'vat-incomplete-report', icon: '📋', label: 'Incomplete Report' },
-      { id: 'vat-amagno-reconcile',  icon: '🔄', label: 'Amagno Reconcile' },
+      { id: 'vat-watchlist-ops',      icon: '📋', label: 'VAT Watchlist Ops.' },
+      { id: 'vat-reconcile-ap01-05',  icon: '🔄', label: 'VAT Reconcile AP01-AP05' },
+      { id: 'vat-simple-input-ops',   icon: '📝', label: 'VAT Simple Input Ops.' },
+    ]},
+    { label: 'Reconcile', icon: '🔗', items: [
+      { id: 'vat-input-rec',           icon: '📥', label: 'Input Vat Rec.' },
+      { id: 'vat-suspense-rec',        icon: '⏳', label: 'Suspense Vat Rec.' },
+      { id: 'vat-direct-debit-recon',  icon: '🏦', label: 'VAT Direct Debit Recon.' },
+      { id: 'vat-timeline',            icon: '📆', label: 'Timeline' },
     ]},
     { label: 'Results', icon: '📊', items: [
-      { id: 'vat-popvat-report',       icon: '📊', label: 'Popvat Report' },
-      { id: 'vat-simple-input-report', icon: '📄', label: 'Simple Input Report' },
+      { id: 'vat-dashboard',    icon: '📊', label: 'Dashboard' },
+      { id: 'vat-upload-file',  icon: '📤', label: 'Upload file' },
+      { id: 'vat-monthly-report', icon: '🗓️', label: 'Monthly Report' },
+    ]},
+    { label: 'Backup', icon: '🗄️', items: [
+      { id: 'vat-backup-transaction',  icon: '💳', label: 'Transaction' },
+      { id: 'vat-backup-tax-invoice',  icon: '🧾', label: 'Tax Invoice' },
     ]},
   ],
 };
+
+// ── Tab ภายในหน้า "Upload file" (จัดการ state ในตัว Component เอง ────────
+// ── ไม่ใช่ Flyout Menu — เก็บไว้ที่นี่เพื่อให้เห็นภาพรวมทั้งหมดในไฟล์เดียว) ─
+export const VAT_UPLOAD_FILE_TABS = [
+  { id: 'popvat-report',       label: 'Popvat Report' },
+  { id: 'simple-input-report', label: 'Simple Input Report' },
+  { id: 'adi-upload',          label: 'ADI Upload' },
+  { id: 'data-load',           label: 'DataLoad' },
+];
 
 // ── เมนูที่ยังไม่มี submenu ย่อย (เป็น placeholder หน้าเดียว) ─────────────
 export const SIMPLE_FUNCTION_MENUS = [

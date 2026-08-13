@@ -675,13 +675,15 @@ const computeNextSyRunning = async () => {
         const updateRows = toProcess.filter(r => r._status === 'update');
         const ts = getTimestamp(); const cuStr = cu();
         if (tab === 'iecode') {
-          let allCodesData = []; let from = 0;
+          let allCodesData = []; let from = 0; let loopGuard = 0;
           while (true) {
-            const { data } = await db.from('ie_code_list').select('"SY-Running"').range(from, from + 999);
+            loopGuard++;
+            if (loopGuard > 20) { confirmDialog.alert('⚠️ ข้อมูล IE Code เยอะเกินคาด (>20 รอบ) โหลดได้ไม่ครบ กรุณาแจ้งผู้พัฒนา', { variant: 'danger' }); break; }
+            const { data } = await db.from('ie_code_list').select('"SY-Running"').range(from, from + 49999);
             if (!data || data.length === 0) break;
             allCodesData = [...allCodesData, ...data.map(d => d['SY-Running'] || '')];
-            if (data.length < 1000) break;
-            from += 1000;
+            if (data.length < 50000) break;
+            from += 50000;
           }
           const getNextSy = getSyRunningPool(allCodesData);
           const buildIePayload = (row) => { const d = {}; cfg.fields.forEach(k => { if (k === 'SY-Running') return; if (k === 'username') d[k] = cuStr; else if (k === 'last_update') d[k] = ts; else d[k] = String(row[k] ?? ''); }); return d; };

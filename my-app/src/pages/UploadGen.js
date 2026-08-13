@@ -15,6 +15,15 @@ const DOC_FOLDERS = [
 
 // MARKER_SUPPORT_FEEDBACK_PHASE2_V1
 const MENU_SOURCE_OPTIONS = ['AP Controller', 'VAT Controller', 'I-Expense', 'GL Functional', 'I-Pro Interface', 'Master Data', 'Resource Center', 'อื่นๆ'];
+// MARKER_SUPPORT_SEVERITY_LEVEL_V1
+// ── ระดับความสำคัญ: เรียงรุนแรงมาก -> น้อย (Incident > Important > Issue > Request) ──
+const SEVERITY_LEVELS = [
+  { value: 'incident',  label: 'Incident',  color: '#791F1F', bg: '#FCEBEB', desc: 'ระบบใช้งานไม่ได้เลย / ข้อมูลผิดพลาดกระทบเงิน' },
+  { value: 'important', label: 'Important', color: '#8a4a00', bg: '#FDF0E0', desc: 'Feature หลักใช้ไม่ได้ แต่ยังมีทางเลี่ยงทำงานต่อได้' },
+  { value: 'issue',     label: 'Issue',     color: '#856404', bg: '#FAEEDA', desc: 'ไม่สะดวกแต่ยังทำงานต่อได้ปกติ' },
+  { value: 'request',   label: 'Request',   color: '#27500A', bg: '#EAF3DE', desc: 'ข้อเสนอแนะ / ไม่กระทบการทำงาน' },
+];
+const SEVERITY_MAP = Object.fromEntries(SEVERITY_LEVELS.map(s => [s.value, s]));
 
 // MARKER_SUPPORT_SEARCH_FILTER_V1
 const MENU_SOURCE_ICONS = {
@@ -3572,6 +3581,8 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const [newThreadBody, setNewThreadBody] = useState('');
   const [newThreadMenuSource, setNewThreadMenuSource] = useState('');
   const [newThreadAttachments, setNewThreadAttachments] = useState([]);
+  // MARKER_SEVERITY_DEFAULT_REQUEST_V1
+  const [newThreadSeverity, setNewThreadSeverity] = useState('request');
   const [creatingThread, setCreatingThread] = useState(false);
 
   // MARKER_SUPPORT_RECYCLE_BIN_FRONTEND_V1
@@ -3619,6 +3630,12 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const [newCommentAttachments, setNewCommentAttachments] = useState([]);
   const [postingComment, setPostingComment] = useState(false);
   const [finishingThread, setFinishingThread] = useState(false);
+  const [rejectingThread, setRejectingThread] = useState(false); // MARKER_SUPPORT_REJECT_V1
+  // MARKER_SUPPORT_HOLD_FRONTEND_V1
+  const [holdingThread, setHoldingThread] = useState(false);
+  const [unholdingThread, setUnholdingThread] = useState(false);
+  const [showHoldModal, setShowHoldModal] = useState(false);
+  const [holdReasonInput, setHoldReasonInput] = useState('');
   const statusTimerRef = React.useRef(null);
   const [supportSearchQuery, setSupportSearchQuery] = useState('');
   const [supportMenuFilter, setSupportMenuFilter] = useState('');
@@ -3718,7 +3735,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       const res = await fetch(`${apiBase}/api/support/threads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ title: newThreadTitle.trim(), body: newThreadBody.trim(), menuSource: newThreadMenuSource }),
+        body: JSON.stringify({ title: newThreadTitle.trim(), body: newThreadBody.trim(), menuSource: newThreadMenuSource, severity: newThreadSeverity }),
       });
       const data = await res.json();
       if (!data.ok) { alert('ตั้งกระทู้ไม่สำเร็จ: ' + (data.error || '')); setCreatingThread(false); return; }
@@ -3733,7 +3750,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       }
 
       setShowNewThreadForm(false);
-      setNewThreadTitle(''); setNewThreadBody(''); setNewThreadMenuSource(''); setNewThreadAttachments([]);
+      setNewThreadTitle(''); setNewThreadBody(''); setNewThreadMenuSource(''); setNewThreadAttachments([]); setNewThreadSeverity('request');
       fetchSupportThreads();
     } catch (err) { alert('ตั้งกระทู้ไม่สำเร็จ: ' + err.message); }
     setCreatingThread(false);
@@ -3932,19 +3949,18 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const token = sessionStorage.getItem('fastapn_token');
 
-      let newCommentId = null;
-      if (newCommentText.trim()) {
-        const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/comments`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ message: newCommentText.trim() }),
-        });
-        const data = await res.json();
-        if (!data.ok) { alert('ส่งข้อความไม่สำเร็จ: ' + (data.error || '')); setPostingComment(false); return; }
-        newCommentId = data.comment && data.comment.id;
-      }
+      // MARKER_SUPPORT_FIX_IMAGE_ONLY_REPLY_V1
+      // ── สร้าง Comment เสมอ (แม้ข้อความว่าง — ตอบด้วยรูปอย่างเดียว) เพื่อให้มี ID ผูกกับรูปเสมอ ──
+      const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ message: newCommentText.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) { alert('ส่งข้อความไม่สำเร็จ: ' + (data.error || '')); setPostingComment(false); return; }
+      const newCommentId = data.comment && data.comment.id;
 
-      // ── รูปแนบผูกกับ Comment นี้โดยตรง (subRefId) — ถ้าไม่มีข้อความ (มีแต่รูป) จะผูกกับกระทู้รวมแทน ──
+      // ── รูปแนบผูกกับ Comment นี้โดยตรง (subRefId) เสมอ ──
       for (const att of newCommentAttachments) {
         const base64 = att.data.split(',')[1];
         await fetch(`${apiBase}/api/file-storage/upload-image`, {
@@ -3968,6 +3984,50 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   };
 
   // ── Thread Detail: Owner กด Finish -> Resolve ──
+  // MARKER_SUPPORT_FINISH_AUTO_COMMENT_V1
+  const handleRejectThread = () => {
+    setConfirmDialog({
+      message: 'ยืนยัน Reject กระทู้นี้?',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setRejectingThread(true);
+        try {
+          const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+          const token = sessionStorage.getItem('fastapn_token');
+
+          if (newCommentText.trim()) {
+            await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/comments`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ message: newCommentText.trim() }),
+            });
+          }
+
+          await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/comments`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ message: 'คำขอนี้ถูกปฏิเสธ' }),
+          });
+
+          const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/reject`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+          const data = await res.json();
+          if (!data.ok) { alert('Reject กระทู้ไม่สำเร็จ: ' + (data.error || '')); setRejectingThread(false); return; }
+
+          setNewCommentText('');
+          setSelectedThread(prev => (prev ? { ...prev, status: 'resolved', resolution_type: 'rejected' } : prev));
+
+          const res2 = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}`, { headers: { Authorization: `Bearer ${token}` } });
+          const data2 = await res2.json();
+          if (data2.ok) {
+            setThreadComments(data2.comments || []);
+            loadThreadImages(data2.images || []);
+          }
+        } catch (err) { alert('Reject กระทู้ไม่สำเร็จ: ' + err.message); }
+        setRejectingThread(false);
+      },
+    });
+  };
+
   const handleFinishThread = () => {
     setConfirmDialog({
       message: 'ยืนยันปิดกระทู้นี้เป็น Resolve?',
@@ -3977,12 +4037,81 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         try {
           const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
           const token = sessionStorage.getItem('fastapn_token');
+
+          // ── ถ้ามีข้อความพิมพ์ค้างไว้ในช่องตอบกลับ (ยังไม่ได้กด "ส่ง") -> ส่งเป็น Comment ก่อน ──
+          // ── เผื่อกระทู้ถูกเปิดมาแบบเข้าใจผิด/มีบริบทเพิ่มเติมที่ Owner อยากอธิบายก่อนปิด ──
+          if (newCommentText.trim()) {
+            await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/comments`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ message: newCommentText.trim() }),
+            });
+          }
+
+          // ── Auto Comment ปิดงานเสมอ ──
+          await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/comments`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ message: 'ดำเนินการเรียบร้อยแล้ว' }),
+          });
+
           const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/finish`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
           const data = await res.json();
           if (!data.ok) { alert('ปิดกระทู้ไม่สำเร็จ: ' + (data.error || '')); setFinishingThread(false); return; }
+
+          setNewCommentText('');
           setSelectedThread(prev => (prev ? { ...prev, status: 'resolved' } : prev));
+
+          // ── Reload Comment ให้เห็น Comment ที่เพิ่ง Auto ส่งไปด้วย ──
+          const res2 = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}`, { headers: { Authorization: `Bearer ${token}` } });
+          const data2 = await res2.json();
+          if (data2.ok) {
+            setThreadComments(data2.comments || []);
+            loadThreadImages(data2.images || []);
+          }
         } catch (err) { alert('ปิดกระทู้ไม่สำเร็จ: ' + err.message); }
         setFinishingThread(false);
+      },
+    });
+  };
+
+  // ── Thread Detail: Owner กด Hold (บังคับกรอกเหตุผล) / ปลด Hold (Manual) ──
+  const handleOpenHoldModal = () => { setHoldReasonInput(''); setShowHoldModal(true); };
+
+  const handleConfirmHold = async () => {
+    if (!holdReasonInput.trim()) { alert('กรุณากรอกเหตุผลก่อน Hold'); return; }
+    setHoldingThread(true);
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/hold`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason: holdReasonInput.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) { alert('Hold กระทู้ไม่สำเร็จ: ' + (data.error || '')); setHoldingThread(false); return; }
+      setSelectedThread(prev => (prev ? { ...prev, on_hold: true, hold_reason: holdReasonInput.trim() } : prev));
+      setShowHoldModal(false);
+    } catch (err) { alert('Hold กระทู้ไม่สำเร็จ: ' + err.message); }
+    setHoldingThread(false);
+  };
+
+  const handleUnholdThread = () => {
+    setConfirmDialog({
+      message: 'ยืนยันปลด Hold กระทู้นี้?',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setUnholdingThread(true);
+        try {
+          const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+          const token = sessionStorage.getItem('fastapn_token');
+          const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/unhold`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+          const data = await res.json();
+          if (!data.ok) { alert('ปลด Hold ไม่สำเร็จ: ' + (data.error || '')); setUnholdingThread(false); return; }
+          setSelectedThread(prev => (prev ? { ...prev, on_hold: false, hold_reason: null } : prev));
+        } catch (err) { alert('ปลด Hold ไม่สำเร็จ: ' + err.message); }
+        setUnholdingThread(false);
       },
     });
   };
@@ -4302,7 +4431,9 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 
       {activeTab==='support' && selectedThread && (
       // MARKER_SUPPORT_THREAD_REDESIGN_V1
-      <div style={{ display:'flex', flexDirection:'column', minHeight:'calc(100vh - 280px)', background:'white', border:'0.5px solid #e8e8e8', borderRadius:'12px', overflow:'hidden' }}>
+      // MARKER_SUPPORT_CHAT_HEIGHT_ENTER_SEND_V1
+      // MARKER_SUPPORT_THREAD_HEIGHT_97VH_V1
+      <div style={{ display:'flex', flexDirection:'column', height:'97vh', background:'white', border:'0.5px solid #e8e8e8', borderRadius:'12px', overflow:'hidden' }}>
         {threadDetailLoading ? (
           <div style={{ textAlign:'center', padding:'40px', color:'#999', fontSize:'13px' }}>กำลังโหลด...</div>
         ) : (
@@ -4310,15 +4441,20 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
             <div style={{ display:'flex', alignItems:'center', gap:'12px', padding:'16px 20px', borderBottom:'0.5px solid #eee' }}>
               <button onClick={closeThreadDetail} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#f5f5f5', border:'none', cursor:'pointer', fontSize:'16px', color:'#555', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>
               <div style={{ flex:1, minWidth:0 }}>
+                {/* MARKER_SUPPORT_LOG_NUMBER_DISPLAY_V1 */}
                 <div style={{ fontSize:'16px', fontWeight:'500', color:'#1a3a5c', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedThread.title}</div>
-                <div style={{ fontSize:'12px', color:'#999', marginTop:'3px' }}>{selectedThread.menu_source} · {selectedThread.created_by}</div>
+                <div style={{ fontSize:'12px', color:'#999', marginTop:'3px' }}>
+                  {selectedThread.log_number && <span style={{ fontFamily:'monospace', color:'#666', fontWeight:'500' }}>{selectedThread.log_number}</span>}
+                  {selectedThread.log_number && ' · '}
+                  {selectedThread.menu_source} · {selectedThread.created_by}
+                </div>
               </div>
               <span style={{
                 fontSize:'12px', padding:'5px 14px', borderRadius:'20px', flexShrink:0, fontWeight:'500',
-                background: selectedThread.status==='new' ? '#FCEBEB' : selectedThread.status==='in_process' ? '#FAEEDA' : '#EAF3DE',
-                color: selectedThread.status==='new' ? '#791F1F' : selectedThread.status==='in_process' ? '#633806' : '#27500A',
+                background: selectedThread.status==='new' ? '#FCEBEB' : selectedThread.status==='in_process' ? '#FAEEDA' : selectedThread.resolution_type==='rejected' ? '#F0F0F0' : '#EAF3DE',
+                color: selectedThread.status==='new' ? '#791F1F' : selectedThread.status==='in_process' ? '#633806' : selectedThread.resolution_type==='rejected' ? '#666' : '#27500A',
               }}>
-                {selectedThread.status==='new' ? 'ใหม่' : selectedThread.status==='in_process' ? 'กำลังดำเนินการ' : 'แก้ไขแล้ว'}
+                {selectedThread.status==='new' ? 'ใหม่' : selectedThread.status==='in_process' ? 'กำลังดำเนินการ' : selectedThread.resolution_type==='rejected' ? 'ถูกปฏิเสธ' : 'แก้ไขแล้ว'}
               </span>
               {isOwner && selectedThread.status !== 'resolved' && (
                 <button onClick={handleFinishThread} disabled={finishingThread}
@@ -4326,7 +4462,30 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                   {finishingThread ? '...' : 'Finish'}
                 </button>
               )}
+              {isOwner && selectedThread.status !== 'resolved' && (
+                <button onClick={handleRejectThread} disabled={rejectingThread}
+                  style={{ fontSize:'13px', padding:'9px 14px', borderRadius:'20px', border:'0.5px solid #d9534f', background:'white', color:'#d9534f', cursor:'pointer', opacity:rejectingThread?0.6:1, flexShrink:0, fontWeight:'500' }}>
+                  {rejectingThread ? '...' : 'Reject'}
+                </button>
+              )}
+              {isOwner && selectedThread.status === 'in_process' && !selectedThread.on_hold && (
+                <button onClick={handleOpenHoldModal} disabled={holdingThread}
+                  style={{ fontSize:'13px', padding:'9px 14px', borderRadius:'20px', border:'0.5px solid #d0a020', background:'white', color:'#8a6d1a', cursor:'pointer', opacity:holdingThread?0.6:1, flexShrink:0, fontWeight:'500' }}>
+                  🔒 Hold
+                </button>
+              )}
+              {isOwner && selectedThread.status === 'in_process' && selectedThread.on_hold && (
+                <button onClick={handleUnholdThread} disabled={unholdingThread}
+                  style={{ fontSize:'13px', padding:'9px 14px', borderRadius:'20px', border:'0.5px solid #999', background:'#f5f5f5', color:'#555', cursor:'pointer', opacity:unholdingThread?0.6:1, flexShrink:0, fontWeight:'500' }}>
+                  {unholdingThread ? '...' : 'ปลด Hold'}
+                </button>
+              )}
             </div>
+            {selectedThread.on_hold && (
+              <div style={{ padding:'8px 20px', background:'#FFF8E1', borderBottom:'0.5px solid #eee', fontSize:'12px', color:'#8a6d1a' }}>
+                🔒 Hold: {selectedThread.hold_reason || '-'}
+              </div>
+            )}
 
             <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column', gap:'20px', padding:'24px 20px', background:'#fafbfc' }}>
               {(() => {
@@ -4337,7 +4496,8 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                       {(selectedThread.created_by||'?').slice(0,2).toUpperCase()}
                     </div>
                     <div style={{ minWidth:0 }}>
-                      <div style={{ fontSize:'12px', color:'#999', marginBottom:'5px' }}>{selectedThread.created_by} · {formatDate(selectedThread.created_at)}</div>
+                      {/* MARKER_SUPPORT_THREAD_SHOW_TIME_V1 */}
+                      <div style={{ fontSize:'12px', color:'#999', marginBottom:'5px' }}>{selectedThread.created_by} · {formatDateTime(selectedThread.created_at)}</div>
                       <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'16px', borderTopLeftRadius:'4px', padding:'12px 14px' }}>
                         <div style={{ fontSize:'13px', color:'#333', lineHeight:'1.6', whiteSpace:'pre-wrap', marginBottom: postImages.length>0 ? '10px' : '0' }}>{selectedThread.body}</div>
                         {postImages.length > 0 && (
@@ -4363,7 +4523,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                       {(c.username||'?').slice(0,2).toUpperCase()}
                     </div>
                     <div style={{ minWidth:0 }}>
-                      <div style={{ fontSize:'12px', color:'#999', marginBottom:'5px', textAlign: isFromCreator?'left':'right' }}>{c.username}{!isFromCreator?' (Owner)':''} · {formatDate(c.created_at)}</div>
+                      <div style={{ fontSize:'12px', color:'#999', marginBottom:'5px', textAlign: isFromCreator?'left':'right' }}>{c.username}{!isFromCreator?' (Owner)':''} · {formatDateTime(c.created_at)}</div>
                       <div style={{
                         background: isFromCreator?'white':'#27500A', border: isFromCreator?'0.5px solid #e8e8e8':'none', borderRadius:'16px', padding:'12px 14px',
                         borderTopLeftRadius: isFromCreator?'4px':'16px', borderTopRightRadius: isFromCreator?'16px':'4px',
@@ -4403,7 +4563,9 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                       ))}
                     </div>
                   )}
-                  <textarea value={newCommentText} onChange={e=>setNewCommentText(e.target.value)} onPaste={e=>handleImagePaste(e, newCommentAttachments, setNewCommentAttachments)} rows={1} placeholder="พิมพ์ข้อความตอบกลับ... (Paste รูปได้เลย)"
+                  <textarea value={newCommentText} onChange={e=>setNewCommentText(e.target.value)} onPaste={e=>handleImagePaste(e, newCommentAttachments, setNewCommentAttachments)}
+                    onKeyDown={e=>{ if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); handlePostComment(); } }}
+                    rows={1} placeholder="พิมพ์ข้อความตอบกลับ... (Enter ส่ง, Shift+Enter ขึ้นบรรทัดใหม่, Paste รูปได้เลย)"
                     style={{ flex:1, padding:'10px 16px', borderRadius:'20px', border:'0.5px solid #ddd', fontSize:'13px', boxSizing:'border-box', resize:'none' }}/>
                   <button onClick={handlePostComment} disabled={postingComment}
                     style={{ fontSize:'13px', padding:'10px 20px', borderRadius:'20px', border:'none', background:'#1a3a5c', color:'white', cursor:'pointer', opacity:postingComment?0.6:1, flexShrink:0, fontWeight:'500' }}>
@@ -4464,10 +4626,13 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         ) : (
 // MARKER_SUPPORT_LIST_INBOX_STYLE_V1
           <div style={{ display:'flex', flexDirection:'column', border:'0.5px solid #e8e8e8', borderRadius:'10px', overflow:'hidden' }}>
+            {/* MARKER_SUPPORT_LIST_CREATOR_COLUMN_V1 */}
             <div style={{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 14px', background:'#f7f9fb', borderBottom:'0.5px solid #e8e8e8' }}>
               <div style={{ width:'26px', flexShrink:0 }}></div>
               <div style={{ flex:1, minWidth:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>หัวข้อ / ข้อความล่าสุด</div>
-              <div style={{ width:'110px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>เมนู</div>
+              <div style={{ width:'90px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>ผู้สร้าง</div>
+              <div style={{ width:'80px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>วันที่สร้าง</div>
+              <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>เมนู</div>
               <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>อัปเดตล่าสุด</div>
               <div style={{ width:'34px', flexShrink:0 }}></div>
             </div>
@@ -4484,15 +4649,29 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
                         <span title={t.menu_source} style={{ flexShrink:0, fontSize:'11px' }}>{MENU_SOURCE_ICONS[t.menu_source] || '🧩'}</span>
+                        {t.log_number && <span style={{ fontSize:'10px', color:'#999', fontFamily:'monospace', flexShrink:0 }}>{t.log_number}</span>}
                         <span style={{ fontSize:'12px', fontWeight: unread?'600':'500', color:'#1a3a5c', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.title}</span>
+                        {/* MARKER_SUPPORT_REJECT_LIST_BADGE_V1 */}
+                        {t.status==='resolved' && t.resolution_type==='rejected' && (
+                          <span style={{ fontSize:'9px', fontWeight:'600', background:'#F0F0F0', color:'#666', padding:'1px 8px', borderRadius:'8px', flexShrink:0 }}>ถูกปฏิเสธ</span>
+                        )}
                         {unread && (
                           <span style={{ fontSize:'9px', background:'#378ADD', color:'white', padding:'1px 6px', borderRadius:'8px', flexShrink:0 }}>New</span>
                         )}
                       </div>
-                      <p style={{ fontSize:'11px', color:'#888', margin:'2px 0 0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{previewText}</p>
+                      {/* MARKER_SUPPORT_SEVERITY_REPLACE_PREVIEW_V1 */}
+                      {t.status==='new' && SEVERITY_MAP[t.severity] ? (
+                        <p style={{ fontSize:'11px', color:SEVERITY_MAP[t.severity].color, margin:'2px 0 0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', fontWeight:'500' }}>
+                          {SEVERITY_MAP[t.severity].label} — {SEVERITY_MAP[t.severity].desc}
+                        </p>
+                      ) : (
+                        <p style={{ fontSize:'11px', color:'#888', margin:'2px 0 0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{previewText}</p>
+                      )}
                     </div>
-                    <div style={{ width:'110px', flexShrink:0, fontSize:'11px', color:'#666', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.menu_source}</div>
-                    <div style={{ width:'100px', flexShrink:0, fontSize:'10px', color:'#999' }}>{formatDateTime(t.last_activity_at || t.created_at)}</div>
+                    <div style={{ width:'90px', flexShrink:0, fontSize:'11px', color:'#666', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.created_by}</div>
+                    <div style={{ width:'80px', flexShrink:0, fontSize:'11px', color:'#999' }}>{formatDate(t.created_at)}</div>
+                    <div style={{ width:'100px', flexShrink:0, fontSize:'11px', color:'#666', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.menu_source}</div>
+                    <div style={{ width:'100px', flexShrink:0, fontSize:'10px', color:'#999' }}>{t.last_activity_at ? formatDateTime(t.last_activity_at) : '-'}</div>
                     <div style={{ width:'34px', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'flex-end' }}>
                       {canDeleteThread(t) && (
                         <button onClick={e=>{ e.stopPropagation(); handleDeleteThread(t.id); }} disabled={deletingThreadId===t.id}
@@ -4521,6 +4700,19 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                 style={{ width:'100%', padding:'8px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'13px', boxSizing:'border-box' }}/>
             </div>
 
+            {/* MARKER_SUPPORT_SEVERITY_COMPACT_UI_V1 */}
+            <div style={{ marginBottom:'12px' }}>
+              <label style={{ fontSize:'12px', color:'#666', display:'block', marginBottom:'6px' }}>ระดับความสำคัญ</label>
+              <div style={{ display:'flex', gap:'6px' }}>
+                {SEVERITY_LEVELS.map(s => (
+                  <button key={s.value} type="button" onClick={()=>setNewThreadSeverity(s.value)} title={s.desc}
+                    style={{ flex:1, fontSize:'12px', fontWeight:'600', padding:'8px 4px', borderRadius:'8px', border: newThreadSeverity===s.value ? `1.5px solid ${s.color}` : '0.5px solid #ddd', background: newThreadSeverity===s.value ? s.bg : 'white', color: newThreadSeverity===s.value ? s.color : '#888', cursor:'pointer' }}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div style={{ marginBottom:'12px' }}>
               <label style={{ fontSize:'12px', color:'#666', display:'block', marginBottom:'4px' }}>มาจากเมนูไหน</label>
               <select value={newThreadMenuSource} onChange={e=>setNewThreadMenuSource(e.target.value)}
@@ -4547,6 +4739,25 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
               <button onClick={handleCreateThread} disabled={creatingThread}
                 style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', cursor:'pointer', opacity:creatingThread?0.6:1 }}>
                 {creatingThread ? 'กำลังตั้งกระทู้...' : 'ตั้งกระทู้'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showHoldModal && (
+        <div onClick={()=>setShowHoldModal(false)}
+          style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:10001, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:'white', borderRadius:'12px', width:'380px', maxWidth:'90vw', padding:'20px' }}>
+            <div style={{ fontSize:'14px', fontWeight:'600', color:'#1a3a5c', marginBottom:'10px' }}>🔒 Hold กระทู้นี้</div>
+            <textarea value={holdReasonInput} onChange={e=>setHoldReasonInput(e.target.value)} placeholder="ระบุเหตุผล (บังคับกรอก)" rows={3}
+              style={{ width:'100%', padding:'10px', borderRadius:'8px', border:'0.5px solid #ddd', fontSize:'13px', boxSizing:'border-box', resize:'vertical', fontFamily:'inherit' }}/>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px', marginTop:'16px' }}>
+              <button onClick={()=>setShowHoldModal(false)} disabled={holdingThread}
+                style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer' }}>ยกเลิก</button>
+              <button onClick={handleConfirmHold} disabled={holdingThread}
+                style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'none', background:'#8a6d1a', color:'white', cursor:'pointer', opacity:holdingThread?0.6:1 }}>
+                {holdingThread ? 'กำลัง Hold...' : 'ยืนยัน Hold'}
               </button>
             </div>
           </div>

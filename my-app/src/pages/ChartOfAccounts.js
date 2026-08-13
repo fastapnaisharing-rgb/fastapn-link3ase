@@ -507,8 +507,10 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
     const handleOpenRecycleBin = async () => {
       setShowRecycleBin(true); setRecycleBinSelected([]); setRecycleBinLoading(true);
       try {
-        let from = 0; const batchSize = 1000; let allData = [];
+        let from = 0; const batchSize = 50000; let allData = []; let loopGuard = 0;
         while (true) {
+          loopGuard++;
+          if (loopGuard > 20) { alert('⚠️ ข้อมูล Recycle Bin เยอะเกินคาด (>20 รอบ) โหลดได้ไม่ครบ กรุณาแจ้งผู้พัฒนา'); break; }
           const { data, error } = await db.from('recycle_bin').select('*').eq('source_table', tableName(tab)).order('deleted_at', { ascending: false }).range(from, from + batchSize - 1);
           if (error) throw error;
           allData = [...allData, ...(data || [])];

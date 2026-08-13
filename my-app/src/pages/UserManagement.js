@@ -298,13 +298,57 @@
     );
   }
 
-  function AccessControlTab({ users, currentUser, userName, isOwner }) {
+  function AccessControlTab({ users, currentUser, userName, isOwner, userRole, userPermissions }) {
     const [overrides, setOverrides] = useState([]);
     const [openFolder, setOpenFolder] = useState(null);
     const [saving, setSaving] = useState(false);
     const [pendingChanges, setPendingChanges] = useState({});
     // ── Sub-tab: Document Access (Owner เท่านั้น) / AP Manual Panel (Owner + Admin ที่มี Permission Manual) ──
     const [subTab, setSubTab] = useState(isOwner ? 'document' : 'apmanual');
+    // MARKER_MENUACCESS_STATE_V2
+    const [menuOverrides, setMenuOverrides] = useState([]);
+    const [selectedMenuUserId, setSelectedMenuUserId] = useState('');
+    const [menuSaving, setMenuSaving] = useState(false);
+    const [openMenuGroup, setOpenMenuGroup] = useState(null);
+
+    // ── 5 Tab ต่อโมดูล — groupId ต้องตรงกับ id ใน MAINTENANCE_MENU_GROUPS ──
+    const ACCESS_TABS = [
+      { id: 'access-ap',   groupId: 'ap-controller',   label: 'AP Access',    permKey: 'Manual' },
+      { id: 'access-vat',  groupId: 'vat-controller',  label: 'VAT Access',   permKey: 'VAT'    },
+      { id: 'access-ie',   groupId: 'i-expense',       label: 'IE Access',    permKey: 'IE'     },
+      { id: 'access-gl',   groupId: 'gl-functional',   label: 'GL Access',    permKey: 'GL'     },
+      { id: 'access-ipro', groupId: 'i-pro-interface', label: 'I-Pro Access', permKey: 'I-Pro'  },
+    ];
+    // Owner เห็นทุก Tab / Admin เห็นเฉพาะ Tab ที่ตนเองมี Permission โมดูลนั้น
+    // MARKER_MENUACCESS_USERROLE_FIX_V7 — ใช้ userRole/userPermissions ที่ส่งแยกมาจริง
+    // (currentUser ไม่มี field role/permissions อยู่ในตัวมันเอง)
+    const visibleAccessTabs = ACCESS_TABS.filter(t =>
+      isOwner || (userRole === 'Admin' && !!userPermissions?.[t.permKey])
+    );
+    // ── รวม subTab ทั้งหมดที่ถือว่าอยู่ใต้ "Access Panel" (Tab ชั้น 2) ──────
+    const ACCESS_PANEL_TABS = ['document', ...ACCESS_TABS.map(t => t.id)];
+    // MARKER_DOCACCESS_PERMISSION_FILTER_V8
+    // ── Document Access: Owner เห็นทุก Folder / Admin เห็นเฉพาะ Folder ที่มี Permission ──
+    const visibleDocFolders = DOC_FOLDERS.filter(f =>
+      isOwner || (userRole === 'Admin' && !!userPermissions?.[f.permKey])
+    );
+    // Owner ปรับ User ได้ทุกคนที่มี Permission โมดูลนี้ (รวม Admin)
+    // Admin ปรับได้เฉพาะคนที่มี Permission โมดูลนี้ + ไม่ใช่ Admin
+    // ── ไม่มี Permission โมดูล = ไม่มีชื่อโผล่ใน Dropdown เลย (ตัดขาดตั้งแต่ต้น) ──
+    const targetUsersFor = (permKey) => {
+      const base = users.filter(u => u.role !== 'Owner' && !!u.permissions?.[permKey]);
+      return isOwner ? base : base.filter(u => u.role !== 'Admin');
+    };
+
+    const fetchMenuOverrides = async () => {
+      try {
+        const data = await apiFetch('/menu_access_override');
+        setMenuOverrides(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error('fetchMenuOverrides error:', err);
+        setMenuOverrides([]);
+      }
+    };
 
     const fetchOverrides = async () => {
       try {
@@ -316,7 +360,7 @@
       }
     };
 
-    useEffect(() => { fetchOverrides(); }, []);
+    useEffect(() => { fetchOverrides(); fetchMenuOverrides(); }, []);
 
 
 
@@ -345,7 +389,43 @@
       return { allowed: baseAccess, hasOverride: false };
     };
 
+    // MARKER_MENUACCESS_EFFECTIVE_V2
+    // ── แก้ไขได้จริง = Role Editor AND Permission=Yes AND Access(can_edit)=On ──
+    // ── ขาดข้อใดข้อหนึ่ง -> ตกเป็น View | ลูกตา (visible) เป็นอิสระคนละมิติ ──
+    const getEffectiveMenu = (user, menuKey, permKey) => {
+      if (user.role === 'Owner') return { visible: true, canEdit: true, accessOn: true, basePermission: true };
+      const basePermission = user.permissions?.[permKey] ?? false;
+      const ov = menuOverrides.find(o => o.user_id === user.id && o.menu_key === menuKey);
+      const visible = ov?.is_visible ?? true;
+      const accessOn = ov?.can_edit ?? true;
+      // MARKER_MENUACCESS_ADMIN_TOGGLEABLE_V6
+      // ── Admin ก็ Toggle Access ได้เหมือน Editor (Owner ปรับได้ทุก Role) ──────
+      // ── Viewer ยังคง Toggle ไม่ได้ (ตั้งใจให้เป็น Read-only ตายตัว) ─────────
+      const canEdit = (user.role === 'Editor' || user.role === 'Admin') && basePermission && accessOn;
+      return { visible, canEdit, accessOn, basePermission };
+    };
 
+    const handleMenuToggle = async (userId, menuKey, field, newValue) => {
+      setMenuSaving(true);
+      try {
+        const existing = menuOverrides.find(o => o.user_id === userId && o.menu_key === menuKey) || {};
+        const payload = {
+          user_id: userId, menu_key: menuKey,
+          is_visible: field === 'is_visible' ? newValue : (existing.is_visible ?? true),
+          can_edit:   field === 'can_edit'   ? newValue : (existing.can_edit ?? true),
+          updated_by: userName || currentUser?.email || '',
+          updated_at: new Date().toISOString(),
+        };
+        await apiFetch(`/menu_access_override/upsert?onConflict=user_id,menu_key`, {
+          method: 'POST', body: JSON.stringify(payload),
+        });
+        await fetchMenuOverrides();
+        broadcastWs('menu_access_updated', { menu_key: menuKey });
+      } catch (err) {
+        confirmDialog.alert('บันทึกไม่สำเร็จ: ' + err.message, { variant: 'danger' });
+      }
+      setMenuSaving(false);
+    };
 
     const getPendingValue = (userId, folderKey) => {
       const key = `${userId}_${folderKey}`;
@@ -419,10 +499,10 @@
     return (
       <div>
         <div style={{ display: 'flex', gap: '4px', borderBottom: '2px solid #e8e8e8', paddingTop: '8px', position: 'sticky', top: 0, background: 'white', zIndex: 5 }}>
-          {isOwner && (
-            <button onClick={() => setSubTab('document')}
-              style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab==='document'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: subTab==='document'?'500':'400', cursor: 'pointer', borderBottom: subTab==='document'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
-              Document access
+          {(isOwner || visibleAccessTabs.length > 0) && (
+            <button onClick={() => setSubTab(isOwner ? 'document' : (visibleAccessTabs[0]?.id || ''))}
+              style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: ACCESS_PANEL_TABS.includes(subTab)?'#1a3a5c':'#888', fontSize: '13px', fontWeight: ACCESS_PANEL_TABS.includes(subTab)?'500':'400', cursor: 'pointer', borderBottom: ACCESS_PANEL_TABS.includes(subTab)?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
+              Access Panel
             </button>
           )}
           <button onClick={() => setSubTab('apmanual')}
@@ -430,20 +510,140 @@
             AP Manual Panel
           </button>
         </div>
+
+        {/* MARKER_ACCESSPANEL_INNERTABS_V3 — Tab ชั้น 2 โผล่เมื่ออยู่ในกลุ่ม Access Panel */}
+        {ACCESS_PANEL_TABS.includes(subTab) && (
+          <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid #f0f0f0', padding: '8px 0 0 16px', background: '#fafafa', flexWrap: 'wrap' }}>
+            {(isOwner || visibleDocFolders.length > 0) && (
+              <button onClick={() => setSubTab('document')}
+                style={{ padding: '6px 12px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab==='document'?'#1a3a5c':'#999', fontSize: '12px', fontWeight: subTab==='document'?'500':'400', cursor: 'pointer', borderBottom: subTab==='document'?'2px solid #1a3a5c':'2px solid transparent' }}>
+                Document Access
+              </button>
+            )}
+            {visibleAccessTabs.map(tab => (
+              <button key={tab.id} onClick={() => setSubTab(tab.id)}
+                style={{ padding: '6px 12px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab===tab.id?'#1a3a5c':'#999', fontSize: '12px', fontWeight: subTab===tab.id?'500':'400', cursor: 'pointer', borderBottom: subTab===tab.id?'2px solid #1a3a5c':'2px solid transparent' }}>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{ paddingTop: '16px' }}>
 
         {subTab === 'apmanual' && <SystemSettingsTab isOwner={isOwner} isAdmin={!isOwner} userName={userName} />}
 
-        {subTab === 'document' && isOwner && (
+        {ACCESS_TABS.map(tab => {
+          if (subTab !== tab.id) return null;
+          const group = MAINTENANCE_MENU_GROUPS.find(g => g.id === tab.groupId);
+          if (!group) return null;
+          const targetUsers = targetUsersFor(tab.permKey);
+          return (
+            <div key={tab.id}>
+              <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', margin: '12px 0 8px' }}>{group.icon} {tab.label}</div>
+              <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
+                Override สิทธิ์ 👁️ มองเห็น / 🟢 Access ต่อเมนูได้ — กด ⚙️ เพื่อตั้งค่า · แก้ไขได้จริงต้องครบ 3 ข้อ: Role=Editor + Permission=Yes + Access=On
+                {!isOwner && <span> · Admin ปรับได้เฉพาะ User ที่ไม่ใช่ Admin</span>}
+              </div>
+              {group.items.map(item => {
+                const itemKey = `${tab.id}_${item.id}`;
+                const isOpen = openMenuGroup === itemKey;
+                const canEditUsers = targetUsers.filter(u => getEffectiveMenu(u, item.id, tab.permKey).canEdit);
+                const viewOnlyUsers = targetUsers.filter(u => !getEffectiveMenu(u, item.id, tab.permKey).canEdit);
+                return (
+                  <div key={item.id} style={{ marginBottom: '8px' }}>
+                    <div style={{ background: 'white', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#e8e8e8'}`, borderRadius: isOpen ? '8px 8px 0 0' : '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ width: '38px', height: '38px', borderRadius: '8px', background: group.color || '#eee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{item.icon}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{item.label}</div>
+                        <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
+                          เข้าถึงได้ {canEditUsers.length} คน · ไม่มีสิทธิ์ {viewOnlyUsers.length} คน
+                        </div>
+                      </div>
+                      <button onClick={() => setOpenMenuGroup(isOpen ? null : itemKey)}
+                        style={{ padding: '5px 10px', borderRadius: '6px', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#ddd'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#555', fontSize: '12px', cursor: 'pointer' }}>
+                        ⚙️ {isOpen ? 'ปิด' : 'ตั้งค่า'}
+                      </button>
+                    </div>
+                    {isOpen && (
+                      <div style={{ background: 'white', border: '0.5px solid #1a3a5c', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '14px 16px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                          <div>
+                            <div style={{ fontSize: '11px', fontWeight: '500', color: '#27500A', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '8px' }}>✅ เข้าถึงได้</div>
+                            {canEditUsers.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มี</div>}
+                            {canEditUsers.map(u => {
+                              const eff = getEffectiveMenu(u, item.id, tab.permKey);
+                              return (
+                                <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '0.5px solid #f0f0f0' }}>
+                                  <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: '#EAF3DE', color: '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0 }}>
+                                    {(u.username || u.email || '?')[0].toUpperCase()}
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: '12px', fontWeight: '500', color: '#333' }}>{u.username || u.email}</div>
+                                    <div style={{ fontSize: '10px', color: '#888' }}>{u.role}</div>
+                                  </div>
+                                  <span onClick={() => handleMenuToggle(u.id, item.id, 'is_visible', !eff.visible)}
+                                    title={eff.visible ? 'มองเห็น (คลิกเพื่อซ่อน)' : 'ซ่อนอยู่ (คลิกเพื่อให้มองเห็น)'}
+                                    style={{ fontSize: '16px', cursor: 'pointer', opacity: eff.visible ? 1 : 0.3, textDecoration: eff.visible ? 'none' : 'line-through', userSelect: 'none' }}>
+                                    👁️
+                                  </span>
+                                  <Toggle value={eff.accessOn} disabled={!eff.basePermission || u.role !== 'Editor'}
+                                    onChange={(v) => handleMenuToggle(u.id, item.id, 'can_edit', v)} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '11px', fontWeight: '500', color: '#791F1F', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '8px' }}>🚫 ไม่มีสิทธิ์</div>
+                            {viewOnlyUsers.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มี</div>}
+                            {viewOnlyUsers.map(u => {
+                              const eff = getEffectiveMenu(u, item.id, tab.permKey);
+                              return (
+                                <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '0.5px solid #f0f0f0' }}>
+                                  <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: '#f5f5f5', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0 }}>
+                                    {(u.username || u.email || '?')[0].toUpperCase()}
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: '12px', fontWeight: '500', color: '#555' }}>{u.username || u.email}</div>
+                                    <div style={{ fontSize: '10px', color: '#888' }}>{u.role}</div>
+                                  </div>
+                                  <span onClick={() => handleMenuToggle(u.id, item.id, 'is_visible', !eff.visible)}
+                                    title={eff.visible ? 'มองเห็น (คลิกเพื่อซ่อน)' : 'ซ่อนอยู่ (คลิกเพื่อให้มองเห็น)'}
+                                    style={{ fontSize: '16px', cursor: 'pointer', opacity: eff.visible ? 1 : 0.3, textDecoration: eff.visible ? 'none' : 'line-through', userSelect: 'none' }}>
+                                    👁️
+                                  </span>
+                                  <Toggle value={eff.accessOn} disabled={!eff.basePermission || u.role !== 'Editor'}
+                                    onChange={(v) => handleMenuToggle(u.id, item.id, 'can_edit', v)} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div style={{ borderTop: '0.5px solid #f0f0f0', paddingTop: '10px', marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>{menuSaving ? '💾 กำลังบันทึก...' : '💡 Toggle เปิด/ปิด — บันทึกทันที'}</span>
+                          <button onClick={() => setOpenMenuGroup(null)}
+                            style={{ padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ปิด</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+
+        {subTab === 'document' && (isOwner || visibleDocFolders.length > 0) && (
         <>
         <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', margin: '12px 0 8px' }}>🔐 Document Center Access</div>
         <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
           Override สิทธิ์เข้าถึงแต่ละโฟลเดอร์ได้ — กด ⚙️ เพื่อตั้งค่า
+          {!isOwner && <span> · Admin ปรับได้เฉพาะ User ที่ไม่ใช่ Admin</span>}
         </div>
-        {DOC_FOLDERS.map(folder => {
+        {visibleDocFolders.map(folder => {
           const isOpen = openFolder === folder.key;
-          const canAccess = nonOwnerUsers.filter(u => getPendingValue(u.id, folder.key));
-          const noAccess = nonOwnerUsers.filter(u => !getPendingValue(u.id, folder.key));
+          const docTargetUsers = isOwner ? nonOwnerUsers : nonOwnerUsers.filter(u => u.role !== 'Admin');
+          const canAccess = docTargetUsers.filter(u => getPendingValue(u.id, folder.key));
+          const noAccess = docTargetUsers.filter(u => !getPendingValue(u.id, folder.key));
           const hasPending = hasPendingForFolder(folder.key);
           return (
             <div key={folder.key} style={{ marginBottom: '8px' }}>
@@ -552,8 +752,11 @@
     const fetchBins = async () => {
       let allData = [];
       let from = 0;
-      const pageSize = 1000;
+      const pageSize = 50000;
+      let loopGuard = 0;
       while (true) {
+        loopGuard++;
+        if (loopGuard > 20) { console.warn('⚠️ fetchBins: เกิน 20 รอบ อาจโหลดข้อมูลไม่ครบ'); break; }
         const { data, error } = await db
           .from('recycle_bin')
           .select('*')
@@ -1778,7 +1981,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         <div style={{ paddingTop: '16px' }}>
           {tab === 'profile' && <ProfileInline currentUser={currentUser} userName={userName} />}
           {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
-          {tab === 'access' && <AccessControlTab users={users || []} currentUser={currentUser} userName={userName} isOwner={false} />}
+          {tab === 'access' && <AccessControlTab users={users || []} currentUser={currentUser} userName={userName} isOwner={false} userRole={userRole} userPermissions={userPermissions} />}
         </div>
       </div>
     );
@@ -2075,7 +2278,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
           </div>
         )}
 
-        {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} isOwner={isOwner} />}
+        {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} isOwner={isOwner} userRole={userRole} userPermissions={userPermissions} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
         {tab === 'settings' && isOwner && <SystemSettingsPageTab currentUser={currentUser} userName={userName} />}
