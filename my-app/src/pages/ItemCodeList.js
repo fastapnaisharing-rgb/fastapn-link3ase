@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../lib/db';
 import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
@@ -124,6 +124,78 @@ const EDIT_FIELDS = [
 
 const COMBO_FIELDS = ['bu', 'sub', 'dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
 
+// ✅ ITEM_COMBO_FIELDS: กลุ่ม Dis-G / I&G / Value / OTH / SPI-1 / SPEC-TX (ใช้ ICCombo เหมือน APController.js)
+const ITEM_COMBO_FIELDS = ['dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
+
+// ✅ ICCombo — custom dropdown กว้างเท่าช่องตัวเอง (คัดลอก pattern จาก APController.js -> ItemCodeSearchPopup)
+function ICCombo({ value, options, readOnly, onChange, last = false }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const ref = useRef(null);
+  const listRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const q = String(value || '').trim().toLowerCase();
+  const filtered = q ? options.filter(o => String(o).toLowerCase().includes(q)) : options;
+  useEffect(() => {
+    if (!open || activeIdx < 0 || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+  const handleKeyDown = (e) => {
+    if (readOnly) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) { setOpen(true); setActiveIdx(0); return; }
+      setActiveIdx(i => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) { setOpen(true); setActiveIdx(filtered.length - 1); return; }
+      setActiveIdx(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (open && activeIdx >= 0 && filtered[activeIdx] !== undefined) {
+        e.preventDefault();
+        onChange(String(filtered[activeIdx]));
+        setOpen(false);
+        setActiveIdx(-1);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+      setActiveIdx(-1);
+    } else if (e.key === 'Tab') {
+      setOpen(false);
+      setActiveIdx(-1);
+    }
+  };
+  return (
+    <div ref={ref} style={{ position: 'relative', background: 'white', overflow: 'visible', borderRight: last ? 'none' : '0.5px solid #e8eaf0' }}>
+      <input
+        value={value || ''} readOnly={readOnly} placeholder="-"
+        onChange={e => !readOnly && onChange(e.target.value)}
+        onFocus={e => { if (readOnly) return; const r = e.target.getBoundingClientRect(); setPos({ top: r.bottom + 1, left: r.left, width: r.width }); setOpen(true); setActiveIdx(-1); }}
+        onBlur={() => setTimeout(() => { setOpen(false); setActiveIdx(-1); }, 150)}
+        onKeyDown={handleKeyDown}
+        style={{ height: '30px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' }}
+      />
+      {open && filtered.length > 0 && (
+        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '180px', overflowY: 'auto' }}>
+          {filtered.map((o, i) => (
+            <div key={i} data-idx={i} onMouseDown={e => { e.preventDefault(); onChange(String(o)); setOpen(false); setActiveIdx(-1); }}
+              onMouseEnter={() => setActiveIdx(i)}
+              style={{ padding: '5px 8px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', background: i === activeIdx ? '#dbe7f8' : (String(o) === value ? '#eef3fb' : 'white'), whiteSpace: 'nowrap' }}
+            >{o}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ✅ Template columns ตรง schema (ตัด itemcode2 ออก)
 const TEMPLATE_COLS = ['bu','description','cpc','account','sub','dis_g','i_and_g','value','oth','spi1','spec_tx','keyword'];
 
@@ -191,11 +263,28 @@ function ItemCodeList() {
   const [previewOpenDetail, setPreviewOpenDetail] = useState(null);
   const formDrag = useDraggable();
   const previewDrag = useDraggable();
+  const descInputRef = useRef(null); // ✅ ใช้ set focus ตอนเปิด New Item Code
   useEffect(() => { if (showForm) formDrag.setPos(null); }, [showForm]); // eslint-disable-line
   useEffect(() => { if (showPreview) previewDrag.setPos(null); }, [showPreview]); // eslint-disable-line
   const [junkConfirm, setJunkConfirm] = useState(null); // { idx: number[], count } | null
   const [importing, setImporting] = useState(false);
   const [editId, setEditId] = useState(null);
+  // ✅ Set focus ที่ Description อัตโนมัติตอนเปิดฟอร์ม New (ไม่ใช่ Edit)
+  useEffect(() => {
+    if (showForm && !editId) {
+      const t = setTimeout(() => descInputRef.current?.focus(), 80);
+      return () => clearTimeout(t);
+    }
+  }, [showForm, editId]);
+  // ✅ กด Esc ปิดฟอร์ม New/Edit Item Code
+  useEffect(() => {
+    if (!showForm) return;
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setShowForm(false); }
+    };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [showForm]);
   const [sortDir, setSortDir] = useState('asc');
   const [nextCode, setNextCode] = useState('');
   const [selected, setSelected] = useState([]);
@@ -215,7 +304,9 @@ function ItemCodeList() {
 
   const emptyForm = {
     bu: '', description: '', cpc: '', account: '', sub: '',
-    dis_g: '', i_and_g: '', value: '', oth: '', spi1: '', spec_tx: '', keyword: ''
+    dis_g: '', i_and_g: '', value: '', oth: '', spi1: '', spec_tx: '', keyword: '',
+    item: '',
+    dis_g_desc: '', i_and_g_desc: '', value_desc: '', oth_desc: '', spi1_desc: '', spec_tx_desc: ''
   };
   const [form, setForm] = useState(emptyForm);
 
@@ -375,6 +466,13 @@ function ItemCodeList() {
       spi1:        item.spi1        || '',
       spec_tx:     item.spec_tx     || '',
       keyword:     item.keyword     || '',
+      item:          item.item          || '',
+      dis_g_desc:    item.dis_g_desc    || '',
+      i_and_g_desc:  item.i_and_g_desc  || '',
+      value_desc:    item.value_desc    || '',
+      oth_desc:      item.oth_desc      || '',
+      spi1_desc:     item.spi1_desc     || '',
+      spec_tx_desc:  item.spec_tx_desc  || '',
     });
     setEditId(item.id);
     setShowForm(true);
@@ -592,6 +690,8 @@ function ItemCodeList() {
       i.sub?.toLowerCase().includes(search.toLowerCase()) ||
       i.dis_g?.toLowerCase().includes(search.toLowerCase()) ||
       i.i_and_g?.toLowerCase().includes(search.toLowerCase()) ||
+      i.value?.toLowerCase().includes(search.toLowerCase()) ||
+      i.oth?.toLowerCase().includes(search.toLowerCase()) ||
       i.spi1?.toLowerCase().includes(search.toLowerCase()) ||
       i.spec_tx?.toLowerCase().includes(search.toLowerCase()) ||
       i.keyword?.toLowerCase().includes(search.toLowerCase())
@@ -644,6 +744,21 @@ function ItemCodeList() {
     iconBtn: (color, bg, border) => ({ background: bg || 'none', border: `0.5px solid ${border || color}`, borderRadius: '4px', cursor: 'pointer', padding: '3px 6px', color, fontSize: '12px', lineHeight: 1 }),
     pageBtn: (active, disabled) => ({ padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: disabled ? 'default' : 'pointer', background: active ? '#1a3a5c' : 'white', color: disabled ? '#ccc' : active ? 'white' : '#555', minWidth: '28px', textAlign: 'center' }),
   };
+
+  // ✅ ItemCode Form UI helpers (เหมือน APController.js -> ItemCodeSearchPopup)
+  const LBL  = { padding: '8px 10px', fontSize: '11px', fontWeight: '600', color: '#1a3a5c', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', background: '#f8f9fa', whiteSpace: 'nowrap' };
+  const HEAD = { padding: '7px 8px', fontSize: '11px', fontWeight: '600', color: '#1a3a5c', textAlign: 'center', background: '#f8f9fa', borderRight: '0.5px solid #e8eaf0' };
+  const cellY = { background: '#FFF3CD' };
+  const inputBase = { height: '30px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', boxSizing: 'border-box', width: '100%' };
+  const inp = (key, opts = {}) => (
+    <input ref={opts.inputRef} value={form[key] ?? ''} onChange={e => setForm({ ...form, [key]: e.target.value })}
+      placeholder={opts.placeholder || ''} style={{ ...inputBase, ...(opts.style || {}) }} />
+  );
+  const descBox = (key) => (
+    <textarea value={form[key] ?? ''} onChange={e => setForm({ ...form, [key]: e.target.value })}
+      placeholder="N/A"
+      style={{ width: '100%', minHeight: '52px', padding: '8px 10px', fontSize: '12px', border: 'none', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.4' }} />
+  );
 
   const renderColGroup = () => (
     <colgroup>
@@ -781,28 +896,78 @@ function ItemCodeList() {
 
       {showForm && (
         <div style={S.overlay}>
-          <div ref={formDrag.ref} style={{ ...S.modal, ...(formDrag.pos ? { position: 'fixed', left: formDrag.pos.left, top: formDrag.pos.top, margin: 0 } : {}) }}>
-            <div style={{ ...S.dragHeader, padding: '16px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }} onMouseDown={formDrag.startDrag}>
-              <h3 style={{ fontSize: '15px', margin: 0 }}>✥ {editId ? '✏️ Edit Item Code' : '+ New Item Code'}</h3>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button style={{ ...S.btn, background: '#f0f0f0', marginLeft: 0 }} onClick={() => setShowForm(false)}>Cancel</button>
-                <button style={{ ...S.btn, background: '#1a3a5c', color: 'white', marginLeft: 0 }} onClick={handleSave}>Save</button>
+          <div ref={formDrag.ref} style={{ ...S.modal, width: isMobile ? '95vw' : '94vw', maxWidth: '1000px', height: '90vh', ...(formDrag.pos ? { position: 'fixed', left: formDrag.pos.left, top: formDrag.pos.top, margin: 0 } : {}) }}>
+            <div style={{ ...S.dragHeader, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }} onMouseDown={formDrag.startDrag}>
+              <button onClick={() => setShowForm(false)} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: editId ? '#1a3a5c' : '#27500A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{editId ? '✏️' : '🔖'}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{editId ? 'Edit Item Code' : 'New Item Code'}</div>
               </div>
+              <div style={{ fontSize: '12px', color: '#aaa', marginLeft: 'auto', flexShrink: 0, padding: '6px 12px', border: '0.5px solid #e8eaf0', borderRadius: '7px', background: '#f8f9fa' }}>Code: {editId ? (items.find(i => i.id === editId)?.code || '') : nextCode}</div>
             </div>
-            <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
-              <label style={{ fontSize: '11px', color: '#888' }}>Code</label>
-              <input style={S.inputDisabled} value={editId ? (items.find(i => i.id === editId)?.code || '') : nextCode} disabled />
-              {EDIT_FIELDS.map(([key, label]) => (
-                <div key={key} style={{ marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '2px' }}>{label}</label>
-                  {COMBO_FIELDS.includes(key)
-                    ? <ComboBox value={form[key]} onChange={val => setForm({ ...form, [key]: val })} options={getOptions(key)} placeholder={`พิมพ์หรือเลือก ${label}`} />
-                    : <input style={S.input} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} />
-                  }
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', background: 'white', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+
+              {/* Row 1: Description | BU | Cpc | Account | Sub Acc */}
+              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
+                  {['Description', 'BU', 'Cpc', 'Account', 'Sub Acc'].map((h, i) => (
+                    <div key={h} style={{ ...HEAD, borderRight: i < 4 ? '0.5px solid #e8eaf0' : 'none' }}>{h}</div>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
+                  <div style={{ ...cellY, borderRight: '0.5px solid #e8eaf0' }}>{inp('description', { inputRef: descInputRef })}</div>
+                  <div style={{ ...cellY, borderRight: '0.5px solid #e8eaf0' }}>{inp('bu', { style: { textAlign: 'center', fontWeight: '600' } })}</div>
+                  <div style={{ ...cellY, borderRight: '0.5px solid #e8eaf0' }}>{inp('cpc')}</div>
+                  <div style={{ ...cellY, borderRight: '0.5px solid #e8eaf0' }}>{inp('account')}</div>
+                  <div style={cellY}>{inp('sub')}</div>
+                </div>
+              </div>
+
+              {/* Row 2: Dis-G Group -- ใช้ ICCombo เหมือน APController.js */}
+              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
+                  {['Dis-G','I & G','Value','OTH','SPI-1','SPEC-TX'].map((h, i) => (
+                    <div key={h} style={{ ...HEAD, borderRight: i < 5 ? '0.5px solid #e8eaf0' : 'none', borderBottom: '0.5px solid #e8eaf0' }}>{h}</div>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
+                  {ITEM_COMBO_FIELDS.map((key, i) => (
+                    <ICCombo key={key} value={form[key] ?? ''} options={getOptions(key)} onChange={v => setForm({ ...form, [key]: v })} last={i === ITEM_COMBO_FIELDS.length - 1} />
+                  ))}
+                </div>
+              </div>
+
+              {/* Row 3: Custom Item */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 5fr', border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={LBL}>Custom Item</div>
+                <div style={{ background: 'white' }}>{inp('item', { style: { background: 'white' } })}</div>
+              </div>
+
+              {/* Row 4-6: Description boxes (dis_g_desc ฯลฯ) */}
+              {[
+                ['Dis-G Description', 'dis_g_desc', 'I & G Description', 'i_and_g_desc'],
+                ['VALUE Description', 'value_desc', 'OTH Description', 'oth_desc'],
+                ['SPI-1 Description', 'spi1_desc', 'SPEC-TX Description', 'spec_tx_desc'],
+              ].map(([l1, k1, l2, k2], ri) => (
+                <div key={ri} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 2fr', border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ ...LBL, alignItems: 'flex-start', paddingTop: '10px' }}>{l1}</div>
+                  <div style={{ background: 'white', borderRight: '0.5px solid #e8eaf0' }}>{descBox(k1)}</div>
+                  <div style={{ ...LBL, alignItems: 'flex-start', paddingTop: '10px' }}>{l2}</div>
+                  <div style={{ background: 'white' }}>{descBox(k2)}</div>
                 </div>
               ))}
-              <label style={{ fontSize: '11px', color: '#888' }}>Updated By</label>
-              <input style={S.inputDisabled} value={userName || currentUser?.email || ''} disabled />
+
+              {/* Row 7: Keyword */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 5fr', border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={LBL}>Keyword</div>
+                <div style={{ background: 'white' }}>{inp('keyword', { style: { background: 'white' } })}</div>
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', flexShrink: 0, background: '#fafbfc' }}>
+              <button onClick={() => setShowForm(false)} style={{ padding: '7px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleSave} style={{ padding: '7px 20px', borderRadius: '7px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>💾 Save</button>
             </div>
           </div>
         </div>

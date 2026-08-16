@@ -264,7 +264,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     return () => observer.disconnect();
   }, []);
 
-  const INFO_FIELDS = ['bu','THAI COMPANY NAME','ENGLISH COMPANY NAME','bu_code_name','system_bank','TAX ID','PREPARE BY','DEPARTMENT','COMPANY CODE','VAT %','Last Rate (%)','BOOK','SEGMENT3','AP GRT Control','mt_Grt','mt_Grn','updated_by','updated_at'];
+  const INFO_FIELDS = ['bu','THAI COMPANY NAME','ENGLISH COMPANY NAME','bu_code_name','system_bank','TAX ID','PREPARE BY','DEPARTMENT','COMPANY CODE','VAT %','Last Rate (%)','BOOK','SEGMENT3','AP GRT Control','updated_by','updated_at'];
   const INFO_KEY = 'TAX ID';
   const INFO_COMBO = ['bu','DEPARTMENT','BOOK','AP GRT Control'];
   const INFO_EDIT = [
@@ -272,8 +272,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['bu_code_name','BU Code Name'],['system_bank','System Bank'],
     ['TAX ID','Tax ID'],['PREPARE BY','Prepare By'],['DEPARTMENT','Department'],
     ['COMPANY CODE','Company Code'],['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],
-    ['BOOK','Book'],['SEGMENT3','Segment3'],['AP GRT Control','AP GRT Control'],
-    ['mt_Grt','GRT_Cus'],['mt_Grn','GRN_Cus']
+    ['BOOK','Book'],['SEGMENT3','Segment3'],['AP GRT Control','AP GRT Control']
   ];
   // Fields that should span full width in Info form
   const INFO_FULL_WIDTH = ['THAI COMPANY NAME','ENGLISH COMPANY NAME'];
@@ -1019,7 +1018,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['COMPANY CODE','Company Code',1],['BOOK','Book',1],
     ['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
     ['SEGMENT3','Segment3',1],['AP GRT Control','AP GRT Control',1],
-    ['mt_Grt','GRT_Cus',1],['mt_Grn','GRN_Cus',1],
   ] : [
     ['bu','BU',1],['TAX ID','Tax ID',1],['COMPANY CODE','Company Code',1],['BOOK','Book',1],
     ['THAI COMPANY NAME','Thai Company Name',4],
@@ -1028,7 +1026,6 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['system_bank','System Bank',4],
     ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
     ['SEGMENT3','Segment3',1],['AP GRT Control','AP GRT Control',1],
-    ['mt_Grt','GRT_Cus',1],['mt_Grn','GRN_Cus',1],
   ];
 
   const renderInfoFormFields = () => {

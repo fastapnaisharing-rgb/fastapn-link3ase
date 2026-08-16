@@ -4,6 +4,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../lib/db';
 // MARKER_HOMEPAGE_NOTIFICATION_CHAT_V1
 import BatchChatDrawer from './BatchChatDrawer';
+// MARKER_HOMEPAGE_CONFIRMDIALOG_STYLE_V1
+import { confirmDialog } from '../confirmDialog';
+// MARKER_HOMEPAGE_REALTIME_NOTIFICATION_V1
+import { useRealtimeRefresh } from '../useRealtimeRefresh';
+// MARKER_HOMEPAGE_AGREEMENT_SYNC_V1
+import { broadcastWs } from '../wsManager';
 
 const ROLE_STYLE = {
   Owner:  { background: '#d4f0e7', color: '#0F6E56' },
@@ -128,7 +134,53 @@ function queueFmtFile(name = '') {
   return base.length > 28 ? base.slice(0, 26) + '…' : base;
 }
 
-function Homepage({ onOpenInbox } = {}) {
+function Homepage({ onOpenInbox, onGotoUpload } = {}) {
+  // MARKER_HOMEPAGE_AGREEMENT_SYSTEM_V1
+  const [supportPopupAgreeing, setSupportPopupAgreeing] = useState(false);
+  const [supportPopupDisagreeing, setSupportPopupDisagreeing] = useState(false);
+
+  const handleSupportPopupAgree = async () => {
+    if (!supportPopup) return;
+    setSupportPopupAgreeing(true);
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${supportPopup.thread.id}/agree`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (!data.ok) { alert('Agree ไม่สำเร็จ: ' + (data.error || '')); setSupportPopupAgreeing(false); return; }
+      // MARKER_HOMEPAGE_AGREE_INSTANT_DISMISS_V1 -- เคลียร์ออกจาก Card ทันที ไม่ต้องรอ Poll
+      setNotifications(prev => prev.filter(n => n.id !== supportPopup.notifId));
+      // MARKER_HOMEPAGE_AGREEMENT_SYNC_V1 -- Broadcast ให้ Bell/UploadGen Sync ทันที
+      broadcastWs('support_agreement_updated', { threadId: supportPopup.thread.id });
+      setSupportPopup(null);
+    } catch (err) { alert('Agree ไม่สำเร็จ: ' + err.message); }
+    setSupportPopupAgreeing(false);
+  };
+
+  const handleSupportPopupDisagree = async () => {
+    if (!supportPopup) return;
+    setSupportPopupDisagreeing(true);
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${supportPopup.thread.id}/disagree`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (!data.ok) { alert('Disagree ไม่สำเร็จ: ' + (data.error || '')); setSupportPopupDisagreeing(false); return; }
+      // MARKER_HOMEPAGE_AGREEMENT_SYNC_V1 -- ยังไม่ Commit จริง (Backend แค่ตรวจสอบ+คืนข้อมูล)
+      // ── ต้อง Submit กระทู้ใหม่ที่ UploadGen.js สำเร็จก่อนถึงจะ Commit จริง (Disagree ยกเลิกได้) ──
+      // ── ไม่เคลียร์ Card ที่นี่แล้ว เพราะยังไม่ได้ตัดสินใจจริง (กด Cancel ได้) ────────────────
+      sessionStorage.setItem('pendingDisagreeRef', JSON.stringify({ logNumber: data.refLogNumber, title: data.refTitle, menuSource: data.refMenuSource, threadId: data.refThreadId }));
+      setSupportPopup(null);
+      onGotoUpload?.();
+    } catch (err) { alert('Disagree ไม่สำเร็จ: ' + err.message); }
+    setSupportPopupDisagreeing(false);
+  };
+
+  const isAgreementWindowOpen = (thread) => {
+    if (!thread?.resolved_at) return false;
+    const hoursSince = (Date.now() - new Date(thread.resolved_at).getTime()) / (1000 * 60 * 60);
+    return hoursSince < 72; // 3 วัน
+  };
   const { userName, userRole, currentUser } = useAuth();
   const today = useMemo(() => getTodayThai(), []);
   const displayName = userName || currentUser?.email || '-';
@@ -209,6 +261,9 @@ function Homepage({ onOpenInbox } = {}) {
   const [supportPopup, setSupportPopup] = useState(null); // { notifId, thread }
   const [supportPopupLoading, setSupportPopupLoading] = useState(false);
   const [supportPopupComments, setSupportPopupComments] = useState([]);
+  const [supportPopupImages, setSupportPopupImages] = useState([]);
+  const [supportPopupImageUrls, setSupportPopupImageUrls] = useState({});
+  const [supportPopupLightboxUrl, setSupportPopupLightboxUrl] = useState(null);
   const [supportPopupReplyText, setSupportPopupReplyText] = useState('');
   const [supportPopupSending, setSupportPopupSending] = useState(false);
   const [supportPopupFinishing, setSupportPopupFinishing] = useState(false);
@@ -221,9 +276,29 @@ function Homepage({ onOpenInbox } = {}) {
     return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getFullYear()).slice(2)} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   };
 
+  // MARKER_HOMEPAGE_SUPPORT_POPUP_IMAGES_V1
+  // ── รูปภาพที่แนบมากับ Thread/Comment -- Backend ส่ง images มาให้อยู่แล้ว ──
+  // ── เดิมไม่เคยดึง/Render เลย (ต่างจาก UploadGen.js ที่ทำถูกอยู่แล้ว) ─────────
+  const loadSupportPopupImages = async (images) => {
+    const apiBase = supportApiBase();
+    const token = sessionStorage.getItem('fastapn_token');
+    const urls = {};
+    for (const img of images) {
+      try {
+        const res = await fetch(`${apiBase}/api/file-storage/${img.id}/view-image`, { headers: { Authorization: `Bearer ${token}` } });
+        const blob = await res.blob();
+        urls[img.id] = URL.createObjectURL(blob);
+      } catch (err) { console.error('load support popup image error:', err); }
+    }
+    setSupportPopupImageUrls(urls);
+    setSupportPopupImages(images);
+  };
+
   const openSupportPopup = async (n) => {
     setSupportPopupLoading(true);
     setSupportPopupComments([]);
+    setSupportPopupImages([]);
+    setSupportPopupImageUrls({});
     setSupportPopupReplyText('');
     try {
       const apiBase = supportApiBase();
@@ -233,6 +308,7 @@ function Homepage({ onOpenInbox } = {}) {
       if (data.ok) {
         setSupportPopup({ notifId: n.id, thread: data.thread });
         setSupportPopupComments(data.comments || []);
+        loadSupportPopupImages(data.images || []);
       }
     } catch (err) { console.error('load support thread error:', err); }
     setSupportPopupLoading(false);
@@ -263,9 +339,48 @@ function Homepage({ onOpenInbox } = {}) {
     setSupportPopupSending(false);
   };
 
+  // MARKER_HOMEPAGE_SUPPORT_DISMISS_ON_CLOSE_V1
+  // ── ปิด Chat = ถือว่าอ่านจบแล้ว -- ลบ Notification ฝั่งตัวเองสำหรับ Thread นี้ ──
+  const handleSupportPopupClose = async () => {
+    const threadId = supportPopup?.thread?.id;
+    setSupportPopup(null);
+    if (!threadId) return;
+    try {
+      const apiBase = supportApiBase();
+      const token = sessionStorage.getItem('fastapn_token');
+      await fetch(`${apiBase}/api/support/threads/${threadId}/dismiss`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      });
+      setNotifications(prev => prev.filter(n => n.link_to !== threadId));
+      // MARKER_HOMEPAGE_SUPPORT_DISMISS_BROADCAST_V1 -- Sync ข้าม Tab/Session ทันที
+      broadcastWs('support_dismissed', { threadId });
+    } catch (err) { console.error('dismiss error:', err); }
+  };
+
+  // MARKER_HOMEPAGE_ACCEPT_BUTTON_V1
+  const [supportPopupAccepting, setSupportPopupAccepting] = useState(false);
+  const handleSupportPopupAccept = async () => {
+    if (!supportPopup) return;
+    setSupportPopupAccepting(true);
+    try {
+      const apiBase = supportApiBase();
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${supportPopup.thread.id}/start-process`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.ok) {
+        // MARKER_HOMEPAGE_ACCEPT_SYNC_V1 -- Broadcast ให้ Bell/UploadGen Sync ทันที
+        broadcastWs('support_thread_status_updated', { threadId: supportPopup.thread.id });
+        setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'in_process' } } : prev);
+      } else {
+        alert('Accept ไม่สำเร็จ: ' + (data.error || ''));
+      }
+    } catch (err) { alert('Accept ไม่สำเร็จ: ' + err.message); }
+    setSupportPopupAccepting(false);
+  };
+
   const handleSupportPopupResolve = async () => {
     if (!supportPopup) return;
-    if (!window.confirm('ยืนยันปิดกระทู้นี้เป็น Resolve?')) return;
+    if (!(await confirmDialog.confirm('ยืนยันปิดกระทู้นี้เป็น Resolve?', { confirmText: 'Resolve' }))) return;
     setSupportPopupFinishing(true);
     try {
       const apiBase = supportApiBase();
@@ -281,11 +396,94 @@ function Homepage({ onOpenInbox } = {}) {
     setSupportPopupFinishing(false);
   };
 
+  // MARKER_HOMEPAGE_TESTING_FLOW_V1
+  const [supportPopupSendingToTest, setSupportPopupSendingToTest] = useState(false);
+  const [supportPopupConfirmingResolve, setSupportPopupConfirmingResolve] = useState(false);
+  const [supportPopupRejectingTest, setSupportPopupRejectingTest] = useState(false);
+
+  const handleSupportPopupSendToTest = async () => {
+    if (!supportPopup) return;
+    if (!(await confirmDialog.confirm('ส่งกระทู้นี้ให้ผู้แจ้งไป Test ก่อนใช่ไหม?', { confirmText: 'ส่งให้ Test' }))) return;
+    setSupportPopupSendingToTest(true);
+    try {
+      const apiBase = supportApiBase();
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${supportPopup.thread.id}/send-to-test`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.ok) {
+        setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'testing' } } : prev);
+      } else {
+        alert('ส่งให้ Test ไม่สำเร็จ: ' + (data.error || ''));
+      }
+    } catch (err) { alert('ส่งให้ Test ไม่สำเร็จ: ' + err.message); }
+    setSupportPopupSendingToTest(false);
+  };
+
+  // ── ผู้แจ้งกระทู้ Confirm ว่า Test ผ่าน -> Resolve ทันที ──
+  const handleSupportPopupConfirmResolve = async () => {
+    if (!supportPopup) return;
+    if (!(await confirmDialog.confirm('ยืนยันว่างานเสร็จสมบูรณ์ ปิดกระทู้นี้เลยใช่ไหม?', { confirmText: 'Confirm' }))) return;
+    setSupportPopupConfirmingResolve(true);
+    try {
+      const apiBase = supportApiBase();
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${supportPopup.thread.id}/request-resolve`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.ok) {
+        setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'resolved' } } : prev);
+      } else {
+        alert('Resolve ไม่สำเร็จ: ' + (data.error || ''));
+      }
+    } catch (err) { alert('Resolve ไม่สำเร็จ: ' + err.message); }
+    setSupportPopupConfirmingResolve(false);
+  };
+
+  const handleSupportPopupRejectTest = async () => {
+    if (!supportPopup) return;
+    const reason = window.prompt('ระบุเหตุผลที่ Test ไม่ผ่าน (บังคับกรอก):');
+    if (reason === null) return;
+    if (!reason.trim()) { alert('กรุณากรอกเหตุผล'); return; }
+    setSupportPopupRejectingTest(true);
+    try {
+      const apiBase = supportApiBase();
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${supportPopup.thread.id}/reject-test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'in_process' } } : prev);
+      } else {
+        alert('ตีกลับไม่สำเร็จ: ' + (data.error || ''));
+      }
+    } catch (err) { alert('ตีกลับไม่สำเร็จ: ' + err.message); }
+    setSupportPopupRejectingTest(false);
+  };
+
   // MARKER_HOMEPAGE_SUPPORT_REJECT_V1
   const [supportPopupRejecting, setSupportPopupRejecting] = useState(false);
+  // MARKER_HOMEPAGE_POPUP_RESIZABLE_V1
+  const [isPopupExpanded, setIsPopupExpanded] = useState(false);
+  // MARKER_HOMEPAGE_POPUP_RESIZE_PERSIST_FIX_V2 -- ใช้ Ref เทียบ notifId ตรงๆ กัน Re-render อื่นมาแทรก Reset ขนาดผิดจังหวะ
+  const popupBoxRef = useRef(null);
+  // MARKER_HOMEPAGE_POPUP_BACKDROP_CLOSE_FIX_V1
+  const backdropMouseDownOnSelfRef = useRef(false);
+  const prevSupportNotifIdRef = useRef(null);
+  // MARKER_HOMEPAGE_DEBUG_LOGS_REMOVED_V1 -- ลบ Debug Log ที่ค้างไว้ออกแล้ว
+  useEffect(() => {
+    if (!popupBoxRef.current || !supportPopup) return;
+    if (prevSupportNotifIdRef.current !== supportPopup.notifId) {
+      prevSupportNotifIdRef.current = supportPopup.notifId;
+      popupBoxRef.current.style.width = '440px';
+      popupBoxRef.current.style.height = '600px';
+      setIsPopupExpanded(false);
+    }
+  }, [supportPopup?.notifId]);
   const handleSupportPopupReject = async () => {
     if (!supportPopup) return;
-    if (!window.confirm('ยืนยัน Reject กระทู้นี้?')) return;
+    if (!(await confirmDialog.confirm('ยืนยัน Reject กระทู้นี้?', { variant: 'danger', confirmText: 'Reject' }))) return;
     setSupportPopupRejecting(true);
     try {
       const apiBase = supportApiBase();
@@ -301,6 +499,15 @@ function Homepage({ onOpenInbox } = {}) {
     setSupportPopupRejecting(false);
   };
   const [loadingNotif, setLoadingNotif] = useState(true);
+  // MARKER_HOMEPAGE_REALTIME_NOTIFICATION_V1 -- Subscribe Event ที่เกี่ยวกับ Batch Review เพื่อ Reload ทันที ไม่ต้องรอ Poll 30 วิ
+  const [notifRefreshTick, setNotifRefreshTick] = useState(0);
+  // MARKER_HOMEPAGE_AGREEMENT_SYNC_V1 -- เพิ่ม Event Agreement System เข้ารายการเดิม
+  // MARKER_HOMEPAGE_ACCEPT_SYNC_V1 -- เพิ่ม Event Accept เข้ารายการเดิม
+  useRealtimeRefresh(
+    ['batch_sent', 'batch_approved', 'batch_rejected', 'batch_deleted', 'support_agreement_updated', 'support_thread_status_updated', 'support_dismissed'],
+    () => setNotifRefreshTick(t => t + 1),
+    0
+  );
   const [batchMeta, setBatchMeta] = useState({}); // batch_id -> { bu, status } จาก batch_list
   const [chatBatchId, setChatBatchId] = useState(null); // Notification "ถูกตีกลับ" -> เปิด Chat ทันที
   const [onlineUsers, setOnlineUsers] = useState([]);
@@ -311,51 +518,65 @@ function Homepage({ onOpenInbox } = {}) {
     if (!me) return;
     const loadNotif = async () => {
       try {
+        // MARKER_HOMEPAGE_FILTER_BY_BATCHLIST_STATUS_V3 -- ดึงมาก่อนแบบไม่กรอง Status ตรงนี้ (จะกรองด้วย batch_list.status จริงทีหลัง)
         const { data } = await db.from('batch_notifications').select('*').eq('recipient_username', me).order('created_at', { ascending: false }).limit(50);
         const list = data || [];
 
-        // MARKER_HOMEPAGE_SUPPORT_NOTIFICATIONS_V1
-        // ── ผสม Notification ของ Support & Feedback (ตาราง notifications) เข้าการ์ดเดียวกัน ──
+        // MARKER_HOMEPAGE_SUPPORT_GROUND_TRUTH_V1
+        // ── Support & Feedback Card: Ground Truth จาก support_threads.status โดยตรง ──
+        // ── (ไม่ผูกกับ Notification Insert/Delete เลย -- New/Resolved กรองออกเองเพราะ ──
+        // ── Query เฉพาะ status='in_process' เท่านั้น -- Bell จัดการ Event แยกต่างหาก) ──
         let supportList = [];
         try {
-          const { data: mineData } = await db.from('notifications').select('*').eq('category', 'support-feedback').eq('recipient_username', me).order('created_at', { ascending: false }).limit(50);
-          supportList = mineData || [];
-          if (isOwner) {
-            const { data: ownerData } = await db.from('notifications').select('*').eq('category', 'support-feedback').eq('target_role', 'Owner').order('created_at', { ascending: false }).limit(50);
-            supportList = [...supportList, ...(ownerData || [])];
-          }
-          // ── ดึง severity/log_number จาก support_threads มาผูกกับ Notification (คนละตารางกัน) ──
-          const threadIds = [...new Set(supportList.map(n => n.link_to).filter(Boolean))];
-          if (threadIds.length > 0) {
-            const { data: threadMeta, error: threadMetaErr } = await db.from('support_threads').select('id, severity, log_number, status').in('id', threadIds);
-            // MARKER_HOMEPAGE_CARD_STATUS_BADGE_DEBUG_V1 -- เปิด Console (F12) ดูว่า threadMeta ว่างเปล่าไหม (RLS อาจปิดกั้น)
-            console.log('[support threadMeta]', { threadIds, threadMeta, threadMetaErr });
-            const metaMap = {};
-            (threadMeta || []).forEach(t => { metaMap[t.id] = t; });
-            supportList = supportList.map(n => ({ ...n, severity: metaMap[n.link_to]?.severity, log_number: metaMap[n.link_to]?.log_number, threadStatus: metaMap[n.link_to]?.status }));
-          }
-        } catch (supportErr) { console.error('[load support notifications]', supportErr); }
+          // MARKER_HOMEPAGE_SUPPORT_FILTER_OWNONLY_V1
+          // ── Confirm แล้ว: Owner เห็นทุกกระทู้ / คนอื่นเห็นเฉพาะของตัวเอง ──
+          // ── ไม่มีเรื่อง Permission Menu แชร์กันเลย (ตัดออกจาก Version ก่อนหน้า) ──
+          const { data: inProcessThreads, error: threadErr } = await db.from('support_threads')
+            .select('id, title, created_by, menu_source, status, severity, log_number, last_activity_at, created_at')
+            .eq('status', 'in_process')
+            .order('last_activity_at', { ascending: false })
+            .limit(50);
+          supportList = (inProcessThreads || [])
+            .filter(t => isOwner || t.created_by === me)
+            .map(t => ({
+              id: `thread-status-${t.id}`, // Fake id สำหรับ React key เท่านั้น -- ไม่ใช่ Notification จริง
+              link_to: t.id,
+              title: t.title,
+              message: null,
+              created_at: t.last_activity_at || t.created_at,
+              category: 'support-feedback',
+              action_type: 'in_process_status',
+              severity: t.severity,
+              log_number: t.log_number,
+              threadStatus: t.status,
+            }));
+        } catch (supportErr) { console.error('[load support in-process threads]', supportErr); }
 
-        const combined = [...list, ...supportList].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        setNotifications(combined);
-
-        // ── Join batch_list เอา bu/status จริงมาโชว์ Badge (ไม่ใช้ Status ที่ Freeze ไว้ตอน Insert) ──
+        // ── Join batch_list เอา bu/status จริงมาก่อน (ทำก่อน setNotifications เพื่อใช้ Filter ด้วย Ground Truth) ──
         const batchIds = [...new Set(list.map(n => n.batch_id).filter(Boolean))];
+        let map = {};
         if (batchIds.length > 0) {
           const { data: batches } = await db.from('batch_list').select('batch_id, bu, status').in('batch_id', batchIds);
-          const map = {};
           (batches || []).forEach(b => { map[b.batch_id] = b; });
-          setBatchMeta(map);
-        } else {
-          setBatchMeta({});
         }
+        setBatchMeta(map);
+
+        // MARKER_HOMEPAGE_FILTER_BY_BATCHLIST_STATUS_V3 -- ตัด Notification ที่ Batch จริง Approve/Reject ไปแล้วออกจาก Home ทันที
+        const filteredList = list.filter(n => {
+          if (!n.batch_id) return true;
+          const liveStatus = map[n.batch_id]?.status;
+          return liveStatus !== 'approved' && liveStatus !== 'rejected';
+        });
+
+        const combined = [...filteredList, ...supportList].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        setNotifications(combined);
       } catch (e) { console.error('[load notifications]', e); }
       setLoadingNotif(false);
     };
     loadNotif();
     const iv = setInterval(loadNotif, 30000);
     return () => clearInterval(iv);
-  }, [me, isOwner]);
+  }, [me, isOwner, notifRefreshTick]); // MARKER_HOMEPAGE_REALTIME_NOTIFICATION_V1
 
   useEffect(() => {
     const loadTeam = async () => {
@@ -514,13 +735,15 @@ function Homepage({ onOpenInbox } = {}) {
                                   {n.severity && SEVERITY_META[n.severity] && (
                                     <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '4px', fontWeight: '500', flexShrink: 0, background: SEVERITY_META[n.severity].bg, color: SEVERITY_META[n.severity].color }}>{SEVERITY_META[n.severity].label}</span>
                                   )}
+                                  {/* MARKER_HOMEPAGE_LIST_BADGE_TESTING_ROLE_V1 -- เพิ่ม Case testing แยก Text ตาม Role + สีฟ้า */}
                                   {n.threadStatus && (
                                     <span style={{
                                       fontSize: '9px', padding: '1px 6px', borderRadius: '4px', fontWeight: '500', flexShrink: 0,
-                                      background: n.threadStatus === 'new' ? '#FCEBEB' : '#FAEEDA',
-                                      color: n.threadStatus === 'new' ? '#791F1F' : '#633806',
+                                      background: n.threadStatus === 'new' ? '#FCEBEB' : n.threadStatus === 'testing' ? '#E3F2FD' : '#FAEEDA',
+                                      color: n.threadStatus === 'new' ? '#791F1F' : n.threadStatus === 'testing' ? '#1565C0' : '#633806',
                                     }}>
-                                      {n.threadStatus === 'new' ? 'ใหม่' : 'กำลังดำเนินการ'}
+                                      {/* MARKER_HOMEPAGE_INPROCESS_LABEL_V1 */}
+                                      {n.threadStatus === 'new' ? 'ใหม่' : n.threadStatus === 'testing' ? (isOwner ? 'Wait to Resolve' : 'Request to Test') : 'In process'}
                                     </span>
                                   )}
                                 </div>
@@ -795,10 +1018,19 @@ function Homepage({ onOpenInbox } = {}) {
         />
       )}
 
+      {/* MARKER_HOMEPAGE_POPUP_BACKDROP_CLOSE_FIX_V1 */}
       {supportPopup && (
-        <div onClick={()=>setSupportPopup(null)}
+        <div
+          onMouseDown={(e)=>{ backdropMouseDownOnSelfRef.current = (e.target === e.currentTarget); }}
+          onClick={(e)=>{ if (backdropMouseDownOnSelfRef.current && e.target === e.currentTarget) handleSupportPopupClose(); }}
           style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:10001, display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <div onClick={e=>e.stopPropagation()} style={{ background:'white', borderRadius:'12px', width:'440px', maxWidth:'92vw', maxHeight:'82vh', display:'flex', flexDirection:'column', overflow:'hidden' }}>
+          <div ref={popupBoxRef} onClick={e=>e.stopPropagation()} style={isPopupExpanded ? {
+            background:'white', borderRadius:'12px', width:'90vw', height:'90vh', maxWidth:'90vw', maxHeight:'90vh',
+            display:'flex', flexDirection:'column', overflow:'hidden',
+          } : {
+            background:'white', borderRadius:'12px', minWidth:'320px', minHeight:'400px',
+            maxWidth:'92vw', maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'auto', resize:'both',
+          }}>
             {supportPopupLoading ? (
               <p style={{ fontSize:'13px', color:'#999', textAlign:'center', margin:'40px 0' }}>กำลังโหลด...</p>
             ) : supportPopup.thread ? (
@@ -810,19 +1042,34 @@ function Homepage({ onOpenInbox } = {}) {
                   )}
                   <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'10px' }}>
                     <p style={{ fontSize:'14px', fontWeight:'600', color:'#1a3a5c', margin:0, flex:1 }}>{supportPopup.thread.title}</p>
-                    <button onClick={()=>setSupportPopup(null)} style={{ background:'none', border:'none', fontSize:'16px', color:'#999', cursor:'pointer', flexShrink:0, lineHeight:1 }}>×</button>
+                    {/* MARKER_HOMEPAGE_POPUP_RESIZE_PERSIST_FIX_V2 */}
+                    <button onClick={()=>{
+                      setIsPopupExpanded(v => {
+                        const next = !v;
+                        if (!next && popupBoxRef.current) {
+                          popupBoxRef.current.style.width = '440px';
+                          popupBoxRef.current.style.height = '600px';
+                        }
+                        return next;
+                      });
+                    }} title={isPopupExpanded ? 'ย่อกลับ' : 'ขยายเต็มจอ'}
+                      style={{ background:'none', border:'none', fontSize:'14px', color:'#999', cursor:'pointer', flexShrink:0, lineHeight:1, marginRight:'4px' }}>{isPopupExpanded ? '⤡' : '⤢'}</button>
+                    <button onClick={handleSupportPopupClose} style={{ background:'none', border:'none', fontSize:'16px', color:'#999', cursor:'pointer', flexShrink:0, lineHeight:1 }}>×</button>
                   </div>
+                  {/* MARKER_HOMEPAGE_TESTING_BADGE_ROLE_V1 -- testing แยก Text ตาม Role + สีฟ้า */}
                   <span style={{
                     display:'inline-block', fontSize:'10px', padding:'2px 10px', borderRadius:'10px', marginTop:'6px',
-                    background: supportPopup.thread.status==='new' ? '#FCEBEB' : supportPopup.thread.status==='in_process' ? '#FAEEDA' : '#EAF3DE',
-                    color: supportPopup.thread.status==='new' ? '#791F1F' : supportPopup.thread.status==='in_process' ? '#633806' : '#27500A',
+                    background: supportPopup.thread.status==='new' ? '#FCEBEB' : supportPopup.thread.status==='in_process' ? '#FAEEDA' : supportPopup.thread.status==='testing' ? '#E3F2FD' : '#EAF3DE',
+                    color: supportPopup.thread.status==='new' ? '#791F1F' : supportPopup.thread.status==='in_process' ? '#633806' : supportPopup.thread.status==='testing' ? '#1565C0' : '#27500A',
                   }}>
-                    {supportPopup.thread.status==='new' ? 'ใหม่' : supportPopup.thread.status==='in_process' ? 'กำลังดำเนินการ' : 'แก้ไขแล้ว'}
+                    {/* MARKER_HOMEPAGE_INPROCESS_LABEL_V1 */}
+                    {supportPopup.thread.status==='new' ? 'ใหม่' : supportPopup.thread.status==='in_process' ? 'In process' : supportPopup.thread.status==='testing' ? (isOwner ? 'Wait to Resolve' : 'Request to Test') : 'แก้ไขแล้ว'}
                   </span>
                 </div>
 
                 {/* MARKER_HOMEPAGE_SUPPORT_POPUP_CHAT_HEIGHT_60VH_V1 */}
-                <div style={{ maxHeight:'60vh', overflowY:'auto', padding:'14px 18px', display:'flex', flexDirection:'column', gap:'12px', background:'#fafbfc' }}>
+                {/* MARKER_HOMEPAGE_POPUP_CHAT_FLEX_V1 -- flex:1 แทน maxHeight Fix ให้เต็มพื้นที่เหลือเสมอ */}
+                <div style={{ flex:1, minHeight:0, overflowY:'auto', padding:'14px 18px', display:'flex', flexDirection:'column', gap:'12px', background:'#fafbfc' }}>
                   <div style={{ display:'flex', gap:'8px', maxWidth:'85%' }}>
                     <div style={{ width:'26px', height:'26px', borderRadius:'50%', background:'#E6F1FB', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10px', fontWeight:'500', color:'#0C447C', flexShrink:0 }}>
                       {(supportPopup.thread.created_by||'?').slice(0,2).toUpperCase()}
@@ -831,12 +1078,24 @@ function Homepage({ onOpenInbox } = {}) {
                       <div style={{ fontSize:'10px', color:'#999', marginBottom:'3px' }}>{supportPopup.thread.created_by} · {supportFmtTime(supportPopup.thread.created_at)}</div>
                       <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'12px', borderTopLeftRadius:'3px', padding:'8px 10px' }}>
                         <div style={{ fontSize:'12px', color:'#333', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{supportPopup.thread.body}</div>
+                        {/* MARKER_HOMEPAGE_SUPPORT_POPUP_IMAGES_V1 */}
+                        {supportPopupImages.filter(img => !img.sub_ref_id).length > 0 && (
+                          <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginTop:'8px' }}>
+                            {supportPopupImages.filter(img => !img.sub_ref_id).map(img => (
+                              <img key={img.id} src={supportPopupImageUrls[img.id]} alt="แนบ" onClick={()=>setSupportPopupLightboxUrl(supportPopupImageUrls[img.id])}
+                                style={{ width:'90px', height:'64px', borderRadius:'8px', objectFit:'cover', border:'0.5px solid #ddd', cursor:'pointer' }}/>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
 
-                  {supportPopupComments.map(c => {
+                  {/* MARKER_HIDE_RESOLVE_COMMENT_OWNER_V1 -- Owner ไม่ต้องเห็น Comment Auto ตอน Resolve ตัวเอง (User อื่นเห็นปกติ) */}
+                  {supportPopupComments.filter(c => !(isOwner && c.message === 'ดำเนินการเรียบร้อยแล้ว')).map(c => {
                     const isFromCreator = c.username === supportPopup.thread.created_by;
+                    // MARKER_HOMEPAGE_SUPPORT_POPUP_IMAGES_V1
+                    const commentImages = supportPopupImages.filter(img => img.sub_ref_id === c.id);
                     return (
                       <div key={c.id} style={{ display:'flex', gap:'8px', maxWidth:'85%', marginLeft: isFromCreator?'0':'auto', flexDirection: isFromCreator?'row':'row-reverse' }}>
                         <div style={{ width:'26px', height:'26px', borderRadius:'50%', background: isFromCreator?'#E6F1FB':'#27500A', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10px', fontWeight:'500', color: isFromCreator?'#0C447C':'white', flexShrink:0 }}>
@@ -849,6 +1108,14 @@ function Homepage({ onOpenInbox } = {}) {
                             borderTopLeftRadius: isFromCreator?'3px':'12px', borderTopRightRadius: isFromCreator?'12px':'3px',
                           }}>
                             <div style={{ fontSize:'12px', color: isFromCreator?'#333':'white', whiteSpace:'pre-wrap', lineHeight:'1.5' }}>{c.message}</div>
+                            {commentImages.length > 0 && (
+                              <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginTop:'6px' }}>
+                                {commentImages.map(img => (
+                                  <img key={img.id} src={supportPopupImageUrls[img.id]} alt="แนบ" onClick={()=>setSupportPopupLightboxUrl(supportPopupImageUrls[img.id])}
+                                    style={{ width:'80px', height:'56px', borderRadius:'8px', objectFit:'cover', border: isFromCreator?'0.5px solid #ddd':'0.5px solid rgba(255,255,255,0.4)', cursor:'pointer' }}/>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -869,7 +1136,14 @@ function Homepage({ onOpenInbox } = {}) {
                       </button>
                     </div>
                     {isOwner && (
-                      <div style={{ marginTop:'8px', display:'flex', gap:'6px' }}>
+                      <div style={{ marginTop:'8px', display:'flex', gap:'6px', flexWrap:'wrap' }}>
+                        {/* MARKER_HOMEPAGE_ACCEPT_BUTTON_V1 -- โชว์เฉพาะ Status ใหม่ */}
+                        {supportPopup.thread.status === 'new' && (
+                          <button onClick={handleSupportPopupAccept} disabled={supportPopupAccepting}
+                            style={{ flex:1, fontSize:'12px', padding:'7px', borderRadius:'8px', border:'none', background:'#0C447C', color:'white', cursor:'pointer', opacity:supportPopupAccepting?0.6:1, fontWeight:'500' }}>
+                            {supportPopupAccepting ? '...' : 'Accept'}
+                          </button>
+                        )}
                         <button onClick={handleSupportPopupResolve} disabled={supportPopupFinishing || supportPopupRejecting}
                           style={{ flex:1, fontSize:'12px', padding:'7px', borderRadius:'8px', border:'none', background:'#27500A', color:'white', cursor:'pointer', opacity:(supportPopupFinishing || supportPopupRejecting)?0.6:1, fontWeight:'500' }}>
                           {supportPopupFinishing ? '...' : '✓ Resolve'}
@@ -878,8 +1152,40 @@ function Homepage({ onOpenInbox } = {}) {
                           style={{ width:'70px', fontSize:'12px', padding:'7px', borderRadius:'8px', border:'0.5px solid #d9534f', background:'white', color:'#d9534f', cursor:'pointer', opacity:(supportPopupFinishing || supportPopupRejecting)?0.6:1, fontWeight:'500' }}>
                           {supportPopupRejecting ? '...' : 'Reject'}
                         </button>
+                        {/* MARKER_HOMEPAGE_TESTING_FLOW_V1 -- ตัวเลือกเสริม ไม่บังคับ */}
+                        {supportPopup.thread.status === 'in_process' && (
+                          <button onClick={handleSupportPopupSendToTest} disabled={supportPopupSendingToTest}
+                            style={{ flex:'1 1 100%', fontSize:'12px', padding:'7px', borderRadius:'8px', border:'0.5px solid #0C447C', background:'white', color:'#0C447C', cursor:'pointer', opacity:supportPopupSendingToTest?0.6:1, fontWeight:'500' }}>
+                            {supportPopupSendingToTest ? '...' : 'ส่งให้ Test ก่อน'}
+                          </button>
+                        )}
                       </div>
                     )}
+                    {/* MARKER_HOMEPAGE_TESTING_FLOW_V1 -- ผู้แจ้งกระทู้เอง Test อยู่ */}
+                    {!isOwner && supportPopup.thread.status === 'testing' && supportPopup.thread.created_by === (userName || currentUser?.email || '') && (
+                      <div style={{ marginTop:'8px', display:'flex', gap:'6px' }}>
+                        <button onClick={handleSupportPopupConfirmResolve} disabled={supportPopupConfirmingResolve || supportPopupRejectingTest}
+                          style={{ flex:1, fontSize:'12px', padding:'7px', borderRadius:'8px', border:'none', background:'#27500A', color:'white', cursor:'pointer', opacity:(supportPopupConfirmingResolve || supportPopupRejectingTest)?0.6:1, fontWeight:'500' }}>
+                          {supportPopupConfirmingResolve ? '...' : '✓ Confirm - งานเสร็จสมบูรณ์'}
+                        </button>
+                        <button onClick={handleSupportPopupRejectTest} disabled={supportPopupConfirmingResolve || supportPopupRejectingTest}
+                          style={{ fontSize:'12px', padding:'7px 10px', borderRadius:'8px', border:'0.5px solid #d9534f', background:'white', color:'#d9534f', cursor:'pointer', opacity:(supportPopupConfirmingResolve || supportPopupRejectingTest)?0.6:1, fontWeight:'500' }}>
+                          ไม่ผ่าน
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!isOwner && supportPopup.thread.status === 'resolved' && supportPopup.thread.agreement_status === 'pending' && isAgreementWindowOpen(supportPopup.thread) && (
+                  <div style={{ display:'flex', gap:'8px', padding:'12px 18px', borderTop:'0.5px solid #eee', flexShrink:0 }}>
+                    <button onClick={handleSupportPopupAgree} disabled={supportPopupAgreeing || supportPopupDisagreeing}
+                      style={{ flex:1, fontSize:'12px', padding:'9px', borderRadius:'20px', border:'none', background:'#27500A', color:'white', cursor:'pointer', opacity:(supportPopupAgreeing || supportPopupDisagreeing)?0.6:1, fontWeight:'500' }}>
+                      {supportPopupAgreeing ? '...' : '✓ Agree'}
+                    </button>
+                    <button onClick={handleSupportPopupDisagree} disabled={supportPopupAgreeing || supportPopupDisagreeing}
+                      style={{ flex:1, fontSize:'12px', padding:'9px', borderRadius:'20px', border:'0.5px solid #d9534f', background:'white', color:'#d9534f', cursor:'pointer', opacity:(supportPopupAgreeing || supportPopupDisagreeing)?0.6:1, fontWeight:'500' }}>
+                      {supportPopupDisagreeing ? '...' : 'Disagree'}
+                    </button>
                   </div>
                 )}
               </>
@@ -887,6 +1193,18 @@ function Homepage({ onOpenInbox } = {}) {
               <p style={{ fontSize:'13px', color:'#999', textAlign:'center', margin:'40px 0' }}>ไม่พบกระทู้นี้ (อาจถูกลบไปแล้ว)</p>
             )}
           </div>
+        </div>
+      )}
+
+      {/* MARKER_HOMEPAGE_SUPPORT_POPUP_LIGHTBOX_V1 */}
+      {/* MARKER_HOMEPAGE_SUPPORT_POPUP_LIGHTBOX_SCOPE_FIX_V1 -- ย้ายกลับเข้ามาข้างใน Component */}
+      {supportPopupLightboxUrl && (
+        <div onClick={()=>setSupportPopupLightboxUrl(null)}
+          style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.85)', zIndex:10010, display:'flex', alignItems:'center', justifyContent:'center', cursor:'zoom-out' }}>
+          <img src={supportPopupLightboxUrl} alt="แนบ (ขยาย)" onClick={e=>e.stopPropagation()}
+            style={{ maxWidth:'90vw', maxHeight:'90vh', borderRadius:'8px', boxShadow:'0 4px 30px rgba(0,0,0,0.5)' }}/>
+          <button onClick={()=>setSupportPopupLightboxUrl(null)}
+            style={{ position:'absolute', top:'20px', right:'20px', width:'36px', height:'36px', borderRadius:'50%', border:'none', background:'rgba(255,255,255,0.9)', color:'#333', fontSize:'18px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>×</button>
         </div>
       )}
 

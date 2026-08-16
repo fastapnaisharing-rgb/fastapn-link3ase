@@ -9192,37 +9192,6 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
     reader.readAsDataURL(file);
   };
 
-  // MARKER_REGINBOX_3ZONE_PARSE_V1
-  const REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due'];
-  const registerRows = useMemo(() => {
-    if (mode !== 'paste' || !pastedRows || !pastedRows.length) return null;
-    const headerIdx = pastedRows.findIndex(r => r.some(c => String(c || '').trim().toLowerCase() === 'vendor name'));
-    if (headerIdx === -1) return null;
-    const header = pastedRows[headerIdx].map(h => String(h || '').trim().toLowerCase());
-    const colIdx = {};
-    REG_COLS.forEach(name => {
-      const idx = header.indexOf(name.toLowerCase());
-      if (idx !== -1) colIdx[name] = idx;
-    });
-    if (colIdx['Vendor Name'] === undefined || colIdx['Invoice number'] === undefined) return null;
-    const get = (row, name) => colIdx[name] !== undefined ? String(row[colIdx[name]] ?? '').trim() : '';
-    return pastedRows.slice(headerIdx + 1)
-      .filter(r => r.some(c => String(c || '').trim() !== ''))
-      .map(r => ({
-        vendor: get(r, 'Vendor Name'), invoice: get(r, 'Invoice number'), po: get(r, 'PO Number'),
-        gr: get(r, 'GR Transaction No.'), date: get(r, 'Invoice Date'), priority: get(r, 'Priority'),
-        method: get(r, 'Method'), paygroup: get(r, 'Pay Group'), holds: get(r, 'Holds'),
-        term: get(r, 'Term'), due: get(r, 'Due'),
-      }));
-  }, [mode, pastedRows]);
-  const regFilteredRows = useMemo(() => {
-    if (!registerRows) return [];
-    const q = regSearchQuery.trim().toLowerCase();
-    if (!q) return registerRows;
-    return registerRows.filter(r => (r.vendor + ' ' + r.invoice).toLowerCase().includes(q));
-  }, [registerRows, regSearchQuery]);
-  const regVisibleRows = regSearchQuery.trim() ? regFilteredRows : regFilteredRows.slice(0, 5);
-
   // ── มีไฟล์ Invoice Register เดิมติดกับ Batch นี้อยู่แล้วหรือไม่ (เช่น Resend หลังโดน Reject) ──
   const hasExistingFile = !!(batch?.invoice_register_file_id);
   // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
@@ -9294,6 +9263,36 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
     setPastedRows(null);
   };
 
+  // MARKER_REGINBOX_3ZONE_PARSE_V1
+  const REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due'];
+  const registerRows = useMemo(() => {
+    if (mode !== 'paste' || !pastedRows || !pastedRows.length) return null;
+    const headerIdx = pastedRows.findIndex(r => r.some(c => String(c || '').trim().toLowerCase() === 'vendor name'));
+    if (headerIdx === -1) return null;
+    const header = pastedRows[headerIdx].map(h => String(h || '').trim().toLowerCase());
+    const colIdx = {};
+    REG_COLS.forEach(name => {
+      const idx = header.indexOf(name.toLowerCase());
+      if (idx !== -1) colIdx[name] = idx;
+    });
+    if (colIdx['Vendor Name'] === undefined || colIdx['Invoice number'] === undefined) return null;
+    const get = (row, name) => colIdx[name] !== undefined ? String(row[colIdx[name]] ?? '').trim() : '';
+    return pastedRows.slice(headerIdx + 1)
+      .filter(r => r.some(c => String(c || '').trim() !== ''))
+      .map(r => ({
+        vendor: get(r, 'Vendor Name'), invoice: get(r, 'Invoice number'), po: get(r, 'PO Number'),
+        gr: get(r, 'GR Transaction No.'), date: get(r, 'Invoice Date'), priority: get(r, 'Priority'),
+        method: get(r, 'Method'), paygroup: get(r, 'Pay Group'), holds: get(r, 'Holds'),
+        term: get(r, 'Term'), due: get(r, 'Due'),
+      }));
+  }, [mode, pastedRows]);
+  const regFilteredRows = useMemo(() => {
+    if (!registerRows) return [];
+    const q = regSearchQuery.trim().toLowerCase();
+    if (!q) return registerRows;
+    return registerRows.filter(r => (r.vendor + ' ' + r.invoice).toLowerCase().includes(q));
+  }, [registerRows, regSearchQuery]);
+  const regVisibleRows = regSearchQuery.trim() ? regFilteredRows : regFilteredRows.slice(0, 5);
   // MARKER_APCONTROLLER_UNIFIED_APPROVE_POPUP_V1
   const canSave = (canApproveBatch || !!toUsername) && (mode === 'existing' ? true : (mode === 'paste' ? pastedText.trim().length > 0 : !!uploadedFileBase64));
 

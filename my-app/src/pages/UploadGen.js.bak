@@ -2900,7 +2900,7 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
           </div>
         </div>
       )}
-      <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'calc(100vw - 20px)',maxWidth:'1800px',height:'92vh',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.18)'}}>
+      <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'900px',maxWidth:'94vw',height:'580px',maxHeight:'88vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.18)'}}>
         <div style={{padding:'14px 18px',borderBottom:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="ค้นหา Serial code, BU..."
             style={{fontSize:'11px',padding:'5px 10px',borderRadius:'6px',border:'0.5px solid #ddd',background:'#f7f8fa',outline:'none',width:'200px'}}/>
@@ -3068,19 +3068,6 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const [qStatus,  setQStatus]    = useState('active');
   const [queueItems, setQueueItems] = useState([]);
   const [queueBadge, setQueueBadge] = useState(0);
-
-  // MARKER_FOLDERDETAIL_ESC_BACK_V1
-  // Esc = Back ไป Document Center — ใช้ร่วมกันทุกเมนู (AP/VAT/IE/GL/I-Pro เป็น Component เดียวกัน)
-  // กันชนกับ Esc ของ Popup อื่น: ถ้ามี Popup ใดๆ เปิดอยู่ ให้ Popup นั้นจัดการ Esc ของตัวเองก่อน ไม่ Back ทับ
-  React.useEffect(() => {
-    const fn = e => {
-      if (e.key !== 'Escape') return;
-      if (showAdd || showDraftPanel || confirmDelete || viewFile || lightbox || attachModal || showQueue) return;
-      onBack();
-    };
-    window.addEventListener('keydown', fn);
-    return () => window.removeEventListener('keydown', fn);
-  }, [showAdd, showDraftPanel, confirmDelete, viewFile, lightbox, attachModal, showQueue, onBack]);
   const [queueTab, setQueueTab] = useState('my'); // 'my' | 'all'
   const API_Q = 'http://10.101.87.126:4000/api/docenter';
 
@@ -5687,4 +5674,3 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 }
 
 export default DocumentCenter;
-// MARKER_DRAFT_PANEL_UPGRADE_RESIZE_ESCBACK_V1

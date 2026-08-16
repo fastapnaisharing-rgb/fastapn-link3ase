@@ -81,9 +81,74 @@ function useVatWatchlistRecentUploads(limit = 5) {
   return { rows, loading };
 }
 
+// MARKER_VATWATCHLISTOPS_PARSE_REAL_V1
+// ── Port จาก VBA Option_Cutting_IncompleteforOfinyes (A_SystemAll_UI.xlam) ──
+// ── Fixed-width Column Position ตรงกับ Header มาตรฐาน 21 คอลัมน์ ───────────
+const VAT_WATCHLIST_COLUMNS = [
+  { key: 'doc_date',        start: 0,   end: 10  },
+  { key: 'doc_no',          start: 10,  end: 26  },
+  { key: 'site',            start: 26,  end: 40  },
+  { key: 'pay_group',       start: 40,  end: 50  },
+  { key: 'branch',          start: 50,  end: 57  },
+  { key: 'tax_type',        start: 57,  end: 75  },
+  { key: 'invoice_ref',     start: 75,  end: 107 },
+  { key: 'supplier_code',   start: 107, end: 123 },
+  { key: 'vendor_name',     start: 123, end: 166 },
+  { key: 'phone',           start: 166, end: 183 },
+  { key: 'payment_date',    start: 183, end: 193 },
+  { key: 'check_date',      start: 193, end: 205 },
+  { key: 'check_no',        start: 205, end: 223 },
+  { key: 'receive_doc_date',start: 223, end: 246 },
+  { key: 'receive_doc_no',  start: 246, end: 262 },
+  { key: 'exp_amount',      start: 262, end: 281 },
+  { key: 'exp_vat',         start: 281, end: 298 },
+  { key: 'avg_amount',      start: 298, end: 317 },
+  { key: 'avg_vat',         start: 317, end: 333 },
+  { key: 'ap_source',       start: 333, end: 359 },
+  { key: 'ap_batch_name',   start: 359, end: null },
+];
+
+// ── บรรทัดข้อมูลจริงต้องขึ้นต้นด้วยรูปแบบวันที่ DD-MMM-YY (ข้าม Header/Dash/บรรทัดว่าง) ──
+const VAT_WATCHLIST_DATE_LINE_RE = /^\s*\d{2}-[A-Z]{3}-\d{2}\b/;
+
+function parseVatWatchlistRawText(rawText) {
+  if (!rawText) return [];
+  const lines = rawText.split(/\r?\n/);
+  const rows = [];
+  for (const line of lines) {
+    if (!VAT_WATCHLIST_DATE_LINE_RE.test(line)) continue; // ข้าม Header/Dash/บรรทัดว่าง
+    const row = {};
+    for (const col of VAT_WATCHLIST_COLUMNS) {
+      const raw = col.end != null ? line.slice(col.start, col.end) : line.slice(col.start);
+      row[col.key] = (raw || '').trim();
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+// MARKER_VATWATCHLISTOPS_TAXTYPE_CLASSIFY_V1
+// ── Classify ประเภทภาษี: [Prefix?][Branch]-[N|M] [S]VAT7 -> N / A / T / F / M ──
+const VAT_WATCHLIST_TAXTYPE_RE = /^([ATF]?)\d+-(N|M)\s+S?VAT7$/;
+
+function classifyVatWatchlistTaxType(taxType) {
+  if (!taxType) return null;
+  const m = taxType.trim().match(VAT_WATCHLIST_TAXTYPE_RE);
+  if (!m) return null;
+  const prefix = m[1]; // '', 'A', 'T', 'F'
+  const suffix = m[2]; // 'N' หรือ 'M'
+  if (suffix === 'M') return 'M';
+  if (prefix === 'A') return 'A';
+  if (prefix === 'T') return 'T';
+  if (prefix === 'F') return 'F';
+  return 'N';
+}
+
 function VatWatchlistUploadModal({ onClose }) {
   const fileInputRef = React.useRef(null);
   const textareaRef = React.useRef(null);
+  const previewHeaderRef = React.useRef(null);
+  const previewBodyRef = React.useRef(null);
   const [selectedFile, setSelectedFile] = React.useState(null);
   const [pastedText, setPastedText] = React.useState('');
   const [isDragging, setIsDragging] = React.useState(false);
@@ -107,12 +172,55 @@ function VatWatchlistUploadModal({ onClose }) {
 
   const hasInput = !!selectedFile || pastedText.trim().length > 0;
 
-  const handleCheckData = () => {
-    // MARKER_VATWATCHLISTOPS_PREVIEW_MOCK — รอต่อ Backend Parse จริงทีหลัง
-    setPreviewRows([
-      { doc_no: 'N230512019', bu: 'CRG', amount: '-109.35' },
-      { doc_no: 'N230509080', bu: 'OTY', amount: '-109.35' },
-    ]);
+  const [isChecking, setIsChecking] = React.useState(false);
+  const [checkSkippedCount, setCheckSkippedCount] = React.useState(0);
+
+  const handleCheckData = async () => {
+    // MARKER_VATWATCHLISTOPS_TAXTYPE_FILTER_WIRED_V1
+    const sourceText = selectedFile ? '' : pastedText; // ไฟล์ยังไม่รองรับ Parse (รอ cp874 decode)
+    const rawRows = parseVatWatchlistRawText(sourceText);
+
+    setIsChecking(true);
+    try {
+      const [branches, companies] = await Promise.all([
+        apiFetch('/branch_list'),
+        apiFetch('/company_list'),
+      ]);
+
+      const branchToBu = {};
+      (Array.isArray(branches) ? branches : []).forEach((b) => {
+        branchToBu[b['Branch Code']] = b.bu;
+      });
+      const buToCompany = {};
+      (Array.isArray(companies) ? companies : []).forEach((c) => {
+        buToCompany[c.bu] = c;
+      });
+
+      let skipped = 0;
+      const validRows = [];
+      for (const row of rawRows) {
+        const bu = branchToBu[row.branch];
+        const company = bu ? buToCompany[bu] : null;
+        const cls = classifyVatWatchlistTaxType(row.tax_type);
+        const allowedRaw = company ? company.allowed_tax_type : null;
+
+        // ── ไม่รู้ BU/Book หรือ Classify Tax Type ไม่ได้ -> ตัดออก (ปลอดภัยไว้ก่อน) ──
+        if (!bu || !company || !allowedRaw || !cls) { skipped++; continue; }
+
+        const allowedList = allowedRaw === 'All Type' ? null : allowedRaw.split(',').map((s) => s.trim());
+        // ── Tax Type ไม่อยู่ใน List ที่ Book นั้นอนุญาต -> ตัดออก ไม่บันทึกเข้า Database ──
+        if (allowedList && !allowedList.includes(cls)) { skipped++; continue; }
+
+        validRows.push({ ...row, bu, book: company.BOOK, tax_class: cls });
+      }
+
+      setCheckSkippedCount(skipped);
+      setPreviewRows(validRows);
+    } catch (err) {
+      console.error('handleCheckData error:', err);
+      setPreviewRows(rawRows); // Fallback: Match ไม่ได้ก็โชว์ดิบไปก่อน ไม่ปิดกั้นผู้ใช้
+    }
+    setIsChecking(false);
   };
 
   const boxActive = isDragging || isFocused;
@@ -151,26 +259,78 @@ function VatWatchlistUploadModal({ onClose }) {
             }}
           />
         ) : (
-          <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '12px', marginBottom: '16px' }}>
-            <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px' }}>Preview ข้อมูลที่ตรวจพบ ({previewRows.length} รายการ)</div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: '#888' }}>
-                  <th style={{ padding: '6px 8px' }}>Doc No.</th>
-                  <th style={{ padding: '6px 8px' }}>BU</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {previewRows.map((row, i) => (
-                  <tr key={i} style={{ borderTop: '0.5px solid #f0f0f0' }}>
-                    <td style={{ padding: '6px 8px' }}>{row.doc_no}</td>
-                    <td style={{ padding: '6px 8px' }}>{row.bu}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{row.amount}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ flex: 1, border: '0.5px solid #e8e8e8', borderRadius: '10px', marginBottom: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ fontSize: '12px', color: '#888', padding: '10px 12px', borderBottom: '0.5px solid #e8e8e8', flexShrink: 0 }}>Preview ข้อมูลที่ตรวจพบ ({previewRows.length.toLocaleString()} รายการ)</div>
+
+            {(() => {
+              const VAT_PREVIEW_COLS = [
+                { key: 'doc_date',        label: 'ว.ด.ป.',        width: 90  },
+                { key: 'doc_no',          label: 'เลขที่',         width: 130 },
+                { key: 'site',            label: 'Site',           width: 100 },
+                { key: 'pay_group',       label: 'Pay Group',      width: 100 },
+                { key: 'branch',          label: 'Branch',         width: 90  },
+                { key: 'tax_type',        label: 'ประเภทภาษี',     width: 130 },
+                { key: 'invoice_ref',     label: 'ใบแจ้งหนี้',      width: 160 },
+                { key: 'supplier_code',   label: 'Supplier Code',  width: 120 },
+                { key: 'vendor_name',     label: 'ชื่อผู้ค้า',       width: 260 },
+                { key: 'phone',           label: 'เบอร์โทรศัพท์',   width: 130 },
+                { key: 'payment_date',    label: 'ชำระเงิน',       width: 100 },
+                { key: 'check_date',      label: 'เช็ค',            width: 100 },
+                { key: 'check_no',        label: 'เลขที่เช็ค',      width: 150 },
+                { key: 'receive_doc_date',label: 'Receive Doc.',   width: 130 },
+                { key: 'receive_doc_no',  label: 'เลขที่ GRT',      width: 130 },
+                { key: 'exp_amount',      label: 'มูลค่าสินค้า',    width: 110, align: 'right' },
+                { key: 'exp_vat',         label: 'เงินภาษี',        width: 100, align: 'right' },
+                { key: 'avg_amount',      label: 'มูลค่าสินค้า',    width: 110, align: 'right' },
+                { key: 'avg_vat',         label: 'เงินภาษี',        width: 100, align: 'right' },
+                { key: 'ap_source',       label: 'AP Source',      width: 130 },
+                { key: 'ap_batch_name',   label: 'AP Batch Name',  width: 200 },
+              ];
+              const totalWidth = VAT_PREVIEW_COLS.reduce((sum, c) => sum + c.width, 0);
+
+              const handleHeaderScroll = (e) => {
+                if (previewBodyRef.current) previewBodyRef.current.scrollLeft = e.target.scrollLeft;
+              };
+              const handleBodyScroll = (e) => {
+                if (previewHeaderRef.current) previewHeaderRef.current.scrollLeft = e.target.scrollLeft;
+              };
+
+              return (
+                <>
+                  {/* MARKER_VATWATCHLISTOPS_FREEZE_HEADER_V1 — Header แยกคนละตารางจาก Body เด็ดขาด */}
+                  <div ref={previewHeaderRef} onScroll={handleHeaderScroll} style={{ overflowX: 'hidden', overflowY: 'hidden', flexShrink: 0 }}>
+                    <table style={{ width: totalWidth, borderCollapse: 'collapse', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                      <thead>
+                        <tr>
+                          {VAT_PREVIEW_COLS.map((col) => (
+                            <th key={col.key} style={{ width: col.width, minWidth: col.width, padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: col.align || 'left' }}>
+                              {col.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                    </table>
+                  </div>
+
+                  {/* Body — Scroll แนวตั้งอิสระ, Scroll แนวนอน Sync กับ Header ด้านบน */}
+                  <div ref={previewBodyRef} onScroll={handleBodyScroll} style={{ flex: 1, overflow: 'auto' }}>
+                    <table style={{ width: totalWidth, borderCollapse: 'collapse', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                      <tbody>
+                        {previewRows.map((row, i) => (
+                          <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#f7f9fb', borderTop: '0.5px solid #e8e8e8' }}>
+                            {VAT_PREVIEW_COLS.map((col) => (
+                              <td key={col.key} style={{ width: col.width, minWidth: col.width, padding: '6px 10px', textAlign: col.align || 'left', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {row[col.key]}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 
