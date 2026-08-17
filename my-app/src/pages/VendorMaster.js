@@ -72,6 +72,7 @@
         value={input} 
         onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }} 
         onFocus={handleFocus}  // ✅ เปลี่ยนจาก () => setOpen(true)
+        onBlur={() => setOpen(false)}  // MARKER_COMBOBOX_BLUR_CLOSE_V5 — ปิด Dropdown เมื่อ Tab/ออกจากช่อง
         onKeyDown={handleKeyDown}
         placeholder={placeholder || ''}
         style={{ height: '28px', padding: '0 8px', fontSize: '12px', outline: 'none', 
@@ -450,7 +451,6 @@ const computeNextSyRunning = async () => {
         { key: 'BU',            label: 'BU', sortable: true, w: 80 },
         { key: 'TYPE',          label: 'TYPE',          w: 100 },
         { key: 'SUB TYPE',      label: 'SUB TYPE',      w: 100 },
-        { key: 'REMARK',        label: 'REMARK',        w: 120 },
       ],
     },
   };
@@ -604,6 +604,12 @@ const computeNextSyRunning = async () => {
           return [...new Set([...pattern, ...fromDb])];
         }
       }
+      // MARKER_CATEGORY_SUBTYPE_FILTER_V6
+      if (field === 'SUB TYPE' && tab === 'category' && formData && formData['TYPE']) {
+        const matchedType = (dataMap[tab] || []).filter(i => String(i['TYPE']||'').trim() === String(formData['TYPE']).trim());
+        const subTypeOpts = [...new Set(matchedType.map(i => i['SUB TYPE'] || '').filter(v => v))];
+        if (subTypeOpts.length) return subTypeOpts;
+      }
       return [...new Set((dataMap[tab] || []).map(i => i[field] || '').filter(v => v))];
     };
 
@@ -748,6 +754,15 @@ const computeNextSyRunning = async () => {
         return;
       }
     }
+    // MARKER_CATEGORY_FORM_REDESIGN_V2
+    if (tab === 'category') {
+      const missing = ['Code','Supplier Name','TAX ID','No.','BU','TYPE','SUB TYPE'].filter(k => !form[k]?.trim());
+      if (missing.length) {
+        setShowNewErrors(true);
+        confirmDialog.alert('กรุณากรอกข้อมูลให้ครบตาม Required Field', { variant: 'danger' });
+        return;
+      }
+    }
     const ts = getTimestamp(); const cuStr = cu();
     let data = { ...form, username: cuStr, last_update: ts };
     if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
@@ -888,6 +903,15 @@ const computeNextSyRunning = async () => {
       if (missingDetail.length) {
         setShowDetailErrors(true); // ── ไฮไลต์ Field สีแดงแทนการ List ชื่อใน Popup ──
         confirmDialog.alert('กรอกข้อมูลให้ครบก่อนบันทึก', { variant: 'danger' });
+        return;
+      }
+    }
+    // MARKER_CATEGORY_FORM_REDESIGN_V2
+    if (tab === 'category') {
+      const missingDetail = ['Code','Supplier Name','TAX ID','No.','BU','TYPE','SUB TYPE'].filter(k => !detailForm[k]?.trim());
+      if (missingDetail.length) {
+        setShowDetailErrors(true);
+        confirmDialog.alert('กรุณากรอกข้อมูลให้ครบตาม Required Field', { variant: 'danger' });
         return;
       }
     }
@@ -1114,7 +1138,8 @@ const computeNextSyRunning = async () => {
       inputDisabled: { padding:'7px 10px', borderRadius:'6px', border:'1px solid #eee', fontSize:'13px', width:'100%', marginBottom:'8px', boxSizing:'border-box', background:'#f5f5f5', color:'#999' },
       inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
       overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
-      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px':'700px', maxHeight:'88vh', display:'flex', flexDirection:'column', overflow:'hidden' }, // MARKER_VENDORMASTER_MODAL_HEIGHT_FIX
+      // MARKER_CATEGORY_MODAL_WIDTH_V3
+      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw': tab==='category'?'92vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px': tab==='category'?'920px':'700px', maxHeight:'88vh', display:'flex', flexDirection:'column', overflow:'hidden' }, // MARKER_VENDORMASTER_MODAL_HEIGHT_FIX
       iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
     };
 
@@ -1602,6 +1627,70 @@ if (tab === 'apcode' || tab === 'iecode') {
                 {editMode
                   ? <textarea rows={3} value={formData['NoticeDescrip']||''} onChange={e=>setFormData({...formData,'NoticeDescrip':e.target.value})} style={{ width:'100%', padding:'6px 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
                   : <div style={{ fontSize:'12px', color: formData['NoticeDescrip'] ? '#1a3a5c' : '#bbb', padding:'4px 2px', whiteSpace:'pre-wrap', lineHeight:'1.5', minHeight:'72px' }}>{formData['NoticeDescrip']||'—'}</div>
+                }
+              </div>
+            </div>
+
+          </div>
+          </div>
+        );
+      }
+      // MARKER_CATEGORY_FORM_REDESIGN_V2
+      if (tab === 'category') {
+        const catRequired = ['Code','Supplier Name','TAX ID','No.','BU','TYPE','SUB TYPE'];
+        const catHead = (text, isLast) => (
+          <div style={{ padding:'3px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa', fontWeight:'600', textAlign:'center', borderRight: isLast ? 'none' : '0.5px solid #e8eaf0', borderBottom:'0.5px solid #e8eaf0' }}>{text}</div>
+        );
+        const catInput = (key, opts = {}) => {
+          const isRequired = catRequired.includes(key);
+          const isCombo = cfg.combo.includes(key);
+          const isEmpty = isRequired && !String(formData[key]||'').trim();
+          const hasError = showErrors && isEmpty;
+          const cellBg = hasError ? '#FCEBEB' : isRequired ? '#FFF9C4' : 'transparent';
+          const cellShadow = hasError ? 'inset 0 0 0 1px #791F1F' : 'none';
+          return ( // MARKER_CATEGORY_ROW_HEIGHT_V4
+            <div style={{ padding:'3px 6px', display:'flex', alignItems:'center', minHeight:'28px', justifyContent: opts.center ? 'center' : 'flex-start', borderRight: opts.isLast ? 'none' : '0.5px solid #e8eaf0', background: cellBg, boxShadow: cellShadow }}>
+              {editMode
+                ? isCombo
+                  ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key, formData)} placeholder='เลือก' center={opts.center} />
+                  : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign: opts.center ? 'center' : 'left' }} />
+                : (key === 'TYPE' || key === 'SUB TYPE')
+                  ? noticeBadge(formData[key])
+                  : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', width:'100%', textAlign: opts.center ? 'center' : 'left' }}>{formData[key] || '—'}</div>
+              }
+            </div>
+          );
+        };
+        return (
+          <div style={{ overflow:'visible', flex:1 }}>
+          <div style={{ padding:'16px 20px' }}>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1.5fr 4.5fr', border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'hidden', marginBottom:'6px' }}>
+              {catHead('Code *')}
+              {catHead('Supplier Name *', true)}
+              {catInput('Code')}
+              {catInput('Supplier Name', { isLast:true })}
+            </div>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1.5fr 1fr 1fr 1.25fr 1.25fr', border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'hidden', marginBottom:'6px' }}>
+              {catHead('TAX ID *')}
+              {catHead('No. *')}
+              {catHead('BU *')}
+              {catHead('TYPE *')}
+              {catHead('SUB TYPE *', true)}
+              {catInput('TAX ID')}
+              {catInput('No.')}
+              {catInput('BU', { center:true })}
+              {catInput('TYPE', { center:true })}
+              {catInput('SUB TYPE', { center:true, isLast:true })}
+            </div>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1.5fr 4.5fr', border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'hidden' }}>
+              <div style={{ padding:'6px 10px', fontSize:'11px', color:'#888', background:'#f8f9fa', display:'flex', alignItems:'center', borderRight:'0.5px solid #e8eaf0' }}>REMARK</div>
+              <div style={{ padding:'6px 6px' }}>
+                {editMode
+                  ? <textarea rows={2} value={formData['REMARK']||''} onChange={e=>setFormData({...formData,'REMARK':e.target.value})} style={{ width:'100%', padding:'2px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', resize:'vertical', fontFamily:'inherit', lineHeight:'1.5', boxSizing:'border-box' }} />
+                  : <div style={{ fontSize:'12px', color: formData['REMARK'] ? '#1a3a5c' : '#bbb', whiteSpace:'pre-wrap', lineHeight:'1.5', minHeight:'40px' }}>{formData['REMARK'] || '—'}</div>
                 }
               </div>
             </div>

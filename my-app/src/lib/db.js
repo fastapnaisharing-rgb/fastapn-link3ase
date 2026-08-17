@@ -1,4 +1,4 @@
-// src/lib/db.js
+﻿// src/lib/db.js
 const API_URL = process.env.REACT_APP_API_URL;
 
 const apiFetch = async (path, options = {}) => {
@@ -12,6 +12,11 @@ const apiFetch = async (path, options = {}) => {
       ...options.headers,
     },
   });
+  // MARKER_DB_GLOBAL_401_HANDLER_V1 -- แจ้ง AuthContext ให้ Force Logout ทันทีเมื่อ Token หลุด/หมดอายุ
+  // -- ไม่ Import useAuth ตรงนี้เพราะ db.js ไม่ใช่ React Component -- ใช้ Window Event แทน
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent('fastapn:unauthorized'));
+  }
   const data = await res.json().catch(() => null);
   if (!res.ok) return { data: null, error: data?.error || 'Request failed', count: null };
   return { data, error: null, count: Array.isArray(data) ? data.length : null };

@@ -1,7 +1,6 @@
 ﻿import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { flushAllSync } from './syncRegistry';
-import { subscribeWs, broadcastWs } from '../wsManager';
-import { db } from '../lib/db';
+import { subscribeWs } from '../wsManager';
 
 const AuthContext = createContext();
 const API_URL = process.env.REACT_APP_API_URL;
@@ -185,20 +184,9 @@ const login = async (email, password) => {
   // ── logout ────────────────────────────────────────────────────────────────────
   const logout = async () => {
     await flushAllSync();
-    // MARKER_AUTHCONTEXT_TEAM_STATUS_REALTIME_LOGOUT_V1
-    // -- เดิม Logout ไม่เคยลบ Session ออกจาก menu_active_sessions เลย -- Row เดิมค้างด้วย
-    // -- last_seen ล่าสุด (ไม่เกิน 30 วิ) ทำให้ User อื่นเห็นว่ายัง Online อยู่จนกว่า
-    // -- จะครบ Cutoff 5 นาทีเอง -- ต้องลบทันที + Broadcast ให้ Home Refresh ทันที
-    const me = userName || currentUser?.email || '';
     try {
       await apiFetch('/auth/logout', { method: 'POST' });
     } catch {}
-    if (me) {
-      try {
-        await db.from('menu_active_sessions').delete().eq('id', me);
-      } catch (e) { console.error('[logout] clear menu_active_sessions', e); }
-      broadcastWs('team_status_updated', { username: me, online: false });
-    }
     clearUserState();
   };
 

@@ -153,6 +153,13 @@
         [{ key, value: String(value), updated_by: userName || currentUser?.email || '', updated_at: new Date().toISOString() }],
         { onConflict: 'key' }
       );
+      // MARKER_USERMANAGEMENT_MAINTENANCE_EVENT_V1
+      // ── แจ้ง App.js แบบ Real-time ตอน Maintenance Mode/Menus เปลี่ยน ──────────
+      // ── ให้ Session อื่นที่ Login ค้างอยู่โดน Force Logout ทันที ไม่ต้องรอ ──
+      // ── Poll Fallback รอบ 5 นาที (ฝั่งรับอยู่ที่ App.js — MARKER_APP_MAINTENANCE_EVENT_V1) ──
+      if (key === 'maintenance_mode' || key === 'maintenance_menus') {
+        broadcastWs('maintenance_mode_changed', { key, value: String(value) });
+      }
     };
 
     const handleFullToggle = () => {
@@ -507,7 +514,7 @@
           )}
           <button onClick={() => setSubTab('apmanual')}
             style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab==='apmanual'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: subTab==='apmanual'?'500':'400', cursor: 'pointer', borderBottom: subTab==='apmanual'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
-            AP Manual Panel
+            Period Panel
           </button>
         </div>
 
@@ -1539,6 +1546,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
   const [editVals, setEditVals]     = React.useState({});
   const [confirmOverrideAll, setConfirmOverrideAll] = React.useState(false);
   const [alphaFilter, setAlphaFilter] = React.useState('All');
+  const [controlType, setControlType] = React.useState('AP');
   const PAGE_SIZE = 20;
 
   const fetchData = React.useCallback(async () => {
@@ -1685,6 +1693,27 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     } catch (err) { setErrorMsg(err.message); }
   };
 
+  // -- VAT Active/Inactive Toggle (vat_watchlist_status) - Toggle both ways --
+  const handleToggleVatActive = async (bu) => {
+    const newStatus = bu.vat_watchlist_status === 'inactive' ? 'active' : 'inactive';
+    try {
+      await apiFetch('/company_list/'+bu.id, { method:'PUT', body:JSON.stringify({
+        vat_watchlist_status: newStatus,
+        vat_watchlist_last_incomplete_update: new Date().toISOString()
+      }) });
+      await fetchData();
+    } catch (err) { setErrorMsg(err.message); }
+  };
+
+  // -- VAT Override/Reopen (borrow prior period GRN numbering for late documents) --
+  const handleOverrideVatBU = async (bu) => {
+    const newMode = bu.vat_period_mode === 'prev' ? 'current' : 'prev';
+    try {
+      await apiFetch('/company_list/'+bu.id, { method:'PUT', body:JSON.stringify({ vat_period_mode: newMode }) });
+      await fetchData();
+    } catch (err) { setErrorMsg(err.message); }
+  };
+
   const getVal = (bu, f) => { const k = bu.id+'_'+f; return editVals[k] !== undefined ? editVals[k] : (bu[f] ?? ''); };
   const setVal = (bu, f, v) => setEditVals(p => ({ ...p, [bu.id+'_'+f]: v }));
 
@@ -1704,8 +1733,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
 
-  const TH1 = (bg, ex) => ({ background:bg, color:'white', padding:'7px 8px', textAlign:'center', fontSize:'11px', fontWeight:'500', position:'sticky', top:0, zIndex:2, ...ex });
-  const TH2 = (bg) => ({ background:bg, color:'rgba(255,255,255,0.85)', padding:'5px 8px', textAlign:'center', fontSize:'10px', fontWeight:'400', position:'sticky', top:'30px', zIndex:1 });
+  const TH1 = (bg, ex) => ({ background:bg, color:'white', padding:'7px 8px', textAlign:'center', fontSize:'11px', fontWeight:'500', position:'sticky', top:0, zIndex:2, height:'30px', boxSizing:'border-box', ...ex });
+  const TH2 = (bg) => ({ background:bg, color:'rgba(255,255,255,0.85)', padding:'5px 8px', textAlign:'center', fontSize:'10px', fontWeight:'400', position:'sticky', top:'30px', zIndex:1, height:'24px', boxSizing:'border-box' });
   const TD  = (ex) => ({ padding:'7px 8px', borderBottom:'0.5px solid #f0f0f0', textAlign:'center', verticalAlign:'middle', ...ex });
   const INP = (w, bg) => ({ width:w||'54px', textAlign:'center', padding:'2px 4px', fontSize:'11px', border:'0.5px solid #ddd', borderRadius:'4px', fontFamily:'monospace', background:bg||'#fffbf5' });
 
@@ -1790,6 +1819,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         </div>
       </div>
 
+      {/* MARKER_CONTROL_ZONE_TAB_V1 -- Zone 3: select Type (AP/VAT/IE/Other) */}
+      <div style={{ display:'flex', gap:'6px', marginBottom:'12px' }}>
+        {[['AP','AP control'],['VAT','VAT control'],['IE','IE control'],['Other','Other control']].map(([key,label]) => (
+          <button key={key} onClick={() => setControlType(key)}
+            style={{
+              padding:'7px 16px', borderRadius:'6px',
+              border: controlType===key ? '0.5px solid #1a3a5c' : '0.5px solid #ddd',
+              background: controlType===key ? '#1a3a5c' : 'white',
+              color: controlType===key ? 'white' : '#555',
+              fontSize:'12px', fontWeight:'500', cursor:'pointer'
+            }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'10px', overflow:'hidden' }}>
         <div style={{ padding:'10px 14px', borderBottom:'0.5px solid #f0f0f0', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' }}>
           <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Search BU or Company..."
@@ -1822,6 +1867,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         </div>
 
         <div style={{ overflowX:'auto', maxHeight:'calc(100vh - 420px)', minHeight:'300px', overflowY:'auto' }}>
+          {controlType === 'AP' && (
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px', minWidth:'900px' }}>
             <thead>
               <tr>
@@ -1833,12 +1879,12 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                 <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', width:'80px' }) }}>Action</th>
               </tr>
               <tr>
-                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.1)' }}>Pattern</th>
-                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.1)' }}>Current</th>
-                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.2)' }}>Override</th>
-                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)' }}>Pattern</th>
-                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)' }}>Current</th>
-                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.2)' }}>Override</th>
+                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Pattern</th>
+                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Current</th>
+                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }}>Override</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Pattern</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Current</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }}>Override</th>
               </tr>
             </thead>
             <tbody>
@@ -1907,6 +1953,158 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
               })}
             </tbody>
           </table>
+          )}
+
+          {controlType === 'VAT' && (
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px', minWidth:'900px' }}>
+            <thead>
+              <tr>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { textAlign:'left', verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)' }) }}>BU</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { textAlign:'left', verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)', minWidth:'150px' }) }}>Company Name</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'55px' }) }}>Digit</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }) }}>Watchlist</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }) }}>Rate</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }) }}>GL Book</th>
+                <th colSpan={3} style={{ ...TH1('#5a1a1a', { borderRight:'0.5px solid rgba(255,255,255,0.2)', borderBottom:'0.5px solid rgba(255,255,255,0.3)' }) }}>GRN</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', width:'80px' }) }}>Status</th>
+              </tr>
+              <tr>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Pattern</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Current</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }}>Prev</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paged.length === 0 && <tr><td colSpan={10} style={{ padding:'30px', textAlign:'center', color:'#aaa' }}>No data</td></tr>}
+              {paged.map((bu, idx) => {
+                const isActive = bu.vat_watchlist_status !== 'inactive';
+                const grnOvr = Number(bu.vat_grn_prev||0);
+                const isOvr  = bu.vat_period_mode === 'prev';
+                const canOvr = isOwner || isAdmin;
+                const isGlBook = bu.vat_gl_booking === 'Yes';
+                const bg = isOvr ? '#fff8f0' : (idx%2===0 ? 'white' : '#fafbfc');
+                return (
+                  <tr key={bu.id} style={{ background:bg }}>
+                    <td style={{ ...TD({ textAlign:'left', fontFamily:'monospace', fontSize:'11px' }) }}>{bu.bu||'---'}</td>
+                    <td style={{ ...TD({ textAlign:'left', maxWidth:'150px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }) }}>{bu['THAI COMPANY NAME']||'---'}</td>
+                    <td style={TD()}>
+                      {isOwner
+                        ? <input value={getVal(bu,'vat_digit')} onChange={e => setVal(bu,'vat_digit',e.target.value)} onBlur={e => handleSaveBU(bu,'vat_digit',e.target.value)} style={INP('40px')} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.vat_digit||'4DG'}</span>}
+                    </td>
+                    <td style={TD()}>
+                      <button onClick={() => handleToggleVatActive(bu)}
+                        style={{
+                          padding:'3px 10px', borderRadius:'5px',
+                          border:'0.5px solid ' + (isActive ? '#27500A' : '#791F1F'),
+                          background: isActive ? '#EAF3DE' : '#FCEBEB',
+                          color: isActive ? '#27500A' : '#791F1F',
+                          fontSize:'11px', cursor:'pointer'
+                        }}>
+                        {isActive ? 'Active' : 'Inactive'}
+                      </button>
+                    </td>
+                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px' }}>{bu['VAT %']||'---'}</td>
+                    <td style={TD()}>
+                      <button onClick={() => handleSaveBU(bu, 'vat_gl_booking', isGlBook ? 'No' : 'Yes')}
+                        style={{
+                          padding:'3px 10px', borderRadius:'5px',
+                          border:'0.5px solid ' + (isGlBook ? '#27500A' : '#aaa'),
+                          background: isGlBook ? '#EAF3DE' : '#f5f5f5',
+                          color: isGlBook ? '#27500A' : '#888',
+                          fontSize:'11px', cursor:'pointer'
+                        }}>
+                        {isGlBook ? 'Yes' : 'No'}
+                      </button>
+                    </td>
+                    <td style={TD()}>
+                      {isOwner
+                        ? <input value={getVal(bu,'vat_grn_pattern')} onChange={e => setVal(bu,'vat_grn_pattern',e.target.value)} onBlur={e => handleSaveBU(bu,'vat_grn_pattern',e.target.value)} style={INP('68px','#fff5f5')} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.vat_grn_pattern||'Y71MM0'}</span>}
+                    </td>
+                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#791F1F' }}>{String(bu.vat_grn||0).padStart(4,'0')}</td>
+                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(grnOvr).padStart(4,'0')}</td>
+                    <td style={TD()}>
+                      {canOvr
+                        ? <button onClick={() => handleOverrideVatBU(bu)}
+                            style={{
+                              padding:'3px 10px', borderRadius:'5px',
+                              border:'0.5px solid ' + (isOvr ? '#1a3a5c' : '#7B3F00'),
+                              background: isOvr ? '#1a3a5c' : 'white',
+                              color: isOvr ? 'white' : '#7B3F00',
+                              fontSize:'11px', cursor:'pointer'
+                            }}>
+                            {isOvr ? 'Reopen' : 'Override'}
+                          </button>
+                        : <span style={{ color:'#ccc' }}>---</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          )}
+
+          {controlType === 'IE' && (
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px', minWidth:'900px' }}>
+            <thead>
+              <tr>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { textAlign:'left', verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)' }) }}>BU</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { textAlign:'left', verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)', minWidth:'150px' }) }}>Company Name</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'55px' }) }}>Digit</th>
+                <th colSpan={3} style={{ ...TH1('#0C447C', { borderRight:'0.5px solid rgba(255,255,255,0.2)', borderBottom:'0.5px solid rgba(255,255,255,0.3)' }) }}>GRT</th>
+                <th colSpan={3} style={{ ...TH1('#5a1a1a', { borderRight:'0.5px solid rgba(255,255,255,0.2)', borderBottom:'0.5px solid rgba(255,255,255,0.3)' }) }}>GRN</th>
+                <th rowSpan={2} style={{ ...TH1('#1a3a5c', { verticalAlign:'middle', width:'80px' }) }}>Action</th>
+              </tr>
+              <tr>
+                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Pattern</th>
+                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Current</th>
+                <th style={{ ...TH2('#0C447C'), borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }}>Override</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Pattern</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.1)', width:'90px' }}>Current</th>
+                <th style={{ ...TH2('#5a1a1a'), borderRight:'0.5px solid rgba(255,255,255,0.2)', width:'90px' }}>Override</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paged.length === 0 && <tr><td colSpan={10} style={{ padding:'30px', textAlign:'center', color:'#aaa' }}>No data</td></tr>}
+              {paged.map((bu, idx) => {
+                const bg = idx%2===0 ? 'white' : '#fafbfc';
+                return (
+                  <tr key={bu.id} style={{ background:bg }}>
+                    <td style={{ ...TD({ textAlign:'left', fontFamily:'monospace', fontSize:'11px' }) }}>{bu.bu||'---'}</td>
+                    <td style={{ ...TD({ textAlign:'left', maxWidth:'150px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }) }}>{bu['THAI COMPANY NAME']||'---'}</td>
+                    <td style={TD()}>
+                      {isOwner
+                        ? <input value={getVal(bu,'ie_digit')} onChange={e => setVal(bu,'ie_digit',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_digit',e.target.value)} style={INP('40px')} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.ie_digit||'4DG'}</span>}
+                    </td>
+                    <td style={{ ...TD(), borderLeft:'0.5px solid #d0e4f7' }}>
+                      {isOwner
+                        ? <input value={getVal(bu,'ie_grt_pattern')} onChange={e => setVal(bu,'ie_grt_pattern',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grt_pattern',e.target.value)} style={INP('68px','#fffbf5')} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.ie_grt_pattern||'Y92MM0'}</span>}
+                    </td>
+                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#0C447C' }}>{String(bu.ie_grt||0).padStart(4,'0')}</td>
+                    <td style={{ ...TD(), borderRight:'0.5px solid #d0e4f7', fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(Number(bu.ie_grt_prev||0)).padStart(4,'0')}</td>
+                    <td style={{ ...TD(), borderLeft:'0.5px solid #f7d0d0' }}>
+                      {isOwner
+                        ? <input value={getVal(bu,'ie_grn_pattern')} onChange={e => setVal(bu,'ie_grn_pattern',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grn_pattern',e.target.value)} style={INP('68px','#fff5f5')} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.ie_grn_pattern||'Y91MM0'}</span>}
+                    </td>
+                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#791F1F' }}>{String(bu.ie_grn||0).padStart(4,'0')}</td>
+                    <td style={{ ...TD(), borderRight:'0.5px solid #f7d0d0', fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(Number(bu.ie_grn_prev||0)).padStart(4,'0')}</td>
+                    <td style={TD()}>
+                      <span style={{ color:'#ccc', fontSize:'11px' }} title="รอเชื่ม Logic ฉัง Backend">Coming soon</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          )}
+
+          {controlType === 'Other' && (
+          <div style={{ padding:'40px', textAlign:'center', color:'#aaa', fontSize:'13px' }}>ยังไม่มีการตั้งค่าในส่วนนี้</div>
+          )}
         </div>
 
         <div style={{ padding:'10px 14px', borderTop:'0.5px solid #f0f0f0', display:'flex', justifyContent:'space-between', background:'white', borderRadius:'0 0 10px 10px', flexShrink:0 }}>

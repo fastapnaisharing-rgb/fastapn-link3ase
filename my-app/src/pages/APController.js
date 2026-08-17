@@ -5279,15 +5279,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     return { ...line, desc: finalDescVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
   };
 
+  // MARKER_CALCLINE_DEBOUNCE_V1
+  // ── Debounce 400ms -- เดิมคำนวณทุกบรรทัดใหม่ทันทีทุก Keystroke ตอนพิมพ์ ──
+  // ── Period/Back Description/Customize Period/% ทำให้พิมพ์แล้วรู้สึกค้าง ──
+  // ── (form.period เอง ยังอัปเดตทันทีปกติ ช้าแค่ตัวคำนวณหนักที่รอ Debounce) ──
   useEffect(() => {
-    setLines(prev => {
-      const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form, allAccountCpcRules));
-      const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
-      return calculated.map(l => ({
-        ...l,
-        taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode,
-      }));
-    });
+    const t = setTimeout(() => {
+      setLines(prev => {
+        const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form, allAccountCpcRules));
+        const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
+        return calculated.map(l => ({
+          ...l,
+          taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode,
+        }));
+      });
+    }, 400);
+    return () => clearTimeout(t);
   }, [
     lines.map(l => l.itemCode).join(','),
     lines.map(l => l.amount).join(','),
@@ -6707,7 +6714,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 // ─────────────────────────────────────────────────────────────────────────────
 // BucketItemPopup — View / Edit ของรายการใน Batch Bucket
 // ─────────────────────────────────────────────────────────────────────────────
-function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave }) {
+function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave, branchItems = [] }) {
+  // MARKER_BUCKETITEM_BRANCH_DOUBLECLICK_POPUP_V1
+  const [showBranchPopupInBucket, setShowBranchPopupInBucket] = useState(false);
   usePopupOpenTracker(show);
   const isView = mode === 'view';
   const emptyLine = () => ({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
@@ -6934,8 +6943,14 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             <div style={{ ...card, width: '49%', marginBottom: 0 }}>
               <div style={cardHead}><span style={cardLabel}>Document Number</span></div>
               <div style={{ ...cardBody, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {/* MARKER_BUCKETITEM_BRANCH_DOUBLECLICK_POPUP_V1 -- Double Click แถว Branch Direct เฉพาะ Edit Mode */}
                 {[['GRT', form.grtNum], ['GRN', form.grn], ['Branch Direct', form.branchDirectLabel], ['Branch IB', form.branchIBLabel && form.branchIBLabel !== '-' ? form.branchIBLabel : '']].map(([label, val]) => (
-                  <div key={label} style={{ display: 'flex', gap: '6px' }}><span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || '—'}</span></div>
+                  <div key={label}
+                    onDoubleClick={(label === 'Branch Direct' && !isView) ? () => setShowBranchPopupInBucket(true) : undefined}
+                    title={(label === 'Branch Direct' && !isView) ? 'ดับเบิลคลิกเพื่อเลือก Branch' : undefined}
+                    style={{ display: 'flex', gap: '6px', cursor: (label === 'Branch Direct' && !isView) ? 'pointer' : 'default' }}>
+                    <span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || '—'}</span>
+                  </div>
                 ))}
               </div>
               <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -6989,6 +7004,34 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
               </div>
             </div>
           </div>
+
+          {/* MARKER_BUCKETITEM_BRANCH_DOUBLECLICK_POPUP_V1 -- Popup เลือก Branch แบบเดียวกับ Invoice Entry */}
+          <BranchSearchPopup
+            show={showBranchPopupInBucket}
+            onClose={() => setShowBranchPopupInBucket(false)}
+            onSelect={(item, meta = {}) => {
+              const ownLabel = formatBranchLabel(item);
+              const branchCpc = String(item['cpc'] ?? '').trim();
+              if (meta.isIB) {
+                const ho = findHOBranch(branchItems, item['bu']);
+                setField('branchNo', item['Branch Code'] || '');
+                setField('branchIBLabel', ownLabel);
+                setField('branchDirectLabel', ho ? formatBranchLabel(ho) : '-');
+                setField('branchCpc', branchCpc);
+                setField('headerCpc', branchCpc);
+              } else {
+                setField('branchNo', item['Branch Code'] || '');
+                setField('branchDirectLabel', ownLabel);
+                setField('branchIBLabel', '-');
+                setField('branchCpc', branchCpc);
+                setField('headerCpc', branchCpc);
+              }
+              setShowBranchPopupInBucket(false);
+            }}
+            branchItems={branchItems}
+            bu={bu}
+            onSaveBranch={async () => { confirmDialog.alert('กรุณาสร้าง Branch ใหม่จากหน้า Invoice Entry (Step 2) แทน', { variant: 'danger' }); return false; }}
+          />
 
           {/* Real vendor card */}
           {(form.realVendorName || form.realVendorTaxid || form.realInvoiceNo) && (
@@ -8041,6 +8084,84 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
   const pvScrollRef = useRef(null);
   const [pvResizing, setPvResizing] = useState(null);
   const pvMousePosRef = useRef({ x: 0, y: 0 });
+  // MARKER_FILEPREVIEW_CHANGEFORM_TOGGLE_V1
+  const [pvViewMode, setPvViewMode] = useState('grid');
+  const [pvRegSelectedIdx, setPvRegSelectedIdx] = useState(null);
+  const [pvCheckedInvoices, setPvCheckedInvoices] = useState(() => new Set());
+  const togglePvChecked = (invoice) => setPvCheckedInvoices(prev => {
+    const next = new Set(prev);
+    next.has(invoice) ? next.delete(invoice) : next.add(invoice);
+    return next;
+  });
+  const [pvRegSearchQuery, setPvRegSearchQuery] = useState('');
+  const [pvRegPage, setPvRegPage] = useState(0);
+  useEffect(() => { setPvRegPage(0); }, [pvRegSearchQuery]);
+  const [pvSupportingImagePreview, setPvSupportingImagePreview] = useState(null);
+  const [pvImageZoom, setPvImageZoom] = useState(1);
+  const pvSupportingImageInputRef = useRef(null);
+  const handlePvSupportingImageSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setPvSupportingImagePreview(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  };
+  const PV_REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due', 'Amount DR', 'Amount CR', 'Witholding Tax Amount', 'Branch', 'Account'];
+  const pvRegisterRows = useMemo(() => {
+    if (!filePreview || !filePreview.rows || !filePreview.rows.length) return null;
+    const headerIdx = filePreview.rows.findIndex(r => r.some(c => String(c || '').trim().toLowerCase() === 'vendor name'));
+    if (headerIdx === -1) return null;
+    const header = filePreview.rows[headerIdx].map(h => String(h || '').trim().toLowerCase());
+    const colIdx = {};
+    PV_REG_COLS.forEach(name => {
+      const idx = header.indexOf(name.toLowerCase());
+      if (idx !== -1) colIdx[name] = idx;
+    });
+    if (colIdx['Vendor Name'] === undefined || colIdx['Invoice number'] === undefined) return null;
+    const get = (row, name) => colIdx[name] !== undefined ? String(row[colIdx[name]] ?? '').trim() : '';
+    return filePreview.rows.slice(headerIdx + 1)
+      .filter(r => r.some(c => String(c || '').trim() !== ''))
+      .map(r => ({
+        vendor: get(r, 'Vendor Name'), invoice: get(r, 'Invoice number'), po: get(r, 'PO Number'),
+        gr: get(r, 'GR Transaction No.'), date: get(r, 'Invoice Date'), priority: get(r, 'Priority'),
+        method: get(r, 'Method'), paygroup: get(r, 'Pay Group'), holds: get(r, 'Holds'),
+        term: get(r, 'Term'), due: get(r, 'Due'),
+        branch: get(r, 'Branch'), account: get(r, 'Account'),
+        dr: get(r, 'Amount DR'), cr: get(r, 'Amount CR'), lineWht: get(r, 'Witholding Tax Amount'),
+      }))
+      // MARKER_PVREG_FILTER_EMPTY_INVOICE_V1
+      .filter(row => row.invoice.trim() !== '');
+  }, [filePreview]);
+  // MARKER_PVREG_MERGE_SORT_V1
+  const pvNum = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+  const pvRegisterRowsMerged = useMemo(() => {
+    if (!pvRegisterRows) return null;
+    const map = new Map();
+    pvRegisterRows.forEach(r => {
+      if (!map.has(r.invoice)) {
+        map.set(r.invoice, { ...r, amount: pvNum(r.amount), vat: pvNum(r.vat), wht: pvNum(r.wht), total: pvNum(r.total) });
+      } else {
+        const ex = map.get(r.invoice);
+        ex.amount += pvNum(r.amount); ex.vat += pvNum(r.vat); ex.wht += pvNum(r.wht); ex.total += pvNum(r.total);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [pvRegisterRows]);
+  // MARKER_PVREG_AUTOSELECT_DEFAULT_V2
+  useEffect(() => {
+    if (pvRegisterRowsMerged && pvRegisterRowsMerged.length > 0 && pvRegSelectedIdx === null) {
+      setPvRegSelectedIdx(0);
+    }
+  }, [pvRegisterRowsMerged]);
+  const pvRegFilteredRows = useMemo(() => {
+    if (!pvRegisterRowsMerged) return [];
+    const q = pvRegSearchQuery.trim().toLowerCase();
+    if (!q) return pvRegisterRowsMerged;
+    return pvRegisterRowsMerged.filter(r => (r.vendor + ' ' + r.invoice).toLowerCase().includes(q));
+  }, [pvRegisterRowsMerged, pvRegSearchQuery]);
+  const PV_REG_PAGE_SIZE = 5;
+  const pvRegTotalPages = Math.max(1, Math.ceil(pvRegFilteredRows.length / PV_REG_PAGE_SIZE));
+  const pvRegVisibleRows = pvRegFilteredRows.slice(pvRegPage * PV_REG_PAGE_SIZE, pvRegPage * PV_REG_PAGE_SIZE + PV_REG_PAGE_SIZE);
 
   const pvColCount = filePreview ? Math.max(1, ...filePreview.rows.map(r => r.length)) : 0;
   const pvPadCount = filePreview ? Math.max(0, 100 - filePreview.rows.length) : 0;
@@ -8573,6 +8694,17 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                       dueDateRef.current?.focus();
                       return;
                     }
+                    // MARKER_BATCHSETUP_DUEDATE_BEFORE_RECEIVEDATE_CONFIRM_V1 -- เตือนถ้า Due Date ย้อนไปก่อน Receive Date
+                    if (receiveDate && dueDate) {
+                      const diffDays = Math.round((new Date(receiveDate) - new Date(dueDate)) / (1000 * 60 * 60 * 24));
+                      if (diffDays > 0) {
+                        const confirmedDueDate = await confirmDialog.confirm(
+                          `Due Date ของคุณย้อนไป ${diffDays} วัน ก่อน Receive Date\n\nต้องการ Start Batch นี้ใช่ไหม?`,
+                          { confirmText: 'Start Batch', cancelText: 'ยกเลิก', title: 'Due Date ย้อนหลัง Receive Date' }
+                        );
+                        if (!confirmedDueDate) return;
+                      }
+                    }
                     if (isBlocked) { setShowBlockedPopup(true); return; }
 
                     // ── ย้าย Popup ยืนยันข้าม Period มาไว้ตรงนี้ (จาก onBlur Receive Date เดิม) ──
@@ -8898,12 +9030,18 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
       {filePreview && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setFilePreview(null)}>
-          <div style={{ background: 'white', borderRadius: '12px', width: '92vw', maxWidth: '1100px', height: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+          <div style={{ background: 'white', borderRadius: '12px', width: '98vw', maxWidth: '1900px', height: '96vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '0.5px solid #e8eaf0', flexShrink: 0 }}>
               <div style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>📄 {filePreview.fileName}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {pvCopied && <span style={{ fontSize: '11px', color: '#1a7a1a' }}>Copied!</span>}
+                {pvRegisterRows && (
+                  <button onClick={() => setPvViewMode(m => m === 'grid' ? '3zone' : 'grid')}
+                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>
+                    🔄 {pvViewMode === 'grid' ? 'Change Form' : 'Grid View'}
+                  </button>
+                )}
                 <button onClick={handleSavePreview} disabled={savingPreview}
                   style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 14px', borderRadius: '6px', border: 'none', background: savingPreview ? '#ccc' : '#1a3a5c', color: 'white', fontSize: '12px', fontWeight: 500, cursor: savingPreview ? 'default' : 'pointer' }}>
                   {savingPreview ? 'กำลังบันทึก...' : '💾 Save'}
@@ -8911,6 +9049,105 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                 <button onClick={() => setFilePreview(null)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#999' }}>✕</button>
               </div>
             </div>
+            {pvViewMode === '3zone' && pvRegisterRows ? (
+            <div style={{ flex: 1, overflow: 'auto', padding: '18px' }}>
+              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', display: 'grid', gridTemplateColumns: '40% 60%' }}>
+                <div style={{ borderRight: '0.5px solid #e8eaf0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', minHeight: '160px', cursor: 'pointer', position: 'relative', overflow: 'auto' }}
+                  onClick={() => pvSupportingImageInputRef.current?.click()}>
+                  <input type="file" accept="image/*" ref={pvSupportingImageInputRef} onChange={handlePvSupportingImageSelect} style={{ display: 'none' }} />
+                  {pvSupportingImagePreview ? (
+                    <>
+                      <img src={pvSupportingImagePreview} alt="รูปประกอบ" style={{ maxWidth: '100%', maxHeight: '140px', borderRadius: '4px', transform: `scale(${pvImageZoom})`, transition: 'transform 0.15s' }} />
+                      <div style={{ position: 'absolute', bottom: '6px', right: '6px', display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
+                        <button onClick={() => setPvImageZoom(z => Math.max(0.5, +(z - 0.2).toFixed(1)))} style={{ width: '22px', height: '22px', borderRadius: '4px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer', lineHeight: '1' }}>−</button>
+                        <button onClick={() => setPvImageZoom(z => Math.min(3, +(z + 0.2).toFixed(1)))} style={{ width: '22px', height: '22px', borderRadius: '4px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer', lineHeight: '1' }}>+</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '22px', color: '#bbb' }}>🖼️</span>
+                      <span style={{ fontSize: '11px', color: '#aaa', textAlign: 'center' }}>วางรูปประกอบ<br/>หรือคลิกเพื่ออัปโหลด</span>
+                    </>
+                  )}
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderBottom: '0.5px solid #e8eaf0' }}>
+                    <span style={{ fontSize: '13px', color: '#aaa' }}>🔍</span>
+                    <input value={pvRegSearchQuery} onChange={e => setPvRegSearchQuery(e.target.value)} placeholder="ค้นหาในไฟล์"
+                      style={{ width: '40%', flex: 'none', height: '28px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none' }} />
+                    <span style={{ fontSize: '11px', color: '#aaa' }}>{pvRegSearchQuery.trim() ? `${pvRegFilteredRows.length} ที่พบ` : ''}</span>
+                    {pvRegisterRowsMerged && (
+                      <span style={{ fontSize: '11px', color: '#1a7a1a', fontWeight: 500 }}>✓ {pvCheckedInvoices.size}/{pvRegisterRowsMerged.length} ตรวจแล้ว</span>
+                    )}
+                    {/* MARKER_PVREG_PAGINATION_TOPBAR_V1 */}
+                    <div style={{ flex: 1 }} />
+                    <button onClick={() => setPvRegPage(p => Math.max(0, p - 1))} disabled={pvRegPage === 0}
+                      style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: pvRegPage === 0 ? 'default' : 'pointer', color: pvRegPage === 0 ? '#ccc' : '#333' }}>‹ ก่อนหน้า</button>
+                    <span style={{ fontSize: '11px', color: '#888' }}>หน้า {pvRegPage + 1}/{pvRegTotalPages}</span>
+                    <button onClick={() => setPvRegPage(p => Math.min(pvRegTotalPages - 1, p + 1))} disabled={pvRegPage >= pvRegTotalPages - 1}
+                      style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: pvRegPage >= pvRegTotalPages - 1 ? 'default' : 'pointer', color: pvRegPage >= pvRegTotalPages - 1 ? '#ccc' : '#333' }}>ถัดไป ›</button>
+                  </div>
+                  <div style={{ maxHeight: '260px', overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
+                    <colgroup>
+                      <col style={{ width: '5%' }} /><col style={{ width: '19%' }} /><col style={{ width: '13%' }} /><col style={{ width: '15%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} /><col style={{ width: '23%' }} />
+                    </colgroup>
+                    <thead>
+                      <tr style={{ background: '#f8f9fa' }}>
+                        <th style={{ padding: '7px 4px', textAlign: 'center' }}></th>
+                        <th style={{ padding: '7px 10px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Invoice Num</th>
+                        <th style={{ padding: '7px 10px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Branch</th>
+                        <th style={{ padding: '7px 10px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Amount</th>
+                        <th style={{ padding: '7px 10px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Vat</th>
+                        <th style={{ padding: '7px 10px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Wht</th>
+                        <th style={{ padding: '7px 10px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pvRegVisibleRows.map((r) => {
+                        const origIdx = pvRegisterRowsMerged.indexOf(r);
+                        const isChecked = pvCheckedInvoices.has(r.invoice);
+                        return (
+                          <tr key={origIdx} onClick={() => setPvRegSelectedIdx(origIdx)}
+                            onMouseEnter={e => { if (pvRegSelectedIdx !== origIdx) e.currentTarget.style.background = '#F2F6FC'; }}
+                            onMouseLeave={e => { if (pvRegSelectedIdx !== origIdx) e.currentTarget.style.background = isChecked ? '#EAF7EA' : 'white'; }}
+                            style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: pvRegSelectedIdx === origIdx ? '#E6F1FB' : (isChecked ? '#EAF7EA' : 'white') }}>
+                            <td style={{ padding: '7px 4px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                              <input type="checkbox" checked={isChecked} onChange={() => togglePvChecked(r.invoice)} style={{ cursor: 'pointer' }} />
+                            </td>
+                            <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.invoice}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right' }}>{r.amount ? r.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right' }}>{r.vat ? r.vat.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right' }}>{r.wht ? r.wht.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right' }}>{r.total ? r.total.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  </div>
+                  {pvRegSelectedIdx !== null && pvRegisterRowsMerged[pvRegSelectedIdx] && (() => {
+                    const d = pvRegisterRowsMerged[pvRegSelectedIdx];
+                    return (
+                      <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '12px', background: '#fafbfc' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                          <div style={{ fontSize: '12px', fontWeight: '600', color: '#1a3a5c', flex: 1 }}>{d.vendor} · {d.invoice}</div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px 16px', fontSize: '11px' }}>
+                          {[['PO Number', d.po], ['GR Transaction No.', d.gr], ['Invoice Date', d.date], ['Priority', d.priority], ['Method', d.method], ['Pay Group', d.paygroup], ['Holds', d.holds], ['Term', d.term], ['Due', d.due]].map(([k, v]) => (
+                            <div key={k}>
+                              <div style={{ color: '#aaa' }}>{k}</div>
+                              <div style={{ color: '#333' }}>{v || '-'}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+            ) : (
             <div ref={pvScrollRef} style={{ flex: 1, overflow: 'auto', padding: '0 18px', userSelect: 'none', position: 'relative' }}
               onContextMenu={(e) => { e.preventDefault(); setPvCtxMenu({ show: true, x: e.clientX, y: e.clientY }); }}
               onMouseMove={(e) => { pvMousePosRef.current = { x: e.clientX, y: e.clientY }; }}>
@@ -9023,6 +9260,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         </div>
       )}
@@ -9181,8 +9419,17 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
   const fileInputRef = useRef(null);
   // MARKER_REGINBOX_3ZONE_PREVIEW_STATE_V1
   const [regSelectedIdx, setRegSelectedIdx] = useState(null);
+  const [regCheckedInvoices, setRegCheckedInvoices] = useState(() => new Set());
+  const toggleRegChecked = (invoice) => setRegCheckedInvoices(prev => {
+    const next = new Set(prev);
+    next.has(invoice) ? next.delete(invoice) : next.add(invoice);
+    return next;
+  });
   const [regSearchQuery, setRegSearchQuery] = useState('');
+  const [regPage, setRegPage] = useState(0);
+  useEffect(() => { setRegPage(0); }, [regSearchQuery]);
   const [supportingImagePreview, setSupportingImagePreview] = useState(null);
+  const [regImageZoom, setRegImageZoom] = useState(1);
   const supportingImageInputRef = useRef(null);
   const handleSupportingImageSelect = (e) => {
     const file = e.target.files?.[0];
@@ -9193,7 +9440,7 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
   };
 
   // MARKER_REGINBOX_3ZONE_PARSE_V1
-  const REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due'];
+  const REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due', 'Amount DR', 'Amount CR', 'Witholding Tax Amount', 'Branch', 'Account'];
   const registerRows = useMemo(() => {
     if (mode !== 'paste' || !pastedRows || !pastedRows.length) return null;
     const headerIdx = pastedRows.findIndex(r => r.some(c => String(c || '').trim().toLowerCase() === 'vendor name'));
@@ -9213,15 +9460,42 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         gr: get(r, 'GR Transaction No.'), date: get(r, 'Invoice Date'), priority: get(r, 'Priority'),
         method: get(r, 'Method'), paygroup: get(r, 'Pay Group'), holds: get(r, 'Holds'),
         term: get(r, 'Term'), due: get(r, 'Due'),
-      }));
+        branch: get(r, 'Branch'), account: get(r, 'Account'),
+        dr: get(r, 'Amount DR'), cr: get(r, 'Amount CR'), lineWht: get(r, 'Witholding Tax Amount'),
+      }))
+      // MARKER_REG_FILTER_EMPTY_INVOICE_V1
+      .filter(row => row.invoice.trim() !== '');
   }, [mode, pastedRows]);
+  // MARKER_REG_MERGE_SORT_V1
+  const regNum = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+  const registerRowsMerged = useMemo(() => {
+    if (!registerRows) return null;
+    const map = new Map();
+    registerRows.forEach(r => {
+      if (!map.has(r.invoice)) {
+        map.set(r.invoice, { ...r, amount: regNum(r.amount), vat: regNum(r.vat), wht: regNum(r.wht), total: regNum(r.total) });
+      } else {
+        const ex = map.get(r.invoice);
+        ex.amount += regNum(r.amount); ex.vat += regNum(r.vat); ex.wht += regNum(r.wht); ex.total += regNum(r.total);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [registerRows]);
+  // MARKER_REG_AUTOSELECT_DEFAULT_V2
+  useEffect(() => {
+    if (registerRowsMerged && registerRowsMerged.length > 0 && regSelectedIdx === null) {
+      setRegSelectedIdx(0);
+    }
+  }, [registerRowsMerged]);
   const regFilteredRows = useMemo(() => {
-    if (!registerRows) return [];
+    if (!registerRowsMerged) return [];
     const q = regSearchQuery.trim().toLowerCase();
-    if (!q) return registerRows;
-    return registerRows.filter(r => (r.vendor + ' ' + r.invoice).toLowerCase().includes(q));
-  }, [registerRows, regSearchQuery]);
-  const regVisibleRows = regSearchQuery.trim() ? regFilteredRows : regFilteredRows.slice(0, 5);
+    if (!q) return registerRowsMerged;
+    return registerRowsMerged.filter(r => (r.vendor + ' ' + r.invoice).toLowerCase().includes(q));
+  }, [registerRowsMerged, regSearchQuery]);
+  const REG_PAGE_SIZE = 5;
+  const regTotalPages = Math.max(1, Math.ceil(regFilteredRows.length / REG_PAGE_SIZE));
+  const regVisibleRows = regFilteredRows.slice(regPage * REG_PAGE_SIZE, regPage * REG_PAGE_SIZE + REG_PAGE_SIZE);
 
   // ── มีไฟล์ Invoice Register เดิมติดกับ Batch นี้อยู่แล้วหรือไม่ (เช่น Resend หลังโดน Reject) ──
   const hasExistingFile = !!(batch?.invoice_register_file_id);
@@ -9481,12 +9755,18 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
                     placeholder="คลิกแล้ววาง (Ctrl+V) ข้อมูลจาก Excel หรือ Google Sheet ที่นี่ — ระบบจะแยกคอลัมน์ตาม Tab ให้อัตโนมัติเหมือน Paste เข้า Excel จริง"
                     style={{ width: '100%', height: registerRows ? '100px' : '360px', padding: '8px', fontSize: '11px', fontFamily: 'monospace', border: '1px dashed #ccc', borderRadius: '7px', background: '#fafbfc', color: '#1a3a5c', outline: 'none', resize: 'none', boxSizing: 'border-box', overflowX: 'auto', whiteSpace: 'pre' }} />
                   {registerRows && (
-                    <div style={{ marginTop: '8px', border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', display: 'grid', gridTemplateColumns: '140px 1fr' }}>
-                      <div style={{ borderRight: '0.5px solid #e8eaf0', padding: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px', minHeight: '140px', cursor: 'pointer' }}
+                    <div style={{ marginTop: '8px', border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', display: 'grid', gridTemplateColumns: '40% 60%' }}>
+                      <div style={{ borderRight: '0.5px solid #e8eaf0', padding: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px', minHeight: '140px', cursor: 'pointer', position: 'relative', overflow: 'auto' }}
                         onClick={() => supportingImageInputRef.current?.click()}>
                         <input type="file" accept="image/*" ref={supportingImageInputRef} onChange={handleSupportingImageSelect} style={{ display: 'none' }} />
                         {supportingImagePreview ? (
-                          <img src={supportingImagePreview} alt="รูปประกอบ" style={{ maxWidth: '100%', maxHeight: '120px', borderRadius: '4px' }} />
+                          <>
+                            <img src={supportingImagePreview} alt="รูปประกอบ" style={{ maxWidth: '100%', maxHeight: '120px', borderRadius: '4px', transform: `scale(${regImageZoom})`, transition: 'transform 0.15s' }} />
+                            <div style={{ position: 'absolute', bottom: '5px', right: '5px', display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
+                              <button onClick={() => setRegImageZoom(z => Math.max(0.5, +(z - 0.2).toFixed(1)))} style={{ width: '20px', height: '20px', borderRadius: '4px', border: '0.5px solid #ddd', background: 'white', fontSize: '11px', cursor: 'pointer', lineHeight: '1' }}>−</button>
+                              <button onClick={() => setRegImageZoom(z => Math.min(3, +(z + 0.2).toFixed(1)))} style={{ width: '20px', height: '20px', borderRadius: '4px', border: '0.5px solid #ddd', background: 'white', fontSize: '11px', cursor: 'pointer', lineHeight: '1' }}>+</button>
+                            </div>
+                          </>
                         ) : (
                           <>
                             <span style={{ fontSize: '20px', color: '#bbb' }}>🖼️</span>
@@ -9498,39 +9778,63 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', borderBottom: '0.5px solid #e8eaf0' }}>
                           <span style={{ fontSize: '11px', color: '#aaa' }}>🔍</span>
                           <input value={regSearchQuery} onChange={e => setRegSearchQuery(e.target.value)} placeholder="ค้นหาในไฟล์"
-                            style={{ flex: 1, height: '22px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none' }} />
+                            style={{ width: '40%', flex: 'none', height: '22px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none' }} />
                           <span style={{ fontSize: '10px', color: '#aaa' }}>{regSearchQuery.trim() ? `${regFilteredRows.length} ที่พบ` : ''}</span>
+                          {registerRowsMerged && (
+                            <span style={{ fontSize: '10px', color: '#1a7a1a', fontWeight: 500 }}>✓ {regCheckedInvoices.size}/{registerRowsMerged.length} ตรวจแล้ว</span>
+                          )}
+                          <div style={{ flex: 1 }} />
+                          <button onClick={() => setRegPage(p => Math.max(0, p - 1))} disabled={regPage === 0}
+                            style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: regPage === 0 ? 'default' : 'pointer', color: regPage === 0 ? '#ccc' : '#333' }}>‹ ก่อนหน้า</button>
+                          <span style={{ fontSize: '10px', color: '#888' }}>หน้า {regPage + 1}/{regTotalPages}</span>
+                          <button onClick={() => setRegPage(p => Math.min(regTotalPages - 1, p + 1))} disabled={regPage >= regTotalPages - 1}
+                            style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: regPage >= regTotalPages - 1 ? 'default' : 'pointer', color: regPage >= regTotalPages - 1 ? '#ccc' : '#333' }}>ถัดไป ›</button>
                         </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                        <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
+                          <colgroup>
+                            <col style={{ width: '5%' }} /><col style={{ width: '19%' }} /><col style={{ width: '13%' }} /><col style={{ width: '15%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} /><col style={{ width: '23%' }} />
+                          </colgroup>
                           <thead>
                             <tr style={{ background: '#f8f9fa' }}>
-                              <th style={{ padding: '5px 8px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Vendor Name</th>
-                              <th style={{ padding: '5px 8px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Invoice number</th>
+                              <th style={{ padding: '5px 3px', textAlign: 'center' }}></th>
+                              <th style={{ padding: '5px 8px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Invoice Num</th>
+                              <th style={{ padding: '5px 8px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Branch</th>
+                              <th style={{ padding: '5px 8px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Amount</th>
+                              <th style={{ padding: '5px 8px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Vat</th>
+                              <th style={{ padding: '5px 8px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Wht</th>
+                              <th style={{ padding: '5px 8px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Total</th>
                             </tr>
                           </thead>
                           <tbody>
                             {regVisibleRows.map((r, i) => {
-                              const origIdx = registerRows.indexOf(r);
+                              const origIdx = registerRowsMerged.indexOf(r);
+                              const isChecked = regCheckedInvoices.has(r.invoice);
                               return (
                                 <tr key={origIdx} onClick={() => setRegSelectedIdx(origIdx)}
-                                  style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: regSelectedIdx === origIdx ? '#E6F1FB' : 'white' }}>
-                                  <td style={{ padding: '5px 8px' }}>{r.vendor}</td>
-                                  <td style={{ padding: '5px 8px' }}>{r.invoice}</td>
+                                  onMouseEnter={e => { if (regSelectedIdx !== origIdx) e.currentTarget.style.background = '#F2F6FC'; }}
+                                  onMouseLeave={e => { if (regSelectedIdx !== origIdx) e.currentTarget.style.background = isChecked ? '#EAF7EA' : 'white'; }}
+                                  style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: regSelectedIdx === origIdx ? '#E6F1FB' : (isChecked ? '#EAF7EA' : 'white') }}>
+                                  <td style={{ padding: '5px 3px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                                    <input type="checkbox" checked={isChecked} onChange={() => toggleRegChecked(r.invoice)} style={{ cursor: 'pointer' }} />
+                                  </td>
+                                  <td style={{ padding: '5px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.invoice}</td>
+                                  <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.amount ? r.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
+                                  <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.vat ? r.vat.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
+                                  <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.wht ? r.wht.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
+                                  <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.total ? r.total.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
                                 </tr>
                               );
                             })}
                           </tbody>
                         </table>
-                        {!regSearchQuery.trim() && registerRows.length > 5 && (
-                          <div style={{ padding: '5px 8px', fontSize: '10px', color: '#aaa' }}>แสดง 5 จากทั้งหมด {registerRows.length} รายการ</div>
-                        )}
-                        {regSelectedIdx !== null && registerRows[regSelectedIdx] && (() => {
-                          const d = registerRows[regSelectedIdx];
+                        </div>
+                        {regSelectedIdx !== null && registerRowsMerged[regSelectedIdx] && (() => {
+                          const d = registerRowsMerged[regSelectedIdx];
                           return (
                             <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '10px', background: '#fafbfc' }}>
                               <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
                                 <div style={{ fontSize: '11px', fontWeight: '600', color: '#1a3a5c', flex: 1 }}>{d.vendor} · {d.invoice}</div>
-                                <span onClick={() => setRegSelectedIdx(null)} style={{ cursor: 'pointer', color: '#999', fontSize: '13px' }}>✕</span>
                               </div>
                               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px 12px', fontSize: '10px' }}>
                                 {[['PO Number', d.po], ['GR Transaction No.', d.gr], ['Invoice Date', d.date], ['Priority', d.priority], ['Method', d.method], ['Pay Group', d.paygroup], ['Holds', d.holds], ['Term', d.term], ['Due', d.due]].map(([k, v]) => (
@@ -9921,6 +10225,70 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   const [supplierViewCode, setSupplierViewCode] = useState('');
   const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', rowKey: null });
   const [selectedRows, setSelectedRows] = useState(new Set()); // ✅ Batch Bucket: เลือกแถวสำหรับ bulk delete
+  // MARKER_VENDORFALLBACK_TDZ_FIX_V1 -- ย้ายขึ้นมาก่อนใช้งานจริง (เดิมอยู่ท้ายไฟล์กว่าจุดเรียกใช้ -> TDZ ReferenceError)
+  // ── หา Supplier จาก Code — ใช้ร่วมกันทั้ง lookupVendor (ตอนพิมพ์) และ Fallback ในตาราง Batch Bucket ──
+  const findSupplierByCode = (code) => {
+    if (!code?.trim()) return null;
+    const bu = batchConfig?.bu || '';
+    const book = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase();
+    // ── Group Book เฉพาะ Book "CGT"/"CGR" เท่านั้น — Book อื่น (เช่น CRG) ให้ใช้ BU ตามปกติ ──
+    const isGroupBook = book === 'CGT' || book === 'CGR';
+    const search = code.trim().toLowerCase();
+    let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
+    if (found) {
+      const codePrefix = String(found['Code'] ?? '').split('-')[0].toUpperCase();
+      const validPrefix = isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
+      if (!validPrefix) return null;
+      return found;
+    }
+    if (isGroupBook) {
+      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${book.toLowerCase()}-${search}`);
+    } else if (bu) {
+      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${bu.toLowerCase()}-${search}`);
+    }
+    if (found) return found;
+
+    // MARKER_SUPPLIER_SECONDARY_LOOKUP_V1
+    // ── Lookup Key ที่ 2: ลองหาใน Supplier Number / No. ด้วย (คนละ Field จาก Code) ──
+    // ── กรณีพิมพ์ค่าอื่นที่ไม่ใช่ Code ตรงๆ (เช่น N-157999) — Filter BU เหมือนเดิม ──
+    const isValidPrefixSecondary = (c) => {
+      const codePrefix = String(c ?? '').split('-')[0].toUpperCase();
+      return isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
+    };
+    found = supplierItems.find(s =>
+      isValidPrefixSecondary(s['Code']) &&
+      (String(s['Supplier Number'] ?? '').trim().toLowerCase() === search ||
+       String(s['No.'] ?? '').trim().toLowerCase() === search)
+    );
+    return found || null;
+  };
+  // ── Invoice เก่าที่ยังไม่มี vendor_tax_id/vendor_no (Field เพิ่งเพิ่มใหม่) ──
+  // ── ดึงมาจาก Supplier Code สด ๆ ตอนแสดงผลแทน ไม่ต้อง Backfill Database ──
+  const resolveVendorFallback = (inv) => {
+    if (inv.vendor_tax_id || inv.vendor_no) return { taxId: inv.vendor_tax_id, no: inv.vendor_no };
+    const found = findSupplierByCode(inv.supplier_code || inv.form_data?.supplierCode);
+    return { taxId: found?.['Tax ID'] || '', no: found?.['No.'] || '' };
+  };
+  // MARKER_BUCKET_SEARCH_ENGINE_V1 -- Search ได้ทุก Column ใน Batch Bucket
+  const [bucketSearchQuery, setBucketSearchQuery] = useState('');
+  const filteredInvoices = (() => {
+    const q = bucketSearchQuery.trim().toLowerCase();
+    if (!q) return invoices;
+    return invoices.filter(inv => {
+      const branchDirectLabel = inv.branch_label || inv.form_data?.branchDirectLabel || '';
+      const branchIBLabel = inv.form_data?.branchIBLabel || '';
+      const isIB = branchIBLabel && branchIBLabel !== '-';
+      const branchIBCode = isIB ? String(branchIBLabel).split('-')[0].trim() : '';
+      const branchDirectCode = branchDirectLabel ? String(branchDirectLabel).split('-')[0].trim() : '';
+      const dueD = inv.form_data?.dueDate || batchConfig?.dueDate || '';
+      const vf = resolveVendorFallback(inv);
+      const searchable = [
+        inv.invoice_no, inv.vendor_name, vf.taxId, branchIBCode, branchDirectCode,
+        inv.amount, inv.vat, inv.wht, inv.net, dueD, inv.status,
+      ].map(v => String(v ?? '')).join(' ').toLowerCase();
+      return searchable.includes(q);
+    });
+  })();
   // ── Batch Bucket: ปุ่มสลับ View Invoice/Summary — Default เป็น Invoice เสมอทุกครั้งที่เปิดหน้า ──
   const [bucketViewMode, setBucketViewMode] = useState('invoice');
   // ── Batch Bucket Summary: Collapse/Expand (Default ยุบไว้ก่อน) ──
@@ -10049,43 +10417,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     return null;
   };
 
-  // ── หา Supplier จาก Code — ใช้ร่วมกันทั้ง lookupVendor (ตอนพิมพ์) และ Fallback ในตาราง Batch Bucket ──
-  const findSupplierByCode = (code) => {
-    if (!code?.trim()) return null;
-    const bu = batchConfig?.bu || '';
-    const book = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase();
-    // ── Group Book เฉพาะ Book "CGT"/"CGR" เท่านั้น — Book อื่น (เช่น CRG) ให้ใช้ BU ตามปกติ ──
-    const isGroupBook = book === 'CGT' || book === 'CGR';
-    const search = code.trim().toLowerCase();
-    let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
-    if (found) {
-      const codePrefix = String(found['Code'] ?? '').split('-')[0].toUpperCase();
-      const validPrefix = isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
-      if (!validPrefix) return null;
-      return found;
-    }
-    if (isGroupBook) {
-      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${book.toLowerCase()}-${search}`);
-    } else if (bu) {
-      found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === `${bu.toLowerCase()}-${search}`);
-    }
-    if (found) return found;
-
-    // MARKER_SUPPLIER_SECONDARY_LOOKUP_V1
-    // ── Lookup Key ที่ 2: ลองหาใน Supplier Number / No. ด้วย (คนละ Field จาก Code) ──
-    // ── กรณีพิมพ์ค่าอื่นที่ไม่ใช่ Code ตรงๆ (เช่น N-157999) — Filter BU เหมือนเดิม ──
-    const isValidPrefixSecondary = (c) => {
-      const codePrefix = String(c ?? '').split('-')[0].toUpperCase();
-      return isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
-    };
-    found = supplierItems.find(s =>
-      isValidPrefixSecondary(s['Code']) &&
-      (String(s['Supplier Number'] ?? '').trim().toLowerCase() === search ||
-       String(s['No.'] ?? '').trim().toLowerCase() === search)
-    );
-    return found || null;
-  };
-
   const lookupVendor = (code) => {
     const found = findSupplierByCode(code);
     setVendorInfo(found);
@@ -10103,14 +10434,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     if (fetchCollection) await fetchCollection('SupplierList', true);
     lookupVendor(form.supplierCode);
   });
-
-  // ── Invoice เก่าที่ยังไม่มี vendor_tax_id/vendor_no (Field เพิ่งเพิ่มใหม่) ──
-  // ── ดึงมาจาก Supplier Code สด ๆ ตอนแสดงผลแทน ไม่ต้อง Backfill Database ──
-  const resolveVendorFallback = (inv) => {
-    if (inv.vendor_tax_id || inv.vendor_no) return { taxId: inv.vendor_tax_id, no: inv.vendor_no };
-    const found = findSupplierByCode(inv.supplier_code || inv.form_data?.supplierCode);
-    return { taxId: found?.['Tax ID'] || '', no: found?.['No.'] || '' };
-  };
 
   // ── Quick Vendor: Vendor ที่ไม่ซ้ำกัน (กรองด้วย Tax ID + Branch No) จาก Invoice ──
   // ── ที่มีอยู่ใน Batch Bucket ตอนนี้ — ไม่ต้องมี Storage ใหม่ ใช้ข้อมูลเดิมที่มีอยู่แล้ว ──
@@ -11280,6 +11603,7 @@ const handleSelectBranch = (item, meta = {}) => {
         userName={userName || currentUser?.email || ''}
         currentUser={currentUser}
         onSave={handleSaveBucketItem}
+        branchItems={branchItems}
       />
       <SendToModal
         show={showSendToModal}
@@ -11311,8 +11635,12 @@ const handleSelectBranch = (item, meta = {}) => {
                   <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
                 </svg>
               </button>
-              {/* MARKER_BUCKET_MANUAL_REFRESH_BUTTON_REPOSITION_V4 -- เอา Icon ตะกร้าออก ให้ปุ่ม Refresh ทำหน้าที่แทน */}
-              Batch Bucket
+              {/* MARKER_BUCKET_SEARCH_ENGINE_V1 -- เปลี่ยน Text Batch Bucket เป็นช่อง Search */}
+              {/* MARKER_BUCKET_SEARCH_UI_COMPACT_V1 -- ลดความกว้าง + Placeholder แค่ Search + เอา Icon ออก */}
+              <input value={bucketSearchQuery} onChange={e => setBucketSearchQuery(e.target.value)}
+                onClick={e => e.stopPropagation()}
+                placeholder="Search"
+                style={{ width: '140px', height: '26px', padding: '0 10px', border: '1px solid #dde3ea', borderRadius: '6px', fontSize: '12px', color: '#1a3a5c', outline: 'none', background: 'white' }} />
               <span style={{ background: '#1a3a5c', color: 'white', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{invoices.length}</span>
             </div>
             <div style={{ display: 'flex', background: '#f0f2f5', borderRadius: '8px', padding: '2px', marginLeft: '10px' }}>
@@ -11369,7 +11697,8 @@ const handleSelectBranch = (item, meta = {}) => {
                 <input type="checkbox" checked={invoices.length > 0 && selectedRows.size === invoices.length}
                   onChange={() => setSelectedRows(prev => prev.size === invoices.length ? new Set() : new Set(invoices.map((inv, i) => inv.id || inv._localId || i)))} />
               </th>
-              {['Invoice No.','Vendor','Tax ID','Branch No','Amount','Vat','Wht','Total','Due Date','Status','Action'].map(h => (
+              {/* MARKER_BUCKET_BRANCH_IB_COLUMN_V2 -- เปลี่ยน Tax ID เป็น Branch IB */}
+              {['Invoice No.','Vendor','Branch IB','Branch No','Amount','Vat','Wht','Total','Due Date','Status','Action'].map(h => (
                 <th key={h} style={{ padding: '7px 9px', textAlign: 'center', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: '#f8f9fa' }}>{h}</th>
               ))}
             </tr>
@@ -11377,7 +11706,10 @@ const handleSelectBranch = (item, meta = {}) => {
           <tbody>
             {invoices.length === 0 ? (
               <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ยังไม่มี Invoice ในตะกร้า</td></tr>
-            ) : [...invoices].sort((a, b) => {
+            ) : filteredInvoices.length === 0 ? (
+              // MARKER_BUCKET_SEARCH_ENGINE_V1
+              <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>ไม่พบรายการที่ตรงกับ "{bucketSearchQuery}"</td></tr>
+            ) : [...filteredInvoices].sort((a, b) => {
               const getCreatedTime = (inv) => {
                 if (inv.created_at) return new Date(inv.created_at).getTime();
                 const m = String(inv._localId || '').match(/^local-(\d+)-/);
@@ -11405,11 +11737,16 @@ const handleSelectBranch = (item, meta = {}) => {
                 <td style={{ padding: '8px 9px', fontFamily: 'monospace', fontSize: '11px', color: '#1a3a5c', fontWeight: '600' }}>{inv.invoice_no || '-'}</td>
                 <td style={{ padding: '8px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.vendor_name || '-'}</td>
                 {(() => {
-                  const vf = resolveVendorFallback(inv);
+                  // MARKER_BUCKET_BRANCH_IB_COLUMN_V2 -- แยก Branch IB Code เป็น Column ของตัวเอง (แทน Tax ID เดิม)
+                  const branchDirectLabel = inv.branch_label || inv.form_data?.branchDirectLabel || '';
+                  const branchIBLabel = inv.form_data?.branchIBLabel || '';
+                  const isIB = branchIBLabel && branchIBLabel !== '-';
+                  const branchIBCode = isIB ? String(branchIBLabel).split('-')[0].trim() : '-';
+                  const branchDirectDisplay = branchDirectLabel ? String(branchDirectLabel).split('-')[0].trim() : '-';
                   return (
                     <>
-                      <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', fontFamily: 'monospace', textAlign: 'center' }}>{vf.taxId || '-'}</td>
-                      <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{vf.no || '-'}</td>
+                      <td style={{ padding: '8px 9px', fontSize: '11px', fontFamily: 'monospace', textAlign: 'center', ...(isIB ? { background: '#FFF3CD', color: '#856404', fontWeight: '600' } : { color: '#555' }) }}>{branchIBCode}</td>
+                      <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{branchDirectDisplay}</td>
                     </>
                   );
                 })()}
@@ -11911,7 +12248,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
           line.desc || '',
           lAmt,
           line.taxCode || '',
-          '',
+          line.whtCode || '', // MARKER_EXPORT_WHTCODE_COLUMN_FIX_V1 -- เดิม Hardcode '' ไม่เคยดึง whtCode มาใส่เลย
           acct[0] || '',
           acct[1] || '',
           acct[2] || '',

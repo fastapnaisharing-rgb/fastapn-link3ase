@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/db';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
@@ -2859,7 +2859,14 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
   const searchResults = q ? drafts.filter(d =>
     (d.serial_code||'').toLowerCase().includes(q) ||
     (d.bu_code||'').toLowerCase().includes(q) ||
-    (d.doc_type||'').toLowerCase().includes(q)
+    (d.bu_code_name||'').toLowerCase().includes(q) ||
+    (d.bu_name||'').toLowerCase().includes(q) ||
+    (d.doc_type||'').toLowerCase().includes(q) ||
+    (d.uploaded_by||'').toLowerCase().includes(q) ||
+    (d.file_date||'').toLowerCase().includes(q) ||
+    (Array.isArray(d.rows) && d.rows.some(row =>
+      Object.values(row).some(v => String(v||'').toLowerCase().includes(q))
+    ))
   ) : [];
 
   return (
@@ -2902,7 +2909,7 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
       )}
       <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'calc(100vw - 20px)',maxWidth:'1800px',height:'92vh',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,0.18)'}}>
         <div style={{padding:'14px 18px',borderBottom:'0.5px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="ค้นหา Serial code, BU..."
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="ค้นหา Serial code, BU, Invoice No., Vendor..."
             style={{fontSize:'11px',padding:'5px 10px',borderRadius:'6px',border:'0.5px solid #ddd',background:'#f7f8fa',outline:'none',width:'200px'}}/>
           <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
             <span style={{display:'flex',alignItems:'center',gap:'8px'}}>
@@ -3954,10 +3961,9 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     } catch (err) { alert('ดาวน์โหลดไม่สำเร็จ: ' + err.message); }
   };
 
-  const { currentUser, userName } = useAuth();
+  const { currentUser, userName, userPermissions } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const [userRoleData, setUserRoleData] = useState(null);
-  const [overrides, setOverrides] = useState([]);
   const [fileCounts, setFileCounts] = useState({});
   const [folderBatches, setFolderBatches] = useState({});
   const [folderDrafts, setFolderDrafts] = useState({});
@@ -4082,11 +4088,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       const { data: roleData } = await db.from('user_roles').select('*').eq('email', currentUser.email).single();
       setUserRoleData(roleData);
       if (roleData?.id) {
-        const [{ data: ovData }, { data: reqData }] = await Promise.all([
-          db.from('doc_access_override').select('*').eq('user_id', roleData.id),
-          db.from('access_requests').select('*').eq('requester_id', roleData.id),
-        ]);
-        setOverrides(ovData || []);
+        const { data: reqData } = await db.from('access_requests').select('*').eq('requester_id', roleData.id);
         setRequests(reqData || []);
       }
       const [{ data: countData }, { data: batchData }] = await Promise.all([
@@ -4119,6 +4121,21 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   }, [currentUser]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // MARKER_COMINGSOON_ESC_BACK_V1
+  // Esc = Back สำหรับหน้า "Module นี้ยังไม่เปิดใช้งาน" (VAT/I-Expense/GL/I-Pro)
+  // คนละ Component กับ FolderDetail (ที่มีแต่ AP Manual ใช้) เลยต้องแยกจับที่นี่
+  useEffect(() => {
+    const fn = e => {
+      if (e.key !== 'Escape') return;
+      if (activeFolder && activeFolder.key !== 'ap') {
+        setActiveFolder(null);
+        fetchData();
+      }
+    };
+    window.addEventListener('keydown', fn);
+    return () => window.removeEventListener('keydown', fn);
+  }, [activeFolder, fetchData]);
 
   // ── Support & Feedback: ดึงรายการกระทู้ (Endpoint 1.8) ──
   const fetchSupportThreads = useCallback(async () => {
@@ -4638,6 +4655,12 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const [rejectingTest, setRejectingTest] = useState(false);
   const [showRejectTestModal, setShowRejectTestModal] = useState(false);
   const [rejectTestReasonInput, setRejectTestReasonInput] = useState('');
+  // MARKER_UPLOADGEN_SHARE_TESTING_V1
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareCandidates, setShareCandidates] = useState([]);
+  const [shareCandidatesLoading, setShareCandidatesLoading] = useState(false);
+  const [selectedShareUsernames, setSelectedShareUsernames] = useState([]);
+  const [sharingThread, setSharingThread] = useState(false);
 
   // ── ตัวเลือกเสริม: ส่งให้ผู้แจ้งกระทู้ Test ก่อน (ไม่บังคับ Owner ยัง Resolve ตรงได้เสมอ) ──
   const handleSendToTest = () => {
@@ -4703,6 +4726,48 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       if (data2.ok) setThreadComments(data2.comments || []);
     } catch (err) { alert('ตีกลับไม่สำเร็จ: ' + err.message); }
     setRejectingTest(false);
+  };
+
+  // MARKER_UPLOADGEN_SHARE_TESTING_V1
+  // ── Share กระทู้ Testing ให้ User อื่นช่วย Test (เจ้าของกระทู้ หรือ Owner เท่านั้น, เฉพาะ Status testing) ──
+  const handleOpenShareModal = async () => {
+    setSelectedShareUsernames([]);
+    setShowShareModal(true);
+    setShareCandidatesLoading(true);
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/share-candidates`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setShareCandidates(data.ok ? (data.candidates || []) : []);
+      if (!data.ok) alert('โหลดรายชื่อไม่สำเร็จ: ' + (data.error || ''));
+    } catch (err) { alert('โหลดรายชื่อไม่สำเร็จ: ' + err.message); }
+    setShareCandidatesLoading(false);
+  };
+
+  const toggleShareUsername = (uname) => {
+    setSelectedShareUsernames(prev => prev.includes(uname) ? prev.filter(u => u !== uname) : [...prev, uname]);
+  };
+
+  const handleConfirmShare = async () => {
+    if (selectedShareUsernames.length === 0) { alert('กรุณาเลือกอย่างน้อย 1 คน'); return; }
+    setSharingThread(true);
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const res = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ usernames: selectedShareUsernames }),
+      });
+      const data = await res.json();
+      if (!data.ok) { alert('Share ไม่สำเร็จ: ' + (data.error || '')); setSharingThread(false); return; }
+      setShowShareModal(false);
+      const res2 = await fetch(`${apiBase}/api/support/threads/${selectedThread.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data2 = await res2.json();
+      if (data2.ok) setThreadComments(data2.comments || []);
+    } catch (err) { alert('Share ไม่สำเร็จ: ' + err.message); }
+    setSharingThread(false);
   };
 
   // ── Thread Detail: Owner กด Hold (บังคับกรอกเหตุผล) / ปลด Hold (Manual) ──
@@ -4828,8 +4893,8 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 
   const canAccess = (folder) => {
     if (isOwner) return true;
-    const override = overrides.find(o => o.folder_key === folder.key);
-    if (override) return override.allowed;
+    const docAccessVal = userPermissions?.docAccess?.[folder.key];
+    if (docAccessVal !== undefined) return docAccessVal;
     return userRoleData?.permissions?.[folder.permKey] ?? false;
   };
 
@@ -5160,8 +5225,15 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                   {sendingToTest ? '...' : 'ส่งให้ Test'}
                 </button>
               )}
-              {/* ผู้แจ้งกระทู้เอง Test อยู่ -- Confirm Resolve ทันที / ไม่ผ่าน กลับไปแก้ต่อ */}
-              {!isOwner && selectedThread.status === 'testing' && selectedThread.created_by === (userName || currentUser?.email || '') && (
+              {/* MARKER_UPLOADGEN_SHARE_TESTING_V1 -- Owner Share ให้คนอื่นช่วย Test ได้ตอน Status testing */}
+              {isOwner && selectedThread.status === 'testing' && (
+                <button onClick={handleOpenShareModal}
+                  style={{ fontSize:'13px', padding:'9px 14px', borderRadius:'20px', border:'0.5px solid #0C447C', background:'white', color:'#0C447C', cursor:'pointer', flexShrink:0, fontWeight:'500' }}>
+                  📤 Share
+                </button>
+              )}
+              {/* ผู้แจ้งกระทู้เอง Test อยู่ -- Confirm Resolve ทันที / ไม่ผ่าน กลับไปแก้ต่อ (รวมคนที่ถูก Share เข้ามาด้วย) */}
+              {!isOwner && selectedThread.status === 'testing' && (selectedThread.created_by === (userName || currentUser?.email || '') || selectedThread.isSharedWithMe) && (
                 <>
                   <button onClick={handleConfirmResolve} disabled={confirmingResolve || rejectingTest}
                     style={{ fontSize:'13px', padding:'9px 14px', borderRadius:'20px', border:'none', background:'#27500A', color:'white', cursor:'pointer', opacity:(confirmingResolve||rejectingTest)?0.6:1, flexShrink:0, fontWeight:'500' }}>
@@ -5172,6 +5244,13 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                     ไม่ผ่าน กลับไปแก้ต่อ
                   </button>
                 </>
+              )}
+              {/* MARKER_UPLOADGEN_SHARE_TESTING_V1 -- เจ้าของกระทู้เองก็ Share เพิ่มคนอื่นได้ระหว่าง Test */}
+              {!isOwner && selectedThread.status === 'testing' && selectedThread.created_by === (userName || currentUser?.email || '') && (
+                <button onClick={handleOpenShareModal}
+                  style={{ fontSize:'13px', padding:'9px 14px', borderRadius:'20px', border:'0.5px solid #0C447C', background:'white', color:'#0C447C', cursor:'pointer', flexShrink:0, fontWeight:'500' }}>
+                  📤 Share
+                </button>
               )}
               {isOwner && selectedThread.status === 'in_process' && !selectedThread.on_hold && (
                 <button onClick={handleOpenHoldModal} disabled={holdingThread}
@@ -5186,7 +5265,8 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                 </button>
               )}
               {/* MARKER_UPLOADGEN_AGREE_BUTTON_POSITION_V1 -- ปุ่มเล็กติดข้าง Badge (แทน Bar เต็มความกว้าง) */}
-              {!isOwner && selectedThread.status === 'resolved' && selectedThread.agreement_status === 'pending' && isAgreementWindowOpen(selectedThread) && (
+              {/* MARKER_UPLOADGEN_AGREEMENT_PERUSER_V1 -- เช็คคำตอบของตัวเอง ไม่เช็คระดับกระทู้ */}
+              {!isOwner && selectedThread.status === 'resolved' && !selectedThread.myAgreementResponse && isAgreementWindowOpen(selectedThread) && (
                 <>
                   <button onClick={handleAgreeThread} disabled={agreeingThread || disagreeingThread}
                     style={{ fontSize:'13px', padding:'9px 14px', borderRadius:'20px', border:'none', background:'#27500A', color:'white', cursor:'pointer', opacity:(agreeingThread||disagreeingThread)?0.6:1, flexShrink:0, fontWeight:'500' }}>
@@ -5336,7 +5416,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 
         <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
           <input value={supportSearchQuery} onChange={e=>setSupportSearchQuery(e.target.value)} placeholder="🔍 ค้นหาหัวข้อ, รายละเอียด, ผู้ตั้ง..."
-            style={{ flex:1, minWidth:'200px', padding:'7px 12px', borderRadius:'8px', border:'0.5px solid #e0e0e0', fontSize:'13px', boxSizing:'border-box' }}/>
+            style={{ width:'280px', maxWidth:'100%', padding:'7px 12px', borderRadius:'8px', border:'0.5px solid #e0e0e0', fontSize:'13px', boxSizing:'border-box' }}/>
           <select value={supportMenuFilter} onChange={e=>setSupportMenuFilter(e.target.value)}
             style={{ padding:'7px 12px', borderRadius:'8px', border:'0.5px solid #e0e0e0', fontSize:'13px', color:'#555', background:'white', cursor:'pointer' }}>
             <option value="">ทุกเมนู</option>
@@ -5361,7 +5441,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
               <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>อัปเดตล่าสุด</div>
               <div style={{ width:'34px', flexShrink:0 }}></div>
             </div>
-            <div style={{ maxHeight:'420px', overflowY:'auto' }}>
+            <div>
               {sortedFilteredSupportThreads.map((t, i) => {
                 const unread = isThreadUnread(t);
                 const previewText = t.last_message ? `${t.last_message_by}: ${t.last_message}` : t.body;
@@ -5548,6 +5628,39 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         </div>
       )}
 
+      {/* MARKER_UPLOADGEN_SHARE_TESTING_V1 */}
+      {showShareModal && (
+        <div onClick={()=>setShowShareModal(false)}
+          style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:10001, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:'white', borderRadius:'12px', width:'380px', maxWidth:'90vw', padding:'20px', maxHeight:'80vh', display:'flex', flexDirection:'column' }}>
+            <div style={{ fontSize:'14px', fontWeight:'600', color:'#1a3a5c', marginBottom:'4px' }}>📤 Share ให้ช่วย Test</div>
+            <div style={{ fontSize:'11px', color:'#999', marginBottom:'12px' }}>เลือกได้มากกว่า 1 คน (เฉพาะคนที่มีสิทธิ์เมนูเดียวกัน และยังไม่เคยถูก Share)</div>
+            <div style={{ flex:1, overflowY:'auto', border:'0.5px solid #eee', borderRadius:'8px', padding:'6px' }}>
+              {shareCandidatesLoading ? (
+                <div style={{ textAlign:'center', padding:'20px', color:'#999', fontSize:'12px' }}>กำลังโหลด...</div>
+              ) : shareCandidates.length === 0 ? (
+                <div style={{ textAlign:'center', padding:'20px', color:'#999', fontSize:'12px' }}>ไม่มีคนที่ Share ได้แล้ว</div>
+              ) : (
+                shareCandidates.map(c => (
+                  <label key={c.username} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 10px', borderRadius:'6px', cursor:'pointer', fontSize:'13px', color:'#333' }}>
+                    <input type="checkbox" checked={selectedShareUsernames.includes(c.username)} onChange={()=>toggleShareUsername(c.username)} />
+                    {c.username}
+                  </label>
+                ))
+              )}
+            </div>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px', marginTop:'16px' }}>
+              <button onClick={()=>setShowShareModal(false)} disabled={sharingThread}
+                style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer' }}>ยกเลิก</button>
+              <button onClick={handleConfirmShare} disabled={sharingThread || selectedShareUsernames.length === 0}
+                style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'none', background:'#0C447C', color:'white', cursor:'pointer', opacity:(sharingThread || selectedShareUsernames.length === 0)?0.6:1 }}>
+                {sharingThread ? 'กำลังส่ง...' : `Share (${selectedShareUsernames.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmDialog && (
         <div onClick={()=>setConfirmDialog(null)}
           style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:10001, display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -5687,4 +5800,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 }
 
 export default DocumentCenter;
-// MARKER_DRAFT_PANEL_UPGRADE_RESIZE_ESCBACK_V1
+// MARKER_SUPPORT_LIST_FULLHEIGHT_V1
+
+// MARKER_SUPPORT_SEARCH_NARROW_V1

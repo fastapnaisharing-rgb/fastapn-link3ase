@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 // MARKER_GLOBAL_CHAT_BUBBLE_V1
 import GlobalChatBubble from './GlobalChatBubble';
@@ -294,6 +294,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
       const res = await fetch(`${API}/api/support/threads/${supportPopup.thread.id}/finish`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data.ok) {
+        // MARKER_APP_BELL_RESOLVE_SYNC_FIX_V1 -- Broadcast ให้ Home/UploadGen/List Sync ทันที (เดิมขาดหาย)
+        broadcastWs('support_thread_status_updated', { threadId: supportPopup.thread.id });
         setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'resolved' } } : prev);
       } else {
         alert('ปิดกระทู้ไม่สำเร็จ: ' + (data.error || ''));
@@ -316,6 +318,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
       const res = await fetch(`${API}/api/support/threads/${supportPopup.thread.id}/send-to-test`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data.ok) {
+        // MARKER_APP_BELL_SENDTOTEST_SYNC_FIX_V1 -- Broadcast ให้ Home/UploadGen/List Sync ทันที (เดิมขาดหาย)
+        broadcastWs('support_thread_status_updated', { threadId: supportPopup.thread.id });
         setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'testing' } } : prev);
       } else {
         alert('ส่งให้ Test ไม่สำเร็จ: ' + (data.error || ''));
@@ -334,6 +338,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
       const res = await fetch(`${API}/api/support/threads/${supportPopup.thread.id}/request-resolve`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data.ok) {
+        // MARKER_APP_BELL_CONFIRMRESOLVE_SYNC_FIX_V1 -- Broadcast ให้ Home/UploadGen/List Sync ทันที (เดิมขาดหาย -- นี่คือจุดที่ผู้ใช้แจ้งบั๊กเข้ามา)
+        broadcastWs('support_thread_status_updated', { threadId: supportPopup.thread.id });
         setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'resolved' } } : prev);
       } else {
         alert('Resolve ไม่สำเร็จ: ' + (data.error || ''));
@@ -357,6 +363,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
       });
       const data = await res.json();
       if (data.ok) {
+        // MARKER_APP_BELL_REJECTTEST_SYNC_FIX_V1 -- Broadcast ให้ Home/UploadGen/List Sync ทันที (เดิมขาดหาย)
+        broadcastWs('support_thread_status_updated', { threadId: supportPopup.thread.id });
         setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'in_process' } } : prev);
       } else {
         alert('ตีกลับไม่สำเร็จ: ' + (data.error || ''));
@@ -374,6 +382,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
       const res = await fetch(`${API}/api/support/threads/${supportPopup.thread.id}/reject`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data.ok) {
+        // MARKER_APP_BELL_REJECT_SYNC_FIX_V1 -- Broadcast ให้ Home/UploadGen/List Sync ทันที (เดิมขาดหาย)
+        broadcastWs('support_thread_status_updated', { threadId: supportPopup.thread.id });
         setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'resolved', resolution_type: 'rejected' } } : prev);
       } else {
         alert('Reject กระทู้ไม่สำเร็จ: ' + (data.error || ''));
@@ -682,8 +692,20 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
                     <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: n.action_type === 'resolved' ? '#EAF3DE' : '#E6F1FB', color: n.action_type === 'resolved' ? '#27500A' : '#0C447C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>
                       {n.action_type === 'resolved' ? '✅' : '💬'}
                     </div>
+                    {/* MARKER_APP_BELL_SEVERITY_BADGE_V1 -- Badge ระดับความสำคัญ (Incident/Important/Issue/Request) */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{n.title}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{n.title}</span>
+                        {n.thread_severity && (
+                          <span style={{
+                            fontSize: '9px', fontWeight: '600', padding: '1px 7px', borderRadius: '8px', flexShrink: 0,
+                            background: n.thread_severity === 'incident' ? '#FCEBEB' : n.thread_severity === 'important' ? '#FDF0E0' : n.thread_severity === 'issue' ? '#FAEEDA' : '#EAF3DE',
+                            color: n.thread_severity === 'incident' ? '#791F1F' : n.thread_severity === 'important' ? '#8a4a00' : n.thread_severity === 'issue' ? '#856404' : '#27500A',
+                          }}>
+                            {n.thread_severity === 'incident' ? 'Incident' : n.thread_severity === 'important' ? 'Important' : n.thread_severity === 'issue' ? 'Issue' : 'Request'}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: '11px', color: '#888', margin: '2px 0' }}>{n.message}</div>
                       <div style={{ fontSize: '11px', color: '#aaa' }}>{formatTime(n.created_at)}</div>
                     </div>
@@ -856,7 +878,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
                     )}
                   </div>
                 )}
-                {!isOwner && supportPopup.thread.status === 'resolved' && supportPopup.thread.agreement_status === 'pending' && isAgreementWindowOpen(supportPopup.thread) && (
+                {/* MARKER_APP_BELL_AGREEMENT_PERUSER_V1 -- เช็คคำตอบของตัวเอง ไม่เช็คระดับกระทู้ */}
+                {!isOwner && supportPopup.thread.status === 'resolved' && !supportPopup.thread.myAgreementResponse && isAgreementWindowOpen(supportPopup.thread) && (
                   <div style={{ display: 'flex', gap: '8px', padding: '12px 18px', borderTop: '0.5px solid #eee', flexShrink: 0 }}>
                     <button onClick={handleSupportPopupAgree} disabled={supportPopupAgreeing || supportPopupDisagreeing}
                       style={{ flex: 1, fontSize: '12px', padding: '9px', borderRadius: '20px', border: 'none', background: '#27500A', color: 'white', cursor: 'pointer', opacity: (supportPopupAgreeing || supportPopupDisagreeing) ? 0.6 : 1, fontWeight: '500' }}>
@@ -1126,7 +1149,10 @@ function MainApp() {
     if (!currentUser) return;
     fetchRequests();
     fetchApNotifications();
-    const interval = setInterval(() => { fetchRequests(); fetchApNotifications(); }, 30000);
+    // MARKER_APP_POLL_INTERVAL_RELAX_V1 -- ยืดจาก 30 วิ เป็น 5 นาที
+    // useRealtimeRefresh ด้านล่าง Refresh ทันทีอยู่แล้วตอนมี Event จริง
+    // ตัวนี้เป็นแค่ Fallback กันเหตุการณ์ที่ WebSocket หลุดโดยไม่รู้ตัว
+    const interval = setInterval(() => { fetchRequests(); fetchApNotifications(); }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [currentUser]);
 
@@ -1143,7 +1169,11 @@ function MainApp() {
 
   // ── ดึง AP Period Notifications (Close Period / Override) เฉพาะ User ที่มี Permission Manual ──
   const fetchApNotifications = async () => {
-    if (!userPermissions?.Manual && !isOwner) return;
+    // MARKER_APP_FETCH_NOTIF_ALL_USERS_V1
+    // ── เอา Gate Manual/Owner ออก -- Endpoint /api/ap/period/notifications คืน Support & Feedback
+    // ── (และ RAM Alert อื่นๆ) ให้ทุก User ด้วย ไม่ใช่แค่ AP Period -- ฝั่ง Backend (apPeriod.js)
+    // ── กรองตาม target_permission/target_role/recipient_username ให้ถูกคนอยู่แล้ว การ Gate
+    // ── ที่นี่ซ้ำซ้อนและทำให้ User ที่ไม่มีสิทธิ์ Manual/ไม่ใช่ Owner ไม่เคยเห็น Notification ของตัวเองเลย
     try {
       const token = sessionStorage.getItem('fastapn_token');
       const res = await fetch(`${API}/api/ap/period/notifications`, {
@@ -1289,23 +1319,35 @@ function MainApp() {
     } catch (err) { console.error('fetchRequests error:', err); }
   };
 
+  // MARKER_APP_MAINTENANCE_EVENT_V1
+  // ── เดิม checkMaintenance ถูกประกาศซ้อนอยู่ใน useEffect เข้าถึงจากข้างนอกไม่ได้ ──
+  // ── ย้ายออกมาเป็นฟังก์ชันระดับ Component เพื่อให้ useRealtimeRefresh เรียกได้ด้วย ──
+  const checkMaintenance = async () => {
+    try {
+      const { data } = await db.from('system_settings').select('key, value').in('key', ['maintenance_mode', 'maintenance_menus']);
+      if (data) {
+        const fullMode = data.find(d => d.key === 'maintenance_mode');
+        const menusRow = data.find(d => d.key === 'maintenance_menus');
+        if (fullMode?.value === 'true' && !isOwner) { await logout(); return; }
+        try { setMaintenanceMenus(JSON.parse(menusRow?.value || '[]')); } catch { setMaintenanceMenus([]); }
+      }
+    } catch (err) { console.error('maintenance check error:', err); }
+  };
+
   useEffect(() => {
     if (!currentUser) return;
-    const checkMaintenance = async () => {
-      try {
-        const { data } = await db.from('system_settings').select('key, value').in('key', ['maintenance_mode', 'maintenance_menus']);
-        if (data) {
-          const fullMode = data.find(d => d.key === 'maintenance_mode');
-          const menusRow = data.find(d => d.key === 'maintenance_menus');
-          if (fullMode?.value === 'true' && !isOwner) { await logout(); return; }
-          try { setMaintenanceMenus(JSON.parse(menusRow?.value || '[]')); } catch { setMaintenanceMenus([]); }
-        }
-      } catch (err) { console.error('maintenance check error:', err); }
-    };
     checkMaintenance();
-    const interval = setInterval(checkMaintenance, 30000);
+    // MARKER_APP_POLL_INTERVAL_RELAX_V1 -- ยืดจาก 30 วิ เป็น 5 นาที
+    // ตอนนี้มี useRealtimeRefresh('maintenance_mode_changed') คอยเช็คทันทีแล้ว
+    // ตัวนี้เป็นแค่ Fallback กันเหตุการณ์ที่ WebSocket หลุดโดยไม่รู้ตัว
+    const interval = setInterval(checkMaintenance, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [currentUser, isOwner]);
+
+  // ── Real-time: ฟัง 'maintenance_mode_changed' -- Admin เพิ่ง Toggle Maintenance ──
+  // ── Mode เช็คทันที ไม่ต้องรอ Poll รอบ Fallback ด้านบน (ฝั่งส่งต้องเพิ่มที่จุด ──
+  // ── Admin Toggle เอง — ยังไม่มีไฟล์นั้นตอนนี้ รอ Patch แยกอีกจุด) ──────────
+  useRealtimeRefresh(['maintenance_mode_changed'], () => checkMaintenance());
 
   const handleApprove = async (req) => {
     try {
@@ -1488,6 +1530,8 @@ function MainApp() {
       } catch (e) { console.error('[menu heartbeat]', e); }
     };
     beat();
+    // MARKER_APP_TEAM_STATUS_REALTIME_LOGIN_V1 -- แจ้ง Home ให้ Refresh การ์ดทีมทันทีตอน Login/เปลี่ยนเมนู ไม่ต้องรอ Poll 30 วิ
+    broadcastWs('team_status_updated', { username: me });
     const interval = setInterval(beat, 30000);
     return () => clearInterval(interval);
   }, [activePage, userName, currentUser]);

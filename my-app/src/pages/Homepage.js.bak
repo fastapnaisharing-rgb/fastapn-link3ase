@@ -513,9 +513,6 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [offlineUsers, setOfflineUsers] = useState([]);
   const [loadingTeam, setLoadingTeam] = useState(true);
-  // MARKER_HOMEPAGE_TEAM_STATUS_REALTIME_V1 -- Subscribe Event Online/Offline เพื่อ Refresh ทันที ไม่ต้องรอ Poll 30 วิ
-  const [teamRefreshTick, setTeamRefreshTick] = useState(0);
-  useRealtimeRefresh(['team_status_updated'], () => setTeamRefreshTick(t => t + 1), 0);
 
   useEffect(() => {
     if (!me) return;
@@ -633,7 +630,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     loadTeam();
     const iv = setInterval(loadTeam, 30000);
     return () => clearInterval(iv);
-  }, [teamRefreshTick]); // MARKER_HOMEPAGE_TEAM_STATUS_REALTIME_V1
+  }, []);
 
   return (
     <div style={{
