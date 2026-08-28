@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { db } from '../lib/db';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 import { useDataCache } from '../contexts/DataCacheContext';
+import { broadcastWs, subscribeWs } from '../wsManager'; // MARKER_BUSINESSUNIT_COMPANYLIST_BROADCAST_V1
 import ReactDOM from 'react-dom'; // MARKER_STATUSDROPDOWN_PORTAL_FIX_V1
 // MARKER_BUSINESSUNIT_APPLY_APCONTROLLER_STYLE_V1
 import { confirmDialog } from '../confirmDialog';
@@ -61,7 +62,8 @@ function StatusDropdown({ value, onChange, options, style }) {
   );
 }
 
-function ComboBox({ value, onChange, options, placeholder }) {
+// MARKER_BUSINESSUNIT_FIX_INFOCELL_STYLE_V1
+function ComboBox({ value, onChange, options, placeholder, bare }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(value || '');
   const ref = useRef(null);
@@ -72,10 +74,12 @@ function ComboBox({ value, onChange, options, placeholder }) {
     return () => document.removeEventListener('mousedown', h);
   }, []);
   const filtered = [...new Set(options.filter(o => o && o !== '-' && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
+  const bareStyle = { height: '28px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: 'center' };
+  const normalStyle = { padding: '5px 8px', borderRadius: '5px', border: '0.5px solid #d0d0d0', fontSize: '12px', width: '100%', boxSizing: 'border-box', height: '30px' };
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <input value={input} onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder={placeholder || ''}
-        style={{ padding: '5px 8px', borderRadius: '5px', border: '0.5px solid #d0d0d0', fontSize: '12px', width: '100%', boxSizing: 'border-box', height: '30px' }} />
+        style={bare ? bareStyle : normalStyle} />
       {open && filtered.length > 0 && (
         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 1000, maxHeight: '180px', overflowY: 'auto' }}>
           {filtered.map((opt, i) => (
@@ -189,9 +193,157 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
   );
 }
 
+// MARKER_BUSINESSUNIT_BU_GROUP_RANGE_SECTION_V1
+// ── Section "BU Group Range" — Global Config ไม่ผูกกับ BU ที่กำลังแก้ไขอยู่ ──
+// ── BU ไหนไม่ได้กำหนด Range ก็ทำงานตามปกติ ไม่บังคับต้องมีทุก BU ──────────
+function VatWatchlistBuGroupRangeSection({ currentBu }) {
+  const [ranges, setRanges] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [editingId, setEditingId] = React.useState(null);
+  const [formGroupName, setFormGroupName] = React.useState('');
+  const [formRangeInput, setFormRangeInput] = React.useState('');
+  const [formPrefixLength, setFormPrefixLength] = React.useState('4');
+  const [saving, setSaving] = React.useState(false);
+
+  const loadRanges = React.useCallback(async () => {
+    try {
+      const { data, error } = await db.from('vat_watchlist_bu_group_range').select('*').order('group_name');
+      if (error) throw error;
+      setRanges(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('VatWatchlistBuGroupRangeSection load error:', err);
+      setRanges([]);
+    }
+    setLoading(false);
+  }, []);
+
+  React.useEffect(() => { loadRanges(); }, [loadRanges]);
+
+  // MARKER_BUSINESSUNIT_BU_GROUP_RANGE_PER_BU_V1
+  // ── โชว์เฉพาะ Range ของ BU ที่กำลังเปิดอยู่เท่านั้น (ผูกกับ BU นี้โดยตรง) ──
+  const buRanges = React.useMemo(
+    () => ranges.filter((r) => r.group_name === currentBu),
+    [ranges, currentBu]
+  );
+
+  const resetForm = () => {
+    setEditingId(null);
+    setFormRangeInput('');
+    setFormPrefixLength('4');
+  };
+
+  const startEdit = (r) => {
+    setEditingId(r.id);
+    setFormRangeInput(`${r.range_start || ''}-${r.range_end || ''}`);
+    setFormPrefixLength(r.prefix_length == null ? 'full' : String(r.prefix_length));
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('ลบ Range นี้?')) return;
+    try {
+      const { error } = await db.from('vat_watchlist_bu_group_range').delete().eq('id', id);
+      if (error) throw error;
+      await loadRanges();
+    } catch (err) {
+      alert('ลบไม่สำเร็จ: ' + err.message);
+    }
+  };
+
+  const handleSave = async () => {
+    const groupName = (currentBu || '').trim(); // MARKER_BUSINESSUNIT_BU_GROUP_RANGE_PER_BU_V1 — ใช้ BU ปัจจุบันเสมอ
+    if (!groupName) { alert('ต้องกรอก BU Code ก่อนถึงจะกำหนด Range ได้'); return; }
+    if (!formRangeInput.trim()) { alert('กรุณากรอก Range'); return; }
+    const prefixLength = formPrefixLength === 'full' ? null : Number(formPrefixLength);
+
+    setSaving(true);
+    try {
+      if (editingId) {
+        // Edit แถวเดียว (ไม่รองรับ Comma หลาย Range ตอนแก้ไข)
+        const [rangeStart, rangeEnd] = formRangeInput.split('-').map((s) => s.trim());
+        const { error } = await db.from('vat_watchlist_bu_group_range')
+          .update({ group_name: groupName, range_start: rangeStart, range_end: rangeEnd || rangeStart, prefix_length: prefixLength })
+          .eq('id', editingId);
+        if (error) throw error;
+      } else {
+        // Add ใหม่ — รองรับ Comma หลาย Range พร้อมกัน เช่น "0401-0401,4360-4363"
+        const pairs = formRangeInput.split(',').map((s) => s.trim()).filter(Boolean);
+        const rowsToInsert = pairs.map((pair) => {
+          const [rangeStart, rangeEnd] = pair.split('-').map((s) => s.trim());
+          return { group_name: groupName, range_start: rangeStart, range_end: rangeEnd || rangeStart, prefix_length: prefixLength };
+        });
+        const { error } = await db.from('vat_watchlist_bu_group_range').insert(rowsToInsert);
+        if (error) throw error;
+      }
+      resetForm();
+      await loadRanges();
+    } catch (err) {
+      alert('บันทึกไม่สำเร็จ: ' + err.message);
+    }
+    setSaving(false);
+  };
+
+  const cellStyle = { padding: '8px 10px', fontSize: '12px', borderRight: '0.5px solid #e8e8e8' };
+  const headStyle = { ...cellStyle, fontWeight: '600', color: '#666', background: '#f5f5f3', fontSize: '11px' };
+  const inputStyle = { width: '100%', padding: '7px 8px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '6px', boxSizing: 'border-box' };
+
+  return (
+    <div style={{ marginTop: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '10px' }}>
+        <div style={{ fontSize: '12px', fontWeight: '600', color: '#666' }}>BU GROUP RANGE</div>
+        <div style={{ fontSize: '10px', color: '#999' }}>— Config ระดับระบบ ไม่บังคับกำหนดทุก BU (ถ้าไม่มี Range = ทำงานตามปกติ)</div>
+      </div>
+
+      {!loading && buRanges.length > 0 && (
+        <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '8px', overflow: 'hidden', marginBottom: '10px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px' }}>
+            <div style={{ ...headStyle, borderBottom: '0.5px solid #e8e8e8' }}>Group Name</div>
+            <div style={{ ...headStyle, borderBottom: '0.5px solid #e8e8e8' }}>Range</div>
+            <div style={{ ...headStyle, borderBottom: '0.5px solid #e8e8e8' }}>อ่านกี่ตำแหน่ง</div>
+            <div style={{ ...headStyle, borderBottom: '0.5px solid #e8e8e8', borderRight: 'none', textAlign: 'center' }}>จัดการ</div>
+          </div>
+          {buRanges.map((r) => (
+            <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', borderTop: '0.5px solid #f0f0f0' }}>
+              <div style={{ ...cellStyle, fontWeight: '500' }}>{r.group_name}</div>
+              <div style={{ ...cellStyle, color: '#555' }}>{r.range_start}-{r.range_end}</div>
+              <div style={{ ...cellStyle, color: '#555' }}>{r.prefix_length == null ? 'Full' : `${r.prefix_length} ตำแหน่ง`}</div>
+              <div style={{ padding: '6px 10px', display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                <button type="button" onClick={() => startEdit(r)} style={{ padding: '3px 8px', fontSize: '11px', border: '0.5px solid #ccc', background: 'white', borderRadius: '5px', cursor: 'pointer' }}>แก้ไข</button>
+                <button type="button" onClick={() => handleDelete(r.id)} style={{ padding: '3px 8px', fontSize: '11px', border: '0.5px solid #c0392b', color: '#c0392b', background: 'white', borderRadius: '5px', cursor: 'pointer' }}>ลบ</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ border: '1px dashed #ccc', borderRadius: '8px', padding: '12px', display: 'grid', gridTemplateColumns: '2fr 1fr 100px', gap: '8px', alignItems: 'end' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: '10px', color: '#999', marginBottom: '4px' }}>Range {!editingId && '(คั่นด้วย , ได้หลายช่วง)'}</label>
+          <input style={inputStyle} placeholder="เช่น 0401-0401,4360-4363" value={formRangeInput} onChange={(e) => setFormRangeInput(e.target.value)} />
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: '10px', color: '#999', marginBottom: '4px' }}>อ่านกี่ตำแหน่ง</label>
+          <select style={inputStyle} value={formPrefixLength} onChange={(e) => setFormPrefixLength(e.target.value)}>
+            <option value="3">3 ตำแหน่ง</option>
+            <option value="4">4 ตำแหน่ง</option>
+            <option value="full">Full (เทียบเต็ม)</option>
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button type="button" onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '8px 0', fontSize: '12px', fontWeight: '500', background: saving ? '#ccc' : '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
+            {editingId ? 'บันทึก' : '+ เพิ่ม'}
+          </button>
+          {editingId && (
+            <button type="button" onClick={resetForm} style={{ padding: '8px 10px', fontSize: '12px', border: '0.5px solid #ccc', background: 'white', borderRadius: '6px', cursor: 'pointer' }}>ยกเลิก</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'info');
-  const { currentUser, userName } = useAuth();
+  const { currentUser, userName, userPermissions } = useAuth();  // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const { fetchCollection, invalidate } = useDataCache();
   const screenWidth = useWindowWidth();
@@ -267,33 +419,47 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const INFO_FIELDS = ['bu','THAI COMPANY NAME','ENGLISH COMPANY NAME','bu_code_name','system_bank','TAX ID','PREPARE BY','DEPARTMENT','COMPANY CODE','VAT %','Last Rate (%)','BOOK','SEGMENT3','AP GRT Control','updated_by','updated_at'];
   const INFO_KEY = 'TAX ID';
   const INFO_COMBO = ['bu','DEPARTMENT','BOOK','AP GRT Control'];
+  // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
   const INFO_EDIT = [
     ['bu','BU'],['THAI COMPANY NAME','Thai Company Name'],['ENGLISH COMPANY NAME','English Company Name'],
     ['bu_code_name','BU Code Name'],['system_bank','System Bank'],
     ['TAX ID','Tax ID'],['PREPARE BY','Prepare By'],['DEPARTMENT','Department'],
     ['COMPANY CODE','Company Code'],['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],
-    ['BOOK','Book'],['SEGMENT3','Segment3'],['AP GRT Control','AP GRT Control']
+    ['BOOK','Book'],['SEGMENT3','Segment3'],['AP GRT Control','AP GRT Control'],['allowed_tax_type','Tax Type'], // MARKER_BUSINESSUNIT_TAXTYPE_MOVE_VAT_V5
+    ['IE GRT Control','IE GRT Control'],['VAT GRT Control','VAT GRT Control'],
+    ['AP Prepare By','AP Prepare By'],['AP Department','AP Department'],
+    ['IE Prepare By','IE Prepare By'],['IE Department','IE Department'], // MARKER_BUSINESSUNIT_SETTING_CONSOLIDATED_V16
+    ['ap_grt_pattern','AP GRT Pattern'],['ap_grt','AP GRT'],['ap_grn_pattern','AP GRN Pattern'],['ap_grn','AP GRN'],['ap_digit','AP Digit'],
+    ['ie_grt_pattern','IE GRT Pattern'],['ie_grt','IE GRT'],['ie_grn_pattern','IE GRN Pattern'],['ie_grn','IE GRN'],['ie_digit','IE Digit'],
+    ['vat_watchlist_status','VAT Status'],['vat_grn_pattern','VAT GRN Pattern'],['vat_grn','VAT GRN'],['vat_digit','VAT Digit'],
+    ['base','Base'] // MARKER_BUSINESSUNIT_ADD_BASE_FIELD_V20
   ];
   // Fields that should span full width in Info form
   const INFO_FULL_WIDTH = ['THAI COMPANY NAME','ENGLISH COMPANY NAME'];
 
+  // MARKER_BUSINESSUNIT_INFO_TABLE_REMOVE_BUCODE_BANK_V1
+  // -- ตัด bu_code_name / system_bank ออกจากตารางแสดงผล (UI เท่านั้น) --
+  // -- ยังแก้ค่าได้ปกติผ่าน Popup Add/Edit เพราะ INFO_FIELDS/INFO_EDIT ไม่ถูกแตะ --
   const INFO_COLUMNS = [
+    // MARKER_BUSINESSUNIT_REMOVE_PREPAREBY_GRTCONTROL_COL_V18
     { key: 'bu', label: 'BU', sortable: true, w: 70 },
     { key: 'THAI COMPANY NAME', label: 'Thai Company Name', sortable: true, w: 220 },
     { key: 'ENGLISH COMPANY NAME', label: 'English Company Name', w: 220 },
-    { key: 'bu_code_name', label: 'BU Code Name', w: 200 },
-    { key: 'system_bank', label: 'System Bank', w: 120 },
     { key: 'TAX ID', label: 'Tax ID', w: 130 },
-    { key: 'PREPARE BY', label: 'Prepare By', w: 140 },
     { key: 'COMPANY CODE', label: 'Company Code', w: 120 },
     { key: 'VAT %', label: 'VAT %', w: 70 },
     { key: 'Last Rate (%)', label: 'Last Rate (%)', w: 90 },
     { key: 'BOOK', label: 'Book', w: 80 },
     { key: 'SEGMENT3', label: 'Segment3', w: 90 },
-    { key: 'AP GRT Control', label: 'AP GRT Control', w: 110 },
   ];
-  const emptyInfoForm = () => Object.fromEntries(INFO_EDIT.map(([k]) => [k, '']));
+  // MARKER_BUSINESSUNIT_SETTING_CONSOLIDATED_V16
+  const emptyInfoForm = () => ({
+    ...Object.fromEntries(INFO_EDIT.map(([k]) => [k, ''])),
+    'IE GRT Control': 'Auto',
+    'VAT GRT Control': 'Auto',
+  });
   const [infoForm, setInfoForm] = useState(emptyInfoForm());
+  const [infoFormTab, setInfoFormTab] = useState('info');  // MARKER_BUSINESSUNIT_INFO_TABS_V3
 
   const BRANCH_FIELDS = ['Branch Code','Branch Direct','Branch Allocate','BU Code','Company for Show in Report Display','Simple Company','BU-TaxID','BU-Branch','Simple Brand Code','%','DB(%)','cpc','Branch Address','Group-P','bu','status','Inactive Date','updated_by','updated_at'];
   const BRANCH_KEY = 'Branch Code';
@@ -378,6 +544,14 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   }, [fetchCollection, invalidate]);
 
   useEffect(() => { fetchInfo(); fetchBranch(); }, []);
+
+  // ---------------- รับ Broadcast Real-time เวลา Company ถูกแก้จาก Tab/User อื่น ----------------
+  useEffect(() => {
+    const unsubscribe = subscribeWs(['company_list_updated'], () => {
+      fetchInfo(true);
+    });
+    return unsubscribe;
+  }, [fetchInfo]);
   useEffect(() => { if (activeSubTab) setTab(activeSubTab); }, [activeSubTab]);
   useEffect(() => { setBranchPage(1); }, [branchSearch, branchSortField, branchSortDir, branchTaxFilter]);
 
@@ -440,6 +614,15 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         autoForm['bu_code_name'] = `${seg} - ${nameF}`;
       }
     }
+    // MARKER_BUSINESSUNIT_IE_DEPARTMENT_DEFAULT_SAVE_V1 — ถ้ายังว่างตอน Save เติม "I-Expense" ก่อนส่งจริง
+    if (!autoForm['IE Department'] || !autoForm['IE Department'].trim()) {
+      autoForm['IE Department'] = 'I-Expense';
+    }
+    // MARKER_BUSINESSUNIT_INTEGER_FIELD_FIX_V17 — Column เหล่านี้เป็น integer ใน DB ส่ง Empty String ไม่ได้ ต้องเป็น null
+    const INTEGER_FIELDS = ['ap_grt','ap_grn','ie_grt','ie_grn','vat_grn'];
+    INTEGER_FIELDS.forEach(f => {
+      if (autoForm[f] === '' || autoForm[f] === undefined) autoForm[f] = null;
+    });
     const data = { ...autoForm, ...metaFields };
     if (infoEditId) {
       const { data: updated, error } = await db.from('company_list').update(data).eq('id', infoEditId).select().single();
@@ -450,6 +633,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       if (error) throw error;
       setInfoItems(prev => [...prev, inserted]);
     }
+    broadcastWs('company_list_updated', { action: infoEditId ? 'update' : 'insert' }); // แจ้งทุก Browser ที่เปิดอยู่ให้ Update ทันที
     setShowInfoForm(false); setInfoEditId(null); setInfoForm(emptyInfoForm());
     await fetchInfo(true);
   };
@@ -481,7 +665,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
-  const handleInfoEdit = (item) => { const f = {}; INFO_EDIT.forEach(([k]) => { f[k] = item[k] || ''; }); setInfoForm(f); setInfoEditId(item.id); setShowInfoForm(true); };
+  const handleInfoEdit = (item) => { const f = {}; INFO_EDIT.forEach(([k]) => { f[k] = item[k] || ''; }); setInfoForm(f); setInfoEditId(item.id); setShowInfoForm(true); setInfoFormTab('info'); };
 
   const handleInfoDelete = async (id) => {
     if (!window.confirm('ต้องการลบรายการนี้?')) return;
@@ -496,6 +680,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       if (error) throw error;
       setInfoItems(prev => prev.filter(i => i.id !== id));
       setInfoSelected(p => p.filter(s => s !== id));
+      broadcastWs('company_list_updated', { action: 'delete', id }); // แจ้งทุก Browser ที่เปิดอยู่ให้ Update ทันที
       await fetchInfo(true);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
@@ -519,6 +704,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       }
       setInfoItems(prev => prev.filter(i => !infoSelected.includes(i.id)));
       setInfoSelected([]);
+      broadcastWs('company_list_updated', { action: 'bulkDelete' }); // แจ้งทุก Browser ที่เปิดอยู่ให้ Update ทันที
       await fetchInfo(true);
     } catch (err) { alert('ลบไม่สำเร็จ: ' + err.message); }
   };
@@ -848,7 +1034,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     // ✅ modal — auto height, no scroll needed with compact layout
     // MARKER_BUSINESSUNIT_MODAL_HEIGHT_MATCH_APCONTROLLER_V1
     modal: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'900px', maxWidth:'96vw', height:isMobile?'92vh':'88vh', display:'flex', flexDirection:'column', overflow:'hidden' },
-    modalMd: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'700px', maxWidth:'96vw', display:'flex', flexDirection:'column' },
+    modalMd: { background:'white', borderRadius:'10px', width:isMobile?'95vw':'700px', maxWidth:'96vw', maxHeight:'88vh', display:'flex', flexDirection:'column' }, // MARKER_BUSINESSUNIT_INFO_MODAL_HEIGHT_V2
     pageBtn: (active,disabled) => ({ padding:'3px 7px', borderRadius:'5px', border:'0.5px solid #ddd', fontSize:'11px', cursor:disabled?'default':'pointer', background:active?'#1a3a5c':'white', color:disabled?'#ccc':active?'white':'#555', minWidth:'26px', textAlign:'center' }),
     iconBtn: (color,bg,border) => ({ background:bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
   };
@@ -1007,55 +1193,239 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     );
   };
 
-  // ✅ Info form — compact 4-col layout, one page no scroll
-  const INFO_LAYOUT = isMobile ? [
-    ['bu','BU',1],['TAX ID','Tax ID',1],
-    ['THAI COMPANY NAME','Thai Company Name',2],
-    ['ENGLISH COMPANY NAME','English Company Name',2],
-    ['bu_code_name','BU Code Name',2],
-    ['system_bank','System Bank',2],
-    ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],
-    ['COMPANY CODE','Company Code',1],['BOOK','Book',1],
-    ['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
-    ['SEGMENT3','Segment3',1],['AP GRT Control','AP GRT Control',1],
+  // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
+  const VAT_STATUS_OPTIONS = [
+    { label: 'Active', bg: '#EAF3DE', color: '#27500A' },
+    { label: 'Inactive', bg: '#F1EFE8', color: '#444441' },
+    { label: 'Unclaim', bg: '#FAEEDA', color: '#854F0B' },
+    { label: 'Out of Scope', bg: '#E6F1FB', color: '#0C447C' },
+  ];
+
+  const INFO_ROWS = isMobile ? [
+    [['bu','BU'],['TAX ID','Tax ID']],
+    [['COMPANY CODE','Company Code'],['BOOK','Book']],
+    [['THAI COMPANY NAME','Thai Company Name']],
+    [['ENGLISH COMPANY NAME','English Company Name']],
+    // MARKER_BUSINESSUNIT_ADD_BASE_FIELD_V20
+    [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
+    [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)']],
+    [['SEGMENT3','Segment3'],['base','Base']],
   ] : [
-    ['bu','BU',1],['TAX ID','Tax ID',1],['COMPANY CODE','Company Code',1],['BOOK','Book',1],
-    ['THAI COMPANY NAME','Thai Company Name',4],
-    ['ENGLISH COMPANY NAME','English Company Name',4],
-    ['bu_code_name','BU Code Name',4],
-    ['system_bank','System Bank',4],
-    ['PREPARE BY','Prepare By',1],['DEPARTMENT','Department',1],['VAT %','VAT %',1],['Last Rate (%)','Last Rate (%)',1],
-    ['SEGMENT3','Segment3',1],['AP GRT Control','AP GRT Control',1],
+    [['bu','BU'],['TAX ID','Tax ID'],['COMPANY CODE','Company Code'],['BOOK','Book']],
+    [['THAI COMPANY NAME','Thai Company Name']],
+    [['ENGLISH COMPANY NAME','English Company Name']],
+    [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
+    [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],['SEGMENT3','Segment3'],['base','Base']],
   ];
 
   const renderInfoFormFields = () => {
-    const cols = isMobile ? 2 : 4;
-    return (
-      <div style={{ padding:'14px 16px 16px', overflow:'visible' }}>
-        <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:'10px 12px' }}>
-          {INFO_LAYOUT.map(([key, label, span]) => (
-            <div key={key} style={{ gridColumn:`span ${Math.min(span, cols)}` }}>
-              <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'3px' }}>{label}</label>
-              {key === 'bu_code_name' ? (
-                <input style={S.input}
-                  value={infoForm[key]||''}
-                  placeholder={`${infoForm['SEGMENT3']||'Segment3'} - ${infoForm['ENGLISH COMPANY NAME']||'English Company Name'}`}
-                  onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}
-                  onBlur={e=>{
-                    if(!e.target.value.trim()){
-                      const seg=(infoForm['SEGMENT3']||'').trim();
-                      const eng=(infoForm['ENGLISH COMPANY NAME']||'').trim();
-                      if(seg||eng) setInfoForm(f=>({...f,[key]:[seg,eng].filter(Boolean).join(' - ')}));
-                    }
-                  }}
-                />
-              ) : INFO_COMBO.includes(key)
-                ?<ComboBox value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`เลือก ${label}`}/>
-                :<input style={S.input} value={infoForm[key]||''} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
-              }
+    const boxWrap = { border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'hidden', marginBottom:'6px' };
+    const headCell = (isLast) => ({ padding:'3px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa', fontWeight:'600', textAlign:'center', borderRight: isLast?'none':'0.5px solid #e8eaf0', borderBottom:'0.5px solid #e8eaf0' });
+    const inputCell = (isLast) => ({ padding:'3px 6px', display:'flex', alignItems:'center', minHeight:'28px', borderRight: isLast?'none':'0.5px solid #e8eaf0' });
+
+    const renderFieldInput = (key, label) => (
+      key === 'bu_code_name' ? (
+        <input style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }}
+          value={infoForm[key]||''}
+          placeholder={`${infoForm['SEGMENT3']||'Segment3'} - ${infoForm['ENGLISH COMPANY NAME']||'English Company Name'}`}
+          onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}
+          onBlur={e=>{
+            if(!e.target.value.trim()){
+              const seg=(infoForm['SEGMENT3']||'').trim();
+              const eng=(infoForm['ENGLISH COMPANY NAME']||'').trim();
+              if(seg||eng) setInfoForm(f=>({...f,[key]:[seg,eng].filter(Boolean).join(' - ')}));
+            }
+          }}
+        />
+      ) : INFO_COMBO.includes(key) ? (
+        <ComboBox value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`เลือก ${label}`} bare/>
+      ) : (
+        // MARKER_BUSINESSUNIT_IE_DEPARTMENT_DEFAULT_V1 — IE Department ว่างเปล่า -> โชว์ "I-Expense" แทน
+        <input style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }} value={infoForm[key] || (key === 'IE Department' ? 'I-Expense' : '')} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
+      )
+    );
+
+    const renderRowBox = (fields) => (
+      <div style={{ ...boxWrap, display:'grid', gridTemplateColumns:`repeat(${fields.length}, 1fr)` }}>
+        {fields.map(([key,label], i) => <div key={key+'_h'} style={headCell(i===fields.length-1)}>{label}</div>)}
+        {fields.map(([key,label], i) => <div key={key+'_i'} style={inputCell(i===fields.length-1)}>{renderFieldInput(key,label)}</div>)}
+      </div>
+    );
+
+    const miniInputStyle = { height:'26px', padding:'0 6px', fontSize:'11px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' };
+
+    // MARKER_BUSINESSUNIT_GRT_GRN_DEFAULT_ZERO_V1
+    // ── Default "0" เมื่อไม่มีข้อมูล เฉพาะ Field ตัวเลข Counter ──────────────
+    // ── ใช้ != null แทน || กัน Bug ค่า 0 จริงโดนเบลอเป็นค่าว่าง (0 || '' = '') ──
+    // MARKER_BUSINESSUNIT_INTEGERFIELDS_SCOPE_FIX_V1
+    // ── ประกาศแยก เพราะตัวเดิม (ใน doInfoSave) อยู่คนละ Scope เข้าไม่ถึงจากตรงนี้ ──
+    const RENDER_INTEGER_FIELDS = ['ap_grt', 'ap_grn', 'ie_grt', 'ie_grn', 'vat_grn'];
+    const renderPairBox = (patKey, patLabel, valKey, valLabel) => {
+      const valDefault = RENDER_INTEGER_FIELDS.includes(valKey) ? 0 : '';
+      const valDisplay = infoForm[valKey] != null && infoForm[valKey] !== '' ? infoForm[valKey] : valDefault;
+      return (
+      <div style={{ ...boxWrap, marginBottom:0 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr' }}>
+          <div style={headCell(false)}>{patLabel}</div>
+          <div style={headCell(true)}>{valLabel}</div>
+          <div style={inputCell(false)}><input style={miniInputStyle} value={infoForm[patKey]||''} onChange={e=>setInfoForm({...infoForm,[patKey]:e.target.value})}/></div>
+          <div style={inputCell(true)}><input style={miniInputStyle} value={valDisplay} onChange={e=>setInfoForm({...infoForm,[valKey]:e.target.value})}/></div>
+        </div>
+      </div>
+      );
+    };
+
+    const renderDigitBox = (key, label) => (
+      <div style={{ ...boxWrap, marginBottom:0 }}>
+        <div style={headCell(true)}>{label}</div>
+        <div style={inputCell(true)}><input style={miniInputStyle} value={infoForm[key]||''} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/></div>
+      </div>
+    );
+
+    // MARKER_BUSINESSUNIT_TAXTYPE_MOVE_VAT_V5
+    // MARKER_BUSINESSUNIT_STATUS_NORMALIZE_V1
+    // ── Normalize ก่อนเทียบ รองรับทั้ง "Out of Scope" และ "out_of_scope" (จาก VatController.js) ──
+    const normalizeVatWatchlistStatus = (s) => (s || '').trim().toLowerCase().replace(/[_\s]+/g, ' ');
+    const renderStatusBox = () => {
+      const current = infoForm['vat_watchlist_status'] || 'Active';
+      const idx = VAT_STATUS_OPTIONS.findIndex(s => normalizeVatWatchlistStatus(s.label) === normalizeVatWatchlistStatus(current));
+      const opt = VAT_STATUS_OPTIONS[idx >= 0 ? idx : 0];
+      const cycleStatus = () => {
+        const next = VAT_STATUS_OPTIONS[((idx >= 0 ? idx : 0) + 1) % VAT_STATUS_OPTIONS.length];
+        setInfoForm({ ...infoForm, vat_watchlist_status: next.label });
+      };
+      return (
+        <div style={{ ...boxWrap, marginBottom:0 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr' }}>
+            <div style={headCell(false)}>Status</div>
+            <div style={headCell(true)}>Tax Type</div>
+            <div style={{ padding:'4px 5px', display:'flex', alignItems:'center', justifyContent:'center', borderRight:'0.5px solid #e8eaf0' }}>
+              <button type="button" onClick={cycleStatus} style={{ border:'none', cursor:'pointer', fontSize:'11px', fontWeight:'600', padding:'4px 10px', borderRadius:'20px', width:'100%', textAlign:'center', background:opt.bg, color:opt.color }}>{opt.label}</button>
             </div>
-          ))}
-          <div style={{ gridColumn:`span ${cols}` }}>
+            <div style={inputCell(true)}>
+              <input style={miniInputStyle} value={infoForm['allowed_tax_type']||''} onChange={e=>setInfoForm({...infoForm, allowed_tax_type:e.target.value})}/>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // MARKER_BUSINESSUNIT_GRTCONTROL_BADGE_V6
+    const settingSection = (title, permNote, borderColor, titleColor, children, gridCols) => (
+      <React.Fragment>
+        <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'6px 0 6px 4px', borderLeft:`3px solid ${borderColor}`, marginBottom:'6px' }}>
+          <span style={{ fontSize:'12px', fontWeight:'600', color:titleColor }}>{title}</span>
+          <span style={{ fontSize:'10px', color:'#999' }}>— {permNote}</span>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : (gridCols || '1.4fr 1.4fr 1fr'), gap:'8px', marginBottom:'12px' }}>
+          {children}
+        </div>
+      </React.Fragment>
+    );
+
+    // MARKER_BUSINESSUNIT_SETTING_CONSOLIDATED_V16
+    const renderGrtControlBox = (fieldKey, label, defaultValue = '') => {
+      const grtOptions = ['Manual','Semi-Auto','Auto'];
+      const current = infoForm[fieldKey] || defaultValue;
+      return (
+        <div style={{ ...boxWrap, marginBottom:0 }}>
+          <div style={headCell(true)}>{label}</div>
+          <div style={{ padding:'4px 5px', display:'flex', gap:'3px', justifyContent:'center' }}>
+            {grtOptions.map(opt => (
+              <button key={opt} type="button" onClick={()=>setInfoForm({...infoForm, [fieldKey]: opt})}
+                style={{ border:'none', cursor:'pointer', fontSize:'9.5px', fontWeight:'600', padding:'4px 4px', borderRadius:'12px', flex:1, background: current===opt ? '#1a3a5c' : '#f0f0f0', color: current===opt ? '#fff' : '#888' }}>
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // MARKER_BUSINESSUNIT_GRTCONTROL_BADGE_V6
+    // MARKER_BUSINESSUNIT_INFO_TABS_V3
+    const hasSettingPerm = userPermissions?.Manual || userPermissions?.IE || userPermissions?.VAT || isOwner;
+    const tabBtn = (key, label) => (
+      <button type="button" onClick={()=>setInfoFormTab(key)} style={{ padding:'9px 14px', fontSize:'12px', fontWeight:'600', border:'none', background:'transparent', cursor:'pointer', borderBottom: infoFormTab===key ? '2px solid #1a3a5c' : '2px solid transparent', color: infoFormTab===key ? '#1a3a5c' : '#999' }}>{label}</button>
+    );
+    return (
+      <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
+        <div style={{ padding:'10px 16px 0', display:'flex', gap:'4px', borderBottom:'1px solid #f0f0f0', flexShrink:0 }}>
+          {tabBtn('info','Company info')}
+          {hasSettingPerm && tabBtn('setting','Setting')}
+        </div>
+        <div style={{ padding:'14px 16px 16px', overflowY:'auto', flex:1, minHeight:'420px' }}>
+          {infoFormTab === 'info' && (
+            <div>
+              {INFO_ROWS.map((row, ri) => <div key={ri}>{renderRowBox(row)}</div>)}
+              <VatWatchlistBuGroupRangeSection currentBu={infoForm.bu} />
+            </div>
+          )}
+
+          {infoFormTab === 'setting' && (
+            <div>
+              {/* MARKER_BUSINESSUNIT_SETTING_CONSOLIDATED_V16 */}
+              {(userPermissions?.Manual || isOwner) && (
+                <React.Fragment>
+                  <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'6px 0 6px 4px', borderLeft:'3px solid #378ADD', marginBottom:'6px' }}>
+                    <span style={{ fontSize:'12px', fontWeight:'600', color:'#0c447c' }}>AP Setting</span>
+                    <span style={{ fontSize:'10px', color:'#999' }}>— Manual permission</span>
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 1fr', gap:'8px', marginBottom:'8px' }}>
+                    {renderGrtControlBox('AP GRT Control', 'GRT Control')}
+                    {renderRowBox([['AP Prepare By','Prepare By']])}
+                    {renderRowBox([['AP Department','Department']])}
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 1fr', gap:'8px', marginBottom:'12px' }}>
+                    {renderPairBox('ap_grt_pattern','GRT Pattern','ap_grt','GRT')}
+                    {renderPairBox('ap_grn_pattern','GRN Pattern','ap_grn','GRN')}
+                    {renderDigitBox('ap_digit','Digit')}
+                  </div>
+                </React.Fragment>
+              )}
+
+              {(userPermissions?.IE || isOwner) && (
+                <React.Fragment>
+                  <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'6px 0 6px 4px', borderLeft:'3px solid #7F77DD', marginBottom:'6px' }}>
+                    <span style={{ fontSize:'12px', fontWeight:'600', color:'#3c3489' }}>IE Setting</span>
+                    <span style={{ fontSize:'10px', color:'#999' }}>— IE permission</span>
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 1fr', gap:'8px', marginBottom:'8px' }}>
+                    {renderGrtControlBox('IE GRT Control', 'GRT Control', 'Auto')}
+                    {renderRowBox([['IE Prepare By','Prepare By']])}
+                    {renderRowBox([['IE Department','Department']])}
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 1fr', gap:'8px', marginBottom:'12px' }}>
+                    {renderPairBox('ie_grt_pattern','GRT Pattern','ie_grt','GRT')}
+                    {renderPairBox('ie_grn_pattern','GRN Pattern','ie_grn','GRN')}
+                    {renderDigitBox('ie_digit','Digit')}
+                  </div>
+                </React.Fragment>
+              )}
+
+              {/* MARKER_BUSINESSUNIT_VAT_ROW_REORG_V7 */}
+              {(userPermissions?.VAT || isOwner) && (
+                <React.Fragment>
+                  <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'6px 0 6px 4px', borderLeft:'3px solid #1D9E75', marginBottom:'6px' }}>
+                    <span style={{ fontSize:'12px', fontWeight:'600', color:'#085041' }}>VAT Setting</span>
+                    <span style={{ fontSize:'10px', color:'#999' }}>— VAT permission</span>
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 1fr', gap:'8px', marginBottom:'8px' }}> {/* MARKER_BUSINESSUNIT_VAT_TOPROW_RATIO_V10 */}
+                    {renderGrtControlBox('VAT GRT Control', 'GRT Control', 'Auto')}
+                    {renderRowBox([['PREPARE BY','Prepare By']])}
+                    {renderRowBox([['DEPARTMENT','Department']])}
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 1fr', gap:'8px', marginBottom:'12px' }}>
+                    {renderStatusBox()}
+                    {renderPairBox('vat_grn_pattern','GRN Pattern','vat_grn','GRN')}
+                    {renderDigitBox('vat_digit','Digit')}
+                  </div>
+                </React.Fragment>
+              )}
+            </div>
+          )}
+
+          <div style={{ marginTop:'4px' }}>
             <label style={{ fontSize:'11px', color:'#888', display:'block', marginBottom:'3px' }}>Updated By</label>
             <input style={S.inputDisabled} value={userName||currentUser?.email||''} disabled/>
           </div>
@@ -1081,7 +1451,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleInfoDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
               <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => infoFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
               <input ref={infoFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleInfoFileChange} />
-              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowInfoForm(true); setInfoEditId(null); setInfoForm(emptyInfoForm()); }}>+ New</button>
+              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowInfoForm(true); setInfoEditId(null); setInfoForm(emptyInfoForm()); setInfoFormTab('info'); }}>+ New</button>
             </> : <>
               <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleBranchDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
               <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => branchFileRef.current.click()}>📂{!isMobile && ' Import'}</button>

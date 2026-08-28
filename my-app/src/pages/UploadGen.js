@@ -308,6 +308,22 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
   const setSelected = setPdfSelected;
   const [pdfSubTab, setPdfSubTab] = React.useState('new'); // 'new' | 'inprogress'
 
+  // MARKER_PDFOCRTAB_WAIT_PROGRESS_PCT_V1
+  // ── nowTick: อัปเดตทุก 3 วิ เพื่อให้ % Progress ตอน "รอ queue" ขยับสดๆ ──────
+  // ── (คำนวณจากเวลาที่ผ่านไปเทียบกับเวลาสูงสุดที่ Backend จะรอ AP OCR ──────────
+  // ── ไม่ใช่ % จริงจาก Retry Count เพราะ Backend ไม่ได้ Persist ค่านี้ลง DB) ──
+  const [nowTick, setNowTick] = React.useState(Date.now());
+  React.useEffect(() => {
+    const iv = setInterval(() => setNowTick(Date.now()), 3000);
+    return () => clearInterval(iv);
+  }, []);
+  const WAIT_MAX_MS = 5 * 60 * 1000; // ตรงกับ MAX_RETRY(10) * RETRY_DELAY_MS(30s) ฝั่ง Backend
+  const getWaitPct = (item) => {
+    if (!item.createdAt) return 0;
+    const elapsed = nowTick - new Date(item.createdAt).getTime();
+    return Math.max(0, Math.min(99, Math.round((elapsed / WAIT_MAX_MS) * 100)));
+  };
+
   // โหลด queue ที่ค้างอยู่จาก DB เมื่อ mount ครั้งแรก
   React.useEffect(() => {
     const loadPendingQueue = async () => {
@@ -358,7 +374,12 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
         fileName: row.file_name,
         status: row.status,
         error: row.error_msg || '',
-        result: row.result_data || null,
+        // MARKER_PDFOCRTAB_RESULT_METADATA_MERGE_V1
+        // ── Backend เก็บผล OCR แยก 2 Column: result_data (rows/pdf_image) กับ ──
+        // ── result_meta (doc_type/bu_code/bu_name) แต่เดิม item.result ใช้แค่ ──
+        // ── result_data เพียวๆ ไม่เคยรวม result_meta เข้า .metadata เลย ──────
+        // ── ทำให้ handlePdfSave หา BU ไม่เจอ (BU Company Name/Code ขึ้น "-") ──
+        result: row.result_data ? { ...row.result_data, metadata: row.result_meta || {} } : null,
         serial: row.serial_code || row.result_meta?.serial_code || row.result_data?.serial_code || '',
         file: null,
         createdAt: row.created_at,
@@ -372,33 +393,90 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
     }).catch(() => {});
   }, []);
 
+  // MARKER_PDFOCRTAB_SSE_AUTORECONNECT_V1
+  // ── เดิม es.onerror แค่ Close เฉยๆ ไม่มีการเชื่อมต่อใหม่เองเลย (Comment เดิม ──
+  // ── บอกว่า "จะ reconnect เองรอบหน้าที่ mount ใหม่" ซึ่งไม่จริง -- ต้องปิด-เปิด ──
+  // ── Modal ใหม่เท่านั้นถึงจะได้ Connection สด) -- เจอจริงตอน Backend Restart ──
+  // ── ระหว่าง Debug วันนี้ Connection หลุดแล้วค้าง "รอ queue" ทั้งที่ Backend ──
+  // ── ประมวลผลเสร็จจริงไปแล้ว -- แก้เป็น Auto-Reconnect หลัง 3 วิ ────────────
+  //
+  // MARKER_PDFOCRTAB_QUEUE_DONE_LISTENER_V1
+  // ── getQueueSnapshot() (backend) กรอง status='done' ออกจาก Query ตั้งแต่ต้น ──
+  // ── queue_update ด้านล่างเลยไม่มีทางเห็น Item ที่เพิ่งเสร็จเลย (หา snapshot ──
+  // ── ไม่เจอ -> เข้า `if (!updated) return item;` ค้างสถานะเดิมตลอดไป) ────────
+  // ── Backend ยิง 'queue_done' แยกอยู่แล้วตอนงานเสร็จจริง (payload สั้น ไม่มี ──
+  // ── result_data) — ฟังตรงนี้แล้ว Fetch ผลเต็มจาก /queue/:id/result แทน ────
+  // ── (เดิมจุดนี้เผลอแปะ Listener ซ้ำ 2 ชุดจาก Patch รอบก่อน — รวมเหลือชุดเดียว) ──
   React.useEffect(() => {
-    const token = sessionStorage.getItem('fastapn_token');
-    const es = new EventSource(`http://10.101.87.126:4000/api/docenter/queue/stream?token=${encodeURIComponent(token || "")}`);
-    es.addEventListener('queue_update', (e) => {
-      try {
-        const { snapshot } = JSON.parse(e.data);
-        if (!Array.isArray(snapshot)) return;
-        setPdfQueue(q => q.map(item => {
-          const updated = snapshot.find(r => r.id === item.id);
-          if (!updated) return item;
-          if (updated.status === 'done') {
+    let cancelled = false;
+    let es = null;
+    let reconnectTimer = null;
+
+    const connect = () => {
+      if (cancelled) return;
+      const token = sessionStorage.getItem('fastapn_token');
+      es = new EventSource(`http://10.101.87.126:4000/api/docenter/queue/stream?token=${encodeURIComponent(token || "")}`);
+
+      es.addEventListener('queue_update', (e) => {
+        try {
+          const { snapshot } = JSON.parse(e.data);
+          if (!Array.isArray(snapshot)) return;
+          setPdfQueue(q => q.map(item => {
+            const updated = snapshot.find(r => r.id === item.id);
+            if (!updated) return item;
+            if (updated.status === 'done') {
+              const buFromName = (() => {
+                const m = (item.fileName||'').replace(/[.]pdf$/i,'').match(/^([A-Z]{2,6})[_-]/);
+                return m ? m[1] : '';
+              })();
+              const dtype  = updated.result_meta?.doc_type || docTypeRef.current;
+              const serial = updated.result_data?.serial_code || genSerialRef.current?.(buFromName||'XX', dtype) || item.fileName;
+              return { ...item, status:'done', result: { ...updated.result_data, metadata: updated.result_meta || {} }, serial, error:'' };
+            }
+            if (updated.status === 'error') return { ...item, status:'error', error: updated.error_msg || 'OCR ล้มเหลว' };
+            if (updated.status === 'ocring') return { ...item, status:'ocring' };
+            return item;
+          }));
+        } catch(_) {}
+      });
+
+      es.addEventListener('queue_done', async (e) => {
+        try {
+          const { id } = JSON.parse(e.data);
+          if (id == null) return;
+          const token2 = sessionStorage.getItem('fastapn_token');
+          const res = await fetch(`http://10.101.87.126:4000/api/docenter/queue/${id}/result`, {
+            headers: { Authorization: `Bearer ${token2}` },
+          });
+          if (!res.ok) return;
+          const row = await res.json();
+          if (row.status !== 'done') return;
+          setPdfQueue(q => q.map(item => {
+            if (item.id !== id) return item;
             const buFromName = (() => {
               const m = (item.fileName||'').replace(/[.]pdf$/i,'').match(/^([A-Z]{2,6})[_-]/);
               return m ? m[1] : '';
             })();
-            const dtype  = updated.result_meta?.doc_type || docTypeRef.current;
-            const serial = updated.result_data?.serial_code || genSerialRef.current?.(buFromName||'XX', dtype) || item.fileName;
-            return { ...item, status:'done', result: updated.result_data, serial, error:'' };
-          }
-          if (updated.status === 'error') return { ...item, status:'error', error: updated.error_msg || 'OCR ล้มเหลว' };
-          if (updated.status === 'ocring') return { ...item, status:'ocring' };
-          return item;
-        }));
-      } catch(_) {}
-    });
-    es.onerror = () => { es.close(); }; // close on error — จะ reconnect เองรอบหน้าที่ mount ใหม่
-    return () => { es.close(); };
+            const dtype  = row.result_meta?.doc_type || docTypeRef.current;
+            const serial = row.result_data?.serial_code || genSerialRef.current?.(buFromName||'XX', dtype) || item.fileName;
+            return { ...item, status:'done', result: { ...row.result_data, metadata: row.result_meta || {} }, serial, error:'' };
+          }));
+        } catch(_) {}
+      });
+
+      es.onerror = () => {
+        es.close();
+        if (cancelled) return;
+        reconnectTimer = setTimeout(connect, 3000); // ลองเชื่อมต่อใหม่หลัง 3 วิ
+      };
+    };
+
+    connect();
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (es) es.close();
+    };
   }, []);
   const [attachments, setAttachments] = React.useState([]);
   const [pdfError, setPdfError]       = React.useState('');
@@ -497,111 +575,142 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
     const readyItems = pdfQueue.filter(x => x.status === 'done');
     if (!readyItems.length) { setPdfError('ไม่มีไฟล์ที่ OCR สำเร็จ'); return; }
     setSaving(true);
-    for (const item of readyItems) {
-      try {
-        const rot = previewRotation[getItemKey(item)] || 0;
-        const now  = new Date().toISOString();
-        const meta = item.result.metadata || {};
-        // ดึง bu (MPS/LKS) จาก company_list โดย match bu_code_name
-        const buShort = meta.bu_short || meta.bu_code?.split('-')[0]?.trim() || '';
-        let insertBuCode     = buShort;
-        let insertBuCodeName = meta.bu_code || '';
-        let insertBuName     = meta.bu_name || meta.bu_name_ocr || '';
-        if (buShort) {
-          try {
-            const { data: cl } = await db.from('company_list')
-              .select('bu,bu_code_name,"THAI COMPANY NAME"')
-              .ilike('bu_code_name', buShort + '%').maybeSingle();
-            if (cl) {
-              insertBuCode     = cl.bu || buShort;
-              insertBuCodeName = cl.bu_code_name || insertBuCodeName;
-              insertBuName     = cl['THAI COMPANY NAME'] || insertBuName;
-            }
-          } catch(_) {}
-        }
-        const finalSerial = item.serial || serialCode.trim() || item.result.serial_code || item.file.name;
-        const ocrDocType  = meta.doc_type || docType;
-        // Duplicate check — serial + doc_type เท่านั้น
-        const dupSerial = await checkDuplicateSerial(db, finalSerial, ocrDocType);
-        if (dupSerial) { setPdfError(`Serial "${finalSerial}" (${ocrDocType}) มีในระบบแล้ว — ข้ามไฟล์นี้`); continue; }
-        // rotate image before insert, respecting user preview rotation
-        let pdfImageData = item.result.pdf_image || '';
-        if (pdfImageData && rot) {
-          try {
-            pdfImageData = await new Promise((resolve) => {
-              const img = new Image();
-              const doRotate = () => {
-                const canvas = document.createElement('canvas');
-                const swap = rot === 90 || rot === 270;
-                canvas.width  = swap ? img.height : img.width;
-                canvas.height = swap ? img.width  : img.height;
-                const ctx = canvas.getContext('2d');
-                ctx.translate(canvas.width/2, canvas.height/2);
-                ctx.rotate(rot * Math.PI / 180);
-                ctx.drawImage(img, -img.width/2, -img.height/2);
-                resolve(canvas.toDataURL('image/jpeg', 0.85));
-              };
-              img.onload = doRotate;
-              img.onerror = () => resolve(pdfImageData);
-              img.src = pdfImageData;
-              if (img.complete && img.naturalWidth > 0) doRotate();
-            });
-          } catch(_) {}
-        }
-        const pdfAttachment = pdfImageData ? [{
-          name: finalSerial + '.jpg',
-          data: pdfImageData, mime: 'image/jpeg', source: 'ocr_pdf',
-        }] : [];
+    // MARKER_PDFOCRTAB_SAVE_HANG_TIMEOUT_V1
+    // ── เจอเคสจริง: Save ไฟล์แรกสำเร็จ (Insert เข้า doc_collection จริง) แต่ ──
+    // ── ทั้งฟังก์ชันเหมือน "ค้าง" ตอนประมวลผลไฟล์ที่ 2 -- ไม่มี Error โผล่ใน ──
+    // ── Console เลย (ไม่ใช่ Throw ปกติ แต่เป็น Promise ที่ไม่ Resolve/Reject) ──
+    // ── ผลคือ Item ที่ Save สำเร็จก็ไม่ถูกลบออกจาก Queue ด้วย เพราะโค้ดเดิมรอ ──
+    // ── ให้ Loop ทั้งหมดจบก่อนค่อยลบทีเดียว -- แก้ 2 ชั้น: (1) ใส่ Timeout 30 วิ ──
+    // ── ต่อไฟล์ กันค้างไม่รู้จบ ถ้าเกินจะ Error ออกมาให้เห็นแทน (2) ลบออกจาก ──
+    // ── Queue "ทันที" หลัง Save แต่ละไฟล์สำเร็จ ไม่ต้องรอไฟล์อื่นที่เหลือ ──────
+    const withTimeout = (promise, ms, label) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${label} เกิน ${ms/1000} วิ`)), ms)),
+    ]);
 
-        // ── Group rows ตาม receive_date → insert แยก record ─────────────
-        const allRows = item.result.rows || [];
-        const rowsByDate = {};
-        const defaultDate = meta.receive_date || now.split('T')[0];
-        allRows.forEach(r => {
-          const rd = r['Receive Date'] || defaultDate;
-          if (!rowsByDate[rd]) rowsByDate[rd] = [];
-          rowsByDate[rd].push(r);
-        });
-        const dateGroups = Object.entries(rowsByDate);
-        // ถ้าวันเดียว ใช้ serial เดิม / ถ้าหลายวัน ใส่ suffix วันที่
-        for (let gi = 0; gi < dateGroups.length; gi++) {
-          const [groupDate, groupRows] = dateGroups[gi];
-          const groupSerial = dateGroups.length === 1
-            ? finalSerial
-            : `${finalSerial}_${groupDate.replace(/[^a-zA-Z0-9]/g, '')}`;
-          const { error: err } = await db.from('doc_collection').insert([{
-            serial_code:  groupSerial,
-            doc_type:     ocrDocType,
-            doc_name:     DOC_TYPE_MAP[ocrDocType] || ocrDocType,
-            rows:         groupRows,
-            bu_code:      insertBuCode,
-            bu_code_name: insertBuCodeName,
-            bu_name:      insertBuName,
-            source:       'ocr_pdf',
-            file_date:    groupDate,
-            uploaded_by:  userName || currentUser?.email || '',
-            ocr_text:     item.result.ocr_text || '',
-            attachments:  gi === 0 ? [...pdfAttachment, ...attachments] : [...attachments],
-            created_at:   now, updated_at: now,
-          }]);
-          if (err) throw new Error(err.message);
+    try {
+      for (const item of readyItems) {
+        try {
+          await withTimeout((async () => {
+            const rot = item.rotation || 0;
+            const now  = new Date().toISOString();
+            const meta = item.result.metadata || {};
+            // ดึง bu (MPS/LKS) จาก company_list โดย match bu_code_name
+            const buShort = meta.bu_short || meta.bu_code?.split('-')[0]?.trim() || '';
+            let insertBuCode     = buShort;
+            let insertBuCodeName = meta.bu_code || '';
+            let insertBuName     = meta.bu_name || meta.bu_name_ocr || '';
+            if (buShort) {
+              try {
+                const { data: cl } = await db.from('company_list')
+                  .select('bu,bu_code_name,"THAI COMPANY NAME"')
+                  .ilike('bu_code_name', buShort + '%').maybeSingle();
+                if (cl) {
+                  insertBuCode     = cl.bu || buShort;
+                  insertBuCodeName = cl.bu_code_name || insertBuCodeName;
+                  insertBuName     = cl['THAI COMPANY NAME'] || insertBuName;
+                }
+              } catch(_) {}
+            }
+            const finalSerial = item.serial || serialCode.trim() || item.result.serial_code || item.file.name;
+            const ocrDocType  = meta.doc_type || docType;
+            // Duplicate check — serial + doc_type เท่านั้น
+            const dupSerial = await checkDuplicateSerial(db, finalSerial, ocrDocType);
+            if (dupSerial) {
+              // MARKER_PDFOCRTAB_DUPLICATE_VISIBLE_ERROR_V1
+              const dupMsg = `Serial "${finalSerial}" (${ocrDocType}) มีในระบบแล้ว`;
+              setPdfError(dupMsg);
+              setPdfQueue(q => q.map(x => x.id === item.id ? { ...x, status:'error', error: dupMsg } : x));
+              return; // ข้ามไฟล์นี้ ไม่นับเป็น Save สำเร็จ
+            }
+            // rotate image before insert, respecting user preview rotation
+            let pdfImageData = item.result.pdf_image || '';
+            if (pdfImageData && rot) {
+              try {
+                pdfImageData = await new Promise((resolve) => {
+                  const img = new Image();
+                  const doRotate = () => {
+                    const canvas = document.createElement('canvas');
+                    const swap = rot === 90 || rot === 270;
+                    canvas.width  = swap ? img.height : img.width;
+                    canvas.height = swap ? img.width  : img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.translate(canvas.width/2, canvas.height/2);
+                    ctx.rotate(rot * Math.PI / 180);
+                    ctx.drawImage(img, -img.width/2, -img.height/2);
+                    resolve(canvas.toDataURL('image/jpeg', 0.85));
+                  };
+                  img.onload = doRotate;
+                  img.onerror = () => resolve(pdfImageData);
+                  img.src = pdfImageData;
+                  if (img.complete && img.naturalWidth > 0) doRotate();
+                });
+              } catch(_) {}
+            }
+            const pdfAttachment = pdfImageData ? [{
+              name: finalSerial + '.jpg',
+              data: pdfImageData, mime: 'image/jpeg', source: 'ocr_pdf',
+            }] : [];
+
+            // ── Group rows ตาม receive_date → insert แยก record ─────────────
+            const allRows = item.result.rows || [];
+            const rowsByDate = {};
+            const defaultDate = meta.receive_date || now.split('T')[0];
+            allRows.forEach(r => {
+              const rd = r['Receive Date'] || defaultDate;
+              if (!rowsByDate[rd]) rowsByDate[rd] = [];
+              rowsByDate[rd].push(r);
+            });
+            const dateGroups = Object.entries(rowsByDate);
+            // ถ้าวันเดียว ใช้ serial เดิม / ถ้าหลายวัน ใส่ suffix วันที่
+            for (let gi = 0; gi < dateGroups.length; gi++) {
+              const [groupDate, groupRows] = dateGroups[gi];
+              const groupSerial = dateGroups.length === 1
+                ? finalSerial
+                : `${finalSerial}_${groupDate.replace(/[^a-zA-Z0-9]/g, '')}`;
+              const { error: err } = await db.from('doc_collection').insert([{
+                serial_code:  groupSerial,
+                doc_type:     ocrDocType,
+                doc_name:     DOC_TYPE_MAP[ocrDocType] || ocrDocType,
+                rows:         groupRows,
+                bu_code:      insertBuCode,
+                bu_code_name: insertBuCodeName,
+                bu_name:      insertBuName,
+                source:       'ocr_pdf',
+                file_date:    groupDate,
+                uploaded_by:  userName || currentUser?.email || '',
+                ocr_text:     item.result.ocr_text || '',
+                attachments:  gi === 0 ? [...pdfAttachment, ...attachments] : [...attachments],
+                created_at:   now, updated_at: now,
+              }]);
+              if (err) throw new Error(err.message);
+            }
+            // Save สำเร็จจริง — ลบออกจาก Queue "ทันที" ไม่ต้องรอไฟล์อื่น
+            setPdfQueue(q => q.filter(x => x.id !== item.id));
+          })(), 30000, item.fileName || 'ไฟล์นี้');
+        } catch(e) {
+          const errMsg = 'บันทึกไม่สำเร็จ: ' + e.message;
+          setPdfError(errMsg);
+          setPdfQueue(q => q.map(x => x.id === item.id ? { ...x, status:'error', error: errMsg } : x));
         }
-      } catch(e) { setPdfError('บันทึกไม่สำเร็จ: ' + e.message); }
+      }
+    } finally {
+      setSaving(false);
+      onSave();
     }
-    setSaving(false);
-    onSave();
   };
 
-  const [previewRotation, setPreviewRotation] = React.useState({}); // {itemKey: 0/90/180/270}
-  const getItemKey = (item) => item?.id || item?.fileName || item?.file?.name || '';
-
+  // MARKER_PDFOCRTAB_ROTATION_ON_ITEM_V1
+  // ── ย้ายค่าการหมุนจาก Dictionary แยก (previewRotation ผูกกับ getItemKey) ──────
+  // ── มาเก็บที่ item.rotation ตรงๆ ใน pdfQueue เลย -- เดิมถ้า Key ตอนหมุน กับ ──
+  // ── Key ตอน Save (ใน readyItems ที่ Filter ใหม่) ไม่ตรงกันเป๊ะ จะหมุนไปแต่ ──
+  // ── ตอน Save ไม่ได้หมุนตาม (อ่านจาก Object เดียวกันตรงๆ ตัดปัญหานี้ทั้งหมด) ──
   const selectedItem = selected !== null ? pdfQueue[selected] : null;
   const meta = selectedItem?.result?.metadata || {};
-  const currentRot = selectedItem ? (previewRotation[getItemKey(selectedItem)] || 0) : 0;
+  const currentRot = selectedItem?.rotation || 0;
   const rotatePreview = () => {
-    if (!selectedItem) return;
-    const key = getItemKey(selectedItem);
-    setPreviewRotation(r => ({ ...r, [key]: ((r[key]||0) + 90) % 360 }));
+    if (selected === null) return;
+    setPdfQueue(q => q.map((x,i) => i===selected ? { ...x, rotation: ((x.rotation||0) + 90) % 360 } : x));
   };
 
   const statusIcon = (s) => s==='done'?'✅':s==='ocring'?'⏳':s==='error'?'❌':s==='duplicate'?'⚠️':'🕐';
@@ -683,7 +792,17 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
                          </div>
                          <style>{`@keyframes ocrShimmer{0%{width:0%}50%{width:80%}100%{width:100%}}`}</style>
                        </div>
-                     ) : 'รอ queue'}
+                     ) : (() => {
+                       const pct = getWaitPct(item);
+                       return (
+                         <div>
+                           <span style={{ fontSize:'9px', color:'#888', fontWeight:'500' }}>รอ queue... {pct}%</span>
+                           <div style={{ height:'3px', borderRadius:'2px', background:'#eee', overflow:'hidden', marginTop:'3px', width:'100%' }}>
+                             <div style={{ height:'100%', borderRadius:'2px', background:'#bbb', width:`${pct}%`, transition:'width 1s linear' }}/>
+                           </div>
+                         </div>
+                       );
+                     })()}
                   </div>
                 </div>
                 <button onClick={e=>{e.stopPropagation();removeFile(idx);}}
@@ -3386,7 +3505,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const fmtNum = (n) => n!=null&&!isNaN(n)&&Number(n)!==0 ? Number(n).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}) : '-';
 
   const S = {
-    th: { padding:'8px 12px',fontSize:'11px',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'left',background:'#1a3a5c',whiteSpace:'nowrap' },
+    // MARKER_FOLDERDETAIL_STICKY_TABLE_HEADER_V1
+    // ── ตรึงหัวคอลัมน์ไว้บนสุดตอน Scroll ตารางลง (Parent Container มี ──────────
+    // ── overflowY:'auto' อยู่แล้ว sticky ทำงานได้เลยไม่ต้องแก้ที่อื่น) ──────────
+    th: { padding:'8px 12px',fontSize:'11px',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'left',background:'#1a3a5c',whiteSpace:'nowrap',position:'sticky',top:0,zIndex:2 },
     td: { padding:'8px 12px',fontSize:'11px',borderBottom:'0.5px solid #f0f0f0',verticalAlign:'middle' },
     tab: (a) => ({ padding:'7px 16px',fontSize:'12px',cursor:'pointer',border:'none',borderBottom:a?'2px solid #1a3a5c':'2px solid transparent',background:'transparent',color:a?'#1a3a5c':'#888',fontWeight:a?'500':'400',marginBottom:'-1px',whiteSpace:'nowrap' }),
   };
@@ -3985,6 +4107,9 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const [supportThreads, setSupportThreads] = useState([]);
   const [supportLoading, setSupportLoading] = useState(false);
   const [supportStatusTab, setSupportStatusTab] = useState('new');
+  // MARKER_UPLOADGEN_SUPPORT_PAGINATION_V1 -- Pagination สำหรับ List กระทู้ (Default 100 แถว/หน้า เหมือน Recycle Bin)
+  const [supportPage, setSupportPage] = useState(1);
+  const [supportPageSize, setSupportPageSize] = useState(100);
   const [showNewThreadForm, setShowNewThreadForm] = useState(false);
   const [newThreadTitle, setNewThreadTitle] = useState('');
   const [newThreadBody, setNewThreadBody] = useState('');
@@ -4308,6 +4433,9 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const sortedFilteredSupportThreads = supportStatusTab === 'in_process'
     ? [...filteredSupportThreads].sort((a, b) => (isThreadUnread(b) ? 1 : 0) - (isThreadUnread(a) ? 1 : 0))
     : filteredSupportThreads;
+  // MARKER_UPLOADGEN_SUPPORT_PAGINATION_V1
+  const supportTotalPages = Math.max(1, Math.ceil(sortedFilteredSupportThreads.length / supportPageSize));
+  const pagedSupportThreads = sortedFilteredSupportThreads.slice((supportPage - 1) * supportPageSize, supportPage * supportPageSize);
 
   // ── Support & Feedback: ลบกระทู้ (Soft Delete เข้า Recycle Bin) ──
   const handleDeleteThread = (threadId) => {
@@ -5389,7 +5517,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
           <div style={{ display:'flex', gap:'6px' }}>
             {/* MARKER_UPLOADGEN_BACKLOG_TAB_V1 -- Backlog โชว์เฉพาะ Owner เห็น */}
             {[['new','New'],['in_process','In process'],['resolved','Resolve'], ...(isOwner ? [['backlog','Backlog']] : [])].map(([key,label]) => (
-              <button key={key} onClick={()=>setSupportStatusTab(key)}
+              <button key={key} onClick={()=>{ setSupportStatusTab(key); setSupportPage(1); }}
                 style={{ display:'flex', alignItems:'center', gap:'6px', padding:'7px 14px', borderRadius:'8px', border: supportStatusTab===key?'0.5px solid #1a3a5c':'0.5px solid #e0e0e0', background: supportStatusTab===key?'#f0f6ff':'white', fontSize:'13px', fontWeight: supportStatusTab===key?'600':'400', color: supportStatusTab===key?'#1a3a5c':'#666', cursor:'pointer' }}>
                 {label}
                 <span style={{ fontSize:'11px', color:'#999', background:'#f0f0f0', padding:'1px 6px', borderRadius:'10px' }}>{supportCounts[key]}</span>
@@ -5415,9 +5543,13 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         </div>
 
         <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
-          <input value={supportSearchQuery} onChange={e=>setSupportSearchQuery(e.target.value)} placeholder="🔍 ค้นหาหัวข้อ, รายละเอียด, ผู้ตั้ง..."
-            style={{ width:'280px', maxWidth:'100%', padding:'7px 12px', borderRadius:'8px', border:'0.5px solid #e0e0e0', fontSize:'13px', boxSizing:'border-box' }}/>
-          <select value={supportMenuFilter} onChange={e=>setSupportMenuFilter(e.target.value)}
+          {/* MARKER_UPLOADGEN_SEARCH_ICON_SEPARATE_V1 -- แยกไอคอนออกจาก Placeholder (เดิมฝังรวมกันทำให้ Cursor แทรกหน้าไอคอนตอน Focus) */}
+          <div style={{ position:'relative', width:'280px', maxWidth:'100%' }}>
+            <span style={{ position:'absolute', left:'12px', top:'50%', transform:'translateY(-50%)', fontSize:'13px', pointerEvents:'none' }}>🔍</span>
+            <input value={supportSearchQuery} onChange={e=>{ setSupportSearchQuery(e.target.value); setSupportPage(1); }} placeholder="ค้นหาหัวข้อ, รายละเอียด, ผู้ตั้ง..."
+              style={{ width:'100%', padding:'7px 12px 7px 32px', borderRadius:'8px', border:'0.5px solid #e0e0e0', fontSize:'13px', boxSizing:'border-box' }}/>
+          </div>
+          <select value={supportMenuFilter} onChange={e=>{ setSupportMenuFilter(e.target.value); setSupportPage(1); }}
             style={{ padding:'7px 12px', borderRadius:'8px', border:'0.5px solid #e0e0e0', fontSize:'13px', color:'#555', background:'white', cursor:'pointer' }}>
             <option value="">ทุกเมนู</option>
             {MENU_SOURCE_OPTIONS.map(m => <option key={m} value={m}>{MENU_SOURCE_ICONS[m] || '🧩'} {m}</option>)}
@@ -5430,31 +5562,40 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
           <div style={{ textAlign:'center', padding:'40px', color:'#999', fontSize:'13px' }}>ยังไม่มีกระทู้ในสถานะนี้</div>
         ) : (
 // MARKER_SUPPORT_LIST_INBOX_STYLE_V1
-          <div style={{ display:'flex', flexDirection:'column', border:'0.5px solid #e8e8e8', borderRadius:'10px', overflow:'hidden' }}>
-            {/* MARKER_SUPPORT_LIST_CREATOR_COLUMN_V1 */}
-            <div style={{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 14px', background:'#f7f9fb', borderBottom:'0.5px solid #e8e8e8' }}>
-              <div style={{ width:'26px', flexShrink:0 }}></div>
-              <div style={{ flex:1, minWidth:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>หัวข้อ / ข้อความล่าสุด</div>
-              <div style={{ width:'90px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>ผู้สร้าง</div>
-              <div style={{ width:'80px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>วันที่สร้าง</div>
-              <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>เมนู</div>
-              <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>อัปเดตล่าสุด</div>
-              <div style={{ width:'34px', flexShrink:0 }}></div>
-            </div>
-            <div>
-              {sortedFilteredSupportThreads.map((t, i) => {
+          // MARKER_UPLOADGEN_LIST_FIXEDHEIGHT_V1 -- ปรับค่าหักลบจาก 280px เป็น 160px (ของเดิมเหลือช่องว่างด้านล่างเยอะเกินไป)
+          <div style={{ display:'flex', flexDirection:'column', height:'calc(100vh - 180px)', border:'0.5px solid #e8e8e8', borderRadius:'10px', overflow:'hidden' }}>
+            {/* MARKER_UPLOADGEN_HEADER_STICKY_ALIGN_FIX_V1 -- ย้าย Header เข้า Scroll Container เดียวกับแถว + ใช้ Sticky แทน (เดิมอยู่คนละ Container กับแถว ทำให้ Scrollbar กินความกว้างแถวแต่ Header ไม่โดน คอลัมน์เลยเยื้องกัน) */}
+            <style>{`
+              .support-thread-scroll::-webkit-scrollbar { width: 6px; }
+              .support-thread-scroll::-webkit-scrollbar-track { background: transparent; }
+              .support-thread-scroll::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 3px; }
+              .support-thread-scroll::-webkit-scrollbar-thumb:hover { background: #b8b8b8; }
+            `}</style>
+            <div className="support-thread-scroll" style={{ overflowY:'auto', flex:'1 1 auto', minHeight:0, scrollbarWidth:'thin' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 14px', background:'#f7f9fb', borderBottom:'0.5px solid #e8e8e8', position:'sticky', top:0, zIndex:1 }}>
+                <div style={{ width:'26px', flexShrink:0 }}></div>
+                <div style={{ flex:1, minWidth:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>หัวข้อ / ข้อความล่าสุด</div>
+                <div style={{ width:'80px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>Log number</div>
+                <div style={{ width:'90px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>ผู้สร้าง</div>
+                <div style={{ width:'80px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>วันที่สร้าง</div>
+                <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>เมนู</div>
+                <div style={{ width:'100px', flexShrink:0, fontSize:'11px', fontWeight:'600', color:'#888' }}>อัปเดตล่าสุด</div>
+                <div style={{ width:'34px', flexShrink:0 }}></div>
+              </div>
+              {pagedSupportThreads.map((t, i) => {
                 const unread = isThreadUnread(t);
                 const previewText = t.last_message ? `${t.last_message_by}: ${t.last_message}` : t.body;
                 return (
                   <div key={t.id} onClick={()=>openThreadDetail(t.id)}
-                    /* MARKER_UPLOADGEN_SEVERITY_ROW_HIGHLIGHT_V1 */
+                    /* MARKER_UPLOADGEN_TABLE_LAYOUT_V2 -- ตัดพื้นหลังสีเต็มแถวออก (เดิมสีไหลรวมกันดูเป็นก้อนเดียว) เหลือแค่เส้นซ้ายบอกสถานะ/severity + เส้นแบ่งเข้มขึ้น */
                     style={{
                       display:'flex', alignItems:'center', gap:'10px', padding:'10px 14px',
-                      borderBottom: i<sortedFilteredSupportThreads.length-1?'0.5px solid #f0f0f0':'none',
+                      borderBottom: i<pagedSupportThreads.length-1?'0.5px solid #dcdcdc':'none',
                       // MARKER_UPLOADGEN_RESOLVED_GREEN_HIGHLIGHT_V1 -- Resolve เขียวทั้งหมด (จบงานสำเร็จ) / Backlog ขาว (แค่เก็บเข้าคลังเก่า)
-                      borderLeft: t.status==='testing' ? '3px solid #1565C0' : (isBacklogThread(t) ? '3px solid transparent' : (t.status==='resolved' ? '3px solid #27500A' : (SEVERITY_MAP[t.severity] ? `3px solid ${SEVERITY_MAP[t.severity].color}` : '3px solid transparent'))),
+                      // MARKER_UPLOADGEN_ROW_ACCENT_WIDTH_V2 -- ขยายแถบสีซ้ายเป็น 8px ให้เห็นระดับความสำคัญชัดเจนขึ้น (ตัวเดียวที่เหลือหลังตัดพื้นหลังสีเต็มแถวออก)
+                      borderLeft: t.status==='testing' ? '8px solid #1565C0' : (isBacklogThread(t) ? '8px solid transparent' : (t.status==='resolved' ? '8px solid #27500A' : (SEVERITY_MAP[t.severity] ? `8px solid ${SEVERITY_MAP[t.severity].color}` : '8px solid transparent'))),
                       cursor:'pointer',
-                      background: t.status==='testing' ? '#E3F2FD' : (isBacklogThread(t) ? 'white' : (t.status==='resolved' ? '#EAF3DE' : (SEVERITY_MAP[t.severity] ? SEVERITY_MAP[t.severity].bg : (unread ? '#E6F1FB' : 'white')))),
+                      background: unread ? '#F5F9FE' : 'white',
                     }}>
                     <div style={{ width:'26px', height:'26px', borderRadius:'50%', background:'#E6F1FB', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10px', fontWeight:'500', color:'#0C447C', flexShrink:0 }}>
                       {(t.created_by||'?').slice(0,2).toUpperCase()}
@@ -5462,7 +5603,6 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
                         <span title={t.menu_source} style={{ flexShrink:0, fontSize:'11px' }}>{MENU_SOURCE_ICONS[t.menu_source] || '🧩'}</span>
-                        {t.log_number && <span style={{ fontSize:'10px', color:'#999', fontFamily:'monospace', flexShrink:0 }}>{t.log_number}</span>}
                         <span style={{ fontSize:'12px', fontWeight: unread?'600':'500', color:'#1a3a5c', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.title}</span>
                         {/* MARKER_SUPPORT_REJECT_LIST_BADGE_V1 */}
                         {t.status==='resolved' && t.resolution_type==='rejected' && (
@@ -5487,6 +5627,8 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                         <p style={{ fontSize:'11px', color:'#888', margin:'2px 0 0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{previewText}</p>
                       )}
                     </div>
+                    {/* MARKER_UPLOADGEN_TABLE_LAYOUT_V2 -- Column Log number แยกใหม่ */}
+                    <div style={{ width:'80px', flexShrink:0, fontSize:'11px', color:'#999', fontFamily:'monospace', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.log_number || '-'}</div>
                     <div style={{ width:'90px', flexShrink:0, fontSize:'11px', color:'#666', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.created_by}</div>
                     <div style={{ width:'80px', flexShrink:0, fontSize:'11px', color:'#999' }}>{formatDate(t.created_at)}</div>
                     <div style={{ width:'100px', flexShrink:0, fontSize:'11px', color:'#666', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.menu_source}</div>
@@ -5502,6 +5644,30 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
                   </div>
                 );
               })}
+            </div>
+            {/* MARKER_UPLOADGEN_SUPPORT_PAGINATION_V1 -- Footer Pagination เหมือน Recycle Bin */}
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', borderTop:'0.5px solid #e8e8e8', background:'#f7f9fb' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'8px', fontSize:'12px', color:'#666' }}>
+                แสดง
+                <select value={supportPageSize} onChange={e=>{ setSupportPageSize(Number(e.target.value)); setSupportPage(1); }}
+                  style={{ padding:'4px 8px', borderRadius:'6px', border:'0.5px solid #e0e0e0', fontSize:'12px', color:'#555', background:'white', cursor:'pointer' }}>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+                แถว/หน้า
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                <button onClick={()=>setSupportPage(p=>Math.max(1, p-1))} disabled={supportPage<=1}
+                  style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #e0e0e0', background:'white', fontSize:'12px', color: supportPage<=1?'#ccc':'#555', cursor: supportPage<=1?'default':'pointer' }}>
+                  ◀ ก่อนหน้า
+                </button>
+                <span style={{ fontSize:'12px', color:'#666' }}>หน้า {supportPage} จาก {supportTotalPages}</span>
+                <button onClick={()=>setSupportPage(p=>Math.min(supportTotalPages, p+1))} disabled={supportPage>=supportTotalPages}
+                  style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #e0e0e0', background:'white', fontSize:'12px', color: supportPage>=supportTotalPages?'#ccc':'#555', cursor: supportPage>=supportTotalPages?'default':'pointer' }}>
+                  ถัดไป ▶
+                </button>
+              </div>
             </div>
           </div>
         )}

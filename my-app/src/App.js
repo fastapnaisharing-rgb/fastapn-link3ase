@@ -182,6 +182,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
   const [supportPopupSending, setSupportPopupSending] = useState(false);
   const [supportPopupFinishing, setSupportPopupFinishing] = useState(false);
   const [supportPopupRejecting, setSupportPopupRejecting] = useState(false);
+  // MARKER_APP_REJECT_COMMENT_PROMPT_V1 -- Optional Comment ก่อน Reject (null = ปิดกล่อง, string = เปิดกล่องพร้อมข้อความที่พิมพ์)
+  const [rejectCommentDraft, setRejectCommentDraft] = useState(null);
   // MARKER_APP_BELL_POPUP_RESIZABLE_V1
   const [isPopupExpanded, setIsPopupExpanded] = useState(false);
   // MARKER_APP_BELL_POPUP_RESIZE_PERSIST_FIX_V1
@@ -373,18 +375,23 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
     setSupportPopupRejectingTest(false);
   };
 
-  const handleSupportPopupReject = async () => {
+  // MARKER_APP_REJECT_COMMENT_PROMPT_V1 -- รับ Comment (ไม่บังคับ) มาแนบไปกับการ Reject -- กล่อง Comment ทำหน้าที่ยืนยันแทน confirmDialog เดิมแล้ว
+  const handleSupportPopupReject = async (comment) => {
     if (!supportPopup) return;
-    if (!(await confirmDialog.confirm('ยืนยัน Reject กระทู้นี้?', { variant: 'danger', confirmText: 'Reject' }))) return;
     setSupportPopupRejecting(true);
     try {
       const token = sessionStorage.getItem('fastapn_token');
-      const res = await fetch(`${API}/api/support/threads/${supportPopup.thread.id}/reject`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/api/support/threads/${supportPopup.thread.id}/reject`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment: (comment || '').trim() }),
+      });
       const data = await res.json();
       if (data.ok) {
         // MARKER_APP_BELL_REJECT_SYNC_FIX_V1 -- Broadcast ให้ Home/UploadGen/List Sync ทันที (เดิมขาดหาย)
         broadcastWs('support_thread_status_updated', { threadId: supportPopup.thread.id });
         setSupportPopup(prev => prev ? { ...prev, thread: { ...prev.thread, status: 'resolved', resolution_type: 'rejected' } } : prev);
+        setRejectCommentDraft(null);
       } else {
         alert('Reject กระทู้ไม่สำเร็จ: ' + (data.error || ''));
       }
@@ -850,7 +857,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
                           style={{ flex: 1, fontSize: '12px', padding: '7px', borderRadius: '8px', border: 'none', background: '#27500A', color: 'white', cursor: 'pointer', opacity: (supportPopupFinishing || supportPopupRejecting) ? 0.6 : 1, fontWeight: '500' }}>
                           {supportPopupFinishing ? '...' : '✓ Resolve'}
                         </button>
-                        <button onClick={handleSupportPopupReject} disabled={supportPopupFinishing || supportPopupRejecting}
+                        {/* MARKER_APP_REJECT_COMMENT_PROMPT_V1 -- เปิดกล่อง Comment (ไม่บังคับ) แทนที่จะ Reject ตรงๆ */}
+                        <button onClick={() => setRejectCommentDraft('')} disabled={supportPopupFinishing || supportPopupRejecting}
                           style={{ width: '70px', fontSize: '12px', padding: '7px', borderRadius: '8px', border: '0.5px solid #d9534f', background: 'white', color: '#d9534f', cursor: 'pointer', opacity: (supportPopupFinishing || supportPopupRejecting) ? 0.6 : 1, fontWeight: '500' }}>
                           {supportPopupRejecting ? '...' : 'Reject'}
                         </button>
@@ -896,6 +904,30 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
               <p style={{ fontSize: '13px', color: '#999', textAlign: 'center', margin: '20px 0' }}>ไม่พบกระทู้นี้ (อาจถูกลบไปแล้ว)</p>
             )}
             {/* MARKER_APP_BELL_REMOVE_FOOTER_PERMANENT_V1 -- เอาปุ่ม ปิด/Confirm ออกถาวร ใช้ × ที่หัว Popup ปิดอย่างเดียวพอ */}
+          </div>
+        </div>
+      )}
+
+      {/* MARKER_APP_REJECT_COMMENT_PROMPT_V1 -- กล่อง Comment (ไม่บังคับ) ก่อนยืนยัน Reject จริง */}
+      {rejectCommentDraft !== null && (
+        <div onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (!supportPopupRejecting) setRejectCommentDraft(null); }}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 10020, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '12px', width: '360px', maxWidth: '90vw', padding: '18px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>Reject กระทู้นี้</div>
+            <div style={{ fontSize: '12px', color: '#888' }}>ระบุเหตุผล (ไม่บังคับ) ให้ผู้แจ้งเห็นว่าทำไมถึงถูก Reject</div>
+            <textarea value={rejectCommentDraft} onChange={e => setRejectCommentDraft(e.target.value)}
+              placeholder="เหตุผลที่ Reject (ไม่กรอกก็ได้)..." rows={4} disabled={supportPopupRejecting}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: '8px', border: '0.5px solid #ddd', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }}/>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <button onClick={() => setRejectCommentDraft(null)} disabled={supportPopupRejecting}
+                style={{ flex: 1, fontSize: '13px', padding: '8px', borderRadius: '8px', border: '0.5px solid #ddd', background: 'white', color: '#666', cursor: 'pointer' }}>
+                ยกเลิก
+              </button>
+              <button onClick={() => handleSupportPopupReject(rejectCommentDraft)} disabled={supportPopupRejecting}
+                style={{ flex: 1, fontSize: '13px', padding: '8px', borderRadius: '8px', border: 'none', background: '#d9534f', color: 'white', cursor: 'pointer', opacity: supportPopupRejecting ? 0.6 : 1, fontWeight: '500' }}>
+                {supportPopupRejecting ? '...' : 'ยืนยัน Reject'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1087,6 +1119,8 @@ function MainApp() {
   // MARKER_APP_OPEN_INBOX_FROM_NOTIF_V1
   // ── จำว่าต้องเปิด Tab ไหนใน APController หลัง Navigate มาจาก Notification ──
   const [pendingHistoryTab, setPendingHistoryTab] = useState(null);
+  // MARKER_BELL_VIEW_SYNC_V1 -- Signal ส่ง Batch ID ที่ต้องเปิด 3-Zone View ให้ APController
+  const [pendingViewBatchId, setPendingViewBatchId] = useState(null);
   // MARKER_NOTIF_CLICK_TARGET_BY_AUDIENCE_V1
   const handleOpenInbox = (tab = 'inbox') => { setPendingHistoryTab(tab); setActivePage('ap-gr'); };
   const [showBell, setShowBell] = useState(false);
@@ -1121,6 +1155,8 @@ function MainApp() {
   // ── Reset pendingHistoryTab ทันทีหลัง Consume (กันบังคับ Inbox ซ้ำตอน Navigate ปกติ) ──
   useEffect(() => {
     if (activePage === 'ap-gr' && pendingHistoryTab) setPendingHistoryTab(null);
+    // MARKER_BELL_VIEW_SYNC_V1 -- Reset ทันทีหลัง Consume เหมือนกัน (APController จับค่าไปแล้วตอน Mount)
+    if (activePage === 'ap-gr' && pendingViewBatchId) setPendingViewBatchId(null);
   }, [activePage]);
 
 
@@ -1463,13 +1499,14 @@ function MainApp() {
     setRejectChatReq(null);
     fetchRequests();
   };
-  const handlePreviewFileForReq = async (req) => {
+  // MARKER_BELL_VIEW_SYNC_V1 -- แทนที่จะเปิด Preview แบบง่าย (แก้ไม่ได้ ไม่มี Gallery/Feature ใดๆ)
+  // ให้ Navigate เข้า Inbox ของ AP Controller + ส่ง Signal Batch ID ไปให้เปิด 3-Zone View เต็มรูปแบบเอง
+  const handlePreviewFileForReq = (req) => {
     const batchId = (req.ref_batch_ids || [])[0];
-    try {
-      const { data } = await db.from('batch_list').select('invoice_register_file_id, invoice_register_file_name').eq('batch_id', batchId).single();
-      if (!data?.invoice_register_file_id) { confirmDialog.alert('ยังไม่มีไฟล์สำหรับ Batch นี้'); return; }
-      setPreviewFile({ fileId: data.invoice_register_file_id, fileName: data.invoice_register_file_name });
-    } catch (e) { confirmDialog.alert('โหลดไฟล์ไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
+    if (!batchId) { confirmDialog.alert('ไม่พบ Batch ID'); return; }
+    setPendingViewBatchId(batchId);
+    handleOpenInbox('inbox');
+    setShowBell(false);
   };
 
   const handleReject = async (req) => {
@@ -1582,6 +1619,7 @@ function MainApp() {
             onSubTabChange={sub => setActivePage(`ap-${sub}`)}
             flyoutOpen={openMenu === 'ap'}
             initialHistoryTab={pendingHistoryTab}
+            initialViewBatchId={pendingViewBatchId}
           />
         : <NoAccessPage />;
 

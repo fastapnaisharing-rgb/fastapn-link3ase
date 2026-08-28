@@ -24,28 +24,8 @@ function getApiBase() {
   return (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 }
 
-// MARKER_WSMANAGER_USERNAME_V1
-// ── เก็บ Username ปัจจุบันไว้ ส่งติดไปกับ URL ตอนเปิด WS Connection ──────
-// ── Backend จะได้รู้ว่า Connection ไหนเป็นของใคร สำหรับ Real-time Offline ──
-// ── Detection ตอนปิด Tab -- ดู app.js wss.on('connection', ...) ────────
-let currentWsUsername = null;
-
-export function setWsUsername(username) {
-  const changed = currentWsUsername !== username;
-  currentWsUsername = username;
-  // ── Username เปลี่ยน (Login/Logout) และ Connection เปิดอยู่แล้ว -> ต้อง ──
-  // ── Reconnect ใหม่ให้ Server รู้ Username ล่าสุด (URL Query String เดิม ──
-  // ── ผูกกับตอนเปิด Connection ครั้งแรกเท่านั้น เปลี่ยนทีหลังไม่มีผลอัตโนมัติ) ──
-  if (changed && ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    ws.close();
-    ws = null;
-    if (listeners.size > 0) connect();
-  }
-}
-
 function getWsUrl() {
-  const base = getApiBase().replace(/^http/, 'ws');
-  return currentWsUsername ? `${base}?user=${encodeURIComponent(currentWsUsername)}` : base;
+  return getApiBase().replace(/^http/, 'ws');
 }
 
 function connect() {

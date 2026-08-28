@@ -537,7 +537,7 @@
         )}
         <div style={{ paddingTop: '16px' }}>
 
-        {subTab === 'apmanual' && <SystemSettingsTab isOwner={isOwner} isAdmin={!isOwner} userName={userName} />}
+        {subTab === 'apmanual' && <SystemSettingsTab isOwner={isOwner} isAdmin={!isOwner} userName={userName} userRole={userRole} userPermissions={userPermissions} />}
 
         {ACCESS_TABS.map(tab => {
           if (subTab !== tab.id) return null;
@@ -1534,8 +1534,270 @@ useEffect(() => {
 
 
 // ─── System Settings Tab ─────────────────────────────────────────────────────
-function SystemSettingsTab({ isOwner, isAdmin, userName }) {
+// MARKER_CLOSEPERIOD_POPUP_V1
+// -- Popup ปิด Period แบบ Multi-Type (AP/VAT/IE) -- แทนที่ปุ่ม "Close period"
+// -- เดิมที่ Hardcode เรียกแค่ /ap/period/close เท่านั้น --
+// -- Owner: ปิดได้ทันที + Reopen ได้ภายใน 7 วันหลัง Close --
+// -- Admin: ปิดได้เฉพาะเมนูที่มี Permission จริง ต้องพิมพ์รหัส 6 หลักยืนยันก่อน --
+// -- Other: โชว์เฉพาะ Owner (ยังไม่มี Backend รองรับ) --
+function ClosePeriodPopup({ apiFetch, isOwner, userRole, userPermissions, onClose }) {
+  const [rows, setRows] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [confirmingKey, setConfirmingKey] = React.useState(null);
+  const [confirmCode, setConfirmCode] = React.useState('');
+  const [confirmInput, setConfirmInput] = React.useState('');
+  const [confirmError, setConfirmError] = React.useState('');
+  const [busyKey, setBusyKey] = React.useState(null);
+  const [errorMsg, setErrorMsg] = React.useState('');
+  const [noticeKey, setNoticeKey] = React.useState(null); // MARKER_CLOSEPERIOD_PRECLOSE_NOTICE_V1
+  const [infoMsg, setInfoMsg] = React.useState(''); // MARKER_CLOSEPERIOD_CLOSEALL_ISDUE_V1
+
+  const TYPES = [
+    { key: 'AP',  label: 'AP Manual',      prefix: 'ap',  permKey: 'Manual', endpoint: '/ap/period', businessDays: 2 },
+    { key: 'VAT', label: 'VAT controller', prefix: 'vat', permKey: 'VAT',    endpoint: '/vat/period', businessDays: 4 },
+    { key: 'IE',  label: 'IE controller',  prefix: 'ie',  permKey: 'IE',     endpoint: '/ie/period', businessDays: 2 },
+  ];
+
+  const fmtDT = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const pad2 = (n) => String(n).padStart(2, '0');
+    return pad2(d.getDate()) + '/' + pad2(d.getMonth()+1) + '/' + d.getFullYear() + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  };
+
+  const loadAll = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const [ap, vat, ie] = await Promise.all([
+        apiFetch('/ap/period/status'), apiFetch('/vat/period/status'), apiFetch('/ie/period/status'),
+      ]);
+      setRows({ AP: ap, VAT: vat, IE: ie });
+    } catch (err) { setErrorMsg(err.message); }
+    setLoading(false);
+  }, [apiFetch]);
+
+  React.useEffect(() => { loadAll(); }, [loadAll]);
+
+  // MARKER_PERIOD_REALTIME_BROADCAST_V1 -- ฟัง 'period_status_updated' จาก
+  // Backend (AP/VAT/IE มี Broadcast หลัง Close/Reopen สำเร็จแล้ว) ให้ Refresh
+  // ทันที กัน Popup ที่ User อื่นเปิดค้างอยู่เห็นปุ่ม Close ที่คนอื่นปิดไปแล้ว
+  React.useEffect(() => {
+    const unsubscribe = subscribeWs(['period_status_updated'], () => { loadAll(); });
+    return unsubscribe;
+  }, [loadAll]);
+
+  const hasPermission = (permKey) => isOwner || (userRole === 'Admin' && !!userPermissions?.[permKey]);
+  const visibleTypes = TYPES.filter(t => hasPermission(t.permKey));
+
+  const genCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
+  const doClose = async (type) => {
+    setBusyKey(type.key); setErrorMsg('');
+    try {
+      const res = await apiFetch(type.endpoint + '/close', { method: 'POST' });
+      if (!res?.ok) throw new Error(res?.error || 'Close failed');
+      setConfirmingKey(null);
+      await loadAll();
+    } catch (err) { setErrorMsg(err.message); }
+    setBusyKey(null);
+  };
+
+  const doReopen = async (type) => {
+    setBusyKey(type.key); setErrorMsg('');
+    try {
+      const res = await apiFetch(type.endpoint + '/reopen', { method: 'POST' });
+      if (!res?.ok) throw new Error(res?.error || 'Reopen failed');
+      await loadAll();
+    } catch (err) { setErrorMsg(err.message); }
+    setBusyKey(null);
+  };
+
+  // MARKER_CLOSEPERIOD_CLOSEALL_ISDUE_V1 -- เช็คว่า Type นี้ ถึง Deadline ของตัวเองแล้วหรือยัง (สูตรเดียวกับ Zone 2)
+  const nextMonthStr = (ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  const getDeadline = (ym, businessDays) => {
+    if (!ym) return null;
+    const [y, m] = ym.split('-').map(Number);
+    let d = new Date(y, m, 1), cnt = 0, dl = null;
+    while (cnt < businessDays) {
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) { cnt++; if (cnt === businessDays) dl = new Date(d); }
+      if (cnt < businessDays) d.setDate(d.getDate() + 1);
+    }
+    return dl;
+  };
+  const isDue = (type) => {
+    const monthM1 = rows?.[type.key]?.[`${type.prefix}_period_month`];
+    if (!monthM1) return false;
+    const dl = getDeadline(nextMonthStr(monthM1), type.businessDays);
+    if (!dl) return false;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const deadline = new Date(dl); deadline.setHours(0, 0, 0, 0);
+    return today >= deadline;
+  };
+
+  // MARKER_CLOSEPERIOD_CLOSEALL_V1 -- Owner ปิดเฉพาะเมนูที่ถึง Deadline ของตัวเองแล้วเท่านั้น เรียงตามลำดับ (กัน Deadlock)
+  const doCloseAll = async () => {
+    setBusyKey('ALL'); setErrorMsg(''); setInfoMsg('');
+    const openTypes = visibleTypes.filter(t => {
+      const s = rows?.[t.key]?.[`${t.prefix}_period_current_status`] || 'open';
+      return s !== 'closed';
+    });
+    const dueTypes = openTypes.filter(isDue);
+    const notDueTypes = openTypes.filter(t => !isDue(t));
+    for (const type of dueTypes) {
+      try {
+        const res = await apiFetch(type.endpoint + '/close', { method: 'POST' });
+        if (!res?.ok) throw new Error((type.label + ': ') + (res?.error || 'Close failed'));
+      } catch (err) {
+        setErrorMsg(err.message);
+        setBusyKey(null);
+        await loadAll();
+        return;
+      }
+    }
+    if (notDueTypes.length > 0) {
+      setInfoMsg('ข้าม ' + notDueTypes.map(t => t.label).join(', ') + ' เพราะยังไม่ถึง Deadline ของตัวเอง');
+    }
+    await loadAll();
+    setBusyKey(null);
+  };
+
+  const handleCloseClick = (type) => {
+    if (isOwner) { doClose(type); return; }
+    // MARKER_CLOSEPERIOD_PRECLOSE_NOTICE_V2 -- ทุก Type (AP/VAT/IE) เช็คเท่ากันหมด ใช้วันที่จริง
+    // เทียบ Deadline ของตัวเอง (isDue) แทนการเช็คจาก Status -- เพราะ VAT ไม่มี
+    // pre-close/blocked Status ให้เช็คแบบ AP/IE เลยต้องใช้วิธีเดียวกันทั้งหมดแทน
+    if (!isDue(type)) {
+      setNoticeKey(type.key);
+      return;
+    }
+    setConfirmingKey(type.key); setConfirmCode(genCode()); setConfirmInput(''); setConfirmError('');
+  };
+
+  const handleConfirmSubmit = (type) => {
+    if (confirmInput !== confirmCode) { setConfirmError('รหัสไม่ตรงกัน ลองใหม่อีกครั้ง'); return; }
+    doClose(type);
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={onClose}>
+      <div style={{ background:'white', borderRadius:'12px', width:'460px', maxWidth:'92vw', padding:'20px 24px', boxShadow:'0 8px 32px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px' }}>
+          <span style={{ fontSize:'16px', fontWeight:'500' }}>Close period</span>
+          <button onClick={onClose} style={{ border:'none', background:'none', fontSize:'18px', cursor:'pointer', color:'#999' }}>×</button>
+        </div>
+        <p style={{ fontSize:'13px', color:'#888', margin:'0 0 14px' }}>เลือกเมนูที่ต้องการปิด Period</p>
+
+        {errorMsg && <div style={{ background:'#FCEBEB', color:'#791F1F', padding:'8px 12px', borderRadius:'8px', fontSize:'12px', marginBottom:'12px' }}>{errorMsg}</div>}
+        {infoMsg && <div style={{ background:'#E8F1FB', color:'#1a3a5c', padding:'8px 12px', borderRadius:'8px', fontSize:'12px', marginBottom:'12px' }}>{infoMsg}</div>}
+        {loading && <div style={{ fontSize:'13px', color:'#888', textAlign:'center', padding:'20px 0' }}>กำลังโหลด...</div>}
+
+        {!loading && rows && (
+          <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+            {visibleTypes.map(type => {
+              const data = rows[type.key];
+              const status = data?.[`${type.prefix}_period_current_status`] || 'open';
+              const closedBy = data?.[`${type.prefix}_period_closed_by`];
+              const closedAt = data?.[`${type.prefix}_period_closed_at`];
+              const isConfirming = confirmingKey === type.key;
+              const isBusy = busyKey === type.key;
+              const canReopen = isOwner && closedAt && (Date.now() - new Date(closedAt).getTime()) <= 7*24*60*60*1000;
+
+              return (
+                <div key={type.key} style={{ border:'0.5px solid #e0e0e0', borderRadius:'8px', padding:'10px 12px' }}>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                    <div>
+                      <div style={{ fontSize:'13px', fontWeight:'500' }}>{type.label}</div>
+                      <div style={{ fontSize:'11px', color:'#888' }}>
+                        {closedBy ? ('Closed by ' + closedBy + ' \u00b7 ' + fmtDT(closedAt)) : 'Open'}
+                      </div>
+                    </div>
+                    {/* MARKER_CLOSEPERIOD_CLOSED_BADGE_ADMIN_V1 -- สถานะ Closed:
+                        Owner (ยังอยู่ใน 7 วัน) เห็นปุ่ม Reopen / Admin เห็นแค่ Badge กดไม่ได้อีกเลย */}
+                    {!isConfirming && (
+                      status === 'closed' ? (
+                        canReopen ? (
+                          <button onClick={() => doReopen(type)} disabled={isBusy}
+                            style={{ padding:'4px 10px', fontSize:'11px', borderRadius:'6px', border:'0.5px solid #856404', background:'white', color:'#856404', cursor:isBusy?'default':'pointer' }}>
+                            {isBusy ? '...' : 'Reopen'}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'20px', background:'#f5f5f5', color:'#555', fontWeight:'500' }}>Closed</span>
+                        )
+                      ) : (
+                        // MARKER_CLOSEPERIOD_ADMIN_NOTDUE_GRAY_V1 -- Admin ก่อนถึง Deadline
+                        // ปุ่มยังกดได้เหมือนเดิม (ยังขึ้น Notice เตือน) แค่เปลี่ยนเป็นสีเทา
+                        // ให้เห็นตั้งแต่แรกว่ายังไม่พร้อม -- Owner ไม่มีผลกระทบ ยังสีน้ำเงินเสมอ
+                        <button onClick={() => handleCloseClick(type)} disabled={isBusy}
+                          style={(!isOwner && !isDue(type))
+                            ? { padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'none', background:'#ccc', color:'#777', cursor:isBusy?'default':'pointer' }
+                            : { padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', cursor:isBusy?'default':'pointer' }}>
+                          {isBusy ? 'Closing...' : 'Close'}
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  {isConfirming && (
+                    <div style={{ marginTop:'10px', paddingTop:'10px', borderTop:'0.5px solid #eee' }}>
+                      <p style={{ fontSize:'12px', color:'#888', margin:'0 0 6px' }}>
+                        พิมพ์ <strong style={{ color:'#333', letterSpacing:'2px' }}>{confirmCode}</strong> เพื่อยืนยันการปิด
+                      </p>
+                      <div style={{ display:'flex', gap:'6px' }}>
+                        <input value={confirmInput} onChange={e => setConfirmInput(e.target.value)} maxLength={6}
+                          style={{ width:'110px', textAlign:'center', letterSpacing:'2px', padding:'5px', border:'0.5px solid #ccc', borderRadius:'6px' }} placeholder="000000" />
+                        <button onClick={() => handleConfirmSubmit(type)} disabled={isBusy}
+                          style={{ padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', cursor:'pointer' }}>
+                          {isBusy ? '...' : 'ยืนยันปิด'}
+                        </button>
+                        <button onClick={() => setConfirmingKey(null)}
+                          style={{ padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'0.5px solid #ccc', background:'white', cursor:'pointer' }}>
+                          ยกเลิก
+                        </button>
+                      </div>
+                      {confirmError && <p style={{ fontSize:'12px', color:'#791F1F', margin:'6px 0 0' }}>{confirmError}</p>}
+                    </div>
+                  )}
+                  {noticeKey === type.key && (
+                    <div style={{ marginTop:'10px', paddingTop:'10px', borderTop:'0.5px solid #eee', display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'8px' }}>
+                      <p style={{ fontSize:'12px', color:'#856404', margin:0, background:'#FFF3CD', padding:'8px 10px', borderRadius:'6px', flex:1 }}>
+                        ยังไม่ถึงช่วงที่ Admin ปิดได้ (ต้องรอใกล้ Deadline — ช่วง Pre-close/Blocked เท่านั้น) หรือให้ Owner เป็นคนปิดแทน
+                      </p>
+                      <button onClick={() => setNoticeKey(null)} style={{ border:'none', background:'none', color:'#999', cursor:'pointer', fontSize:'13px', padding:'4px' }}>×</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {isOwner && (
+              <div style={{ border:'0.5px solid #e0e0e0', borderRadius:'8px', padding:'10px 12px', opacity:0.6 }}>
+                <div style={{ fontSize:'13px', fontWeight:'500' }}>Other <span style={{ fontSize:'10px', color:'#999', fontWeight:'400' }}>(Owner only — Coming soon)</span></div>
+                <div style={{ fontSize:'11px', color:'#888' }}>ยังไม่มี Backend รองรับ</div>
+              </div>
+            )}
+            {isOwner && (
+              <button onClick={doCloseAll} disabled={busyKey === 'ALL'}
+                style={{ width:'100%', padding:'8px 0', fontSize:'13px', background:'#1a3a5c', color:'white', border:'none', borderRadius:'8px', cursor: busyKey === 'ALL' ? 'default' : 'pointer', marginTop:'2px' }}>
+                Close all open
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissions }) {
   const [periodData, setPeriodData] = React.useState(null);
+  const [showClosePopup, setShowClosePopup] = React.useState(false); // MARKER_CLOSEPERIOD_POPUP_V1
+  const [vatPeriodData, setVatPeriodData] = React.useState(null); // MARKER_ZONE2_MULTITYPE_TIMELINE_V1
+  const [iePeriodData, setIePeriodData] = React.useState(null);
   const [buList, setBuList]         = React.useState([]);
   const [loading, setLoading]       = React.useState(true);
   const [closing, setClosing]       = React.useState(false);
@@ -1547,13 +1809,32 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
   const [confirmOverrideAll, setConfirmOverrideAll] = React.useState(false);
   const [alphaFilter, setAlphaFilter] = React.useState('All');
   const [controlType, setControlType] = React.useState('AP');
+  // MARKER_PERIODPANEL_PERMKEY_MAP_V1 -- แปลง controlType เป็น permKey ของ userPermissions (ตรงกับ ACCESS_TABS ใน AccessControlTab)
+  const PERIOD_PANEL_PERM_KEY = { AP: 'Manual', VAT: 'VAT', IE: 'IE' };
+  // Owner แก้/Override ได้ทุกเมนู / Admin แก้/Override ได้เฉพาะเมนูที่ตัวเองมี Permission จริง (ไม่ใช่ Blanket แบบเดิม)
+  const hasEditPermission = isOwner || (userRole === 'Admin' && !!userPermissions?.[PERIOD_PANEL_PERM_KEY[controlType]]);
+  // MARKER_CONTROL_ZONE_TAB_AUTOSWITCH_V1 -- ถ้า controlType ปัจจุบันไม่ใช่ Tab ที่ User
+  // มีสิทธิ์เห็น (เช่น State เก่าค้างมาจากตอนยังไม่ Filter) ให้สลับไป Tab แรกที่มีสิทธิ์แทน
+  React.useEffect(() => {
+    const allowed = ['AP', 'VAT', 'IE'].filter(k => isOwner || (userRole === 'Admin' && !!userPermissions?.[PERIOD_PANEL_PERM_KEY[k]]));
+    if (allowed.length > 0 && !allowed.includes(controlType) && controlType !== 'Other') {
+      setControlType(allowed[0]);
+    } else if (controlType === 'Other' && !isOwner) {
+      setControlType(allowed[0] || 'AP');
+    }
+  }, [isOwner, userRole, userPermissions]);
   const PAGE_SIZE = 20;
 
   const fetchData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [period, bus] = await Promise.all([apiFetch('/ap/period/status'), apiFetch('/company_list')]);
+      const [period, vatPeriod, iePeriod, bus] = await Promise.all([
+        apiFetch('/ap/period/status'), apiFetch('/vat/period/status'), apiFetch('/ie/period/status'),
+        apiFetch('/company_list')
+      ]);
       setPeriodData(period);
+      setVatPeriodData(vatPeriod);
+      setIePeriodData(iePeriod);
       setBuList(Array.isArray(bus) ? bus : []);
     } catch (err) { setErrorMsg('Load error: ' + err.message); }
     setLoading(false);
@@ -1578,25 +1859,29 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     const mn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return mn[m-1] + ' ' + (y+543);
   };
-  const getDeadline = (ym) => {
+  const getDeadline = (ym, businessDays = 2) => {
     if (!ym) return null;
     const [y, m] = ym.split('-').map(Number);
     let d = new Date(y, m, 1), cnt = 0, dl = null;
-    while (cnt < 2) {
+    while (cnt < businessDays) {
       const wd = d.getDay();
-      if (wd !== 0 && wd !== 6) { cnt++; if (cnt === 2) dl = new Date(d); }
-      if (cnt < 2) d.setDate(d.getDate()+1);
+      if (wd !== 0 && wd !== 6) { cnt++; if (cnt === businessDays) dl = new Date(d); }
+      if (cnt < businessDays) d.setDate(d.getDate()+1);
     }
     return dl;
   };
 
-  const curMonth  = periodData?.ap_period_month    || '';
-  const curStatus = periodData?.ap_period_current_status || 'open';
-  const closedBy  = periodData?.ap_period_closed_by || '';
-  const closedAt  = periodData?.ap_period_closed_at || '';
+  // MARKER_ZONE2_MULTITYPE_TIMELINE_V1 -- เลือกข้อมูลตาม controlType จริง (เดิม Hardcode เฉพาะ AP)
+  const activePrefix = controlType === 'VAT' ? 'vat' : controlType === 'IE' ? 'ie' : 'ap';
+  const activeBusinessDays = controlType === 'VAT' ? 4 : 2;
+  const activePeriodData = controlType === 'VAT' ? vatPeriodData : controlType === 'IE' ? iePeriodData : (controlType === 'AP' ? periodData : null);
+  const curMonth  = activePeriodData?.[`${activePrefix}_period_month`]    || '';
+  const curStatus = activePeriodData?.[`${activePrefix}_period_current_status`] || 'open';
+  const closedBy  = activePeriodData?.[`${activePrefix}_period_closed_by`] || '';
+  const closedAt  = activePeriodData?.[`${activePrefix}_period_closed_at`] || '';
   const isClosed  = curStatus === 'closed';
-  const curMonthPlus1 = (() => { const d = new Date(curMonth+'-01'); d.setMonth(d.getMonth()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })();
-  const dl = getDeadline(curMonthPlus1);
+  const curMonthPlus1 = curMonth ? (() => { const d = new Date(curMonth+'-01'); d.setMonth(d.getMonth()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })() : '';
+  const dl = curMonthPlus1 ? getDeadline(curMonthPlus1, activeBusinessDays) : null;
   const dlStr     = dl ? pad2(dl.getDate())+'/'+pad2(dl.getMonth()+1)+'/'+dl.getFullYear() : '---';
   const fmtFullDateEarly = (d) => { if (!d) return '---'; const mn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return pad2(d.getDate())+'-'+mn[d.getMonth()]+'-'+d.getFullYear(); };
   const dlStrFull = dl ? fmtFullDateEarly(dl) : '---';
@@ -1615,7 +1900,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
 
     // ── จุดเริ่มต้นของ Timeline = วันถัดจาก Deadline ของ Previous Period ──
     // ── เพราะช่วง 1-2 วันแรกของเดือนใหม่ยังถือเป็นช่วง "รอปิดเดือนก่อนหน้า" อยู่ ──
-    const prevDeadline = getDeadline(curMonth);
+    const prevDeadline = getDeadline(curMonth, activeBusinessDays);
     const startDate = prevDeadline ? new Date(prevDeadline) : new Date(curMonthPlus1 + '-01');
     if (prevDeadline) startDate.setDate(startDate.getDate() + 1);
     startDate.setHours(0, 0, 0, 0);
@@ -1643,7 +1928,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
   // ── เช็คว่ามี BU ใดถูก Override อยู่หรือไม่ ──
   // ── ถ้ามี อย่างน้อย 1 BU → Card "Current" ต้องเปลี่ยน Label เป็น "Override" ──
   // ── เพื่อให้ AP Controller รู้ว่าตอนนี้สามารถย้อน Received Date ได้ ──
-  const hasAnyOverride = buList.some(bu => bu.ap_period_mode === 'prev');
+  const hasAnyOverride = buList.some(bu => bu[`${activePrefix}_period_mode`] === 'prev');
   const displayCurrentStatus = hasAnyOverride ? 'reopen' : curStatus;
   const sbMap     = { open:{l:'Open',bg:'#EAF3DE',c:'#27500A'}, 'pre-close':{l:'Pre-close',bg:'#FCEBEB',c:'#791F1F'}, blocked:{l:'Pre-close',bg:'#FCEBEB',c:'#791F1F'}, closed:{l:'Closed',bg:'#f5f5f5',c:'#555'}, reopen:{l:'Reopen',bg:'#FFF3CD',c:'#856404'} };
   const sb        = sbMap[displayCurrentStatus] || sbMap['open'];
@@ -1674,6 +1959,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         : 'Reopen all BU to Current done (' + res.bu_count + ' BU)';
       setSuccessMsg(msg);
       await fetchData();
+      // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1 -- แจ้ง APController.js (ทุก BU) ให้ Refresh ap_period_mode ทันที
+      broadcastWs('bu_config_updated', { all: true, field: 'ap_period_mode', value: targetMode });
     } catch (err) { setErrorMsg(err.message); }
     setConfirmOverrideAll(false);
   };
@@ -1683,6 +1970,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     try {
       await apiFetch('/ap/period/override/bu', { method:'POST', body:JSON.stringify({ bu:bu.bu, mode:newMode }) });
       await fetchData();
+      broadcastWs('bu_config_updated', { bu: bu.bu, field: 'ap_period_mode', value: newMode }); // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1
     } catch (err) { setErrorMsg(err.message); }
   };
 
@@ -1690,6 +1978,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     try {
       await apiFetch('/company_list/'+bu.id, { method:'PUT', body:JSON.stringify({ [field]:value }) });
       await fetchData();
+      broadcastWs('bu_config_updated', { bu: bu.bu, field, value }); // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1
     } catch (err) { setErrorMsg(err.message); }
   };
 
@@ -1702,6 +1991,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         vat_watchlist_last_incomplete_update: new Date().toISOString()
       }) });
       await fetchData();
+      broadcastWs('bu_config_updated', { bu: bu.bu, field: 'vat_watchlist_status', value: newStatus }); // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1
     } catch (err) { setErrorMsg(err.message); }
   };
 
@@ -1711,6 +2001,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
     try {
       await apiFetch('/company_list/'+bu.id, { method:'PUT', body:JSON.stringify({ vat_period_mode: newMode }) });
       await fetchData();
+      broadcastWs('bu_config_updated', { bu: bu.bu, field: 'vat_period_mode', value: newMode }); // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1
     } catch (err) { setErrorMsg(err.message); }
   };
 
@@ -1797,10 +2088,10 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
             </div>
           </div>
           <div style={{ display:'flex', gap:'8px', alignItems:'center', flexShrink:0 }}>
-            {!isClosed && (isOwner || isAdmin) && (
-              <button onClick={handleClose} disabled={closing}
-                style={{ padding:'7px 14px', borderRadius:'8px', border:'none', background:closing?'#ccc':'#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor:closing?'default':'pointer' }}>
-                {closing ? 'Closing...' : 'Close period'}
+            {(isOwner || isAdmin) && (
+              <button onClick={() => setShowClosePopup(true)}
+                style={{ padding:'7px 14px', borderRadius:'8px', border:'none', background:'#1a3a5c', color:'white', fontSize:'12px', fontWeight:'500', cursor:'pointer' }}>
+                Close period
               </button>
             )}
             {isOwner && (
@@ -1819,9 +2110,14 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
         </div>
       </div>
 
+      {/* MARKER_CONTROL_ZONE_TAB_VISIBILITY_V1 -- Owner เห็นครบ 4 Tab / Admin เห็นเฉพาะ
+          Tab ที่มี Permission จริง (Manual=AP, VAT, IE) / Other เห็นเฉพาะ Owner เท่านั้น
+          ไม่ว่า Admin จะมี Permission อะไรก็ตาม (ยังไม่มี Backend รองรับ) */}
       {/* MARKER_CONTROL_ZONE_TAB_V1 -- Zone 3: select Type (AP/VAT/IE/Other) */}
       <div style={{ display:'flex', gap:'6px', marginBottom:'12px' }}>
-        {[['AP','AP control'],['VAT','VAT control'],['IE','IE control'],['Other','Other control']].map(([key,label]) => (
+        {[['AP','AP control'],['VAT','VAT control'],['IE','IE control'],['Other','Other control']]
+          .filter(([key]) => key === 'Other' ? isOwner : (isOwner || (userRole === 'Admin' && !!userPermissions?.[PERIOD_PANEL_PERM_KEY[key]])))
+          .map(([key,label]) => (
           <button key={key} onClick={() => setControlType(key)}
             style={{
               padding:'7px 16px', borderRadius:'6px',
@@ -1896,8 +2192,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                 const isOvr  = bu.ap_period_mode === 'prev';
                 // ── ปุ่มมีแค่ 2 สถานะ: Override (ยังไม่กด) / Reopen (กดไปแล้ว) ──
                 // ── ไม่เกี่ยวกับ Deadline เลย — Deadline เป็นแค่ตัวกระตุ้นให้สังเกตเห็น ไม่ได้เปลี่ยนคำปุ่ม ──
-                const canEdit = isOwner;
-                const canOvr  = isOwner || isAdmin;
+                const canEdit = hasEditPermission;
+                const canOvr  = hasEditPermission;
                 const bg = isOvr ? '#fff8f0' : (idx%2===0 ? 'white' : '#fafbfc');
                 return (
                   <tr key={bu.id} style={{ background:bg }}>
@@ -1980,7 +2276,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                 const isActive = bu.vat_watchlist_status !== 'inactive';
                 const grnOvr = Number(bu.vat_grn_prev||0);
                 const isOvr  = bu.vat_period_mode === 'prev';
-                const canOvr = isOwner || isAdmin;
+                const canOvr = hasEditPermission;
                 const isGlBook = bu.vat_gl_booking === 'Yes';
                 const bg = isOvr ? '#fff8f0' : (idx%2===0 ? 'white' : '#fafbfc');
                 return (
@@ -1988,7 +2284,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                     <td style={{ ...TD({ textAlign:'left', fontFamily:'monospace', fontSize:'11px' }) }}>{bu.bu||'---'}</td>
                     <td style={{ ...TD({ textAlign:'left', maxWidth:'150px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }) }}>{bu['THAI COMPANY NAME']||'---'}</td>
                     <td style={TD()}>
-                      {isOwner
+                      {hasEditPermission
                         ? <input value={getVal(bu,'vat_digit')} onChange={e => setVal(bu,'vat_digit',e.target.value)} onBlur={e => handleSaveBU(bu,'vat_digit',e.target.value)} style={INP('40px')} />
                         : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.vat_digit||'4DG'}</span>}
                     </td>
@@ -2018,11 +2314,15 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                       </button>
                     </td>
                     <td style={TD()}>
-                      {isOwner
+                      {hasEditPermission
                         ? <input value={getVal(bu,'vat_grn_pattern')} onChange={e => setVal(bu,'vat_grn_pattern',e.target.value)} onBlur={e => handleSaveBU(bu,'vat_grn_pattern',e.target.value)} style={INP('68px','#fff5f5')} />
                         : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.vat_grn_pattern||'Y71MM0'}</span>}
                     </td>
-                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#791F1F' }}>{String(bu.vat_grn||0).padStart(4,'0')}</td>
+                    <td style={TD()}>
+                      {hasEditPermission
+                        ? <input value={getVal(bu,'vat_grn')} onChange={e => setVal(bu,'vat_grn',e.target.value)} onBlur={e => handleSaveBU(bu,'vat_grn',Number(e.target.value)||0)} style={{ ...INP('60px'), color:'#791F1F' }} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px', color:'#791F1F' }}>{String(bu.vat_grn||0).padStart(4,'0')}</span>}
+                    </td>
                     <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(grnOvr).padStart(4,'0')}</td>
                     <td style={TD()}>
                       {canOvr
@@ -2074,23 +2374,31 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
                     <td style={{ ...TD({ textAlign:'left', fontFamily:'monospace', fontSize:'11px' }) }}>{bu.bu||'---'}</td>
                     <td style={{ ...TD({ textAlign:'left', maxWidth:'150px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }) }}>{bu['THAI COMPANY NAME']||'---'}</td>
                     <td style={TD()}>
-                      {isOwner
+                      {hasEditPermission
                         ? <input value={getVal(bu,'ie_digit')} onChange={e => setVal(bu,'ie_digit',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_digit',e.target.value)} style={INP('40px')} />
                         : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.ie_digit||'4DG'}</span>}
                     </td>
                     <td style={{ ...TD(), borderLeft:'0.5px solid #d0e4f7' }}>
-                      {isOwner
+                      {hasEditPermission
                         ? <input value={getVal(bu,'ie_grt_pattern')} onChange={e => setVal(bu,'ie_grt_pattern',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grt_pattern',e.target.value)} style={INP('68px','#fffbf5')} />
                         : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.ie_grt_pattern||'Y92MM0'}</span>}
                     </td>
-                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#0C447C' }}>{String(bu.ie_grt||0).padStart(4,'0')}</td>
+                    <td style={TD()}>
+                      {hasEditPermission
+                        ? <input value={getVal(bu,'ie_grt')} onChange={e => setVal(bu,'ie_grt',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grt',Number(e.target.value)||0)} style={{ ...INP('60px'), color:'#0C447C' }} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px', color:'#0C447C' }}>{String(bu.ie_grt||0).padStart(4,'0')}</span>}
+                    </td>
                     <td style={{ ...TD(), borderRight:'0.5px solid #d0e4f7', fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(Number(bu.ie_grt_prev||0)).padStart(4,'0')}</td>
                     <td style={{ ...TD(), borderLeft:'0.5px solid #f7d0d0' }}>
-                      {isOwner
+                      {hasEditPermission
                         ? <input value={getVal(bu,'ie_grn_pattern')} onChange={e => setVal(bu,'ie_grn_pattern',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grn_pattern',e.target.value)} style={INP('68px','#fff5f5')} />
                         : <span style={{ fontFamily:'monospace', fontSize:'11px' }}>{bu.ie_grn_pattern||'Y91MM0'}</span>}
                     </td>
-                    <td style={{ ...TD(), fontFamily:'monospace', fontSize:'11px', color:'#791F1F' }}>{String(bu.ie_grn||0).padStart(4,'0')}</td>
+                    <td style={TD()}>
+                      {hasEditPermission
+                        ? <input value={getVal(bu,'ie_grn')} onChange={e => setVal(bu,'ie_grn',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grn',Number(e.target.value)||0)} style={{ ...INP('60px'), color:'#791F1F' }} />
+                        : <span style={{ fontFamily:'monospace', fontSize:'11px', color:'#791F1F' }}>{String(bu.ie_grn||0).padStart(4,'0')}</span>}
+                    </td>
                     <td style={{ ...TD(), borderRight:'0.5px solid #f7d0d0', fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(Number(bu.ie_grn_prev||0)).padStart(4,'0')}</td>
                     <td style={TD()}>
                       <span style={{ color:'#ccc', fontSize:'11px' }} title="รอเชื่ม Logic ฉัง Backend">Coming soon</span>
@@ -2143,6 +2451,15 @@ function SystemSettingsTab({ isOwner, isAdmin, userName }) {
             </div>
           </div>
         </div>
+      )}
+      {showClosePopup && (
+        <ClosePeriodPopup
+          apiFetch={apiFetch}
+          isOwner={isOwner}
+          userRole={userRole}
+          userPermissions={userPermissions}
+          onClose={() => { setShowClosePopup(false); fetchData(); }}
+        />
       )}
     </div>
   );

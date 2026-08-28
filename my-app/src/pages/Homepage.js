@@ -1,4 +1,4 @@
-﻿// MARKER_HOMEPAGE_ZONE_A_V1
+// MARKER_HOMEPAGE_ZONE_A_V1
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../lib/db';
@@ -207,13 +207,32 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     };
     fetchAll();
 
-    // SSE: ส่ง token ใน query string เพราะ EventSource ไม่รองรับ custom header
-    const es = new EventSource(`${API_QUEUE}/queue/stream?token=${encodeURIComponent(token || '')}`);
-    es.addEventListener('queue_update', () => { fetchAll(); });
-    es.addEventListener('queue_done',   () => { fetchAll(); });
-    es.addEventListener('queue_error',  () => { fetchAll(); });
-    es.onerror = () => { es.close(); };
-    return () => { es.close(); };
+    // MARKER_HOMEPAGE_CENTRALQUEUE_SSE_AUTORECONNECT_V1
+    // ── เดิม es.onerror แค่ Close เฉยๆ ไม่มีการเชื่อมต่อใหม่เองเลย (Pattern ──────
+    // ── เดียวกับ Bug ที่เจอใน PdfOcrTab — ถ้า Connection หลุดระหว่าง Backend ──
+    // ── Restart (ที่ทำบ่อยวันนี้) Widget "OCR Queue" หน้า Home จะไม่ Sync อีก ──
+    // ── เลยจนกว่าจะ Refresh หน้าทั้งหน้า) -- แก้เป็น Auto-Reconnect หลัง 3 วิ ────
+    let cancelled = false;
+    let es = null;
+    let reconnectTimer = null;
+    const connectSSE = () => {
+      if (cancelled) return;
+      es = new EventSource(`${API_QUEUE}/queue/stream?token=${encodeURIComponent(token || '')}`);
+      es.addEventListener('queue_update', () => { fetchAll(); });
+      es.addEventListener('queue_done',   () => { fetchAll(); });
+      es.addEventListener('queue_error',  () => { fetchAll(); });
+      es.onerror = () => {
+        es.close();
+        if (cancelled) return;
+        reconnectTimer = setTimeout(connectSSE, 3000);
+      };
+    };
+    connectSSE();
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (es) es.close();
+    };
   }, [isOwner, isAdmin, currentUser?.email]);
 
   const [queueModalFilter, setQueueModalFilter] = useState('active');
@@ -513,20 +532,16 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [offlineUsers, setOfflineUsers] = useState([]);
   const [loadingTeam, setLoadingTeam] = useState(true);
-  // MARKER_HOMEPAGE_TEAM_STATUS_REALTIME_V1 -- Subscribe Event Online/Offline เพื่อ Refresh ทันที ไม่ต้องรอ Poll 30 วิ
+  // MARKER_HOMEPAGE_TEAM_REALTIME_V1 -- ฟัง 'team_status_updated' (App.js Heartbeat/Login + AuthContext.js Logout มี Broadcast อยู่แล้ว) ให้ Refresh ทันที ไม่ต้องรอ Poll 30 วิ
   const [teamRefreshTick, setTeamRefreshTick] = useState(0);
   useRealtimeRefresh(['team_status_updated'], () => setTeamRefreshTick(t => t + 1), 0);
 
   useEffect(() => {
     if (!me) return;
     const loadNotif = async () => {
-      // MARKER_HOMEPAGE_NOTIF_TOKEN_GUARD_V1 -- ไม่มี Token แปลว่า Logout/Idle Timeout ไปแล้ว ไม่ต้องยิง Request ให้ 401 เปล่าๆ
-      if (!sessionStorage.getItem('fastapn_token')) return;
       try {
         // MARKER_HOMEPAGE_FILTER_BY_BATCHLIST_STATUS_V3 -- ดึงมาก่อนแบบไม่กรอง Status ตรงนี้ (จะกรองด้วย batch_list.status จริงทีหลัง)
-        // MARKER_HOMEPAGE_NOTIF_ERRLOG_DEBUG_V1 -- เพิ่ม Error Log ชั่วคราว เพื่อตรวจว่า Auth Header หลุดพร้อมกันทุก Query ในฟังก์ชันนี้หรือไม่
-        const { data, error: notifErr } = await db.from('batch_notifications').select('*').eq('recipient_username', me).order('created_at', { ascending: false }).limit(50);
-        if (notifErr) console.error('[load batch_notifications]', notifErr);
+        const { data } = await db.from('batch_notifications').select('*').eq('recipient_username', me).order('created_at', { ascending: false }).limit(50);
         const list = data || [];
 
         // MARKER_HOMEPAGE_SUPPORT_GROUND_TRUTH_V1
@@ -544,8 +559,6 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
             .in('status', ['in_process', 'testing'])
             .order('last_activity_at', { ascending: false })
             .limit(50);
-          // MARKER_HOMEPAGE_NOTIF_ERRLOG_DEBUG_V1
-          if (threadErr) console.error('[load support_threads]', threadErr);
           // MARKER_HOMEPAGE_SHARE_VISIBILITY_V1 -- หา Thread ที่ถูก Share มาให้ me เพิ่ม (เดิมเช็คแค่ created_by/Owner)
           // MARKER_HOMEPAGE_SHARE_VISIBILITY_ERRLOG_V2 -- db.js ไม่ Throw ตอน Request ล้มเหลว ต้องเช็ค error Field ตรงๆ ไม่งั้น Fail เงียบ
           let mySharedThreadIds = new Set();
@@ -574,9 +587,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
         const batchIds = [...new Set(list.map(n => n.batch_id).filter(Boolean))];
         let map = {};
         if (batchIds.length > 0) {
-          // MARKER_HOMEPAGE_NOTIF_ERRLOG_DEBUG_V1
-          const { data: batches, error: batchListErr } = await db.from('batch_list').select('batch_id, bu, status').in('batch_id', batchIds);
-          if (batchListErr) console.error('[load batch_list]', batchListErr);
+          const { data: batches } = await db.from('batch_list').select('batch_id, bu, status').in('batch_id', batchIds);
           (batches || []).forEach(b => { map[b.batch_id] = b; });
         }
         setBatchMeta(map);
@@ -598,13 +609,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     // useRealtimeRefresh ด้านบน (notifRefreshTick dependency) Refresh ทันทีอยู่แล้ว
     // ตัวนี้เป็นแค่ Fallback กันเหตุการณ์ที่ WebSocket หลุดโดยไม่รู้ตัว
     const iv = setInterval(loadNotif, 5 * 60 * 1000);
-    // MARKER_HOMEPAGE_NOTIF_STOP_ON_UNAUTH_V1 -- หยุด Poll ทันทีเมื่อ Token หลุด ไม่ต้องรอ me เปลี่ยนค่าผ่าน Re-render (ปิดช่องโหว่ Race Condition)
-    const stopOnUnauth = () => clearInterval(iv);
-    window.addEventListener('fastapn:unauthorized', stopOnUnauth);
-    return () => {
-      clearInterval(iv);
-      window.removeEventListener('fastapn:unauthorized', stopOnUnauth);
-    };
+    return () => clearInterval(iv);
   }, [me, isOwner, notifRefreshTick]); // MARKER_HOMEPAGE_REALTIME_NOTIFICATION_V1
 
   useEffect(() => {
@@ -633,7 +638,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     loadTeam();
     const iv = setInterval(loadTeam, 30000);
     return () => clearInterval(iv);
-  }, [teamRefreshTick]); // MARKER_HOMEPAGE_TEAM_STATUS_REALTIME_V1
+  }, [teamRefreshTick]); // MARKER_HOMEPAGE_TEAM_REALTIME_V1
 
   return (
     <div style={{

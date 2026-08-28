@@ -824,6 +824,10 @@ const computeNextSyRunning = async () => {
       if (tab === 'iecode') refreshNextSyRunning();
       if (tab === 'apcode') invalidate('SupplierList');
       if (tab === 'category') invalidate('VendorCategory');
+      // MARKER_VENDORMASTER_SMCODE_WS_BROADCAST_V1
+      if (tab === 'smcode') {
+        apiFetch('/ws-notify', { method: 'POST', body: JSON.stringify({ event: 'smcode_updated' }) }).catch(e => console.error('[SmCode broadcast]', e));
+      }
     } catch (err) {
       // ❌ ย้อนกลับถ้า backend พัง
       setDataMap(prev => ({

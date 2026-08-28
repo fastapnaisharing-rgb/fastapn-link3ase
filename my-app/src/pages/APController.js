@@ -289,6 +289,8 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
         value={value || ''}
         onChange={e => onChange(e.target.value)}
         onFocus={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); }}
+        // MARKER_COMBOINPUT_ONCLICK_REOPEN_V1 -- คลิกซ้ำตอน Focus ค้างอยู่แล้ว ต้องเปิด List ได้อีก
+        onClick={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); }}
         // MARKER_COMBOINPUT_ONBLUR_CLOSE_V1 -- ปิด Dropdown ตอน Focus หลุด (เช่น Tab ออก)
         // ── หน่วง 150ms กัน Race Condition กับคลิกเลือก Option ด้วยเมาส์ ──────
         onBlur={() => { setTimeout(() => setOpen(false), 150); }}
@@ -1352,6 +1354,9 @@ function DescriptionBankPopup({ show, onClose, onSelect, bu = '', supplierCode =
   const [newDesc, setNewDesc] = useState('');
   // MARKER_APCONTROLLER_ATDES_DESC_BANK_UX_V2
   const [activeIdx, setActiveIdx] = useState(-1);
+  // MARKER_DESCBANK_DBLCLICK_AND_EDIT_V1
+  const [editingId, setEditingId] = useState(null);
+  const [editingValue, setEditingValue] = useState('');
   const newDescRef = useRef(null);
   const MIN_ROWS = 5;
   // MARKER_APCONTROLLER_ATDES_DESC_BANK_HELP_V1
@@ -1396,6 +1401,19 @@ function DescriptionBankPopup({ show, onClose, onSelect, bu = '', supplierCode =
     } catch (e) { console.error('[desc bank delete]', e); }
   };
 
+  // MARKER_DESCBANK_DBLCLICK_AND_EDIT_V1 -- แก้ไข Description ที่เคยบันทึกไว้ได้โดยตรง
+  const startEdit = (item) => { setEditingId(item.id); setEditingValue(item.description); };
+  const cancelEdit = () => { setEditingId(null); setEditingValue(''); };
+  const saveEdit = async () => {
+    const v = editingValue.trim();
+    if (!v || !editingId) { cancelEdit(); return; }
+    try {
+      await db.from('item_description_favorites').update({ description: v }).eq('id', editingId);
+      setList(prev => prev.map(item => item.id === editingId ? { ...item, description: v } : item));
+      cancelEdit();
+    } catch (e) { console.error('[desc bank edit]', e); }
+  };
+
   // ── ↑↓ เลื่อนเลือกรายการเดิม, Enter ยืนยันรายการที่เลือกอยู่ (ถ้ามี) ──
   // ── หรือบันทึก Description ใหม่ (ถ้ายังไม่ได้เลือกรายการไหน) ─────
   const handleInputKeyDown = (e) => {
@@ -1427,14 +1445,38 @@ function DescriptionBankPopup({ show, onClose, onSelect, bu = '', supplierCode =
               {list.length === 0 && (
                 <div style={{ padding: '10px', fontSize: '11px', color: '#999' }}>ยังไม่มี Description ที่บันทึกไว้สำหรับรายการนี้</div>
               )}
+              {/* MARKER_DESCBANK_DBLCLICK_AND_EDIT_V1 */}
               {list.map((item, i) => (
                 <div key={item.id}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', borderBottom: '0.5px solid #f2f2f2', background: i === activeIdx ? '#E6F1FB' : 'white' }}>
-                  <span onClick={() => onSelect(item.description)} style={{ flex: 1 }}>{item.description}</span>
-                  <button onClick={() => handleDelete(item.id)} title="ลบ Description นี้"
-                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#A32D2D', padding: '2px 6px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                  </button>
+                  {editingId === item.id ? (
+                    <>
+                      <input value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
+                        onKeyDown={e => { if (e.key === 'Enter') saveEdit(); else if (e.key === 'Escape') cancelEdit(); }}
+                        onClick={e => e.stopPropagation()}
+                        style={{ flex: 1, height: '24px', padding: '0 6px', fontSize: '12px', border: '0.5px solid #1a3a5c', borderRadius: '4px', outline: 'none', color: '#1a3a5c' }} />
+                      <button onClick={saveEdit} title="บันทึก"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#27500A', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6 9 17l-5-5"/></svg>
+                      </button>
+                      <button onClick={cancelEdit} title="ยกเลิก"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#888', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span onClick={() => onSelect(item.description)} style={{ flex: 1 }}>{item.description}</span>
+                      <button onClick={() => startEdit(item)} title="แก้ไข Description นี้"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#0C447C', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                      </button>
+                      <button onClick={() => handleDelete(item.id)} title="ลบ Description นี้"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#A32D2D', padding: '2px 6px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
               {Array.from({ length: emptyRowCount }).map((_, i) => (
@@ -1502,6 +1544,10 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   const inputRef = useRef(null);
   const listRef  = useRef(null);
   const [favUpdating, setFavUpdating] = useState(null); // code ที่กำลัง update
+  // MARKER_MASTERDATA_REALTIME_V1 -- คนอื่นแก้ Item Code ที่ไหนก็ตาม Refetch ให้เห็นสด
+  useRealtimeRefresh(['itemcode_list_updated'], () => {
+    if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode realtime] fetchCollection background error:', e));
+  });
 
   const isReadOnly = view === 'view';
 
@@ -1529,6 +1575,8 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       if (!favRes.ok) { const j = await favRes.json().catch(() => ({})); throw new Error(j.error || 'บันทึกไม่สำเร็จ'); }
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode toggleFav] fetchCollection background error:', e));
+      // MARKER_MASTERDATA_REALTIME_V1
+      try { broadcastWs('itemcode_list_updated', {}); } catch (e) { console.error('[broadcast itemcode_list_updated]', e); }
     } catch (e) {
       console.error('[toggleFav failed]', e);
       confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ (เช็ค Console)'), { variant: 'danger' });
@@ -1589,6 +1637,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       }
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode handleSave] fetchCollection background error:', e));
+      try { broadcastWs('itemcode_list_updated', {}); } catch (e) { console.error('[broadcast itemcode_list_updated]', e); }
       setView('search'); setForm(emptyForm); setViewTarget(null);
     } catch (e) {
       console.error('[ItemCode handleSave failed]', e);
@@ -1604,6 +1653,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       if (error) throw error;
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode handleDelete] fetchCollection background error:', e));
+      try { broadcastWs('itemcode_list_updated', {}); } catch (e) { console.error('[broadcast itemcode_list_updated]', e); }
     } catch (e) { confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
@@ -1890,10 +1940,87 @@ const buildWhtCodeVal = (whtChar, branchDirectCode) => {
   return `${branchDirectCode}-WHT${w}`;
 };
 
+// MARKER_EDITGROUP_RESPLIT_V1 -- Logic แบ่งกลุ่ม (เหมือน handleSubmitInvoice เป๊ะ)
+// ดึงออกมาเป็นฟังก์ชันกลาง ใช้ร่วมกันทั้งตอน Submit ใหม่ และตอน Save "แก้ไขทั้งกลุ่ม"
+// -- กฎ1 Real Vendor แยกเป็น Invoice ของตัวเองเสมอ / กฎ2 ไม่มี Real Vendor จับ Tax Code ข้าม H-Block ได้ --
+const computeSplitGroups = (meaningfulLines) => {
+  const rankTax = (tc) => {
+    const t = String(tc || '').trim();
+    if (t.includes('SVAT7')) return 2;
+    if (t.includes('VAT7')) return 1;
+    return 0;
+  };
+  const groups = [];
+  meaningfulLines.forEach(line => {
+    const hasRealVendor = !!(line.realVendorName && String(line.realVendorName).trim());
+    if (!hasRealVendor) return;
+    const asH = line.hl === 'H' ? line : { ...line, hl: 'H' };
+    groups.push({ lines: [asH], hLine: asH });
+  });
+  const nonRvLines = meaningfulLines.filter(line => !(line.realVendorName && String(line.realVendorName).trim()));
+  const bucketMap = new Map();
+  const bucketOrder = [];
+  nonRvLines.forEach(line => {
+    const tax = String(line.taxCode || '').trim();
+    if (!bucketMap.has(tax)) { bucketMap.set(tax, []); bucketOrder.push(tax); }
+    bucketMap.get(tax).push(line);
+  });
+  const sortedKeys = [...bucketOrder].sort((a, b) => rankTax(b) - rankTax(a));
+  // MARKER_SPLITGROUPS_MERGE_SAME_ITEMCODE_ACCOUNT_V1
+  // -- กฎใหม่: Item Code + Account เหมือนกัน + ไม่มี Tax Code/Wht Code เลย -- Merge ยอดเป็นบรรทัดเดียว
+  const mergeSameItemAccount = (bucketLines) => {
+    const merged = [];
+    const keyMap = new Map();
+    bucketLines.forEach(line => {
+      const hasTax = !!String(line.taxCode || '').trim();
+      const hasWht = !!String(line.whtCode || '').trim();
+      if (hasTax || hasWht) { merged.push(line); return; }
+      const mergeKey = `${String(line.itemCode || '').trim()}|${String(line.account || '').trim()}`;
+      if (keyMap.has(mergeKey)) {
+        const existing = keyMap.get(mergeKey);
+        const amt = parseFloat(String(line.amount || '0').replace(/,/g, '')) || 0;
+        const existingAmt = parseFloat(String(existing.amount || '0').replace(/,/g, '')) || 0;
+        const summed = (existingAmt + amt).toFixed(2);
+        existing.amount = summed;
+        existing.total = summed;
+      } else {
+        const copy = { ...line };
+        keyMap.set(mergeKey, copy);
+        merged.push(copy);
+      }
+    });
+    return merged;
+  };
+  sortedKeys.forEach(key => {
+    // MARKER_COMPUTESPLITGROUPS_HL_FIX_V1 -- จัด H/L ใหม่ทุกกลุ่มเสมอ: บรรทัดแรก = H, ที่เหลือ = L
+    // (เดิมบังคับแค่บรรทัดแรกเป็น H แต่ไม่ได้เคลียร์บรรทัดอื่นที่อาจติด H มาด้วยให้เป็น L)
+    const mergedRaw = mergeSameItemAccount(bucketMap.get(key));
+    const bucketLines = mergedRaw.map((l, li) => {
+      const wantHl = li === 0 ? 'H' : 'L';
+      return l.hl === wantHl ? l : { ...l, hl: wantHl };
+    });
+    groups.push({ lines: bucketLines, hLine: bucketLines[0] });
+  });
+  return groups;
+};
+
 const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
   const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
   if (!itemData) return line;
+  // MARKER_CALCINVOICELINE_NV7_AUTOVATLINE_V1 -- Port มาจาก calcLine (InvoiceDetailPopup, MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1)
+  // บรรทัด Auto VAT (_isAutoVatLine) -- คำนวณ Account/Total ใหม่ตามปกติ แต่ "ไม่" คำนวณ VAT/WHT ซ้ำอีกชั้น
+  // เพราะ Amount ของบรรทัดนี้ *คือ* VAT ที่คำนวณไว้แล้วจากบรรทัดต้นทาง (ดู handleMoneyBlur)
+  if (line._isAutoVatLine) {
+    const rawSubAV = String(itemData.sub ?? '').trim();
+    const rawSubAccAV = String(vendorInfo?.['Sub Acc'] ?? '').trim();
+    const subValAV = rawSubAV.toUpperCase() === 'SUB' ? ((!rawSubAccAV || rawSubAccAV === '-') ? '999999' : rawSubAccAV) : rawSubAV;
+    const rawCpcAV = String(itemData.cpc ?? '').trim();
+    const effectiveCpcAV = form?.branchCpc?.trim() ? form.branchCpc.trim() : rawCpcAV;
+    const accountValAV = [effectiveCpcAV, String(itemData.account ?? '').trim(), subValAV].filter(Boolean).join('-');
+    const amountNumAV = parseFloat(String(line.amount).replace(/,/g, '')) || 0;
+    return { ...line, account: accountValAV, taxCode: '', whtCode: '', vat: '', wht: '', total: fmt2Val(amountNumAV), tax: 'NN', _isAutoVatLine: true };
+  }
   const rawSub = String(itemData.sub ?? '').trim();
   // MARKER_APCONTROLLER_SUBACC_DEFAULT_999999_V1
   // ── Vendor ไม่มี Sub Acc กำหนดไว้ (ว่าง/"-") -> Default เป็น 999999 ──────
@@ -1915,7 +2042,15 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   if (form?.customizePeriod) customizeParts.push(`งวดที่ ${form.customizePeriod}`);
   if (form?.customizePercent) customizeParts.push(`จำนวน ${form.customizePercent}%`);
   const customizeText = customizeParts.join(' ');
-  let descVal = [ibPrefix, customizeText, form?.period ?? '', String(itemData.description ?? '').trim(), disGDesc, ibLabel].filter(Boolean).join(' ');
+  // MARKER_BUCKETITEM_DESC_PARTIAL_LOCK_V1 -- Lock "แค่ข้อ 4" (คำอธิบาย Item Code)
+  // ส่วนอื่น (ibPrefix/Customize/Period/disGDesc-BDes/ibLabel) คำนวณสดเสมอ ไม่ว่าจะ Lock หรือไม่
+  const itemCodeUpperCIL = String(line.itemCode ?? '').trim().toUpperCase();
+  const hasManualPart4CIL = line._descLockedForCode && line._descLockedForCode === itemCodeUpperCIL;
+  const part4TextCIL = hasManualPart4CIL ? (line._descManualPart4 ?? '') : String(itemData.description ?? '').trim();
+  // MARKER_CALCINVOICELINE_ATDES_SUFFIX_V1 -- Port มาจาก calcLine (InvoiceDetailPopup)
+  // แทรก ATDES Suffix ก่อน disGDesc เหมือนกัน (เดิม calcInvoiceLine ไม่มี Field นี้เลย)
+  const hasAtdesSuffixCIL = line._atdesSuffixForCode && line._atdesSuffixForCode === itemCodeUpperCIL;
+  let descVal = [ibPrefix, customizeText, form?.period ?? '', part4TextCIL, hasAtdesSuffixCIL ? line._atdesSuffix : '', disGDesc, ibLabel].filter(Boolean).join(' ');
   // MARKER_WHT_QUICKCALC_DESC_SUFFIX_V1
   // -- บรรทัด WHT ที่มาจากปุ่ม W1/W2/W3/W5 -- ต่อท้าย Description ด้วย -------
   // -- Vendor Name / มูลค่าฐานที่เลือก (ก่อนคูณ %) / Due Date ---------------
@@ -1930,7 +2065,8 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   const hasVITEM = notices.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
   const hasTC = notices.some(n => n === 'TC' || n === 'TC V-ITEM');
   let sourceStr = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
-  if (hasTC || hasVITEM) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase();
+  // MARKER_CALCINVOICELINE_HASITC_FIX_V1 -- เพิ่ม hasITC เข้าเงื่อนไข เหมือน calcLine (InvoiceDetailPopup)
+  if (hasTC || hasVITEM || hasITC) sourceStr = String(itemData?.spec_tx ?? '').trim().toUpperCase();
   if (form?.invTax?.trim()) sourceStr = String(form.invTax).trim().toUpperCase();
   if (line.tax?.trim()) sourceStr = String(line.tax).trim().toUpperCase();
   const vatChar = sourceStr[0] ?? '';
@@ -1946,8 +2082,32 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
   return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2Val(vatNum), wht: fmt2Val(whtNum), total: fmt2Val(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
 };
 
-const recalcLines = (lines, itemcodeItems, vendorInfo, form) => {
-  const calculated = lines.map(l => calcInvoiceLine(l, itemcodeItems, vendorInfo, form));
+// MARKER_BUCKETITEM_ACCOUNTCPC_PHASE1_V1 -- Priority Lookup (Item Code > Account) เหมือน InvoiceDetailPopup
+// เวอร์ชันเรียบง่าย ไม่มี Memoized Map Index (ใช้ใน Popup อายุสั้น จำนวน Rule ไม่เยอะ ไม่กระทบ Performance)
+// ตัด Supplier Rule (Account List) ออกตั้งใจ ต้องเลือกเองเท่านั้น เหมือนต้นฉบับ (MARKER_ACCOUNTCPC_SUPPLIER_NOAUTOAPPLY_V1)
+const lookupAccountCpcPriorityGlobal = (rules, itemCode, defaultAccount) => {
+  let account = null, cpc = null, subAcc = null;
+  const icRule = (rules || []).find(r => r.rule_type === 'item_code' && String(r.item_code || '').trim().toUpperCase() === String(itemCode || '').trim().toUpperCase());
+  if (icRule) { account = icRule.account; cpc = icRule.cpc; subAcc = icRule.sub_acc; }
+  const accountForLookup = account || defaultAccount;
+  const accRule = (rules || []).find(r => r.rule_type === 'account' && String(r.account || '').trim() === String(accountForLookup || '').trim());
+  if (accRule) { cpc = accRule.cpc; subAcc = accRule.sub_acc; }
+  return { account, cpc, subAcc };
+};
+
+const recalcLines = (lines, itemcodeItems, vendorInfo, form, accountCpcRules = []) => {
+  const calculated = lines.map(l => {
+    const base = calcInvoiceLine(l, itemcodeItems, vendorInfo, form);
+    if (!accountCpcRules.length || !base.itemCode?.trim()) return base;
+    const parts = String(base.account || '').split('-');
+    const defaultAccountPart = parts[1] || '';
+    const priority = lookupAccountCpcPriorityGlobal(accountCpcRules, base.itemCode, defaultAccountPart);
+    if (!priority.account && !priority.cpc && !priority.subAcc) return base;
+    const finalCpc = priority.cpc ?? parts[0] ?? '';
+    const finalAccount = priority.account ?? defaultAccountPart;
+    const finalSubAcc = priority.subAcc ?? parts[2] ?? '';
+    return { ...base, account: [finalCpc, finalAccount, finalSubAcc].filter(Boolean).join('-') };
+  });
   const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
   return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode }));
 };
@@ -1971,7 +2131,8 @@ const invFmtYYMMDD   = (d) => invFmtYY(d) + invFmtMM(d) + invFmtDD(d);
 const INVOICE_PATTERN_BUILDERS = {
   'AF-2Y2M':     (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYYMM(d)}${Mp}${r}`,
   'AF-T2Y2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 43}${invFmtMM(d)}${Mp}${r}`,
-  'AF-TFY2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 543}${invFmtMM(d)}${Mp}${r}`,
+  // MARKER_INVOICERULE_AFTFY2M_YYYY_FIX_V1 -- แก้ YY เป็น YYYY
+  'AF-TFY2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYYYY(d), 10) + 543}${invFmtMM(d)}${Mp}${r}`,
   'FY2M':        (Fp, Mp, Lp, d, r) => `${invFmtYYYYMM(d)}${Mp}${r}`,
   '2D2MFY':      (Fp, Mp, Lp, d, r) => `${invFmtDDMMYYYY(d)}${Mp}${r}`,
   'FY':          (Fp, Mp, Lp, d, r) => `${invFmtYYYY(d)}${Mp}${r}`,
@@ -2003,6 +2164,9 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
   const ruleCode = String(vendorInfo?.['Invoice No.'] ?? '').trim();
   const digitRule = String(vendorInfo?.['Digit'] ?? '').trim().toUpperCase();
 
+  // MARKER_INVOICENUM_DIGIT_FULL_BYPASS_V1 -- Digit = "Full" ข้ามทุก Rule ใช้ Invoice Num ที่พิมพ์ตรงๆ
+  if (digitRule === 'FULL') return raw;
+
   // "NDB" -> n หลัก ที่ supplier กำหนด (เช่น "4DB" -> 4)
   const dm = digitRule.match(/^(\d{1,2})DB$/);
   const n = dm ? parseInt(dm[1], 10) : 0;
@@ -2019,11 +2183,11 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
   return builder(Fp, Mp, Lp, d, result);
 };
 
-const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5'];
+const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5','NV7'];
 
 const VRV_MAPPING = {
   'C0001474': { h: 'C0001564', l: 'C0001631' },
-  'C0001565': { h: 'C0001497', l: 'C0000674' },
+  'C0001565': { h: 'C0000705', l: 'C0000674' },
 };
 
 const SUPPLIER_SITE_OPTS_DEFAULT = ['สำนักงานใหญ่','HQ','MAIN'];
@@ -2053,6 +2217,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     const f = {};
     SUPPLIER_FIELDS.forEach(([key]) => { f[key] = ''; });
     f['BU Code'] = bu || '';
+    f['disabled_fields'] = []; // MARKER_SUPPLIER_DISABLE_FIELDS_CONFIG_V1
     return f;
   };
 
@@ -2152,6 +2317,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     const f = emptyForm();
     SUPPLIER_FIELDS.forEach(([key]) => { f[key] = item[key] || ''; });
     f['BU Code'] = item['BU Code'] || String(item['Code'] ?? '').split('-')[0] || bu || '';
+    // MARKER_SUPPLIER_DISABLE_FIELDS_CONFIG_V1 -- Copy ค่าที่เคยตั้งไว้มาด้วย
+    f['disabled_fields'] = Array.isArray(item['disabled_fields']) ? item['disabled_fields'] : [];
     setEditTarget(item); setFormState(f); setFormError(''); setView(viewOnly ? 'view' : 'edit');
   };
   // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V4
@@ -2187,6 +2354,13 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     try {
       const meta = { updated_by: userName, updated_at: new Date().toISOString() };
       const payload = { ...form, ...meta };
+      // MARKER_SUPPLIER_DISABLEDFIELDS_JSONB_FIX_V1 -- ต้อง Stringify ก่อนส่ง ไม่งั้น pg
+      // จะ Serialize Array ดิบเป็น Postgres Array Literal ({a,b,c}) แทน JSON Array
+      // ทำให้ Type ไม่ตรงกับ Column JSONB เกิด HTTP 500 (Postgres รับ String JSON
+      // แล้ว Cast เข้า JSONB เองอัตโนมัติ -- อ่านกลับมาทีหลัง pg คืนเป็น Array ให้เหมือนเดิม)
+      if (Array.isArray(payload['disabled_fields'])) {
+        payload['disabled_fields'] = JSON.stringify(payload['disabled_fields']);
+      }
       if (view === 'edit' && editTarget?.id) {
         console.log('[DEBUG SupplierSave] -> UPDATE', editTarget.id);
         const { error } = await db.from('supplier_list').update(payload).eq('id', editTarget.id);
@@ -2446,6 +2620,37 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><textarea rows={3} value={form['RuleDescrip'] || ''} onChange={e => setField('RuleDescrip', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', height: 'auto' }} /></div>
                 {lbl('Notice Description', { alignItems: 'flex-start', paddingTop: '8px' })}
                 <div style={{ padding: '4px 6px' }}><textarea rows={3} value={form['NoticeDescrip'] || ''} onChange={e => setField('NoticeDescrip', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', height: 'auto' }} /></div>
+              </div>
+
+              {/* MARKER_SUPPLIER_DISABLE_FIELDS_CONFIG_V1 -- Row 10: Config Zone ปิด Field ใน Invoice Detail */}
+              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', padding: '14px 16px' }}>
+                <div style={{ fontSize: '11px', fontWeight: '600', color: '#1a3a5c', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>
+                  Config: ปิดการใช้งาน Field ใน Invoice Detail
+                </div>
+                <div style={{ fontSize: '10px', color: '#999', marginBottom: '12px' }}>
+                  Field ที่ปิดจะยังแสดงอยู่ แต่เปลี่ยนเป็นอ่านอย่างเดียว (ไม่ต้องกรอกสำหรับ Supplier นี้)
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px' }}>
+                  {/* MARKER_DUPLICATE_NOTICE_TOGGLE_V1 */}
+                  {['Method', 'Paygroup', 'Par', 'Invoice num', 'Real Tax Invoice', 'Duplicate Notice'].map(fieldName => {
+                    const disabledFields = Array.isArray(form['disabled_fields']) ? form['disabled_fields'] : [];
+                    const isOff = disabledFields.includes(fieldName);
+                    return (
+                      <div key={fieldName}
+                        onClick={() => {
+                          if (!canEdit) return;
+                          const next = isOff ? disabledFields.filter(f => f !== fieldName) : [...disabledFields, fieldName];
+                          setField('disabled_fields', next);
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: canEdit ? 'pointer' : 'default' }}>
+                        <span style={{ width: '30px', height: '16px', borderRadius: '8px', background: isOff ? '#ccc' : '#27500A', position: 'relative', flexShrink: 0, transition: 'background 0.15s' }}>
+                          <span style={{ position: 'absolute', top: '2px', left: isOff ? '2px' : '15px', width: '12px', height: '12px', borderRadius: '50%', background: 'white', transition: 'left 0.15s' }} />
+                        </span>
+                        <span style={{ fontSize: '12.5px', color: isOff ? '#999' : '#333', whiteSpace: 'nowrap' }}>{fieldName}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </>
           );
@@ -3171,6 +3376,8 @@ function SmComboBox({ value, onChange, options = [], center = false }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(value || '');
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  // MARKER_SMCOMBOBOX_KEYBOARD_NAV_V1
+  const [activeIdx, setActiveIdx] = useState(0);
   const ref = useRef(null);
   useEffect(() => { setInput(value || ''); }, [value]);
   useEffect(() => {
@@ -3183,25 +3390,37 @@ function SmComboBox({ value, onChange, options = [], center = false }) {
     const r = e.target.getBoundingClientRect();
     setPos({ top: r.bottom + 2, left: r.left, width: r.width });
     setInput('');  // เคลียร์ตอน focus เพื่อโชว์ list เต็มเสมอ — ไม่ต้องลบ text เองก่อน
+    setActiveIdx(0);
     setOpen(true);
   };
   const filtered = [...new Set(options.filter(o => String(o).toLowerCase().includes(input.toLowerCase())))];
+  const selectOption = (o) => { setInput(String(o)); onChange(String(o)); setOpen(false); };
+  const handleKeyDown = (e) => {
+    if (!open) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(a => Math.min(filtered.length - 1, a + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(a => Math.max(0, a - 1)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[activeIdx] !== undefined) selectOption(filtered[activeIdx]); }
+    else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+  };
   return (
     <div ref={ref} style={{ position: 'relative', width: '100%' }}>
       <input
         value={input}
-        onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onChange={e => { setInput(e.target.value); onChange(e.target.value); setActiveIdx(0); setOpen(true); }}
         onFocus={handleFocus}
+        onKeyDown={handleKeyDown}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder="เลือก"
         style={{ height: '24px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: center ? 'center' : 'left' }}
       />
       {open && filtered.length > 0 && (
         <div style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(26,58,92,0.15)', maxHeight: '180px', overflowY: 'auto' }}>
           {filtered.map((o, i) => (
-            <div key={i} onMouseDown={e => { e.preventDefault(); setInput(String(o)); onChange(String(o)); setOpen(false); }}
-              style={{ padding: '6px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: String(o) === value ? '#eef3fb' : 'white' }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#eef3fb'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = String(o) === value ? '#eef3fb' : 'white'; }}
+            <div key={i}
+              ref={el => { if (i === activeIdx) el?.scrollIntoView({ block: 'nearest' }); }}
+              onMouseDown={e => { e.preventDefault(); selectOption(o); }}
+              onMouseEnter={() => setActiveIdx(i)}
+              style={{ padding: '6px 10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: i === activeIdx ? '#eef3fb' : (String(o) === value ? '#eef3fb' : 'white') }}
             >{o}</div>
           ))}
         </div>
@@ -3211,6 +3430,14 @@ function SmComboBox({ value, onChange, options = [], center = false }) {
 }
 
 function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxId = '', fetchCollection, branchItems = [], userName = '', categoryItems = [] }) {
+  // MARKER_SMCODE_WS_BROADCAST_V1
+  const wsNotifySmCodeUpdated = async () => {
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      await fetch(`${apiBase}/api/ws-notify`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ event: 'smcode_updated' }) });
+    } catch {}
+  };
   usePopupOpenTracker(show);
   const [query, setQuery]                 = useState('');
   const [active, setActive]               = useState(-1);
@@ -3235,6 +3462,10 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
   const [smFormError, setSmFormError]     = useState('');
   const [saving, setSaving]               = useState(false);
   const [favUpdating, setFavUpdating]     = useState(null);
+  // MARKER_MASTERDATA_REALTIME_V1 -- คนอื่นแก้ SM Code ที่ไหนก็ตาม Refetch ให้เห็นสด
+  useRealtimeRefresh(['sm_code_list_updated'], () => {
+    if (fetchCollection) fetchCollection('SmCodeList', true).catch(e => console.error('[SmCode realtime] fetchCollection background error:', e));
+  });
   const inputRef = useRef(null);
   const listRef  = useRef(null);
 
@@ -3261,6 +3492,8 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       if (!favRes.ok) { const j = await favRes.json().catch(() => ({})); throw new Error(j.error || 'บันทึกไม่สำเร็จ'); }
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('SmCodeList', true).catch(e => console.error('[SmCode toggleFav] fetchCollection background error:', e));
+      // MARKER_MASTERDATA_REALTIME_V1
+      try { broadcastWs('sm_code_list_updated', {}); } catch (e) { console.error('[broadcast sm_code_list_updated]', e); }
     } catch (e) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
     setFavUpdating(null);
   };
@@ -3411,6 +3644,8 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
         if (error) throw error;
         // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1 -- ไม่ต้องรอเลย onSelect ใช้ data ตรงๆ ไม่ได้พึ่ง Cache
         if (fetchCollection) fetchCollection('SmCodeList', true).catch(e => console.error('[SmCode handleSmSave insert] fetchCollection background error:', e));
+        try { broadcastWs('sm_code_list_updated', {}); } catch (e) { console.error('[broadcast sm_code_list_updated]', e); }
+        wsNotifySmCodeUpdated();
         // auto-select record ใหม่
         setSaving(false);
         onSelect({ vendor: data, realInvoiceNo: '' });
@@ -3418,6 +3653,8 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       }
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('SmCodeList', true).catch(e => console.error('[SmCode handleSmSave update] fetchCollection background error:', e));
+      try { broadcastWs('sm_code_list_updated', {}); } catch (e) { console.error('[broadcast sm_code_list_updated]', e); }
+      wsNotifySmCodeUpdated();
       setView('search'); setEditTarget(null); setSmForm({}); setSmFormError('');
     } catch (e) { setSmFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
@@ -3430,6 +3667,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       if (error) throw error;
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('SmCodeList', true).catch(e => console.error('[SmCode handleSmDelete] fetchCollection background error:', e));
+      try { broadcastWs('sm_code_list_updated', {}); } catch (e) { console.error('[broadcast sm_code_list_updated]', e); }
     } catch (e) { confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
@@ -3807,24 +4045,25 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
           </div>
         </div>
 
-        {/* Table */}
+        {/* Table -- MARKER_REALVENDOR_THEAD_ALWAYS_SHOW_V1: thead โชว์ตลอด ไม่หายตอนหา Vendor ไม่เจอ */}
         <div ref={listRef} style={{ overflowY: 'auto', flex: 1 }}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
-              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
-              <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Vendor{query ? ` "${query}"` : ''}</div>
-            </div>
-          ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
                   {[['★','36px'],['SM-Code','100px'],['Company Name',''],['Tax ID','130px'],['Branch','70px'],['Supplier Code','130px'],['Action','100px']].map(([h, w]) => (
-                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: (h === 'Action' || h === '★') ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                    <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 12px', textAlign: (h === 'Action' || h === '★' || h === 'Tax ID' || h === 'Branch') ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item, i) => {
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
+                      <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+                      <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Vendor{query ? ` "${query}"` : ''}</div>
+                    </td>
+                  </tr>
+                ) : filtered.map((item, i) => {
                   const isAct = i === active;
                   const showFavHeader = i === 0 && favItems.length > 0;
                   const showAllHeader = i === favItems.length && favItems.length > 0;
@@ -3847,7 +4086,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
                           <span style={{ background: isAct ? '#1a3a5c' : (favItems.includes(item) ? '#fff3cd' : '#f0f3f8'), color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['SM-Code'] || '-'}</span>
                         </td>
                         <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>{item['Company Name'] || '-'}</td>
-                        <td style={{ padding: '9px 12px', color: '#778', fontFamily: 'monospace', fontSize: '11px' }}>{item['Tax ID'] || '-'}</td>
+                        <td style={{ padding: '9px 12px', color: '#778', fontFamily: 'monospace', fontSize: '11px', textAlign: 'center' }}>{item['Tax ID'] || '-'}</td>
                         <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', textAlign: 'center' }}>{item['Branch'] || '-'}</td>
                         <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Supplier Code'] || '-'}</td>
                         <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -3872,7 +4111,6 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
                 })}
               </tbody>
             </table>
-          )}
         </div>
 
         {/* Footer */}
@@ -4076,14 +4314,25 @@ return (
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '', flowMemory = {}, setFlowMemory = () => {}, supplierCodeRef, matchedRule = null, onOpenSupplierDetail = () => {}, vendorRuleItems = [] }) {
+function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '', flowMemory = {}, setFlowMemory = () => {}, supplierCodeRef, matchedRule = null, onOpenSupplierDetail = () => {}, vendorRuleItems = [], buInfo = null }) {
   usePopupOpenTracker(show);
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
   const isTablet = winW >= 768 && winW < 1200;
 
   const emptyLine = (hl = 'L') => ({ hl, itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
-  const [lines, setLines] = useState([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+  const [lines, _setLinesRaw] = useState([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+  // MARKER_DEBUG_LINES_GROW_V1 -- Debug ชั่วคราว หาจังหวะที่ Row ใหม่โผล่มาก่อนเวลาตอน V-RV Pending
+  const setLines = (updater) => {
+    _setLinesRaw(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (Array.isArray(next) && Array.isArray(prev) && next.length > prev.length) {
+        console.warn('[LINES GROW] ' + prev.length + ' -> ' + next.length + ' | realVendorLineIdx=' + realVendorLineIdx);
+        console.trace('[LINES GROW] stack');
+      }
+      return next;
+    });
+  };
   // MARKER_WHT_QUICKCALC_STATE_V1
   // -- เลือกแถวใน Invoice Lines แล้วคำนวณ WHT% จากยอดรวมที่เลือก Auto-Add แถวใหม่ --
   const [selectedLineIdx, setSelectedLineIdx] = useState(new Set());
@@ -4110,7 +4359,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const line1 = lines[0];
   const setLine1 = (fn) => setLines(prev => { const next = [...prev]; next[0] = typeof fn === 'function' ? fn(prev[0]) : fn; return next; });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
-  const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
+  const setLineField = (idx, key, val) => {
+    // MARKER_DEBUG_REALVENDOR_LEAK_V1 -- Debug ชั่วคราว หาสาเหตุ realVendorName รั่วไป Line อื่น
+    if (key === 'realVendorName' && val) {
+      console.trace('[REALVENDOR SET] idx=' + idx + ' val=' + val);
+    }
+    setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
+  };
   const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
 
   // ── GRN Preview แบบ Group-aware (Live) — เลียนแบบ Logic แบ่งกลุ่มเดียวกับ
@@ -4648,6 +4903,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   })();
   const [expandEditVal, setExpandEditVal] = useState('');
   const expandEditCancelRef = useRef(false);
+  // MARKER_INVOICEDETAIL_DESC_PARTIAL_LOCK_V1 -- Lock แค่ข้อ 4 + คำนวณ Description เต็มใหม่ทันที (ไม่รอ Debounce)
+  const commitDescPartialInvoiceDetail = (idx, manualPart4) => {
+    const curItemCodeUpper = String(lines[idx]?.itemCode ?? '').trim().toUpperCase();
+    const updatedLine = { ...lines[idx], _descManualPart4: manualPart4, _descLockedForCode: curItemCodeUpper };
+    const recalculated = calcLine(updatedLine, itemcodeItems, vendorInfo, form, allAccountCpcRules);
+    if (idx === 0) {
+      setLine1Field('desc', recalculated.desc);
+      setLine1Field('_descManualPart4', manualPart4);
+      setLine1Field('_descLockedForCode', curItemCodeUpper);
+    } else {
+      setLineField(idx, 'desc', recalculated.desc);
+      setLineField(idx, '_descManualPart4', manualPart4);
+      setLineField(idx, '_descLockedForCode', curItemCodeUpper);
+    }
+  };
   // MARKER_APCONTROLLER_INVOICE_FLOW_V1
   // ── Invoice Entry Flow — จำชุด Item Code (H/L) ที่ใช้ซ้ำบ่อยต่อ Vendor ──────
   const [vendorFlows, setVendorFlows] = useState([]);
@@ -4746,9 +5016,14 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     setFlowMemory?.(prev => ({ ...prev, [vendorNoForFlow]: { id: flow.id, flow_name: flow.flow_name } }));
   };
 
+  // MARKER_FLOW_DATA_BASED_GUARD_V1
+  // -- เช็คจาก lines ตรงๆ แทน State realVendorLineIdx ที่อาจ Desync กับความจริงได้
+  const hasIncompleteVRV = (linesArr) => {
+    return (linesArr || []).some(l => l?.realVendorName && (!String(l?.realInvoiceNo || '').trim() || !l?.realVendorTaxDate));
+  };
   // ── เรียกตอน Focus เข้า Item Code แถวแรกจริงๆ — ตรงนี้ค่อย Auto-fill ────
   const applyFlowToFirstLine = () => {
-    if (!selectedFlow || flowStep !== 0 || realVendorLineIdx !== -1) return;
+    if (!selectedFlow || flowStep !== 0 || hasIncompleteVRV(lines)) return;
     setLine1Field('itemCode', selectedFlow.items[0]?.itemCode || '');
     setFlowStep(1);
     setTimeout(() => { amountRef.current?.focus(); }, 60);
@@ -4767,6 +5042,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const handleSaveFlowConfirm = async () => {
     const itemsToSave = flowActionSession;
     const exampleLines = lines.filter(l => l.itemCode?.trim()).map(l => ({ hl: l.hl, itemCode: l.itemCode, amount: l.amount, desc: l.desc }));
+    // MARKER_DEBUG_SAVEFLOW_CONFIRM_V1
+    console.log('[DEBUG SaveFlow] mode=', saveFlowState.mode, '| targetId=', saveFlowState.targetId, '| name=', saveFlowState.name);
+    console.log('[DEBUG SaveFlow] flowActionSession.length=', flowActionSession.length, '| itemsToSave=', JSON.stringify(itemsToSave));
+    console.log('[DEBUG SaveFlow] selectedFlow (ตอนกด Save)=', selectedFlow ? selectedFlow.flow_name : null);
     if (!saveFlowState.name.trim()) { setSaveFlowState(s => ({ ...s, error: 'ต้องระบุชื่อ Flow' })); return; }
     setSaveFlowState(s => ({ ...s, saving: true, error: null }));
     try {
@@ -4778,7 +5057,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         example_invoice_no: buildInvoiceNumber(form?.invoiceNum, form?.invDate, vendorInfo) || null,
         example_date: form?.invDate || null,
       };
+      console.log('[DEBUG SaveFlow] Body ที่กำลังจะส่งไป Backend:', JSON.stringify(body));
       const isReplace = saveFlowState.mode === 'replace' && saveFlowState.targetId;
+      console.log('[DEBUG SaveFlow] isReplace=', isReplace, '| URL=', `${flowApiBase}/api/invoice-flows${isReplace ? '/' + saveFlowState.targetId : ''}`, '| method=', isReplace ? 'PUT' : 'POST');
       const res = await fetch(
         `${flowApiBase}/api/invoice-flows${isReplace ? '/' + saveFlowState.targetId : ''}`,
         {
@@ -4830,6 +5111,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [showCustomizeModal, setShowCustomizeModal]   = useState(false);
   const [showRealVendorPopup, setShowRealVendorPopup] = useState(false);
   const [realVendorLineIdx, setRealVendorLineIdx]     = useState(-1); // index ของ line ที่กด Real Vendor
+  const [showRealTaxFields, setShowRealTaxFields] = useState(true); // MARKER_REALVENDOR_TAXFIELDS_TOGGLE_V1
+  // MARKER_INVOICENUM_GRT_AUTOFILL_V1 -- ถ้า Supplier ปิด "Invoice num" ไว้ -> Sync ค่า GRT เข้ามาแทนอัตโนมัติ
+  const isInvoiceNumDisabled = Array.isArray(vendorInfo?.disabled_fields) && vendorInfo.disabled_fields.includes('Invoice num');
+  // MARKER_REALTAX_DISABLE_TOGGLE_V1 -- Supplier ปิด Real Tax Invoice No./Tax Invoice Date ไว้ไหม
+  const isRealTaxDisabled = Array.isArray(vendorInfo?.disabled_fields) && vendorInfo.disabled_fields.includes('Real Tax Invoice');
+  useEffect(() => {
+    if (isInvoiceNumDisabled && form?.grtNum !== form?.invoiceNum) {
+      setField('invoiceNum', form?.grtNum || '');
+    }
+  }, [isInvoiceNumDisabled, form?.grtNum]);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
   const [taxDropdownIdx, setTaxDropdownIdx] = useState(null);
   // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
@@ -4879,6 +5170,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     } else {
       // ── ไม่ใช่ ATDES (ไม่มี Popup เปิดต่อ) -- Focus ไป Amount ทันที ──
       setTimeout(() => lineAmountRefs.current[lineIdx]?.focus(), 50);
+    }
+  };
+  // MARKER_DESCBANK_DBLCLICK_AND_EDIT_V1
+  // ── Double-click ที่ Item Code (ตอนมีข้อมูลอยู่แล้ว) เปิดคลัง Description ──
+  // ── ซ้ำได้อีกครั้งเพื่อ Adjust -- ต้องเช็ค SPI-1 = ATDES ของ Item นั้นก่อนเสมอ ──
+  const openDescBankForExistingItem = (idx) => {
+    const code = String(lines[idx]?.itemCode || '').trim().toUpperCase();
+    if (!code) return;
+    const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === code);
+    if (!itemData) return;
+    if (String(itemData.dis_g ?? '').toUpperCase().includes('ATDES')) {
+      setDescBankContext({ lineIdx: idx, itemCode: code });
+      setDescBankOpen(true);
     }
   };
   // MARKER_APCONTROLLER_DESCBANK_AUTOFOCUS_V1
@@ -4951,7 +5255,25 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   //                                ไม่ add Line จาก blur Amount เอง
   // ══════════════════════════════════════════════════════════════════════════════
 
+  // MARKER_VRV_RACE_CONDITION_REMAINING_PATHS_V1
+  const isLineVRVByItemCode = (idx) => {
+    const l = lines[idx];
+    const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === l?.itemCode?.trim()?.toUpperCase());
+    return String(itemData?.value ?? '').trim().toUpperCase() === 'V-RV';
+  };
   const addLineAndFocus = () => {
+    // MARKER_DEBUG_ADDLINEANDFOCUS_V1
+    console.log('[DEBUG AddLine] เรียกแล้ว -- lines.length=', lines.length, '| selectedFlow=', selectedFlow?.flow_name, '| flowStep=', flowStep, '| items.length=', selectedFlow?.items?.length, '| realVendorLineIdx=', realVendorLineIdx, '| lastLineAmount=', lines[lines.length-1]?.amount);
+    // MARKER_ADDLINEFOCUS_REALVENDOR_PENDING_GUARD_V2 -- เช็คจาก lines ตรงๆ แทน State realVendorLineIdx
+    if (hasIncompleteVRV(lines)) {
+      console.log('[DEBUG AddLine] STOP ที่ hasIncompleteVRV -- บรรทัดที่ค้าง:', lines.filter(l => l?.realVendorName && (!String(l?.realInvoiceNo || '').trim() || !l?.realVendorTaxDate)));
+      return;
+    }
+    // MARKER_ADDLINEFOCUS_LAST_ROW_NOT_EMPTY_GUARD_V1
+    if (lines.length > 0 && !String(lines[lines.length - 1]?.amount ?? '').trim()) {
+      console.log('[DEBUG AddLine] STOP ที่ Last Row Amount ว่าง -- lines[last]=', JSON.stringify(lines[lines.length - 1]));
+      return;
+    }
     // MARKER_APCONTROLLER_INVOICE_FLOW_V1
     // ── ถ้ามี Flow Active และยังมี Step เหลือ — เติม Item Code Step ถัดไปให้ ──
     // ── ทันที แล้ว Focus ไปที่ Amount (ไม่ใช่ Item Code แบบปกติ) ──────────────
@@ -4959,6 +5281,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     // ── ปิด Flow ชั่วคราวถ้ากำลังเปิด Real Vendor Sub-row อยู่ (realVendorLineIdx ─
     // ── !== -1) กัน Flow แทรกกลางจังหวะที่ V-RV กำลังทำงานของตัวเองอยู่ ─────────
     if (selectedFlow && flowStep < selectedFlow.items.length && realVendorLineIdx === -1) {
+      console.log('[DEBUG AddLine] ผ่านเข้า Flow Branch -- กำลังเติม Item ถัดไป:', selectedFlow.items[flowStep]);
       const nextItem = selectedFlow.items[flowStep];
       setLines(prev => {
         const next = [...prev, { hl: nextItem.hl || 'L', itemCode: nextItem.itemCode || '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }];
@@ -5020,6 +5343,51 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       const itemCode = lines[idx]?.itemCode?.trim();
       const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCode?.toUpperCase());
       const isVRV = String(itemData?.value ?? '').trim().toUpperCase() === 'V-RV';
+      // MARKER_BU_ZEROVAT_AUTOTAX_V1
+      // MARKER_BU_ZEROVAT_AUTOTAX_V3_SPLITLINE -- แก้จาก v2 (แค่สลับตัวอักษร) เป็น v3 (แยกบรรทัด VAT เหมือน isNV7 เดิม)
+      // ── BU ไม่จด VAT (company_list."VAT %" = 0) -- คำนวณ sourceStr แบบเดียว ──
+      // ── กับที่ calcLine ใช้จริง (Priority: Vendor Tax-Type -> Item spec_tx ──
+      // ── (ถ้ามี Notice) -> Header invTax -> Line tax) ถ้าผลลัพธ์เป็น V/S Type ──
+      // ── ให้ทำเหมือน isNV7 เดิม (แยก VAT7% เป็นบรรทัดใหม่) แต่บรรทัดหลักเป็น ──
+      // ── "N"+เลขเดิม (เช่น N3) แทนที่จะเป็น "NN" ตายตัว -- WHT ยังคำนวณตาม ──
+      // ── % ที่ Master/Item Code กำหนดได้ถูกต้อง ────────────────────────────
+      const buVatPercentRaw = String(buInfo?.['VAT %'] ?? '').trim();
+      let zeroVatSplitHandled = false;
+      if (buVatPercentRaw === '0') {
+        const noticesForZeroVat = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
+        const hasITCForZeroVat = noticesForZeroVat.includes('ITC');
+        const hasVITEMForZeroVat = noticesForZeroVat.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
+        const hasTCForZeroVat = noticesForZeroVat.some(n => n === 'TC' || n === 'TC V-ITEM');
+        let sourceStrForZeroVat = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
+        if (hasTCForZeroVat || hasVITEMForZeroVat || hasITCForZeroVat) sourceStrForZeroVat = String(itemData?.spec_tx ?? '').trim().toUpperCase();
+        if (form?.invTax?.trim()) sourceStrForZeroVat = String(form.invTax).trim().toUpperCase();
+        if (lines[idx]?.tax?.trim()) sourceStrForZeroVat = String(lines[idx].tax).trim().toUpperCase();
+        if (/^[VS][0-9]/.test(sourceStrForZeroVat)) {
+          const digitForZeroVat = sourceStrForZeroVat.slice(1);
+          const amountNumZeroVat = parseFloat(val) || 0;
+          const roundedAmountZeroVat = Math.round(amountNumZeroVat * 100) / 100;
+          const vatNumZeroVat = Math.round(roundedAmountZeroVat * 0.07 * 100) / 100;
+          const formattedAmountZeroVat = roundedAmountZeroVat.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const baseVatLineZeroVat = {
+            hl: 'L', itemCode, amount: vatNumZeroVat.toFixed(2), tax: 'NN',
+            taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '',
+          };
+          const calcVatLineZeroVat = calcLine(baseVatLineZeroVat, itemcodeItems, vendorInfo, form, allAccountCpcRules);
+          const vatLineZeroVat = { ...calcVatLineZeroVat, tax: 'NN', desc: `VAT7%-${calcVatLineZeroVat.desc || ''}`, _isAutoVatLine: true };
+          setLines(prev => {
+            const next = [...prev];
+            next[idx] = { ...next[idx], amount: formattedAmountZeroVat, tax: 'N' + digitForZeroVat };
+            if (next[idx + 1]?._isAutoVatLine) {
+              next[idx + 1] = vatLineZeroVat;
+            } else {
+              next.splice(idx + 1, 0, vatLineZeroVat);
+            }
+            return next;
+          });
+          zeroVatSplitHandled = true;
+        }
+      }
+      if (zeroVatSplitHandled) return;
       // MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1
       // ── Item ที่ SPEC-TX = NV7 -- Tab ออกจาก Amount แล้ว Auto สร้าง/อัปเดต ──
       // ── บรรทัดคู่ (VAT7%-) ต่อท้ายทันที + บังคับทั้ง 2 บรรทัดเป็น Tax=NN ────
@@ -5171,19 +5539,37 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     return () => { active = false; };
   }, [bu]);
 
+  // MARKER_INVOICEDETAIL_CALCLINE_PERF_V1 -- Index ด้วย Map (Memoized) แทน .find() O(n) ทุกครั้ง
+  // ยิ่งมีหลายบรรทัด/หลาย Rule ยิ่งเห็นผลชัด (คำนวณ Description/Account ทุกบรรทัดใหม่
+  // ทุกครั้งที่แก้ Period/BDes/Branch ฯลฯ -- เดิม .find() วนลูปซ้ำทุกบรรทัด ทุก Rule)
+  const itemcodeItemsMapPerf = useMemo(() => {
+    const m = new Map();
+    (itemcodeItems || []).forEach(i => { m.set(String(i.code ?? '').trim().toUpperCase(), i); });
+    return m;
+  }, [itemcodeItems]);
+  const accountCpcRulesIndexPerf = useMemo(() => {
+    const byItemCode = new Map();
+    const byAccount = new Map();
+    (allAccountCpcRules || []).forEach(r => {
+      if (r.rule_type === 'item_code') byItemCode.set(String(r.item_code || '').trim().toUpperCase(), r);
+      else if (r.rule_type === 'account') byAccount.set(String(r.account || '').trim(), r);
+    });
+    return { byItemCode, byAccount };
+  }, [allAccountCpcRules]);
+
   const lookupAccountCpcPriority = (rules, itemCode, supplierCode, defaultAccount) => {
     let account = null;
     let cpc = null;
     let subAcc = null;
 
-    const icRule = rules.find(r => r.rule_type === 'item_code' && String(r.item_code || '').trim().toUpperCase() === String(itemCode || '').trim().toUpperCase());
+    const icRule = accountCpcRulesIndexPerf.byItemCode.get(String(itemCode || '').trim().toUpperCase());
     if (icRule) { account = icRule.account; cpc = icRule.cpc; subAcc = icRule.sub_acc; }
 
     const accountForLookup = account || defaultAccount;
 
     // MARKER_ACCOUNTCPC_SUPPLIER_NOAUTOAPPLY_V1 -- ตัด Supplier Rule Auto-Apply ออก
     // -- Supplier Rule (Account List) ต้องเลือกเองเท่านั้น ไม่ Auto-Apply เข้า Line ใหม่ --
-    const accRule = rules.find(r => r.rule_type === 'account' && String(r.account || '').trim() === String(accountForLookup || '').trim());
+    const accRule = accountCpcRulesIndexPerf.byAccount.get(String(accountForLookup || '').trim());
     if (accRule) { cpc = accRule.cpc; subAcc = accRule.sub_acc; }
 
     return { account, cpc, subAcc };
@@ -5191,7 +5577,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
   const calcLine = (line, itemcodeItems, vendorInfo, form, accountCpcRules = []) => {
     if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
-    const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
+    const itemData = itemcodeItemsMapPerf.get(line.itemCode.trim().toUpperCase());
     if (!itemData) return line;
     // MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1
     // ── บรรทัด Auto VAT (_isAutoVatLine) -- คำนวณ Account/Total ใหม่ตามปกติ ──
@@ -5243,11 +5629,14 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     // ── ย้าย ATDes Suffix มาแทรก "ก่อน" disGDesc (BDes1/2/3) แทนการต่อท้ายสุด ──
     // ── เพราะ ATDes คือส่วนหนึ่งของคำอธิบายหลัก (บอกว่ารายการนี้คืออะไร) ────
     // ── ส่วน BDes1-3 เป็นรหัสอ้างอิง ควรอยู่ท้ายสุดเสมอ ─────────────────────
+    // MARKER_INVOICEDETAIL_DESC_PARTIAL_LOCK_V1 -- Lock "แค่ข้อ 4" (คำอธิบาย Item Code)
+    // เหมือน Edit Invoice Form -- ATDES Suffix ยังทำงานคู่กันได้ปกติ ไม่ผูกกับ Lock อีกแล้ว
     const itemCodeUpper = String(line.itemCode ?? '').trim().toUpperCase();
-    const isFullyLocked = line._descLockedForCode && line._descLockedForCode === itemCodeUpper;
-    const hasAtdesSuffix = !isFullyLocked && line._atdesSuffixForCode && line._atdesSuffixForCode === itemCodeUpper;
-    const descVal = [ibPrefix, customizeText, form?.period ?? '', String(itemData.description ?? '').trim(), hasAtdesSuffix ? line._atdesSuffix : '', disGDesc, ibLabel].filter(Boolean).join(' ');
-    let finalDescVal = isFullyLocked ? line.desc : descVal;
+    const hasManualPart4 = line._descLockedForCode && line._descLockedForCode === itemCodeUpper;
+    const hasAtdesSuffix = line._atdesSuffixForCode && line._atdesSuffixForCode === itemCodeUpper;
+    const part4Text = hasManualPart4 ? (line._descManualPart4 ?? '') : String(itemData.description ?? '').trim();
+    const descVal = [ibPrefix, customizeText, form?.period ?? '', part4Text, hasAtdesSuffix ? line._atdesSuffix : '', disGDesc, ibLabel].filter(Boolean).join(' ');
+    let finalDescVal = descVal;
     // MARKER_WHT_QUICKCALC_CALCLINE_DESC_SUFFIX_V1
     // -- จุดนี้คือตัวจริงที่ Sync Description เข้าตาราง Invoice Lines --------
     // -- (ไม่ใช่ calcInvoiceLine) -- บรรทัด WHT จากปุ่ม W1-W5 ต่อท้ายด้วย -----
@@ -5284,6 +5673,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // ── Period/Back Description/Customize Period/% ทำให้พิมพ์แล้วรู้สึกค้าง ──
   // ── (form.period เอง ยังอัปเดตทันทีปกติ ช้าแค่ตัวคำนวณหนักที่รอ Debounce) ──
   useEffect(() => {
+    // MARKER_INVOICEDETAIL_CALCLINE_PERF_V1 -- ลด Debounce 400ms -> 150ms (คู่กับ Index ด้าน Map ด้านบน)
     const t = setTimeout(() => {
       setLines(prev => {
         const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form, allAccountCpcRules));
@@ -5293,7 +5683,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
           taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode,
         }));
       });
-    }, 400);
+    }, 150);
     return () => clearTimeout(t);
   }, [
     lines.map(l => l.itemCode).join(','),
@@ -5368,6 +5758,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       confirmDialog.alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด');
       return;
     }
+    // MARKER_AMOUNT_REQUIRED_ALL_LINES_V1
+    // ── เช็คทุกบรรทัด ไม่ใช่แค่บรรทัดแรก -- มี Item Code แล้วต้องมี Amount เสมอ ──
+    const incompleteLineIdx = lines.findIndex(l => l.itemCode?.trim() && !l.amount?.trim());
+    if (incompleteLineIdx !== -1) {
+      confirmDialog.alert(`กรุณากรอก Amount ให้ครบทุกบรรทัดที่มี Item Code (แถวที่ ${incompleteLineIdx + 1} ยังไม่ได้กรอก Amount)`, { variant: 'danger', title: 'ข้อมูลไม่ครบ' });
+      return;
+    }
     // ── ถ้ามีบรรทัดไหนใช้ Item Code ที่กำหนด SPI-1 = Prd หรือ CT แต่ยังไม่ใส่ Period ──
     // ── ต้องถามยืนยันก่อน Submit เสมอ (กด Yes ถึงจะผ่านต่อได้) ──────────────────
     const needsPeriod = lines.some(l => {
@@ -5403,11 +5800,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         if (openPopupCount > 1) return;
         onClose();
       }
-      // MARKER_SUBMIT_SHORTCUT_END_KEY_V1
-      // -- เปลี่ยนเป็นปุ่ม End เดี่ยวๆ --
-      if (e.key === 'End') { e.preventDefault(); handleSubmit(); }
-      // Ctrl+Delete → Clear form (lines + header fields)
-      if (e.key === 'Delete' && e.ctrlKey) {
+      // MARKER_SUBMIT_INS_CLEAR_END_SWAP_V1
+      // -- Submit = Insert เดี่ยวๆ, Clear = End เดี่ยวๆ (เดิม Submit=End, Clear=Ctrl+Delete) --
+      if (e.key === 'Insert') { e.preventDefault(); handleSubmit(); }
+      // End → Clear form (lines + header fields)
+      if (e.key === 'End') {
         e.preventDefault();
         setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
         // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
@@ -5499,10 +5896,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   {['Method', 'Paygroup', 'Par'].map(field => {
                     const key = field.toLowerCase();
                     const displayVal = form?.[key] || matchedRule?.[field] || '';
+                    // MARKER_SUPPLIER_DISABLE_FIELDS_CONFIG_V1 -- เช็คว่า Supplier นี้ปิด Field นี้ไว้ไหม
+                    const isFieldDisabled = Array.isArray(vendorInfo?.disabled_fields) && vendorInfo.disabled_fields.includes(field);
                     return (
                       <div key={field}
-                        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', cursor: 'pointer', position: 'relative' }}
+                        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', cursor: isFieldDisabled ? 'default' : 'pointer', position: 'relative', opacity: isFieldDisabled ? 0.45 : 1 }}
                         onClick={(e) => {
+                          if (isFieldDisabled) return;
                           // MARKER_RULE_FIELD_CHOICE_TOGGLE_CLOSE_V1 -- กดซ้ำช่องที่เปิดอยู่ -> ปิดทันที ไม่ต้องกดข้างนอก
                           if (ruleChoiceField === field) { setRuleChoiceField(null); return; }
                           const rcRect = e.currentTarget.getBoundingClientRect();
@@ -5514,7 +5914,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                           setRuleChoiceField(field);
                         }}>
                         <span style={{ fontSize: '10px', color: '#999' }}>{field}</span>
-                        <span style={{ fontSize: '12px', color: displayVal ? '#1a3a5c' : '#ccc' }}>{displayVal || '—'}</span>
+                        <span style={{ fontSize: '12px', color: isFieldDisabled ? '#bbb' : (displayVal ? '#1a3a5c' : '#ccc') }}>{isFieldDisabled ? 'ปิดใช้งาน' : (displayVal || '—')}</span>
                         {/* MARKER_APCONTROLLER_RULE_FIELD_CHOICE_PORTAL_FIX_V1 -- Portal ไป document.body กัน Element อื่นบังเด็ดขาด */}
                         {ruleChoiceField === field && ReactDOM.createPortal(
                           <div ref={ruleChoiceRef} style={{ position: 'fixed', top: rcPos.top, left: rcPos.left, transform: 'translateX(-50%)', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 6px 20px rgba(26,58,92,0.12)', zIndex: 99999, padding: '8px', minWidth: '90px' }}>
@@ -5671,9 +6071,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 <label style={fieldLabel}>{label}</label>
                 {key === 'invoiceNum' && vendorInfo?.['Digit'] ? (
                   // MARKER_APCONTROLLER_INVDATE_INVNUM_YELLOW_FIELD_V1
-                  <div style={{ ...inputStyle(w), display: 'flex', alignItems: 'center', padding: 0, overflow: 'hidden', background: '#FFF3CD' }}>
-                    <input type={type} value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
-                      style={{ flex: 1, minWidth: 0, height: '100%', border: 'none', outline: 'none', background: 'transparent', padding: '0 8px', fontSize: '12px', color: 'inherit', boxSizing: 'border-box' }} />
+                  <div style={{ ...inputStyle(w), display: 'flex', alignItems: 'center', padding: 0, overflow: 'hidden', background: isInvoiceNumDisabled ? '#f0f0f0' : '#FFF3CD' }}>
+                    <input type={type} value={(isInvoiceNumDisabled ? form?.grtNum : form?.[key]) || ''} title={(isInvoiceNumDisabled ? form?.grtNum : form?.[key]) || ''}
+                      disabled={isInvoiceNumDisabled}
+                      onChange={e => setField(key, e.target.value)}
+                      style={{ flex: 1, minWidth: 0, height: '100%', border: 'none', outline: 'none', background: 'transparent', padding: '0 8px', fontSize: '12px', color: isInvoiceNumDisabled ? '#999' : 'inherit', boxSizing: 'border-box' }} />
                     <div title="Digit (จาก Vendor Master)"
                       style={{ flexShrink: 0, height: '100%', display: 'flex', alignItems: 'center', padding: '0 8px', background: '#f0f3f8', borderLeft: '0.5px solid #e0e0e0', fontSize: '11px', fontWeight: '500', color: '#0C447C', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                       {vendorInfo['Digit']}
@@ -5713,9 +6115,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     <span aria-hidden="true" style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', fontSize: '12px', pointerEvents: 'none' }}>&#128197;</span>
                   </div>
                 ) : (
-                  <input type={type} value={form?.[key] || ''} title={form?.[key] || ''} onChange={e => setField(key, e.target.value)}
+                  <input type={type}
+                    value={(key === 'invoiceNum' && isInvoiceNumDisabled ? form?.grtNum : form?.[key]) || ''}
+                    title={(key === 'invoiceNum' && isInvoiceNumDisabled ? form?.grtNum : form?.[key]) || ''}
+                    disabled={key === 'invoiceNum' && isInvoiceNumDisabled}
+                    onChange={e => setField(key, e.target.value)}
                     // MARKER_APCONTROLLER_INVDATE_INVNUM_YELLOW_FIELD_V1
-                    style={{ ...inputStyle(w), ...(key === 'invoiceNum' ? { background: '#FFF3CD' } : {}) }} />
+                    style={{ ...inputStyle(w), ...(key === 'invoiceNum' ? { background: isInvoiceNumDisabled ? '#f0f0f0' : '#FFF3CD', color: isInvoiceNumDisabled ? '#999' : 'inherit' } : {}) }} />
                 )}
               </div>
             ))}
@@ -5916,12 +6322,18 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                   // ── จริง (onBlur เกิดจาก User Action เท่านั้น — บรรทัดที่ระบบ ────
                                   // ── Auto-Add ให้ เช่น V-RV จะข้าม Focus ช่อง Item Code ไปเลย ──────
                                   // ── (Focus ตรงไป Amount) เลยไม่มีทาง Trigger onBlur นี้ได้ ────────
-                                  // MARKER_APCONTROLLER_FLOW_SESSION_ONLY_WHEN_NO_FLOW_V1
-                                  // ── บันทึกเข้า Session เฉพาะตอน Dropdown เป็น "— ไม่ใช้ Flow —" ──
-                                  // ── (selectedFlow === null) เท่านั้น — ถ้ามี Flow ถูกเลือกอยู่แล้ว ──
-                                  // ── ไม่บันทึกทับ กันข้อมูล Session ปนกันสับสน ────────────────────
-                                  if (finalVal.trim() && !selectedFlow) {
-                                    setFlowActionSession(prev => [...prev, { hl: line.hl, itemCode: finalVal.trim() }]);
+                                  // MARKER_FLOW_SESSION_RECORD_WHILE_ACTIVE_V1
+                                  // ── ตัด !selectedFlow ออก -- addLineAndFocus() ไม่เคย Trigger onBlur นี้เลย ──
+                                  // MARKER_FLOWSESSION_DEDUP_GUARD_V1
+                                  // MARKER_FLOWSESSION_DEDUP_ROWIDX_FIX_V1 -- เช็ค rowIdx (บรรทัด) ด้วย ไม่ใช่แค่ Item Code
+                                  // ── Item Code เดิม + บรรทัดเดิม ติดกัน = บัค (พิมพ์+Blur แล้วกด Search ซ้ำที่เดิม) -- ตัดทิ้ง ──
+                                  // ── Item Code เดิม + บรรทัดต่างกัน = ธุรกิจจริง (เช่น V-RV 2 รอบคนละ Real Vendor) -- เก็บไว้ ──
+                                  if (finalVal.trim()) {
+                                    setFlowActionSession(prev => {
+                                      const last = prev[prev.length - 1];
+                                      if (last && last.hl === line.hl && last.itemCode === finalVal.trim() && last.rowIdx === idx) return prev;
+                                      return [...prev, { hl: line.hl, itemCode: finalVal.trim(), rowIdx: idx }];
+                                    });
                                   }
                                   // MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1
                                   // ── Sync: เปลี่ยน Item Code เมื่อไหร่ -- ลบบรรทัด VAT7%- ที่เคย Auto ──
@@ -5935,6 +6347,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                     return next;
                                   });
                                 }}
+                                onDoubleClick={() => openDescBankForExistingItem(idx)}
                                 style={{ width: '100%', height: '28px', padding: '0 24px 0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
                               <button type="button" title="Search item code" onClick={() => { setActiveLineIdx(idx); setItemCodeInitialSearch(''); setShowItemCodePopup(true); }}
                                 style={{ position: 'absolute', right: 0, top: 0, height: '28px', width: '22px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
@@ -6029,7 +6442,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                       return;
                                     }
                                     const l = lines[idx];
-                                    if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
+                                    if (!isLineVRVByItemCode(idx) && l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
                                   }
                                 }}
                                 style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: '#1a3a5c', boxSizing: 'border-box' }} />
@@ -6070,11 +6483,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onFocus={() => handleMoneyFocus(idx, key, line[key])}
                                 onBlur={() => handleMoneyBlur(idx, key, line[key])}
                                 onKeyDown={e => {
-                                  if (e.key === 'Enter') { const l = lines[idx]; if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus(); }
+                                  // MARKER_AMOUNT_ENTER_VRV_RACE_CONDITION_FIX_V1
+                                  if (e.key === 'Enter') {
+                                    const l = lines[idx];
+                                    const itemDataAmt = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === l.itemCode?.trim()?.toUpperCase());
+                                    const isVRVAmt = String(itemDataAmt?.value ?? '').trim().toUpperCase() === 'V-RV';
+                                    if (!isVRVAmt && l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
+                                  }
                                   // MARKER_APCONTROLLER_INVOICE_FLOW_TAB_V1
                                   // ── Tab จาก Amount ข้ามไป Amount บรรทัดถัดไปของ Flow เหมือน Enter ──────
                                   // ── เฉพาะตอนยังมี Step เหลือเท่านั้น — Flow หมดแล้วปล่อย Tab ทำงานปกติ ──
+                                  // MARKER_AMOUNT_TAB_VRV_RACE_CONDITION_FIX_V1
                                   else if (e.key === 'Tab' && !e.shiftKey && selectedFlow && flowStep < selectedFlow.items.length && realVendorLineIdx === -1) {
+                                    const lTab = lines[idx];
+                                    const itemDataTab = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === lTab.itemCode?.trim()?.toUpperCase());
+                                    const isVRVTab = String(itemDataTab?.value ?? '').trim().toUpperCase() === 'V-RV';
+                                    if (isVRVTab) return;
                                     e.preventDefault();
                                     addLineAndFocus();
                                   }
@@ -6090,11 +6514,22 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
-                              onDoubleClick={key === 'desc' ? () => { setExpandEditIdx(idx); setExpandEditVal(line[key] || ''); } : key === 'account' ? (String(line[key] || '').trim() ? () => openAccountConfig(idx, line[key]) : undefined /* MARKER_ACCOUNT_DBLCLICK_EMPTY_GUARD_V1 -- ช่องว่าง ไม่เปิด Popup */) : undefined}
+                              onDoubleClick={key === 'desc' ? () => {
+                                setExpandEditIdx(idx);
+                                // MARKER_INVOICEDETAIL_DESC_PARTIAL_LOCK_V1 -- Prefill "แค่ข้อ 4" ไม่ใช่ Description เต็มก้อน
+                                const curItemCodeUpper = String(line.itemCode ?? '').trim().toUpperCase();
+                                const alreadyLocked = line._descLockedForCode && line._descLockedForCode === curItemCodeUpper;
+                                if (alreadyLocked) {
+                                  setExpandEditVal(line._descManualPart4 ?? '');
+                                } else {
+                                  const itemDataForDesc = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === curItemCodeUpper);
+                                  setExpandEditVal(String(itemDataForDesc?.description ?? '').trim());
+                                }
+                              } : key === 'account' ? (String(line[key] || '').trim() ? () => openAccountConfig(idx, line[key]) : undefined /* MARKER_ACCOUNT_DBLCLICK_EMPTY_GUARD_V1 -- ช่องว่าง ไม่เปิด Popup */) : undefined}
                               onKeyDown={['total','amount','desc'].includes(key) ? (e) => {
                                 if (e.key === 'Enter') {
                                   const l = lines[idx];
-                                  if (l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
+                                  if (!isLineVRVByItemCode(idx) && l.itemCode?.trim() && l.amount?.trim() && l.desc?.trim() && l.account?.trim()) addLineAndFocus();
                                 }
                               } : undefined}
                               style={{ width: '100%', height: '28px', padding: '0 6px', fontSize: '11px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', background: 'white', color: key === 'wht' && line[key] ? '#A32D2D' : '#1a3a5c', boxSizing: 'border-box', textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
@@ -6109,9 +6544,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 onKeyDown={e => {
                                   if (e.key === 'Enter' && !e.shiftKey) {
                                     e.preventDefault();
-                                    idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
-                                    // MARKER_APCONTROLLER_DESC_LOCK_ON_MANUAL_EDIT_V1
-                                    { const lockCode = String(lines[idx]?.itemCode ?? '').trim().toUpperCase(); idx === 0 ? setLine1Field('_descLockedForCode', lockCode) : setLineField(idx, '_descLockedForCode', lockCode); }
+                                    commitDescPartialInvoiceDetail(idx, expandEditVal);
                                     setExpandEditIdx(null);
                                   } else if (e.key === 'Escape') {
                                     expandEditCancelRef.current = true;
@@ -6120,9 +6553,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 }}
                                 onBlur={() => {
                                   if (expandEditCancelRef.current) { expandEditCancelRef.current = false; return; }
-                                  idx === 0 ? setLine1Field('desc', expandEditVal) : setLineField(idx, 'desc', expandEditVal);
-                                  // MARKER_APCONTROLLER_DESC_LOCK_ON_MANUAL_EDIT_V1
-                                  { const lockCode = String(lines[idx]?.itemCode ?? '').trim().toUpperCase(); idx === 0 ? setLine1Field('_descLockedForCode', lockCode) : setLineField(idx, '_descLockedForCode', lockCode); }
+                                  commitDescPartialInvoiceDetail(idx, expandEditVal);
                                   setExpandEditIdx(null);
                                 }}
                                 style={{ width: '100%', minHeight: '60px', fontSize: '12px', padding: '6px 8px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', color: '#1a3a5c', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
@@ -6197,14 +6628,30 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                     {line.realVendorName && (
                       <tr style={{ background: '#f0faf5' }}>
                         <td colSpan={12} style={{ padding: 0, borderBottom: '0.5px solid #97C459' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 2fr 1.2fr 0.5fr 0.8fr auto', gap: '8px', alignItems: 'end', padding: '6px 12px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: (showRealTaxFields ? '28px 1.2fr 1fr 2fr 1.2fr 0.5fr 0.8fr auto' : '28px 2fr 1.2fr 0.5fr 0.8fr auto'), gap: '8px', alignItems: 'end', padding: '6px 12px' }}>
+                            {/* MARKER_REALVENDOR_TAXFIELDS_TOGGLE_V1 -- เปิด/ปิด Real Tax Invoice No. + Tax Invoice Date */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: 'transparent' }}>_</span>
+                              <button type="button" onClick={() => setShowRealTaxFields(v => !v)}
+                                title={showRealTaxFields ? 'ซ่อน Real Tax Invoice No. / Tax Invoice Date' : 'แสดง Real Tax Invoice No. / Tax Invoice Date'}
+                                style={{ width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #97C459', background: 'white', color: '#27500A', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {showRealTaxFields ? (
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                ) : (
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a18.5 18.5 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                                )}
+                              </button>
+                            </div>
+                            {showRealTaxFields && (
+                            <>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Real Tax Invoice No.</span>
                               <input type="text" value={line.realInvoiceNo || ''}
                                 title={line.realInvoiceNo || ''}
                                 ref={el => lineRealInvoiceRefs.current[idx] = el}
+                                disabled={isRealTaxDisabled}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realInvoiceNo', v) : setLineField(idx, 'realInvoiceNo', v); }}
-                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: isRealTaxDisabled ? '#f0f0f0' : 'white', color: isRealTaxDisabled ? '#999' : '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Tax Invoice Date</span>
@@ -6215,6 +6662,11 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                 title={formatDateDisplayMDY(line.realVendorTaxDate)}
                                 defaultValue={formatDateDisplayMDY(line.realVendorTaxDate)}
                                 placeholder="MM/DD/YYYY"
+                                disabled={isRealTaxDisabled}
+                                onKeyDown={e => {
+                                  // MARKER_VRV_ENTER_TRIGGER_TAXDATE_V1 -- กด Enter = Blur ทันที (ใช้ Logic เดิมใน onBlur ด้านล่างซ้ำ ไม่ต้องเขียนซ้ำ)
+                                  if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+                                }}
                                 onBlur={e => {
                                   const parsed = parseFlexibleDate(e.target.value);
                                   if (!parsed) {
@@ -6243,12 +6695,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                       // MARKER_VRV_PERLINE_GUARD_V1
                                       // ── Mark ว่าบรรทัดนี้เพิ่ม H+L ไปแล้ว กันเพิ่มซ้ำไม่ว่า Event จะยิงกี่ครั้ง ──
                                       lineVrvProcessedRef.current[idx] = true;
+                                      // MARKER_VRV_RESET_REALVENDORLINEIDX_AFTER_COMPLETE_V1
+                                      setRealVendorLineIdx(-1);
                                       const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
                                       const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
                                       const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                       const mapping = VRV_MAPPING[line.itemCode] || {};
+                                      // MARKER_VRV_SPLICE_INSERT_FIX_V4
                                       setLines(prev => {
-                                        const next = [...prev, {
+                                        const next = [...prev];
+                                        next.splice(idx + 1, 0, {
                                           hl: 'H',
                                           itemCode: mapping.h || '',
                                           amount: negFormatted,
@@ -6258,21 +6714,20 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                           itemCode: mapping.l || '',
                                           amount: '',
                                           tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
-                                        }];
-                                        const newIdx = next.length - 1;
+                                        });
+                                        const newIdx = idx + 2;
                                         setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
                                         return next;
                                       });
-                                      if (selectedFlow && flowStep < selectedFlow.items.length) {
-                                        tryAdvanceFlowStep();
-                                      }
+                                      // MARKER_VRV_DOUBLE_ADVANCE_FLOWSTEP_FIX_V1 -- เอา tryAdvanceFlowStep() ที่ซ้ำออก
                                     } else if (selectedFlow && flowStep < selectedFlow.items.length) {
                                       addLineAndFocus();
                                     }
                                   }
                                 }}
-                                style={{ height: '26px', padding: '0 22px 0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                                style={{ height: '26px', padding: '0 22px 0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: isRealTaxDisabled ? '#f0f0f0' : 'white', color: isRealTaxDisabled ? '#999' : '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                               <input type="date" tabIndex={-1} value={line.realVendorTaxDate || ''}
+                                disabled={isRealTaxDisabled}
                                 onMouseDown={() => { lineCalendarOpeningRef.current[idx] = true; }}
                                 onChange={e => {
                                   const v = e.target.value;
@@ -6288,12 +6743,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                     const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
                                     if (isVRV) {
                                       lineVrvProcessedRef.current[idx] = true;
+                                      // MARKER_VRV_RESET_REALVENDORLINEIDX_AFTER_COMPLETE_V1
+                                      setRealVendorLineIdx(-1);
                                       const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
                                       const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
                                       const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                       const mapping = VRV_MAPPING[line.itemCode] || {};
+                                      // MARKER_VRV_SPLICE_INSERT_FIX_V5
                                       setLines(prev => {
-                                        const next = [...prev, {
+                                        const next = [...prev];
+                                        next.splice(idx + 1, 0, {
                                           hl: 'H',
                                           itemCode: mapping.h || '',
                                           amount: negFormatted,
@@ -6303,14 +6762,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                                           itemCode: mapping.l || '',
                                           amount: '',
                                           tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
-                                        }];
-                                        const newIdx = next.length - 1;
+                                        });
+                                        const newIdx = idx + 2;
                                         setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
                                         return next;
                                       });
-                                      if (selectedFlow && flowStep < selectedFlow.items.length) {
-                                        tryAdvanceFlowStep();
-                                      }
+                                      // MARKER_VRV_DOUBLE_ADVANCE_FLOWSTEP_FIX_V1 -- เอา tryAdvanceFlowStep() ที่ซ้ำออก
                                     } else if (selectedFlow && flowStep < selectedFlow.items.length) {
                                       addLineAndFocus();
                                     }
@@ -6320,10 +6777,53 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               <span aria-hidden="true" style={{ position: 'absolute', right: '5px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#97C459', pointerEvents: 'none' }}>&#128197;</span>
                               </div>
                             </div>
+                            </>
+                            )}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                               <span style={{ fontSize: '10px', color: '#999' }}>Company Name</span>
                               <input type="text" value={line.realVendorName || ''} title={line.realVendorName || ''}
                                 onChange={e => { const v = e.target.value; idx === 0 ? setLine1Field('realVendorName', v) : setLineField(idx, 'realVendorName', v); }}
+                                onKeyDown={e => {
+                                  // MARKER_VRV_ENTER_TRIGGER_COMPANYNAME_V1 -- กด Enter ที่ Company Name ก็เพิ่มบรรทัดใหม่ได้เลย
+                                  // (ถ้า Real Invoice No. + Tax Invoice Date กรอกไว้ครบแล้ว และ Item Code เป็น V-RV)
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const curLine = lines[idx];
+                                    if (curLine?.realVendorTaxDate && curLine?.realInvoiceNo?.trim() && !lineVrvProcessedRef.current[idx]) {
+                                      const itemCodeVrv = curLine.itemCode?.trim();
+                                      const itemDataVrv = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCodeVrv?.toUpperCase());
+                                      const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
+                                      if (isVRV) {
+                                        lineVrvProcessedRef.current[idx] = true;
+                                        // MARKER_VRV_RESET_REALVENDORLINEIDX_AFTER_COMPLETE_V1
+                                        setRealVendorLineIdx(-1);
+                                        const vatNum = parseFloat(String(curLine.vat || '0').replace(/,/g, '')) || 0;
+                                        const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
+                                        const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        const mapping = VRV_MAPPING[curLine.itemCode] || {};
+                                        setLines(prev => {
+                                          // MARKER_VRV_SPLICE_INSERT_FIX_V1 -- Insert ต่อจากตำแหน่งบรรทัด V-RV (idx) แทนที่จะต่อท้าย Array
+                                          const next = [...prev];
+                                          const newH = {
+                                            hl: 'H', itemCode: mapping.h || '', amount: negFormatted,
+                                            tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                          };
+                                          const newL = {
+                                            hl: 'L', itemCode: mapping.l || '', amount: '',
+                                            tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                          };
+                                          next.splice(idx + 1, 0, newH, newL);
+                                          const newIdx = idx + 2;
+                                          setTimeout(() => lineAmountRefs.current[newIdx]?.focus(), 30);
+                                          return next;
+                                        });
+                                        // MARKER_VRV_DOUBLE_ADVANCE_FLOWSTEP_FIX_V1 -- เอา tryAdvanceFlowStep() ที่ซ้ำออก
+                                      } else if (selectedFlow && flowStep < selectedFlow.items.length) {
+                                        addLineAndFocus();
+                                      }
+                                    }
+                                  }
+                                }}
                                 style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: 'white', color: '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -6485,23 +6985,30 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                     <input type="radio" checked={saveFlowState.mode === 'replace'} onChange={() => {
-                      // MARKER_APCONTROLLER_FLOW_REPLACE_AUTOFILL_NAME_V1
-                      // ── Bug Fix: เดิม set targetId เป็น Flow แรกให้ แต่ไม่เคย set ชื่อตาม ──
-                      // ── ทำให้ช่อง "ชื่อ Flow" ว่างจนกว่าจะไปเลือกใน dropdown ซ้ำอีกครั้ง ──
-                      const f0 = vendorFlows[0];
-                      setSaveFlowState(s => ({ ...s, mode: 'replace', targetId: f0?.id || '', name: f0?.flow_name || '' }));
+                      // MARKER_SAVEFLOW_REPLACE_NO_DEFAULT_V1 -- ไม่ Auto-Select Flow แรกอีกต่อไป ปล่อยว่างให้คลิกเลือกเอง
+                      setSaveFlowState(s => ({ ...s, mode: 'replace', targetId: '', name: '' }));
                     }} />
                     แทนที่ Flow เดิม
                   </label>
                 </div>
               )}
+              {/* MARKER_SAVEFLOW_REPLACE_TARGET_CLICKABLE_V1 -- เปลี่ยนจาก Dropdown เป็นปุ่มคลิกเลือกตรงๆ */}
               {saveFlowState.mode === 'replace' && (
-                <select value={saveFlowState.targetId} onChange={e => {
-                  const f = vendorFlows.find(x => x.id === e.target.value);
-                  setSaveFlowState(s => ({ ...s, targetId: e.target.value, name: f?.flow_name || s.name }));
-                }} style={{ width: '100%', marginBottom: '10px', fontSize: '12px', padding: '6px' }}>
-                  {vendorFlows.map(f => <option key={f.id} value={f.id}>{f.flow_name}</option>)}
-                </select>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '10px' }}>
+                  {vendorFlows.map(f => (
+                    <button key={f.id} type="button"
+                      onClick={() => setSaveFlowState(s => ({ ...s, targetId: f.id, name: f.flow_name }))}
+                      style={{
+                        textAlign: 'left', padding: '7px 10px', borderRadius: '6px', fontSize: '12px',
+                        border: saveFlowState.targetId === f.id ? 'none' : '0.5px solid #ddd',
+                        background: saveFlowState.targetId === f.id ? '#1a3a5c' : 'white',
+                        color: saveFlowState.targetId === f.id ? 'white' : '#333',
+                        cursor: 'pointer',
+                      }}>
+                      {f.flow_name}
+                    </button>
+                  ))}
+                </div>
               )}
               <label style={fieldLabel}>ชื่อ Flow</label>
               {/* MARKER_APCONTROLLER_FLOW_NAME_CLEAR_BUTTON_V1 */}
@@ -6521,7 +7028,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                 <button onClick={() => setShowSaveFlowModal(false)} disabled={saveFlowState.saving}
                   style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
-                <button onClick={handleSaveFlowConfirm} disabled={saveFlowState.saving}
+                {/* MARKER_SAVEFLOW_REPLACE_NO_DEFAULT_V1 */}
+                <button onClick={handleSaveFlowConfirm} disabled={saveFlowState.saving || (saveFlowState.mode === 'replace' && !saveFlowState.targetId)}
                   style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '600', cursor: saveFlowState.saving ? 'default' : 'pointer' }}>
                   {saveFlowState.saving ? 'กำลังบันทึก...' : 'บันทึก Flow'}
                 </button>
@@ -6615,9 +7123,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             // ── อะไรให้บันทึกเป็น Flow ได้เลย เพราะ Session ว่างตลอด ──────────────
             // MARKER_APCONTROLLER_FLOW_SESSION_ONLY_WHEN_NO_FLOW_V1
             // ── บันทึกเข้า Session เฉพาะตอน Dropdown เป็น "— ไม่ใช้ Flow —" เท่านั้น ──
+            // MARKER_FLOWSESSION_DEDUP_GUARD_V1
+            // MARKER_FLOWSESSION_DEDUP_ROWIDX_FIX_V1 -- เช็ค rowIdx (บรรทัด) ด้วย ไม่ใช่แค่ Item Code
             if (item.code?.trim() && !selectedFlow) {
               const hlForSession = lines[activeLineIdx]?.hl || 'L';
-              setFlowActionSession(prev => [...prev, { hl: hlForSession, itemCode: item.code.trim() }]);
+              const codeForSession = item.code.trim();
+              setFlowActionSession(prev => {
+                const last = prev[prev.length - 1];
+                if (last && last.hl === hlForSession && last.itemCode === codeForSession && last.rowIdx === activeLineIdx) return prev;
+                return [...prev, { hl: hlForSession, itemCode: codeForSession, rowIdx: activeLineIdx }];
+              });
             }
             setShowItemCodePopup(false);
             setTimeout(() => lineAmountRefs.current[activeLineIdx]?.focus(), 50);
@@ -6648,7 +7163,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             <div style={{ borderTop: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
               {/* MARKER_APCONTROLLER_FLOW_BUTTON_LAYOUT_V1 */}
               <div style={{ padding: isMobile ? '8px 14px' : '8px 22px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button onClick={handleSubmit} disabled={isSubmitting} title="Submit (กด End เพื่อเพิ่มข้อมูลได้)" style={{ padding: '6px 18px', minWidth: '132px', justifyContent: 'center', borderRadius: '7px', border: 'none', background: isSubmitting ? '#8a9bb0' : '#1a3a5c', color: 'white', fontSize: '12px', cursor: isSubmitting ? 'not-allowed' : 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button onClick={handleSubmit} disabled={isSubmitting} title="Submit (กด Insert เพื่อบันทึก)" style={{ padding: '6px 18px', minWidth: '132px', justifyContent: 'center', borderRadius: '7px', border: 'none', background: isSubmitting ? '#8a9bb0' : '#1a3a5c', color: 'white', fontSize: '12px', cursor: isSubmitting ? 'not-allowed' : 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   {isSubmitting ? 'กำลัง Submit...' : 'Submit'}
                 </button>
                 {/* MARKER_APCONTROLLER_INVOICE_FLOW_V1 */}
@@ -6670,6 +7185,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   // MARKER_APCONTROLLER_FLOW_LOCK_CLEAR_UNLOCK_V1 -- จุดเดียวที่ Unlock ได้
                   setFlowLocked(false);
                 }}
+                title="Clear (กด End เพื่อล้างฟอร์ม)"
                 style={{ alignSelf: 'center', marginRight: '5px', padding: '6px 18px', minWidth: '132px', justifyContent: 'center', borderRadius: '7px', border: 'none', background: '#7B1A1A', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
                 🗑 Clear
@@ -6714,29 +7230,120 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 // ─────────────────────────────────────────────────────────────────────────────
 // BucketItemPopup — View / Edit ของรายการใน Batch Bucket
 // ─────────────────────────────────────────────────────────────────────────────
-function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave, branchItems = [] }) {
+function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave, branchItems = [], smCodeItems = [], categoryItems = [] }) {
   // MARKER_BUCKETITEM_BRANCH_DOUBLECLICK_POPUP_V1
   const [showBranchPopupInBucket, setShowBranchPopupInBucket] = useState(false);
+  // MARKER_BUCKETITEM_CONTRACT_POPUP_V1 -- Port จาก InvoiceDetailPopup มาใช้ (เดิมปุ่มไม่มี onClick เลย)
+  const [showContractPopup, setShowContractPopup] = useState(false);
+  // MARKER_BUCKETITEM_REALVENDOR_V1 -- เปิด/ปิด Popup ค้นหา Real Vendor
+  const [showRealVendorPopupInBucket, setShowRealVendorPopupInBucket] = useState(false);
+  // MARKER_BUCKETITEM_REALVENDOR_PERLINE_V1 -- Track ว่ากำลังกรอก Real Vendor ให้บรรทัดไหน (Per-line เหมือน InvoiceDetailPopup)
+  const [realVendorLineIdx, setRealVendorLineIdx] = useState(-1);
+  // MARKER_VRV_ENTER_TRIGGER_V1 -- กัน Trigger เพิ่มบรรทัด H+L ซ้ำ (Port มาจาก InvoiceDetailPopup)
+  const lineVrvProcessedRef = useRef([]);
+  // MARKER_BUCKETITEM_ACCOUNTCPC_PHASE1_V1 -- Fetch Rule ที่เคย Setup ไว้จาก InvoiceDetailPopup มา Apply เงียบๆ ตอน Recalculate (Phase 1: Read-only ยังไม่มี Setup UI)
+  const [allAccountCpcRules, setAllAccountCpcRules] = useState([]);
+  // MARKER_BUCKETITEM_ACCOUNTCPC_PHASE2_V1 -- Reusable Refetch (เรียกซ้ำได้หลัง Save Rule ใน Popup Setup)
+  const refetchAllAccountCpcRules = async () => {
+    if (!bu) { setAllAccountCpcRules([]); return; }
+    try {
+      const { data } = await db.from('account_cpc_rules').select('*').eq('bu', bu).eq('source_mode', 'AP');
+      setAllAccountCpcRules(data || []);
+    } catch (e) { console.error('[AccountCpcRules] Refetch Rules ทั้งหมดผิดพลาด (BucketItemPopup)', e); }
+  };
+  useEffect(() => {
+    if (!bu) { setAllAccountCpcRules([]); return; }
+    let active = true;
+    (async () => {
+      try {
+        const { data } = await db.from('account_cpc_rules').select('*').eq('bu', bu).eq('source_mode', 'AP');
+        if (active) setAllAccountCpcRules(data || []);
+      } catch (e) { console.error('[AccountCpcRules] โหลด Rules ทั้งหมดผิดพลาด (BucketItemPopup)', e); }
+    })();
+    return () => { active = false; };
+  }, [bu]);
   usePopupOpenTracker(show);
   const isView = mode === 'view';
-  const emptyLine = () => ({ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
+  // MARKER_BUCKETITEM_ADDLINE_DEFAULT_L_FIX_V1
+  // ── FIX: เดิม emptyLine() ไม่รับ param -- hl เป็น 'H' ตายตัวเสมอ ──────
+  // ── ทำให้กด "+ Add line" ได้แถวใหม่เป็น H ผิด (ควรเป็น L) ──────────
+  const emptyLine = (hl = 'H') => ({ hl, itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
 
   // MARKER_HOTFIX_INVDATEREF_SCOPE_V1
   // ── ประกาศ invDateRef ใหม่ในนี้ (คนละตัวกับใน InvoiceDetailPopup โดยสิ้นเชิง) ──
   const invDateRef = useRef(null);
   // MARKER_INVOICEDETAIL_TAXINVOICEDATE_HYBRID_V1
   const realVendorTaxDateRef = useRef(null);
+  // MARKER_BUCKETITEM_AMOUNT_AUTOFOCUS_V1
+  // ── Ref เก็บ input Amount แต่ละแถว -- ใช้ Auto-Focus หลังเลือก Item Code ──
+  const lineAmountRefs = useRef([]);
   const [form, setForm]     = useState({});
   // MARKER_HOTFIX_TAXINVOICEDATE_TDZ_V1 (ย้ายมาไว้หลัง form ประกาศแล้ว)
   useEffect(() => { if (realVendorTaxDateRef.current) realVendorTaxDateRef.current.value = formatDateDisplayMDY(form.realVendorTaxDate); }, [form.realVendorTaxDate]);
-  const [lines, setLines]   = useState([emptyLine()]);
+  const [lines, _setLinesRaw]   = useState([emptyLine()]);
+  // MARKER_DEBUG_BUCKETITEM_LINES_SHRINK_V1 -- Debug ชั่วคราว หาจังหวะที่แถวหายไปตอน Edit Invoice
+  const setLines = (updater) => {
+    _setLinesRaw(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (Array.isArray(next) && Array.isArray(prev) && next.length < prev.length) {
+        console.error('[LINES SHRINK] ' + prev.length + ' -> ' + next.length);
+        console.trace('[LINES SHRINK] stack');
+      }
+      return next;
+    });
+  };
   const [saving, setSaving] = useState(false);
   const [showItemCodePopup, setShowItemCodePopup] = useState(false);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
   const [taxDropdownIdx, setTaxDropdownIdx] = useState(null);
   // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
   const [taxLineActiveIdx, setTaxLineActiveIdx] = useState(-1);
+  // MARKER_BUCKETITEM_FAV_DROPDOWN_SCOPE_FIX_V1
+  // ── State สำหรับ "/" Favorites Dropdown ใน BucketItemPopup (คนละ scope ──
+  // ── กับคอมโพเนนต์หลัก -- เดิมโค้ด UI ถูก copy มาแต่ลืมประกาศตัวนี้) ──────
+  const [favDropdownIdx, setFavDropdownIdx] = useState(null);
+  const [favActiveIdx, setFavActiveIdx] = useState(0);
+  // ── เลือก Item จาก Favorites ใน BucketItemPopup -- เวอร์ชันย่อ ─────────
+  // ── (ไม่มี ATDES/Description Bank ใน Popup นี้ จึงไม่พอร์ตส่วนนั้นมา ────
+  // ── ตามหลักการเดิม: ไม่ทำกับ Path ที่ไม่มีฟีเจอร์รองรับ) ────────────────
+  const selectFavoriteItem = (f, lineIdx, key) => {
+    const code = f.code || '';
+    setLineField(lineIdx, key, code);
+    setFavDropdownIdx(null);
+    // MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1
+    setLines(prev => {
+      let next = [...prev];
+      if (next[lineIdx + 1]?._isAutoVatLine) next = next.filter((_, i) => i !== lineIdx + 1);
+      if (String(next[lineIdx]?.tax ?? '').trim().toUpperCase() === 'NN') next[lineIdx] = { ...next[lineIdx], tax: '' };
+      return next;
+    });
+    // MARKER_BUCKETITEM_AMOUNT_AUTOFOCUS_V1
+    setTimeout(() => lineAmountRefs.current[lineIdx]?.focus(), 50);
+  };
+  // MARKER_BUCKETITEM_DESC_EXPAND_EDIT_V1 -- Double-click ช่อง Description เปิด Textarea ขยาย
+  const [expandEditIdx, setExpandEditIdx] = useState(null);
+  const [expandEditVal, setExpandEditVal] = useState('');
+  const expandEditCancelRef = useRef(false);
+  // MARKER_BUCKETITEM_DESC_PARTIAL_LOCK_V1 -- Lock แค่ข้อ 4 + คำนวณ Description เต็มใหม่ทันที (ไม่รอ Effect)
+  const commitDescPartial = (idx, manualPart4) => {
+    setLines(prev => {
+      const curItemCodeUpper = String(prev[idx]?.itemCode ?? '').trim().toUpperCase();
+      const updatedLine = { ...prev[idx], _descManualPart4: manualPart4, _descLockedForCode: curItemCodeUpper };
+      const recalculated = calcInvoiceLine(updatedLine, itemcodeItems, vendorInfo, form);
+      // MARKER_BUCKETITEM_DESC_PARTIAL_LOCK_FIX_OVERWRITE_V1 -- เอาแค่ .desc เท่านั้น
+      // ห้าม Spread recalculated ทั้งก้อน (จะไปรีเซ็ต Account/Vat/Wht/Total ทับของเดิมโดยไม่ตั้งใจ)
+      return prev.map((l, i) => (i === idx ? { ...l, desc: recalculated.desc, _descManualPart4: manualPart4, _descLockedForCode: curItemCodeUpper } : l));
+    });
+  };
 
+  // MARKER_BUCKETITEM_INVOICE_REF_RESET_FIX_V1
+  // ── FIX: เดิม dependency ใช้ [show, invoice] (ทั้ง object) -- ทุกครั้งที่ ──
+  // ── parent re-render (โดยเฉพาะตอน WebSocket Auto Refresh ทำงาน) -- ──
+  // ── invoices.find(...) จะคืน object ใหม่เสมอ แม้ข้อมูลเหมือนเดิม ──────
+  // ── ทำให้ effect รันซ้ำ + setLines(ls) เขียนทับแถวที่เพิ่งเพิ่ม/แก้ไข ──
+  // ── (ยังไม่ Save) ด้วยข้อมูลเก่าจาก server ทันทีโดยผู้ใช้ไม่ได้กดอะไรเลย ──
+  // ── แก้ด้วยการอ้างอิงแค่ id/_localId (ตัวระบุที่นิ่ง) แทนทั้ง object ─────
+  const invoiceIdentityKey = invoice?.id ?? invoice?._localId ?? null;
   useEffect(() => {
     if (show && invoice) {
       const fd = { ...(invoice.form_data || {}) };
@@ -6750,7 +7357,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
       setForm(fd);
       setLines(ls);
     }
-  }, [show, invoice]);
+  }, [show, invoiceIdentityKey]);
 
   const vendorInfo = supplierItems.find(s => {
     const code = String(s['Code'] ?? '').trim().toLowerCase();
@@ -6774,6 +7381,22 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   }) ? 'Yes' : lines.some(l => String(l.taxCode || '').includes('SVAT7')) ? 'SVAT' : 'No';
 
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
+  // MARKER_BUCKETITEM_CONTRACT_POPUP_V1
+  // ── เลือกสัญญาจาก ContractPopup -> ดึง CDes+BDes ใส่ Back Description 1/2/3 ──
+  // (อันไหนไม่มีข้อมูล ไม่ต้องใส่/ไม่แก้ของเดิม) -- Port มาจาก InvoiceDetailPopup
+  const handleSelectContract = (item) => {
+    const pairs = [
+      ['backDesc1', item?.cdes1, item?.bdes1],
+      ['backDesc2', item?.cdes2, item?.bdes2],
+      ['backDesc3', item?.cdes3, item?.bdes3],
+    ];
+    pairs.forEach(([key, c, b]) => {
+      const cc = String(c ?? '').trim();
+      const bb = String(b ?? '').trim();
+      if (cc || bb) setField(key, [cc, bb].filter(Boolean).join(' '));
+    });
+    setShowContractPopup(false);
+  };
   // MARKER_BUCKETITEM_RULE_FIELD_CHOICE_V1
   // -- Port ระบบ Choice Picker (Method/Paygroup/Par) จาก InvoiceDetailPopup มาใช้ --
   const [ruleChoiceField, setRuleChoiceField] = useState(null); // null | 'Method' | 'Paygroup' | 'Par'
@@ -6821,9 +7444,421 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
       }
     }
   };
-  const setLineField = (idx, key, val) => setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
-  const addLine = () => setLines(prev => [...prev, emptyLine()]);
-  const removeLine = (idx) => setLines(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
+  const setLineField = (idx, key, val) => {
+    // MARKER_DEBUG_REALVENDOR_LEAK_V1 -- Debug ชั่วคราว หาสาเหตุ realVendorName รั่วไป Line อื่น
+    if (key === 'realVendorName' && val) {
+      console.trace('[REALVENDOR SET] idx=' + idx + ' val=' + val);
+    }
+    setLines(prev => { const next = [...prev]; next[idx] = { ...next[idx], [key]: val }; return next; });
+  };
+  const addLine = () => setLines(prev => [...prev, emptyLine('L')]);
+  const removeLine = (idx) => {
+    setLines(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
+    // MARKER_BUCKETITEM_REALVENDOR_PERLINE_V1 -- กันบรรทัดขยับ Index แล้ว Real Vendor Popup ค้างอ้างอิงผิดบรรทัด
+    if (realVendorLineIdx === idx) { setRealVendorLineIdx(-1); setShowRealVendorPopupInBucket(false); }
+  };
+  // MARKER_ACCOUNTCPC_TDZ_RELOCATE_FIX_V1 -- ย้ายมาจากด้านบน (ก่อน lines/setLineField ประกาศ) มาไว้ตรงนี้แทน
+  // เพราะ accountConfigPopupJsx เป็น IIFE ที่รันทันทีตอน Render และอ้างอิง lines/setLineField
+  // วางไว้ก่อนจุดประกาศทำให้เกิด ReferenceError: Cannot access 'lines' before initialization (TDZ)
+  // MARKER_BUCKETITEM_ACCOUNTCPC_PHASE2_HOTFIX_V1 -- state ที่หลุดไปตอน Port (ลืมใส่ทำให้ ESLint no-undef)
+  const [accountConfigIdx, setAccountConfigIdx] = useState(null);
+  const [accCfgCpc, setAccCfgCpc] = useState('');
+  const [accCfgAccount, setAccCfgAccount] = useState('');
+  const [accCfgSubAcc, setAccCfgSubAcc] = useState('');
+  // MARKER_ACCOUNT_LEVEL_VALIDATION_V1 -- เก็บ Account เดิมตอนเปิด Popup ไว้เทียบตอน Save ระดับ Account
+  const [originalAccountKey, setOriginalAccountKey] = useState('');
+  // MARKER_ACCOUNT_CPC_HELP_POPUP_PHASE6_V1 -- State เปิด/ปิด Help Popup
+  const [showAccountCpcHelp, setShowAccountCpcHelp] = useState(false);
+  // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1
+  useEffect(() => {
+    if (!showAccountCpcHelp) return;
+    const h = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setShowAccountCpcHelp(false); } };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showAccountCpcHelp]);
+  const openAccountConfig = (idx, currentVal) => {
+    const parts = String(currentVal || '').split('-');
+    setAccCfgCpc(parts[0] || '');
+    setAccCfgAccount(parts[1] || '');
+    setAccCfgSubAcc(parts[2] || '');
+    setOriginalAccountKey(parts[1] || '');
+    setAccountConfigIdx(idx);
+  };
+  // MARKER_ACCOUNT_CPC_SETUP_BOXES_PHASE3_V1 -- State เก็บ Rule ที่มีอยู่แล้ว (null = ยังไม่เคย Setup)
+  const [itemCodeRule, setItemCodeRule] = useState(null);
+  const [accountRule, setAccountRule] = useState(null);
+  const [savingRuleType, setSavingRuleType] = useState(null);
+
+  useEffect(() => {
+    if (accountConfigIdx === null) { setItemCodeRule(null); setAccountRule(null); return; }
+    const line = lines[accountConfigIdx];
+    if (!line) return;
+    let active = true;
+    (async () => {
+      try {
+        const { data: icData } = await db.from('account_cpc_rules').select('*')
+          .eq('bu', bu).eq('rule_type', 'item_code').eq('item_code', line.itemCode || '').limit(1);
+        if (active) setItemCodeRule(icData && icData[0] ? icData[0] : null);
+      } catch (e) { console.error('[AccountCpcRules] โหลด Item Code Rule ผิดพลาด', e); }
+      try {
+        const accParts = String(line.account || '').split('-');
+        const accKey = accParts[1] || '';
+        const { data: accData } = await db.from('account_cpc_rules').select('*')
+          .eq('bu', bu).eq('rule_type', 'account').eq('account', accKey).limit(1);
+        if (active) setAccountRule(accData && accData[0] ? accData[0] : null);
+      } catch (e) { console.error('[AccountCpcRules] โหลด Account Rule ผิดพลาด', e); }
+    })();
+    return () => { active = false; };
+  }, [accountConfigIdx]);
+
+  // MARKER_ACCOUNT_CPC_RULE_OTP_GATE_V1
+  // -- OTP 6 หลัก (สุ่มโชว์ + พิมพ์ยืนยัน) กันกดพลาด Setup/Edit Rule ที่ Impact ทั้งระบบ --
+  const [otpChallenge, setOtpChallenge] = useState(null); // null | { ruleType, code }
+  const [otpInput, setOtpInput] = useState('');
+  const requestOtpThenSaveRule = (ruleType) => {
+    if (savingRuleType) return;
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    setOtpInput('');
+    setOtpChallenge({ ruleType, code });
+  };
+  const confirmOtpAndSaveRule = () => {
+    if (!otpChallenge) return;
+    if (otpInput.trim() !== otpChallenge.code) {
+      confirmDialog.alert('รหัสยืนยันไม่ถูกต้อง กรุณาลองใหม่', { variant: 'danger' });
+      return;
+    }
+    const ruleType = otpChallenge.ruleType;
+    setOtpChallenge(null);
+    setOtpInput('');
+    saveAccountCpcRule(ruleType);
+  };
+  const saveAccountCpcRule = async (ruleType) => {
+    if (accountConfigIdx === null) return;
+    const line = lines[accountConfigIdx];
+    if (!line) return;
+    // MARKER_ACCOUNT_LEVEL_VALIDATION_V1 -- ระดับ Account: Account Code ห้ามเปลี่ยนจากค่าเดิม (เป็น Key หลัก)
+    if (ruleType === 'account' && accCfgAccount.trim() !== originalAccountKey.trim()) {
+      await confirmDialog.alert(
+        `ระบบไม่อนุญาตให้ Save เนื่องจากไม่ตรงตามเงื่อนไข\n\n` +
+        `Account Code ถูกเปลี่ยนจาก "${originalAccountKey}" เป็น "${accCfgAccount}" — ระดับ Account ต้องใช้ Account Code เดิมเป็น Key เสมอ\n\n` +
+        `เหตุผล/Impact:\n` +
+        `• Account Code คือตัวที่ระบบใช้ค้นหา Rule นี้ (Key หลัก) เปลี่ยนแล้ว Rule จะผูกผิด Account\n` +
+        `• ถ้าต้องการให้ Account อื่นได้ CPC/SubAcc นี้ด้วย ให้เปิด Popup จาก Account นั้นแล้ว Setup แยกต่างหาก\n` +
+        `• ถ้าต้องการเปลี่ยน Account ของ Item Code นี้ถาวร ให้ใช้ปุ่ม "Setup - Item Code" แทน (ผูกกับ Item Code ไม่ใช่ Account)`,
+        { variant: 'danger', title: 'บันทึกไม่สำเร็จ' }
+      );
+      return;
+    }
+    // MARKER_ACCOUNT_LEVEL_CONFIRM_STEP_V1 -- ระดับ Account ผ่าน Validation แล้ว ยังต้องกด Confirm อีกชั้น
+    if (ruleType === 'account') {
+      const confirmed = await confirmDialog.confirm(
+        `การ Setup นี้จะมีผลกับทุก Invoice ใน BU "${bu}" ที่เรียกใช้ Account "${accCfgAccount}" ทั้งหมด ไม่ว่าจะเป็น Supplier รายใดก็ตาม\n\n` +
+        `ยืนยันว่า CPC "${accCfgCpc}" / Sub Acc "${accCfgSubAcc}" เป็นมาตรฐานจริงของ Account นี้สำหรับ BU นี้ ใช่หรือไม่?`,
+        { confirmText: 'ยืนยัน Setup', title: 'ยืนยันการตั้งค่าระดับ Account' }
+      );
+      if (!confirmed) return;
+    }
+    setSavingRuleType(ruleType);
+    try {
+      // MARKER_ACCOUNT_CPC_ROLE_AND_DUPLICATE_FIX_V1 -- Query สดจาก DB ก่อน Insert เสมอ (กัน Local State Stale -> Duplicate)
+      let existing = ruleType === 'item_code' ? itemCodeRule : accountRule;
+      // MARKER_ACCOUNT_CPC_RULES_SOURCE_MODE_V1 -- กรอง Mode ด้วย กัน Rule จาก Mode อื่นถูกดึงมาทับ/Update ผิด
+      const freshQuery = ruleType === 'item_code'
+        ? db.from('account_cpc_rules').select('*').eq('bu', bu).eq('rule_type', 'item_code').eq('item_code', line.itemCode || '').eq('source_mode', 'AP').limit(1)
+        : db.from('account_cpc_rules').select('*').eq('bu', bu).eq('rule_type', 'account').eq('account', accCfgAccount).eq('source_mode', 'AP').limit(1);
+      const { data: freshData } = await freshQuery;
+      if (freshData && freshData[0]) existing = freshData[0];
+      const payload = {
+        bu,
+        rule_type: ruleType,
+        cpc: accCfgCpc,
+        account: accCfgAccount,
+        sub_acc: accCfgSubAcc,
+        item_code: ruleType === 'item_code' ? (line.itemCode || '') : null,
+        supplier_code: null,
+        // MARKER_ACCOUNT_CPC_RULES_SOURCE_MODE_V1 -- ไฟล์นี้เป็นฝั่ง AP เท่านั้น Hardcode 'AP' เสมอ
+        source_mode: 'AP',
+        created_by: userName || currentUser?.email || '',
+        updated_at: new Date().toISOString(),
+      };
+      if (existing?.id) {
+        const { error } = await db.from('account_cpc_rules').update(payload).eq('id', existing.id);
+        if (error) throw error;
+        const updated = { ...existing, ...payload };
+        ruleType === 'item_code' ? setItemCodeRule(updated) : setAccountRule(updated);
+      } else {
+        const { data, error } = await db.from('account_cpc_rules').insert([payload]).select().single();
+        if (error) throw error;
+        ruleType === 'item_code' ? setItemCodeRule(data) : setAccountRule(data);
+      }
+      // MARKER_ACCOUNTCPC_SUPPLIER_NOAUTOAPPLY_V1 -- Refetch ทันที กัน Auto Apply ต้อง Refresh
+      await refetchAllAccountCpcRules();
+    } catch (e) {
+      console.error('[AccountCpcRules] บันทึก Rule ผิดพลาด', e);
+      confirmDialog.alert('บันทึกไม่สำเร็จ กรุณาลองใหม่', { variant: 'danger' });
+    } finally {
+      setSavingRuleType(null);
+    }
+  };
+
+  // MARKER_ACCOUNT_CPC_SUPPLIER_LIST_PHASE4_V1 -- State + Logic สำหรับ Account List ระดับ Supplier
+  const [supplierRules, setSupplierRules] = useState([]);
+  const [savingSupplierRule, setSavingSupplierRule] = useState(false);
+
+  const loadSupplierRules = async () => {
+    if (accountConfigIdx === null) return;
+    const supCode = form?.supplierCode || '';
+    if (!supCode) { setSupplierRules([]); return; }
+    try {
+      // MARKER_ACCOUNT_CPC_RULES_SOURCE_MODE_V1
+      const { data } = await db.from('account_cpc_rules').select('*')
+        .eq('bu', bu).eq('rule_type', 'supplier').eq('supplier_code', supCode).eq('source_mode', 'AP')
+        .order('created_at', { ascending: false });
+      setSupplierRules(data || []);
+    } catch (e) { console.error('[AccountCpcRules] โหลด Supplier List ผิดพลาด', e); }
+  };
+
+  useEffect(() => {
+    if (accountConfigIdx === null) { setSupplierRules([]); return; }
+    loadSupplierRules();
+  }, [accountConfigIdx]);
+
+  const saveSupplierAccountRule = async () => {
+    const supCode = form?.supplierCode || '';
+    if (!supCode) { confirmDialog.alert('ไม่พบ Supplier Code ของ Invoice นี้', { variant: 'danger' }); return; }
+    const combined = `${accCfgCpc}-${accCfgAccount}-${accCfgSubAcc}`;
+    const isDup = supplierRules.some(r => `${r.cpc}-${r.account}-${r.sub_acc}` === combined);
+    if (isDup) {
+      confirmDialog.alert('ค่านี้มีอยู่แล้วใน Account List — ไม่เพิ่มซ้ำ', { variant: 'danger', title: 'ซ้ำในระบบ' });
+      return;
+    }
+    setSavingSupplierRule(true);
+    try {
+      const payload = {
+        bu, rule_type: 'supplier', cpc: accCfgCpc, account: accCfgAccount, sub_acc: accCfgSubAcc,
+        item_code: null, supplier_code: supCode,
+        // MARKER_ACCOUNT_CPC_RULES_SOURCE_MODE_V1
+        source_mode: 'AP',
+        created_by: userName || currentUser?.email || '',
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await db.from('account_cpc_rules').insert([payload]);
+      if (error) throw error;
+      await loadSupplierRules();
+    } catch (e) {
+      console.error('[AccountCpcRules] บันทึก Supplier Rule ผิดพลาด', e);
+      confirmDialog.alert('บันทึกไม่สำเร็จ กรุณาลองใหม่', { variant: 'danger' });
+    } finally {
+      setSavingSupplierRule(false);
+    }
+  };
+
+  const loadSupplierRuleToFields = (rule) => {
+    setAccCfgCpc(rule.cpc || '');
+    setAccCfgAccount(rule.account || '');
+    setAccCfgSubAcc(rule.sub_acc || '');
+  };
+
+  const deleteSupplierRule = async (rule) => {
+    if (!(await confirmDialog.confirm('ต้องการลบ Rule นี้ใช่หรือไม่?', { variant: 'danger', confirmText: 'ลบ' }))) return;
+    try {
+      const { error } = await db.from('account_cpc_rules').delete().eq('id', rule.id);
+      if (error) throw error;
+      await loadSupplierRules();
+    } catch (e) {
+      console.error('[AccountCpcRules] ลบ Supplier Rule ผิดพลาด', e);
+      confirmDialog.alert('ลบไม่สำเร็จ กรุณาลองใหม่', { variant: 'danger' });
+    }
+  };
+
+  // MARKER_FIX_ACCOUNTCONFIGPOPUP_REMOUNT_BUG_V1 -- เปลี่ยนจาก Component ซ้อน (สาเหตุ Cursor เด้ง) เป็น JSX Value
+  const accountConfigPopupJsx = (() => {
+    if (accountConfigIdx === null) return null;
+    const line = lines[accountConfigIdx];
+    if (!line) return null;
+    const applyToLine = () => {
+      const combined = `${accCfgCpc}-${accCfgAccount}-${accCfgSubAcc}`;
+      setLineField(accountConfigIdx, 'account', combined);
+      setAccountConfigIdx(null);
+    };
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onMouseDown={e => { if (e.target === e.currentTarget) setAccountConfigIdx(null); }}>
+        <div style={{ background: 'white', borderRadius: '12px', maxWidth: '480px', width: '92%', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+          <div style={{ background: '#f7f8fa', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px', fontSize: '12px', color: '#666' }}>
+            Item Code: <b style={{ color: '#1a3a5c' }}>{line.itemCode || '-'}</b> &middot; BU: <b style={{ color: '#1a3a5c' }}>{bu}</b> &middot; Supplier: <b style={{ color: '#1a3a5c' }}>{form?.supplierCode || '-'}</b>
+          </div>
+          {/* MARKER_ACCOUNT_CPC_POPUP_TITLE_RENAME_V1 */}
+          <div style={{ fontSize: '15px', fontWeight: 500, marginBottom: '14px', color: '#1a3a5c' }}>Account Combination</div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>CPC</label>
+              <input value={accCfgCpc} onChange={e => setAccCfgCpc(e.target.value)}
+                style={{ width: '100%', height: '32px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>Account</label>
+              <input value={accCfgAccount} onChange={e => setAccCfgAccount(e.target.value)}
+                style={{ width: '100%', height: '32px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '3px' }}>Sub Acc</label>
+              <input value={accCfgSubAcc} onChange={e => setAccCfgSubAcc(e.target.value)}
+                style={{ width: '100%', height: '32px', padding: '0 8px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+          </div>
+          <button onClick={applyToLine}
+            style={{ width: '100%', height: '36px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' }}>
+            Apply — ใช้ค่านี้กับบรรทัดนี้
+          </button>
+
+          {/* MARKER_ACCOUNT_CPC_SETUP_BOXES_PHASE3_V1 -- กล่อง Setup/Edit Item Code + Account */}
+          <div style={{ fontSize: '12px', color: '#888', margin: '14px 0 8px' }}>บันทึกเป็น Rule ถาวร (ใช้ค่าใน 3 ช่องด้านบนซ้ำได้)</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            <div onClick={() => savingRuleType !== 'item_code' && requestOtpThenSaveRule('item_code')}
+              style={{ cursor: savingRuleType ? 'default' : 'pointer', opacity: savingRuleType === 'item_code' ? 0.6 : 1, background: '#eef8ee', border: '1px dashed #97C459', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '10px', color: '#5a8a3a', marginBottom: '2px' }}>Item Code</div>
+                <b style={{ color: '#3a6a2a' }}>{itemCodeRule ? `${itemCodeRule.cpc}-${itemCodeRule.account}-${itemCodeRule.sub_acc}` : (savingRuleType === 'item_code' ? 'กำลังบันทึก...' : 'ยังไม่เคย Setup')}</b>
+              </div>
+              <span style={{ fontSize: '16px', color: '#5a8a3a' }}>{itemCodeRule ? '✎' : '+'}</span>
+            </div>
+            <div onClick={() => savingRuleType !== 'account' && requestOtpThenSaveRule('account')}
+              style={{ cursor: savingRuleType ? 'default' : 'pointer', opacity: savingRuleType === 'account' ? 0.6 : 1, background: '#eaf2fb', border: '1px dashed #6d9fd8', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '10px', color: '#3a6a9a', marginBottom: '2px' }}>Account</div>
+                <b style={{ color: '#1a4a7a' }}>{accountRule ? `${accountRule.cpc}-${accountRule.account}-${accountRule.sub_acc}` : (savingRuleType === 'account' ? 'กำลังบันทึก...' : 'ยังไม่เคย Setup')}</b>
+              </div>
+              <span style={{ fontSize: '16px', color: '#3a6a9a' }}>{accountRule ? '✎' : '+'}</span>
+            </div>
+          </div>
+
+          {/* MARKER_ACCOUNT_CPC_SUPPLIER_LIST_PHASE4_V1 -- Account List ระดับ Supplier */}
+          <div style={{ borderTop: '0.5px solid #eee', paddingTop: '14px', marginTop: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 500, color: '#1a3a5c' }}>Account List</div>
+              <button onClick={saveSupplierAccountRule} disabled={savingSupplierRule}
+                style={{ background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '12px', padding: '4px 12px', fontSize: '11px', fontWeight: 500, cursor: savingSupplierRule ? 'default' : 'pointer', opacity: savingSupplierRule ? 0.6 : 1 }}>
+                {supplierRules.length} record
+              </button>
+            </div>
+            <div style={{ fontSize: '10px', color: '#999', marginBottom: '8px' }}>คลิก = โหลดเข้า 3 ช่อง &middot; ดับเบิลคลิก = Apply ทันที</div>
+            <div style={{ border: '0.5px solid #ddd', borderRadius: '8px', height: '110px', overflowY: 'auto' }}>
+              {supplierRules.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', fontSize: '12px', color: '#999' }}>ยังไม่มี Rule</div>
+              ) : supplierRules.map((r, i) => (
+                <div key={r.id || i}
+                  onClick={() => loadSupplierRuleToFields(r)}
+                  onDoubleClick={() => { loadSupplierRuleToFields(r); setTimeout(applyToLine, 0); }}
+                  style={{ padding: '7px 12px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', borderBottom: i < supplierRules.length - 1 ? '0.5px solid #eee' : 'none', gap: '6px' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f7f8fa'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.cpc}-{r.account}-{r.sub_acc}</span>
+                  {/* MARKER_ACCOUNTLIST_INVOICE_ONLY_BUTTON_V1 -- เหลือแค่ Invoice + ลบ (ตัด Line ออก) */}
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button title="เอา CPC + Sub Acc ไปใส่ Invoice Setup (Fallback ทั้งใบ)" onClick={e => {
+                        e.stopPropagation();
+                        setField('headerCpc', r.cpc || '');
+                        setField('headerSubAcc', r.sub_acc || '');
+                        setAccountConfigIdx(null);
+                      }}
+                      style={{ padding: '3px 8px', background: '#eef8ee', color: '#3a8a3a', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Invoice</button>
+                    <button title="ลบ Rule นี้" onClick={e => { e.stopPropagation(); deleteSupplierRule(r); }}
+                      style={{ padding: '3px 8px', background: '#fbeaea', color: '#c0392b', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>🗑</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* MARKER_ACCOUNT_CPC_HELP_POPUP_PHASE6_V1 -- ปุ่มเปิด Help Popup */}
+          <button onClick={() => setShowAccountCpcHelp(true)}
+            style={{ width: '100%', height: '30px', background: 'none', border: '1px dashed #ddd', color: '#888', fontSize: '12px', marginTop: '14px', cursor: 'pointer', borderRadius: '6px' }}>
+            ⓘ วิธีใช้งานฟอร์มนี้
+          </button>
+
+          <button onClick={() => setAccountConfigIdx(null)}
+            style={{ width: '100%', height: '32px', background: 'none', color: '#888', border: 'none', fontSize: '12px', marginTop: '8px', cursor: 'pointer' }}>
+            ปิด
+          </button>
+        </div>
+
+        {showAccountCpcHelp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 999999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onMouseDown={e => { if (e.target === e.currentTarget) setShowAccountCpcHelp(false); }}>
+            <div style={{ background: 'white', borderRadius: '12px', maxWidth: '380px', width: '90%', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+              <div style={{ fontWeight: 500, color: '#1a3a5c', fontSize: '14px', marginBottom: '14px' }}>ลำดับความสำคัญ (Priority)</div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#eaf2fb', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ background: '#1a3a5c', color: 'white', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0 }}>1</div>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>Supplier</div>
+                    <div style={{ fontSize: '11px', color: '#666' }}>เจาะจงสุด — แต่ Apply ได้ก็ต่อเมื่อมีการเลือกใช้จริง</div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', color: '#999', fontSize: '11px' }}>↓ ถ้าไม่เจอ ค่อยดูระดับถัดไป</div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#f7f8fa', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ background: '#888', color: 'white', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0 }}>2</div>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>Item Code</div>
+                    <div style={{ fontSize: '11px', color: '#666' }}>ตั้งได้แค่ 1 ค่าต่อ BU (ไม่มี Supplier ย่อยซ้อนในนี้อีก)</div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', color: '#999', fontSize: '11px' }}>↓ ถ้าไม่เจอ ค่อยดูระดับถัดไป</div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#f7f8fa', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ background: '#aaa', color: 'white', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0 }}>3</div>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>Account</div>
+                    <div style={{ fontSize: '11px', color: '#666' }}>ตั้งได้แค่ 1 ค่าต่อ Account — พอตั้งแล้วจะโชว์อัตโนมัติทุกครั้งที่เรียก Account นี้ซ้ำ</div>
+                  </div>
+                </div>
+              </div>
+
+              <button onClick={() => setShowAccountCpcHelp(false)}
+                style={{ width: '100%', height: '34px', background: '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', marginTop: '16px', cursor: 'pointer' }}>
+                เข้าใจแล้ว
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* MARKER_ACCOUNT_CPC_RULE_OTP_GATE_V1 -- Popup ยืนยันโค้ด 6 หลักก่อนบันทึก Rule */}
+        {otpChallenge && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onMouseDown={e => { if (e.target === e.currentTarget) { setOtpChallenge(null); setOtpInput(''); } }}>
+            <div style={{ background: 'white', borderRadius: '12px', maxWidth: '320px', width: '90%', padding: '22px', boxShadow: '0 10px 40px rgba(0,0,0,0.25)', textAlign: 'center' }}>
+              <div style={{ fontSize: '14px', fontWeight: 500, color: '#1a3a5c', marginBottom: '4px' }}>ยืนยันการ Setup Rule</div>
+              <div style={{ fontSize: '11px', color: '#888', marginBottom: '16px' }}>
+                {otpChallenge.ruleType === 'item_code' ? 'Item Code' : 'Account'} Rule มีผลกับทั้งระบบ กรุณายืนยันรหัสด้านล่าง
+              </div>
+              <div style={{ fontSize: '32px', fontWeight: 700, letterSpacing: '0.15em', color: '#1a3a5c', background: '#f7f8fa', borderRadius: '8px', padding: '12px', marginBottom: '16px', fontFamily: 'monospace' }}>
+                {otpChallenge.code}
+              </div>
+              <input value={otpInput} onChange={e => setOtpInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onKeyDown={e => { if (e.key === 'Enter') confirmOtpAndSaveRule(); }}
+                placeholder="พิมพ์รหัส 6 หลักด้านบน" autoFocus
+                style={{ width: '100%', height: '38px', textAlign: 'center', fontSize: '16px', letterSpacing: '0.15em', border: '1px solid #ccc', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', marginBottom: '14px' }} />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => { setOtpChallenge(null); setOtpInput(''); }}
+                  style={{ flex: 1, height: '36px', background: 'none', border: '1px solid #ddd', color: '#888', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                  ยกเลิก
+                </button>
+                <button onClick={confirmOtpAndSaveRule} disabled={otpInput.length !== 6}
+                  style={{ flex: 1, height: '36px', background: otpInput.length === 6 ? '#1a3a5c' : '#ccc', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', cursor: otpInput.length === 6 ? 'pointer' : 'default' }}>
+                  ยืนยัน
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  })();
 
   const MONEY_FIELDS = ['amount', 'vat', 'wht', 'total'];
   const handleMoneyChange = (idx, key, val) => { let v = val.replace(/[^0-9.-]/g, ''); const fd = v.indexOf('.'); if (fd !== -1) v = v.slice(0, fd + 1) + v.slice(fd + 1).replace(/\./g, ''); setLineField(idx, key, v); };
@@ -6866,14 +7901,19 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   // recalc ทุกครั้งที่ itemCode/amount/tax/header เปลี่ยน (เฉพาะตอน edit)
   useEffect(() => {
     if (isView) return;
-    setLines(prev => recalcLines(prev, itemcodeItems, vendorInfo, form));
+    setLines(prev => recalcLines(prev, itemcodeItems, vendorInfo, form, allAccountCpcRules));
   }, [
     lines.map(l => l.itemCode).join(','),
     lines.map(l => l.amount).join(','),
+    allAccountCpcRules,
     lines.map(l => l.tax).join(','),
     form.period, form.invTax, form.backDesc1, form.backDesc2, form.backDesc3,
     form.branchNo, form.branchDirectLabel, form.branchIBLabel,
     form.customizePeriod, form.customizePercent,
+    // MARKER_BUCKETITEM_HEADERCPC_RECALC_DEPS_FIX_V1 -- เพิ่ม headerCpc/branchCpc เข้า dependency
+    // เหมือน InvoiceDetailPopup (MARKER_ACCOUNT_CPC_PRIORITY_LOOKUP_PHASE5_V1) ไม่งั้นกดปุ่ม Invoice
+    // ใน Account List (ตั้ง headerCpc/headerSubAcc) แล้ว useEffect ไม่รู้ตัวว่าต้องคำนวณ Account ใหม่
+    form.headerCpc, form.headerSubAcc, form.branchCpc,
   ]);
 
   if (!show || !invoice) return null;
@@ -7033,52 +8073,6 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             onSaveBranch={async () => { confirmDialog.alert('กรุณาสร้าง Branch ใหม่จากหน้า Invoice Entry (Step 2) แทน', { variant: 'danger' }); return false; }}
           />
 
-          {/* Real vendor card */}
-          {(form.realVendorName || form.realVendorTaxid || form.realInvoiceNo) && (
-            <div style={{ background: '#EAF3DE', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', flexShrink: 0 }}>
-              <div style={{ fontSize: '11px', color: '#27500A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: '600' }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                Real vendor
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px 16px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Company name</label>
-                  <input type="text" value={form.realVendorName || ''} disabled={isView} onChange={e => setField('realVendorName', e.target.value)} style={inputStyle('100%', isView)} />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Tax ID</label>
-                  <input type="text" value={form.realVendorTaxid || ''} disabled={isView} onChange={e => setField('realVendorTaxid', e.target.value)} style={inputStyle('100%', isView)} />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Branch</label>
-                  <input type="text" value={form.realVendorBranch || ''} disabled={isView} onChange={e => setField('realVendorBranch', e.target.value)} style={inputStyle('100%', isView)} />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Real invoice no.</label>
-                  <input type="text" value={form.realInvoiceNo || ''} disabled={isView} onChange={e => setField('realInvoiceNo', e.target.value)} style={inputStyle('100%', isView)} />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <label style={{ fontSize: '11px', color: '#27500A', opacity: 0.8 }}>Tax Invoice Date</label>
-                  {/* MARKER_INVOICEDETAIL_TAXINVOICEDATE_HYBRID_V1 -- พิมพ์ได้ + กด Calendar ได้ */}
-                  <div style={{ position: 'relative' }}>
-                    <input type="text" ref={realVendorTaxDateRef} defaultValue={formatDateDisplayMDY(form.realVendorTaxDate)}
-                      disabled={isView} placeholder="MM/DD/YYYY"
-                      onBlur={e => {
-                        const parsed = parseFlexibleDate(e.target.value);
-                        if (parsed) { e.target.value = formatDateDisplayMDY(parsed); setField('realVendorTaxDate', parsed); }
-                        else if (!e.target.value.trim()) { setField('realVendorTaxDate', ''); }
-                        else { e.target.value = formatDateDisplayMDY(form.realVendorTaxDate); }
-                      }}
-                      style={{ ...inputStyle('100%', isView), paddingRight: '22px', boxSizing: 'border-box' }} />
-                    <input type="date" tabIndex={-1} value={form.realVendorTaxDate || ''} disabled={isView}
-                      min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`}
-                      onChange={e => setField('realVendorTaxDate', e.target.value)}
-                      style={{ position: 'absolute', right: 0, top: 0, width: '20px', height: '100%', opacity: 0, cursor: isView ? 'default' : 'pointer', border: 'none', padding: 0 }} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Editable header fields */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'flex-end', marginBottom: '14px', flexShrink: 0 }}>
@@ -7148,6 +8142,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '0 0 36px' }}>
               <label style={{ ...fieldLabel, color: 'transparent' }}>_</label>
               <button title="Contract" disabled={isView}
+                onClick={() => setShowContractPopup(true)}
                 style={{ height: '28px', width: '36px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: isView ? '#f5f5f5' : '#eef4fb', color: isView ? '#ccc' : '#1a3a5c', cursor: isView ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
@@ -7161,7 +8156,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
           <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '10px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
-                <colgroup>{(isView ? [3,7,9,5,21,10,9,12,8,8,8] : [3,7,9,5,19,10,9,11,8,8,8,4]).map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+                <colgroup>{(isView ? [3,7,9,5,21,10,9,12,8,8,8] : [3,7,9,5,17,10,9,11,8,8,8,6]).map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ background: '#f8f9fa' }}>
                     {['H/L','Item Code','Amount','Tax','Description','Tax Code','Wht Code','Account','Vat Amount','Wht Amount','Total', ...(isView ? [] : [''])].map(h => (
@@ -7171,16 +8166,34 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                 </thead>
                 <tbody>
                   {lines.map((line, idx) => (
-                    <tr key={idx}>
+                    <React.Fragment key={idx}>
+                    <tr>
                       {[['hl'],['itemCode'],['amount'],['tax'],['desc'],['taxCode'],['whtCode'],['account'],['vat'],['wht'],['total']].map(([key]) => (
-                        <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0' }}>
+                        <td key={key} style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0', position: key === 'desc' ? 'relative' : undefined }}>
                           {key === 'hl' ? (
                             <input type="text" value={line.hl} disabled={isView} maxLength={1} onChange={e => setLineField(idx, 'hl', e.target.value.slice(0,1).toUpperCase())}
                               style={{ ...inputStyle('100%', isView), textAlign: 'center' }} />
                           ) : key === 'itemCode' ? (
                             <div style={{ position: 'relative' }}>
                               <input type="text" maxLength={8} value={line[key]} disabled={isView}
-                                onChange={e => setLineField(idx, key, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                                placeholder={!isView && itemcodeItems.some(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(vendorInfo?.['Tax ID'] || '')) ? 'พิมพ์ /' : undefined}
+                                onChange={e => {
+                                  const raw = e.target.value;
+                                  if (!isView && raw === '/') { setFavDropdownIdx(idx); setFavActiveIdx(0); setLineField(idx, key, raw); return; }
+                                  if (favDropdownIdx === idx) setFavDropdownIdx(null);
+                                  setLineField(idx, key, raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8));
+                                }}
+                                onKeyDown={e => {
+                                  if (favDropdownIdx !== idx) return;
+                                  const favList = itemcodeItems
+                                    .filter(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(vendorInfo?.['Tax ID'] || ''))
+                                    .sort((a, b) => String(a.code ?? '').localeCompare(String(b.code ?? ''), undefined, { numeric: true, sensitivity: 'base' }));
+                                  if (e.key === 'ArrowDown') { e.preventDefault(); setFavActiveIdx(a => Math.min(favList.length - 1, a + 1)); }
+                                  else if (e.key === 'ArrowUp') { e.preventDefault(); setFavActiveIdx(a => Math.max(0, a - 1)); }
+                                  else if (e.key === 'Enter' && favList[favActiveIdx]) { e.preventDefault(); selectFavoriteItem(favList[favActiveIdx], idx, key); }
+                                  else if (e.key === 'Escape') { setFavDropdownIdx(null); }
+                                }}
+                                onBlur={() => setTimeout(() => setFavDropdownIdx(null), 150)}
                                 style={{ ...inputStyle('100%', isView), paddingRight: isView ? '8px' : '24px' }} />
                               {!isView && (
                                 <button type="button" onClick={() => { setActiveLineIdx(idx); setShowItemCodePopup(true); }}
@@ -7188,6 +8201,25 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                                 </button>
                               )}
+                              {!isView && favDropdownIdx === idx && (() => {
+                                const favList = itemcodeItems
+                                  .filter(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(vendorInfo?.['Tax ID'] || ''))
+                                  .sort((a, b) => String(a.code ?? '').localeCompare(String(b.code ?? ''), undefined, { numeric: true, sensitivity: 'base' }));
+                                if (favList.length === 0) return null;
+                                return (
+                                  <div style={{ position: 'absolute', top: '100%', left: 0, width: '360px', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 4px 14px rgba(26,58,92,0.15)', zIndex: 20, maxHeight: '220px', overflowY: 'auto' }}>
+                                    <div style={{ padding: '5px 10px', fontSize: '10px', fontWeight: '600', color: '#e6a800', background: '#FFFBEB', borderBottom: '0.5px solid #f0f0f0' }}>★ FAVORITE ({favList.length})</div>
+                                    {favList.map((f, fi) => (
+                                      <div key={f.code || fi}
+                                        ref={el => { if (fi === favActiveIdx) el?.scrollIntoView({ block: 'nearest' }); }}
+                                        onMouseDown={() => selectFavoriteItem(f, idx, key)}
+                                        style={{ padding: '6px 10px', cursor: 'pointer', background: fi === favActiveIdx ? '#E6F1FB' : 'white', borderBottom: '0.5px solid #f0f0f0' }}>
+                                        <div style={{ fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><span style={{ color: '#0C447C', fontWeight: '500' }}>{f.code}</span> {f.description}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           ) : key === 'tax' ? (
                             <div style={{ position: 'relative' }}>
@@ -7227,23 +8259,200 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                               )}
                             </div>
                           ) : (
+                            <>
                             <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]} disabled={isView}
+                              title={key === 'desc' && !isView ? (line[key] ? line[key] + ' (Double-click เพื่อแก้ไขแบบเต็ม)' : '') : line[key]}
+                              // MARKER_BUCKETITEM_AMOUNT_AUTOFOCUS_V1
+                              ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; }) : undefined}
                               onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : setLineField(idx, key, v); }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
+                              onDoubleClick={key === 'desc' && !isView ? () => {
+                                setExpandEditIdx(idx);
+                                // MARKER_BUCKETITEM_DESC_PARTIAL_LOCK_V1 -- Prefill "แค่ข้อ 4" ไม่ใช่ Description เต็มก้อน
+                                const curItemCodeUpper = String(line.itemCode ?? '').trim().toUpperCase();
+                                const alreadyLocked = line._descLockedForCode && line._descLockedForCode === curItemCodeUpper;
+                                if (alreadyLocked) {
+                                  setExpandEditVal(line._descManualPart4 ?? '');
+                                } else {
+                                  const itemDataForDesc = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === curItemCodeUpper);
+                                  setExpandEditVal(String(itemDataForDesc?.description ?? '').trim());
+                                }
+                              } : (key === 'account' && !isView ? (String(line.account || '').trim() ? () => openAccountConfig(idx, line.account) : undefined /* MARKER_ACCOUNT_DBLCLICK_EMPTY_GUARD_V1 */) : undefined)}
                               style={{ ...inputStyle('100%', isView), color: key === 'wht' && line[key] ? '#A32D2D' : (isView ? '#999' : '#1a3a5c'), textAlign: MONEY_FIELDS.includes(key) ? 'right' : 'left' }} />
+                            {/* MARKER_BUCKETITEM_DESC_EXPAND_EDIT_V1 */}
+                            {key === 'desc' && expandEditIdx === idx && (
+                              <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, width: '100%', minWidth: '280px', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 4px 14px rgba(26,58,92,0.15)', padding: '8px', zIndex: 20, boxSizing: 'border-box' }}>
+                                <textarea
+                                  autoFocus
+                                  value={expandEditVal}
+                                  onChange={e => setExpandEditVal(e.target.value)}
+                                  onFocus={e => e.target.select()}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault();
+                                      commitDescPartial(idx, expandEditVal);
+                                      setExpandEditIdx(null);
+                                    } else if (e.key === 'Escape') {
+                                      expandEditCancelRef.current = true;
+                                      setExpandEditIdx(null);
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    if (expandEditCancelRef.current) { expandEditCancelRef.current = false; return; }
+                                    commitDescPartial(idx, expandEditVal);
+                                    setExpandEditIdx(null);
+                                  }}
+                                  style={{ width: '100%', minHeight: '60px', fontSize: '12px', padding: '6px 8px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', color: '#1a3a5c', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
+                                <div style={{ fontSize: '10px', color: '#999', marginTop: '5px' }}>Enter เพื่อบันทึก · Esc เพื่อยกเลิก</div>
+                              </div>
+                            )}
+                            {/* MARKER_ACCOUNT_CPC_POPUP_PHASE2_V1 -- Popup ตั้งค่า CPC/Account/SubAcc (Double-click ช่อง Account) */}
+                            {key === 'account' && accountConfigIdx === idx && accountConfigPopupJsx}
+                            </>
                           )}
                         </td>
                       ))}
                       {!isView && (
                         <td style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center' }}>
-                          <button onClick={() => removeLine(idx)} disabled={lines.length <= 1}
-                            style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: lines.length <= 1 ? '#f5f5f5' : '#FCEBEB', color: lines.length <= 1 ? '#ccc' : '#791F1F', cursor: lines.length <= 1 ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+                            {/* MARKER_BUCKETITEM_REALVENDOR_PERLINE_V1 -- กดต่อบรรทัด ผลไปโชว์/แก้ที่ Sub-row ใต้บรรทัดนั้นเลย (ไม่ใช่ Header อีกต่อไป) */}
+                            <button type="button" onClick={() => { setRealVendorLineIdx(idx); setShowRealVendorPopupInBucket(true); }} title="Real vendor"
+                              style={{
+                                height: '24px', width: '24px', borderRadius: '5px',
+                                border: line.realVendorName ? '1px solid #97C459' : '0.5px solid #c5d8f0',
+                                background: line.realVendorName ? '#EAF3DE' : '#eef4fb',
+                                color: line.realVendorName ? '#27500A' : '#1a3a5c',
+                                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                              }}>
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            </button>
+                            <button onClick={() => removeLine(idx)} disabled={lines.length <= 1}
+                              style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: lines.length <= 1 ? '#f5f5f5' : '#FCEBEB', color: lines.length <= 1 ? '#ccc' : '#791F1F', cursor: lines.length <= 1 ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                            </button>
+                          </div>
                         </td>
                       )}
                     </tr>
+                    {/* MARKER_BUCKETITEM_REALVENDOR_PERLINE_V1 -- Sub-row Real Vendor ใต้บรรทัดที่มีข้อมูล (Pattern เดียวกับ InvoiceDetailPopup) */}
+                    {line.realVendorName && (
+                      <tr style={{ background: '#f0faf5' }}>
+                        <td colSpan={isView ? 11 : 12} style={{ padding: 0, borderBottom: '0.5px solid #97C459' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.2fr 1fr auto', gap: '8px', alignItems: 'end', padding: '6px 12px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Company name</span>
+                              <input type="text" value={line.realVendorName || ''} disabled={isView} onChange={e => setLineField(idx, 'realVendorName', e.target.value)}
+                                onKeyDown={e => {
+                                  // MARKER_VRV_ENTER_TRIGGER_COMPANYNAME_V1 -- กด Enter ที่ Company Name ก็เพิ่มบรรทัดใหม่ได้เลย
+                                  // (ถ้า Real Invoice No. + Tax Invoice Date กรอกไว้ครบแล้ว และ Item Code เป็น V-RV) -- Port จาก InvoiceDetailPopup
+                                  if (e.key === 'Enter' && !isView) {
+                                    e.preventDefault();
+                                    const curLine = lines[idx];
+                                    if (curLine?.realVendorTaxDate && curLine?.realInvoiceNo?.trim() && !lineVrvProcessedRef.current[idx]) {
+                                      const itemCodeVrv = curLine.itemCode?.trim();
+                                      const itemDataVrv = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCodeVrv?.toUpperCase());
+                                      const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
+                                      if (isVRV) {
+                                        lineVrvProcessedRef.current[idx] = true;
+                                        const vatNum = parseFloat(String(curLine.vat || '0').replace(/,/g, '')) || 0;
+                                        const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
+                                        const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        const mapping = VRV_MAPPING[curLine.itemCode] || {};
+                                        // MARKER_VRV_SPLICE_INSERT_FIX_V2 -- Insert ต่อจากตำแหน่งบรรทัด V-RV (idx) แทนที่จะต่อท้าย Array
+                                        setLines(prev => {
+                                          const next = [...prev];
+                                          next.splice(idx + 1, 0, {
+                                            hl: 'H', itemCode: mapping.h || '', amount: negFormatted,
+                                            tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                          }, {
+                                            hl: 'L', itemCode: mapping.l || '', amount: '',
+                                            tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                          });
+                                          return next;
+                                        });
+                                      }
+                                    }
+                                  }
+                                }}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: isView ? '#f0f0f0' : 'white', color: isView ? '#999' : '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Tax ID</span>
+                              <input type="text" value={line.realVendorTaxid || ''} disabled={isView} onChange={e => setLineField(idx, 'realVendorTaxid', e.target.value)}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: isView ? '#f0f0f0' : 'white', color: isView ? '#999' : '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Branch</span>
+                              <input type="text" value={line.realVendorBranch || ''} disabled={isView} onChange={e => setLineField(idx, 'realVendorBranch', e.target.value)}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: isView ? '#f0f0f0' : 'white', color: isView ? '#999' : '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Real invoice no.</span>
+                              <input type="text" value={line.realInvoiceNo || ''} disabled={isView} onChange={e => setLineField(idx, 'realInvoiceNo', e.target.value)}
+                                style={{ height: '26px', padding: '0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: isView ? '#f0f0f0' : 'white', color: isView ? '#999' : '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '10px', color: '#999' }}>Tax Invoice Date</span>
+                              <div style={{ position: 'relative' }}>
+                                <input type="text" defaultValue={formatDateDisplayMDY(line.realVendorTaxDate)} placeholder="MM/DD/YYYY" disabled={isView}
+                                  onKeyDown={e => {
+                                    // MARKER_VRV_ENTER_TRIGGER_TAXDATE_V1 -- กด Enter = Blur ทันที (ใช้ Logic เดิมใน onBlur ด้านล่างซ้ำ)
+                                    if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+                                  }}
+                                  onBlur={e => {
+                                    const parsed = parseFlexibleDate(e.target.value);
+                                    if (parsed) {
+                                      e.target.value = formatDateDisplayMDY(parsed);
+                                      setLineField(idx, 'realVendorTaxDate', parsed);
+                                      // MARKER_VRV_ENTER_TRIGGER_TAXDATE_V1 -- Trigger เพิ่มบรรทัด H+L (Port จาก InvoiceDetailPopup)
+                                      if (parsed && line.realInvoiceNo?.trim() && !lineVrvProcessedRef.current[idx]) {
+                                        const itemCodeVrv = line.itemCode?.trim();
+                                        const itemDataVrv = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCodeVrv?.toUpperCase());
+                                        const isVRV = String(itemDataVrv?.value ?? '').trim().toUpperCase() === 'V-RV';
+                                        if (isVRV) {
+                                          lineVrvProcessedRef.current[idx] = true;
+                                          const vatNum = parseFloat(String(line.vat || '0').replace(/,/g, '')) || 0;
+                                          const negAmount = -(Math.round(vatNum * 100 / 7 * 100) / 100);
+                                          const negFormatted = negAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                          const mapping = VRV_MAPPING[line.itemCode] || {};
+                                          // MARKER_VRV_SPLICE_INSERT_FIX_V3 -- Insert ต่อจากตำแหน่งบรรทัด V-RV (idx) แทนที่จะต่อท้าย Array
+                                          setLines(prev => {
+                                            const next = [...prev];
+                                            next.splice(idx + 1, 0, {
+                                              hl: 'H', itemCode: mapping.h || '', amount: negFormatted,
+                                              tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                            }, {
+                                              hl: 'L', itemCode: mapping.l || '', amount: '',
+                                              tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: ''
+                                            });
+                                            return next;
+                                          });
+                                        }
+                                      }
+                                    }
+                                    else if (!e.target.value.trim()) { setLineField(idx, 'realVendorTaxDate', ''); }
+                                    else { e.target.value = formatDateDisplayMDY(line.realVendorTaxDate); }
+                                  }}
+                                  style={{ height: '26px', padding: '0 22px 0 8px', fontSize: '11px', border: '0.5px solid #97C459', borderRadius: '5px', background: isView ? '#f0f0f0' : 'white', color: isView ? '#999' : '#1a3a5c', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+                                <input type="date" tabIndex={-1} value={line.realVendorTaxDate || ''} disabled={isView}
+                                  min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`}
+                                  onChange={e => setLineField(idx, 'realVendorTaxDate', e.target.value)}
+                                  style={{ position: 'absolute', right: 0, top: 0, width: '20px', height: '100%', opacity: 0, cursor: isView ? 'default' : 'pointer', border: 'none', padding: 0 }} />
+                              </div>
+                            </div>
+                            {!isView && (
+                              <button type="button" onClick={() => {
+                                  const clear = { realVendorCode: '', realVendorName: '', realVendorTaxid: '', realVendorBranch: '', realInvoiceNo: '', realVendorTaxDate: '' };
+                                  Object.entries(clear).forEach(([k, v]) => setLineField(idx, k, v));
+                                }} title="ล้างค่า"
+                                style={{ width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #97C459', background: 'white', color: '#27500A', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -7259,8 +8468,46 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
         {!isView && (
           <ItemCodeSearchPopup
             show={showItemCodePopup} onClose={() => setShowItemCodePopup(false)}
-            onSelect={(item) => { setLineField(activeLineIdx, 'itemCode', item.code || ''); setShowItemCodePopup(false); }}
+            onSelect={(item) => {
+              setLineField(activeLineIdx, 'itemCode', item.code || '');
+              setShowItemCodePopup(false);
+              // MARKER_BUCKETITEM_AMOUNT_AUTOFOCUS_V1
+              setTimeout(() => lineAmountRefs.current[activeLineIdx]?.focus(), 50);
+            }}
             itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
+            // MARKER_BUCKETITEM_ITEMCODEPOPUP_VENDORTAXID_FIX_V1
+            // ── FIX: เดิมไม่ได้ส่ง vendorTaxId เข้า ItemCodeSearchPopup -- ทำให้ ──
+            // ── favItems ว่างเปล่าเสมอ (การันตี Favorite ไม่ขึ้นดาวเลยสักแถว) ──
+            vendorTaxId={vendorInfo?.['Tax ID'] || ''}
+          />
+        )}
+
+        {/* MARKER_BUCKETITEM_REALVENDOR_V1 -- ใช้ Pattern เดียวกับ InvoiceDetailPopup ตัด Auto-GRN/Flow ออก (แก้ Invoice ที่มี GRT/GRN อยู่แล้ว) */}
+        {!isView && (
+          <RealVendorPopup
+            show={showRealVendorPopupInBucket}
+            onClose={() => { setShowRealVendorPopupInBucket(false); setRealVendorLineIdx(-1); }}
+            fetchCollection={fetchCollection}
+            vendorTaxId={vendorInfo?.['Tax ID'] || ''}
+            onSelect={({ vendor, realInvoiceNo, taxInvoiceDate }) => {
+              // MARKER_BUCKETITEM_REALVENDOR_PERLINE_V1 -- เซ็ตลงบรรทัดที่กำลังแก้ (realVendorLineIdx) แทน Header
+              if (realVendorLineIdx < 0) { setShowRealVendorPopupInBucket(false); return; }
+              const rv = {
+                realVendorCode:   vendor['SM-Code'] || '',
+                realVendorName:   vendor['Company Name'] || '',
+                realVendorTaxid:  vendor['Tax ID'] || '',
+                realVendorBranch: vendor['Branch'] || '',
+                realInvoiceNo:    realInvoiceNo || '',
+                realVendorTaxDate: taxInvoiceDate || '',
+              };
+              setLines(prev => prev.map((l, i) => i === realVendorLineIdx ? { ...l, ...rv } : l));
+              setShowRealVendorPopupInBucket(false);
+              setRealVendorLineIdx(-1);
+            }}
+            smCodeItems={smCodeItems}
+            categoryItems={categoryItems}
+            branchItems={branchItems}
+            userName={userName}
           />
         )}
 
@@ -7284,6 +8531,16 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
           </div>
         </div>
       </div>
+      {/* MARKER_BUCKETITEM_CONTRACT_POPUP_V1 */}
+      <ContractPopup
+        show={showContractPopup}
+        onClose={() => setShowContractPopup(false)}
+        onSelect={handleSelectContract}
+        vendorCode={form?.supplierCode || ''}
+        bu={bu}
+        fetchCollection={fetchCollection}
+        userName={userName}
+      />
     </div>
   );
 }
@@ -7410,7 +8667,7 @@ function VendorInfoPanel({ vendorInfo, vendorLoading, matchedRule, branchDirectL
 
 // ── BatchSetup ────────────────────────────────────────────────────────────────
 // MARKER_FIX_INITIAL_HISTORY_TAB_BATCHSETUP_V1
-function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
+function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBatchId, step, activeChannel = 1, setActiveChannel = () => {} }) {  // MARKER_BELL_VIEW_SYNC_V1
   const today = new Date();
   const pad2  = (n) => String(n).padStart(2, '0');
   const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
@@ -7600,6 +8857,21 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
     return unsubscribe;
   }, [bu, buInfo]);
 
+  // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1
+  // -- Real-time: Owner/Admin แก้ Pattern/Digit/Current/Override/GL Book/Watchlist ที่ Period Panel --
+  // -- อัปเดต buInfo บนจอ Invoice Entry ทันที กัน BU ที่กำลังใช้อยู่เห็นค่าเก่าค้าง --
+  useEffect(() => {
+    const unsubscribe = subscribeWs(['bu_config_updated'], (event, payload) => {
+      if (payload.all) {
+        setBuInfo(prev => prev ? { ...prev, [payload.field]: payload.value } : prev);
+        return;
+      }
+      if (!bu || payload.bu !== bu) return;
+      setBuInfo(prev => prev ? { ...prev, [payload.field]: payload.value } : prev);
+    });
+    return unsubscribe;
+  }, [bu]);
+
   // ── กัน Popup Blocked เด้งซ้ำ — ดึงจาก Endpoint เล็กๆ แยก ใช้ได้ทุก User ไม่ต้องมี Permission Manual ──
   const [hasPendingCloseRequest, setHasPendingCloseRequest] = useState(false);
   useEffect(() => {
@@ -7619,6 +8891,10 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
   useEffect(() => {
     fetchCollection('CompanyList', true).catch(e => console.error('force refresh CompanyList:', e));
   }, []);
+  // MARKER_MASTERDATA_REALTIME_V1 -- คนอื่นแก้ Company/BU Info ที่ไหนก็ตาม Refetch ให้เห็นสด
+  useRealtimeRefresh(['company_list_updated'], () => {
+    fetchCollection('CompanyList', true).catch(e => console.error('[CompanyList realtime] fetchCollection background error:', e));
+  });
 
   // ── Global Representative: ใช้ตอนยังไม่กรอก BU เพื่อโชว์ Period/Receive Date ที่ถูกต้อง ──
   // ── ทุก BU ที่ไม่ได้ Override จะมี ap_bu_period_status เดียวกันหมด (Cron Sync พร้อมกันทีเดียว) ──
@@ -7757,6 +9033,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
       const res = await apiFetch('/ap/period/close', { method: 'POST' });
       if (res?.error) throw new Error(res.error);
       await fetchCollection('CompanyList', true);
+      // MARKER_MASTERDATA_REALTIME_V1
+      try { broadcastWs('company_list_updated', {}); } catch (e) { console.error('[broadcast company_list_updated]', e); }
       setShowBlockedPopup(false);
     } catch (e) {
       console.error('close-period:', e);
@@ -7798,6 +9076,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
   // ── ดึง Invoice Pending ทั้งหมด (ทุก BU ทุก User) มา Group ตาม BU+เดือน ──
   // ── เพื่อโชว์ใน Popup "On process" — ให้กด "เข้าไปทำต่อ" กลับเข้า Batch ค้างได้ ──
   const [onProcessGroups, setOnProcessGroups] = useState([]);
+  // MARKER_CHANNEL_FEATURE_PHASE5_V1 -- Popup เตือนตอน Start Batch ถ้ามีมากกว่า 1 Channel ค้างอยู่
+  const [showStartBatchChannelPopup, setShowStartBatchChannelPopup] = useState(false);
+  const [pendingStartConfig, setPendingStartConfig] = useState(null);
   const [onProcessLoading, setOnProcessLoading] = useState(false);
   const [showOnProcess, setShowOnProcess] = useState(false);
   // MARKER_ESCAPE_LOGIC_FULL_FIX_V1 (showOnProcess)
@@ -7827,9 +9108,11 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
         // ── แยก Group ตาม created_by ด้วย ไม่ใช่แค่ bu|เดือน ────────────
         // ── กัน Invoice ของคนละ User ปนกันเป็น Batch เดียว ทำให้ Filter ──
         // ── My Jobs/All Jobs ทำได้แม่นยำ ไม่ต้องเดาว่าในกลุ่มมีใครบ้าง ──
-        const key = `${row.bu}|${rd}|${row.created_by || ''}`;
+        // MARKER_CHANNEL_FEATURE_PHASE1_2_V1 -- แยก Group ตาม channel ด้วย กัน Invoice คนละ Channel ปนกัน
+        const rowChannel = row.channel || 1;
+        const key = `${row.bu}|${rd}|${row.created_by || ''}|${rowChannel}`;
         if (!groups[key]) {
-          groups[key] = { bu: row.bu, month: rd, receiveDate: row.receive_date, dueDate: row.form_data?.dueDate || '', count: 0, amount: 0, user: row.created_by, createdAt: row.created_at };
+          groups[key] = { bu: row.bu, month: rd, receiveDate: row.receive_date, dueDate: row.form_data?.dueDate || '', count: 0, amount: 0, user: row.created_by, createdAt: row.created_at, channel: rowChannel };
         }
         groups[key].count += 1;
         groups[key].amount += parseFloat(row.amount) || 0;
@@ -7855,12 +9138,17 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
   };
 
   useEffect(() => { fetchOnProcessGroups(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // MARKER_ONPROCESS_REALTIME_V1 -- Refetch ทันทีที่มี Invoice เปลี่ยนแปลงที่ไหนก็ตาม
+  // (Reuse Event เดิมจาก Edit/Delete/Sync Realtime -- ไม่ต้องรอ Reload หน้าเองอีกต่อไป)
+  useRealtimeRefresh(['bucket_item_updated', 'bucket_item_deleted'], () => { fetchOnProcessGroups(); });
 
   // MARKER_ONPROCESS_GO_TO_STEP2_V1
   // ── "เข้าไปทำต่อ" พาไป Invoice Entry (Step 2) ทันที ไม่ต้องกด Start Batch ──
   // ── ซ้ำ — คำนวณ mode/Running/Prefix เองตรงนี้เลย (ไม่พึ่ง State ที่ยังไม่ ──
   // ── Re-render เพราะ setState เป็น Async อ่านค่าเก่าไม่ได้ทันที) ────────
   const handleResumeOnProcess = (g) => {
+    // MARKER_CHANNEL_FEATURE_PHASE1_2_V1 -- สลับไป Channel ของกลุ่มที่กด Resume อัตโนมัติ
+    setActiveChannel(g.channel || 1);
     const matched = infoItems.find(i => i['bu'] === g.bu);
     const mode = g.track === 'Prev' ? 'prev' : g.track === 'Next Period' ? 'over' : 'current';
     const dc = getDigitCount(matched);
@@ -7907,10 +9195,96 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
   };
 
   const [historyTab, setHistoryTab]     = useState(initialHistoryTab === 'inbox' ? 'inbox' : 'mine');
+  // MARKER_BELL_VIEW_SYNC_V1 -- มาจากปุ่ม 👁 ใน Notification Bell -- เปิด 3-Zone View เต็มรูปแบบให้อัตโนมัติ
+  // MARKER_BELL_VIEW_SYNC_FIX_DEPS_V1 -- ผูกกับ [initialViewBatchId] แทน [] เพราะถ้าอยู่ในหน้านี้
+  // ค้างอยู่แล้ว BatchSetup ไม่ Mount ใหม่ -- ต้องทำงานทุกครั้งที่ค่าเปลี่ยน ไม่ใช่แค่ตอน Mount แรกสุด
+  useEffect(() => {
+    if (!initialViewBatchId) return;
+    (async () => {
+      try {
+        const { data } = await db.from('batch_list')
+          .select('invoice_register_file_id, invoice_register_file_name, bu')
+          .eq('batch_id', initialViewBatchId).single();
+        if (!data?.invoice_register_file_id) { confirmDialog.alert('ยังไม่มีไฟล์สำหรับ Batch นี้'); return; }
+        handleFileAction(data.invoice_register_file_id, 'view', data.invoice_register_file_name, initialViewBatchId, data.bu);
+      } catch (e) { confirmDialog.alert('เปิดไฟล์ไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
+    })();
+  }, [initialViewBatchId]);
   const [historyMine, setHistoryMine]   = useState([]);
   const [historyAll, setHistoryAll]     = useState([]);
   const [historyInbox, setHistoryInbox] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // MARKER_BATCHLIST_CONFIG_BAR_STATE_V1 -- Search/BU/Status/Date range สำหรับ Config bar ของ Batch List
+  const [batchListSearch, setBatchListSearch] = useState('');
+  const [batchListFilterBu, setBatchListFilterBu] = useState('');
+  // MARKER_BATCHLIST_STATUS_MULTISELECT_V1 -- Array แทน String เดี่ยว, Default "Processing+Reviewing" ถ้าเริ่มที่ My Jobs
+  const [batchListFilterStatus, setBatchListFilterStatus] = useState(() => historyTab === 'mine' ? ['processing', 'reviewing', 'rejected'] : historyTab === 'inbox' ? ['processing', 'reviewing', 'rejected'] : []);
+  const [batchListStatusDropdownOpen, setBatchListStatusDropdownOpen] = useState(false);
+  const batchListStatusDropdownRef = useRef(null);
+  const batchListStatusButtonRef = useRef(null); // MARKER_BATCHLIST_STATUS_DROPDOWN_FIX_V1
+  const [batchListStatusDropdownPos, setBatchListStatusDropdownPos] = useState({ top: 0, left: 0 });
+  // MARKER_BATCHLIST_STATUS_DROPDOWN_KEYBOARD_V1 -- Options กลาง + Index ไฮไลต์ด้วยคีย์บอร์ด
+  const BATCH_STATUS_OPTIONS = [['processing', 'Processing'], ['reviewing', 'Reviewing'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['end_process', 'ส่งแล้ว'], ['draft', 'Draft']];
+  const [batchListStatusHighlightIndex, setBatchListStatusHighlightIndex] = useState(-1);
+  // MARKER_BATCHLIST_STATUS_DROPDOWN_FIX_V2 -- คำนวณตำแหน่งแบบ Clamp ไม่ให้ล้นขอบจอ (ขวา/ล่าง)
+  const calcBatchListStatusDropdownPos = (rect) => {
+    const menuWidth = 170;
+    const menuHeightEstimate = Math.min(260, BATCH_STATUS_OPTIONS.length * 30 + 50);
+    let left = rect.left;
+    if (left + menuWidth > window.innerWidth - 8) left = window.innerWidth - menuWidth - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + menuHeightEstimate > window.innerHeight - 8) {
+      top = rect.top - menuHeightEstimate - 4;
+      if (top < 8) top = 8;
+    }
+    return { top, left };
+  };
+  const handleBatchListStatusKeyDown = (e) => {
+    if (!batchListStatusDropdownOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (batchListStatusButtonRef.current) {
+          const rect = batchListStatusButtonRef.current.getBoundingClientRect();
+          setBatchListStatusDropdownPos(calcBatchListStatusDropdownPos(rect));
+        }
+        setBatchListStatusDropdownOpen(true);
+        setBatchListStatusHighlightIndex(0);
+      }
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setBatchListStatusHighlightIndex(i => (i + 1) % BATCH_STATUS_OPTIONS.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setBatchListStatusHighlightIndex(i => (i - 1 + BATCH_STATUS_OPTIONS.length) % BATCH_STATUS_OPTIONS.length);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (batchListStatusHighlightIndex >= 0) {
+        const val = BATCH_STATUS_OPTIONS[batchListStatusHighlightIndex][0];
+        setBatchListFilterStatus(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setBatchListStatusDropdownOpen(false);
+      batchListStatusButtonRef.current && batchListStatusButtonRef.current.focus();
+    } else if (e.key === 'Tab') {
+      setBatchListStatusDropdownOpen(false);
+    }
+  };
+  useEffect(() => {
+    if (!batchListStatusDropdownOpen) return;
+    const onClickOutside = (e) => {
+      if (batchListStatusDropdownRef.current && !batchListStatusDropdownRef.current.contains(e.target)) {
+        setBatchListStatusDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [batchListStatusDropdownOpen]);
+  const [batchListDateFrom, setBatchListDateFrom] = useState('');
+  const [batchListDateTo, setBatchListDateTo] = useState('');
 
   // ── ลบแถวใน Batch History (batch_list) — ใช้ล้าง Batch ทดสอบ/ค้าง Processing ──
   const [deletingBatchRowId, setDeletingBatchRowId] = useState(null);
@@ -8006,8 +9380,11 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
   const [savingPreview, setSavingPreview] = useState(false);
   const fileBlobCache = useRef({});
   const wsRef = useRef(null); // cache Blob URL ต่อ fileId ใน session
+  // MARKER_PVGRID_UPDATE_ATTACHED_FILE_V1
+  const [updatingFile, setUpdatingFile] = useState(false);
+  const updateFileInputRef = useRef(null);
 
-  const handleFileAction = async (fileId, mode, suggestedFileName) => {
+  const handleFileAction = async (fileId, mode, suggestedFileName, batchId, batchBu) => {
     try {
       // ── ถ้า open และ cache มีแล้ว → ใช้ทันทีไม่ต้อง fetch ──
       if (mode === 'open' && fileBlobCache.current[fileId]) {
@@ -8035,7 +9412,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
         const sheet = wb.Sheets[wb.SheetNames[0]];
         // MARKER_INVOICE_REGISTER_PREVIEW_DATE_FORMAT_V1 -- raw:false ให้ดึงค่าที่ Format แล้ว แทนเลข Serial ดิบ
         const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
-        setFilePreview({ fileId, fileName: suggestedFileName || 'preview.xls', rows });
+        // MARKER_FILEPREVIEW_BATCHID_V1 -- เตรียมไว้สำหรับ Gallery รูปหลายรูป (module: 'ap-export')
+        setFilePreview({ fileId, fileName: suggestedFileName || 'preview.xls', rows, batchId: batchId || null, bu: batchBu || null });
       } else if (mode === 'open') {
         // ── mode 'open': Download + Cache Blob ใน session ──
         const blob = await res.blob();
@@ -8073,10 +9451,68 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
     setSavingPreview(false);
   };
 
+  // MARKER_PVGRID_UPDATE_ATTACHED_FILE_V2 — เขียนทับไฟล์เดิม (fileId เดิม) ตรงๆ ผ่าน /:id/update-raw
+  // (ของเดิม V1 เรียก /generate-raw สร้าง Record ใหม่ทุกครั้ง + ต้อง UPDATE batch_list เอง -> พัง
+  // เพราะ ref_id ชนของเดิม/ข้อมูลไม่ครบ -> "Request failed" ตอนใช้งานจริง — ตัดขั้นตอนพวกนั้นทิ้งหมด)
+  const handleUpdateAttachedFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // เคลียร์ input ไว้เผื่อเลือกไฟล์ชื่อเดิมซ้ำ
+    if (!file || !filePreview?.fileId) return;
+    const ok = await confirmDialog.confirm(
+      `ต้องการแทนที่ไฟล์เดิม "${filePreview.fileName}" ด้วย "${file.name}" ใช่หรือไม่?`,
+      { variant: 'danger', confirmText: 'แทนที่ไฟล์' }
+    );
+    if (!ok) return;
+    setUpdatingFile(true);
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = String(reader.result || '');
+          const b64 = dataUrl.split(',')[1] || '';
+          b64 ? resolve(b64) : reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+        };
+        reader.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+        reader.readAsDataURL(file);
+      });
+      const updRes = await apiFetch(`/file-storage/${filePreview.fileId}/update-raw`, {
+        method: 'POST',
+        body: JSON.stringify({ fileBase64: base64, fileName: file.name }),
+      });
+      if (updRes?.error) throw new Error(updRes.error);
+      // MARKER_PVGRID_UPDATE_ATTACHED_FILE_BROADCAST_V1 -- แจ้งแบบ Real-time ให้คนอื่นที่เปิด
+      // My Jobs/Inbox/All Jobs ค้างอยู่พร้อมกัน เห็นว่าไฟล์ Invoice Register ของ Batch นี้ถูกแทนที่แล้ว
+      try { broadcastWs('invoice_history_changed', { batch_id: filePreview.batchId }); } catch (e) { console.error('[broadcast invoice_history_changed]', e); }
+      await handleFileAction(filePreview.fileId, 'view', file.name, filePreview.batchId, filePreview.bu);
+      confirmDialog.alert('แทนที่ไฟล์สำเร็จแล้ว');
+    } catch (err) {
+      confirmDialog.alert('แทนที่ไฟล์ไม่สำเร็จ: ' + err.message, { variant: 'danger' });
+    }
+    setUpdatingFile(false);
+  };
+
   // ── ความสามารถให้เหมือน Batch Preview: Selection ลากได้, Copy (Ctrl+C), Resize คอลัมน์, Keyboard Nav ──
   const [pvSel, setPvSel] = useState({ r1: -1, c1: -1, r2: -1, c2: -1 });
   const [pvDragging, setPvDragging] = useState(false);
   const [pvColWidths, setPvColWidths] = useState({});
+  // MARKER_PVGRID_AUTO_COLWIDTH_V1 — คำนวณความกว้างคอลัมน์จากความยาวเนื้อหาจริงตอนเปิดไฟล์ใหม่
+  // (กันไม่ให้ text-overflow:ellipsis ตัดข้อความ/ตัวเลขจนดูเหมือนข้อมูลหายไปจาก Original)
+  useEffect(() => {
+    if (!filePreview || !filePreview.rows || !filePreview.rows.length) return;
+    const colCount = Math.max(1, ...filePreview.rows.map(r => r.length));
+    const CHAR_PX = 7.2, PAD_PX = 14, MIN_W = 90, MAX_W = 460;
+    const widths = {};
+    for (let ci = 0; ci < colCount; ci++) {
+      let maxLen = 0;
+      for (const row of filePreview.rows) {
+        const len = String(row[ci] ?? '').length;
+        if (len > maxLen) maxLen = len;
+      }
+      widths[ci] = Math.min(MAX_W, Math.max(MIN_W, Math.ceil(maxLen * CHAR_PX) + PAD_PX));
+    }
+    setPvColWidths(widths);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePreview?.fileId]);
   const [pvCtxMenu, setPvCtxMenu] = useState({ show: false, x: 0, y: 0 });
   const [pvCopied, setPvCopied] = useState(false);
   const [pvEditingCell, setPvEditingCell] = useState(null); // { r, c }
@@ -8096,17 +9532,261 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
   const [pvRegSearchQuery, setPvRegSearchQuery] = useState('');
   const [pvRegPage, setPvRegPage] = useState(0);
   useEffect(() => { setPvRegPage(0); }, [pvRegSearchQuery]);
-  const [pvSupportingImagePreview, setPvSupportingImagePreview] = useState(null);
+  // MARKER_PVREG_GALLERY_V1 -- Gallery หลายรูปต่อ Batch (module: 'ap-export', สูงสุด 200 รูป)
+  const PV_GALLERY_MAX = 200;
+  const [pvGalleryFiles, setPvGalleryFiles] = useState([]); // [{ fileId, createdAt }]
+  const [pvGalleryIndex, setPvGalleryIndex] = useState(0);
+  const [pvGalleryImageCache, setPvGalleryImageCache] = useState({}); // { [fileId]: dataUrl }
+  const [pvGalleryLoading, setPvGalleryLoading] = useState(false);
+  const [pvGalleryLoadError, setPvGalleryLoadError] = useState(''); // MARKER_PVREG_GALLERY_ERROR_STATE_V1
   const [pvImageZoom, setPvImageZoom] = useState(1);
+  const [pvImageHover, setPvImageHover] = useState(false); // MARKER_PVREG_IMAGE_ZOOM_OVERLAY_V1
+  const [pvImageDragOver, setPvImageDragOver] = useState(false); // MARKER_PVREG_GALLERY_DRAGDROP_V1
+  // MARKER_PVREG_GALLERY_ROTATE_PAN_V1 -- หมุนรูป + ลากรูปตอนซูม
+  const [pvImageRotation, setPvImageRotation] = useState(0); // 0/90/180/270
+  const [pvImagePan, setPvImagePan] = useState({ x: 0, y: 0 });
+  const pvPanDragRef = useRef(null); // { startX, startY, panX, panY } ระหว่างลาก
   const pvSupportingImageInputRef = useRef(null);
-  const handlePvSupportingImageSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPvSupportingImagePreview(String(reader.result || ''));
-    reader.readAsDataURL(file);
+  // MARKER_PVREG_IMAGE_WHEEL_CALLBACK_REF_V1 -- callback ref self-healing (คงไว้เหมือนเดิม)
+  const pvImageScrollNodeRef = useRef(null);
+  const pvWheelHandlerRef = useRef((e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setPvImageZoom(z => Math.min(3, Math.max(0.5, +(z + (e.deltaY < 0 ? 0.05 : -0.05)).toFixed(2))));
+  });
+  const attachPvImageScrollRef = (el) => {
+    if (pvImageScrollNodeRef.current && pvImageScrollNodeRef.current !== el) {
+      pvImageScrollNodeRef.current.removeEventListener('wheel', pvWheelHandlerRef.current);
+    }
+    pvImageScrollNodeRef.current = el;
+    if (el) el.addEventListener('wheel', pvWheelHandlerRef.current, { passive: false });
   };
-  const PV_REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due', 'Amount DR', 'Amount CR', 'Witholding Tax Amount', 'Branch', 'Account'];
+  const pvCurrentGalleryFile = pvGalleryFiles[pvGalleryIndex] || null;
+  const pvCurrentImageDataUrl = pvCurrentGalleryFile ? (pvGalleryImageCache[pvCurrentGalleryFile.fileId] || null) : null;
+  // MARKER_PVREG_GALLERY_ADD_V1 -- เพิ่มรูปใหม่ (ไม่ทับของเดิม)
+  // MARKER_PVGALLERY_MULTI_FILE_UPLOAD_V1 -- รองรับเลือกหลายไฟล์พร้อมกัน (Ctrl+คลิก ใน Browse dialog)
+  const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  // MARKER_PVREG_GALLERY_ROTATE_PAN_V1 -- แยก Logic อัปโหลดออกมาเป็นฟังก์ชันกลาง ใช้ร่วมกับ Paste (Ctrl+V) ได้
+  const uploadFilesToGallery = async (selectedFiles) => {
+    if (selectedFiles.length === 0) return;
+    const batchId = filePreview?.batchId;
+    if (!batchId) return;
+
+    // ── เช็ค Limit ล่วงหน้า: ถ้าไฟล์ที่เลือกทำให้เกิน Max ให้ตัดเหลือเท่าที่เพิ่มได้ ──
+    const remainingSlots = PV_GALLERY_MAX - pvGalleryFiles.length;
+    if (remainingSlots <= 0) {
+      confirmDialog.alert(`รูปประกอบครบ ${PV_GALLERY_MAX} รูปแล้ว (สูงสุดต่อ Batch) กรุณาลบบางรูปก่อนเพิ่มใหม่`, { variant: 'danger' });
+      return;
+    }
+    const filesToUpload = selectedFiles.slice(0, remainingSlots);
+    if (selectedFiles.length > remainingSlots) {
+      confirmDialog.alert(`เลือกมา ${selectedFiles.length} รูป แต่เพิ่มได้อีกแค่ ${remainingSlots} รูป (สูงสุด ${PV_GALLERY_MAX} รูปต่อ Batch) ระบบจะอัปโหลดให้ ${remainingSlots} รูปแรก`, { variant: 'danger' });
+    }
+
+    const token = sessionStorage.getItem('fastapn_token');
+    const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+    let lastDataUrl = null;
+    let failCount = 0;
+
+    // ── อัปโหลดทีละไฟล์ตามลำดับ (backend รับทีละไฟล์) แล้วค่อย Append เข้า Gallery ──
+    for (const file of filesToUpload) {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const base64 = dataUrl.split(',')[1] || '';
+        const uploadRes = await fetch(`${apiBase}/api/file-storage/upload-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ module: 'ap-export', refId: batchId, fileBase64: base64, retentionDays: 15 }),
+        });
+        const uploadData = await uploadRes.json().catch(() => null);
+        if (uploadData?.fileId) {
+          setPvGalleryFiles(prev => {
+            const next = [...prev, { fileId: uploadData.fileId, createdAt: uploadData.createdAt }];
+            setPvGalleryIndex(next.length - 1);
+            return next;
+          });
+          setPvGalleryImageCache(prev => ({ ...prev, [uploadData.fileId]: dataUrl }));
+          lastDataUrl = dataUrl;
+        } else {
+          failCount += 1;
+          if (uploadData?.error) console.error('เพิ่มรูปประกอบไม่สำเร็จ:', uploadData.error);
+        }
+      } catch (err) {
+        failCount += 1;
+        console.error('เพิ่มรูปประกอบไม่สำเร็จ:', err.message);
+      }
+    }
+    if (lastDataUrl) {
+      setPvImageZoom(1);
+      // MARKER_PVREG_GALLERY_BROADCAST_V1 -- แจ้ง Real-time เหมือน Update File
+      try { broadcastWs('invoice_history_changed', { batch_id: batchId }); } catch (e) { console.error('[broadcast invoice_history_changed]', e); }
+    }
+    if (failCount > 0) {
+      confirmDialog.alert(`อัปโหลดไม่สำเร็จ ${failCount} จาก ${filesToUpload.length} รูป กรุณาลองใหม่`, { variant: 'danger' });
+    }
+  };
+  const handlePvGalleryAddImage = async (e) => {
+    const selectedFiles = Array.from(e.target.files || []);
+    await uploadFilesToGallery(selectedFiles);
+    e.target.value = '';
+  };
+  // MARKER_PVREG_GALLERY_DELETE_V1 -- ลบเฉพาะรูปที่กำลังดูอยู่
+  const handlePvGalleryDeleteCurrent = async () => {
+    const target = pvGalleryFiles[pvGalleryIndex];
+    if (!target) return;
+    if (!(await confirmDialog.confirm('ต้องการลบรูปนี้ใช่หรือไม่?', { variant: 'danger', confirmText: 'ลบ' }))) return;
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      await fetch(`${apiBase}/api/file-storage/${target.fileId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      // MARKER_PVREG_GALLERY_BROADCAST_V1 -- แจ้ง Real-time เหมือน Update File
+      try { broadcastWs('invoice_history_changed', { batch_id: filePreview?.batchId }); } catch (e) { console.error('[broadcast invoice_history_changed]', e); }
+    } catch (err) {
+      console.error('ลบรูปประกอบไม่สำเร็จ:', err.message);
+    } finally {
+      setPvGalleryFiles(prev => {
+        const next = prev.filter((_, i) => i !== pvGalleryIndex);
+        setPvGalleryIndex(idx => Math.max(0, Math.min(idx, next.length - 1)));
+        return next;
+      });
+      setPvGalleryImageCache(prev => {
+        const next = { ...prev };
+        delete next[target.fileId];
+        return next;
+      });
+      setPvImageZoom(1);
+    }
+  };
+  // MARKER_PVREG_GALLERY_CLEAR_ALL_V1 -- ลบรูปทั้งหมดของ Batch ทีเดียว
+  const handlePvGalleryClearAll = async () => {
+    const batchId = filePreview?.batchId;
+    if (!batchId || pvGalleryFiles.length === 0) return;
+    if (!(await confirmDialog.confirm(`ต้องการลบรูปประกอบทั้งหมด ${pvGalleryFiles.length} รูปของ Batch นี้ใช่หรือไม่? (ลบแล้วกู้คืนไม่ได้)`, { variant: 'danger', confirmText: 'ลบทั้งหมด' }))) return;
+    try {
+      const token = sessionStorage.getItem('fastapn_token');
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      await fetch(`${apiBase}/api/file-storage/clear-images?module=ap-export&refId=${encodeURIComponent(batchId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      console.error('ลบรูปประกอบทั้งหมดไม่สำเร็จ:', err.message);
+    } finally {
+      setPvGalleryFiles([]);
+      setPvGalleryIndex(0);
+      setPvGalleryImageCache({});
+      setPvImageZoom(1);
+    }
+  };
+  // MARKER_PVREG_GALLERY_LOAD_LIST_V1 -- โหลด "รายชื่อ" รูปทั้งหมดของ Batch (ไม่โหลดรูปจริงพร้อมกันทีเดียว)
+  useEffect(() => {
+    let cancelled = false;
+    setPvGalleryFiles([]);
+    setPvGalleryIndex(0);
+    setPvGalleryImageCache({});
+    setPvImageZoom(1);
+    const batchId = filePreview?.batchId;
+    if (!batchId) return;
+    (async () => {
+      try {
+        const token = sessionStorage.getItem('fastapn_token');
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        // MARKER_PVREG_GALLERY_NO_CACHE_V1 -- บังคับไม่พึ่ง Browser Cache กันโชว์รูปเก่าที่ถูกลบไปแล้ว
+        const res = await fetch(`${apiBase}/api/file-storage/list-images?module=ap-export&refId=${encodeURIComponent(batchId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        const data = await res.json().catch(() => []);
+        if (!cancelled && Array.isArray(data)) setPvGalleryFiles(data);
+      } catch (err) {
+        console.error('โหลดรายการรูปประกอบไม่สำเร็จ:', err.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filePreview?.batchId]);
+  // MARKER_PVREG_GALLERY_LOAD_CURRENT_V1 -- โหลดรูปจริงทีละรูปตามที่กำลังดู (Lazy + Cache)
+  useEffect(() => {
+    const target = pvGalleryFiles[pvGalleryIndex];
+    setPvGalleryLoadError(''); // MARKER_PVREG_GALLERY_ERROR_STATE_V1 -- เคลียร์ Error เก่าทุกครั้งที่เปลี่ยนรูป/Batch
+    if (!target || pvGalleryImageCache[target.fileId]) return;
+    let cancelled = false;
+    setPvGalleryLoading(true);
+    (async () => {
+      try {
+        const token = sessionStorage.getItem('fastapn_token');
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        // MARKER_PVREG_GALLERY_NO_CACHE_V1 -- บังคับไม่พึ่ง Browser Cache กันโชว์รูปเก่าที่ถูกลบไปแล้ว
+        const res = await fetch(`${apiBase}/api/file-storage/${target.fileId}/view-image`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          if (!cancelled) setPvGalleryLoadError(`โหลดรูปไม่สำเร็จ (HTTP ${res.status} - fileId: ${target.fileId})`);
+          return;
+        }
+        const blob = await res.blob();
+        if (blob.size === 0) {
+          if (!cancelled) setPvGalleryLoadError(`ไฟล์รูปว่างเปล่าหรือหาไม่พบ (fileId: ${target.fileId})`);
+          return;
+        }
+        const dataUrl = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result || ''));
+          r.onerror = reject;
+          r.readAsDataURL(blob);
+        });
+        if (!cancelled) setPvGalleryImageCache(prev => ({ ...prev, [target.fileId]: dataUrl }));
+      } catch (err) {
+        console.error('โหลดรูปประกอบไม่สำเร็จ:', err.message);
+        if (!cancelled) setPvGalleryLoadError(`โหลดรูปไม่สำเร็จ: ${err.message}`);
+      } finally {
+        if (!cancelled) setPvGalleryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pvGalleryIndex, pvGalleryFiles]);
+
+  // MARKER_PVREG_GALLERY_ROTATE_PAN_V1 -- Reset หมุน/ลากทุกครั้งที่เปลี่ยนรูป
+  useEffect(() => {
+    setPvImageRotation(0);
+    setPvImagePan({ x: 0, y: 0 });
+  }, [pvGalleryIndex]);
+
+  // MARKER_PVREG_GALLERY_KEYBOARD_V1 -- Keyboard Shortcut (← → เปลี่ยนรูป, Delete ลบรูป, +/- ซูม)
+  useEffect(() => {
+    if (!filePreview || pvViewMode !== '3zone' || pvGalleryFiles.length === 0) return;
+    const onKeyDown = (e) => {
+      const tag = (e.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return; // อย่าไปแย่ง Keyboard ตอนพิมพ์ช่องอื่น
+      if (e.key === 'ArrowLeft') { e.preventDefault(); setPvGalleryIndex(i => Math.max(0, i - 1)); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); setPvGalleryIndex(i => Math.min(pvGalleryFiles.length - 1, i + 1)); }
+      else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); handlePvGalleryDeleteCurrent(); }
+      else if (e.key === '+' || e.key === '=') { e.preventDefault(); setPvImageZoom(z => Math.min(3, +(z + 0.05).toFixed(2))); }
+      else if (e.key === '-' || e.key === '_') { e.preventDefault(); setPvImageZoom(z => Math.max(0.5, +(z - 0.05).toFixed(2))); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [filePreview, pvViewMode, pvGalleryFiles.length]);
+
+  // MARKER_PVREG_GALLERY_PASTE_V1 -- Paste จาก Clipboard (Ctrl+V) -- อัปโหลดทันทีถ้าเจอรูป
+  useEffect(() => {
+    if (!filePreview || pvViewMode !== '3zone') return;
+    const onPaste = (e) => {
+      const items = Array.from(e.clipboardData?.items || []);
+      const imageFiles = items.filter(it => it.type?.startsWith('image/')).map(it => it.getAsFile()).filter(Boolean);
+      if (imageFiles.length === 0) return;
+      e.preventDefault();
+      uploadFilesToGallery(imageFiles);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [filePreview, pvViewMode, pvGalleryFiles.length]);
+  const PV_REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due Date', 'Amount DR', 'Amount CR', 'Withholding Tax Amount', 'Branch', 'Account', 'CPC', 'Sub Acc', 'Description'];
   const pvRegisterRows = useMemo(() => {
     if (!filePreview || !filePreview.rows || !filePreview.rows.length) return null;
     const headerIdx = filePreview.rows.findIndex(r => r.some(c => String(c || '').trim().toLowerCase() === 'vendor name'));
@@ -8125,26 +9805,41 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
         vendor: get(r, 'Vendor Name'), invoice: get(r, 'Invoice number'), po: get(r, 'PO Number'),
         gr: get(r, 'GR Transaction No.'), date: get(r, 'Invoice Date'), priority: get(r, 'Priority'),
         method: get(r, 'Method'), paygroup: get(r, 'Pay Group'), holds: get(r, 'Holds'),
-        term: get(r, 'Term'), due: get(r, 'Due'),
+        term: get(r, 'Term'), due: get(r, 'Due Date'),
         branch: get(r, 'Branch'), account: get(r, 'Account'),
-        dr: get(r, 'Amount DR'), cr: get(r, 'Amount CR'), lineWht: get(r, 'Witholding Tax Amount'),
+        dr: get(r, 'Amount DR'), cr: get(r, 'Amount CR'), lineWht: get(r, 'Withholding Tax Amount'),
+        cpc: get(r, 'CPC'), subAcc: get(r, 'Sub Acc'), description: get(r, 'Description'),
+        // MARKER_PVREG_WHT_COL_S_U_V1 — S = index 18 (ระบุประเภทบรรทัด เช่น "WHT"), U = index 20 (ยอดเงินจริง)
+        whtTypeRaw: String(r[18] ?? '').trim(), whtAmtRaw: String(r[20] ?? '').trim(),
       }))
       // MARKER_PVREG_FILTER_EMPTY_INVOICE_V1
       .filter(row => row.invoice.trim() !== '');
   }, [filePreview]);
-  // MARKER_PVREG_MERGE_SORT_V1
+  // MARKER_PVREG_GL_ACCOUNT_CALC_V2
   const pvNum = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+  const PV_GL_WHT_CODE = '21915200';
+  const PV_GL_VAT_CODES = ['11610752', '11610755', '11630052', '11630055', '11610751', '11630051'];
+  const pvLineValue = (r) => pvNum(r.dr) || pvNum(r.cr);
   const pvRegisterRowsMerged = useMemo(() => {
     if (!pvRegisterRows) return null;
     const map = new Map();
     pvRegisterRows.forEach(r => {
       if (!map.has(r.invoice)) {
-        map.set(r.invoice, { ...r, amount: pvNum(r.amount), vat: pvNum(r.vat), wht: pvNum(r.wht), total: pvNum(r.total) });
-      } else {
-        const ex = map.get(r.invoice);
-        ex.amount += pvNum(r.amount); ex.vat += pvNum(r.vat); ex.wht += pvNum(r.wht); ex.total += pvNum(r.total);
+        map.set(r.invoice, { ...r, amount: 0, vat: 0, wht: 0, total: 0 });
       }
+      const ex = map.get(r.invoice);
+      const acc = String(r.account || '').trim();
+      const val = pvLineValue(r);
+      // MARKER_PVREG_AMOUNT_116301_CLASSIFY_V1 -- Account ขึ้นต้นด้วย "116301" เป็นบัญชีสินทรัพย์
+      // ที่เทียบเท่า 4/5/6 (Confirm แล้ว) -- เดิมไม่ตรงเงื่อนไขไหนเลย หายไปเงียบๆ ไม่ถูกรวม Amount
+      if (/^2/.test(acc)) ex.total += val;
+      else if (PV_GL_VAT_CODES.includes(acc)) ex.vat += val;
+      else if (/^[456]/.test(acc) || /^116301/.test(acc)) ex.amount += val;
+      // MARKER_PVREG_WHT_FROM_STU_COLS_V2 — ถ้าคอลัมน์ S มีคำว่า "-WHT" อยู่ ให้ดึงยอดจากคอลัมน์ U มารวม
+      if (String(r.whtTypeRaw || '').toUpperCase().includes('-WHT')) ex.wht += pvNum(r.whtAmtRaw);
     });
+    // MARKER_PVREG_TOTAL_RAW_NO_ADJUST_V1 -- ตัดสูตรปรับ 107% ทิ้ง (Confirm แล้ว)
+    // Total = ยอด CR ดิบจาก Account ขึ้นต้นด้วย "2" เสมอ 100% ไม่มีข้อยกเว้น
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [pvRegisterRows]);
   // MARKER_PVREG_AUTOSELECT_DEFAULT_V2
@@ -8574,12 +10269,23 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
 
   const inputBase = { width: '100%', height: '32px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', background: 'white', color: '#1a3a5c', outline: 'none', boxSizing: 'border-box' };
 
+  // MARKER_BATCHLIST_CONFIG_BAR_FILTER_LOGIC_V1 -- กรองตาม Search/BU/สถานะ/Receive Date จาก Config bar
+  const batchListBaseRows = historyTab === 'mine' ? historyMine : historyTab === 'inbox' ? historyInbox : historyAll;
+  const filteredRows = batchListBaseRows.filter(b => {
+    const q = batchListSearch.trim().toLowerCase();
+    if (q && !String(b.batch_name || b.batch_id || '').toLowerCase().includes(q) && !String(b.file_name || '').toLowerCase().includes(q)) return false;
+    if (batchListFilterBu && b.bu !== batchListFilterBu) return false;
+    if (batchListFilterStatus.length > 0 && !batchListFilterStatus.includes(b.status)) return false; // MARKER_BATCHLIST_STATUS_MULTISELECT_V1
+    if (batchListDateFrom && (!b.receive_date || new Date(b.receive_date) < new Date(batchListDateFrom))) return false;
+    if (batchListDateTo && (!b.receive_date || new Date(b.receive_date) > new Date(batchListDateTo))) return false;
+    return true;
+  });
+
   return (
     <>
       <BUSearchPopup show={showPopup} onClose={() => setShowPopup(false)} onSelect={handleSelectBU} infoItems={infoItems} />
-      <div ref={batchSetupRootRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
-        <div style={card}>
-          <div style={cardHead}><span style={cardLabel}>Batch setup</span></div>
+      <div ref={batchSetupRootRef} style={{ flex: 1, overflow: 'hidden', padding: '14px 18px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ ...card, flexShrink: 0 }}>
           <div style={cardBody}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
@@ -8747,7 +10453,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                       console.error('[sync grt/grn on start batch]', e);
                     }
                     // MARKER_BATCHSETUP_PERIODMODE_TO_BATCHCONFIG_V1
-                    onStart({
+                    const startConfig = {
                       bu: bu || '-', receiveDate, dueDate,
                       // MARKER_BATCHSETUP_LABEL_NEXT_PERIOD_V1
                       period: mode === 'over' ? 'Next Period' : mode === 'prev' ? 'Override' : 'Current',
@@ -8755,7 +10461,17 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                       apGrtRunning: runningGrt, apGrnRunning: runningGrn,
                       grtPrefix: getPrefix('GRT', buInfo, mode), grnPrefix: getPrefix('GRN', buInfo, mode),
                       buInfo,
-                    });
+                    };
+                    // MARKER_CHANNEL_FEATURE_PHASE5_V1 -- เช็คว่ามีมากกว่า 1 Channel (ของตัวเอง) ที่มีของค้างอยู่มั้ย
+                    // MARKER_CHANNEL_PHASE5_BU_SCOPE_V1 -- กรองเฉพาะ BU ปัจจุบันเท่านั้น ไม่เอา BU อื่นมาปน
+                    const myGroupsForStart = onProcessGroups.filter(g => (g.user || '') === myOnProcessIdentity && g.bu === bu);
+                    const channelsWithDataForStart = [1, 2, 3, 4, 5].filter(ch => myGroupsForStart.some(g => g.channel === ch));
+                    if (channelsWithDataForStart.length <= 1) {
+                      onStart(startConfig);
+                      return;
+                    }
+                    setPendingStartConfig(startConfig);
+                    setShowStartBatchChannelPopup(true);
                   }}>▶ Start Batch</button>
                 <button ref={onProcessBtnRef} title="กด Home เพื่อดู On process ได้ทันที (Shortcut)" onClick={() => { fetchOnProcessGroups(); setShowOnProcess(true); }}
                   style={{ padding: '0 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', fontSize: '13px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
@@ -8774,11 +10490,31 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
           </div>
         </div>
 
-        <div style={card}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0' }}>
+        <div style={{ ...card, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          {/* MARKER_BATCHLIST_FLEX_FRAME_V1 -- Card นี้กินพื้นที่ที่เหลือพอดี (flex:1) ไม่ต้องพึ่ง sticky อีกต่อไป */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', borderBottom: '0.5px solid #e8eaf0', flexShrink: 0, background: 'white' }}>
             <div style={{ display: 'flex' }}>
               {[{ key: 'mine', label: '👤 My Jobs', count: historyMine.length }, ...(historyInbox.length > 0 ? [{ key: 'inbox', label: '📥 Inbox', count: historyInbox.length }] : []), ...(canSeeAll ? [{ key: 'all', label: '👥 All Jobs', count: historyAll.length }] : [])].map(t => (
-                <div key={t.key} onClick={() => setHistoryTab(t.key)}
+                <div key={t.key} onClick={() => {
+                    // MARKER_BATCHLIST_MYJOBS_DEFAULT_REJECTED_V1 -- สลับมา My Jobs แล้วต้องมี Processing/Reviewing/Rejected ในตัวกรองเสมอ
+                    if (t.key === 'mine') {
+                      setBatchListFilterStatus(prev => {
+                        const need = ['processing', 'reviewing', 'rejected'];
+                        const merged = [...prev];
+                        need.forEach(v => { if (!merged.includes(v)) merged.push(v); });
+                        return merged;
+                      });
+                    }
+                    // MARKER_BATCHLIST_INBOX_DEFAULT_REJECTED_V1 -- สลับมา Inbox แล้วต้องมี Rejected ในตัวกรองเสมอ
+                    if (t.key === 'inbox') {
+                      setBatchListFilterStatus(prev => prev.includes('rejected') ? prev : [...prev, 'rejected']);
+                    }
+                    // MARKER_BATCHLIST_ALLJOBS_NO_DEFAULT_FILTER_V1 -- สลับมา All Jobs แล้วต้องไม่มีตัวกรองสถานะค้างอยู่
+                    if (t.key === 'all') {
+                      setBatchListFilterStatus([]);
+                    }
+                    setHistoryTab(t.key);
+                  }}
                   style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: historyTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: historyTab === t.key ? '#1a3a5c' : '#888', fontWeight: historyTab === t.key ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   {t.label}<span style={{ background: historyTab === t.key ? '#1a3a5c' : '#e8e8e8', color: historyTab === t.key ? 'white' : '#888', fontSize: '10px', padding: '1px 5px', borderRadius: '20px' }}>{t.count}</span>
                 </div>
@@ -8786,6 +10522,70 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
             </div>
             <span style={{ fontSize: '10px', fontWeight: '600', color: '#bbb', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Batch History</span>
           </div>
+          {/* MARKER_BATCHLIST_CONFIG_BAR_V1 -- Search/BU/สถานะ/Receive Date จาก-ถึง โชว์ Default ตลอดเวลา */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderBottom: '0.5px solid #e8eaf0', background: '#fafbfc', flexShrink: 0, overflowX: 'auto', whiteSpace: 'nowrap' }}>
+            <div style={{ position: 'relative', width: '240px', flexShrink: 0 }}>
+              <span style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '12px', color: '#aaa' }}>🔍</span>
+              <input value={batchListSearch} onChange={e => setBatchListSearch(e.target.value)} placeholder="ค้นหา..."
+                style={{ width: '100%', height: '30px', paddingLeft: '26px', paddingRight: '8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
+            </div>
+            <select value={batchListFilterBu} onChange={e => setBatchListFilterBu(e.target.value)}
+              style={{ width: '90px', height: '30px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', flexShrink: 0 }}>
+              <option value="">BU: ทั้งหมด</option>
+              {[...new Set(batchListBaseRows.map(b => b.bu).filter(Boolean))].sort().map(bu => (
+                <option key={bu} value={bu}>{bu}</option>
+              ))}
+            </select>
+            {/* MARKER_BATCHLIST_STATUS_MULTISELECT_V1 -- Custom Multi-Select Dropdown (Checkbox) แทน <select> เดี่ยว */}
+            <div ref={batchListStatusDropdownRef} style={{ position: 'relative', flexShrink: 0 }}>
+              <button type="button" ref={batchListStatusButtonRef} onClick={() => {
+                  // MARKER_BATCHLIST_STATUS_DROPDOWN_FIX_V2 -- คำนวณตำแหน่งแบบ Clamp ไม่ให้ล้นขอบจอ
+                  if (!batchListStatusDropdownOpen && batchListStatusButtonRef.current) {
+                    const rect = batchListStatusButtonRef.current.getBoundingClientRect();
+                    setBatchListStatusDropdownPos(calcBatchListStatusDropdownPos(rect));
+                  }
+                  setBatchListStatusHighlightIndex(-1);
+                  setBatchListStatusDropdownOpen(v => !v);
+                }}
+                onKeyDown={handleBatchListStatusKeyDown}
+                style={{ width: '160px', height: '30px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', background: 'white', textAlign: 'left', padding: '0 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#333' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {batchListFilterStatus.length === 0 ? 'สถานะ: ทั้งหมด' : `สถานะ: ${batchListFilterStatus.length} รายการ`}
+                </span>
+                {/* MARKER_BATCHLIST_STATUS_DROPDOWN_FIX_V1 -- ลูกศรสลับ ▾/▴ ตามสถานะเปิด-ปิด */}
+                <span style={{ fontSize: '9px', color: '#999', marginLeft: '4px' }}>{batchListStatusDropdownOpen ? '▴' : '▾'}</span>
+              </button>
+              {batchListStatusDropdownOpen && (
+                <div style={{ position: 'fixed', top: batchListStatusDropdownPos.top, left: batchListStatusDropdownPos.left, maxHeight: '260px', overflowY: 'auto', zIndex: 9999, background: 'white', border: '0.5px solid #ddd', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: '6px', width: '170px', boxSizing: 'border-box' }}>
+                  {BATCH_STATUS_OPTIONS.map(([val, label], idx) => (
+                    <label key={val} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px', fontSize: '12px', cursor: 'pointer', borderRadius: '5px', color: '#333', background: batchListStatusHighlightIndex === idx ? '#f5f7fa' : 'transparent' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#f5f7fa'; setBatchListStatusHighlightIndex(idx); }} onMouseLeave={e => e.currentTarget.style.background = batchListStatusHighlightIndex === idx ? '#f5f7fa' : 'transparent'}>
+                      <input type="checkbox" checked={batchListFilterStatus.includes(val)}
+                        onChange={() => setBatchListFilterStatus(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val])} />
+                      {label}
+                    </label>
+                  ))}
+                  <div style={{ borderTop: '0.5px solid #eee', marginTop: '4px', paddingTop: '4px' }}>
+                    <button type="button" onClick={() => setBatchListFilterStatus([])}
+                      style={{ width: '100%', textAlign: 'left', padding: '5px 6px', fontSize: '11.5px', color: '#888', background: 'transparent', border: 'none', cursor: 'pointer', borderRadius: '5px' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#f5f7fa'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                      ล้างตัวกรอง (ทั้งหมด)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <span style={{ fontSize: '11px', color: '#999', flexShrink: 0 }}>Receive</span>
+            <input type="date" value={batchListDateFrom} onChange={e => setBatchListDateFrom(e.target.value)}
+              style={{ width: '124px', height: '30px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', flexShrink: 0 }} />
+            <span style={{ fontSize: '11px', color: '#999', flexShrink: 0 }}>-</span>
+            <input type="date" value={batchListDateTo} onChange={e => setBatchListDateTo(e.target.value)}
+              style={{ width: '124px', height: '30px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', flexShrink: 0 }} />
+            <button onClick={() => { setBatchListSearch(''); setBatchListFilterBu(''); setBatchListFilterStatus(''); setBatchListDateFrom(''); setBatchListDateTo(''); }}
+              style={{ height: '30px', padding: '0 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', background: 'white', cursor: 'pointer', flexShrink: 0, marginLeft: 'auto' }}>ล้าง</button>
+          </div>
+          {/* MARKER_BATCHLIST_TABLE_SCROLL_FRAME_V1 -- กรอบ scroll เดียวของ Batch List กินพื้นที่ที่เหลือพอดี */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
             {/* MARKER_BATCH_TABLE_COLUMN_WIDTH_V1 */}
             <colgroup>
@@ -8809,7 +10609,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
               )}
             </colgroup>
             <thead>
-              <tr style={{ background: '#f8f9fa' }}>
+              <tr style={{ background: '#f8f9fa', position: 'sticky', top: 0, zIndex: 2 }}>
                 {/* MARKER_APPROVE_AT_COLUMN_MINE_V1 */}
                 {['Batch Name','BU','Receive Date','Total','Filename','Attachment','Status','Action',...(historyTab === 'mine' ? ['Approve At'] : []),...((historyTab === 'all' || historyTab === 'inbox') ? ['Created By'] : [])].map(h => (
                   <th key={h} style={{ padding: '7px 9px', textAlign: h === 'Action' ? 'center' : 'left', fontSize: '11px', color: '#888', fontWeight: '500', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
@@ -8819,9 +10619,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
             <tbody>
               {historyLoading ? (
                 <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>Loading...</td></tr>
-              ) : (historyTab === 'mine' ? historyMine : historyTab === 'inbox' ? historyInbox : historyAll).length === 0 ? (
-                <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{historyTab === 'mine' ? 'No jobs yet' : historyTab === 'inbox' ? 'ยังไม่มีงานส่งเข้ามา' : 'No batch history'}</td></tr>
-              ) : (historyTab === 'mine' ? historyMine : historyTab === 'inbox' ? historyInbox : historyAll).map(b => {
+              ) : filteredRows.length === 0 ? (
+                <tr><td colSpan={11} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>{batchListBaseRows.length === 0 ? (historyTab === 'mine' ? 'No jobs yet' : historyTab === 'inbox' ? 'ยังไม่มีงานส่งเข้ามา' : 'No batch history') : 'ไม่พบรายการที่ตรงกับตัวกรอง'}</td></tr>
+              ) : filteredRows.map(b => {
                 const approvedLabel = b.approved_by ? `Approved by ${b.approved_by}` : 'Approved';
                 const statusMap = { end_process: { bg: '#EAF3DE', color: '#27500A', label: 'ส่งแล้ว' }, done: { bg: '#EAF3DE', color: '#27500A', label: 'Done' }, approved: { bg: '#EAF3DE', color: '#27500A', label: approvedLabel }, reviewing: { bg: '#FAEEDA', color: '#633806', label: `Reviewing by ${b.reported_to_username || '...'}` }, rejected: { bg: '#FCEBEB', color: '#791F1F', label: 'Rejected' }, processing: { bg: '#E6F1FB', color: '#0C447C', label: 'Processing' }, error: { bg: '#FCEBEB', color: '#791F1F', label: 'Error' }, draft: { bg: '#F1EFE8', color: '#444441', label: 'Draft' } };
                 const st = statusMap[b.status] || statusMap.draft;
@@ -8859,7 +10659,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                             {attachId ? (
                               <>
                                 {/* MARKER_BATCHLIST_REMOVE_AMOUNTVAT_VIEWICON_V1 -- ใช้ View เหมือน Tab อื่นเสมอ */}
-                                <button onClick={() => handleFileAction(attachId, 'view', attachName)} title="View"
+                                <button onClick={() => handleFileAction(attachId, 'view', attachName, b.batch_id || b.id, b.bu)} title="View"
                                   style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '16px', cursor: 'pointer' }}>👁</button>
                                 <button onClick={() => handleFileAction(attachId, 'download', attachName)} title="Download"
                                   style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '5px', border: '0.5px solid #b7dfc8', background: '#eaf6f0', color: '#0F6E56', fontSize: '16px', cursor: 'pointer' }}>⬇</button>
@@ -8931,6 +10731,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
       {showBlockedPopup && (
@@ -8953,6 +10754,46 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                   {requestCloseLoading ? 'กำลังส่ง...' : 'Request to Close Period'}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MARKER_CHANNEL_FEATURE_PHASE5_V1 */}
+      {showStartBatchChannelPopup && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowStartBatchChannelPopup(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '420px', maxWidth: '92vw', padding: '22px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <span style={{ fontSize: '18px', color: '#BA7517' }}>⚠</span>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>มี Batch ค้างอยู่บางช่อง</div>
+            </div>
+            <div style={{ fontSize: '12px', color: '#888', margin: '6px 0 16px' }}>เลือก Channel ที่จะ Start Batch เข้าไป</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {[1, 2, 3, 4, 5].map(chNum => {
+                // MARKER_CHANNEL_PHASE5_BU_SCOPE_V1 -- กรองเฉพาะ BU ปัจจุบันเท่านั้น ไม่เอา BU อื่นมาปน
+                const myGroupsForPopup = onProcessGroups.filter(g => (g.user || '') === myOnProcessIdentity && g.channel === chNum && g.bu === bu);
+                const chCount = myGroupsForPopup.reduce((s, g) => s + g.count, 0);
+                const chAmount = myGroupsForPopup.reduce((s, g) => s + g.amount, 0);
+                const hasData = chCount > 0;
+                return (
+                  <button key={chNum} onClick={() => {
+                      setActiveChannel(chNum);
+                      setShowStartBatchChannelPopup(false);
+                      if (pendingStartConfig) onStart(pendingStartConfig);
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '11px 14px', borderRadius: '9px', cursor: 'pointer', textAlign: 'left', border: hasData ? '0.5px solid #c5d8f0' : '0.5px solid #e5e7eb', background: hasData ? '#E6F1FB' : '#fafbfc' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ width: '26px', height: '26px', borderRadius: '7px', background: hasData ? '#1a3a5c' : '#c8ccd2', color: '#fff', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{chNum}</span>
+                      <span>
+                        <span style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#1a3a5c' }}>Start batch — Channel {chNum}</span>
+                        <span style={{ display: 'block', fontSize: '11px', color: hasData ? '#0C447C' : '#aaa' }}>{hasData ? `${chCount} invoice ค้างอยู่` : 'ว่าง'}</span>
+                      </span>
+                    </span>
+                    {hasData && <span style={{ fontSize: '12px', fontWeight: '500', color: '#0C447C' }}>{fmtOnProcessNum(chAmount)} บาท</span>}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -8994,6 +10835,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                       <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>GRT/GRN</th>
                       <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>User</th>
                       <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>Created</th>
+                      {/* MARKER_CHANNEL_FEATURE_PHASE1_2_V1 */}
+                      <th style={{ textAlign: 'center', padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}>Channel</th>
                       <th style={{ padding: '6px 4px', borderBottom: '0.5px solid #e8eaf0' }}></th>
                     </tr>
                   </thead>
@@ -9010,6 +10853,10 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                         </td>
                         <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5' }}>{g.user || '-'}</td>
                         <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', color: '#888' }}>{fmtOnProcessDate(g.createdAt)}</td>
+                        {/* MARKER_CHANNEL_FEATURE_PHASE1_2_V1 */}
+                        <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5', textAlign: 'center' }}>
+                          <span style={{ display: 'inline-flex', width: '20px', height: '20px', borderRadius: '5px', background: '#1a3a5c', color: '#fff', fontSize: '10px', fontWeight: '600', alignItems: 'center', justifyContent: 'center' }}>{g.channel || 1}</span>
+                        </td>
                         <td style={{ padding: '9px 4px', borderBottom: '0.5px solid #f5f5f5' }}>
                           <button onClick={() => handleResumeOnProcess(g)} style={{ padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '11px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' }}>เข้าไปทำต่อ</button>
                         </td>
@@ -9036,6 +10883,16 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
               <div style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>📄 {filePreview.fileName}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {pvCopied && <span style={{ fontSize: '11px', color: '#1a7a1a' }}>Copied!</span>}
+                {filePreview.batchId && (
+                  <>
+                    <input type="file" accept=".xlsx,.xls" ref={updateFileInputRef} onChange={handleUpdateAttachedFile} style={{ display: 'none' }} />
+                    <button onClick={() => updateFileInputRef.current?.click()} disabled={updatingFile}
+                      title="แทนที่ไฟล์เดิมด้วยไฟล์ Excel ใหม่ (กรณีไฟล์เดิมผิด/ไม่ตรง Original)"
+                      style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #f0c36d', background: updatingFile ? '#f0f0f0' : '#fff8e8', color: updatingFile ? '#aaa' : '#7a5a0a', fontSize: '12px', fontWeight: 500, cursor: updatingFile ? 'default' : 'pointer' }}>
+                      {updatingFile ? 'กำลังแทนที่...' : '🔁 Update File'}
+                    </button>
+                  </>
+                )}
                 {pvRegisterRows && (
                   <button onClick={() => setPvViewMode(m => m === 'grid' ? '3zone' : 'grid')}
                     style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>
@@ -9050,28 +10907,114 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
               </div>
             </div>
             {pvViewMode === '3zone' && pvRegisterRows ? (
-            <div style={{ flex: 1, overflow: 'auto', padding: '18px' }}>
-              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', display: 'grid', gridTemplateColumns: '40% 60%' }}>
-                <div style={{ borderRight: '0.5px solid #e8eaf0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', minHeight: '160px', cursor: 'pointer', position: 'relative', overflow: 'auto' }}
-                  onClick={() => pvSupportingImageInputRef.current?.click()}>
-                  <input type="file" accept="image/*" ref={pvSupportingImageInputRef} onChange={handlePvSupportingImageSelect} style={{ display: 'none' }} />
-                  {pvSupportingImagePreview ? (
+            <div style={{ flex: 1, overflow: 'auto', padding: '18px', display: 'flex', flexDirection: 'column' }}>
+              {/* MARKER_PVREG_MONITOR_SCROLL_FIX_V1 -- height แทน minHeight กัน Invoice Monitor ล้นไม่มี Scroll */}
+              <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', display: 'grid', gridTemplateColumns: '40% 60%', flex: 1, height: '520px' }}>
+                <div style={{ borderRight: '0.5px solid #e8eaf0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', height: '100%', position: 'relative', overflow: 'hidden', background: pvImageDragOver ? '#EAF3DE' : 'transparent', transition: 'background 0.15s' }}
+                  onMouseEnter={() => setPvImageHover(true)}
+                  onMouseLeave={() => setPvImageHover(false)}
+                  // MARKER_PVREG_GALLERY_DRAGDROP_V1 -- ลากไฟล์รูปจาก Desktop/File Explorer มาปล่อยได้เลย
+                  onDragOver={(e) => { e.preventDefault(); setPvImageDragOver(true); }}
+                  onDragLeave={(e) => { e.preventDefault(); setPvImageDragOver(false); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setPvImageDragOver(false);
+                    const droppedFiles = Array.from(e.dataTransfer?.files || []).filter(f => f.type?.startsWith('image/'));
+                    if (droppedFiles.length === 0) return;
+                    uploadFilesToGallery(droppedFiles);
+                  }}>
+                  {/* MARKER_PVREG_GALLERY_DRAGDROP_V1 -- Overlay บอกว่าปล่อยได้ ระหว่างลากไฟล์ผ่าน */}
+                  {pvImageDragOver && (
+                    <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(234,243,222,0.9)', border: '2px dashed #97C459', borderRadius: '8px', pointerEvents: 'none' }}>
+                      <span style={{ fontSize: '13px', color: '#27500A', fontWeight: 500 }}>📥 ปล่อยรูปที่นี่เพื่ออัปโหลด</span>
+                    </div>
+                  )}
+                  <input type="file" accept="image/*" multiple ref={pvSupportingImageInputRef} onChange={handlePvGalleryAddImage} style={{ display: 'none' }} />
+                  {pvGalleryFiles.length > 0 ? (
                     <>
-                      <img src={pvSupportingImagePreview} alt="รูปประกอบ" style={{ maxWidth: '100%', maxHeight: '140px', borderRadius: '4px', transform: `scale(${pvImageZoom})`, transition: 'transform 0.15s' }} />
-                      <div style={{ position: 'absolute', bottom: '6px', right: '6px', display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
-                        <button onClick={() => setPvImageZoom(z => Math.max(0.5, +(z - 0.2).toFixed(1)))} style={{ width: '22px', height: '22px', borderRadius: '4px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer', lineHeight: '1' }}>−</button>
-                        <button onClick={() => setPvImageZoom(z => Math.min(3, +(z + 0.2).toFixed(1)))} style={{ width: '22px', height: '22px', borderRadius: '4px', border: '0.5px solid #ddd', background: 'white', fontSize: '12px', cursor: 'pointer', lineHeight: '1' }}>+</button>
+                      {/* MARKER_PVREG_GALLERY_VIEW_V1 */}
+                      <div
+                        ref={attachPvImageScrollRef}
+                        style={{ flex: 1, minHeight: 0, width: '100%', overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        {pvCurrentImageDataUrl ? (
+                          <img src={pvCurrentImageDataUrl} alt="รูปประกอบ"
+                            // MARKER_PVREG_GALLERY_ROTATE_PAN_V1 -- หมุน + ลาก (Pan เมื่อ Zoom > 100%)
+                            onMouseDown={(e) => {
+                              if (pvImageZoom <= 1) return;
+                              e.preventDefault();
+                              pvPanDragRef.current = { startX: e.clientX, startY: e.clientY, panX: pvImagePan.x, panY: pvImagePan.y };
+                            }}
+                            onMouseMove={(e) => {
+                              if (!pvPanDragRef.current) return;
+                              const dx = e.clientX - pvPanDragRef.current.startX;
+                              const dy = e.clientY - pvPanDragRef.current.startY;
+                              setPvImagePan({ x: pvPanDragRef.current.panX + dx, y: pvPanDragRef.current.panY + dy });
+                            }}
+                            onMouseUp={() => { pvPanDragRef.current = null; }}
+                            onMouseLeave={() => { pvPanDragRef.current = null; }}
+                            style={{
+                              maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: '4px',
+                              transform: `translate(${pvImagePan.x}px, ${pvImagePan.y}px) scale(${pvImageZoom}) rotate(${pvImageRotation}deg)`,
+                              transition: pvPanDragRef.current ? 'none' : 'transform 0.15s',
+                              cursor: pvImageZoom > 1 ? (pvPanDragRef.current ? 'grabbing' : 'grab') : 'default',
+                            }} />
+                        ) : pvGalleryLoadError ? (
+                          <span style={{ fontSize: '12px', color: '#A32D2D', textAlign: 'center', padding: '0 16px' }}>⚠️ {pvGalleryLoadError}</span>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: '#aaa' }}>{pvGalleryLoading ? 'กำลังโหลด...' : ''}</span>
+                        )}
                       </div>
+                      {pvGalleryFiles.length > 1 && (
+                        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                          <button onClick={() => setPvGalleryIndex(i => Math.max(0, i - 1))} disabled={pvGalleryIndex === 0}
+                            style={{ width: '24px', height: '24px', borderRadius: '50%', border: '0.5px solid #ddd', background: pvGalleryIndex === 0 ? '#f5f5f5' : 'white', color: pvGalleryIndex === 0 ? '#ccc' : '#555', cursor: pvGalleryIndex === 0 ? 'default' : 'pointer', fontSize: '12px' }}>◀</button>
+                          <span style={{ fontSize: '11px', color: '#888' }}>{pvGalleryIndex + 1} / {pvGalleryFiles.length}</span>
+                          <button onClick={() => setPvGalleryIndex(i => Math.min(pvGalleryFiles.length - 1, i + 1))} disabled={pvGalleryIndex === pvGalleryFiles.length - 1}
+                            style={{ width: '24px', height: '24px', borderRadius: '50%', border: '0.5px solid #ddd', background: pvGalleryIndex === pvGalleryFiles.length - 1 ? '#f5f5f5' : 'white', color: pvGalleryIndex === pvGalleryFiles.length - 1 ? '#ccc' : '#555', cursor: pvGalleryIndex === pvGalleryFiles.length - 1 ? 'default' : 'pointer', fontSize: '12px' }}>▶</button>
+                          {/* MARKER_PVREG_GALLERY_CLEAR_ALL_V1 -- ลบทั้งหมด แยกจากปุ่มถังขยะเดิมชัดเจน กันกดพลาด */}
+                          <button onClick={handlePvGalleryClearAll} title="ลบรูปประกอบทั้งหมดของ Batch นี้"
+                            style={{ marginLeft: '6px', padding: '2px 8px', borderRadius: '10px', border: '0.5px solid #f0c0c0', background: '#FCEBEB', color: '#A32D2D', fontSize: '10px', cursor: 'pointer' }}>
+                            ลบทั้งหมด
+                          </button>
+                        </div>
+                      )}
+                      {pvImageHover && (
+                        <div
+                          style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '5px 10px', borderRadius: '20px', background: 'rgba(0,0,0,0.55)', marginTop: '6px', marginBottom: '24px' }}
+                        >
+                          <button onClick={() => setPvImageZoom(z => Math.max(0.5, +(z - 0.05).toFixed(2)))} style={{ width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.9)', fontSize: '13px', cursor: 'pointer', lineHeight: '1' }}>−</button>
+                          <span style={{ fontSize: '11px', color: 'white', minWidth: '36px', textAlign: 'center' }}>{Math.round(pvImageZoom * 100)}%</span>
+                          <button onClick={() => setPvImageZoom(z => Math.min(3, +(z + 0.05).toFixed(2)))} style={{ width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.9)', fontSize: '13px', cursor: 'pointer', lineHeight: '1' }}>+</button>
+                          {/* MARKER_PVREG_GALLERY_ROTATE_PAN_V1 -- ปุ่มหมุนรูป 90 องศาต่อครั้ง */}
+                          <button onClick={() => setPvImageRotation(r => (r + 90) % 360)} title="หมุนรูป 90°"
+                            style={{ width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.9)', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                          </button>
+                          {/* MARKER_PVREG_GALLERY_ADD_V1 -- ปุ่มเพิ่มรูป แยกจากพื้นที่ดูรูป */}
+                          <button onClick={() => pvSupportingImageInputRef.current?.click()} title="เพิ่มรูปใหม่"
+                            style={{ width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.9)', color: '#1a3a5c', fontSize: '15px', cursor: 'pointer', lineHeight: '1', fontWeight: 700 }}>﹢</button>
+                          {/* MARKER_PVREG_GALLERY_DELETE_V1 -- ลบเฉพาะรูปที่กำลังดูอยู่ */}
+                          <button onClick={handlePvGalleryDeleteCurrent} title="ลบรูปนี้"
+                            style={{ width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.9)', color: '#A32D2D', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          </button>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <>
-                      <span style={{ fontSize: '22px', color: '#bbb' }}>🖼️</span>
-                      <span style={{ fontSize: '11px', color: '#aaa', textAlign: 'center' }}>วางรูปประกอบ<br/>หรือคลิกเพื่ออัปโหลด</span>
+                      <span style={{ fontSize: '40px', color: '#bbb' }}>🖼️</span>
+                      <span style={{ fontSize: '13px', color: '#aaa', textAlign: 'center' }}>ยังไม่มีรูปประกอบ</span>
+                      <button onClick={() => pvSupportingImageInputRef.current?.click()}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer' }}>
+                        ﹢ เพิ่มรูปประกอบ
+                      </button>
                     </>
                   )}
                 </div>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderBottom: '0.5px solid #e8eaf0' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderBottom: '0.5px solid #e8eaf0', flexShrink: 0 }}>
                     <span style={{ fontSize: '13px', color: '#aaa' }}>🔍</span>
                     <input value={pvRegSearchQuery} onChange={e => setPvRegSearchQuery(e.target.value)} placeholder="ค้นหาในไฟล์"
                       style={{ width: '40%', flex: 'none', height: '28px', padding: '0 8px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none' }} />
@@ -9087,7 +11030,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                     <button onClick={() => setPvRegPage(p => Math.min(pvRegTotalPages - 1, p + 1))} disabled={pvRegPage >= pvRegTotalPages - 1}
                       style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: pvRegPage >= pvRegTotalPages - 1 ? 'default' : 'pointer', color: pvRegPage >= pvRegTotalPages - 1 ? '#ccc' : '#333' }}>ถัดไป ›</button>
                   </div>
-                  <div style={{ maxHeight: '260px', overflowY: 'auto' }}>
+                  <div style={{ minHeight: '190px', maxHeight: '190px', overflowY: 'auto', flexShrink: 0 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
                     <colgroup>
                       <col style={{ width: '5%' }} /><col style={{ width: '19%' }} /><col style={{ width: '13%' }} /><col style={{ width: '15%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} /><col style={{ width: '23%' }} />
@@ -9109,13 +11052,14 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                         const isChecked = pvCheckedInvoices.has(r.invoice);
                         return (
                           <tr key={origIdx} onClick={() => setPvRegSelectedIdx(origIdx)}
-                            onMouseEnter={e => { if (pvRegSelectedIdx !== origIdx) e.currentTarget.style.background = '#F2F6FC'; }}
-                            onMouseLeave={e => { if (pvRegSelectedIdx !== origIdx) e.currentTarget.style.background = isChecked ? '#EAF7EA' : 'white'; }}
-                            style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: pvRegSelectedIdx === origIdx ? '#E6F1FB' : (isChecked ? '#EAF7EA' : 'white') }}>
+                            onMouseEnter={e => { e.currentTarget.style.background = '#F2F6FC'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = isChecked ? '#EAF7EA' : 'white'; }}
+                            style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: isChecked ? '#EAF7EA' : 'white' }}>
                             <td style={{ padding: '7px 4px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                               <input type="checkbox" checked={isChecked} onChange={() => togglePvChecked(r.invoice)} style={{ cursor: 'pointer' }} />
                             </td>
                             <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.invoice}</td>
+                            <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.branch || '-'}</td>
                             <td style={{ padding: '7px 10px', textAlign: 'right' }}>{r.amount ? r.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
                             <td style={{ padding: '7px 10px', textAlign: 'right' }}>{r.vat ? r.vat.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
                             <td style={{ padding: '7px 10px', textAlign: 'right' }}>{r.wht ? r.wht.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
@@ -9129,7 +11073,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                   {pvRegSelectedIdx !== null && pvRegisterRowsMerged[pvRegSelectedIdx] && (() => {
                     const d = pvRegisterRowsMerged[pvRegSelectedIdx];
                     return (
-                      <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '12px', background: '#fafbfc' }}>
+                      <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '12px', background: '#fafbfc', flexShrink: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
                           <div style={{ fontSize: '12px', fontWeight: '600', color: '#1a3a5c', flex: 1 }}>{d.vendor} · {d.invoice}</div>
                         </div>
@@ -9140,6 +11084,53 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                               <div style={{ color: '#333' }}>{v || '-'}</div>
                             </div>
                           ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {/* MARKER_PVREG_INVOICE_MONITOR_V1 */}
+                  {pvRegSelectedIdx !== null && pvRegisterRowsMerged[pvRegSelectedIdx] && (() => {
+                    const selInvoice = pvRegisterRowsMerged[pvRegSelectedIdx].invoice;
+                    // MARKER_PVREG_MONITOR_SORT_GROUP_V1 -- กลุ่ม 0: Account 4/5/6 + 116301 (Amount), กลุ่ม 1: VAT, กลุ่ม 2: อื่นๆ (AP)
+                    // MARKER_PVREG_MONITOR_SORT_116301_V1 -- 116301 ต้องขึ้นก่อน VAT Code (เทียบเท่า 4/5/6 ตามที่ Confirm)
+                    const pvMonitorGroup = (acc) => {
+                      const a = String(acc || '').trim();
+                      if (/^[456]/.test(a) || /^116301/.test(a)) return 0;
+                      if (PV_GL_VAT_CODES.includes(a)) return 1;
+                      return 2;
+                    };
+                    const monitorRows = pvRegisterRows
+                      .filter(r => String(r.invoice || '').trim().toLowerCase() === String(selInvoice || '').trim().toLowerCase())
+                      .sort((a, b) => {
+                        const ga = pvMonitorGroup(a.account);
+                        const gb = pvMonitorGroup(b.account);
+                        if (ga !== gb) return ga - gb;
+                        return String(a.account || '').localeCompare(String(b.account || ''));
+                      });
+                    return (
+                      <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '12px 18px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                        <div style={{ fontSize: '12px', fontWeight: '600', color: '#1a3a5c', marginBottom: '8px', flexShrink: 0 }}>Invoice Monitor — {monitorRows.length} Account Rows</div>
+                        <div style={{ flex: 1, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                          <thead>
+                            <tr style={{ background: '#f8f9fa' }}>
+                              <th style={{ padding: '6px 8px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Account Code</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'left', color: '#888', fontWeight: '500' }}>Description</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Amount DR</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'right', color: '#888', fontWeight: '500' }}>Amount CR</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monitorRows.map((r, i) => (
+                              <tr key={i} style={{ borderTop: '0.5px solid #f0f0f0' }}>
+                                <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>{[r.cpc, r.account, r.subAcc].filter(Boolean).join('-') || '-'}</td>
+                                <td style={{ padding: '6px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '300px' }}>{r.description || '-'}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.dr || '-'}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.cr || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                         </div>
                       </div>
                     );
@@ -9169,23 +11160,19 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                 </thead>
                 <tbody>
                   {filePreview.rows.map((row, ri) => {
-                    const isBookRow = ri === 0;
-                    const isH = !isBookRow && row[0] === 'H';
-                    const prevIsH = ri > 1 && filePreview.rows[ri - 1]?.[0] === 'H';
-                    const showDivider = isH && !prevIsH && ri > 1;
+                    // MARKER_PVGRID_CUSTOM_COLOR_V1 -- ตรวจจาก "เนื้อหา" ของแถว ไม่ใช่ตำแหน่ง index
+                    // (ไฟล์ Invoice Register จริง Header ไม่ได้อยู่แถวแรกเสมอไป เพราะมี Metadata นำหน้า)
+                    const isHeaderRow = String(row[0] || '').trim() === 'Vendor Name';
+                    const isTotalRow = row.some(c => /total by|grand total/i.test(String(c || '')));
                     return (
                       <React.Fragment key={ri}>
-                        {showDivider && (
-                          <tr>
-                            <td style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td>
-                            {row.map((_, ci) => <td key={ci} style={{ padding: 0, height: '2px', background: '#1a3a5c', border: 'none' }}></td>)}
-                          </tr>
-                        )}
-                        <tr style={{ background: isBookRow ? '#f8f9fa' : isH ? '#E6F1FB' : 'white' }}>
+                        <tr style={{ background: isHeaderRow ? '#C2D69B' : 'white' }}>
                           <td onClick={() => setPvSel({ r1: ri, c1: 0, r2: ri, c2: pvColCount - 1 })}
-                            style={{ padding: '3px 5px', borderRight: '1.5px solid #1a3a5c', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: isBookRow ? '#f0f0f0' : isH ? '#dbeafa' : '#f5f5f5', color: isH ? '#0C447C' : '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{ri + 1}</td>
+                            style={{ padding: '3px 5px', borderRight: '1.5px solid #1a3a5c', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px', fontFamily: 'var(--font-sans)', background: isHeaderRow ? '#b8ca87' : '#f5f5f5', color: '#aaa', textAlign: 'center', width: '36px', height: '22px', boxSizing: 'border-box', cursor: 'pointer' }}>{ri + 1}</td>
                           {row.map((cell, ci) => {
                             const editing = pvEditingCell?.r === ri && pvEditingCell?.c === ci;
+                            const numVal = typeof cell === 'number' ? cell : (typeof cell === 'string' && /^-?[\d,]+\.?\d*$/.test(cell.trim()) ? parseFloat(cell.replace(/,/g, '')) : null);
+                            const isNegative = numVal !== null && !isNaN(numVal) && numVal < 0;
                             return (
                               <td key={ci}
                                 data-pv-r={ri} data-pv-c={ci}
@@ -9193,7 +11180,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, step }) {
                                 onMouseDown={(e) => { if (e.button === 2) return; if (e.shiftKey && pvSel.r1 >= 0) setPvSel(s => ({ ...s, r2: ri, c2: ci })); else { setPvSel({ r1: ri, c1: ci, r2: ri, c2: ci }); setPvDragging(true); } }}
                                 onMouseOver={() => { if (pvDragging) setPvSel(s => ({ ...s, r2: ri, c2: ci })); }}
                                 onDoubleClick={() => setPvEditingCell({ r: ri, c: ci })}
-                                style={{ padding: 0, borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', maxWidth: '160px', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '22px', boxSizing: 'border-box', color: isBookRow ? '#aaa' : isH ? '#0C447C' : '#333', background: isPvSel(ri, ci) ? '#c8dffe' : undefined, outline: pvCopied && isPvSel(ri, ci) ? '2px dashed #1a7a1a' : isPvSel(ri, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
+                                style={{ padding: 0, borderRight: '0.5px solid #e8eaf0', borderBottom: '0.5px solid #e8eaf0', width: pvColWidths[ci] || 90, minWidth: pvColWidths[ci] || 90, height: '22px', boxSizing: 'border-box', color: isNegative ? '#c0392b' : isHeaderRow ? '#1a1a1a' : '#333', fontWeight: (isHeaderRow || isTotalRow) ? 'bold' : 'normal', background: isPvSel(ri, ci) ? '#c8dffe' : undefined, outline: pvCopied && isPvSel(ri, ci) ? '2px dashed #1a7a1a' : isPvSel(ri, ci) ? '1px solid #378ADD' : 'none', outlineOffset: '-1px', cursor: 'cell' }}>
                                 {editing ? (
                                   <input autoFocus value={cell === null || cell === undefined ? '' : String(cell)}
                                     onChange={e => {
@@ -9417,6 +11404,36 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
+  // MARKER_APPROVE_ATTACH_IMAGE_V1 -- แนบรูปภาพตอนอนุมัติ (Reuse Backend เดียวกับ Gallery)
+  const [approveImgUploading, setApproveImgUploading] = useState(false);
+  const [approveImgMsg, setApproveImgMsg] = useState('');
+  const approveImgInputRef = useRef(null);
+  const handleApproveAttachImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setApproveImgUploading(true);
+    setApproveImgMsg('');
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const dataUrl = String(reader.result || '');
+        const base64 = dataUrl.split(',')[1] || '';
+        const refId = batch?.batch_id || batch?.id;
+        const res = await apiFetch('/file-storage/upload-image', {
+          method: 'POST',
+          body: JSON.stringify({ module: 'ap-export', refId, fileBase64: base64, retentionDays: 15 }),
+        });
+        if (res?.error) throw new Error(res.error);
+        setApproveImgMsg('✅ แนบรูปสำเร็จ');
+      } catch (err) {
+        setApproveImgMsg('❌ แนบรูปไม่สำเร็จ: ' + err.message);
+      } finally {
+        setApproveImgUploading(false);
+        e.target.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
   // MARKER_REGINBOX_3ZONE_PREVIEW_STATE_V1
   const [regSelectedIdx, setRegSelectedIdx] = useState(null);
   const [regCheckedInvoices, setRegCheckedInvoices] = useState(() => new Set());
@@ -9440,7 +11457,7 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
   };
 
   // MARKER_REGINBOX_3ZONE_PARSE_V1
-  const REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due', 'Amount DR', 'Amount CR', 'Witholding Tax Amount', 'Branch', 'Account'];
+  const REG_COLS = ['Vendor Name', 'Invoice number', 'PO Number', 'GR Transaction No.', 'Invoice Date', 'Priority', 'Method', 'Pay Group', 'Holds', 'Term', 'Due Date', 'Amount DR', 'Amount CR', 'Witholding Tax Amount', 'Branch', 'Account'];
   const registerRows = useMemo(() => {
     if (mode !== 'paste' || !pastedRows || !pastedRows.length) return null;
     const headerIdx = pastedRows.findIndex(r => r.some(c => String(c || '').trim().toLowerCase() === 'vendor name'));
@@ -9459,26 +11476,36 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
         vendor: get(r, 'Vendor Name'), invoice: get(r, 'Invoice number'), po: get(r, 'PO Number'),
         gr: get(r, 'GR Transaction No.'), date: get(r, 'Invoice Date'), priority: get(r, 'Priority'),
         method: get(r, 'Method'), paygroup: get(r, 'Pay Group'), holds: get(r, 'Holds'),
-        term: get(r, 'Term'), due: get(r, 'Due'),
+        term: get(r, 'Term'), due: get(r, 'Due Date'),
         branch: get(r, 'Branch'), account: get(r, 'Account'),
         dr: get(r, 'Amount DR'), cr: get(r, 'Amount CR'), lineWht: get(r, 'Witholding Tax Amount'),
+        cpc: get(r, 'CPC'), subAcc: get(r, 'Sub Acc'), description: get(r, 'Description'),
       }))
       // MARKER_REG_FILTER_EMPTY_INVOICE_V1
       .filter(row => row.invoice.trim() !== '');
   }, [mode, pastedRows]);
-  // MARKER_REG_MERGE_SORT_V1
+  // MARKER_REG_GL_ACCOUNT_CALC_V2
   const regNum = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+  const REG_GL_WHT_CODE = '21915200';
+  const REG_GL_VAT_CODES = ['11610752', '11610755', '11630052', '11630055', '11610751', '11630051'];
+  const regLineValue = (r) => regNum(r.dr) || regNum(r.cr);
   const registerRowsMerged = useMemo(() => {
     if (!registerRows) return null;
     const map = new Map();
     registerRows.forEach(r => {
       if (!map.has(r.invoice)) {
-        map.set(r.invoice, { ...r, amount: regNum(r.amount), vat: regNum(r.vat), wht: regNum(r.wht), total: regNum(r.total) });
-      } else {
-        const ex = map.get(r.invoice);
-        ex.amount += regNum(r.amount); ex.vat += regNum(r.vat); ex.wht += regNum(r.wht); ex.total += regNum(r.total);
+        map.set(r.invoice, { ...r, amount: 0, vat: 0, wht: 0, total: 0 });
       }
+      const ex = map.get(r.invoice);
+      const acc = String(r.account || '').trim();
+      const val = regLineValue(r);
+      if (/^2/.test(acc)) ex.total += val;
+      else if (acc === REG_GL_WHT_CODE) ex.wht += val;
+      else if (REG_GL_VAT_CODES.includes(acc)) ex.vat += val;
+      else if (/^[456]/.test(acc)) ex.amount += val;
     });
+    // MARKER_REG_TOTAL_VAT_ADJUST_V1
+    map.forEach(ex => { if (ex.vat > 0) ex.total = Math.round(ex.total * 100 / 107); });
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [registerRows]);
   // MARKER_REG_AUTOSELECT_DEFAULT_V2
@@ -9790,7 +11817,7 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
                           <button onClick={() => setRegPage(p => Math.min(regTotalPages - 1, p + 1))} disabled={regPage >= regTotalPages - 1}
                             style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: regPage >= regTotalPages - 1 ? 'default' : 'pointer', color: regPage >= regTotalPages - 1 ? '#ccc' : '#333' }}>ถัดไป ›</button>
                         </div>
-                        <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                        <div style={{ minHeight: '220px', maxHeight: '220px', overflowY: 'auto' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
                           <colgroup>
                             <col style={{ width: '5%' }} /><col style={{ width: '19%' }} /><col style={{ width: '13%' }} /><col style={{ width: '15%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} /><col style={{ width: '23%' }} />
@@ -9812,13 +11839,14 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
                               const isChecked = regCheckedInvoices.has(r.invoice);
                               return (
                                 <tr key={origIdx} onClick={() => setRegSelectedIdx(origIdx)}
-                                  onMouseEnter={e => { if (regSelectedIdx !== origIdx) e.currentTarget.style.background = '#F2F6FC'; }}
-                                  onMouseLeave={e => { if (regSelectedIdx !== origIdx) e.currentTarget.style.background = isChecked ? '#EAF7EA' : 'white'; }}
-                                  style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: regSelectedIdx === origIdx ? '#E6F1FB' : (isChecked ? '#EAF7EA' : 'white') }}>
+                                  onMouseEnter={e => { e.currentTarget.style.background = '#F2F6FC'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = isChecked ? '#EAF7EA' : 'white'; }}
+                                  style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: isChecked ? '#EAF7EA' : 'white' }}>
                                   <td style={{ padding: '5px 3px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                                     <input type="checkbox" checked={isChecked} onChange={() => toggleRegChecked(r.invoice)} style={{ cursor: 'pointer' }} />
                                   </td>
                                   <td style={{ padding: '5px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.invoice}</td>
+                                  <td style={{ padding: '5px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.branch || '-'}</td>
                                   <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.amount ? r.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
                                   <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.vat ? r.vat.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
                                   <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.wht ? r.wht.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</td>
@@ -9868,6 +11896,15 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
               จะบันทึกเป็น: <span style={{ fontFamily: 'monospace', color: '#555' }}>{computedFileName}</span>
             </div>
           )}
+          {/* MARKER_APPROVE_ATTACH_IMAGE_V1 -- ปุ่มแนบรูปภาพเดี่ยว (ดู Preview ทีหลังที่หน้า 3-Zone) */}
+          <div>
+            <input type="file" accept="image/*" ref={approveImgInputRef} onChange={handleApproveAttachImage} style={{ display: 'none' }} />
+            <button type="button" onClick={() => approveImgInputRef.current?.click()} disabled={approveImgUploading}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '7px', border: '0.5px solid #97C459', background: approveImgUploading ? '#f5f5f5' : '#EAF3DE', color: '#27500A', fontSize: '12px', cursor: approveImgUploading ? 'default' : 'pointer' }}>
+              🖼️ {approveImgUploading ? 'กำลังแนบรูป...' : 'แนบรูปภาพ'}
+            </button>
+            {approveImgMsg && <span style={{ fontSize: '11px', marginLeft: '10px', color: approveImgMsg.startsWith('✅') ? '#27500A' : '#791F1F' }}>{approveImgMsg}</span>}
+          </div>
         </div>
         <div style={{ padding: '8px 16px', borderTop: '0.5px solid #f0f2f5', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: '#fafbfc' }}>
           <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ยกเลิก</button>
@@ -10192,7 +12229,7 @@ function InvoiceHeader({ form, setField, onSupplierBlur, onSupplierSearch, vendo
 }
 
 // ── InvoiceEntry ──────────────────────────────────────────────────────────────
-function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () => {}, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], smCodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange }) {
+function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () => {}, supplierItems = [], branchItems = [], accountItems = [], subAccItems = [], cpcItems = [], itemcodeItems = [], smCodeItems = [], categoryItems = [], noticeItems = [], vendorRuleItems = [], fetchCollection, userName = '', currentUser, onRunningChange, activeChannel = 1, setActiveChannel = () => {}, setPreviewChannelChoice = () => {} }) {
   // ── wsNotifyInEntry — Broadcast event หลัง Submit / ส่ง WebSocket event ไปที่ Server ──
   const wsNotifyInEntry = async (event, batch_id, status) => {
     try {
@@ -10225,6 +12262,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   const [supplierViewCode, setSupplierViewCode] = useState('');
   const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', rowKey: null });
   const [selectedRows, setSelectedRows] = useState(new Set()); // ✅ Batch Bucket: เลือกแถวสำหรับ bulk delete
+  // MARKER_DUPLICATE_NOTICE_TOGGLE_V1 -- Toast แจ้งเตือน Duplicate ที่ไม่ Block (ตอน Toggle Off)
+  const [dupToastMsg, setDupToastMsg] = useState(null);
+  const dupToastTimerRef = useRef(null);
+  const showDupToast = (msg) => {
+    if (dupToastTimerRef.current) clearTimeout(dupToastTimerRef.current);
+    setDupToastMsg(msg);
+    dupToastTimerRef.current = setTimeout(() => setDupToastMsg(null), 15000);
+  };
   // MARKER_VENDORFALLBACK_TDZ_FIX_V1 -- ย้ายขึ้นมาก่อนใช้งานจริง (เดิมอยู่ท้ายไฟล์กว่าจุดเรียกใช้ -> TDZ ReferenceError)
   // ── หา Supplier จาก Code — ใช้ร่วมกันทั้ง lookupVendor (ตอนพิมพ์) และ Fallback ในตาราง Batch Bucket ──
   const findSupplierByCode = (code) => {
@@ -10232,7 +12277,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     const bu = batchConfig?.bu || '';
     const book = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase();
     // ── Group Book เฉพาะ Book "CGT"/"CGR" เท่านั้น — Book อื่น (เช่น CRG) ให้ใช้ BU ตามปกติ ──
-    const isGroupBook = book === 'CGT' || book === 'CGR';
+    // MARKER_ADD_CMG_GROUPBOOK_V1
+    const isGroupBook = book === 'CGT' || book === 'CGR' || book === 'CMG';
     const search = code.trim().toLowerCase();
     let found = supplierItems.find(s => String(s['Code'] ?? '').trim().toLowerCase() === search);
     if (found) {
@@ -10271,10 +12317,28 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   };
   // MARKER_BUCKET_SEARCH_ENGINE_V1 -- Search ได้ทุก Column ใน Batch Bucket
   const [bucketSearchQuery, setBucketSearchQuery] = useState('');
+  // MARKER_CHANNEL_PREVIEW_POPUP_ONLY_V1 -- Popup เลือก Channel ก่อนเข้า Batch Preview (โผล่เฉพาะมี >1 Channel มีของ)
+  const [showBatchPreviewChannelPopup, setShowBatchPreviewChannelPopup] = useState(false);
+  const handleBatchPreviewClick = () => {
+    const channelsWithData = [1, 2, 3, 4, 5].filter(ch => invoices.some(inv => (inv.channel || 1) === ch));
+    if (channelsWithData.length <= 1) {
+      setPreviewChannelChoice(activeChannel);
+      onNext();
+      return;
+    }
+    setShowBatchPreviewChannelPopup(true);
+  };
+  const handlePickPreviewChannel = (choice) => {
+    setPreviewChannelChoice(choice);
+    setShowBatchPreviewChannelPopup(false);
+    onNext();
+  };
+  // MARKER_CHANNEL_FEATURE_PHASE3_V1 -- กรองตาม Channel ก่อนเสมอ แล้วค่อย Search ทับ
+  const channelInvoices = invoices.filter(inv => (inv.channel || 1) === activeChannel);
   const filteredInvoices = (() => {
     const q = bucketSearchQuery.trim().toLowerCase();
-    if (!q) return invoices;
-    return invoices.filter(inv => {
+    if (!q) return channelInvoices;
+    return channelInvoices.filter(inv => {
       const branchDirectLabel = inv.branch_label || inv.form_data?.branchDirectLabel || '';
       const branchIBLabel = inv.form_data?.branchIBLabel || '';
       const isIB = branchIBLabel && branchIBLabel !== '-';
@@ -10443,7 +12507,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     // ── ไม่งั้นถ้า Tax ID+No เดียวกันมีอยู่หลาย BU จะได้ Supplier ผิด BU มา ──
     const bu = batchConfig?.bu || '';
     const book = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase();
-    const isGroupBook = book === 'CGT' || book === 'CGR';
+    // MARKER_ADD_CMG_GROUPBOOK_V1
+    const isGroupBook = book === 'CGT' || book === 'CGR' || book === 'CMG';
     const isValidPrefix = (code) => {
       const codePrefix = String(code ?? '').split('-')[0].toUpperCase();
       return isGroupBook ? codePrefix === book : (bu && codePrefix.toLowerCase() === bu.toLowerCase());
@@ -10566,8 +12631,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         if (error || !active) return;
         const beforeFilterCount = (data || []).length;
         const synced = (data || []).map(r => ({ ...r, _synced: true })).filter(matchesTrack);
-        // MARKER_DEBUG_SPLIT_INVOICE_DISAPPEAR_V1
-        console.log('[DEBUG Split] 5) โหลดจาก DB ได้', beforeFilterCount, 'แถว -> หลัง matchesTrack Filter เหลือ', synced.length, '| batchMonthStr =', batchMonthStr, '| ตัวที่โดนกรองทิ้ง:', (data || []).filter(r => !matchesTrack({ ...r, _synced: true })).map(r => ({ invoice_no: r.invoice_no, receive_date: r.receive_date })));
         // MARKER_BUCKET_RELOAD_SHRINK_GUARD_V1 -- กันเผลอ Overwrite ด้วยข้อมูลที่น้อยกว่าจอปัจจุบัน (Race Condition ตอน DB ยัง Sync ไม่ทัน)
         let finalSynced = synced;
         if (active && synced.length < invoicesRef.current.length) {
@@ -10711,6 +12774,9 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
             saveLocalBucket(next);
             return next;
           });
+          // MARKER_ONPROCESS_REALTIME_V1 -- Broadcast หลังข้อมูลลง DB จริงแล้วเท่านั้น
+          // ให้ On Process (BatchSetup) และ Session อื่น Refresh ทันที ไม่ต้องรอ Reload หน้า
+          try { broadcastWs('bucket_item_updated', { id: row.id }); } catch (e) { console.error('[broadcast bucket_item_updated sync]', e); }
         }
       }
     } catch (e) {
@@ -10758,6 +12824,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       }
       lastSyncedGrtGrnRef.current = { grt, grn };
       if (fetchCollection) await fetchCollection('CompanyList', true);
+      try { broadcastWs('company_list_updated', {}); } catch (e) { console.error('[broadcast company_list_updated]', e); }
     } catch (e) {
       console.error('syncGrtGrnCounter:', e);
     }
@@ -10781,6 +12848,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         if (error) throw error;
         lastSyncedDueDateRef.current = form.dueDate;
         if (fetchCollection) await fetchCollection('CompanyList', true);
+        try { broadcastWs('company_list_updated', {}); } catch (e) { console.error('[broadcast company_list_updated]', e); }
       } catch (e) {
         console.error('syncApDueDate:', e);
       }
@@ -10857,42 +12925,139 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   // เก็บ supplier/branch ไว้ (มักเป็น vendor เดียวกันหลายใบ) แต่ reset
   // invoice-specific fields เพื่อกรอกใบถัดไป
   // ── บันทึกการแก้ไข invoice ใน Batch Bucket (เรียกจาก BucketItemPopup) ──
+  // MARKER_EDITGROUP_RESPLIT_V1 -- Array ID ทุกแถวในกลุ่ม (null = แก้แถวเดียวปกติ)
+  const [bucketPopupGroupIds, setBucketPopupGroupIds] = useState(null);
   const handleSaveBucketItem = async ({ form_data, lines, invoiceNo }) => {
-    const target = invoices.find((inv, i) => (inv.id || inv._localId || i) === bucketPopup.rowKey);
-    if (!target) return false;
-    const sumField = (key) => lines.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
-    const updated = {
-      ...target,
-      branch_no:    form_data.branchNo || '',
-      branch_label: form_data.branchDirectLabel || '',
-      invoice_no:   invoiceNo || form_data.invoiceNum || '',
-      inv_date:     form_data.invDate || null,
-      period:       form_data.period || '',
-      description:  lines[0]?.desc || '',
-      amount: sumField('amount'), vat: sumField('vat'), wht: sumField('wht'), net: sumField('total'),
-      form_data, lines,
-    };
-    if (target._synced && target.id) {
-      const { error } = await db.from('bucket_list').update({
-        branch_no: updated.branch_no, branch_label: updated.branch_label, invoice_no: updated.invoice_no,
-        inv_date: updated.inv_date, period: updated.period, description: updated.description,
-        amount: updated.amount, vat: updated.vat, wht: updated.wht, net: updated.net,
-        form_data: updated.form_data, lines: updated.lines,
-      }).eq('id', target.id);
-      if (error) {
-        console.error('[SAVE-BUCKET-ERROR] full error object:', error, 'updated.form_data=', updated.form_data);
-        confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (error.message || error.hint || error.code || JSON.stringify(error)), { variant: 'danger' });
-        return false;
+    // MARKER_UNIVERSAL_RESPLIT_V1 -- ทุกครั้งที่ Save ให้วิเคราะห์กลุ่มใหม่เสมอ (ไม่ว่าจะ Edit ใบเดียวหรือหลายใบ)
+    // ถือว่า Edit ใบเดียวเป็น "กลุ่มขนาด 1" แล้วรัน Logic เดียวกับตอน Submit ครั้งแรกทุกครั้ง
+    const effectiveGroupIds = (bucketPopupGroupIds && bucketPopupGroupIds.length > 0)
+      ? bucketPopupGroupIds
+      : (bucketPopup.rowKey != null ? [bucketPopup.rowKey] : []);
+    if (effectiveGroupIds.length > 0) {
+      const sumF = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
+      const meaningfulEdited = lines.filter(l => String(l.itemCode || '').trim() || String(l.amount || '').trim());
+      const computedGroups = computeSplitGroups(meaningfulEdited);
+      // MARKER_SMART_GROUP_MATCHING_V1 -- จับคู่ Group เดิม-ใหม่ตาม "เนื้อหาจริง" แทนการแย่ง ID
+      // Real Vendor ชื่อเดียวกัน -> จับคู่กัน / ไม่มี Real Vendor -> จับคู่ตาม Tax Code เดียวกัน
+      // ข้อดี: ใบที่จับคู่ได้ "คงเลข invoice_no เดิมไว้" ไม่ renumber มั่วซั่วทุกครั้งที่ Save
+      const matchKeyForGroup = (hLine) => {
+        const rv = String(hLine?.realVendorName || '').trim().toLowerCase();
+        if (rv) return 'RV:' + rv;
+        return 'TAX:' + String(hLine?.taxCode || '').trim();
+      };
+      const origMatchInfo = effectiveGroupIds.map(k => {
+        const inv = invoices.find((iv, i) => (iv.id || iv._localId || i) === k);
+        if (!inv) return null;
+        const invLines = Array.isArray(inv.lines) ? inv.lines : [];
+        const rvLine = invLines.find(l => String(l.realVendorName || '').trim());
+        const key = rvLine ? matchKeyForGroup(rvLine) : matchKeyForGroup(invLines[0]);
+        return { id: k, inv, key };
+      }).filter(Boolean);
+      const claimedRowIds = new Set();
+      const groupAssignments = computedGroups.map(g => {
+        const key = matchKeyForGroup(g.hLine);
+        const match = origMatchInfo.find(o => o.key === key && !claimedRowIds.has(o.id));
+        if (match) claimedRowIds.add(match.id);
+        return { group: g, originId: match ? match.id : null };
+      });
+      const firstOrigInv = invoices.find((inv, i) => (inv.id || inv._localId || i) === effectiveGroupIds[0]);
+      // MARKER_FIX_INVOICENUM_EDIT_PRIORITY_V1 -- เลขที่แก้ในฟอร์มต้องชนะก่อนเสมอ (ถ้ามีค่า)
+      // เดิมเอาเลขเดิม (firstOrigInv.invoice_no) มาก่อน ทำให้แก้ในฟอร์มแล้วไม่เคย Update จริง
+      // เพราะเลขเดิมแทบไม่เคยว่างเปล่า Fallback เดิมเลยไม่ถูกใช้งานจริงเลย
+      const baseInvNoFixed = String(form_data.invoiceNum || firstOrigInv?.invoice_no || '').replace(/\/\d+$/, '');
+      // MARKER_SMART_MATCH_GAP_FIX_V1 -- เลข invoice_no อิงตาม "ตำแหน่ง (index)" ของกลุ่มที่คำนวณได้เสมอ
+      // (gi=0 = เลขฐาน ไม่มี suffix, gi=1,2,3... = /1 /2 /3) ทำให้ปิด Gap อัตโนมัติเสมอไม่ว่าจะมาจากไหน
+      // ส่วนการจับคู่ว่ากลุ่มไหนอัปเดต DB record ไหน ยังใช้เนื้อหาจริง (Real Vendor/Tax Code) เหมือนเดิม
+      // ลำดับกลุ่มจาก computeSplitGroups คงที่เสมอถ้าข้อมูลไม่เปลี่ยน จึงยัง Save ซ้ำได้ผลเดิมเสถียร
+      for (let gi = 0; gi < groupAssignments.length; gi++) {
+        const ga = groupAssignments[gi];
+        const cleanLines = ga.group.lines.map(({ _origRowId, ...rest }) => rest);
+        const newInvoiceNo = gi === 0 ? baseInvNoFixed : `${baseInvNoFixed}/${gi}`;
+        // MARKER_EDITGROUP_REALVENDOR_PROMOTE_V1 -- โปรโมท Real Vendor จาก hLine ขึ้น form_data
+        // เหมือนตอน Submit ครั้งแรก (MARKER_SPLIT_INVOICE_REALVENDOR_ISOLATED_V1) ไม่งั้นหายตอน re-split
+        const commonFormData = {
+          realVendorCode:    ga.group.hLine?.realVendorCode   || '',
+          realVendorName:    ga.group.hLine?.realVendorName   || '',
+          realVendorTaxid:   ga.group.hLine?.realVendorTaxid  || '',
+          realVendorBranch:  ga.group.hLine?.realVendorBranch || '',
+          realInvoiceNo:     ga.group.hLine?.realInvoiceNo    || '',
+          realVendorTaxDate: ga.group.hLine?.realVendorTaxDate || '',
+          isVat:             ga.group.hLine?.isVat            || '',
+          realGrn:           ga.group.hLine?.realGrn          || '',
+        };
+        if (ga.originId != null) {
+          // ── กลุ่มนี้จับคู่กับใบเดิมได้ (Real Vendor/Tax Code ตรงกัน) -- Update ใบเดิม (renumber ตามตำแหน่งด้วย) ──
+          const origInv = origMatchInfo.find(o => o.id === ga.originId)?.inv;
+          if (!origInv) continue;
+          // MARKER_SMART_MATCH_FORMDATA_MERGE_FIX_V1 -- รวม form_data ที่เพิ่งแก้ไขรอบนี้ (เช่น headerCpc จากปุ่ม Invoice) เข้าไปด้วย
+          // เดิมใช้แค่ origInv.form_data (ค่าเก่า) + commonFormData (Real Vendor เท่านั้น) ทำให้แก้ Header อื่นแล้ว Save ไม่ติด
+          const updFormData = { ...(origInv.form_data || {}), ...form_data, ...commonFormData };
+          // MARKER_SMART_MATCH_TOPLEVEL_FIELDS_FIX_V1 -- Update ต้องอัปเดต Top-level column อื่นๆ ด้วย
+          // (branch_no, branch_label, inv_date, period) ไม่ใช่แค่ description/amount/vat/wht/net/form_data/lines
+          // เดิม (จาก universal_resplit rewrite) ตกหล่นไปหมด ทำให้แก้ Branch/Due Date/Period แล้ว Save ไม่ติด
+          const upd = {
+            ...origInv,
+            invoice_no: newInvoiceNo,
+            branch_no:    form_data.branchNo ?? origInv.branch_no ?? '',
+            branch_label: form_data.branchDirectLabel ?? origInv.branch_label ?? '',
+            inv_date:     form_data.invDate ?? origInv.inv_date ?? null,
+            period:       form_data.period ?? origInv.period ?? '',
+            description: cleanLines[0]?.desc || '',
+            amount: sumF(cleanLines, 'amount'), vat: sumF(cleanLines, 'vat'), wht: sumF(cleanLines, 'wht'), net: sumF(cleanLines, 'total'),
+            form_data: updFormData,
+            lines: cleanLines,
+          };
+          if (origInv._synced && origInv.id) {
+            const { error } = await db.from('bucket_list').update({
+              invoice_no: upd.invoice_no, branch_no: upd.branch_no, branch_label: upd.branch_label, inv_date: upd.inv_date, period: upd.period,
+              description: upd.description, amount: upd.amount, vat: upd.vat, wht: upd.wht, net: upd.net, form_data: upd.form_data, lines: upd.lines,
+            }).eq('id', origInv.id);
+            if (error) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (error.message || JSON.stringify(error)), { variant: 'danger' }); return false; }
+            try { broadcastWs('bucket_item_updated', { id: origInv.id }); } catch (e) { console.error('[broadcast bucket_item_updated]', e); }
+          }
+          setInvoices(prev => prev.map((it, i) => (it.id || it._localId || i) === ga.originId ? upd : it));
+        } else {
+          // ── กลุ่มนี้ไม่มีใบเดิมจับคู่ (เนื้อหาไม่ตรงกับใบไหนเลย) -- สร้างใบใหม่ ใช้เลขตำแหน่งที่กำหนดไว้แล้ว ──
+          // MARKER_SMART_MATCH_FORMDATA_MERGE_FIX_V1 -- รวม form_data ที่เพิ่งแก้ไขรอบนี้เข้าไปด้วยเหมือนกัน
+          const newFormData = { ...(firstOrigInv?.form_data || {}), ...form_data, ...commonFormData };
+          // MARKER_SMART_MATCH_TOPLEVEL_FIELDS_FIX_V1 -- ใบใหม่ก็ต้องใช้ค่าที่เพิ่งแก้ไขรอบนี้ (form_data) ก่อน ไม่ใช่แค่ firstOrigInv เก่า
+          const insertPayload = {
+            bu: firstOrigInv?.bu,
+            branch_no: form_data.branchNo ?? firstOrigInv?.branch_no,
+            branch_label: form_data.branchDirectLabel ?? firstOrigInv?.branch_label,
+            invoice_no: newInvoiceNo, vendor_name: firstOrigInv?.vendor_name,
+            inv_date: form_data.invDate ?? firstOrigInv?.inv_date,
+            period: form_data.period ?? firstOrigInv?.period, description: cleanLines[0]?.desc || '',
+            amount: sumF(cleanLines, 'amount'), vat: sumF(cleanLines, 'vat'), wht: sumF(cleanLines, 'wht'), net: sumF(cleanLines, 'total'),
+            form_data: newFormData, lines: cleanLines, status: 'pending', created_by: userName || currentUser?.email || '',
+          };
+          const { data: insData, error: insErr } = await db.from('bucket_list').insert([insertPayload]);
+          if (insErr) {
+            // MARKER_FIX_INSERT_ERROR_MESSAGE_V1 -- เดิมใช้ .message ตรงๆ บาง Error Shape ไม่มี Field นี้ เห็นแค่ "undefined"
+            console.error('[Smart Match Insert Error] payload:', insertPayload, 'error:', insErr);
+            confirmDialog.alert('สร้างใบใหม่ไม่สำเร็จ: ' + (insErr.message || insErr.hint || insErr.code || JSON.stringify(insErr)), { variant: 'danger' });
+            continue;
+          }
+          const newRow = { ...insertPayload, id: insData?.[0]?.id, _synced: true };
+          setInvoices(prev => [...prev, newRow]);
+          try { broadcastWs('bucket_item_updated', { id: newRow.id }); } catch (e) { console.error('[broadcast bucket_item_updated]', e); }
+        }
       }
-      // MARKER_BUCKET_REALTIME_EDIT_DELETE_V1 -- แจ้ง Session อื่นให้ Refresh ทันที (ไม่ต้องรอ Polling)
-      try { broadcastWs('bucket_item_updated', { id: target.id }); } catch (e) { console.error('[broadcast bucket_item_updated]', e); }
+      // ── ลบใบเดิมที่ไม่มีกลุ่มไหนจับคู่เลย (เหลือ 0 บรรทัด) ──
+      const unmatchedIds = effectiveGroupIds.filter(k => !claimedRowIds.has(k));
+      if (unmatchedIds.length > 0) {
+        const toDeleteInv = unmatchedIds.map(k => invoices.find((inv, i) => (inv.id || inv._localId || i) === k)).filter(Boolean);
+        const syncedIdsToDel = toDeleteInv.filter(inv => inv._synced && inv.id).map(inv => inv.id);
+        if (syncedIdsToDel.length) {
+          await db.from('bucket_list').delete().in('id', syncedIdsToDel);
+          try { broadcastWs('bucket_item_deleted', { ids: syncedIdsToDel }); } catch (e) { console.error('[broadcast bucket_item_deleted]', e); }
+        }
+        setInvoices(prev => prev.filter((it, i) => !unmatchedIds.includes(it.id || it._localId || i)));
+      }
+      setBucketPopupGroupIds(null);
+      return true;
     }
-    setInvoices(prev => {
-      const next = prev.map((it, i) => (it.id || it._localId || i) === bucketPopup.rowKey ? updated : it);
-      saveLocalBucket(next);
-      return next;
-    });
-    return true;
+    return false;
   };
 
   // ✅ ลบรายการที่เลือกไว้ใน Batch Bucket (bulk delete) ────────────────────
@@ -10914,6 +13079,18 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     setSelectedRows(new Set());
   };
 
+  // MARKER_EDITGROUP_RESPLIT_V1 -- แก้ไขทั้งกลุ่ม (รวม Invoice ที่ Split จาก Submit เดียวกันมาแก้พร้อมกัน)
+  const handleEditGroup = (groupItems) => {
+    if (!groupItems || groupItems.length === 0) return;
+    const keys = groupItems.map(({ inv, i }) => inv.id || inv._localId || i);
+    if (groupItems.length === 1) {
+      setBucketPopupGroupIds(null);
+      setBucketPopup({ show: true, mode: 'edit', rowKey: keys[0] });
+      return;
+    }
+    setBucketPopupGroupIds(keys);
+    setBucketPopup({ show: true, mode: 'edit', rowKey: keys[0] });
+  };
   // ── Batch Bucket Summary: ลบทั้งกลุ่ม (ทุกบรรทัดย่อยของ Invoice หลัก) ──
   const handleDeleteGroup = async (baseNo) => {
     const toDelete = invoices.filter(inv => String(inv.invoice_no || '-').replace(/\/\d+$/, '') === baseNo);
@@ -11058,45 +13235,10 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     const meaningfulLines = lines.filter(l => String(l.itemCode || '').trim() || String(l.amount || '').trim());
 
     // ── แบ่ง lines เป็น Invoice ────────────────────────────────────────────────
-    // Step 1: แบ่งเป็น H-Block ก่อน (H เริ่ม Block ใหม่, L รวมเข้า Block ล่าสุด) — เหมือนเดิม
-    const hBlocks = [];
-    meaningfulLines.forEach(line => {
-      if (line.hl === 'H' || hBlocks.length === 0) hBlocks.push([line]);
-      else hBlocks[hBlocks.length - 1].push(line);
-    });
-    // ── กฎใหม่: จับกลุ่มตาม Tax Code ที่เหมือนกัน (Priority SVAT7 > VAT7 > ว่าง) ──
-    // Step 2: ภายในแต่ละ H-Block จับกลุ่มย่อยตามค่า Tax Code ที่ตรงกันเป๊ะ (ไม่สนตำแหน่ง/H-L เดิม)
-    // ว่าง ≠ มี Tax Code เสมอ (นับเป็นคนละกลุ่ม) — กลุ่มที่มี Tax Code ได้ Priority เป็น Invoice หลักก่อน
-    const rankTax = (tc) => {
-      const t = String(tc || '').trim();
-      if (t.includes('SVAT7')) return 2;
-      if (t.includes('VAT7')) return 1;
-      return 0;
-    };
-    const groups = [];
-    hBlocks.forEach(block => {
-      const hLine = block[0]; // บรรทัด H ดั้งเดิมของ Block — ใช้เป็นแหล่ง Description/Real Vendor เสมอ
-      const bucketMap = new Map();
-      const bucketOrder = [];
-      block.forEach(line => {
-        const tax = String(line.taxCode || '').trim();
-        if (!bucketMap.has(tax)) { bucketMap.set(tax, []); bucketOrder.push(tax); }
-        bucketMap.get(tax).push(line);
-      });
-      const sortedKeys = [...bucketOrder].sort((a, b) => rankTax(b) - rankTax(a));
-      sortedKeys.forEach(key => {
-        // ── Bug Fix: บรรทัดแรกของกลุ่มที่ Split ใหม่ ต้องเป็น H เสมอ (แม้เดิมจะเป็น L) ──
-        // ── เพราะตอนนี้มันคือหัวของ Invoice ใหม่ของตัวเองแล้ว ไม่ใช่ L ของใครอีกต่อไป ──
-        const bucketLines = bucketMap.get(key);
-        if (bucketLines.length && bucketLines[0].hl !== 'H') {
-          bucketLines[0] = { ...bucketLines[0], hl: 'H' };
-        }
-        groups.push({ lines: bucketLines, hLine });
-      });
-    });
+    // MARKER_SPLIT_INVOICE_REALVENDOR_ISOLATED_V1 -- MARKER_EDITGROUP_RESPLIT_V1
+    // ── ใช้ computeSplitGroups() ตัวกลาง (Reuse ร่วมกับตอน Save "แก้ไขทั้งกลุ่ม") ──
+    const groups = computeSplitGroups(meaningfulLines);
 
-    // MARKER_DEBUG_SPLIT_INVOICE_DISAPPEAR_V1
-    console.log('[DEBUG Split] 1) groups.length =', groups.length, groups.map(g => ({ taxCode: g.lines[0]?.taxCode, lineCount: g.lines.length })));
     // MARKER_APCONTROLLER_EARLY_DUPLICATE_BLOCK_V1
     // ── Early Duplicate Guard: เช็คก่อนขอเลข GRT/GRN และก่อนยิง API ใดๆ ──
     // ── กันไม่ให้ "เบิ้ล" ตั้งแต่ต้นทาง ไม่ใช่แค่กรองทีหลัง ──
@@ -11204,6 +13346,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         // MARKER_BUCKETLIST_MODULE_FIELD_V1
         // -- เตรียมรองรับ IE-Project ใช้ bucket_list Table เดียวกันในอนาคต --
         module:          'AP',
+        // MARKER_CHANNEL_FEATURE_PHASE1_2_V1 -- ติด Channel ปัจจุบันไปกับทุก Invoice ที่ Submit
+        channel:         activeChannel,
         branch_no:       form.branchNo || '',
         branch_label:    form.branchDirectLabel || '',
         invoice_no:      invoiceNo,
@@ -11297,8 +13441,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       }
       if (newItems.length !== before) console.warn('[Split Dedup] ตัด Invoice ซ้ำในขั้นตอน Split ออก', before - newItems.length, 'รายการ');
     }
-    // MARKER_DEBUG_SPLIT_INVOICE_DISAPPEAR_V1
-    console.log('[DEBUG Split] 2) dupResults =', dupResults.map(d => ({ baseNo: d.baseNo, groupItemsCount: d.groupItems?.length, is_duplicate: d.dupData?.is_duplicate, has_warning: d.dupData?.has_warning, error: d.error ? String(d.error) : null })));
     const finalItems = [];
     for (const { baseNo, groupItems, dupData, error } of dupResults) {
       try {
@@ -11321,17 +13463,30 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
           const detailLines = relatedList.slice(0, 3).map(r =>
             `  • Invoice: ${r.invoice_no} | Vendor: ${r.vendor_name || r.vendor_no} | Amount: ${r.amount}`
           ).join('\n');
-          const accepted = await confirmDialog.confirm(
-            `Invoice "${baseNo}" มีรายการที่น่าสงสัยว่าอาจซ้ำ:\n${detailLines}\n\n` +
-            `ต้องการยืนยันบันทึกรายการนี้ต่อหรือไม่?`,
-            { variant: 'warning', confirmText: 'Accept (ยืนยันไม่ซ้ำ)', cancelText: 'Reject (ตัดออก)' }
-          );
-          if (!accepted) continue;
-          groupItems.forEach(item => {
-            item._dupWarning = 'yellow';
-            item._dupConfirmedAt = new Date().toISOString();
-            item._dupDetail = relatedList.slice(0, 5);
-          });
+          // MARKER_DUPLICATE_NOTICE_TOGGLE_V1
+          // ── Toggle "Duplicate Notice" Off (เก็บใน supplier_list.disabled_fields) ──
+          // ── ไม่ Block ด้วย Popup ยืนยันอีกต่อไป -- เพิ่มเข้า Batch ทันที + Toast ──
+          const isDupNoticeOff = Array.isArray(vendorInfo?.disabled_fields) && vendorInfo.disabled_fields.includes('Duplicate Notice');
+          if (isDupNoticeOff) {
+            groupItems.forEach(item => {
+              item._dupWarning = 'yellow';
+              item._dupConfirmedAt = new Date().toISOString();
+              item._dupDetail = relatedList.slice(0, 5);
+            });
+            showDupToast(`Invoice "${baseNo}" มีรายการที่น่าสงสัยว่าอาจซ้ำ:\n${detailLines}`);
+          } else {
+            const accepted = await confirmDialog.confirm(
+              `Invoice "${baseNo}" มีรายการที่น่าสงสัยว่าอาจซ้ำ:\n${detailLines}\n\n` +
+              `ต้องการยืนยันบันทึกรายการนี้ต่อหรือไม่?`,
+              { variant: 'warning', confirmText: 'Accept (ยืนยันไม่ซ้ำ)', cancelText: 'Reject (ตัดออก)' }
+            );
+            if (!accepted) continue;
+            groupItems.forEach(item => {
+              item._dupWarning = 'yellow';
+              item._dupConfirmedAt = new Date().toISOString();
+              item._dupDetail = relatedList.slice(0, 5);
+            });
+          }
         } else {
           groupItems.forEach(item => { item._dupWarning = 'green'; });
         }
@@ -11342,8 +13497,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       finalItems.push(...groupItems);
     }
 
-    // MARKER_DEBUG_SPLIT_INVOICE_DISAPPEAR_V1
-    console.log('[DEBUG Split] 3) finalItems.length =', finalItems.length, finalItems.map(i => ({ invoice_no: i.invoice_no, amount: i.amount, receive_date: i.receive_date, _localId: i._localId })));
     setInvoices(prev => {
       // ── Dedup guard: ป้องกัน user กด Submit ซ้ำเร็ว ๆ ─────────────────
       // เปรียบ invoice_no + branch_no + amount ของ item ใหม่กับที่มีอยู่แล้ว
@@ -11357,8 +13510,6 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       const deduped = finalItems.filter(
         item => !existingKeys.has(`${item.invoice_no}|${item.branch_no}|${normAmt(item.amount)}`)
       );
-      // MARKER_DEBUG_SPLIT_INVOICE_DISAPPEAR_V1
-      console.log('[DEBUG Split] 4) deduped.length =', deduped.length, '(finalItems ถูก Dedup Guard ตัดออกไป', finalItems.length - deduped.length, 'รายการ)', deduped.map(i => i.invoice_no));
       if (!deduped.length) return prev;
       const next = [...prev, ...deduped];
       saveLocalBucket(next);
@@ -11555,15 +13706,28 @@ const handleSelectBranch = (item, meta = {}) => {
   };
 
   // trigger: Blur, Enter, Tab
+  // MARKER_BRANCHNO_MIN6_VALIDATE_V1 -- ต้องกรอกอย่างน้อย 6 ตัวอักษร ไม่งั้นเตือนตอนออกจากช่อง
+  const validateBranchNoLength = (val) => {
+    const trimmed = String(val ?? '').trim();
+    if (trimmed.length > 0 && trimmed.length < 6) {
+      confirmDialog.alert('กรุณากรอก Branch no. ให้ครบอย่างน้อย 6 ตัวอักษร', { variant: 'danger', title: 'ข้อมูลไม่ครบ' });
+      return false;
+    }
+    return true;
+  };
   const handleBranchNoBlur = (val) => {
     if (branchJustResolved.current) {
       branchJustResolved.current = false;
       return;
     }
+    if (!validateBranchNoLength(val)) return;
     resolveBranch(val);
   };
   const handleBranchNoKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === 'Tab') resolveBranch(e.target.value);
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      if (!validateBranchNoLength(e.target.value)) return;
+      resolveBranch(e.target.value);
+    }
   };
 
   return (
@@ -11582,7 +13746,7 @@ const handleSelectBranch = (item, meta = {}) => {
         }}
         supplierItems={supplierItems}
         bu={batchConfig?.bu || ''}
-        bookFilter={(() => { const b = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase(); return (b === 'CGT' || b === 'CGR') ? b : ''; })()}
+        bookFilter={(() => { const b = String(batchConfig?.buInfo?.['BOOK'] ?? '').trim().toUpperCase(); return (b === 'CGT' || b === 'CGR' || b === 'CMG') ? b : ''; })()}
         fetchCollection={fetchCollection}
         userName={userName || currentUser?.email || ''}
         quickVendors={quickVendors}
@@ -11593,8 +13757,32 @@ const handleSelectBranch = (item, meta = {}) => {
       <BucketItemPopup
         show={bucketPopup.show}
         mode={bucketPopup.mode}
-        invoice={bucketPopup.rowKey != null ? invoices.find((inv, i) => (inv.id || inv._localId || i) === bucketPopup.rowKey) : null}
-        onClose={() => setBucketPopup({ show: false, mode: 'view', rowKey: null })}
+        invoice={bucketPopup.rowKey != null ? (
+          // MARKER_UNIVERSAL_RESPLIT_V1 -- ทุก Edit (ใบเดียวหรือหลายใบ) ใช้ Logic เดียวกันเสมอ:
+          // รวม lines พร้อม Tag _origRowId เสมอ แม้เป็น Edit ใบเดียว (ถือเป็น "กลุ่มขนาด 1")
+          // เพื่อให้ตอน Save จับคู่กลับใบเดิมได้ถูกต้อง ไม่ว่าจะ Re-split ออกเป็นกี่ใบก็ตาม
+          (() => {
+                const effectiveGroupIds = (bucketPopupGroupIds && bucketPopupGroupIds.length > 0)
+                  ? bucketPopupGroupIds
+                  : [bucketPopup.rowKey];
+                const groupInvoices = effectiveGroupIds
+                  .map(k => invoices.find((inv, i) => (inv.id || inv._localId || i) === k))
+                  .filter(Boolean);
+                if (groupInvoices.length === 0) return null;
+                const first = groupInvoices[0];
+                const mergedLines = groupInvoices.flatMap((inv, gi) =>
+                  (Array.isArray(inv.lines) ? inv.lines : []).map(l => ({ ...l, _origRowId: effectiveGroupIds[gi] }))
+                );
+                const baseNo = String(first.invoice_no || '').replace(/\/\d+$/, '');
+                return {
+                  ...first,
+                  lines: mergedLines,
+                  invoice_no: baseNo,
+                  form_data: { ...(first.form_data || {}), invoiceNum: baseNo },
+                };
+              })()
+        ) : null}
+        onClose={() => { setBucketPopup({ show: false, mode: 'view', rowKey: null }); setBucketPopupGroupIds(null); }}
         itemcodeItems={itemcodeItems}
         supplierItems={supplierItems}
         vendorRuleItems={vendorRuleItems}
@@ -11604,7 +13792,19 @@ const handleSelectBranch = (item, meta = {}) => {
         currentUser={currentUser}
         onSave={handleSaveBucketItem}
         branchItems={branchItems}
+        smCodeItems={smCodeItems}
+        categoryItems={categoryItems}
       />
+      {/* MARKER_DUPLICATE_NOTICE_TOGGLE_V1 -- Toast Duplicate ลอย 15 วิ */}
+      {dupToastMsg && (
+        <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 10002, background: '#1a3a5c', color: 'white', padding: '12px 16px', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.2)', maxWidth: '360px', fontSize: '12px', whiteSpace: 'pre-line' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+            <span style={{ flex: 1 }}>⚠ {dupToastMsg}</span>
+            <button onClick={() => { if (dupToastTimerRef.current) clearTimeout(dupToastTimerRef.current); setDupToastMsg(null); }}
+              style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', fontSize: '14px', padding: 0, flexShrink: 0 }}>×</button>
+          </div>
+        </div>
+      )}
       <SendToModal
         show={showSendToModal}
         onClose={() => setShowSendToModal(false)}
@@ -11613,10 +13813,49 @@ const handleSelectBranch = (item, meta = {}) => {
         totalAmount={invoices.filter((inv, i) => selectedRows.has(inv.id || inv._localId || i)).reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0)}
         currentUserId={currentUser?.id || ''}
       />
+      {/* MARKER_CHANNEL_PREVIEW_POPUP_ONLY_V1 */}
+      {showBatchPreviewChannelPopup && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowBatchPreviewChannelPopup(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '420px', maxWidth: '92vw', padding: '22px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c', marginBottom: '4px' }}>เลือก Channel ที่จะดู/Export</div>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>มีมากกว่า 1 Channel ที่มี Invoice อยู่</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button onClick={() => handlePickPreviewChannel('all')}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '11px 14px', borderRadius: '9px', border: '0.5px solid #c5d8f0', background: '#E6F1FB', cursor: 'pointer', textAlign: 'left' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ width: '26px', height: '26px', borderRadius: '7px', background: '#0C447C', color: '#fff', fontSize: '10px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>All</span>
+                  <span style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c' }}>ทุก Channel รวมกัน</span>
+                </span>
+                <span style={{ fontSize: '12px', fontWeight: '500', color: '#0C447C' }}>{invoices.length} ใบ</span>
+              </button>
+              {[1, 2, 3, 4, 5].map(chNum => {
+                const chInvoices = invoices.filter(inv => (inv.channel || 1) === chNum);
+                const hasData = chInvoices.length > 0;
+                const chAmount = chInvoices.reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0);
+                return (
+                  <button key={chNum} onClick={() => handlePickPreviewChannel(chNum)}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '11px 14px', borderRadius: '9px', cursor: 'pointer', textAlign: 'left', border: hasData ? '0.5px solid #c5d8f0' : '0.5px solid #e5e7eb', background: hasData ? '#E6F1FB' : '#fafbfc' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ width: '26px', height: '26px', borderRadius: '7px', background: hasData ? '#1a3a5c' : '#c8ccd2', color: '#fff', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{chNum}</span>
+                      <span>
+                        <span style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#1a3a5c' }}>Channel {chNum}</span>
+                        <span style={{ display: 'block', fontSize: '11px', color: hasData ? '#0C447C' : '#aaa' }}>{hasData ? `${chInvoices.length} invoice` : 'ว่าง'}</span>
+                      </span>
+                    </span>
+                    {hasData && <span style={{ fontSize: '12px', fontWeight: '500', color: '#0C447C' }}>{chAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
       
       <div style={{ ...card, overflow: 'visible', flexShrink: 0 }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} recentHeaderCpc={recentHeaderCpc} recentHeaderAccount={recentHeaderAccount} recentHeaderSubAcc={recentHeaderSubAcc} recentSupplierCode={recentSupplierCode} supplierCodeRef={supplierCodeRef} branchNoRef={branchNoRef} headerCpcRef={headerCpcRef} headerAccountRef={headerAccountRef} headerSubAccRef={headerSubAccRef} isOwner={isOwner} onOpenGrtSetting={() => setShowGrtSettingPopup(true)} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} flowMemory={flowMemory} setFlowMemory={setFlowMemory} supplierCodeRef={supplierCodeRef} matchedRule={matchedRule} onOpenSupplierDetail={() => { setSupplierViewCode(form.supplierCode || ''); setShowSupplierPopup(true); }} vendorRuleItems={vendorRuleItems} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} buInfo={batchConfig?.buInfo || null} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} flowMemory={flowMemory} setFlowMemory={setFlowMemory} supplierCodeRef={supplierCodeRef} matchedRule={matchedRule} onOpenSupplierDetail={() => { setSupplierViewCode(form.supplierCode || ''); setShowSupplierPopup(true); }} vendorRuleItems={vendorRuleItems} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
@@ -11650,7 +13889,29 @@ const handleSelectBranch = (item, meta = {}) => {
                 style={{ padding: '4px 12px', borderRadius: '6px', border: 'none', background: bucketViewMode === 'summary' ? 'white' : 'transparent', boxShadow: bucketViewMode === 'summary' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none', fontSize: '11px', fontWeight: bucketViewMode === 'summary' ? '600' : '500', color: bucketViewMode === 'summary' ? '#1a3a5c' : '#888', cursor: 'pointer' }}>Summary</button>
             </div>
           </div>
+          {/* MARKER_CHANNEL_FEATURE_PHASE3_POSITION_FIX_V1 -- ย้าย Channel Switcher เข้ากลุ่ม Div ขวา ติดกับ Batch Preview */}
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+              <span style={{ fontSize: '10px', color: '#bbb', marginRight: '2px' }}>Channel</span>
+              {[1, 2, 3, 4, 5].map(chNum => {
+                const chCount = invoices.filter(inv => (inv.channel || 1) === chNum).length;
+                const isActive = activeChannel === chNum;
+                return (
+                  <div key={chNum} style={{ position: 'relative' }}>
+                    <button onClick={() => setActiveChannel(chNum)}
+                      style={{ width: '26px', height: '26px', fontSize: '11px', borderRadius: '6px', border: isActive ? '0.5px solid #1a3a5c' : '0.5px solid #ddd', background: isActive ? '#1a3a5c' : 'white', color: isActive ? 'white' : '#999', cursor: 'pointer', fontWeight: '500', padding: 0 }}>
+                      {chNum}
+                    </button>
+                    {chCount > 0 && (
+                      <span style={{ position: 'absolute', top: '-6px', right: '-6px', background: '#D85A30', color: 'white', fontSize: '9px', fontWeight: '600', minWidth: '15px', height: '15px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', border: '1.5px solid white' }}>
+                        {chCount}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ width: '0.5px', height: '18px', background: '#e8eaf0', margin: '0 2px' }}></div>
             {selectedRows.size > 0 && (
               <>
                 <button onClick={handleDeleteSelected}
@@ -11673,7 +13934,7 @@ const handleSelectBranch = (item, meta = {}) => {
                 <div style={{ width: '0.5px', height: '18px', background: '#e8eaf0', margin: '0 2px' }}></div>
               </>
             )}
-            <button onClick={onNext} disabled={invoices.length === 0}
+            <button onClick={handleBatchPreviewClick} disabled={invoices.length === 0}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '30px', padding: '0 16px', borderRadius: '6px', border: 'none', background: invoices.length === 0 ? '#e0e0e0' : '#27500A', color: 'white', fontSize: '12px', fontWeight: '500', cursor: invoices.length === 0 ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               Batch Preview
@@ -11822,7 +14083,11 @@ const handleSelectBranch = (item, meta = {}) => {
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </button>
                       <button onClick={async () => {
-                          if (inv._synced && inv.id) { await db.from('bucket_list').delete().eq('id', inv.id); }
+                          if (inv._synced && inv.id) {
+                            await db.from('bucket_list').delete().eq('id', inv.id);
+                            // MARKER_BUCKET_SINGLEDELETE_BROADCAST_V1 -- แจ้ง On process ให้ Refresh ทันที (Pattern เดียวกับ handleDeleteSelected)
+                            try { broadcastWs('bucket_item_deleted', { ids: [inv.id] }); } catch (e) { console.error('[broadcast bucket_item_deleted]', e); }
+                          }
                           setInvoices(list => { const next = list.filter((_, idx2) => idx2 !== i); saveLocalBucket(next); return next; });
                           setSelectedRows(prev => { const next = new Set(prev); next.delete(rowKey); return next; });
                         }}
@@ -11933,10 +14198,17 @@ const handleSelectBranch = (item, meta = {}) => {
                         )}
                       </td>
                       <td style={{ padding: '8px 9px', textAlign: 'center' }}>
-                        <button title="Delete" onClick={() => handleDeleteGroup(g.baseNo)}
-                          style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                        </button>
+                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                          {/* MARKER_EDITGROUP_RESPLIT_V1 -- แก้ไขทั้งกลุ่ม (รวม Invoice ที่ Split มา) */}
+                          <button title="แก้ไขทั้งกลุ่ม" onClick={() => handleEditGroup(g.items)}
+                            style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button title="Delete" onClick={() => handleDeleteGroup(g.baseNo)}
+                            style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     {isOpen && g.items.map(({ inv, i }) => {
@@ -11979,7 +14251,11 @@ const handleSelectBranch = (item, meta = {}) => {
                               )}
                               {inv.status !== 'sent' && (
                                 <button title="Delete" onClick={async () => {
-                                    if (inv._synced && inv.id) { await db.from('bucket_list').delete().eq('id', inv.id); }
+                                    if (inv._synced && inv.id) {
+                                      await db.from('bucket_list').delete().eq('id', inv.id);
+                                      // MARKER_BUCKET_SINGLEDELETE_BROADCAST_V1 -- แจ้ง On process ให้ Refresh ทันที
+                                      try { broadcastWs('bucket_item_deleted', { ids: [inv.id] }); } catch (e) { console.error('[broadcast bucket_item_deleted]', e); }
+                                    }
                                     setInvoices(list => { const next = list.filter((_, idx2) => idx2 !== i); saveLocalBucket(next); return next; });
                                   }}
                                   style={{ width: '22px', height: '22px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -12055,11 +14331,24 @@ const handleSelectBranch = (item, meta = {}) => {
 }
 
 // ── GenerateExport (Batch Preview) ───────────────────────────────────────────
-function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, supplierItems = [], vendorRuleItems = [], userName = '', currentUser, systemPrefix = '' }) {
+function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, supplierItems = [], vendorRuleItems = [], userName = '', currentUser, systemPrefix = '', activeChannel = 1 }) {
   const [exported, setExported]   = useState(false);
   const [exporting, setExporting] = useState(false);
+  // MARKER_CHANNEL_FEATURE_PHASE4_V1 -- Default = Channel ที่ Active ตอนกด Batch Preview มา
+  const [previewChannelFilter, setPreviewChannelFilter] = useState(activeChannel);
+  const previewFilteredInvoices = previewChannelFilter === 'all'
+    ? invoices
+    : invoices.filter(inv => (inv.channel || 1) === previewChannelFilter);
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
   const [batchName, setBatchName] = useState('');
+  // MARKER_EXPORTBATCH_CATEGORY_BUTTONS_V1
+  // MARKER_EXPORT_CATEGORY_PO_TO_LOG_V1 -- เปลี่ยน PO เป็น LOG
+  const CATEGORY_OPTS = ['OTH', 'DUM', 'FLEET', 'CORP', 'LOG'];
+  const [batchCategory, setBatchCategory] = useState('OTH');
+  const handleSelectCategory = (cat) => {
+    setBatchCategory(cat);
+    setBatchName(prev => prev ? prev.replace(/-[A-Z]+(?=\/)/, `-${cat}`) : prev);
+  };
   const [showExportModal, setShowExportModal] = useState(false);
   // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1 (showExportModal)
   // -- Respect เงื่อนไขเดิม: ห้ามปิดระหว่างกำลัง Export อยู่ (!exporting) --------
@@ -12069,7 +14358,20 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, [showExportModal, exporting]);
+  // MARKER_GENERATEEXPORT_RESERVINGRUNNING_TDZ_FIX_V1 -- ย้ายขึ้นมาก่อน useEffect ที่ใช้งาน กัน TDZ Error
   const [reservingRunning, setReservingRunning] = useState(false);
+  // MARKER_GENERATEEXPORT_ESC_END_SHORTCUT_V1 -- ระดับหน้า Batch Preview:
+  // Esc = Back to edit (เฉพาะตอนไม่มี Modal Export เปิดอยู่ และยังไม่ Export ไปแล้ว)
+  // End = เปิด Generate & Export (เฉพาะตอนปุ่มไม่ Disable)
+  useEffect(() => {
+    if (showExportModal) return;
+    const h = (e) => {
+      if (e.key === 'Escape' && !exporting && !exported) { e.stopPropagation(); onBack(); }
+      else if (e.key === 'End' && !exporting && !exported && !reservingRunning) { e.stopPropagation(); openExportModal(); }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [showExportModal, exporting, exported, reservingRunning]);
 
   // ── ส่วนคงที่ของ Batch Name: {BU}-NMR-{YYMMDD}-OTH (NMR/OTH เป็นค่า Fix ตายตัว) ──
   // MARKER_BATCHNAME_YY_SHORT_YEAR_V1
@@ -12079,7 +14381,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     const p2 = (n) => String(n).padStart(2, '0');
     const yy = String(now.getFullYear()).slice(-2);
     const ymd = `${yy}${p2(now.getMonth() + 1)}${p2(now.getDate())}`;
-    return `${batchConfig?.bu || 'BU'}-NMR-${ymd}-OTH`;
+    return `${batchConfig?.bu || 'BU'}-NMR-${ymd}-${batchCategory}`;
   })();
 
   // ── ชื่อไฟล์ (คนละเรื่องกับ Batch Name — Batch Name มี "/" ใช้เป็นชื่อไฟล์ไม่ได้) ──
@@ -12095,7 +14397,8 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   // ── กด Generate & Export → ขอเลข Running จริงจาก Backend (Lazy Reset ต่อ BU ต่อวัน) ──
   // ── แล้วประกอบเป็น Batch Name เต็ม: {Base}/{SystemPrefix}-{Running} ──────────────
   const openExportModal = async () => {
-    if (!invoices.length) { confirmDialog.alert('No invoices in batch'); return; }
+    // MARKER_CHANNEL_FEATURE_PHASE4_V1
+    if (!previewFilteredInvoices.length) { confirmDialog.alert('No invoices in batch'); return; }
     if (batchName.trim()) { setShowExportModal(true); return; } // เคยตั้ง/แก้เองแล้ว ไม่ขอเลขใหม่ซ้ำ
     const buId = batchConfig?.buInfo?.id;
     const prefixPart = systemPrefix || 'XXX';
@@ -12185,7 +14488,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       if (m) return { base: m[1], suf: parseInt(m[2], 10) };
       return { base: s, suf: 0 };
     };
-    const sortedInvoices = [...invoices].sort((a, b) => {
+    const sortedInvoices = [...previewFilteredInvoices].sort((a, b) => {
       const pa = parseInvSuffixForSort(a.invoice_no), pb = parseInvSuffixForSort(b.invoice_no);
       if (pa.base !== pb.base) return getCreatedTimeForSort(a) - getCreatedTimeForSort(b);
       return pa.suf - pb.suf;
@@ -12208,7 +14511,14 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         const tc = String(l.taxCode || '');
         return tc.includes('VAT7') && !tc.includes('SVAT7');
       }) ? 'Yes' : 'No';
-      const totalAmt = lines.reduce((s, l) => s + (parseFloat(String(l.total || '').replace(/,/g, '')) || 0), 0);
+      // MARKER_EXPORT_TOTALAMT_ROUND_V1
+      // ── ใช้ inv.net (Round ไว้แล้วตั้งแต่ Submit ผ่าน MARKER_APCONTROLLER_ROUND2_ON_SUBMIT_V1) ──
+      // ── เป็นหลัก แทนที่จะ Sum inv.lines ดิบๆ ใหม่ (ของเดิมเจอ Floating Point Error ซ้ำ) ──
+      // ── Fallback คำนวณจาก Line + Round เผื่อ Data เก่าที่ไม่มี net ──────────────────────
+      const totalAmtRaw = (inv.net !== null && inv.net !== undefined && inv.net !== '')
+        ? parseFloat(String(inv.net).replace(/,/g, ''))
+        : lines.reduce((s, l) => s + (parseFloat(String(l.total || '').replace(/,/g, '')) || 0), 0);
+      const totalAmt = Math.round((totalAmtRaw || 0) * 100) / 100;
 
       const dueDateCol = fd.dueDate ? fmtDateDMY(fd.dueDate) : '';
       const taxInvoiceDateCol = derivedVat === 'Yes'
@@ -12278,7 +14588,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       widths[c] = hasData ? Math.min(MAX, Math.max(MIN, Math.round(maxLen * CHAR_W + PAD))) : 5;
     });
     setColWidths(widths);
-  }, [invoices]);
+  }, [previewFilteredInvoices]);
   const [resizing, setResizing] = useState(null);
   const [copied, setCopied] = useState(false);
   const resizeRef = React.useRef(null);
@@ -12447,7 +14757,8 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
   }, [isDragging]);
 
   const doExport = async () => {
-    if (!invoices.length) { confirmDialog.alert('No invoices in batch'); return; }
+    // MARKER_CHANNEL_FEATURE_PHASE4_V1
+    if (!previewFilteredInvoices.length) { confirmDialog.alert('No invoices in batch'); return; }
     const newBatchId = batchName.trim();
     if (!newBatchId) { confirmDialog.alert('กรุณาตั้งชื่อ Batch ก่อน Export'); return; }
     setExporting(true);
@@ -12472,8 +14783,9 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       // ── db.update() ของระบบนี้ต้องระบุ id เท่านั้น (ไม่รองรับ .eq('batch_id', ...) แบบ Bulk) ──
       // ── เลยต้องหา id ของ Invoice ทุกใบก่อน แล้ว Update ผ่าน .in('id', ids) แทน ──
       // ── Sync ก่อน Export — upsert รายการที่ยังไม่มี id แล้วรับ id กลับมาก่อน ──
-      let mergedInvoices = [...invoices];
-      const pendingToSync = invoices.filter(inv => !inv._synced && !inv.id);
+      // MARKER_CHANNEL_FEATURE_PHASE4_V1 -- ใช้ Invoice ที่ Filter แล้วเท่านั้น กัน Channel อื่นโดน Mark Done ปนไป
+      let mergedInvoices = [...previewFilteredInvoices];
+      const pendingToSync = previewFilteredInvoices.filter(inv => !inv._synced && !inv.id);
       if (pendingToSync.length > 0) {
         // MARKER_APCONTROLLER_FIX_DUPWARNING_UPSERT_BUG_V1
         const payloads = pendingToSync.map(({ _localId, _synced, id, _dupWarning, _dupConfirmedAt, _dupDetail, ...rest }) => ({ ...rest, local_id: _localId }));
@@ -12514,9 +14826,10 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       // ── บันทึก Amount/Vat/Total ให้ My Jobs/All Jobs แสดงถูก — ยังคงสถานะ "processing" ไว้ ──
       // ── ไม่เปลี่ยนเป็น "done" ที่นี่ เพราะ Done จริง ๆ ต้องรอมีการ Report to ผู้ตรวจก่อน ──
       // ── ใช้ id (จาก Insert ด้านบน) แทน batch_id เพราะ db.update() รองรับแค่ id เท่านั้น ──
-      const sumAmount = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
-      const sumVat = invoices.reduce((s, inv) => s + (parseFloat(inv.vat) || 0), 0);
-      const sumTotal = invoices.reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0);
+      // MARKER_CHANNEL_FEATURE_PHASE4_V1
+      const sumAmount = previewFilteredInvoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+      const sumVat = previewFilteredInvoices.reduce((s, inv) => s + (parseFloat(inv.vat) || 0), 0);
+      const sumTotal = previewFilteredInvoices.reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0);
       if (batchListId) {
         const { error: sumErr } = await db.from('batch_list')
           .update({ amount: sumAmount, vat: sumVat, total_amount: sumTotal })
@@ -12556,8 +14869,9 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       tabIndex={-1}
       onMouseLeave={() => setIsDragging(false)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexShrink: 0, gap: '10px' }}>
-        <button style={btnOutline} onClick={onBack}>&#8592; Back to edit</button>
-        <button disabled={exporting || exported || reservingRunning} onClick={openExportModal}
+        <button style={btnOutline} onClick={onBack} title="กด Esc เพื่อกลับไปแก้ไข">&#8592; Back to edit</button>
+        {/* MARKER_CHANNEL_PREVIEW_POPUP_ONLY_V1 -- ตัดปุ่ม All+CH1-5 ออก เลือกผ่าน Popup ก่อนเข้าหน้านี้แทน */}
+        <button disabled={exporting || exported || reservingRunning} onClick={openExportModal} title="กด End เพื่อ Generate & Export"
           style={{ ...btnPrimary, background: exported ? '#27500A' : '#1a3a5c', opacity: (exporting || reservingRunning) ? 0.6 : 1, cursor: (exporting || exported || reservingRunning) ? 'default' : 'pointer' }}>
           {exported ? 'Exported' : exporting ? 'Exporting...' : reservingRunning ? 'กำลังเตรียม...' : 'Generate & Export'}
         </button>
@@ -12575,7 +14889,21 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
 
             <label style={{ fontSize: '12px', color: '#888', display: 'block', marginBottom: '6px' }}>Batch name</label>
             <input value={batchName} onChange={e => setBatchName(e.target.value)} disabled={exporting}
-              style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', marginBottom: '14px' }} />
+              style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', marginBottom: '10px' }} />
+
+            {/* MARKER_EXPORTBATCH_CATEGORY_BUTTONS_V1 */}
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+              {CATEGORY_OPTS.map(cat => (
+                <button key={cat} type="button" disabled={exporting} onClick={() => handleSelectCategory(cat)}
+                  style={{ flex: 1, padding: '6px 0', fontSize: '12px', fontWeight: 500, borderRadius: '6px',
+                    border: batchCategory === cat ? 'none' : '0.5px solid #ddd',
+                    background: batchCategory === cat ? '#1a3a5c' : 'white',
+                    color: batchCategory === cat ? 'white' : '#555',
+                    cursor: exporting ? 'default' : 'pointer' }}>
+                  {cat}
+                </button>
+              ))}
+            </div>
 
             <label style={{ fontSize: '12px', color: '#888', display: 'block', marginBottom: '6px' }}>File type</label>
             <select disabled style={{ width: '100%', height: '34px', padding: '0 10px', fontSize: '13px', border: '0.5px solid #ddd', borderRadius: '6px', marginBottom: '16px', color: '#555', background: '#fafafa' }}>
@@ -12600,7 +14928,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       )}
       {showCompleteBanner && (
         <div style={{ position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, background: '#EAF3DE', color: '#27500A', padding: '12px 24px', borderRadius: '8px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}>
-          ✓ Export Complete — {invoices.length} ใบ
+          ✓ Export Complete — {previewFilteredInvoices.length} ใบ
         </div>
       )}
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px', userSelect: 'none', position: 'relative' }}
@@ -12667,7 +14995,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
                 </React.Fragment>
               );
             })}
-            {invoices.length === 0 && (
+            {previewFilteredInvoices.length === 0 && (
               <tr><td colSpan={31} style={{ textAlign: 'center', color: '#aaa', padding: '24px', fontSize: '12px' }}>No invoices</td></tr>
             )}
             {Array.from({ length: Math.max(0, 100 - rows.length - 1) }).map((_, i) => {
@@ -12859,6 +15187,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         exported_at: r.exported_at,
         created_by: r.created_by,
         record_type: r.record_type || 'actual',
+        sent_stamp: r.sent_stamp || null, // MARKER_INVOICEHISTORY_SENTSTAMP_V1
       }));
       setRowsData(mapped);
     } catch (e) { console.error('fetch invoice history:', e); }
@@ -13171,7 +15500,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
     const map = new Map();
     filtered.forEach(r => {
       const key = r.batch_id || '(ไม่มี Batch)';
-      if (!map.has(key)) map.set(key, { batch_id: r.batch_id || '', bu: r.bu, receive_date: r.receive_date, exported_at: r.exported_at, record_type: r.record_type || 'actual', items: [] });
+      if (!map.has(key)) map.set(key, { batch_id: r.batch_id || '', bu: r.bu, receive_date: r.receive_date, exported_at: r.exported_at, record_type: r.record_type || 'actual', sentStamp: r.sent_stamp || null, items: [] }); // MARKER_INVOICEHISTORY_SENTSTAMP_V1
       map.get(key).items.push(r);
     });
     return Array.from(map.values()).map(g => ({
@@ -13356,6 +15685,10 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                         {g.batch_id || '(ไม่มี Batch)'}
                         {g.record_type === 'legacy' && (
                           <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 500, padding: '1px 6px', borderRadius: '20px', background: '#F1EFE8', color: '#5F5E5A', fontFamily: 'sans-serif' }}>Legacy</span>
+                        )}
+                        {/* MARKER_INVOICEHISTORY_SENTSTAMP_V1 -- Badge "ส่งแล้ว" (AP TO FP) -- Stamp ระดับ Batch ถาวร */}
+                        {g.sentStamp && (
+                          <span title={`ส่งแล้ว (${g.sentStamp})`} style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 500, padding: '1px 6px', borderRadius: '20px', background: '#EAF3DE', color: '#27500A', fontFamily: 'sans-serif' }}>✅ ส่งแล้ว</span>
                         )}
                       </td>
                       <td style={{ padding: '8px 10px' }}></td>
@@ -14691,7 +17024,7 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 // MARKER_INITIAL_HISTORY_TAB_V1
-export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, initialHistoryTab }) {
+export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, initialHistoryTab, initialViewBatchId }) {  // MARKER_BELL_VIEW_SYNC_V1
   const { fetchCollection, getCached } = useDataCache();
 
   // ── Real-time: คนอื่น Save Branch (New/Edit) ที่ไหนก็ตาม -> Refetch BranchList ──
@@ -14705,6 +17038,10 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   const { userName, currentUser }      = useAuth();
   const [step, setStep]               = useState(1);
   const [batchConfig, setBatchConfig] = useState(null);
+  // MARKER_CHANNEL_FEATURE_PHASE1_2_V1 -- Default Channel 1 เสมอ (5 ช่องทำงานคู่ขนาน ต่อ User)
+  const [activeChannel, setActiveChannel] = useState(1);
+  // MARKER_CHANNEL_PREVIEW_POPUP_ONLY_V1 -- ค่าที่เลือกจาก Popup ก่อนเข้า Batch Preview (null = ยังไม่เลือก ใช้ activeChannel แทน)
+  const [previewChannelChoice, setPreviewChannelChoice] = useState(null);
   // MARKER_APCONTROLLER_BATCHSETUP_RESET_KEY_V1
   // ── เปลี่ยนค่านี้เฉพาะตอนกด "+ New Batch" เพื่อบังคับ BatchSetup Remount ──
   // ── (Reset State เจตนา) ส่วนกลับไปมาระหว่าง Step ปกติจะไม่ทำให้ค่านี้เปลี่ยน ──
@@ -15001,17 +17338,17 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
         {/* ── ซ่อนด้วย CSS แทน Unmount กัน BU/Receive Date/Due Date/GRT-GRN Preview ── */}
         {/* ── หายตอนกลับมา Step 1 (เดิม unmount ทุกครั้งที่ step !== 1 ทำให้ State หาย) ── */}
         <div key={batchSetupKey} style={{ display: step === 1 ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-          <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} step={step} />
+          <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} initialViewBatchId={initialViewBatchId} step={step} activeChannel={activeChannel} setActiveChannel={setActiveChannel} />  {/* MARKER_BELL_VIEW_SYNC_V1 */}
         </div>
         {step === 2 && (
-          <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)}
+          <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)} activeChannel={activeChannel} setActiveChannel={setActiveChannel} setPreviewChannelChoice={setPreviewChannelChoice}
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}
             cpcItems={cpcItems} itemcodeItems={itemcodeItems} categoryItems={categoryItems} noticeItems={noticeItems}
             vendorRuleItems={vendorRuleItems} smCodeItems={smCodeItems} fetchCollection={fetchCollection}
             userName={userName || currentUser?.email || ''} currentUser={currentUser}
             onRunningChange={handleRunningChange} />
         )}
-        {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} batchConfig={batchConfig} supplierItems={supplierItems} vendorRuleItems={vendorRuleItems} userName={userName || currentUser?.email || ''} currentUser={currentUser} systemPrefix={systemPrefix} />}
+        {step === 3 && <GenerateExport invoices={invoices} onNewBatch={handleNewBatch} onBack={() => setStep(2)} batchConfig={batchConfig} supplierItems={supplierItems} vendorRuleItems={vendorRuleItems} userName={userName || currentUser?.email || ''} currentUser={currentUser} systemPrefix={systemPrefix}  activeChannel={previewChannelChoice ?? activeChannel} />}
       </div>
     </div>
   );

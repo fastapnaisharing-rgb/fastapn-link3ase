@@ -1,6 +1,6 @@
 ﻿import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { flushAllSync } from './syncRegistry';
-import { subscribeWs, broadcastWs } from '../wsManager';
+import { subscribeWs, broadcastWs, setWsUsername } from '../wsManager';
 import { db } from '../lib/db';
 
 const AuthContext = createContext();
@@ -41,6 +41,8 @@ export function AuthProvider({ children }) {
     setUserPermissions(user?.permissions || null);
     // ── ไม่ต้องเรียก mergeDocAccessOverrides อีกแล้ว ──
     // ── user.permissions.docAccess มาพร้อม Response แล้ว (Backend getDocAccess()) ──
+    // MARKER_AUTHCONTEXT_WSUSERNAME_V1 -- แจ้ง wsManager ว่า Username คือใคร สำหรับ WS Connection
+    setWsUsername(user?.username || null);
   };
 
   const clearUserState = () => {
@@ -51,6 +53,8 @@ export function AuthProvider({ children }) {
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem('fastapn_cache');
     sessionStorage.removeItem('fastapn_cache_time');
+    // MARKER_AUTHCONTEXT_WSUSERNAME_V1 -- เคลียร์ Username ฝั่ง wsManager ด้วย
+    setWsUsername(null);
   };
 
   // MARKER_AUTHCONTEXT_GLOBAL_401_LISTENER_V1
