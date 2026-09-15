@@ -63,32 +63,68 @@ function StatusDropdown({ value, onChange, options, style }) {
 }
 
 // MARKER_BUSINESSUNIT_FIX_INFOCELL_STYLE_V1
-function ComboBox({ value, onChange, options, placeholder, bare }) {
+function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_COMBOBOX_PORTAL_FIX_V1
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(value || '');
+  const [highlight, setHighlight] = useState(-1); // ✅ Index ที่ Highlight อยู่ตอนเลื่อนด้วย Arrow Up/Down
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 }); // MARKER_COMBOBOX_PORTAL_FIX_V1
   const ref = useRef(null);
+  const listRef = useRef(null); // MARKER_COMBOBOX_PORTAL_FIX_V1
   useEffect(() => { setInput(value || ''); }, [value]);
   useEffect(() => {
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = (e) => {
+      if (ref.current && ref.current.contains(e.target)) return;
+      if (listRef.current && listRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
   const filtered = [...new Set(options.filter(o => o && o !== '-' && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
   const bareStyle = { height: '28px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: 'center' };
   const normalStyle = { padding: '5px 8px', borderRadius: '5px', border: '0.5px solid #d0d0d0', fontSize: '12px', width: '100%', boxSizing: 'border-box', height: '30px' };
+  // ✅ เลือก Option — ใช้ร่วมทั้ง Mouse Click และ Arrow+Enter
+  const selectOption = (opt) => { setInput(opt); onChange(opt); setOpen(false); setHighlight(-1); };
+  // MARKER_COMBOBOX_PORTAL_FIX_V1 -- คำนวณตำแหน่งก่อนเปิด Dropdown เสมอ (สำหรับ Portal position:fixed)
+  const openDropdown = () => {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    }
+    setOpen(true);
+  };
+  // ✅ Arrow Up/Down เลื่อนเลือก, Enter เลือก, Escape ปิด
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) { openDropdown(); return; }
+      setHighlight(h => Math.min(h + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight(h => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (open && highlight >= 0 && filtered[highlight]) { e.preventDefault(); selectOption(filtered[highlight]); }
+    } else if (e.key === 'Escape') {
+      setOpen(false); setHighlight(-1);
+    }
+  };
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <input value={input} onChange={e => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder={placeholder || ''}
+      <input value={input}
+        onChange={e => { setInput(e.target.value); onChange(e.target.value); openDropdown(); setHighlight(-1); }}
+        onFocus={openDropdown}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder || ''}
         style={bare ? bareStyle : normalStyle} />
-      {open && filtered.length > 0 && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 1000, maxHeight: '180px', overflowY: 'auto' }}>
+      {open && filtered.length > 0 && ReactDOM.createPortal(
+        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 99999, maxHeight: '180px', overflowY: 'auto' }}>
           {filtered.map((opt, i) => (
-            <div key={i} onMouseDown={() => { setInput(opt); onChange(opt); setOpen(false); }}
-              style={{ padding: '7px 10px', fontSize: '12px', cursor: 'pointer', borderBottom: '0.5px solid #f5f5f5' }}
-              onMouseEnter={e => e.target.style.background = '#f0f7ff'}
-              onMouseLeave={e => e.target.style.background = 'white'}>{opt}</div>
+            <div key={i} onMouseDown={() => selectOption(opt)}
+              onMouseEnter={() => setHighlight(i)}
+              style={{ padding: '7px 10px', fontSize: '12px', cursor: 'pointer', borderBottom: '0.5px solid #f5f5f5', background: i === highlight ? '#f0f7ff' : 'white' }}>{opt}</div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -238,21 +274,22 @@ function VatWatchlistBuGroupRangeSection({ currentBu }) {
     setFormPrefixLength(r.prefix_length == null ? 'full' : String(r.prefix_length));
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('ลบ Range นี้?')) return;
+  const handleDelete = async (id) => { // MARKER_BUSINESSUNIT_GROUPRANGE_CONFIRMDIALOG_V1 -- confirmDialog แทน window.confirm/alert
+    const confirmed = await confirmDialog.confirm('ลบ Range นี้?', { title: 'ลบ BU Group Range', variant: 'danger' });
+    if (!confirmed) return;
     try {
       const { error } = await db.from('vat_watchlist_bu_group_range').delete().eq('id', id);
       if (error) throw error;
       await loadRanges();
     } catch (err) {
-      alert('ลบไม่สำเร็จ: ' + err.message);
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + err.message, { variant: 'danger' });
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async () => { // MARKER_BUSINESSUNIT_GROUPRANGE_CONFIRMDIALOG_V1
     const groupName = (currentBu || '').trim(); // MARKER_BUSINESSUNIT_BU_GROUP_RANGE_PER_BU_V1 — ใช้ BU ปัจจุบันเสมอ
-    if (!groupName) { alert('ต้องกรอก BU Code ก่อนถึงจะกำหนด Range ได้'); return; }
-    if (!formRangeInput.trim()) { alert('กรุณากรอก Range'); return; }
+    if (!groupName) { confirmDialog.alert('ต้องกรอก BU Code ก่อนถึงจะกำหนด Range ได้', { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
+    if (!formRangeInput.trim()) { confirmDialog.alert('กรุณากรอก Range', { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
     const prefixLength = formPrefixLength === 'full' ? null : Number(formPrefixLength);
 
     setSaving(true);
@@ -276,8 +313,8 @@ function VatWatchlistBuGroupRangeSection({ currentBu }) {
       }
       resetForm();
       await loadRanges();
-    } catch (err) {
-      alert('บันทึกไม่สำเร็จ: ' + err.message);
+    } catch (err) { // MARKER_BUSINESSUNIT_GROUPRANGE_CONFIRMDIALOG_V1
+      confirmDialog.alert('บันทึกไม่สำเร็จ: ' + err.message, { variant: 'danger' });
     }
     setSaving(false);
   };
@@ -286,11 +323,12 @@ function VatWatchlistBuGroupRangeSection({ currentBu }) {
   const headStyle = { ...cellStyle, fontWeight: '600', color: '#666', background: '#f5f5f3', fontSize: '11px' };
   const inputStyle = { width: '100%', padding: '7px 8px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '6px', boxSizing: 'border-box' };
 
-  return (
-    <div style={{ marginTop: '16px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '10px' }}>
-        <div style={{ fontSize: '12px', fontWeight: '600', color: '#666' }}>BU GROUP RANGE</div>
-        <div style={{ fontSize: '10px', color: '#999' }}>— Config ระดับระบบ ไม่บังคับกำหนดทุก BU (ถ้าไม่มี Range = ทำงานตามปกติ)</div>
+  return ( // MARKER_VATWATCHLISTOPS_GROUPRANGE_STYLE_MATCH_V1 -- Header Style เดียวกับ VAT Setting ด้านบน
+    <div style={{ marginTop: '4px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '18px 0 10px' }}>
+        <div style={{ width: '3px', height: '14px', background: '#0F6E56', borderRadius: '2px' }} />
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#0F6E56' }}>BU Group Range</div>
+        <div style={{ fontSize: '12px', color: '#999' }}>— Config ระดับระบบ ไม่บังคับกำหนดทุก BU (ถ้าไม่มี Range = ทำงานตามปกติ)</div>
       </div>
 
       {!loading && buRanges.length > 0 && (
@@ -432,6 +470,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ['ap_grt_pattern','AP GRT Pattern'],['ap_grt','AP GRT'],['ap_grn_pattern','AP GRN Pattern'],['ap_grn','AP GRN'],['ap_digit','AP Digit'],
     ['ie_grt_pattern','IE GRT Pattern'],['ie_grt','IE GRT'],['ie_grn_pattern','IE GRN Pattern'],['ie_grn','IE GRN'],['ie_digit','IE Digit'],
     ['vat_watchlist_status','VAT Status'],['vat_grn_pattern','VAT GRN Pattern'],['vat_grn','VAT GRN'],['vat_digit','VAT Digit'],
+    ['Vat_IE_CPC','Vat IE CPC'], // MARKER_BUSINESSUNIT_VATIE_CPC_TOGGLE_V1 -- IE=46115, MT=99999
     ['base','Base'] // MARKER_BUSINESSUNIT_ADD_BASE_FIELD_V20
   ];
   // Fields that should span full width in Info form
@@ -457,9 +496,12 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     ...Object.fromEntries(INFO_EDIT.map(([k]) => [k, ''])),
     'IE GRT Control': 'Auto',
     'VAT GRT Control': 'Auto',
+    'Vat_IE_CPC': '46115', // MARKER_BUSINESSUNIT_VATIE_CPC_TOGGLE_V1 -- Default IE
   });
   const [infoForm, setInfoForm] = useState(emptyInfoForm());
   const [infoFormTab, setInfoFormTab] = useState('info');  // MARKER_BUSINESSUNIT_INFO_TABS_V3
+  // ✅ Tax Type ComboBox Option List — ค่าใหม่ที่พิมพ์จะถูกเพิ่มเข้า List นี้ (Session เดียว ไม่เก็บ DB)
+  const [taxTypeOptions, setTaxTypeOptions] = useState(['A,T', 'N,T', 'No Type', 'All Type']);
 
   const BRANCH_FIELDS = ['Branch Code','Branch Direct','Branch Allocate','BU Code','Company for Show in Report Display','Simple Company','BU-TaxID','BU-Branch','Simple Brand Code','%','DB(%)','cpc','Branch Address','Group-P','bu','status','Inactive Date','updated_by','updated_at'];
   const BRANCH_KEY = 'Branch Code';
@@ -1252,7 +1294,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       </div>
     );
 
-    const miniInputStyle = { height:'26px', padding:'0 6px', fontSize:'11px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' };
+    const miniInputStyle = { height:'26px', padding:'0 6px', fontSize:'11px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' };
 
     // MARKER_BUSINESSUNIT_GRT_GRN_DEFAULT_ZERO_V1
     // ── Default "0" เมื่อไม่มีข้อมูล เฉพาะ Field ตัวเลข Counter ──────────────
@@ -1282,6 +1324,32 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       </div>
     );
 
+    // MARKER_BUSINESSUNIT_VATIE_CPC_TOGGLE_V2 -- รวม Digit + VAT IE CPC เป็น
+    // กรอบเดียวกัน (Pattern เดียวกับ renderPairBox) แทนแยก 2 กรอบ -- กด "IE"
+    // เซ็ตเป็น '46115' / กด "MT" เซ็ตเป็น '99999' -- Broadcast ไปพร้อมกับ
+    // company_list_updated ตอนกด Save ทั้งฟอร์ม (ไม่ Save ทันทีที่คลิก)
+    const VAT_IE_CPC_MAP = { IE: '46115', MT: '99999' };
+    const renderDigitCpcBox = (digitKey) => {
+      const current = infoForm['Vat_IE_CPC'] || VAT_IE_CPC_MAP.IE;
+      return (
+        <div style={{ ...boxWrap, marginBottom:0 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'0.8fr 1fr' }}>
+            <div style={headCell(false)}>Digit</div>
+            <div style={headCell(true)}>VAT IE CPC</div>
+            <div style={inputCell(false)}><input style={miniInputStyle} value={infoForm[digitKey]||''} onChange={e=>setInfoForm({...infoForm,[digitKey]:e.target.value})}/></div>
+            <div style={{ ...inputCell(true), gap:'3px' }}>
+              {Object.entries(VAT_IE_CPC_MAP).map(([label, value]) => (
+                <button key={label} type="button" onClick={()=>setInfoForm({...infoForm, Vat_IE_CPC: value})}
+                  style={{ border:'none', cursor:'pointer', fontSize:'9.5px', fontWeight:'600', padding:'4px 4px', borderRadius:'12px', flex:1, background: current===value ? '#1a3a5c' : '#f0f0f0', color: current===value ? '#fff' : '#888' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     // MARKER_BUSINESSUNIT_TAXTYPE_MOVE_VAT_V5
     // MARKER_BUSINESSUNIT_STATUS_NORMALIZE_V1
     // ── Normalize ก่อนเทียบ รองรับทั้ง "Out of Scope" และ "out_of_scope" (จาก VatController.js) ──
@@ -1303,7 +1371,18 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               <button type="button" onClick={cycleStatus} style={{ border:'none', cursor:'pointer', fontSize:'11px', fontWeight:'600', padding:'4px 10px', borderRadius:'20px', width:'100%', textAlign:'center', background:opt.bg, color:opt.color }}>{opt.label}</button>
             </div>
             <div style={inputCell(true)}>
-              <input style={miniInputStyle} value={infoForm['allowed_tax_type']||''} onChange={e=>setInfoForm({...infoForm, allowed_tax_type:e.target.value})}/>
+              <ComboBox
+                value={infoForm['allowed_tax_type']||''}
+                onChange={val=>{
+                  setInfoForm({...infoForm, allowed_tax_type:val});
+                  // ✅ ค่าใหม่ที่พิมพ์เอง → เพิ่มเข้า List ให้เลือกซ้ำได้ (ตัด Trim กันซ้ำ/ค่าว่าง)
+                  const v = val.trim();
+                  if (v && !taxTypeOptions.includes(v)) setTaxTypeOptions(prev => [...prev, v]);
+                }}
+                options={taxTypeOptions}
+                placeholder="Tax Type"
+                bare
+              />
             </div>
           </div>
         </div>
@@ -1398,7 +1477,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                   <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 1fr', gap:'8px', marginBottom:'12px' }}>
                     {renderPairBox('ie_grt_pattern','GRT Pattern','ie_grt','GRT')}
                     {renderPairBox('ie_grn_pattern','GRN Pattern','ie_grn','GRN')}
-                    {renderDigitBox('ie_digit','Digit')}
+                    {renderDigitCpcBox('ie_digit')}
                   </div>
                 </React.Fragment>
               )}

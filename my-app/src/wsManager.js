@@ -19,6 +19,9 @@
 let ws = null;
 let reconnectTimer = null;
 const listeners = new Set(); // { events: string[], onEvent: (event, payload) => void }
+// MARKER_WSMANAGER_RECONNECT_BACKOFF_V1 -- ครั้งแรกต่อทันที (0ms) แล้วค่อยหน่วงเพิ่มขึ้นถ้ายังไม่สำเร็จ เพดานเท่าของเดิม (5s)
+let reconnectAttempts = 0;
+const RECONNECT_DELAYS = [0, 1000, 2000, 4000, 5000];
 
 function getApiBase() {
   return (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
@@ -52,6 +55,8 @@ function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   ws = new WebSocket(getWsUrl());
 
+  ws.onopen = () => { reconnectAttempts = 0; }; // MARKER_WSMANAGER_RECONNECT_BACKOFF_V1 -- เชื่อมต่อสำเร็จ รีเซ็ต Backoff กลับเป็นต่อทันทีในรอบหน้า
+
   ws.onmessage = ({ data }) => {
     let parsed;
     try { parsed = JSON.parse(data); } catch { return; }
@@ -69,7 +74,9 @@ function connect() {
     // ── Reconnect เฉพาะตอนยังมีคน Subscribe อยู่จริง ไม่งั้นปล่อยปิดไปเลย ──
     if (listeners.size > 0) {
       clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(connect, 5000);
+      const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)]; // MARKER_WSMANAGER_RECONNECT_BACKOFF_V1
+      reconnectAttempts += 1;
+      reconnectTimer = setTimeout(connect, delay);
     }
   };
 }

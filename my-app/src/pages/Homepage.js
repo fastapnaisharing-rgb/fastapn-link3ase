@@ -586,17 +586,27 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
         // ── Join batch_list เอา bu/status จริงมาก่อน (ทำก่อน setNotifications เพื่อใช้ Filter ด้วย Ground Truth) ──
         const batchIds = [...new Set(list.map(n => n.batch_id).filter(Boolean))];
         let map = {};
+        // MARKER_HOMEPAGE_BATCH_DELETED_FILTER_V1
+        // ── Track ว่า Query batch_list สำเร็จจริงไหม (แยกจากกรณี "หา Batch ไม่เจอ") ──
+        let batchQueryOk = true;
         if (batchIds.length > 0) {
-          const { data: batches } = await db.from('batch_list').select('batch_id, bu, status').in('batch_id', batchIds);
+          const { data: batches, error: batchErr } = await db.from('batch_list').select('batch_id, bu, status').in('batch_id', batchIds);
+          if (batchErr) { batchQueryOk = false; console.error('[load batch_list for notifications]', batchErr); }
           (batches || []).forEach(b => { map[b.batch_id] = b; });
         }
         setBatchMeta(map);
 
         // MARKER_HOMEPAGE_FILTER_BY_BATCHLIST_STATUS_V3 -- ตัด Notification ที่ Batch จริง Approve/Reject ไปแล้วออกจาก Home ทันที
+        // ── FIX: เดิมเช็คแค่ approved/rejected -- ถ้า Batch ถูกลบไปเลย (ไม่มี Row ──
+        // ── ให้ Join เจอ) liveStatus จะเป็น undefined ซึ่งผ่านเงื่อนไขเดิมได้ ──────
+        // ── ทำให้ Notification ค้างแสดงตลอดไป -- ตอนนี้ตัดออกด้วยถ้าหาไม่เจอจริง ──
+        // ── (เฉพาะตอน Query สำเร็จเท่านั้น กัน False Positive ตอน Query ล้มเหลว) ──
         const filteredList = list.filter(n => {
           if (!n.batch_id) return true;
           const liveStatus = map[n.batch_id]?.status;
-          return liveStatus !== 'approved' && liveStatus !== 'rejected';
+          if (liveStatus === undefined) return !batchQueryOk;
+          // MARKER_HOMEPAGE_NOTIF_ENDPROCESS_FILTER_V1 -- เพิ่ม end_process เข้ามาด้วย ยืนยันจาก DB จริงว่า Batch ที่จบแล้ว (มี approved_at) ใช้ status นี้
+          return liveStatus !== 'approved' && liveStatus !== 'rejected' && liveStatus !== 'end_process';
         });
 
         const combined = [...filteredList, ...supportList].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));

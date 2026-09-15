@@ -2668,11 +2668,13 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
 
 
 // ── compress รูปก่อน save ให้เหลือ ≤ maxKB ──────────────────────────────────
-function compressImage(dataUrl, maxKB = 200, quality = 0.82) {
+// MARKER_UPLOADGEN_ATTACH_AUTOSMALLEST_QUALITY_V1
+// ── บีบอัดรูปให้เล็กที่สุดเท่าที่ยังอ่านรู้เรื่องได้ -- ไล่ Quality จากสูงลงต่ำ หยุดตรงจุดที่ ──
+// ── ขนาดไฟล์เริ่มลดลงน้อยกว่า 4% ต่อ Step (Diminishing Return) แล้วใช้ Quality ก่อนหน้า ──
+function compressImage(dataUrl) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      // คำนวณขนาดใหม่ถ้ากว้าง/สูงเกิน 1600px
       const MAX_DIM = 1600;
       let { width, height } = img;
       if (width > MAX_DIM || height > MAX_DIM) {
@@ -2685,14 +2687,75 @@ function compressImage(dataUrl, maxKB = 200, quality = 0.82) {
       canvas.height = height;
       canvas.getContext('2d').drawImage(img, 0, 0, width, height);
 
-      // ลด quality จนกว่าจะ ≤ maxKB
-      let q = quality;
-      let result = canvas.toDataURL('image/jpeg', q);
-      while (result.length * 0.75 > maxKB * 1024 && q > 0.3) {
-        q -= 0.08;
-        result = canvas.toDataURL('image/jpeg', q);
+      const qualities = [0.92, 0.86, 0.8, 0.74, 0.68, 0.62, 0.56, 0.5, 0.44, 0.38];
+      let best = canvas.toDataURL('image/jpeg', qualities[0]);
+      for (let i = 1; i < qualities.length; i++) {
+        const candidate = canvas.toDataURL('image/jpeg', qualities[i]);
+        const reduction = (best.length - candidate.length) / best.length;
+        if (reduction < 0.04) break;
+        best = candidate;
       }
-      resolve(result);
+      resolve(best);
+    };
+    img.src = dataUrl;
+  });
+}
+
+// MARKER_UPLOADGEN_ATTACH_PDFJS_LOADER_V1
+// ── โหลด pdf.js จาก CDN แบบ Lazy (โหลดครั้งแรกที่มีการแนบ PDF เท่านั้น) ──
+let _pdfJsLoadPromise = null;
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_pdfJsLoadPromise) return _pdfJsLoadPromise;
+  _pdfJsLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(window.pdfjsLib);
+    };
+    script.onerror = () => reject(new Error('โหลด PDF Engine ไม่สำเร็จ (ตรวจ Internet/Firewall)'));
+    document.head.appendChild(script);
+  });
+  return _pdfJsLoadPromise;
+}
+
+// MARKER_UPLOADGEN_ATTACH_PDF_FIRSTPAGE_V1
+// ── แปลง PDF หน้าแรกเป็นรูป JPG (ก่อนส่งเข้า compressImage บีบอัดต่ออีกที) ──
+async function renderPdfFirstPageToDataUrl(file) {
+  const pdfjsLib = await loadPdfJs();
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
+// MARKER_UPLOADGEN_ATTACH_UPSCALE_DOWNLOAD_V1
+// ── ตอน Download ค่อยขยาย Pixel กลับขึ้น (เก็บไฟล์เล็กไว้ประหยัดพื้นที่ แต่โหลดออกมาใหญ่ขึ้น) ──
+function upscaleForDownload(dataUrl, scaleFactor = 2, maxDim = 2400) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width * scaleFactor;
+      let height = img.height * scaleFactor;
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.92));
     };
     img.src = dataUrl;
   });
@@ -2702,21 +2765,67 @@ function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
   const [attachments, setAttachments] = React.useState(Array.isArray(file.attachments) ? [...file.attachments] : []);
   const [saving, setSaving] = React.useState(false);
   const [preview, setPreview] = React.useState(null); // index ที่กำลัง preview
+  const [dragOver, setDragOver] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
   const inputRef = React.useRef();
 
+  // MARKER_UPLOADGEN_ATTACH_ACCEPT_PDF_DRAGDROP_V1
+  // ── รับ PDF/JPG/PNG ทั้งจาก Drag&Drop และปุ่มเลือกไฟล์ -- ใช้ Handler เดียวกัน ──
+  // ── PDF: แปลงหน้าแรกเป็น JPG ก่อน แล้วเข้า Flow บีบอัดเดียวกับรูปภาพปกติ ──
+  const processFiles = (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+    if (!files.length) return;
+    if (attachments.length + files.length > 3) { alert('แนบได้สูงสุด 3 ไฟล์ครับ'); return; }
+    const slot = 3 - attachments.length;
+    setImporting(true);
+    (async () => {
+      for (const f of files.slice(0, slot)) {
+        try {
+          let rawDataUrl;
+          if (f.type === 'application/pdf') {
+            rawDataUrl = await renderPdfFirstPageToDataUrl(f);
+          } else {
+            rawDataUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = ev => resolve(ev.target.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(f);
+            });
+          }
+          const compressed = await compressImage(rawDataUrl);
+          const kb = Math.round(compressed.length * 0.75 / 1024);
+          const displayName = f.type === 'application/pdf' ? f.name.replace(/\.pdf$/i, '.jpg') : f.name;
+          setAttachments(prev => [...prev, { name: displayName, data: compressed, mime: 'image/jpeg', size_kb: kb }]);
+        } catch (e) {
+          alert('แปลงไฟล์ "' + f.name + '" ไม่สำเร็จ: ' + e.message);
+        }
+      }
+      setImporting(false);
+    })();
+  };
+
   const handleAddFiles = (e) => {
-    const imgs = Array.from(e.target.files||[]).filter(f=>f.type.startsWith('image/'));
-    if (attachments.length + imgs.length > 3) { alert('แนบได้สูงสุด 3 รูปครับ'); return; }
-    imgs.slice(0, 3 - attachments.length).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = async ev => {
-        const compressed = await compressImage(ev.target.result, 200);
-        const kb = Math.round(compressed.length * 0.75 / 1024);
-        setAttachments(prev => [...prev, { name: file.name, data: compressed, mime: 'image/jpeg', size_kb: kb }]);
-      };
-      reader.readAsDataURL(file);
-    });
+    processFiles(e.target.files);
     e.target.value = '';
+  };
+
+  // MARKER_UPLOADGEN_ATTACH_UPSCALE_DOWNLOAD_V1
+  // ── Download ที่ Thumbnail เดิม (Mockup A) -- ขยาย Pixel กลับขึ้นก่อนโหลด ไม่กระทบไฟล์ที่เก็บใน DB ──
+  const [downloadingIdx, setDownloadingIdx] = React.useState(null);
+  const handleDownloadAttachment = async (i) => {
+    if (downloadingIdx === i) return;
+    setDownloadingIdx(i);
+    try {
+      const att = attachments[i];
+      const upscaled = await upscaleForDownload(att.data);
+      const a = document.createElement('a');
+      a.href = upscaled;
+      a.download = att.name || 'attachment.jpg';
+      a.click();
+    } catch (e) {
+      alert('ดาวน์โหลดไม่สำเร็จ: ' + e.message);
+    }
+    setDownloadingIdx(null);
   };
 
   const handleRemove = (i) => {
@@ -2730,7 +2839,10 @@ function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
     try {
       await db.from('doc_collection').update({ attachments }).eq('id', file.id);
       await logActivity('update_attachment', file.serial_code, { count: attachments.length });
-      onSave();
+      // MARKER_UPLOADGEN_ATTACH_SKIP_FULL_REFETCH_V1
+      // ── ส่ง attachments ที่เพิ่ง Save กลับไปให้ Parent ──
+      // ── อัปเดต State เฉพาะแถวนี้ ไม่ต้อง Fetch ทั้งตารางใหม่ ──
+      onSave(attachments);
     } catch(e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
@@ -2750,14 +2862,18 @@ function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
 
         {/* Content */}
         <div style={{padding:'16px 18px',flex:1,overflowY:'auto'}}>
-          {/* Preview ใหญ่ */}
-          <div style={{width:'100%',height:'220px',borderRadius:'8px',background:'#f4f6f9',border:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'12px',overflow:'hidden',cursor:preview!=null?'zoom-in':'default'}}
-            onClick={()=>preview!=null&&window.open(attachments[preview].data,'_blank')}>
+          {/* MARKER_UPLOADGEN_ATTACH_SINGLE_ZONE_V1 -- Zone เดียว: Preview + Browse/Drag&Drop รวมกัน */}
+          <div style={{width:'100%',height:'220px',borderRadius:'8px',background: dragOver ? '#eef4fb' : '#f4f6f9',border: dragOver ? '1.5px dashed #1a3a5c' : '0.5px solid #e0e0e0',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'12px',overflow:'hidden',cursor: preview!=null ? 'zoom-in' : (attachments.length<3 ? 'pointer' : 'default'),transition:'all .15s'}}
+            onClick={()=>{ if (preview!=null) window.open(attachments[preview].data,'_blank'); else if (attachments.length<3) inputRef.current?.click(); }}
+            onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+            onDragLeave={()=>setDragOver(false)}
+            onDrop={e=>{e.preventDefault();setDragOver(false);processFiles(e.dataTransfer.files);}}>
             {preview != null
               ? <img src={attachments[preview].data} alt={attachments[preview].name} style={{maxWidth:'100%',maxHeight:'100%',objectFit:'contain'}}/>
-              : <div style={{textAlign:'center',color:'#bbb'}}>
-                  <div style={{fontSize:'32px',marginBottom:'6px'}}>🖼</div>
-                  <div style={{fontSize:'11px'}}>คลิกรูปด้านล่างเพื่อดู Preview</div>
+              : <div style={{textAlign:'center',color: dragOver ? '#1a3a5c' : '#bbb'}}>
+                  <div style={{fontSize:'32px',marginBottom:'6px'}}>{importing ? '⏳' : '📥'}</div>
+                  <div style={{fontSize:'12px',fontWeight:'500'}}>{importing ? 'กำลังแปลงไฟล์...' : 'ลากไฟล์มาวาง หรือคลิกเพื่อเลือก'}</div>
+                  <div style={{fontSize:'10px',marginTop:'4px'}}>รองรับ PDF, JPG, PNG{attachments.length>0 ? ' · คลิกรูปด้านล่างเพื่อดู Preview' : ''}</div>
                 </div>
             }
           </div>
@@ -2770,6 +2886,9 @@ function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
                   style={{width:'80px',height:'80px',borderRadius:'6px',objectFit:'cover',cursor:'pointer',border:preview===i?'2px solid #1a3a5c':'1.5px solid #ddd',transition:'border .15s'}}/>
                 <button onClick={()=>handleRemove(i)}
                   style={{position:'absolute',top:'-6px',right:'-6px',width:'18px',height:'18px',borderRadius:'50%',background:'#c0392b',border:'none',color:'white',cursor:'pointer',fontSize:'10px',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>✕</button>
+                {/* MARKER_UPLOADGEN_ATTACH_UPSCALE_DOWNLOAD_V1 -- Mockup A: ไอคอน Download มุมล่างขวาของ Thumbnail เดิม */}
+                <button title="Download" onClick={()=>handleDownloadAttachment(i)} disabled={downloadingIdx===i}
+                  style={{position:'absolute',bottom:'3px',right:'3px',width:'20px',height:'20px',borderRadius:'4px',border:'none',background: downloadingIdx===i ? 'rgba(150,150,150,0.85)' : 'rgba(26,58,92,0.85)',color:'white',cursor: downloadingIdx===i ? 'default' : 'pointer',fontSize:'11px',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>{downloadingIdx===i ? '⏳' : '⬇'}</button>
                 <div style={{fontSize:'9px',color:'#888',textAlign:'center',marginTop:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'80px'}}>{a.name}</div>
                 {a.size_kb && <div style={{fontSize:'9px',color:'#aaa',textAlign:'center'}}>{a.size_kb} KB</div>}
               </div>
@@ -2780,13 +2899,13 @@ function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
                 onMouseEnter={e=>{e.currentTarget.style.borderColor='#1a3a5c';e.currentTarget.style.color='#1a3a5c';}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor='#ccc';e.currentTarget.style.color='#bbb';}}>
                 <span style={{fontSize:'22px'}}>+</span>
-                <span style={{fontSize:'9px'}}>เพิ่มรูป</span>
+                <span style={{fontSize:'9px'}}>เพิ่มไฟล์</span>
               </div>
             )}
           </div>
-          <input ref={inputRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleAddFiles}/>
+          <input ref={inputRef} type="file" accept="image/*,application/pdf" multiple style={{display:'none'}} onChange={handleAddFiles}/>
 
-          <div style={{fontSize:'10px',color:'#aaa'}}>แนบได้สูงสุด 3 รูป · คลิก ✕ เพื่อลบรูป · {attachments.length}/3</div>
+          <div style={{fontSize:'10px',color:'#aaa'}}>แนบได้สูงสุด 3 ไฟล์ · คลิก ✕ เพื่อลบ · {attachments.length}/3</div>
         </div>
 
         {/* Footer */}
@@ -3184,6 +3303,9 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const [perPage, setPerPage] = useState(100);
   const [showAdd, setShowAdd] = useState(false);
   const [showDraftPanel, setShowDraftPanel] = useState(false);
+  // MARKER_UPLOADGEN_BROADCAST_SAVE_LIGHTWEIGHT_V1
+  const [addOpenedAt, setAddOpenedAt] = useState(null);
+  const [draftOpenedAt, setDraftOpenedAt] = useState(null);
   const [draftBadge, setDraftBadge] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [viewFile, setViewFile] = useState(null);
@@ -3230,9 +3352,39 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     setLoading(false);
   }, []);
 
+  // MARKER_UPLOADGEN_BROADCAST_SAVE_LIGHTWEIGHT_V1
+  // ── Fetch เฉพาะแถวที่เกิดใหม่ตั้งแต่ ts (เวลาเปิด Modal) แทนการดึงทั้งตารางใหม่หมด ──
+  const fetchNewSince = async (ts) => {
+    if (!ts) return [];
+    try {
+      const { data } = await db.from('doc_collection').select('*').neq('status','draft').gte('created_at', ts).order('created_at',{ ascending:false });
+      return data || [];
+    } catch(e) { console.error(e); return []; }
+  };
+  const mergeNewFiles = (newRows) => {
+    if (!newRows || !newRows.length) return;
+    setFiles(prev => {
+      const ids = new Set(newRows.map(r => r.id));
+      return [...newRows, ...prev.filter(f => !ids.has(f.id))];
+    });
+  };
+
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
   useEffect(() => {
-    const unsub = subscribeWs(['doc_collection_updated'], () => fetchFiles());
+    // MARKER_UPLOADGEN_BROADCAST_DELETE_LIGHTWEIGHT_V1 / MARKER_UPLOADGEN_BROADCAST_SAVE_LIGHTWEIGHT_V1
+    // ── action==='delete' ── ลบแถวออกจาก State ตรงๆ ไม่ต้อง Fetch ซ้ำ (หนัก) ──
+    // ── action==='save' ── Fetch เฉพาะแถวใหม่ตั้งแต่ ts มา Merge เข้า State (ไม่ Fetch ทั้งตาราง) ──
+    // ── อย่างอื่น (หรือไม่มี Payload) ── คง fetchFiles() เดิม (Fallback ปลอดภัย) ──
+    const unsub = subscribeWs(['doc_collection_updated'], async (payload) => {
+      if (payload?.action === 'delete' && payload.id != null) {
+        setFiles(prev => prev.filter(f => f.id !== payload.id));
+      } else if (payload?.action === 'save' && payload.ts) {
+        const newRows = await fetchNewSince(payload.ts);
+        mergeNewFiles(newRows);
+      } else {
+        fetchFiles();
+      }
+    });
     return unsub;
   }, [fetchFiles]);
 
@@ -3287,8 +3439,11 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     try {
       await db.from('doc_collection').delete().eq('id', file.id);
       await logActivity('delete_file', file.serial_code, { folder:folder.key });
-      broadcastWs('doc_collection_updated', { action:'delete', serial:file.serial_code });
-      setConfirmDelete(null); fetchFiles();
+      // MARKER_UPLOADGEN_BROADCAST_DELETE_LIGHTWEIGHT_V1
+      // ── ส่ง id ไปด้วย ให้เครื่องอื่นลบแถวออกจาก State ตรงๆ ได้ ไม่ต้อง Fetch ซ้ำ ──
+      broadcastWs('doc_collection_updated', { action:'delete', id:file.id, serial:file.serial_code });
+      setConfirmDelete(null);
+      setFiles(prev => prev.filter(f => f.id !== file.id));
     } catch(e){ alert('ลบไม่สำเร็จ: '+e.message); }
   };
 
@@ -3554,7 +3709,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                 style={{ width:'220px',padding:'5px 10px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'11px',background:'#f7f8fa',outline:'none' }}/>
               {search && <button onClick={()=>setSearch('')} style={{ padding:'5px 7px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'11px',cursor:'pointer',background:'#f5f5f5',color:'#888' }}>✕</button>}
               <div style={{ position:'relative',display:'inline-block' }}>
-                <button onClick={()=>setShowDraftPanel(true)}
+                <button onClick={()=>{ setDraftOpenedAt(new Date().toISOString()); setShowDraftPanel(true); }}
                   style={{ padding:'5px 12px',borderRadius:'6px',border:'0.5px solid #c8d8ec',background:'#f0f6ff',color:'#1a3a5c',fontSize:'12px',cursor:'pointer',fontWeight:'500' }}>
                   📋 Draft
                 </button>
@@ -3575,7 +3730,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                   </span>
                 )}
               </div>
-              <button onClick={()=>setShowAdd(true)} style={{ padding:'5px 14px',borderRadius:'6px',border:'none',background:'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500' }}>+ เพิ่มไฟล์</button>
+              <button onClick={()=>{ setAddOpenedAt(new Date().toISOString()); setShowAdd(true); }} style={{ padding:'5px 14px',borderRadius:'6px',border:'none',background:'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500' }}>+ เพิ่มไฟล์</button>
             </div>
           </div>
         </div>
@@ -3800,7 +3955,13 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
         <AttachmentModal
           file={attachModal}
           onClose={()=>setAttachModal(null)}
-          onSave={()=>{ setAttachModal(null); fetchFiles(); }}
+          onSave={(updatedAttachments)=>{
+            // MARKER_UPLOADGEN_ATTACH_SKIP_FULL_REFETCH_V1
+            // ── อัปเดต attachments เฉพาะแถวนี้ใน State โดยตรง ──
+            // ── ไม่ต้อง fetchFiles() ดึงทุก Column ของทุกแถว (attachments/rows หนัก) ซ้ำ ──
+            setFiles(prev => prev.map(f => f.id === attachModal.id ? { ...f, attachments: updatedAttachments } : f));
+            setAttachModal(null);
+          }}
           db={db}
           logActivity={logActivity}
         />
@@ -3831,8 +3992,21 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
           <div style={{fontSize:'11px',color:'rgba(255,255,255,0.5)'}}>{lightbox.attachments[lightbox.index].name}</div>
         </div>
       )}
-      {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={()=>{setShowAdd(false);fetchFiles();fetchQueue();broadcastWs('doc_collection_updated',{action:'save'});}} userName={userName} currentUser={currentUser} isOwner={isOwner} isAdmin={isAdmin} isEditor={isEditor}/>}
-      {showDraftPanel && <DraftPanel onClose={()=>{setShowDraftPanel(false);fetchDraftBadge();}} onSubmitted={()=>{fetchFiles();fetchDraftBadge();broadcastWs('doc_collection_updated',{action:'save'});}} userName={userName} currentUser={currentUser} isOwner={isOwner} isAdmin={isAdmin} isEditor={isEditor}/>}
+      {showAdd && <AddFileModal folder={folder} onClose={()=>setShowAdd(false)} onSave={async ()=>{
+        // MARKER_UPLOADGEN_BROADCAST_SAVE_LIGHTWEIGHT_V1
+        setShowAdd(false);
+        const newRows = await fetchNewSince(addOpenedAt);
+        mergeNewFiles(newRows);
+        fetchQueue();
+        broadcastWs('doc_collection_updated',{action:'save', ts:addOpenedAt});
+      }} userName={userName} currentUser={currentUser} isOwner={isOwner} isAdmin={isAdmin} isEditor={isEditor}/>}
+      {showDraftPanel && <DraftPanel onClose={()=>{setShowDraftPanel(false);fetchDraftBadge();}} onSubmitted={async ()=>{
+        // MARKER_UPLOADGEN_BROADCAST_SAVE_LIGHTWEIGHT_V1
+        const newRows = await fetchNewSince(draftOpenedAt);
+        mergeNewFiles(newRows);
+        fetchDraftBadge();
+        broadcastWs('doc_collection_updated',{action:'save', ts:draftOpenedAt});
+      }} userName={userName} currentUser={currentUser} isOwner={isOwner} isAdmin={isAdmin} isEditor={isEditor}/>}
 
       {/* ── Queue Modal — Central Queue Monitor ── */}
       {showQueue && (() => {
@@ -4993,8 +5167,12 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         user_name: user,
         last_seen: new Date().toISOString(),
       }, { onConflict: 'session_id' });
+      // MARKER_UPLOADGEN_HEARTBEAT_APIBASE_FIX_V1
+      // ── FIX: API_Q ไม่มีอยู่ใน Scope ของ Component นี้ (DocumentCenter) ──
+      // ── ใช้ Pattern apiBase Local Declaration เดียวกับจุดอื่นในไฟล์แทน ──
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       // 2. trigger auto start/stop OCR service
-      fetch('/api/docenter/ocr-service/auto', {
+      fetch(`${apiBase}/api/docenter/ocr-service/auto`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => {});
@@ -5007,7 +5185,8 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       clearInterval(interval);
       db.from('menu_active_sessions').delete().eq('session_id', sessionId);
       // stop service ถ้าไม่มี user เหลือ
-      fetch('/api/docenter/ocr-service/auto', {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      fetch(`${apiBase}/api/docenter/ocr-service/auto`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => {});

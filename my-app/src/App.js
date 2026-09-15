@@ -12,8 +12,10 @@ import VendorMaster from './pages/VendorMaster';
 import UploadGen from './pages/UploadGen';
 import UserManagement from './pages/UserManagement';
 import APController, { InvoiceHistoryPage, BatchControlPage } from './pages/APController'; // MARKER_APP_BATCH_CONTROL_PAGE_ROUTE
+import IEController, { InvoiceHistoryPage as IEInvoiceHistoryPage, GenerateMacroLogicPage as IEGenerateMacroLogicPage } from './pages/IEController'; // MARKER_APP_IE_CONTROLLER_ROUTE
 import APScanOCR from './pages/APScanOCR';
 import VatController from './pages/VatController';
+import GLFunctionalController from './pages/GLFunctionalController'; // MARKER_GL_AP_RECON_COMPONENT_V1
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db } from './lib/db';
@@ -24,7 +26,7 @@ import BatchChatDrawer from './pages/BatchChatDrawer';
 import FilePreviewPopup from './FilePreviewPopup';
 import { confirmDialog } from './confirmDialog';
 import ConfirmDialogHost from './ConfirmDialogHost';
-import { ALL_FUNCTION_MENUS, AP_CONTROLLER_MENU, VAT_CONTROLLER_MENU } from './menuConfig'; // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT
+import { ALL_FUNCTION_MENUS, AP_CONTROLLER_MENU, VAT_CONTROLLER_MENU, IE_CONTROLLER_MENU, GL_FUNCTIONAL_MENU } from './menuConfig'; // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT // MARKER_GL_FUNCTIONAL_MENU_APP_V1
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 
@@ -65,8 +67,8 @@ const PAGE_MAINTENANCE_MAP = {
   'vat-amagno-reconcile': 'vat-controller',
   'vat-popvat-report': 'vat-controller',
   'vat-simple-input-report': 'vat-controller',
-  'i-expense': 'i-expense',
-  'gl-functional': 'gl-functional',
+  'ie-gr': 'ie-gr', 'ie-drafts': 'ie-drafts', 'ie-generate-macro-logic': 'ie-generate-macro-logic', // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
+  'gl-ap-recon': 'gl-functional',
   'i-pro-interface': 'i-pro-interface',
 };
 
@@ -1166,8 +1168,12 @@ function MainApp() {
   const VAT_PAGES    = ['vat-incomplete-report', 'vat-amagno-reconcile', 'vat-popvat-report', 'vat-simple-input-report'];
   // [CHANGE 1] เพิ่ม 'condition-rule' เข้า MASTER_PAGES เพื่อให้ sidebar highlight ถูกต้อง
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category','condition-rule'];
+  const IE_PAGES = ['ie-gr', 'ie-drafts', 'ie-generate-macro-logic']; // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
+  const GL_PAGES = ['gl-ap-recon']; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
   const isAPActive     = AP_PAGES.includes(activePage);
   const isVATActive    = VAT_PAGES.includes(activePage);
+  const isIEActive     = IE_PAGES.includes(activePage);
+  const isGLActive     = GL_PAGES.includes(activePage);
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
@@ -1594,6 +1600,8 @@ function MainApp() {
   const handleAPEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ap'); };
   const handleFlyoutEnter  = () => { clearCloseTimer(); };
   const handleVATEnter     = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('vat'); };
+  const handleIEEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ie'); };
+  const handleGLEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('gl'); }; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
   const handleMouseLeave   = () => { startCloseTimer(); };
   const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
 
@@ -1643,6 +1651,26 @@ function MainApp() {
         ? <BatchControlPage currentUser={currentUser} userName={userName} onGotoOutlookSetup={goToOutlookSetup} />
         : <NoAccessPage />;
 
+      // IE Controller
+    case 'ie-gr':
+      return (isEditor || userPermissions?.['IE'])
+        ? <IEController
+            activeSubTab={activePage.replace('ie-', '')}
+            onSubTabChange={sub => setActivePage(`ie-${sub}`)}
+            flyoutOpen={openMenu === 'ie'}
+          />
+        : <NoAccessPage />;
+
+    case 'ie-drafts':
+      return (isEditor || userPermissions?.['IE'])
+        ? <IEInvoiceHistoryPage currentUser={currentUser} userName={userName} isOwner={isOwner} isAdmin={isAdmin} />
+        : <NoAccessPage />;
+
+    case 'ie-generate-macro-logic': // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE // MARKER_APP_IE_MACROLOGIC_PROPS_V1
+      return (isEditor || userPermissions?.['IE'])
+        ? <IEGenerateMacroLogicPage currentUser={currentUser} userName={userName} isOwner={isOwner} isAdmin={isAdmin} />
+        : <NoAccessPage />;
+
       // Functions (placeholder)
       // MARKER_APP_VAT_ROUTING_RESTRUCTURE_V2 — 12 เมนู ตามโครงสร้างใหม่ (OPERATION/RECONCILE/RESULTS/BACKUP)
       case 'vat-watchlist-ops':
@@ -1664,8 +1692,14 @@ function MainApp() {
               flyoutOpen={openMenu === 'vat'}
             />
           : <NoAccessPage />;
-      case 'i-expense':       return (isOwner || userPermissions?.['IE'])    ? <PlaceholderPage title="I-Expense" icon="💸" />       : <NoAccessPage />;
-      case 'gl-functional':   return (isOwner || userPermissions?.['GL'])    ? <PlaceholderPage title="GL Functional" icon="📊" />   : <NoAccessPage />;
+      case 'gl-ap-recon':
+        return (isOwner || userPermissions?.['GL'])
+          ? <GLFunctionalController
+              activeSubTab={activePage}
+              onSubTabChange={sub => setActivePage(sub)}
+              flyoutOpen={openMenu === 'gl'}
+            />
+          : <NoAccessPage />; // MARKER_GL_AP_RECON_COMPONENT_V1
       case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
 
       // Master Data
@@ -1737,7 +1771,7 @@ function MainApp() {
 
   const fpDiv = () => <div style={{ height: '0.5px', background: '#e8eaf0', margin: '4px 16px' }} />;
 
-  const flyoutOpen = openMenu === 'master' || openMenu === 'ap' || openMenu === 'vat';
+  const flyoutOpen = openMenu === 'master' || openMenu === 'ap' || openMenu === 'vat' || openMenu === 'ie' || openMenu === 'gl'; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif', overflow: 'clip' }}>
@@ -1783,7 +1817,21 @@ function MainApp() {
                 {sidebarExpanded ? <><span>💹 VAT Controller</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>💹</span>}
               </div>
             )}
-            {FUNCTION_MENUS.filter(m => m.id !== 'ap-gr' && m.id !== 'vat-controller').map(m => navItem(m.id, m.icon, m.label))}
+            {/* IE Controller — flyout trigger */}
+            {(isOwner || (userPermissions?.['IE'] && !maintenanceMenus.includes('ie-controller'))) && (
+              <div onClick={handleIEEnter} title={!sidebarExpanded ? 'I-Expense' : ''}
+                style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isIEActive || openMenu === 'ie' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ie' ? 'rgba(93,202,165,0.12)' : isIEActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isIEActive || openMenu === 'ie' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                {sidebarExpanded ? <><span>💸 I-Expense</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>💸</span>}
+              </div>
+            )}
+            {/* GL Functional — flyout trigger */} {/* MARKER_GL_FUNCTIONAL_MENU_APP_V1 */}
+            {(isOwner || (userPermissions?.['GL'] && !maintenanceMenus.includes('gl-functional'))) && (
+              <div onClick={handleGLEnter} title={!sidebarExpanded ? 'GL Functional' : ''}
+                style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isGLActive || openMenu === 'gl' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'gl' ? 'rgba(93,202,165,0.12)' : isGLActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isGLActive || openMenu === 'gl' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                {sidebarExpanded ? <><span>📊 GL Functional</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>📊</span>}
+              </div>
+            )}
+            {FUNCTION_MENUS.filter(m => m.id !== 'ap-gr' && m.id !== 'vat-controller' && m.id !== 'i-expense' && m.id !== 'gl-functional').map(m => navItem(m.id, m.icon, m.label))}
 
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
 
@@ -1878,6 +1926,45 @@ function MainApp() {
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {/* MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — Loop จาก menuConfig.js (VAT_CONTROLLER_MENU.groups) */}
               {VAT_CONTROLLER_MENU.groups.map((g, gi) => (
+                <React.Fragment key={g.label}>
+                  {gi > 0 && fpDiv()}
+                  {fpGroup(g.icon, g.label)}
+                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Flyout: IE Controller ── */}
+        {openMenu === 'ie' && (
+          <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+              <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>💸 I-Expense</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+              {/* MARKER_MENUCONFIG_SYNCED_IE_FLYOUT — Loop จาก menuConfig.js (IE_CONTROLLER_MENU.groups) */}
+              {IE_CONTROLLER_MENU.groups.map((g, gi) => (
+                <React.Fragment key={g.label}>
+                  {gi > 0 && fpDiv()}
+                  {fpGroup(g.icon, g.label)}
+                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Flyout: GL Functional ── */} {/* MARKER_GL_FUNCTIONAL_MENU_APP_V1 */}
+        {openMenu === 'gl' && (
+          <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+              <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📊 GL Functional</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+              {GL_FUNCTIONAL_MENU.groups.map((g, gi) => (
                 <React.Fragment key={g.label}>
                   {gi > 0 && fpDiv()}
                   {fpGroup(g.icon, g.label)}

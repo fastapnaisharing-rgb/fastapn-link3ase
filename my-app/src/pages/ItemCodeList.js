@@ -2,6 +2,7 @@
 import { db } from '../lib/db';
 import { apiFetch } from '../api';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs'; // MARKER_ITEMCODELIST_SOURCEMODE_V1 -- ใช้ทำ Template ที่ Highlight สีได้จริง
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 import { useDataCache } from '../contexts/DataCacheContext';
@@ -197,7 +198,7 @@ function ICCombo({ value, options, readOnly, onChange, last = false }) {
 }
 
 // ✅ Template columns ตรง schema (ตัด itemcode2 ออก)
-const TEMPLATE_COLS = ['bu','description','cpc','account','sub','dis_g','i_and_g','value','oth','spi1','spec_tx','keyword'];
+const TEMPLATE_COLS = ['bu','source_mode','description','cpc','account','sub','dis_g','i_and_g','value','oth','spi1','spec_tx','keyword']; // MARKER_ITEMCODELIST_SOURCEMODE_V1 MARKER_ITEMCODELIST_TEMPLATE_MODULE_REORDER_V1
 
 // ✅ Duplicate Check: Field หลักสำหรับเทียบเป็น Record เดียวกัน (Partial Match Key)
 const DUP_KEY_FIELDS = ['bu', 'description', 'account', 'cpc'];
@@ -205,21 +206,29 @@ const DUP_KEY_FIELDS = ['bu', 'description', 'account', 'cpc'];
 const COMPARE_FIELDS = TEMPLATE_COLS.filter(f => f !== 'keyword');
 // Field ที่เคย Default เป็น '-' ตอน Import จริง (ต้องทำตอน Classify ด้วย ไม่งั้นเทียบผิด)
 const DASH_DEFAULT_FIELDS = ['dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx'];
-const ALT_KEYS = { i_and_g: 'I & G', spi1: 'SPI-1' };
+const ALT_KEYS = { i_and_g: 'I & G', spi1: 'SPI-1', source_mode: 'Module' }; // MARKER_ITEMCODELIST_TEMPLATE_MODULE_REORDER_V1
 
-function normalizeRawRow(row) {
+function normalizeRawRow(row, defaultModule = 'AP') {
   const out = {};
   TEMPLATE_COLS.forEach(f => {
     const alt = ALT_KEYS[f];
     let v = String(row[f] ?? (alt ? row[alt] : undefined) ?? '').trim();
     if (!v && DASH_DEFAULT_FIELDS.includes(f)) v = '-';
+    // MARKER_ITEMCODELIST_SOURCEMODE_V1 -- source_mode ไม่กรอกมาก็ได้ (Column Highlight ไว้ใน Template)
+    // ถ้าว่าง Default เป็น 'AP' เสมอ ไม่ใช้ '-' เหมือน Field อื่น
+    if (f === 'source_mode' && !v) v = defaultModule;
+    if (f === 'bu' && !v) v = 'FREE'; // MARKER_ITEMCODELIST_IMPORT_MODULE_MODAL_V1 -- bu ว่าง Default เป็น FREE
     out[f] = v;
   });
   return out;
 }
 
+// MARKER_ITEMCODELIST_IMPORT_MODULE_MODAL_V1 -- Column ที่จำเป็นต้องกรอกจริงๆ (C-F) ถ้าขาดอันใดอันหนึ่ง
+// จะ Flag ไว้เป็น _missingRequired ป้องกัน Import แถวที่ข้อมูลไม่ครบ
+const REQUIRED_IMPORT_FIELDS = ['description', 'cpc', 'account', 'sub'];
+
 // ✅ Classify แต่ละแถวจากไฟล์: new / partial (ซ้ำ Field หลัก แต่ Field อื่นต่าง) / exact (ซ้ำทุก Field หรือซ้ำกันเองในไฟล์)
-function classifyImportRows(rawRows, existingItems) {
+function classifyImportRows(rawRows, existingItems, defaultModule = 'AP') {
   const existingMap = new Map();
   existingItems.forEach(item => {
     const key = DUP_KEY_FIELDS.map(f => String(item[f] ?? '').trim().toLowerCase()).join('|');
@@ -228,7 +237,8 @@ function classifyImportRows(rawRows, existingItems) {
   });
   const seenKeys = new Set();
   return rawRows.map(rawRow => {
-    const row = normalizeRawRow(rawRow);
+    const row = normalizeRawRow(rawRow, defaultModule);
+    const missingRequired = REQUIRED_IMPORT_FIELDS.some(f => !row[f]); // MARKER_ITEMCODELIST_IMPORT_MODULE_MODAL_V1
     const dupKey = DUP_KEY_FIELDS.map(f => row[f].toLowerCase()).join('|');
     const candidates = existingMap.get(dupKey) || [];
     let matched = candidates[0] || null;
@@ -240,15 +250,15 @@ function classifyImportRows(rawRows, existingItems) {
     const isFileDup = seenKeys.has(dupKey);
     seenKeys.add(dupKey);
     if (isExact || isFileDup) {
-      return { ...row, _status: 'exact', _existing: matched, _diffs: [], _imported: false, _junked: false };
+      return { ...row, _status: 'exact', _existing: matched, _diffs: [], _imported: false, _junked: false, _missingRequired: missingRequired };
     }
     if (matched) {
       const diffs = COMPARE_FIELDS
         .filter(f => String(matched[f] ?? '').trim().toLowerCase() !== row[f].toLowerCase())
         .map(f => ({ field: f, old: matched[f] || '-', new: row[f] || '-' }));
-      return { ...row, _status: 'partial', _existing: matched, _diffs: diffs, _imported: false, _junked: false };
+      return { ...row, _status: 'partial', _existing: matched, _diffs: diffs, _imported: false, _junked: false, _missingRequired: missingRequired };
     }
-    return { ...row, _status: 'new', _existing: null, _diffs: [], _imported: false, _junked: false };
+    return { ...row, _status: 'new', _existing: null, _diffs: [], _imported: false, _junked: false, _missingRequired: missingRequired };
   });
 }
 
@@ -269,6 +279,22 @@ function ItemCodeList() {
   const [junkConfirm, setJunkConfirm] = useState(null); // { idx: number[], count } | null
   const [importing, setImporting] = useState(false);
   const [editId, setEditId] = useState(null);
+  // MARKER_ITEMCODELIST_IMPORT_MODULE_MODAL_V1 -- เลือก Module Default ก่อน Import (สำหรับแถวที่ไฟล์ไม่ได้ใส่ Module มา)
+  const [showImportModuleModal, setShowImportModuleModal] = useState(false);
+  const [importDefaultModule, setImportDefaultModule] = useState('AP');
+  const [pendingRawRows, setPendingRawRows] = useState(null); // MARKER_ITEMCODELIST_IMPORT_FLOW_REORDER_V1 -- เก็บไว้รอ Module Default ถ้าจำเป็น
+  // MARKER_ITEMCODELIST_IMPORT_UNIFIED_POPUP_V1 -- Popup เดียวจบ: เลือกไฟล์ในนี้เลย + Auto-Detect + เปิด/ปิดปุ่ม Import
+  const [importFileName, setImportFileName] = useState('');
+  const [importAutoDetected, setImportAutoDetected] = useState(false);
+  const [importUserPicked, setImportUserPicked] = useState(false);
+  const resetImportModalState = () => {
+    setPendingRawRows(null);
+    setImportFileName('');
+    setImportAutoDetected(false);
+    setImportUserPicked(false);
+    setImportDragOver(false);
+  };
+  const [importDragOver, setImportDragOver] = useState(false); // MARKER_ITEMCODELIST_IMPORT_DRAGDROP_V1
   // ✅ Set focus ที่ Description อัตโนมัติตอนเปิดฟอร์ม New (ไม่ใช่ Edit)
   useEffect(() => {
     if (showForm && !editId) {
@@ -286,6 +312,7 @@ function ItemCodeList() {
     return () => document.removeEventListener('keydown', handleEsc);
   }, [showForm]);
   const [sortDir, setSortDir] = useState('asc');
+  const [modeFilter, setModeFilter] = useState('AP'); // MARKER_ITEMCODELIST_SOURCEMODE_V1 -- Filter AP/IE ด้านบน
   const [nextCode, setNextCode] = useState('');
   const [selected, setSelected] = useState([]);
   const [page, setPage] = useState(1);
@@ -295,7 +322,7 @@ function ItemCodeList() {
   const tbodyRef = useRef(null);
   const containerRef = useRef(null);
   const [containerW, setContainerW] = useState(0);
-  const { currentUser, userName } = useAuth();
+  const { currentUser, userName, userPermissions } = useAuth(); // MARKER_ITEMCODELIST_SMCODE_EXACT_UPGRADE_V1
   const { isAdmin, isOwner } = useUserRole();
   const { invalidate } = useDataCache();
   const screenWidth = useWindowWidth();
@@ -305,9 +332,14 @@ function ItemCodeList() {
   const emptyForm = {
     bu: '', description: '', cpc: '', account: '', sub: '',
     dis_g: '', i_and_g: '', value: '', oth: '', spi1: '', spec_tx: '', keyword: '',
-    item: '',
+    item: '', source_mode: 'AP', // MARKER_ITEMCODELIST_SOURCEMODE_V1
     dis_g_desc: '', i_and_g_desc: '', value_desc: '', oth_desc: '', spi1_desc: '', spec_tx_desc: ''
   };
+  // MARKER_ITEMCODELIST_SMCODE_EXACT_UPGRADE_V1 -- Logic เดียวกับ SM-Code เป๊ะ: Owner หรือมีสิทธิ์ทั้ง AP+IE
+  // ถึงจะสลับ Module ได้อิสระ -- คนอื่นล็อกตามสิทธิ์ตัวเอง
+  const hasApItemCode = userPermissions?.['VAT'] || userPermissions?.['Manual'];
+  const hasIeItemCode = userPermissions?.['IE'];
+  const canToggleSourceMode = isOwner || (hasApItemCode && hasIeItemCode);
   const [form, setForm] = useState(emptyForm);
 
   useEffect(() => {
@@ -546,28 +578,90 @@ function ItemCodeList() {
 
 
   // ✅ Template ตัด itemcode2 ออก
-  const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLS]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'ItemcodeList');
-    XLSX.writeFile(wb, 'ItemcodeList_Template.xlsx');
+  // MARKER_ITEMCODELIST_SOURCEMODE_V1 -- เปลี่ยนไปใช้ ExcelJS แทน xlsx ฟรี เพราะต้อง Highlight
+  // สี Background คอลัมน์ source_mode ให้รู้ว่าไม่กรอกก็ได้ (xlsx ฟรีเขียน Fill ไม่ได้จริง)
+  const handleDownloadTemplate = async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('ItemcodeList');
+    // MARKER_ITEMCODELIST_TEMPLATE_MODULE_REORDER_V1 -- Header โชว์ "Module" (อ่านง่ายกว่า source_mode ดิบๆ)
+    const displayHeaders = TEMPLATE_COLS.map(f => f === 'source_mode' ? 'Module' : f);
+    ws.addRow(displayHeaders);
+    const sourceModeColIdx = TEMPLATE_COLS.indexOf('source_mode') + 1;
+    const cell = ws.getRow(1).getCell(sourceModeColIdx);
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE699' } };
+    cell.note = 'ไม่กรอกก็ได้ -- ถ้าว่างจะ Default เป็น AP ให้เอง (ใส่เองได้: AP / IE / All)';
+
+    // MARKER_ITEMCODELIST_TEMPLATE_SAME_FILL_V1 -- Highlight สีเหลืองอ่อนเดียวกับ Module
+    // ให้ Column ที่จำเป็นต้องกรอกด้วย (description, cpc, account, sub) -- สีเดียวกันเป๊ะ
+    const REQUIRED_COLS = ['description', 'cpc', 'account', 'sub'];
+    const requiredIdxs = REQUIRED_COLS.map(f => TEMPLATE_COLS.indexOf(f) + 1).filter(i => i > 0);
+    requiredIdxs.forEach(c => {
+      ws.getRow(1).getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE699' } };
+    });
+
+    // MARKER_ITEMCODELIST_TEMPLATE_GRAY_OTHERS_V1 -- Column ที่เหลือ (bu, dis_g, i_and_g, value,
+    // oth, spi1, spec_tx, keyword) Highlight สีเทาอ่อน แยกให้เห็นชัดว่าไม่ใช่กลุ่มบังคับ/Module
+    const GRAY_COLS = ['bu', 'dis_g', 'i_and_g', 'value', 'oth', 'spi1', 'spec_tx', 'keyword'];
+    const grayIdxs = GRAY_COLS.map(f => TEMPLATE_COLS.indexOf(f) + 1).filter(i => i > 0);
+    grayIdxs.forEach(c => {
+      ws.getRow(1).getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    });
+
+    ws.columns.forEach(col => { col.width = 16; });
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'ItemcodeList_Template.xlsx'; a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
+  // MARKER_ITEMCODELIST_IMPORT_FLOW_REORDER_V1 -- แยก Logic Classify + เปิด Preview ออกมาเป็นฟังก์ชันแยก
+  // ให้เรียกซ้ำได้ทั้งจาก handleFileChange ตรงๆ (ถ้าไฟล์มี Module ครบ) และจาก Popup Module Default (ถ้าไฟล์ขาด Module บางแถว)
+  const proceedWithImport = (rawRows, defaultModule) => {
+    const classified = classifyImportRows(rawRows, items, defaultModule);
+    setPreviewRows(classified);
+    setPreviewSelected(new Set(classified.map((r, i) => i).filter(i => classified[i]._status === 'new' && !classified[i]._missingRequired)));
+    setPreviewTab('new');
+    setPreviewOpenDetail(null);
+    setShowPreview(true);
+  };
+
+  // MARKER_ITEMCODELIST_IMPORT_UNIFIED_POPUP_V1 -- เลือกไฟล์ในตัว Popup เดียวจบ: อ่านไฟล์ + Auto-Detect
+  // Module จากแถวที่มีข้อมูลอยู่แล้ว -- ถ้า Detect เจอ ปุ่ม Import ใช้ได้ทันที ถ้าไม่เจอ ต้องเลือก Module เองก่อน
+  // MARKER_ITEMCODELIST_IMPORT_DRAGDROP_V1 -- แยก Logic อ่านไฟล์ออกมาเป็นฟังก์ชันกลาง
+  // ใช้ร่วมกันได้ทั้งตอนคลิกเลือกไฟล์ และตอนลากไฟล์มาวาง (Drag & Drop)
+  const processImportFile = (file) => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (evt) => {
       const wb = XLSX.read(evt.target.result, { type: 'binary' });
       const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-      const classified = classifyImportRows(rawRows, items);
-      setPreviewRows(classified);
-      setPreviewSelected(new Set(classified.map((r, i) => i).filter(i => classified[i]._status === 'new')));
-      setPreviewTab('new');
-      setPreviewOpenDetail(null);
-      setShowPreview(true);
+      setPendingRawRows(rawRows);
+      setImportFileName(file.name);
+      setImportUserPicked(false);
+
+      const foundCounts = { AP: 0, IE: 0 };
+      rawRows.forEach(r => {
+        const v = String(r['source_mode'] ?? r['Module'] ?? '').trim().toUpperCase();
+        if (v === 'AP' || v === 'IE') foundCounts[v]++;
+      });
+      const fallback = canToggleSourceMode ? 'AP' : effectiveModeFilter;
+      if (foundCounts.AP === 0 && foundCounts.IE === 0) {
+        setImportDefaultModule(fallback);
+        setImportAutoDetected(false);
+      } else {
+        const autoDetected = foundCounts.IE > foundCounts.AP ? 'IE' : 'AP';
+        setImportDefaultModule(canToggleSourceMode ? autoDetected : fallback);
+        setImportAutoDetected(true);
+      }
     };
     reader.readAsBinaryString(file);
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) processImportFile(file);
     e.target.value = '';
   };
 
@@ -648,6 +742,7 @@ function ItemCodeList() {
           spi1:        row.spi1,
           spec_tx:     row.spec_tx,
           keyword:     row.keyword,
+          source_mode: row.source_mode || 'AP', // MARKER_ITEMCODELIST_SOURCEMODE_V1
           updated_by:  userName || currentUser?.email || '',  // ✅ ตรงกับ schema
           updated_at:  now,                                   // ✅ ตรงกับ schema
         }));
@@ -680,7 +775,10 @@ function ItemCodeList() {
     setImporting(false);
   };
 
+  // MARKER_ITEMCODELIST_SMCODE_EXACT_UPGRADE_V1 -- คนที่สลับ Module เองไม่ได้ ให้ล็อกตามสิทธิ์ตัวเอง
+  const effectiveModeFilter = canToggleSourceMode ? modeFilter : (hasIeItemCode ? 'IE' : 'AP');
   const filtered = useMemo(() => items
+    .filter(i => (i.source_mode || 'AP') === effectiveModeFilter || i.source_mode === 'All')
     .filter(i => !search || (
       i.code?.toLowerCase().includes(search.toLowerCase()) ||
       i.bu?.toLowerCase().includes(search.toLowerCase()) ||
@@ -700,7 +798,7 @@ function ItemCodeList() {
       const ca = a.code || '', cb = b.code || '';
       return sortDir === 'asc' ? ca.localeCompare(cb) : cb.localeCompare(ca);
     }),
-    [items, search, sortDir]
+    [items, search, sortDir, effectiveModeFilter]
   );
 
   const effectivePageSize = pageSize === 0 ? filtered.length || 1 : pageSize;
@@ -790,14 +888,89 @@ function ItemCodeList() {
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button style={{ ...S.btn, background: '#0F6E56', color: 'white' }} onClick={handleDownloadTemplate}>
-            ⬇{!isMobile && ' Template'}
-          </button>
-          <button style={{ ...S.btn, background: '#5DCAA5', color: '#1a3a5c' }} onClick={() => fileInputRef.current.click()}>
-            📂{!isMobile && ' Import'}
-          </button>
+          {/* MARKER_ITEMCODELIST_TEMPLATE_IMPORT_OWNERADMIN_ONLY_V1 -- Template/Import จำกัดไว้ที่ Owner/Admin เท่านั้น
+              (แยกจาก canToggleSourceMode ที่คุมแค่การเลือก Module -- ตัวนี้คุมว่าใครเห็นปุ่มนี้ได้เลย) */}
+          {(isOwner || isAdmin) && (
+            <>
+              <button style={{ ...S.btn, background: '#0F6E56', color: 'white' }} onClick={handleDownloadTemplate}>
+                ⬇{!isMobile && ' Template'}
+              </button>
+              <button style={{ ...S.btn, background: '#5DCAA5', color: '#1a3a5c' }} onClick={() => { resetImportModalState(); setShowImportModuleModal(true); }}>
+                📂{!isMobile && ' Import'}
+              </button>
+            </>
+          )}
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />
-          <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setShowForm(true); setEditId(null); resetForm(); }}>
+          {/* MARKER_ITEMCODELIST_IMPORT_UNIFIED_POPUP_V1 -- Popup เดียวจบ: เลือกไฟล์ในตัว + Auto-Detect + Import */}
+          {showImportModuleModal && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10020, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onMouseDown={e => { if (e.target === e.currentTarget) setShowImportModuleModal(false); }}>
+              <div style={{ background: 'white', borderRadius: '14px', width: '420px', maxWidth: '92vw', padding: '24px', boxShadow: '0 20px 60px rgba(26,58,92,0.22), 0 4px 16px rgba(0,0,0,0.08)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
+                  <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#5DCAA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '17px', flexShrink: 0 }}>📥</div>
+                  <div>
+                    <div style={{ fontSize: '15px', fontWeight: 600, color: '#1a3a5c' }}>Import Item Code</div>
+                    <div style={{ fontSize: '11px', color: '#999', marginTop: '1px' }}>เลือกไฟล์ Excel เพื่อเริ่ม Import</div>
+                  </div>
+                </div>
+
+                {/* พื้นที่คลิกเลือกไฟล์ หรือลากไฟล์มาวาง -- MARKER_ITEMCODELIST_IMPORT_DRAGDROP_V1 */}
+                <div onClick={() => fileInputRef.current.click()}
+                  onDragOver={e => { e.preventDefault(); setImportDragOver(true); }}
+                  onDragLeave={() => setImportDragOver(false)}
+                  onDrop={e => { e.preventDefault(); setImportDragOver(false); const file = e.dataTransfer.files?.[0]; if (file) processImportFile(file); }}
+                  style={{ border: `1.5px dashed ${importDragOver ? '#1a3a5c' : pendingRawRows ? '#5DCAA5' : '#ccc'}`, borderRadius: '10px', background: importDragOver ? '#eef4fb' : pendingRawRows ? '#EAF8F2' : '#fafbfc',
+                    padding: '20px', textAlign: 'center', cursor: 'pointer', marginBottom: '14px', transition: 'all .15s' }}>
+                  {pendingRawRows ? (
+                    <>
+                      <div style={{ fontSize: '22px', marginBottom: '6px' }}>✅</div>
+                      <div style={{ fontSize: '12px', color: '#1a3a5c', fontWeight: 500 }}>{importFileName}</div>
+                      <div style={{ fontSize: '11px', color: '#999', marginTop: '2px' }}>{pendingRawRows.length} แถว — คลิกเพื่อเลือกไฟล์อื่น</div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: '26px', marginBottom: '6px' }}>📁</div>
+                      <div style={{ fontSize: '12px', color: '#555', fontWeight: 500 }}>ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์ Excel</div>
+                      <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>.xlsx, .xls</div>
+                    </>
+                  )}
+                </div>
+
+                {pendingRawRows && (
+                  <>
+                    <div style={{ fontSize: '11px', color: importAutoDetected ? '#0F6E56' : '#B54708', marginBottom: '10px', padding: '8px 10px', background: importAutoDetected ? '#E1F5EE' : '#FAEEDA', borderRadius: '6px' }}>
+                      {importAutoDetected
+                        ? `✓ Detect Module จากไฟล์ได้อัตโนมัติแล้ว (${importDefaultModule})`
+                        : '⚠ ไฟล์นี้ไม่ได้ระบุ Module มา — กรุณาเลือก Module ด้านล่างก่อน Import'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#888', marginBottom: '6px', fontWeight: 500 }}>Module</div>
+                    <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '8px', overflow: 'hidden', marginBottom: '20px' }}>
+                      {(canToggleSourceMode ? ['AP', 'IE'] : [effectiveModeFilter]).map(m => (
+                        <button key={m} type="button" onClick={() => { setImportDefaultModule(m); setImportUserPicked(true); }}
+                          style={{ flex: 1, padding: '10px 14px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'background .12s',
+                            background: importDefaultModule === m ? '#1a3a5c' : 'white', color: importDefaultModule === m ? 'white' : '#888' }}>{m}</button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button type="button" onClick={() => { setShowImportModuleModal(false); resetImportModalState(); }}
+                    style={{ padding: '8px 18px', borderRadius: '8px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '13px', cursor: 'pointer' }}>ยกเลิก</button>
+                  <button type="button" disabled={!pendingRawRows || (!importAutoDetected && !importUserPicked)}
+                    onClick={() => { setShowImportModuleModal(false); proceedWithImport(pendingRawRows, importDefaultModule); resetImportModalState(); }}
+                    style={{ padding: '8px 18px', borderRadius: '8px', border: 'none',
+                      background: (!pendingRawRows || (!importAutoDetected && !importUserPicked)) ? '#ccc' : '#1a3a5c',
+                      color: 'white', fontSize: '13px', fontWeight: 600,
+                      cursor: (!pendingRawRows || (!importAutoDetected && !importUserPicked)) ? 'default' : 'pointer',
+                      display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    Import <span style={{ fontSize: '15px' }}>→</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setShowForm(true); setEditId(null); resetForm(); setForm(f => ({ ...f, source_mode: canToggleSourceMode ? 'All' : effectiveModeFilter })); }}> {/* MARKER_ITEMCODELIST_SMCODE_EXACT_UPGRADE_V1 */}
             + New
           </button>
         </div>
@@ -811,6 +984,16 @@ function ItemCodeList() {
             onChange={e => setSearch(e.target.value)}
             style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: isMobile ? '140px' : isTablet ? '180px' : '240px' }}
           />
+          {/* MARKER_ITEMCODELIST_SMCODE_EXACT_UPGRADE_V1 -- Filter AP/IE (โชว์เฉพาะคนสลับ Module ได้) */}
+          {canToggleSourceMode && (
+            <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
+              {['AP', 'IE'].map(m => (
+                <button key={m} onClick={() => { setModeFilter(m); setPage(1); }}
+                  style={{ padding: '5px 12px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '500',
+                    background: modeFilter === m ? '#1a3a5c' : 'white', color: modeFilter === m ? 'white' : '#888' }}>{m}</button>
+              ))}
+            </div>
+          )}
           {!isMobile && <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>{renderInfoText()}</span>}
           {nextCode && !isMobile && <span style={{ fontSize: '12px', color: '#1a3a5c', fontWeight: '500', whiteSpace: 'nowrap' }}>Next Code: {nextCode}</span>}
         </div>
@@ -903,12 +1086,26 @@ function ItemCodeList() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{editId ? 'Edit Item Code' : 'New Item Code'}</div>
               </div>
-              <div style={{ fontSize: '12px', color: '#aaa', marginLeft: 'auto', flexShrink: 0, padding: '6px 12px', border: '0.5px solid #e8eaf0', borderRadius: '7px', background: '#f8f9fa' }}>Code: {editId ? (items.find(i => i.id === editId)?.code || '') : nextCode}</div>
+              {/* MARKER_ITEMCODELIST_SMCODE_EXACT_UPGRADE_V1 -- Module Picker ย้ายมาไว้ตรงนี้ (เหมือน SM-Code เป๊ะ) */}
+              {canToggleSourceMode && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                  <label style={{ fontSize: '11px', color: '#888' }}>Module</label>
+                  <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden' }}>
+                    {['AP', 'IE', 'All'].map(m => (
+                      <button key={m} type="button" onClick={() => setForm(f => ({ ...f, source_mode: m }))}
+                        style={{ padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '500',
+                          background: (form['source_mode'] || 'AP') === m ? '#1a3a5c' : 'white',
+                          color: (form['source_mode'] || 'AP') === m ? 'white' : '#888' }}>{m}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div style={{ fontSize: '12px', color: '#aaa', marginLeft: canToggleSourceMode ? 0 : 'auto', flexShrink: 0, padding: '6px 12px', border: '0.5px solid #e8eaf0', borderRadius: '7px', background: '#f8f9fa' }}>Code: {editId ? (items.find(i => i.id === editId)?.code || '') : nextCode}</div>
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', background: 'white', display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
-              {/* Row 1: Description | BU | Cpc | Account | Sub Acc */}
+              {/* Row 1: Description | BU | Cpc | Account | Sub Acc -- Module ย้ายไปอยู่ Header ของ Form แทน (MARKER_ITEMCODELIST_SMCODE_EXACT_UPGRADE_V1) */}
               <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
                   {['Description', 'BU', 'Cpc', 'Account', 'Sub Acc'].map((h, i) => (
@@ -1025,9 +1222,11 @@ function ItemCodeList() {
                 <tbody>
                   {(previewTab === 'new' ? previewNew : previewDup).slice(0, 200).map((row) => (
                     <React.Fragment key={row._idx}>
-                      <tr>
+                      <tr style={row._missingRequired ? { background: '#FEECEC' } : undefined}>
                         <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                          <input type="checkbox" checked={previewSelected.has(row._idx)} onChange={() => togglePreviewSelect(row._idx)} />
+                          {/* MARKER_ITEMCODELIST_IMPORT_MODULE_MODAL_V1 -- ข้อมูลไม่ครบ (C-F) กดเลือก Import ไม่ได้ */}
+                          <input type="checkbox" checked={previewSelected.has(row._idx)} disabled={row._missingRequired}
+                            onChange={() => togglePreviewSelect(row._idx)} title={row._missingRequired ? 'ข้อมูลไม่ครบ (Description/Cpc/Account/Sub) — Import แถวนี้ไม่ได้' : ''} />
                         </td>
                         {previewTab === 'duplicate' && (
                           <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>

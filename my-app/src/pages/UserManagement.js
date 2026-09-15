@@ -305,7 +305,7 @@
     );
   }
 
-  function AccessControlTab({ users, currentUser, userName, isOwner, userRole, userPermissions }) {
+  function AccessControlTab({ users, currentUser, userName, isOwner, userRole, userPermissions, onLabelChange }) {
     const [overrides, setOverrides] = useState([]);
     const [openFolder, setOpenFolder] = useState(null);
     const [saving, setSaving] = useState(false);
@@ -322,10 +322,20 @@
     const ACCESS_TABS = [
       { id: 'access-ap',   groupId: 'ap-controller',   label: 'AP Access',    permKey: 'Manual' },
       { id: 'access-vat',  groupId: 'vat-controller',  label: 'VAT Access',   permKey: 'VAT'    },
-      { id: 'access-ie',   groupId: 'i-expense',       label: 'IE Access',    permKey: 'IE'     },
+      { id: 'access-ie',   groupId: 'ie-controller',   label: 'IE Access',    permKey: 'IE'     },
       { id: 'access-gl',   groupId: 'gl-functional',   label: 'GL Access',    permKey: 'GL'     },
       { id: 'access-ipro', groupId: 'i-pro-interface', label: 'I-Pro Access', permKey: 'I-Pro'  },
     ];
+    // MARKER_SYSTEMCONSOLE_BREADCRUMB_V4 -- Chain "Access Panel - {Sub-tab
+    // Label}" ขึ้น Parent (System Console Heading) -- Period Panel
+    // ('apmanual') ปล่อยให้ SystemSettingsTab (ลูก) เป็นคน Set Label เต็ม
+    // ("Period Panel - AP control") เอง ไม่งั้นชนกัน เพราะ Effect ของลูกรัน
+    // ก่อนพ่อเสมอใน React (ถ้ามาเซ็ตทับที่นี่ด้วยจะเขียนทับของลูกทิ้ง)
+    useEffect(() => {
+      if (!onLabelChange || subTab === 'apmanual') return;
+      const subTabLabel = subTab === 'document' ? 'Document Access' : (ACCESS_TABS.find(t => t.id === subTab)?.label || '');
+      onLabelChange(subTabLabel ? `Access Panel - ${subTabLabel}` : 'Access Panel');
+    }, [subTab, onLabelChange]);
     // Owner เห็นทุก Tab / Admin เห็นเฉพาะ Tab ที่ตนเองมี Permission โมดูลนั้น
     // MARKER_MENUACCESS_USERROLE_FIX_V7 — ใช้ userRole/userPermissions ที่ส่งแยกมาจริง
     // (currentUser ไม่มี field role/permissions อยู่ในตัวมันเอง)
@@ -537,7 +547,7 @@
         )}
         <div style={{ paddingTop: '16px' }}>
 
-        {subTab === 'apmanual' && <SystemSettingsTab isOwner={isOwner} isAdmin={!isOwner} userName={userName} userRole={userRole} userPermissions={userPermissions} />}
+        {subTab === 'apmanual' && <SystemSettingsTab isOwner={isOwner} isAdmin={!isOwner} userName={userName} userRole={userRole} userPermissions={userPermissions} onLabelChange={onLabelChange} />}
 
         {ACCESS_TABS.map(tab => {
           if (subTab !== tab.id) return null;
@@ -1716,18 +1726,19 @@ function ClosePeriodPopup({ apiFetch, isOwner, userRole, userPermissions, onClos
                         {closedBy ? ('Closed by ' + closedBy + ' \u00b7 ' + fmtDT(closedAt)) : 'Open'}
                       </div>
                     </div>
-                    {/* MARKER_CLOSEPERIOD_CLOSED_BADGE_ADMIN_V1 -- สถานะ Closed:
-                        Owner (ยังอยู่ใน 7 วัน) เห็นปุ่ม Reopen / Admin เห็นแค่ Badge กดไม่ได้อีกเลย */}
+                    {/* MARKER_REOPEN_BUTTON_STATUS_FIX_V1
+                        Backend Set current_status='open' เสมอหลัง Close สำเร็จ (สะท้อนเดือนใหม่
+                        ที่เพิ่งเปิด ไม่ใช่เดือนที่เพิ่ง Close ไป) -- เดิมเช็ค status==='closed' ก่อน
+                        ไม่มีวันเป็นจริง ปุ่ม Reopen เลยไม่โผล่ -- แก้เช็ค canReopen (อยู่ใน 7 วัน
+                        + เป็น Owner) เป็นเงื่อนไขหลักก่อนเสมอแทน ไม่พึ่ง status อีกต่อไป */}
                     {!isConfirming && (
-                      status === 'closed' ? (
-                        canReopen ? (
-                          <button onClick={() => doReopen(type)} disabled={isBusy}
-                            style={{ padding:'4px 10px', fontSize:'11px', borderRadius:'6px', border:'0.5px solid #856404', background:'white', color:'#856404', cursor:isBusy?'default':'pointer' }}>
-                            {isBusy ? '...' : 'Reopen'}
-                          </button>
-                        ) : (
-                          <span style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'20px', background:'#f5f5f5', color:'#555', fontWeight:'500' }}>Closed</span>
-                        )
+                      canReopen ? (
+                        <button onClick={() => doReopen(type)} disabled={isBusy}
+                          style={{ padding:'4px 10px', fontSize:'11px', borderRadius:'6px', border:'0.5px solid #856404', background:'white', color:'#856404', cursor:isBusy?'default':'pointer' }}>
+                          {isBusy ? '...' : 'Reopen'}
+                        </button>
+                      ) : status === 'closed' ? (
+                        <span style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'20px', background:'#f5f5f5', color:'#555', fontWeight:'500' }}>Closed</span>
                       ) : (
                         // MARKER_CLOSEPERIOD_ADMIN_NOTDUE_GRAY_V1 -- Admin ก่อนถึง Deadline
                         // ปุ่มยังกดได้เหมือนเดิม (ยังขึ้น Notice เตือน) แค่เปลี่ยนเป็นสีเทา
@@ -1793,7 +1804,7 @@ function ClosePeriodPopup({ apiFetch, isOwner, userRole, userPermissions, onClos
   );
 }
 
-function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissions }) {
+function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissions, onLabelChange }) {
   const [periodData, setPeriodData] = React.useState(null);
   const [showClosePopup, setShowClosePopup] = React.useState(false); // MARKER_CLOSEPERIOD_POPUP_V1
   const [vatPeriodData, setVatPeriodData] = React.useState(null); // MARKER_ZONE2_MULTITYPE_TIMELINE_V1
@@ -1809,6 +1820,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
   const [confirmOverrideAll, setConfirmOverrideAll] = React.useState(false);
   const [alphaFilter, setAlphaFilter] = React.useState('All');
   const [controlType, setControlType] = React.useState('AP');
+  // MARKER_SYSTEMCONSOLE_BREADCRUMB_V4 -- Set Label เต็ม "Period Panel - AP
+  // control" เอง (แทนที่จะพึ่ง Parent เพราะเป็นเจ้าของ controlType ตัวจริง)
+  React.useEffect(() => {
+    if (onLabelChange) onLabelChange(`Period Panel - ${controlType} control`);
+  }, [controlType, onLabelChange]);
   // MARKER_PERIODPANEL_PERMKEY_MAP_V1 -- แปลง controlType เป็น permKey ของ userPermissions (ตรงกับ ACCESS_TABS ใน AccessControlTab)
   const PERIOD_PANEL_PERM_KEY = { AP: 'Manual', VAT: 'VAT', IE: 'IE' };
   // Owner แก้/Override ได้ทุกเมนู / Admin แก้/Override ได้เฉพาะเมนูที่ตัวเองมี Permission จริง (ไม่ใช่ Blanket แบบเดิม)
@@ -1949,18 +1965,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     setClosing(false);
   };
 
+  // MARKER_OVERRIDEALL_MULTITYPE_FIX_V1 -- เดิม Hardcode ยิง /ap/period/override/all
+  // เสมอไม่ว่า controlType จะเป็นอะไร -- ถ้า Owner กำลังดู VAT/IE control อยู่
+  // แล้วกด "Override All" จะไป Override AP ทั้งหมดแทนโดยไม่ตั้งใจ (Bug ร้ายแรง)
+  // แก้ให้ยิง Endpoint ตาม activePrefix จริง (ap/vat/ie) เสมอ
   const handleOverrideAll = async () => {
     try {
       const targetMode = hasAnyOverride ? 'current' : 'prev';
-      const res = await apiFetch('/ap/period/override/all', { method:'POST', body:JSON.stringify({ mode: targetMode }) });
+      const res = await apiFetch(`/${activePrefix}/period/override/all`, { method:'POST', body:JSON.stringify({ mode: targetMode }) });
       if (!res?.ok) throw new Error(res?.error || 'Override all failed');
       const msg = targetMode === 'prev'
         ? 'Override all BU to M-1 done (' + res.bu_count + ' BU)'
         : 'Reopen all BU to Current done (' + res.bu_count + ' BU)';
       setSuccessMsg(msg);
       await fetchData();
-      // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1 -- แจ้ง APController.js (ทุก BU) ให้ Refresh ap_period_mode ทันที
-      broadcastWs('bu_config_updated', { all: true, field: 'ap_period_mode', value: targetMode });
+      // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1 -- แจ้ง Controller ที่ตรงกับ controlType ปัจจุบัน ให้ Refresh Period Mode ทันที
+      broadcastWs('bu_config_updated', { all: true, field: `${activePrefix}_period_mode`, value: targetMode });
     } catch (err) { setErrorMsg(err.message); }
     setConfirmOverrideAll(false);
   };
@@ -1971,6 +1991,18 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       await apiFetch('/ap/period/override/bu', { method:'POST', body:JSON.stringify({ bu:bu.bu, mode:newMode }) });
       await fetchData();
       broadcastWs('bu_config_updated', { bu: bu.bu, field: 'ap_period_mode', value: newMode }); // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1
+    } catch (err) { setErrorMsg(err.message); }
+  };
+
+  // MARKER_OVERRIDEBU_IE_V1 -- คู่กับ handleOverrideBU ของ AP -- Backend
+  // Endpoint /api/ie/period/override/bu มีอยู่แล้ว (iePeriod.js) แค่ไม่เคย
+  // เชื่อม Frontend เข้ามา (Action Column ฝั่ง IE เดิมโชว์ "Coming soon")
+  const handleOverrideIeBU = async (bu) => {
+    const newMode = bu.ie_period_mode === 'prev' ? 'current' : 'prev';
+    try {
+      await apiFetch('/ie/period/override/bu', { method:'POST', body:JSON.stringify({ bu:bu.bu, mode:newMode }) });
+      await fetchData();
+      broadcastWs('bu_config_updated', { bu: bu.bu, field: 'ie_period_mode', value: newMode }); // MARKER_PERIODPANEL_REALTIME_TO_INVOICE_V1
     } catch (err) { setErrorMsg(err.message); }
   };
 
@@ -2045,6 +2077,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       )}
 
       <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'12px', padding:'1.25rem 1.5rem', marginBottom:'12px' }}>
+        {/* MARKER_CONTROLTYPE_SYSTEMCONSOLE_LABEL_V3 -- เอา Label ตรงนี้ออก
+            แล้ว เพราะย้ายไปทำเป็น Breadcrumb ที่ Heading บนสุดของหน้าแทน
+            ("System Console - AP Period") เห็นชัดกว่าและไม่ซ้ำซ้อนกัน */}
         <div style={{ display:'flex', justifyContent:'space-between', gap:'24px', marginBottom:'14px', flexWrap:'wrap' }}>
           <div>
             <div style={{ fontSize:'11px', color:'#888', marginBottom:'6px' }}>Current period</div>
@@ -2368,7 +2403,12 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
             <tbody>
               {paged.length === 0 && <tr><td colSpan={10} style={{ padding:'30px', textAlign:'center', color:'#aaa' }}>No data</td></tr>}
               {paged.map((bu, idx) => {
-                const bg = idx%2===0 ? 'white' : '#fafbfc';
+                // MARKER_IE_OVERRIDE_STATE_COMPUTE_V1 -- คำนวณ Pattern เดียวกับ AP
+                const grtOvr = Number(bu.ie_grt_prev||0);
+                const grnOvr = Number(bu.ie_grn_prev||0);
+                const isOvr  = bu.ie_period_mode === 'prev';
+                const canOvr = hasEditPermission;
+                const bg = isOvr ? '#fff8f0' : (idx%2===0 ? 'white' : '#fafbfc');
                 return (
                   <tr key={bu.id} style={{ background:bg }}>
                     <td style={{ ...TD({ textAlign:'left', fontFamily:'monospace', fontSize:'11px' }) }}>{bu.bu||'---'}</td>
@@ -2388,7 +2428,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                         ? <input value={getVal(bu,'ie_grt')} onChange={e => setVal(bu,'ie_grt',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grt',Number(e.target.value)||0)} style={{ ...INP('60px'), color:'#0C447C' }} />
                         : <span style={{ fontFamily:'monospace', fontSize:'11px', color:'#0C447C' }}>{String(bu.ie_grt||0).padStart(4,'0')}</span>}
                     </td>
-                    <td style={{ ...TD(), borderRight:'0.5px solid #d0e4f7', fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(Number(bu.ie_grt_prev||0)).padStart(4,'0')}</td>
+                    <td style={{ ...TD(), borderRight:'0.5px solid #d0e4f7', fontFamily:'monospace', fontSize:'11px', fontWeight:grtOvr>0?'500':'400', color:grtOvr>0?'#0C447C':'#aaa' }}>{String(grtOvr).padStart(4,'0')}</td>
                     <td style={{ ...TD(), borderLeft:'0.5px solid #f7d0d0' }}>
                       {hasEditPermission
                         ? <input value={getVal(bu,'ie_grn_pattern')} onChange={e => setVal(bu,'ie_grn_pattern',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grn_pattern',e.target.value)} style={INP('68px','#fff5f5')} />
@@ -2399,9 +2439,20 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                         ? <input value={getVal(bu,'ie_grn')} onChange={e => setVal(bu,'ie_grn',e.target.value)} onBlur={e => handleSaveBU(bu,'ie_grn',Number(e.target.value)||0)} style={{ ...INP('60px'), color:'#791F1F' }} />
                         : <span style={{ fontFamily:'monospace', fontSize:'11px', color:'#791F1F' }}>{String(bu.ie_grn||0).padStart(4,'0')}</span>}
                     </td>
-                    <td style={{ ...TD(), borderRight:'0.5px solid #f7d0d0', fontFamily:'monospace', fontSize:'11px', color:'#aaa' }}>{String(Number(bu.ie_grn_prev||0)).padStart(4,'0')}</td>
+                    <td style={{ ...TD(), borderRight:'0.5px solid #f7d0d0', fontFamily:'monospace', fontSize:'11px', fontWeight:grnOvr>0?'500':'400', color:grnOvr>0?'#791F1F':'#aaa' }}>{String(grnOvr).padStart(4,'0')}</td>
                     <td style={TD()}>
-                      <span style={{ color:'#ccc', fontSize:'11px' }} title="รอเชื่ม Logic ฉัง Backend">Coming soon</span>
+                      {canOvr
+                        ? <button onClick={() => handleOverrideIeBU(bu)}
+                            style={{
+                              padding:'3px 10px', borderRadius:'5px',
+                              border:'0.5px solid ' + (isOvr ? '#1a3a5c' : '#7B3F00'),
+                              background: isOvr ? '#1a3a5c' : 'white',
+                              color: isOvr ? 'white' : '#7B3F00',
+                              fontSize:'11px', cursor:'pointer'
+                            }}>
+                            {isOvr ? 'Reopen' : 'Override'}
+                          </button>
+                        : <span style={{ color:'#ccc' }}>---</span>}
                     </td>
                   </tr>
                 );
@@ -2471,15 +2522,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     // Patch 99: วัดความสูง Header จริง (Topbar+Tab Bar) ด้วย ResizeObserver
     // แทนการเดาตัวเลขคงที่ (180) ที่ไม่แม่นเพราะแต่ละหน้ามี Header สูงไม่
     // เท่ากัน (จำนวน Tab/ปุ่มต่างกัน) — ตั้งเป็น CSS Variable ให้ลูกใช้ต่อ
+    // MARKER_RESIZEOBSERVER_RAF_FIX_V1 -- ห่อ update() ด้วย requestAnimationFrame กัน
+    // "ResizeObserver loop completed with undelivered notifications"
+    // (Browser Warning ที่ CRA Dev Overlay จับเป็น Error เต็มจอ)
     const headerRef = React.useRef(null);
     useEffect(() => {
       if (!headerRef.current || typeof ResizeObserver === 'undefined') return;
       const el = headerRef.current;
+      let rafId = null;
       const update = () => document.documentElement.style.setProperty('--console-header-height', `${el.offsetHeight}px`);
       update();
-      const ro = new ResizeObserver(update);
+      const ro = new ResizeObserver(() => {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(update);
+      });
       ro.observe(el);
-      return () => ro.disconnect();
+      return () => { if (rafId) cancelAnimationFrame(rafId); ro.disconnect(); };
     }, []);
     return (
       <div style={S.container}>
@@ -2505,18 +2563,32 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
   // ─── Main ─────────────────────────────────────────────────────────────────────
   function UserManagement() {
     const [tab, setTab] = useState('users');
+    // MARKER_SYSTEMCONSOLE_BREADCRUMB_V3 -- Title แบบ "System Console - {Section}"
+    // Base Label ตาม Tab หลัก + subLabel (ละเอียดกว่า ส่งขึ้นมาจาก AccessControlTab/
+    // SystemSettingsTab ตอนอยู่ใน Access Control เช่น "AP Period", "Access Panel")
+    const TAB_LABELS = { users: 'User Management', access: 'Access Control', recycle: 'Recycle Bin', activity: 'Activity Log', deploy: 'Backend Ops', settings: 'System Settings' };
+    const [subLabel, setSubLabel] = useState('');
+    useEffect(() => { if (tab !== 'access') setSubLabel(''); }, [tab]);
+    const consoleTitle = `System Console - ${TAB_LABELS[tab] || ''}${tab === 'access' && subLabel ? ' - ' + subLabel : ''}`;
     // Patch 99: วัดความสูง Header จริง (Topbar+Tab Bar) ด้วย ResizeObserver
     // แทนการเดาตัวเลขคงที่ (180) ที่ไม่แม่นเพราะแต่ละหน้ามี Header สูงไม่
     // เท่ากัน (จำนวน Tab/ปุ่มต่างกัน) — ตั้งเป็น CSS Variable ให้ลูกใช้ต่อ
+    // MARKER_RESIZEOBSERVER_RAF_FIX_V1 -- ห่อ update() ด้วย requestAnimationFrame กัน
+    // "ResizeObserver loop completed with undelivered notifications"
+    // (Browser Warning ที่ CRA Dev Overlay จับเป็น Error เต็มจอ)
     const headerRef = React.useRef(null);
     useEffect(() => {
       if (!headerRef.current || typeof ResizeObserver === 'undefined') return;
       const el = headerRef.current;
+      let rafId = null;
       const update = () => document.documentElement.style.setProperty('--console-header-height', `${el.offsetHeight}px`);
       update();
-      const ro = new ResizeObserver(update);
+      const ro = new ResizeObserver(() => {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(update);
+      });
       ro.observe(el);
-      return () => ro.disconnect();
+      return () => { if (rafId) cancelAnimationFrame(rafId); ro.disconnect(); };
     }, []);
 
     const [users, setUsers] = useState([]);
@@ -2687,7 +2759,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       <div style={S.container}>
         <div ref={headerRef}>
           <div style={S.topbar}>
-            <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>⚙️ System Console</h2>
+            <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>⚙️ {consoleTitle}</h2>
             {tab === 'users' && <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setShowForm(true); setError(''); }}>+ Add User</button>}
           </div>
 
@@ -2793,7 +2865,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
           </div>
         )}
 
-        {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} isOwner={isOwner} userRole={userRole} userPermissions={userPermissions} />}
+        {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} isOwner={isOwner} userRole={userRole} userPermissions={userPermissions} onLabelChange={setSubLabel} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} />}
         {tab === 'settings' && isOwner && <SystemSettingsPageTab currentUser={currentUser} userName={userName} />}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
   import { db } from '../lib/db';
   import * as XLSX from 'xlsx';
   import { useAuth } from '../contexts/AuthContext';
@@ -276,6 +276,15 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
     }, [fetchCollection]);
 
     useEffect(() => { fetchTab('costcenter'); fetchTab('account'); fetchTab('subaccount'); }, []);
+    // MARKER_CHARTOFACCOUNTS_FOCUS_AUTOREFRESH_V1
+    // ── แก้ปัญหา Admin/Owner เพิ่ม Account แล้ว Editor (Session อื่น) ไม่เห็น ──
+    // ── เพราะ fetchTab(tab, true) เดิมรีเฟรชแค่ฝั่งคนกด Save เอง ไม่มี ────────
+    // ── Broadcast ข้าม Session -- Auto-Refresh ทุกครั้งที่กลับมา Focus Tab นี้ ──
+    useEffect(() => {
+      const handleFocus = () => { fetchTab('costcenter', true); fetchTab('account', true); fetchTab('subaccount', true); };
+      window.addEventListener('focus', handleFocus);
+      return () => window.removeEventListener('focus', handleFocus);
+    }, [fetchTab]);
     useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab, tab]);
     useEffect(() => { setAccountFilter('ALL'); }, [tab]);
     useEffect(() => { setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, accountFilter, search]);
@@ -678,12 +687,12 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
             {isOwner && selected.length > 0 && <button style={{ ...S.btn, background: '#c0392b', color: 'white', marginLeft: 0 }} onClick={handleBulkDelete}>🗑️{!isMobile && ` ลบ ${selected.length}`}</button>}
             {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
           </div>
-          {isAdmin && (
+          {(isAdmin || isEditor) && ( // MARKER_CHARTOFACCOUNTS_EDITOR_ADD_PERMISSION_V1 -- เปิดสิทธิ์ให้ Editor เพิ่ม Account ได้ (เดิม isAdmin เท่านั้น)
             <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '0' }}>
-              <button style={{ ...S.btn, background: '#f5f5f5', color: '#555', border: '0.5px solid #ddd' }} onClick={handleOpenRecycleBin}>🗑️{!isMobile && ' Recycle Bin'}</button>
-              <button style={{ ...S.btn, background: '#0F6E56', color: 'white' }} onClick={handleDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
-              <button style={{ ...S.btn, background: '#5DCAA5', color: '#1a3a5c' }} onClick={() => fileRef.current.click()}>📂{!isMobile && ' Import'}</button>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />
+              {isAdmin && <button style={{ ...S.btn, background: '#f5f5f5', color: '#555', border: '0.5px solid #ddd' }} onClick={handleOpenRecycleBin}>🗑️{!isMobile && ' Recycle Bin'}</button>}
+              {isAdmin && <button style={{ ...S.btn, background: '#0F6E56', color: 'white' }} onClick={handleDownloadTemplate}>⬇{!isMobile && ' Template'}</button>}
+              {isAdmin && <button style={{ ...S.btn, background: '#5DCAA5', color: '#1a3a5c' }} onClick={() => fileRef.current.click()}>📂{!isMobile && ' Import'}</button>}
+              {isAdmin && <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />}
               <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setForm(Object.fromEntries(cfg.edit.map(([k]) => [k,'']))); setEditId(null); setShowForm(true); }}>+ New</button>
             </div>
           )}

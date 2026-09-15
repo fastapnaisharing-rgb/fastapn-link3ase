@@ -2,6 +2,7 @@
   import { db } from '../lib/db';
   import { apiFetch } from '../api';
   import * as XLSX from 'xlsx';
+  import ExcelJS from 'exceljs'; // MARKER_IECODE_IMPORT_REQUIRED_FIELDS_V1
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
   import { useDataCache } from '../contexts/DataCacheContext';
@@ -262,19 +263,22 @@
   }
 
   // ─── Import Preview Modal ─────────────────────────────────────────────────────
-  function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile, isCategory }) {
+  function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile, isCategory, isIecode }) {
     const [filterStatus, setFilterStatus] = React.useState(null);
     const summary = (previewRows || []).reduce((acc, r) => { acc[r._status] = (acc[r._status] || 0) + 1; return acc; }, {});
     const confirmCount = (previewRows || []).filter(r => r._status === 'new' || r._status === 'update').length;
     const displayRows = filterStatus ? (previewRows || []).filter(r => r._status === filterStatus) : (previewRows || []);
     if (!show) return null;
     const statusTag = (s) => {
-      const map = { new: { label: '➕ New', bg: '#EAF3DE', color: '#27500A' }, update: { label: '🔄 Update', bg: '#e8f0fb', color: '#1a3a5c' }, nochange: { label: '✅ No Change', bg: '#f5f5f5', color: '#666' }, duplicate: { label: '⚠️ Duplicate', bg: '#FFF3CD', color: '#856404' } };
+      const map = { new: { label: '➕ New', bg: '#EAF3DE', color: '#27500A' }, update: { label: '🔄 Update', bg: '#e8f0fb', color: '#1a3a5c' }, missing: { label: '⚠️ ข้อมูลไม่ครบ', bg: '#FCEBEB', color: '#791F1F' }, nochange: { label: '✅ No Change', bg: '#f5f5f5', color: '#666' }, duplicate: { label: '⚠️ Duplicate', bg: '#FFF3CD', color: '#856404' } };
       const m = map[s] || { label: s, bg: '#eee', color: '#333' };
       return <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: '500', background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>{m.label}</span>;
     };
-    const displayFields = allFields.filter(f => !['username', 'last_update', 'SY-Running'].includes(f)).slice(0, 5);
-    const BADGE_CONFIG = [['new','➕ New','#EAF3DE','#27500A','#c0dda0'],['update','🔄 Update','#e8f0fb','#1a3a5c','#aac4e8'],['nochange','✅ No Change','#f5f5f5','#666','#ccc'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404','#f5d87a']];
+    // MARKER_IECODE_IMPORT_REQUIRED_FIELDS_V1 -- IE-Code โชว์ 5 คอลัมน์ Required แทน 5 คอลัมน์แรกของ cfg.fields
+    const displayFields = isIecode
+      ? ['Supplier Name', 'Supplier Number', 'Supplier Site', 'Tax ID', 'BU Code']
+      : allFields.filter(f => !['username', 'last_update', 'SY-Running'].includes(f)).slice(0, 5);
+    const BADGE_CONFIG = [['new','➕ New','#EAF3DE','#27500A','#c0dda0'],['update','🔄 Update','#e8f0fb','#1a3a5c','#aac4e8'],['missing','⚠️ ข้อมูลไม่ครบ','#FCEBEB','#791F1F','#f0999a'],['nochange','✅ No Change','#f5f5f5','#666','#ccc'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404','#f5d87a']];
     return (
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
         <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
@@ -308,7 +312,7 @@
               </thead>
               <tbody>
                 {displayRows.map((row, i) => {
-                  const rowBg = { new: '#f9fffe', update: '#f5f8ff', nochange: 'white', duplicate: '#fffdf0' }[row._status] || 'white';
+                  const rowBg = { new: '#f9fffe', update: '#f5f8ff', missing: '#fff6f6', nochange: 'white', duplicate: '#fffdf0' }[row._status] || 'white';
                   return (
                     <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
                       <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>{statusTag(row._status)}</td>
@@ -327,8 +331,9 @@
                             ))}
                           </div>
                         ) : row._status === 'new' ? <span style={{ fontSize: '10px', color: '#888' }}>เพิ่มใหม่ (SY-Running: Auto)</span>
-                          : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์</span>
-                            : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
+                          : row._status === 'missing' ? <span style={{ fontSize: '10px', color: '#791F1F' }}>ขาด {(row._missingFields || []).join(', ')} — จะไม่ถูก Import</span>
+                            : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์</span>
+                              : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
                       </td>
                     </tr>
                   );
@@ -399,9 +404,9 @@ const computeNextSyRunning = async () => {
     },
     smcode: {
       label: 'SM-Code', icon: '🔖', table: 'sm_code_list', key: 'SM-Code',
-      fields: ['SM-Code','Company Name','Tax ID','Branch','Short Name','CPC_Dr','Account_Dr','Sub Acc_Dr','Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','CPC_Cr','Account_Dr2','Sub Acc_Cr','BU','Ofin Code','Simple Brand Code','Short Branch','Remark','Supplier Code','username','last_update'],
+      fields: ['SM-Code','Company Name','Tax ID','Branch','Short Name','CPC_Dr','Account_Dr','Sub Acc_Dr','Expense Type','First Part','Mid Part','Last Part','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5','Digit','CPC_Cr','Account_Cr','Sub Acc_Cr','BU','Ofin Code','Simple Brand Code','Short Branch','Remark','Supplier Code','username','last_update'], // MARKER_SMCODE_FIX_ACCOUNT_DR2_TO_ACCOUNT_CR_V1
       combo: ['Short Name','Expense Type','Digit','Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5'],
-      edit: [['SM-Code','SM-Code'],['Company Name','Company Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Short Name','AT-Match (Short Name)'],['CPC_Dr','CPC Dr'],['Account_Dr','Account Dr'],['Sub Acc_Dr','Sub Acc Dr'],['CPC_Cr','CPC Cr'],['Account_Dr2','Account Cr'],['Sub Acc_Cr','Sub Acc Cr'],['Expense Type','Expense Type'],['First Part','First Part'],['Mid Part','Mid Part'],['Last Part','Last Part'],['Special Rule1','Rule1'],['Special Rule2','Rule2'],['Simple Rule3','Rule3'],['Special Rule4','Rule4'],['Special Rule5','Rule5'],['Digit','Digit'],['BU','BU'],['Ofin Code','Ofin Code'],['Simple Brand Code','Brand Code'],['Short Branch','Short Branch'],['Remark','Remark'],['Supplier Code','Supplier Code']],
+      edit: [['SM-Code','SM-Code'],['Company Name','Company Name'],['Tax ID','Tax ID'],['Branch','Branch'],['Short Name','AT-Match (Short Name)'],['CPC_Dr','CPC Dr'],['Account_Dr','Account Dr'],['Sub Acc_Dr','Sub Acc Dr'],['CPC_Cr','CPC Cr'],['Account_Cr','Account Cr'],['Sub Acc_Cr','Sub Acc Cr'],['Expense Type','Expense Type'],['First Part','First Part'],['Mid Part','Mid Part'],['Last Part','Last Part'],['Special Rule1','Rule1'],['Special Rule2','Rule2'],['Simple Rule3','Rule3'],['Special Rule4','Rule4'],['Special Rule5','Rule5'],['Digit','Digit'],['BU','BU'],['Ofin Code','Ofin Code'],['Simple Brand Code','Brand Code'],['Short Branch','Short Branch'],['Remark','Remark'],['Supplier Code','Supplier Code']], // MARKER_SMCODE_FIX_ACCOUNT_DR2_TO_ACCOUNT_CR_V1
       columns: [
         { key: 'SM-Code',        label: 'SM-Code',        sortable: true, w: 110 },
         { key: 'Company Name',   label: 'Company Name',   w: 200 },
@@ -454,6 +459,16 @@ const computeNextSyRunning = async () => {
       ],
     },
   };
+
+  // MARKER_IECODE_IMPORT_REQUIRED_FIELDS_V1 -- Import IE-Code: Required 5 คอลัมน์ + กุญแจจับคู่ใหม่
+  // (Supplier Number+Site+BU แทน IE-Code เดิม เพราะ IE-Code มี SY-Running Auto อยู่แล้ว) + คอลัมน์ที่ไม่
+  // ให้ Import Overwrite ทิ้งถ้ามาว่าง + คอลัมน์ที่ตัดออกจาก Template + สี Header Template
+  const IECODE_IMPORT_REQUIRED_FIELDS = ['Supplier Name', 'Supplier Number', 'Supplier Site', 'Tax ID', 'BU Code'];
+  const IECODE_IMPORT_KEY_FIELDS = ['Supplier Number', 'Supplier Site', 'BU Code'];
+  const IECODE_IMPORT_PRESERVE_FIELDS = ['IE-Code', 'NoticeDescrip', 'RuleDescrip'];
+  const IECODE_TEMPLATE_EXCLUDE_FIELDS = ['NoticeDescrip', 'RuleDescrip'];
+  const IECODE_TEMPLATE_HEADER_ARGB = 'FF0F6E56';
+  const buildIeCompositeKey = (r) => IECODE_IMPORT_KEY_FIELDS.map(f => String(r?.[f] ?? '').trim().toUpperCase()).join('|');
 
   function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const [tab, setTab] = useState(activeSubTab || 'apcode');
@@ -521,7 +536,7 @@ const computeNextSyRunning = async () => {
       ...Object.entries(TAB_CONFIG).filter(([key]) => {
         if (isOwner) return true;
         if (key === 'apcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
-        if (key === 'smcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
+        if (key === 'smcode')   return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual'] || userPermissions?.['IE']);
         if (key === 'iecode')   return isEditor && userPermissions?.['IE'];
         if (key === 'category') return isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']);
         return false;
@@ -535,7 +550,28 @@ const computeNextSyRunning = async () => {
       if (allowed.length > 0 && !allowed.includes(tab)) handleTabChange(allowed[0]);
     }, []); // run once on mount only — tab is controlled by parent via activeSubTab
 
-    const items    = cfg ? (dataMap[tab] || []) : [];
+    // MARKER_SMCODE_SOURCE_MODE_CONTEXT_V2 -- แยก AP/IE/All ด้วย Permission
+    // ของ User แทนการสร้าง Tab ใหม่ (แต่ละคนมีแค่ Manual หรือ IE อย่างใด
+    // อย่างหนึ่ง ยกเว้น Owner ที่มีทั้งคู่ -- ใช้ Toggle State ให้ Owner เลือกเอง)
+    // "All" มี 2 ความหมายต่างกันตามบริบท:
+    //   - ตอน Add/Edit Record: Tag ว่า Vendor นี้ใช้ได้ทั้ง AP และ IE
+    //   - ตอนดู List (Toggle): โหมดภาพรวม Owner เห็นทุก Record ปนกันหมด
+    const hasApSmCode = userPermissions?.['VAT'] || userPermissions?.['Manual'];
+    const hasIeSmCode = userPermissions?.['IE'];
+    const canToggleSmCodeMode = isOwner || (hasApSmCode && hasIeSmCode);
+    const [smCodeModeView, setSmCodeModeView] = useState('AP');
+    const effectiveSmCodeMode = canToggleSmCodeMode ? smCodeModeView : (hasIeSmCode ? 'IE' : 'AP');
+    const items    = cfg
+      ? (tab === 'smcode'
+          ? (dataMap[tab] || []).filter(i => {
+              const sm = i.source_mode || 'AP';
+              // "All" Toggle (View ภาพรวม) -> ไม่ Filter เลย เห็นทุก Record
+              if (effectiveSmCodeMode === 'All') return true;
+              // AP/IE Toggle ปกติ -> เห็นของตัวเอง + Record ที่ Tag เป็น "All" (Shared)
+              return sm === effectiveSmCodeMode || sm === 'All';
+            })
+          : (dataMap[tab] || []))
+      : [];
     const search   = cfg ? (searchMap[tab] || '') : '';
     const selected = cfg ? (selectedMap[tab] || []) : [];
     const sort     = cfg ? (sortMap[tab] || { field: cfg.key, dir: 'asc' }) : {};
@@ -582,6 +618,31 @@ const computeNextSyRunning = async () => {
     useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab]);
     useEffect(() => { if (cfg) setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
     useEffect(() => { if (tab === 'iecode') refreshNextSyRunning(); }, [tab]);
+    // MARKER_SMCODE_IE_AUTORUN_TRIGGER_V1 -- พอสลับ Module Picker เป็น 'IE'
+    // (ตอนเปิดฟอร์มใหม่ หรือสลับทีหลังก็ได้) แล้ว Simple Code ยังว่างอยู่
+    // ให้ Auto-Run เลขถัดไปให้ทันที (Pattern เดียวกับ SY-Running)
+    useEffect(() => {
+      if (tab !== 'smcode' || !showForm) return;
+      if (form['source_mode'] !== 'IE') return;
+      if (form['SM-Code']?.trim()) return;
+      (async () => {
+        try {
+          const { data, error } = await db.from('sm_code_list').select('SM-Code');
+          if (error) throw error;
+          const next = computeNextSmCodeRunning(data);
+          setForm(f => (f['SM-Code']?.trim() ? f : { ...f, 'SM-Code': next }));
+        } catch (e) { console.error('[SmCode IE Auto-Run]', e); }
+      })();
+    }, [tab, showForm, form['source_mode']]);
+    // MARKER_SMCODE_IE_OFIN_AUTOFILL_TRIGGER_V1 -- พอกรอก/เปลี่ยน BU แล้ว
+    // OFIN Code ยังว่างอยู่ (เฉพาะโหมด IE) เติม Segment3+'01' ให้อัตโนมัติ
+    useEffect(() => {
+      if (tab !== 'smcode' || !showForm) return;
+      if (form['source_mode'] !== 'IE') return;
+      if (form['Ofin Code']?.trim()) return;
+      const seg3 = getSegment3OfBu(form['BU']);
+      if (seg3) setForm(f => (f['Ofin Code']?.trim() ? f : { ...f, 'Ofin Code': `${seg3}01` }));
+    }, [tab, showForm, form['source_mode'], form['BU']]);
 
     const handleTabChange = (t) => { setTab(t); };
     // ── Lookup Book ของ BU จาก company_list (bu -> BOOK) ──────────────────
@@ -590,6 +651,24 @@ const computeNextSyRunning = async () => {
       const companyItems = getCached('CompanyList') || [];
       const match = companyItems.find(i => String(i['bu'] || '').toLowerCase() === String(buCode).trim().toLowerCase());
       return match?.['BOOK'] || '';
+    };
+    // MARKER_SMCODE_IE_SEGMENT3_LOOKUP_V1 -- Lookup Segment3 ของ BU จาก
+    // company_list เหมือน getBookOfBu -- ใช้ Auto-Fill OFIN Code (IE Mode)
+    const getSegment3OfBu = (buCode) => {
+      if (!buCode) return '';
+      const companyItems = getCached('CompanyList') || [];
+      const match = companyItems.find(i => String(i['bu'] || '').toLowerCase() === String(buCode).trim().toLowerCase());
+      return match?.['SEGMENT3'] || '';
+    };
+    // MARKER_SMCODE_IE_AUTORUN_V1 -- Auto-Running "SM-Code" แบบเดียวกับ
+    // SY-Running ของ IE-Code Tab -- ใช้เฉพาะตอน source_mode = 'IE' เท่านั้น
+    // Scan ทุก Record (ไม่ Filter Module กัน Code ชนกันข้าม AP/IE/All)
+    const computeNextSmCodeRunning = (list) => {
+      const codes = (list || []).map(d => d['SM-Code'] || '');
+      const nums = codes.filter(c => /^P\d{7}$/.test(c)).map(c => parseInt(c.replace('P', ''), 10)).sort((a, b) => a - b);
+      if (!nums.length) return 'P0000001';
+      for (let i = 0; i < nums.length - 1; i++) { if (nums[i + 1] - nums[i] > 1) return `P${String(nums[i] + 1).padStart(7, '0')}`; }
+      return `P${String(nums[nums.length - 1] + 1).padStart(7, '0')}`;
     };
     // ── getOptions: Supplier Site Generate จาก Book ({BOOK}-INTERCOM/NONMER) ──
     // ── + รวมกับค่าที่มีอยู่จริงใน DB ที่ตรงกับ Book Prefix เดียวกัน ──────────
@@ -615,9 +694,24 @@ const computeNextSyRunning = async () => {
 
     // ── ส่วนที่เหลือ (buildPreviewRows, exportToExcel, handlers, render) เหมือนเดิมทุกอย่าง ──
     const buildPreviewRows = (rawRows, existingItems, keyField, allFields) => {
-      const dataFields = allFields.filter(f => !['username', 'last_update', 'SY-Running'].includes(f));
+      const isIecodeImport = tab === 'iecode'; // MARKER_IECODE_IMPORT_REQUIRED_FIELDS_V1
+      // MARKER_SMCODE_IE_IMPORT_V1 -- Import SM-Code โหมด IE (source_mode='IE')
+      // Gate ด้วย effectiveSmCodeMode ปัจจุบัน (ตาม Module Picker ตอนกด Import)
+      // Auto-Fill/Auto-Run ตามกฎที่ Confirm ไว้ (ดู SM-Code_Template_Example.xlsx):
+      //   1) SM-Code ว่าง -> Auto-Run ต่อจาก SY-Running Pool (Sequential ในชุด Import เดียวกัน)
+      //   2) Short Name ว่าง -> Default 'INPUT'
+      //   3) CPC/Account/Sub Acc (Dr+Cr) ว่าง -> Auto-Match จาก Record ที่มี Short Name เดียวกัน
+      //   4) Expense Type ว่าง -> Cascade เดียวกับ handleSmATMatchChange (ใช้ %comPct จาก Branch ที่ Match ผ่าน OFIN Code)
+      //   5) OFIN Code ว่าง + มี BU -> Segment3 ของ BU (จาก CompanyList) + '01'
+      const isSmcodeIeImport = tab === 'smcode' && effectiveSmCodeMode === 'IE';
+      let nextSmRun = isSmcodeIeImport ? computeNextSmCodeRunning(dataMap['smcode'] || []) : '';
+      const bumpSmRun = (code) => `P${String(parseInt(code.replace('P', ''), 10) + 1).padStart(7, '0')}`;
+      const dataFields = allFields.filter(f => !['username', 'last_update', 'SY-Running'].includes(f) && !(isIecodeImport && IECODE_IMPORT_PRESERVE_FIELDS.includes(f)));
       const existingMap = {};
-      existingItems.forEach(item => { if (item[keyField]) existingMap[String(item[keyField]).trim()] = item; });
+      existingItems.forEach(item => {
+        if (isIecodeImport) { existingMap[buildIeCompositeKey(item)] = item; return; }
+        if (item[keyField]) existingMap[String(item[keyField]).trim()] = item;
+      });
       const seenKeys = new Set();
       return rawRows.map(row => {
         const normalizedRow = { ...row };
@@ -627,11 +721,59 @@ const computeNextSyRunning = async () => {
         if ('CPC_Dr' in normalizedRow) normalizedRow['CPC_Dr'] = normalizeCpc(row['CPC_Dr']);
         if ('CPC_Cr' in normalizedRow) normalizedRow['CPC_Cr'] = normalizeCpc(row['CPC_Cr']);
         if ('Account_Dr' in normalizedRow) normalizedRow['Account_Dr'] = normalizeAccount(row['Account_Dr']);
-        if ('Account_Dr2' in normalizedRow) normalizedRow['Account_Dr2'] = normalizeAccount(row['Account_Dr2']);
+        if ('Account_Cr' in normalizedRow) normalizedRow['Account_Cr'] = normalizeAccount(row['Account_Cr']); // MARKER_SMCODE_FIX_ACCOUNT_DR2_TO_ACCOUNT_CR_V1
         if ('Sub Acc_Dr' in normalizedRow) normalizedRow['Sub Acc_Dr'] = normalizeSubAcc(row['Sub Acc_Dr']);
         if ('Sub Acc_Cr' in normalizedRow) normalizedRow['Sub Acc_Cr'] = normalizeSubAcc(row['Sub Acc_Cr']);
         if ('Sub Acc' in normalizedRow && tab !== 'smcode') normalizedRow['Sub Acc'] = normalizeSubAcc(row['Sub Acc']);
-        const keyVal = String(normalizedRow[keyField] ?? '').trim();
+        if (isSmcodeIeImport) {
+          // 1) SM-Code Auto-Run
+          if (!String(normalizedRow['SM-Code'] ?? '').trim()) {
+            normalizedRow['SM-Code'] = nextSmRun;
+            nextSmRun = bumpSmRun(nextSmRun);
+          }
+          // 2) Short Name Default 'INPUT'
+          if (!String(normalizedRow['Short Name'] ?? '').trim()) normalizedRow['Short Name'] = 'INPUT';
+          const shortNameVal = String(normalizedRow['Short Name']).trim();
+          const isInputSN = shortNameVal.toUpperCase() === 'INPUT' || shortNameVal.toUpperCase() === 'IST36';
+          const isT36SN = shortNameVal.toUpperCase() === 'T36';
+          // 3) CPC/Account/Sub Acc Auto-Match จาก Short Name ที่มีอยู่แล้ว (รวม 'INPUT' เอง ถ้ามี Record ต้นแบบ)
+          const shortNameMatch = (dataMap['smcode'] || []).find(i => String(i['Short Name'] || '').trim() === shortNameVal);
+          ['CPC_Dr', 'Account_Dr', 'Sub Acc_Dr', 'CPC_Cr', 'Account_Cr', 'Sub Acc_Cr'].forEach(f => {
+            if (!String(normalizedRow[f] ?? '').trim() && shortNameMatch) normalizedRow[f] = shortNameMatch[f] || '';
+          });
+          // 5) BU -> Segment3 (CompanyList) -> OFIN Code (ทำก่อน Expense Type เพราะ Expense Type ต้องใช้ OFIN Code หา %comPct ต่อ)
+          if (!String(normalizedRow['Ofin Code'] ?? '').trim() && normalizedRow['BU']) {
+            const seg3 = getSegment3OfBu(normalizedRow['BU']);
+            if (seg3) normalizedRow['Ofin Code'] = `${seg3}01`;
+          }
+          // 4) Expense Type Default -- Cascade เดียวกับ handleSmATMatchChange ทุกประการ
+          // (ใช้ %comPct จาก Branch ที่ Match ผ่าน OFIN Code ที่เพิ่งได้จากขั้น 5 ด้านบน)
+          if (!String(normalizedRow['Expense Type'] ?? '').trim()) {
+            const branchFound = normalizedRow['Ofin Code'] ? (branchList || []).find(b => String(b['Branch Code'] || '').trim() === String(normalizedRow['Ofin Code']).trim()) : null;
+            const comPct = branchFound ? String(branchFound['%'] || '').trim() : '';
+            const isNotFull = comPct !== '' && comPct !== '100';
+            const subDr = shortNameMatch ? (shortNameMatch['Sub Acc_Dr'] || '') : '';
+            const isNot999 = subDr !== '' && subDr !== '999999';
+            const expOpts = [...new Set((dataMap['smcode'] || []).map(i => i['Expense Type']).filter(Boolean))];
+            normalizedRow['Expense Type'] = isNotFull
+              ? (expOpts.find(o => String(o).startsWith('63050000')) || '')
+              : (isInputSN || isT36SN)
+                ? (expOpts.find(o => String(o).startsWith('63047000')) || '')
+                : isNot999
+                  ? (expOpts.find(o => String(o).startsWith('61200201')) || '')
+                  : '';
+          }
+          normalizedRow['source_mode'] = 'IE';
+        }
+        // MARKER_IECODE_IMPORT_REQUIRED_FIELDS_V1 -- Default Tax-Type/Notice ตอนว่าง + เช็ค Required 5
+        // คอลัมน์ (Supplier Name/Number/Site/Tax ID/BU) ก่อนเข้ากุญแจจับคู่ New/Update/Duplicate ใหม่
+        if (isIecodeImport) {
+          if (!String(normalizedRow['Tax-Type'] ?? '').trim()) normalizedRow['Tax-Type'] = 'NN';
+          if (!String(normalizedRow['Notice'] ?? '').trim()) normalizedRow['Notice'] = 'N';
+          const missingFields = IECODE_IMPORT_REQUIRED_FIELDS.filter(f => !String(normalizedRow[f] ?? '').trim());
+          if (missingFields.length) return { ...normalizedRow, _status: 'missing', _changes: [], _missingFields: missingFields };
+        }
+        const keyVal = isIecodeImport ? buildIeCompositeKey(normalizedRow) : String(normalizedRow[keyField] ?? '').trim();
         if (!keyVal) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
         if (seenKeys.has(keyVal)) return { ...normalizedRow, _status: 'duplicate', _changes: [] };
         seenKeys.add(keyVal);
@@ -653,8 +795,31 @@ const computeNextSyRunning = async () => {
     };
     const handleExportSelected = () => exportToExcel(items.filter(i => selected.includes(i.id)), cfg.fields, cfg.label, cfg.label.replace(/ /g,''));
     const handleExportAll      = () => exportToExcel(filtered, cfg.fields, cfg.label, cfg.label.replace(/ /g,''));
-    const handleDownloadTemplate = () => {
-      const templateFields = cfg.fields.filter(f => !['username','last_update','SY-Running'].includes(f));
+    const handleDownloadTemplate = async () => {
+      const templateFields = cfg.fields.filter(f => !['username','last_update','SY-Running'].includes(f) && !(tab === 'iecode' && IECODE_TEMPLATE_EXCLUDE_FIELDS.includes(f)));
+      // MARKER_IECODE_IMPORT_REQUIRED_FIELDS_V1 -- Template IE-Code: ตัด NoticeDescrip/RuleDescrip ออก,
+      // ใส่ * กำกับ 5 คอลัมน์ Required, ใส่สี Header ด้วย ExcelJS (IE-Code ยังเก็บเป็น Column เสริม เว้นว่างได้)
+      if (tab === 'iecode') {
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet(cfg.label);
+        const header = templateFields.map(f => IECODE_IMPORT_REQUIRED_FIELDS.includes(f) ? `${f} *` : f);
+        ws.addRow(header);
+        ws.getRow(1).eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: IECODE_TEMPLATE_HEADER_ARGB } };
+          cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+          cell.alignment = { vertical: 'middle' };
+        });
+        ws.columns.forEach((col, idx) => { col.width = Math.max(12, header[idx].length + 2); });
+        ws.views = [{ state: 'frozen', ySplit: 1 }];
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${cfg.label.replace(/ /g,'')}_Template.xlsx`; a.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
       const ws = XLSX.utils.aoa_to_sheet([templateFields]);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, cfg.label);
@@ -692,12 +857,29 @@ const computeNextSyRunning = async () => {
             from += 50000;
           }
           const getNextSy = getSyRunningPool(allCodesData);
-          const buildIePayload = (row) => { const d = {}; cfg.fields.forEach(k => { if (k === 'SY-Running') return; if (k === 'username') d[k] = cuStr; else if (k === 'last_update') d[k] = ts; else d[k] = String(row[k] ?? ''); }); return d; };
+          // MARKER_IECODE_IMPORT_REQUIRED_FIELDS_V1 -- IE-Code/NoticeDescrip/RuleDescrip ไม่บังคับกรอกใน
+          // Template แล้ว ถ้า Import มาว่างตอน Update ไม่ Overwrite ของเดิมทิ้ง (เอาค่าเดิมจาก items มาใส่แทน)
+          const buildIePayload = (row) => {
+            const d = {};
+            cfg.fields.forEach(k => {
+              if (k === 'SY-Running') return;
+              if (k === 'username') { d[k] = cuStr; return; }
+              if (k === 'last_update') { d[k] = ts; return; }
+              if (IECODE_IMPORT_PRESERVE_FIELDS.includes(k)) {
+                const incoming = String(row[k] ?? '').trim();
+                if (!incoming && row._existingId) { const existing = items.find(i => i.id === row._existingId); d[k] = existing?.[k] ?? ''; return; }
+                d[k] = incoming;
+                return;
+              }
+              d[k] = String(row[k] ?? '');
+            });
+            return d;
+          };
           if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const payload = newRows.slice(i, i + 500).map(row => ({ 'SY-Running': getNextSy(), ...buildIePayload(row) })); const { error } = await db.from('ie_code_list').insert(payload); if (error) throw new Error(error.message); } }
           if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i, i + 500).map(row => ({ id: row._existingId, ...buildIePayload(row) })); const { error } = await db.from('ie_code_list').upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
           await refreshNextSyRunning();
         } else {
-          const buildPayload = (row) => { const d = {}; cfg.fields.forEach(k => { if (k === 'username') d[k] = cuStr; else if (k === 'last_update') d[k] = ts; else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') { const existing = items.find(i => i[cfg.key] === row[cfg.key]); d[k] = existing?.['Tax ID'] ?? String(row[k] ?? ''); } else d[k] = String(row[k] ?? ''); }); return d; };
+          const buildPayload = (row) => { const d = {}; cfg.fields.forEach(k => { if (k === 'username') d[k] = cuStr; else if (k === 'last_update') d[k] = ts; else if (k === 'Tax ID' && tab === 'smcode' && row['Short Name'] === 'T36') { const existing = items.find(i => i[cfg.key] === row[cfg.key]); d[k] = existing?.['Tax ID'] ?? String(row[k] ?? ''); } else d[k] = String(row[k] ?? ''); }); if (tab === 'smcode' && row.source_mode) d['source_mode'] = row.source_mode; return d; }; // MARKER_SMCODE_IE_IMPORT_SOURCEMODE_PAYLOAD_V1 -- source_mode ไม่ได้อยู่ใน cfg.fields ต้องแปะเพิ่มเองตรงนี้
           if (newRows.length > 0) { for (let i = 0; i < newRows.length; i += 500) { const { error } = await db.from(cfg.table).insert(newRows.slice(i, i+500).map(buildPayload)); if (error) throw new Error(error.message); } }
           if (updateRows.length > 0) { for (let i = 0; i < updateRows.length; i += 500) { const payload = updateRows.slice(i, i+500).map(row => ({ id: row._existingId, ...buildPayload(row) })); const { error } = await db.from(cfg.table).upsert(payload, { onConflict: 'id' }); if (error) throw new Error(error.message); } }
         }
@@ -713,18 +895,23 @@ const computeNextSyRunning = async () => {
     // ── Validation: required fields ──
     if (tab === 'smcode') {
       const missing = [];
-      if (!form['SM-Code']?.trim())      missing.push('Simple Code');
-      if (!form['Ofin Code']?.trim())    missing.push('OFIN CODE');
+      // MARKER_SMCODE_IE_REQUIRED_REDUCE_V1 -- โหมด IE (source_mode='IE')
+      // ข้าม Simple Code/OFIN/CPC/Account ทั้งหมด (Auto-Run/Auto-Fill ให้แล้ว
+      // เหมือน RealVendorPopup ใน IEController.js) เหลือแค่ Vendor Name,
+      // Tax ID, Branch No., AT-Match -- โหมดอื่น (AP/All) ยังบังคับครบเหมือนเดิม
+      const isIeMode = form['source_mode'] === 'IE';
+      if (!isIeMode && !form['SM-Code']?.trim())      missing.push('Simple Code');
+      if (!isIeMode && !form['Ofin Code']?.trim())    missing.push('OFIN CODE');
       if (!form['Company Name']?.trim()) missing.push('Vendor Name');
       if (!form['Tax ID']?.trim())       missing.push('Tax ID');
       if (!form['Branch']?.trim())       missing.push('Branch No.');
       if (!form['Short Name']?.trim())   missing.push('AT-Match');
-      if (!form['CPC_Dr']?.trim())       missing.push('CPC Dr');
-      if (!form['Account_Dr']?.trim())   missing.push('Account Dr');
-      if (!form['Sub Acc_Dr']?.trim())   missing.push('Sub Acc Dr');
-      if (!form['CPC_Cr']?.trim())       missing.push('CPC Cr');
-      if (!form['Account_Dr2']?.trim())  missing.push('Account Cr');
-      if (!form['Sub Acc_Cr']?.trim())   missing.push('Sub Acc Cr');
+      if (!isIeMode && !form['CPC_Dr']?.trim())       missing.push('CPC Dr');
+      if (!isIeMode && !form['Account_Dr']?.trim())   missing.push('Account Dr');
+      if (!isIeMode && !form['Sub Acc_Dr']?.trim())   missing.push('Sub Acc Dr');
+      if (!isIeMode && !form['CPC_Cr']?.trim())       missing.push('CPC Cr');
+      if (!isIeMode && !form['Account_Cr']?.trim())  missing.push('Account Cr'); // MARKER_SMCODE_FIX_ACCOUNT_DR2_TO_ACCOUNT_CR_V1
+      if (!isIeMode && !form['Sub Acc_Cr']?.trim())   missing.push('Sub Acc Cr');
       if (missing.length) { setShowNewErrors(true); confirmDialog.alert('กรุณากรอกข้อมูลให้ครบถ้วนตาม Required Field', { variant: 'danger' }); return; }
       // ← ตรงนี้ครับ หลัง missing check
       if (!editId) {
@@ -765,7 +952,24 @@ const computeNextSyRunning = async () => {
     }
     const ts = getTimestamp(); const cuStr = cu();
     let data = { ...form, username: cuStr, last_update: ts };
+    // MARKER_VENDORMASTER_STRIP_UNDERSCORE_FIELDS_V1
+    // ── Field ที่ขึ้นต้นด้วย "_" (เช่น _type, _sub_type, _ofinSimpleName ──
+    // ── ฯลฯ) เป็น UI-only สำหรับ Auto-fill/แสดงผลเท่านั้น ไม่ใช่ Column ──
+    // ── จริงใน DB ต้องกรองออกก่อนส่งไป Backend เสมอ ป้องกัน Error ──────
+    // ── "column \"_xxx\" of relation ... does not exist" ────────────────
+    data = Object.fromEntries(Object.entries(data).filter(([k]) => !k.startsWith('_')));
     if (tab === 'iecode') data['SY-Running'] = nextSyRunning;
+    // MARKER_SMCODE_TAG_SOURCE_MODE_ON_SAVE_V2 -- ใช้ค่าจาก Picker ในฟอร์ม
+    // (form['source_mode']) ก่อนเสมอถ้ามี (Owner/มี 2 Permission เลือกเองได้)
+    // ไม่มี (User มี Permission เดียว ไม่เห็น Picker) -> Fallback เป็น
+    // effectiveSmCodeMode (Lock ตาม Permission ของตัวเอง)
+    // MARKER_SMCODE_FIX_SOURCE_MODE_ALL_BUG_V1 -- Safety Net: 'All' เป็นแค่ค่า UI Filter รวม
+    // ไม่ใช่ค่าจริงที่ DB รับ (Column จริงมีแค่ 'AP'/'IE') ห้ามหลุดไป Backend เด็ดขาด
+    if (tab === 'smcode') {
+      let resolvedSourceMode = form['source_mode'] || effectiveSmCodeMode;
+      if (resolvedSourceMode === 'All') resolvedSourceMode = 'AP';
+      data['source_mode'] = resolvedSourceMode;
+    }
 
     const wasEditCheck = !!editId; // ใช้เช็คก่อน auto-create category
 
@@ -897,13 +1101,15 @@ const computeNextSyRunning = async () => {
 
 
 
-    const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm(Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || '']))); setDetailEditMode(false); setShowDetailModal(true); setShowDetailErrors(false); };
+    const handleOpenDetail = (item) => { setDetailItem(item); setDetailForm({ ...Object.fromEntries(cfg.edit.map(([k]) => [k, item[k] || ''])), ...(tab === 'smcode' ? { source_mode: item.source_mode || 'AP' } : {}) }); setDetailEditMode(false); setShowDetailModal(true); setShowDetailErrors(false); };
     const handleDetailSave = async () => {
     // ── AP-Code / IE-Code: บังคับต้องมี Tax ID และ Branch No. ก่อน Save เสมอ ──
     if (tab === 'apcode' || tab === 'iecode') {
       const missingDetail = [];
       if (!detailForm['Tax ID']?.trim()) missingDetail.push('Tax ID');
-      if (!detailForm['No.']?.trim())    missingDetail.push('Branch No.');
+      // MARKER_VENDORMASTER_BRANCHNO_EXEMPT_INDIVIDUAL_TAXID_V1 -- ยกเว้น Branch No. ถ้า Tax ID เป็นบุคคลธรรมดา (ขึ้นต้น 1-8)
+      const isIndividualTaxId = /^[1-8]/.test(String(detailForm['Tax ID'] || '').trim());
+      if (!isIndividualTaxId && !detailForm['No.']?.trim()) missingDetail.push('Branch No.');
       if (missingDetail.length) {
         setShowDetailErrors(true); // ── ไฮไลต์ Field สีแดงแทนการ List ชื่อใน Popup ──
         confirmDialog.alert('กรอกข้อมูลให้ครบก่อนบันทึก', { variant: 'danger' });
@@ -920,7 +1126,12 @@ const computeNextSyRunning = async () => {
       }
     }
     setShowDetailErrors(false);
-    const data = { ...detailForm, username: cu(), last_update: getTimestamp() };
+    // MARKER_VENDORMASTER_STRIP_UNDERSCORE_FIELDS_V1
+    // ── กรอง Field UI-only (ขึ้นต้นด้วย "_") ออกก่อนส่งไป Backend ────────
+    // ── เช่นเดียวกับ handleNewSave (กันเผื่ออนาคตมี Field แบบเดียวกัน) ──
+    const data = Object.fromEntries(
+      Object.entries({ ...detailForm, username: cu(), last_update: getTimestamp() }).filter(([k]) => !k.startsWith('_'))
+    );
     const prevItem = detailItem;
 
     // ✅ อัปเดตหน้าจอทันที
@@ -1108,7 +1319,7 @@ const computeNextSyRunning = async () => {
       if (c.key === 'TYPE' || c.key === 'SUB TYPE') return noticeBadge(item[c.key]);
       if (c.key === '_entityType')     return entityBadge(item['TAX ID']);
       if (c.key === '_debitAccount')   return <span style={{ fontSize:'10px', color:'#555' }}>{[item['CPC_Dr'], item['Account_Dr'], item['Sub Acc_Dr']].filter(Boolean).join(' · ') || '-'}</span>;
-      if (c.key === '_creditAccount')  return <span style={{ fontSize:'10px', color:'#555' }}>{[item['CPC_Cr'], item['Account_Dr2'], item['Sub Acc_Cr']].filter(Boolean).join(' · ') || '-'}</span>;
+      if (c.key === '_creditAccount')  return <span style={{ fontSize:'10px', color:'#555' }}>{[item['CPC_Cr'], item['Account_Cr'], item['Sub Acc_Cr']].filter(Boolean).join(' · ') || '-'}</span>; {/* MARKER_SMCODE_FIX_ACCOUNT_DR2_TO_ACCOUNT_CR_V1 */}
       if (['Special Rule1','Special Rule2','Simple Rule3','Special Rule4','Special Rule5'].includes(c.key)) return ruleBadge(item[c.key]);
       if (c.key === 'Short Name')      return item[c.key] ? <span style={{ background:'#E6F1FB', color:'#0C447C', padding:'2px 7px', borderRadius:'20px', fontSize:'10px' }}>{item[c.key]}</span> : '-';
       if (c.key === 'SY-Running')      return item[c.key] ? <span style={{ background:'#f0faf6', color:'#0F6E56', padding:'2px 7px', borderRadius:'20px', fontSize:'10px', fontWeight:'500' }}>{item[c.key]}</span> : '-';
@@ -1143,7 +1354,11 @@ const computeNextSyRunning = async () => {
       inputReadonly: { padding:'6px 10px', borderRadius:'6px', border:'1px solid #f0f0f0', fontSize:'12px', width:'100%', marginBottom:'6px', boxSizing:'border-box', background:'#fafafa', color:'#333' },
       overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 },
       // MARKER_CATEGORY_MODAL_WIDTH_V3
-      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw': tab==='category'?'92vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px': tab==='category'?'920px':'700px', maxHeight:'88vh', display:'flex', flexDirection:'column', overflow:'hidden' }, // MARKER_VENDORMASTER_MODAL_HEIGHT_FIX
+      // MARKER_VENDORMASTER_MODAL_HEIGHT_FIX_V3 -- กลับไปใช้ maxHeight (Auto-Size
+      // ตามเนื้อหาจริง) แทน Fixed height -- Root Cause ที่ View เตี้ยกว่า Edit
+      // แก้ที่ต้นตอแล้ว (Field Row Height ให้เท่ากัน 24px ทั้งคู่) ไม่ต้อง Force
+      // ความสูงเท่ากันด้วยตัวเลขตายตัวอีกต่อไป (ทำให้เกิดพื้นที่ว่างเปล่าเกินจำเป็น)
+      modal: { background:'white', borderRadius:'14px', width: isMobile?'95vw': tab==='smcode'?'96vw': tab==='apcode'||tab==='iecode'?'96vw': tab==='category'?'92vw':'500px', maxWidth: tab==='smcode'||tab==='apcode'||tab==='iecode'?'1100px': tab==='category'?'920px':'700px', maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'hidden' },
       iconBtn: (color, bg, border) => ({ background: bg||'none', border:`0.5px solid ${border||color}`, borderRadius:'4px', cursor:'pointer', padding:'3px 6px', color, fontSize:'12px', lineHeight:1 }),
     };
 
@@ -1202,8 +1417,14 @@ const computeNextSyRunning = async () => {
               const isCombo = !c.noCombo && (cfg.combo.includes(key) || c.combo);
               const opts = c.opts || getOptions(key, formData);
               const cellHasError = showErrors && c.required && !String(formData[key]||'').trim();
+              // MARKER_SMCODE_IE_DYNAMIC_BG_V1 -- SM-Code/OFIN Code เปลี่ยน
+              // เป็นฟ้า/ขาว (แทน Required เหลือง) เฉพาะตอน source_mode='IE'
+              // (Auto-Run/Auto-Fill ให้แล้ว ไม่ต้องกรอกเอง) -- Tab/Field อื่น
+              // ไม่กระทบ ยังใช้ c.bg เดิม
+              const isSmcodeIeAutoField = tab === 'smcode' && formData['source_mode'] === 'IE' && (key === 'SM-Code' || key === 'Ofin Code');
+              const dynamicBg = isSmcodeIeAutoField ? (key === 'SM-Code' ? '#E6F1FB' : 'transparent') : (c.bg || 'transparent');
               return (
-                <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center',justifyContent: c.center ? 'center' : 'flex-start', borderRight:br, overflow:'visible', background: cellHasError ? '#FCEBEB' : (c.bg || 'transparent'), boxShadow: cellHasError ? 'inset 0 0 0 1px #791F1F' : 'none' }}>
+                <div key={`c${i}`} style={{ padding:'3px 6px', display:'flex', alignItems:'center',justifyContent: c.center ? 'center' : 'flex-start', borderRight:br, overflow:'visible', background: cellHasError && !isSmcodeIeAutoField ? '#FCEBEB' : dynamicBg, boxShadow: cellHasError && !isSmcodeIeAutoField ? 'inset 0 0 0 1px #791F1F' : 'none' }}>
                   {editMode
                     ? isCombo
                     ? <ComboBox 
@@ -1218,14 +1439,15 @@ const computeNextSyRunning = async () => {
                           value={formData[key]||''} onChange={e=> c.onChangeFn ? c.onChangeFn(e.target.value) : setFormData({...formData,[key]:e.target.value})} 
                           onBlur={key === 'Ofin Code' ? () => handleOfinCodeChange(normalizeOfinCode(formData['Ofin Code'])) : undefined}
                           style={{ 
-                            height:'24px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', 
+                            height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', 
                             background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box',
                             textAlign: c.center ? 'center' : 'left'
                           }} />
                     : <div style={{ 
+                            height:'28px', display:'flex', alignItems:'center',
                             fontSize:'12px', color:'#1a3a5c', padding:'0 2px', overflow:'hidden', 
-                            textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%',
-                            textAlign: c.center ? 'center' : 'left'  // ✅ เพิ่มตรงนี้
+                            textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%', boxSizing:'border-box',
+                            justifyContent: c.center ? 'center' : 'flex-start'  // ✅ เพิ่มตรงนี้
                           }}>{/* MARKER_VENDORMASTER_OFINCODE_DISPLAY_NORMALIZE */ key === 'Ofin Code' ? (normalizeOfinCode(formData[key]) || '—') : (formData[key]||'—')}</div>
                   }
                 </div>
@@ -1336,7 +1558,7 @@ const computeNextSyRunning = async () => {
           'Account_Dr':  found ? (found['Account_Dr'] || '') : prev['Account_Dr'],
           'Sub Acc_Dr':  found ? (found['Sub Acc_Dr'] || '') : prev['Sub Acc_Dr'],
           'CPC_Cr':      found ? (found['CPC_Cr'] || '') : prev['CPC_Cr'],
-          'Account_Dr2': found ? (found['Account_Dr2'] || '') : prev['Account_Dr2'],
+          'Account_Cr': found ? (found['Account_Cr'] || '') : prev['Account_Cr'], // MARKER_SMCODE_FIX_ACCOUNT_DR2_TO_ACCOUNT_CR_V1
           'Sub Acc_Cr':  found ? (found['Sub Acc_Cr'] || '') : prev['Sub Acc_Cr'],
         }));
       };
@@ -1399,7 +1621,7 @@ const computeNextSyRunning = async () => {
               <div>
                 <div style={{ padding:'6px 10px', fontSize:'11px', color:'white', background:'#1a3a5c', fontWeight:'600', textAlign:'center', borderBottom:'0.5px solid #e8eaf0' }}>Credit Account</div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr' }}>
-                  {[['CPC_Cr','CPC Cr'],['Account_Dr2','Account Cr'],['Sub Acc_Cr','Sub Acc Cr']].map(([key,lbl],fi) => (
+                  {[['CPC_Cr','CPC Cr'],['Account_Cr','Account Cr'],['Sub Acc_Cr','Sub Acc Cr']].map(([key,lbl],fi) => ( // MARKER_SMCODE_FIX_ACCOUNT_DR2_TO_ACCOUNT_CR_V1
                     <div key={key}>
                       <div style={{ padding:'4px 8px', fontSize:'10px', color:'#888', background:'#f8f9fa', borderBottom:'0.5px solid #e8eaf0', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none', textAlign:'center', fontWeight:'500' }}>{lbl}</div>
                       <div style={{ padding:'3px 6px', borderRight: fi<2 ? '0.5px solid #e8eaf0' : 'none' }}>
@@ -1731,10 +1953,16 @@ if (tab === 'apcode' || tab === 'iecode') {
           {canEdit && tab !== 'vendor_rule' && cfg && (
             <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
               {isAdmin && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile&&' Recycle Bin'}</button>}
-              <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
-              <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
+              {/* MARKER_SMCODE_TEMPLATE_IMPORT_OWNERADMIN_ONLY_V1 -- SM-Code จำกัด Template/Import ไว้ที่ Owner/Admin เท่านั้น
+                  (Tab อื่นยังใช้ canEdit เดิม ไม่เปลี่ยน) */}
+              {(tab !== 'smcode' || isOwner || isAdmin) && (
+                <>
+                  <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleDownloadTemplate}>⬇{!isMobile&&' Template'}</button>
+                  <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={()=>fileRef.current.click()}>📂{!isMobile&&' Import'}</button>
+                </>
+              )}
               <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleFileChange} />
-              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={()=>{setForm(Object.fromEntries(cfg.edit.map(([k])=>[k,'']))); setEditId(null); setShowForm(true); setShowNewErrors(false); setTimeout(() => simpleCodeRef.current?.focus(), 100);}}>+ New</button>
+              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={()=>{setForm({...Object.fromEntries(cfg.edit.map(([k])=>[k,''])), ...(tab === 'smcode' ? { source_mode: canToggleSmCodeMode ? 'AP' : effectiveSmCodeMode } : {})}); setEditId(null); setShowForm(true); setShowNewErrors(false); setTimeout(() => simpleCodeRef.current?.focus(), 100);}}>+ New</button> {/* MARKER_SMCODE_FIX_SOURCE_MODE_ALL_BUG_V1 -- Default เดิมเป็น 'All' ทำให้หลุดไป DB ได้ถ้า User ไม่เปลี่ยน Dropdown ก่อน Save */}
             </div>
           )}
         </div>
@@ -1743,7 +1971,18 @@ if (tab === 'apcode' || tab === 'iecode') {
           {VISIBLE_TABS.map(([key, c]) => (
             <div key={key} style={S.tab(tab===key)} onClick={()=>handleTabChange(key)}>
               {c.icon} {!isMobile && c.label}
-              <span style={S.tabBadge(tab===key)}>{key === 'vendor_rule' ? vendorRules.length : (dataMap[key]||[]).length}</span>
+              {/* MARKER_SMCODE_BADGE_COUNT_FILTER_V1 -- Badge ของ smcode ต้อง
+                  นับตาม source_mode ที่ User เห็นได้จริง (เหมือน items ด้านล่าง)
+                  ไม่ใช่ Count ดิบทั้งหมดที่รวม AP+IE+All ปนกัน */}
+              <span style={S.tabBadge(tab===key)}>{
+                key === 'vendor_rule' ? vendorRules.length
+                : key === 'smcode' ? (dataMap[key]||[]).filter(i => {
+                    if (effectiveSmCodeMode === 'All') return true;
+                    const sm = i.source_mode || 'AP';
+                    return sm === effectiveSmCodeMode || sm === 'All';
+                  }).length
+                : (dataMap[key]||[]).length
+              }</span>
             </div>
           ))}
         </div>
@@ -1759,6 +1998,18 @@ if (tab === 'apcode' || tab === 'iecode') {
         <div style={{ display:'flex', alignItems:'center', padding:'6px 0', margin:'4px 0', flexShrink:0, gap:'8px', justifyContent:'space-between' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
             <input placeholder={isMobile?'Search...':`Search ${cfg?.label}...`} value={search} onChange={e=>setSearchMap(prev=>({...prev,[tab]:e.target.value}))} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width: isMobile?'120px':isTablet?'160px':'220px' }} />
+            {/* MARKER_SMCODE_MODE_TOGGLE_UI_V2 -- 3 Mode (AP/IE/All) โชว์เฉพาะ
+                tab smcode และ User เห็นได้มากกว่า 1 Mode (Owner/มี 2 Permission) */}
+            {tab === 'smcode' && canToggleSmCodeMode && (
+              <div style={{ display:'flex', border:'0.5px solid #ddd', borderRadius:'6px', overflow:'hidden', flexShrink:0 }}>
+                {['AP', 'IE'].map(m => ( // MARKER_SMCODE_FILTER_REMOVE_ALL_V1 -- เอา 'All' ออกจาก Filter (เหลือแค่ AP/IE) -- Form Edit/New ยังมี All ให้เลือกตามเดิม
+                  <button key={m} onClick={() => setSmCodeModeView(m)}
+                    style={{ padding:'5px 12px', border:'none', cursor:'pointer', fontSize:'12px', fontWeight:'500',
+                      background: smCodeModeView === m ? '#1a3a5c' : 'white',
+                      color: smCodeModeView === m ? 'white' : '#888' }}>{m}</button>
+                ))}
+              </div>
+            )}
             {!isMobile && <span style={{ fontSize:'12px', color:'#888', whiteSpace:'nowrap' }}>
               {filtered.length > 0 ? `แสดง ${(page-1)*effectivePageSize+1}-${Math.min(page*effectivePageSize, filtered.length)} จาก ${filtered.length} รายการ` : '0 รายการ'}
               {selected.length>0?` | เลือกอยู่ ${selected.length} รายการ`:''}
@@ -1831,16 +2082,38 @@ if (tab === 'apcode' || tab === 'iecode') {
         {showForm && cfg && (
           <div style={S.overlay}>
             <div style={S.modal}>
-              <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <div style={{ padding:'16px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0, gap:'12px' }}>
                 <div>
                   <h3 style={{ fontSize:'15px', margin:0 }}>{editId?`✏️ Edit ${cfg.label}`:`+ New ${cfg.label}`}</h3>
                   {tab === 'iecode' && !editId && <div style={{ fontSize:'11px', color:'#0F6E56', marginTop:'2px' }}>SY-Running: {nextSyRunning} (Auto)</div>}
                 </div>
-                <div style={{ display:'flex', gap:'8px' }}>
-                  <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setShowForm(false); setShowNewErrors(false);}}>Cancel</button>
-                  <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleNewSave}>Save</button>
+                {/* MARKER_SMCODE_ADD_MODULE_PICKER_V3 -- รวมกลุ่มกับปุ่ม
+                    Cancel/Save ไว้ Div เดียวกัน (เดิมแยก Div ทำให้ justifyContent:
+                    space-between ดันห่างกันไปคนละฝั่ง) ให้ชิดติดกันจริงๆ */}
+                <div style={{ display:'flex', alignItems:'center', gap:'12px', flexShrink:0 }}>
+                  {tab === 'smcode' && canToggleSmCodeMode && (
+                    <div style={{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
+                      <label style={{ fontSize:'11px', color:'#888' }}>Module</label>
+                      <div style={{ display:'flex', border:'0.5px solid #ddd', borderRadius:'6px', overflow:'hidden' }}>
+                        {['AP', 'IE', 'All'].map(m => (
+                          <button key={m} type="button" onClick={() => setForm(f => ({ ...f, source_mode: m }))}
+                            style={{ padding:'6px 14px', border:'none', cursor:'pointer', fontSize:'12px', fontWeight:'500',
+                              background: (form['source_mode'] || 'AP') === m ? '#1a3a5c' : 'white',
+                              color: (form['source_mode'] || 'AP') === m ? 'white' : '#888' }}>{m}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display:'flex', gap:'8px', flexShrink:0 }}>
+                    <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setShowForm(false); setShowNewErrors(false);}}>Cancel</button>
+                    <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleNewSave}>Save</button>
+                  </div>
                 </div>
               </div>
+              {/* MARKER_VENDORMASTER_NEWFORM_SCROLL_FIX_V1 -- ห่อเนื้อหาเหมือน
+                  Detail Modal ให้ Scroll ได้แทนโดน overflow:hidden ตัดทิ้ง
+                  (ตอนนี้ Modal สูงคงที่ 96vh เท่ากับ View/Edit แล้ว) */}
+              <div style={{ overflowY:'auto', flex:1 }}>
               {renderFormFields(form, setForm, true, showNewErrors, !editId)}
               <div style={{ padding:'0 20px 16px' }}>
                 <div style={{ display:'flex', gap:'12px', alignItems:'center' }}>
@@ -1854,6 +2127,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                   </div>
                 </div>
               </div>
+              </div>
             </div>
           </div>
         )}
@@ -1861,21 +2135,47 @@ if (tab === 'apcode' || tab === 'iecode') {
         {showDetailModal && detailItem && cfg && (
           <div style={S.overlay}>
             <div style={S.modal}>
-              <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+              <div style={{ padding:'14px 20px', borderBottom:'1px solid #f0f0f0', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0, gap:'12px' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
                   <span style={{ fontSize:'14px', fontWeight:'500' }}>{detailEditMode?`✏️ Edit ${cfg.label}`:`🔍 ${detailItem[cfg.key]||'Detail'}`}</span>
                   {tab === 'iecode' && detailItem['SY-Running'] && <span style={{ fontSize:'11px', background:'#f0faf6', color:'#0F6E56', padding:'2px 8px', borderRadius:'20px' }}>{detailItem['SY-Running']}</span>}
+                  {/* MARKER_SMCODE_DETAIL_MODULE_BADGE_V2 -- Badge (View อ่าน
+                      อย่างเดียว) อยู่ข้างชื่อเรื่องเหมือนเดิม -- ส่วน Picker
+                      (Edit) ย้ายไปอยู่ข้าง Cancel/Save แล้ว (ดูด้านล่าง) */}
+                  {tab === 'smcode' && !detailEditMode && (
+                    <span style={{ fontSize:'11px', background:'#f0f3f8', color:'#1a3a5c', padding:'2px 8px', borderRadius:'20px', fontWeight:'600' }}>{detailItem.source_mode || 'AP'}</span>
+                  )}
                   {!detailEditMode && canEdit && <button onClick={()=>setDetailEditMode(true)} style={{ padding:'3px 10px', borderRadius:'5px', border:'1px solid #1a3a5c', background:'white', color:'#1a3a5c', fontSize:'12px', cursor:'pointer' }}>✏️ Edit</button>}
                 </div>
+                {/* MARKER_SMCODE_DETAIL_MODULE_PICKER_V2 -- ย้ายมาไว้ข้าง
+                    Cancel/Save (เดิมอยู่ข้างชื่อเรื่อง ห่างจาก Cancel/Save
+                    มาก) -- ปรับขนาดปุ่มให้สูงเท่า S.btn (Cancel/Save) ด้วย */}
+                <div style={{ display:'flex', alignItems:'center', gap:'12px', flexShrink:0 }}>
+                  {tab === 'smcode' && detailEditMode && canToggleSmCodeMode && (
+                    <div style={{ display:'flex', border:'0.5px solid #ddd', borderRadius:'6px', overflow:'hidden' }}>
+                      {['AP', 'IE', 'All'].map(m => (
+                        <button key={m} type="button" onClick={() => setDetailForm(f => ({ ...f, source_mode: m }))}
+                          style={{ padding: isMobile?'6px 10px':'7px 14px', border:'none', cursor:'pointer', fontSize: isMobile?'12px':'13px', fontWeight:'600',
+                            background: (detailForm['source_mode'] || 'AP') === m ? '#1a3a5c' : 'white',
+                            color: (detailForm['source_mode'] || 'AP') === m ? '#fff' : '#888' }}>{m}</button>
+                      ))}
+                    </div>
+                  )}
                 <div style={{ display:'flex', gap:'8px' }}>
                   {detailEditMode ? (
                     <>
-                      <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setDetailEditMode(false); setDetailForm(Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||'']))); setShowDetailErrors(false);}}>Cancel</button>
+                      <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>{setDetailEditMode(false); setDetailForm({ ...Object.fromEntries(cfg.edit.map(([k])=>[k,detailItem[k]||''])), ...(tab === 'smcode' ? { source_mode: detailItem.source_mode || 'AP' } : {}) }); setShowDetailErrors(false);}}>Cancel</button>
                       <button style={{...S.btn, background:'#1a3a5c', color:'white', marginLeft:0}} onClick={handleDetailSave}>Save</button>
                     </>
                   ) : <button style={{...S.btn, background:'#f0f0f0', marginLeft:0}} onClick={()=>setShowDetailModal(false)}>Close</button>}
                 </div>
+                </div>
               </div>
+              {/* MARKER_VENDORMASTER_DETAIL_MODAL_SCROLL_FIX_V1 -- ห่อเนื้อหา
+                  ตั้งแต่ Form จนถึง Username/Last Update ด้วย Scrollable Wrapper
+                  (เดิมไม่มี พอเนื้อหายาวเกิน maxHeight:88vh ของ Modal จะโดน
+                  overflow:hidden ตัดทิ้งเงียบๆ แทนที่จะ Scroll ได้) */}
+              <div style={{ overflowY:'auto', flex:1 }}>
               {/* MARKER_VENDORMASTER_DETAIL_AUTOLOOKUP */}
               {(() => {
                 const detailOfinMatch = branchList.find(b => String(b['Branch Code'] || '').trim() === normalizeOfinCode(detailItem['Ofin Code'] || ''));
@@ -1898,13 +2198,19 @@ if (tab === 'apcode' || tab === 'iecode') {
                 // MARKER_VENDORMASTER_DETAIL_LOOKUP_FIX_KEYS
                 const detailAllKeys = Array.from(new Set([...cfg.edit.map(([k]) => k), ...Object.keys(detailLiveMap)]));
                 const detailViewData = Object.fromEntries(detailAllKeys.map(k => [k, (detailLiveMap[k] || detailItem[k] || '')]));
-                return renderFormFields(detailEditMode ? detailForm : detailViewData, setDetailForm, detailEditMode, showDetailErrors, false);
+                // MARKER_VENDORMASTER_DETAIL_LOOKUP_EDITMODE_FIX_V1 -- Merge
+                // detailLiveMap เข้าไปตอน Edit Mode ด้วย (เดิมมีแค่ View Mode
+                // ที่เห็น Auto-Lookup พวกนี้ เพราะ detailForm ไม่มี Key พวกนี้
+                // อยู่เลยตั้งแต่ต้น -- Field ขึ้นต้น "_" อยู่แล้วจะถูก Strip
+                // ออกก่อน Save เอง ไม่กระทบ Payload)
+                return renderFormFields(detailEditMode ? { ...detailForm, ...detailLiveMap } : detailViewData, setDetailForm, detailEditMode, showDetailErrors, false);
               })()}
               <div style={{ padding:'0 20px 16px', borderTop:'0.5px solid #f0f0f0' }}>
                 <div style={{ display:'flex', gap:'16px', paddingTop:'12px' }}>
                   <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Username</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{detailItem['username']||'-'}</div></div>
                   <div style={{ flex:1 }}><div style={{ fontSize:'11px', color:'#888' }}>Last Update</div><div style={{ fontSize:'12px', color:'#555', marginTop:'2px' }}>{formatLastUpdate(detailItem['last_update'])}</div></div>
                 </div>
+              </div>
               </div>
             </div>
           </div>
@@ -1916,10 +2222,11 @@ if (tab === 'apcode' || tab === 'iecode') {
           onConfirm={handleConfirmImport}
           importing={importing}
           previewRows={previewRows}
-          keyField={cfg?.key}
+          keyField={tab === 'iecode' ? 'Supplier Number + Supplier Site + BU Code' : cfg?.key}
           allFields={cfg?.fields||[]}
           isMobile={isMobile}
           isCategory={tab === 'category'}
+          isIecode={tab === 'iecode'}
         />
 
         {/* ─── Recycle Bin Modal ─── */}

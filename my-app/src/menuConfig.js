@@ -64,17 +64,43 @@ export const VAT_CONTROLLER_MENU = {
 
 // ── Tab ภายในหน้า "Upload file" (จัดการ state ในตัว Component เอง ────────
 // ── ไม่ใช่ Flyout Menu — เก็บไว้ที่นี่เพื่อให้เห็นภาพรวมทั้งหมดในไฟล์เดียว) ─
-export const VAT_UPLOAD_FILE_TABS = [
+export const VAT_UPLOAD_FILE_TABS = [ // MARKER_MENUCONFIG_REMOVE_DATALOAD_V1 -- เอา DataLoad ออก เหลือ 3 Tab
   { id: 'popvat-report',       label: 'Popvat Report' },
   { id: 'simple-input-report', label: 'Simple Input Report' },
   { id: 'adi-upload',          label: 'ADI Upload' },
-  { id: 'data-load',           label: 'DataLoad' },
 ];
+
+// ── IE Controller: Clone โครงสร้างจาก AP_CONTROLLER_MENU -- ตัด "Invoice OCR",
+// "Purchase Order", "Batch Control" ออกทั้งหมด (Confirm แล้วว่า IE ยังไม่ต้องมี)
+export const IE_CONTROLLER_MENU = {
+  id: 'ie-controller', icon: '💸', label: 'I-Expense', color: '#FAEEDA',
+  groups: [
+    { label: 'Invoice Entry', icon: '📥', items: [
+      { id: 'ie-gr', icon: '📋', label: 'IE Manual' },
+    ]},
+    { label: 'จัดการ', icon: '🗂️', items: [
+      { id: 'ie-drafts', icon: '📄', label: 'Invoice History' },
+      // ไม่มี Batch Control ตามที่สั่งไว้ (ยังไม่ Clone มา)
+    ]},
+    { label: 'Reconcile', icon: '🔗', items: [ // MARKER_IE_MENU_RECONCILE_GROUP_V1
+      { id: 'ie-generate-macro-logic', icon: '⚙️', label: 'Generate by Macro Logic' },
+    ]},
+  ],
+};
+
+// ── GL Functional: เมนูย่อยแบ่งเป็นกลุ่ม (ใช้สร้าง Flyout) ──────────────
+// MARKER_GL_FUNCTIONAL_MENU_V1 — เริ่มจากกลุ่ม Reconcile, เมนูแรก = Account Payable Recon.
+export const GL_FUNCTIONAL_MENU = {
+  id: 'gl-functional', icon: '📊', label: 'GL Functional', color: '#EEEDFE',
+  groups: [
+    { label: 'Reconcile', icon: '🔗', items: [
+      { id: 'gl-ap-recon', icon: '🧾', label: 'Account Payable Recon.' },
+    ]},
+  ],
+};
 
 // ── เมนูที่ยังไม่มี submenu ย่อย (เป็น placeholder หน้าเดียว) ─────────────
 export const SIMPLE_FUNCTION_MENUS = [
-  { id: 'i-expense',       icon: '💸', label: 'I-Expense',       color: '#FAEEDA' },
-  { id: 'gl-functional',   icon: '📊', label: 'GL Functional',   color: '#EEEDFE' },
   { id: 'i-pro-interface', icon: '🔗', label: 'I-Pro Interface', color: '#FAECE7' },
 ];
 
@@ -91,6 +117,16 @@ export const MAINTENANCE_MENU_GROUPS = [
     id: VAT_CONTROLLER_MENU.id, icon: VAT_CONTROLLER_MENU.icon, label: VAT_CONTROLLER_MENU.label,
     color: VAT_CONTROLLER_MENU.color,
     items: VAT_CONTROLLER_MENU.groups.flatMap(g => g.items),
+  },
+  {
+    id: IE_CONTROLLER_MENU.id, icon: IE_CONTROLLER_MENU.icon, label: IE_CONTROLLER_MENU.label,
+    color: IE_CONTROLLER_MENU.color,
+    items: IE_CONTROLLER_MENU.groups.flatMap(g => g.items),
+  },
+  {
+    id: GL_FUNCTIONAL_MENU.id, icon: GL_FUNCTIONAL_MENU.icon, label: GL_FUNCTIONAL_MENU.label,
+    color: GL_FUNCTIONAL_MENU.color,
+    items: GL_FUNCTIONAL_MENU.groups.flatMap(g => g.items),
   },
   ...SIMPLE_FUNCTION_MENUS.map(m => ({
     id: m.id, icon: m.icon, label: m.label, color: m.color,

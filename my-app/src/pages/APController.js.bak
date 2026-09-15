@@ -1706,7 +1706,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       const favRes = await fetch(`${favApiBase}/api/favorite/toggle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${favToken}` },
-        body: JSON.stringify({ table: 'itemcode_list', id: item.id, favKey: vendorTaxId }),
+        body: JSON.stringify({ table: 'itemcode_list', id: item.id, taxId: vendorTaxId }),
       });
       if (!favRes.ok) { const j = await favRes.json().catch(() => ({})); throw new Error(j.error || 'บันทึกไม่สำเร็จ'); }
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
@@ -1736,29 +1736,6 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       setForm(f);
     }
   }, [show, view, bu, viewTarget]);
-
-  // MARKER_ITEMCODE_SERVER_SEARCH_V1 -- Server-side Search (เดิม Filter itemcodeItems ทั้งก้อนฝั่ง Client)
-  const [results, setResults] = useState([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const searchSeqRef = useRef(0);
-  useEffect(() => {
-    if (!show) return;
-    const controller = new AbortController();
-    const mySeq = ++searchSeqRef.current;
-    const t = setTimeout(async () => {
-      setSearchLoading(true);
-      try {
-        const qs = new URLSearchParams({ q: query.trim(), bu: bu || '', sourceModule: sourceModule || 'AP', favKey: vendorTaxId || '' }).toString();
-        const data = await apiFetch(`/itemcode-search?${qs}`, { signal: controller.signal });
-        if (mySeq === searchSeqRef.current) setResults(Array.isArray(data?.items) ? data.items : []);
-      } catch (err) {
-        if (err?.name !== 'AbortError') console.error('[ItemCode search] error:', err);
-      } finally {
-        if (mySeq === searchSeqRef.current) setSearchLoading(false);
-      }
-    }, 300);
-    return () => { clearTimeout(t); controller.abort(); };
-  }, [show, query, bu, sourceModule, vendorTaxId]);
 
 
 
@@ -1823,8 +1800,19 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
 
   if (!show) return null;
 
-  const favItems  = vendorTaxId ? results.filter(i => (Array.isArray(i.favorite_taxids) ? i.favorite_taxids : []).includes(vendorTaxId)) : [];
-  const restItems = vendorTaxId ? results.filter(i => !(Array.isArray(i.favorite_taxids) ? i.favorite_taxids : []).includes(vendorTaxId)) : results;
+  const buLower = String(bu ?? '').toLowerCase();
+  // MARKER_ITEMCODE_SOURCEMODE_AP_V1 -- เห็นเฉพาะ Item Code ของ Module ตัวเอง (IE) + 'All' เท่านั้น
+  const buFiltered = itemcodeItems.filter(i => {
+    const ib = String(i['bu'] ?? '').toLowerCase();
+    const buOk = ib === 'free' || (buLower && ib === buLower);
+    const modeOk = i['source_mode'] === sourceModule || i['source_mode'] === 'All';
+    return buOk && modeOk;
+  });
+  const q = query.trim().toLowerCase();
+  const filtered0 = q ? buFiltered.filter(i => i['code']?.toLowerCase().includes(q) || i['description']?.toLowerCase().includes(q) || i['keyword']?.toLowerCase().includes(q) || i['cpc']?.toLowerCase().includes(q) || i['account']?.includes(q)) : buFiltered;
+  const sortedAll = [...filtered0].sort((a, b) => String(a['code'] ?? '').localeCompare(String(b['code'] ?? ''), undefined, { numeric: true, sensitivity: 'base' }));
+  const favItems  = vendorTaxId ? sortedAll.filter(i => (Array.isArray(i.favorite_taxids) ? i.favorite_taxids : []).includes(vendorTaxId)) : [];
+  const restItems = vendorTaxId ? sortedAll.filter(i => !(Array.isArray(i.favorite_taxids) ? i.favorite_taxids : []).includes(vendorTaxId)) : sortedAll;
   const filtered  = [...favItems, ...restItems];
 
   const handleKey = (e) => {
@@ -1954,7 +1942,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🔖</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Select Item Code</div>
-                <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{searchLoading ? 'กำลังค้นหา...' : `${filtered.length} รายการ`}{query ? ` · ค้นหา "${query}"` : ''} · BU: FREE{bu ? `, ${bu}` : ''}</div>
+                <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''} · BU: FREE{bu ? `, ${bu}` : ''}</div>
               </div>
               <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
             </div>
@@ -1980,7 +1968,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
                   <tr>{COLS.map(([key, label, w]) => (<th key={key} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.75)', padding: '9px 10px', textAlign: key === '_action' ? 'center' : 'left', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap', width: w || undefined }}>{label}</th>))}</tr>
                 </thead>
                 <tbody>
-                  {filtered.length === 0 ? (<tr><td colSpan={COLS.length} style={{ textAlign: 'center', color: '#aaa', padding: '48px', fontSize: '13px' }}>{searchLoading ? 'กำลังค้นหา...' : `ไม่พบ Item Code${query ? ` "${query}"` : ''}`}</td></tr>)
+                  {filtered.length === 0 ? (<tr><td colSpan={COLS.length} style={{ textAlign: 'center', color: '#aaa', padding: '48px', fontSize: '13px' }}>ไม่พบ Item Code{query ? ` "${query}"` : ''}</td></tr>)
                   : filtered.map((item, i) => {
                     const isAct = i === active;
                     const showFavHeader = i === 0 && favItems.length > 0;
@@ -2033,7 +2021,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
               </table>
             </div>
             <div style={{ padding: '10px 20px', borderTop: '1px solid #f0f2f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: '#fafbfc' }}>
-              <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} รายการ{results.length >= 50 ? ' (พิมพ์เพิ่มเพื่อจำกัดผลลัพธ์)' : ''}</span>
+              <span style={{ fontSize: '11px', color: '#bbb' }}>{filtered.length} / {buFiltered.length} รายการ</span>
               <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: '7px', border: '1px solid #dde', background: 'white', color: '#666', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
             </div>
           </>
@@ -3665,7 +3653,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       const favRes = await fetch(`${favApiBase}/api/favorite/toggle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${favToken}` },
-        body: JSON.stringify({ table: 'sm_code_list', id: item.id, favKey: vendorTaxId }),
+        body: JSON.stringify({ table: 'sm_code_list', id: item.id, taxId: vendorTaxId }),
       });
       if (!favRes.ok) { const j = await favRes.json().catch(() => ({})); throw new Error(j.error || 'บันทึกไม่สำเร็จ'); }
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
@@ -3696,29 +3684,6 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
     if (active < 0 || !listRef.current) return;
     listRef.current.querySelectorAll('tr[data-row]')[active]?.scrollIntoView({ block: 'nearest' });
   }, [active]);
-
-  // MARKER_SMCODE_SERVER_SEARCH_V1 -- Server-side Search (เดิม Filter smCodeItems ทั้งก้อนฝั่ง Client)
-  const [results, setResults] = useState([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const searchSeqRef = useRef(0);
-  useEffect(() => {
-    if (!show) return;
-    const controller = new AbortController();
-    const mySeq = ++searchSeqRef.current;
-    const t = setTimeout(async () => {
-      setSearchLoading(true);
-      try {
-        const qs = new URLSearchParams({ q: query.trim(), favKey: vendorTaxId || '' }).toString();
-        const data = await apiFetch(`/smcode-search?${qs}`, { signal: controller.signal });
-        if (mySeq === searchSeqRef.current) setResults(Array.isArray(data?.items) ? data.items : []);
-      } catch (err) {
-        if (err?.name !== 'AbortError') console.error('[SmCode search] error:', err);
-      } finally {
-        if (mySeq === searchSeqRef.current) setSearchLoading(false);
-      }
-    }, 300);
-    return () => { clearTimeout(t); controller.abort(); };
-  }, [show, query, vendorTaxId]);
 
   // ── SM-Code Form helpers ──────────────────────────────────────────────────
   const smEmptyForm = () => ({
@@ -4166,8 +4131,18 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
   const isFormView = view === 'new' || view === 'edit' || view === 'view';
 
   if (!show) return null;
-  const favItems  = vendorTaxId ? results.filter(i => isFav(i)) : [];
-  const restItems = vendorTaxId ? results.filter(i => !isFav(i)) : results;
+  const inputOnly = smCodeItems.filter(i =>
+    String(i['Short Name'] ?? '').trim().toUpperCase() === 'INPUT'
+  );
+  const q = query.trim().toLowerCase();
+  const filtered0 = q
+    ? inputOnly.filter(i =>
+        String(i['Company Name'] ?? '').toLowerCase().includes(q) ||
+        String(i['SM-Code'] ?? '').toLowerCase().includes(q)
+      )
+    : inputOnly;
+  const favItems  = vendorTaxId ? filtered0.filter(i => isFav(i)) : [];
+  const restItems = vendorTaxId ? filtered0.filter(i => !isFav(i)) : filtered0;
   const filtered  = [...favItems, ...restItems];
 
   const handleKey = (e) => {
@@ -4191,7 +4166,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
           <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏢</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>Real Vendor</div>
-            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{searchLoading ? 'กำลังค้นหา...' : `${filtered.length} รายการ`}{query ? ` · ค้นหา "${query}"` : ''}</div>
+            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '1px' }}>{filtered.length} รายการ{query ? ` · ค้นหา "${query}"` : ''}</div>
           </div>
           <button onClick={() => { setView('new'); setEditTarget(null); setSmForm(smEmptyForm()); setSmFormError(''); }}
             style={{ height: '32px', padding: '0 14px', borderRadius: '8px', border: 'none', background: '#27500A', color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -4272,7 +4247,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
                   <tr>
                     <td colSpan={7} style={{ padding: '48px', textAlign: 'center', color: '#ccc' }}>
                       <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
-                      <div style={{ fontSize: '13px', color: '#aaa' }}>{searchLoading ? 'กำลังค้นหา...' : `ไม่พบ Vendor${query ? ` "${query}"` : ''}`}</div>
+                      <div style={{ fontSize: '13px', color: '#aaa' }}>ไม่พบ Vendor{query ? ` "${query}"` : ''}</div>
                     </td>
                   </tr>
                 ) : filtered.map((item, i) => {
@@ -7261,7 +7236,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             setRealVendorLineIdx(-1);
           }}
           fetchCollection={fetchCollection}
-          vendorTaxId={vendorInfo?.['Tax ID']?.trim() || vendorInfo?.['Supplier Number']?.trim() || ''}
+          vendorTaxId={vendorInfo?.['Tax ID'] || ''}
           onSelect={({ vendor, realInvoiceNo, taxInvoiceDate }) => {
             const taxCode0 = String(lines[realVendorLineIdx]?.taxCode || '');
             const isVatBool = taxCode0.includes('VAT7') && !taxCode0.includes('SVAT7');
@@ -7489,7 +7464,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
             setTimeout(() => lineAmountRefs.current[activeLineIdx]?.focus(), 50);
           }}
           itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={bu}
-          vendorTaxId={vendorInfo?.['Tax ID']?.trim() || vendorInfo?.['Supplier Number']?.trim() || ''}
+          vendorTaxId={vendorInfo?.['Tax ID'] || ''}
           initialSearch={itemCodeInitialSearch}
         />
         {/* MARKER_APCONTROLLER_ATDES_DESC_BANK_V1 */}
@@ -8854,7 +8829,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             // MARKER_BUCKETITEM_ITEMCODEPOPUP_VENDORTAXID_FIX_V1
             // ── FIX: เดิมไม่ได้ส่ง vendorTaxId เข้า ItemCodeSearchPopup -- ทำให้ ──
             // ── favItems ว่างเปล่าเสมอ (การันตี Favorite ไม่ขึ้นดาวเลยสักแถว) ──
-            vendorTaxId={vendorInfo?.['Tax ID']?.trim() || vendorInfo?.['Supplier Number']?.trim() || ''}
+            vendorTaxId={vendorInfo?.['Tax ID'] || ''}
           />
         )}
 
@@ -8864,7 +8839,7 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
             show={showRealVendorPopupInBucket}
             onClose={() => { setShowRealVendorPopupInBucket(false); setRealVendorLineIdx(-1); }}
             fetchCollection={fetchCollection}
-            vendorTaxId={vendorInfo?.['Tax ID']?.trim() || vendorInfo?.['Supplier Number']?.trim() || ''}
+            vendorTaxId={vendorInfo?.['Tax ID'] || ''}
             onSelect={({ vendor, realInvoiceNo, taxInvoiceDate }) => {
               // MARKER_BUCKETITEM_REALVENDOR_PERLINE_V1 -- เซ็ตลงบรรทัดที่กำลังแก้ (realVendorLineIdx) แทน Header
               if (realVendorLineIdx < 0) { setShowRealVendorPopupInBucket(false); return; }
