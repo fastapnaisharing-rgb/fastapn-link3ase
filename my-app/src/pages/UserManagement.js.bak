@@ -1487,13 +1487,11 @@
     const fileRef = React.useRef();
     const [avatarPreview, setAvatarPreview] = React.useState(null);
     const [currentUsername, setCurrentUsername] = React.useState('');
-    const [currentRole, setCurrentRole] = React.useState(''); // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1
-    const [currentUserId, setCurrentUserId] = React.useState(null); // db.js update() ต้องใช้ id เท่านั้น
 
     React.useEffect(() => {
       const fetchUser = async () => {
-        const { data } = await db.from('user_roles').select('id, username, role').eq('email', currentUser?.email).single(); // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- เพิ่ม id, role เข้า Query
-        if (data) { setCurrentUserId(data.id); setCurrentUsername(data.username || ''); setUsername(data.username || ''); setCurrentRole(data.role || ''); }
+        const { data } = await db.from('user_roles').select('username').eq('email', currentUser?.email).single();
+        if (data) { setCurrentUsername(data.username || ''); setUsername(data.username || ''); }
       };
       fetchUser();
     }, []);
@@ -1516,13 +1514,11 @@
           });
           if (!res?.ok) throw new Error(res?.error || 'เปลี่ยน password ไม่สำเร็จ');
         }
-        // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- db.js update() ต้อง Filter ด้วย id เท่านั้น (email ใช้ไม่ได้)
-        if (!currentUserId) throw new Error('ไม่พบ User ID กรุณา Refresh หน้าแล้วลองใหม่');
-        const { error: roleError } = await db.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('id', currentUserId);
-        if (roleError) throw new Error(typeof roleError === 'string' ? roleError : (roleError?.message || 'บันทึกไม่สำเร็จ'));
+        const { error: roleError } = await db.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('email', currentUser?.email);
+        if (roleError) throw roleError;
         setSuccess('บันทึกข้อมูลสำเร็จแล้วครับ!');
         setNewPassword(''); setConfirmPassword('');
-      } catch (err) { setError('เกิดข้อผิดพลาด: ' + (typeof err === 'string' ? err : (err?.message || 'ไม่ทราบสาเหตุ'))); }
+      } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
       setLoading(false);
     };
 
@@ -1548,7 +1544,7 @@
           <input type="file" accept="image/*" ref={fileRef} onChange={handleAvatarChange} style={{ display: 'none' }} />
           <div>
             <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{currentUsername || currentUser?.email}</div>
-            <div style={{ fontSize: '12px', color: '#888' }}>{currentRole || '-'}</div> {/* MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- ดึง Role จริงแทน Hardcode "Admin" */}
+            <div style={{ fontSize: '12px', color: '#888' }}>Admin</div>
             <div style={{ fontSize: '11px', color: '#aaa' }}>{currentUser?.email}</div>
           </div>
         </div>

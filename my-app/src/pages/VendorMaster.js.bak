@@ -279,7 +279,7 @@
     // ให้เห็นชัด (OFIN Code, Expense Type) แทน 5 Column แรกแบบทั่วไป -- Debit/Credit
     // (CPC/Account/Sub Acc) โชว์แยกเป็น 2 Column พิเศษต่างหาก ไม่ได้อยู่ใน Array นี้
     const displayFields = isIecode
-      ? ['Supplier Name', 'Supplier Number', 'Supplier Site', 'Tax ID', 'BU Code', 'Tax-Type', 'Notice', 'Digit'] // MARKER_IECODE_PREVIEW_AUTOFIELDS_V1 -- เพิ่ม Tax-Type/Notice/Digit ให้เห็นค่า Auto
+      ? ['Supplier Name', 'Supplier Number', 'Supplier Site', 'Tax ID', 'BU Code', 'Tax-Type', 'Notice'] // MARKER_IECODE_PREVIEW_AUTOFIELDS_V1 -- เพิ่ม Tax-Type/Notice ให้เห็นค่า Auto
       : isSmcodeIe
         ? ['SM-Code', 'Company Name', 'Short Name', 'Ofin Code']
         : allFields.filter(f => !['username', 'last_update', 'SY-Running'].includes(f)).slice(0, 5);
@@ -813,7 +813,6 @@ const computeNextSyRunning = async () => {
           const ieAutoFields = []; // MARKER_IECODE_PREVIEW_AUTOFIELDS_V1 -- เก็บ Field ที่ Auto เติมให้ Preview โชว์ Badge ได้
           if (!String(normalizedRow['Tax-Type'] ?? '').trim()) { normalizedRow['Tax-Type'] = 'NN'; ieAutoFields.push('Tax-Type'); }
           if (!String(normalizedRow['Notice'] ?? '').trim()) { normalizedRow['Notice'] = 'N'; ieAutoFields.push('Notice'); }
-          if (!String(normalizedRow['Digit'] ?? '').trim()) { normalizedRow['Digit'] = 'FULL'; ieAutoFields.push('Digit'); } // MARKER_IECODE_DIGIT_FULL_DEFAULT_V1
           normalizedRow['_autoFields'] = ieAutoFields;
           const missingFields = IECODE_IMPORT_REQUIRED_FIELDS.filter(f => !String(normalizedRow[f] ?? '').trim());
           if (missingFields.length) return { ...normalizedRow, _status: 'missing', _changes: [], _missingFields: missingFields };

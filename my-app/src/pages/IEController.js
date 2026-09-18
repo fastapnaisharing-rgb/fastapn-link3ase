@@ -2152,7 +2152,8 @@ const computeSplitGroups = (meaningfulLines) => {
 };
 
 const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form, buInfo = null) => {
-  if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
+  // MARKER_IE_DESC_FREEFORM_NO_STRUCTURE_PROTECT_V1 -- ไม่มี Item Code = ไม่เข้า Structure ใดๆ -> ถือ desc เป็น Freeform ที่ User พิมพ์เอง ห้ามลบอัตโนมัติ
+  if (!line.itemCode?.trim()) return { ...line, account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
   const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === line.itemCode.trim().toUpperCase());
   if (!itemData) return line;
   // MARKER_CALCINVOICELINE_NV7_AUTOVATLINE_V1 -- Port มาจาก calcLine (InvoiceDetailPopup, MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1)
@@ -2234,7 +2235,10 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form, buInfo = null) =
   const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
   const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
   const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
-  return { ...line, desc: descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2Val(vatNum), wht: fmt2Val(whtNum), total: fmt2Val(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
+  // MARKER_IE_DESC_MANUAL_FULL_LOCK_V1 -- ถ้า User พิมพ์ตรงในกล่อง Description เอง (Lock ไว้ตอน onChange)
+  // ให้คง desc เดิมไว้ตามที่พิมพ์ ไม่ทับด้วย Default Description ของ Item Code
+  const hasManualFullDescCIL = line._descManualFullForCode && line._descManualFullForCode === itemCodeUpperCIL;
+  return { ...line, desc: hasManualFullDescCIL ? (line.desc ?? '') : descVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2Val(vatNum), wht: fmt2Val(whtNum), total: fmt2Val(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
 };
 
 // MARKER_BUCKETITEM_ACCOUNTCPC_PHASE1_V1 -- Priority Lookup (Item Code > Account) เหมือน InvoiceDetailPopup
@@ -4640,6 +4644,28 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 
   const emptyLine = (hl = 'L') => ({ hl, itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' });
   const [lines, _setLinesRaw] = useState([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
+  // MARKER_IE_INVOICE_DRAFT_HEARTBEAT_V1
+  // ── ยิง Heartbeat ทุก 5 นาทีถ้ามีข้อมูล Dirty ค้างอยู่ -- กัน App.js Logout ──────
+  // ── ทิ้งทั้งที่ Invoice Detail ยังเปิดค้างมีข้อมูลพิมพ์ไปแล้ว (ดู App.js) ────────
+  // ── ใช้ Ref เก็บ lines/form ล่าสุด กัน Interval ถูก Reset ทุกครั้งที่พิมพ์ ──────
+  const draftLinesRef = useRef(lines);
+  useEffect(() => { draftLinesRef.current = lines; }, [lines]);
+  const draftFormRef = useRef(form);
+  useEffect(() => { draftFormRef.current = form; }, [form]);
+  useEffect(() => {
+    if (!show) return;
+    const checkDirty = () => {
+      const l = draftLinesRef.current || [];
+      const f = draftFormRef.current || {};
+      const hasLineData = l.some(row => (row.itemCode && String(row.itemCode).trim()) || (row.desc && String(row.desc).trim()) || (row.amount !== '' && row.amount != null && Number(String(row.amount).replace(/,/g, '')) !== 0));
+      const hasFormData = !!(f?.backDesc1?.trim?.() || f?.backDesc2?.trim?.() || f?.backDesc3?.trim?.() || (!isAutoGrt && (f?.grtNum?.trim?.() || f?.grn?.trim?.())));
+      return hasLineData || hasFormData;
+    };
+    const id = setInterval(() => {
+      if (checkDirty()) window.dispatchEvent(new Event('fastapn:invoice-draft-heartbeat'));
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [show]);
   // MARKER_DEBUG_LINES_GROW_V1 -- Debug ชั่วคราว หาจังหวะที่ Row ใหม่โผล่มาก่อนเวลาตอน V-RV Pending
   const setLines = (updater) => {
     _setLinesRaw(prev => {
@@ -5516,27 +5542,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const isInvoiceNumDisabled = Array.isArray(vendorInfo?.disabled_fields) && vendorInfo.disabled_fields.includes('Invoice num');
   // MARKER_REALTAX_DISABLE_TOGGLE_V1 -- Supplier ปิด Real Tax Invoice No./Tax Invoice Date ไว้ไหม
   const isRealTaxDisabled = Array.isArray(vendorInfo?.disabled_fields) && vendorInfo.disabled_fields.includes('Real Tax Invoice');
-  // MARKER_GRTGRN_MANUAL_AUTOPAD_V1
-  // ── Manual Mode: Auto-Pad เลข 0 นำหน้าตาม Digit Count ของ BU (ie_digit) ──
-  // ── ตอน Blur ถ้าพิมพ์น้อยกว่าที่กำหนด -- พิมพ์เกิน/ไม่ใช่ตัวเลขล้วน ปล่อยตามเดิม ──
+  // MARKER_GRTGRN_MANUAL_AP_STYLE_HIDE_PREFIX_V1 -- Port มาจาก AP เป๊ะๆ
+  // ── Manual Mode: Blur ดึงตัวเลขล้วนๆ ที่พิมพ์ออกมา แล้วประกอบ Prefix + Pad 0 ──
+  // ── นำหน้าใหม่เสมอ (Prefix ไม่เคยโผล่ให้เห็นในกล่อง Input เลย -- ดู value ──
+  // ── ที่ Render คู่กันด้านล่าง ตัด Prefix ออกจาก Display เสมอ) ─────────────
   const handleGrtGrnManualBlur = (key, val) => {
     if (isAutoGrt) return;
-    const trimmed = String(val ?? '').trim();
-    if (!trimmed || !/^\d+$/.test(trimmed)) return;
-    const digitCount = getDigitCount(buInfo);
-    if (trimmed.length < digitCount) {
-      setField(key, trimmed.padStart(digitCount, '0'));
-    }
-  };
-  // MARKER_GRTGRN_MANUAL_PREFIX_PREFILL_V1
-  // ── Manual Mode: เติม Prefix (จาก Pattern) ให้เองตอน Focus เข้าช่อง ──────
-  // ── ถ้ายังว่างอยู่เท่านั้น -- ไม่ทับข้อมูลที่ User พิมพ์ไปแล้ว ──────────────
-  const handleGrtGrnManualFocus = (key) => {
-    if (isAutoGrt) return;
-    if (form?.[key]) return;
+    const digits = String(val ?? '').replace(/\D/g, '');
     const prefixVal = key === 'grtNum' ? grtPrefix : grnPrefix;
-    if (prefixVal) setField(key, prefixVal);
+    if (!digits) { setField(key, ''); return; }
+    const digitCount = getDigitCount(buInfo);
+    setField(key, `${prefixVal}${digits.padStart(digitCount, '0')}`);
   };
+  // MARKER_GRTGRN_MANUAL_AP_STYLE_HIDE_PREFIX_V1 -- เอา Prefill ตอน Focus ออก
+  // ── ให้ช่องว่างเปล่าจนกว่าจะพิมพ์เอง เหมือน AP (ไม่ Auto โชว์ Pattern ให้เห็น) ──
+  const handleGrtGrnManualFocus = () => {};
   // MARKER_INVOICENUM_GRT_AUTOFILL_FIX_V1 -- ตอน GRT Status=Auto ค่าจริงมาจาก grtPreview
   // ไม่ใช่ form.grtNum (form.grtNum ว่างเปล่าจนกว่าจะกด Submit จริง) -- ใช้ Logic
   // เดียวกับจุดแสดงผลคอลัมน์ GRT (isAutoGrt ? grtPreview : form.grtNum)
@@ -5961,7 +5981,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   const calcLine = (line, itemcodeItems, vendorInfo, form, accountCpcRules = []) => {
-    if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
+    // MARKER_IE_DESC_FREEFORM_NO_STRUCTURE_PROTECT_V1 -- ไม่มี Item Code = ไม่เข้า Structure ใดๆ -> ถือ desc เป็น Freeform ที่ User พิมพ์เอง ห้ามลบอัตโนมัติ
+    if (!line.itemCode?.trim()) return { ...line, account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
     const itemData = itemcodeItemsMapPerf.get(line.itemCode.trim().toUpperCase());
     if (!itemData) return line;
     // MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1
@@ -6058,7 +6079,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const whtPct = hasITC ? 0 : (parseFloat(whtChar) || 0);
     const whtNum = -Math.round(amountNum * (whtPct / 100) * 100) / 100;
     const totalNum = Math.round((amountNum + vatNum) * 100) / 100;
-    return { ...line, desc: finalDescVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
+    // MARKER_IE_DESC_MANUAL_FULL_LOCK_V1 -- ถ้า User พิมพ์ตรงในกล่อง Description เอง (Lock ไว้ตอน onChange)
+    // ให้คง desc เดิมไว้ตามที่พิมพ์ ไม่ทับด้วย Default Description ของ Item Code
+    const hasManualFullDesc = line._descManualFullForCode && line._descManualFullForCode === itemCodeUpper;
+    return { ...line, desc: hasManualFullDesc ? (line.desc ?? '') : finalDescVal, account: accountVal, taxCode: taxCodeVal, whtCode: whtCodeVal, vat: fmt2(vatNum), wht: fmt2(whtNum), total: fmt2(totalNum), _taxCodeRaw: taxCodeVal, _accountRaw: String(itemData.account ?? '').trim() };
   };
 
   // MARKER_CALCLINE_DEBOUNCE_V1
@@ -6111,7 +6135,16 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     // ── Manual Mode + GRT/GRN ยังว่างอยู่ -- ถามก่อนว่าต้องการกำหนดเองมั้ย ──
     // ── ต้องการ = ไม่ Submit ให้กรอกก่อน / ไม่ต้องการ = Auto เฉพาะใบนี้ ──────
     let forceAutoGrtForThisInvoice = false;
-    if (!isAutoGrt && (!form?.grtNum?.trim() || !form?.grn?.trim())) {
+    // MARKER_GRT_MANUAL_CONFIRM_TAXCODE_GRN_CHECK_V1
+    // ── GRN จำเป็นเฉพาะ Invoice ที่มีบรรทัด Tax Code = VAT7 (ไม่ใช่ SVAT7) หรือมี ──
+    // ── Real Vendor Auto VAT Row (Cal Vat) เท่านั้น (เงื่อนไขเดียวกับตอน Submit จริง ──
+    // ── ที่ requestUniqueNumber GRN เฉพาะ isVat/hasCalVat) -- ไม่มีบรรทัดไหนเข้า ──────
+    // ── เงื่อนไขเลย -> ไม่ต้องเอาความว่างของ GRN มาถาม ─────────────────────────────
+    const needsGrn = lines.some(l => {
+      const tc = String(l?.taxCode || '');
+      return (tc.includes('VAT7') && !tc.includes('SVAT7')) || l?._isRealVendorVatLine;
+    });
+    if (!isAutoGrt && (!form?.grtNum?.trim() || (needsGrn && !form?.grn?.trim()))) {
       const wantManual = await confirmDialog.confirm(
         'ยังไม่ได้กำหนด GRT/GRN สำหรับ Invoice นี้ ต้องการกำหนดเองหรือไม่?',
         { variant: 'warning', confirmText: 'ต้องการกำหนดเอง', cancelText: 'ไม่ต้องการ (ใช้ Auto)' }
@@ -6122,20 +6155,12 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
-      // MARKER_IE_SUBMIT_PREFIX_IENUMBER_DESC_V1 -- ตอน Submit เอา IE Number ของ
-      // Invoice นี้ไปต่อหน้า Item Description ทุก Line เป็น "{IE Number} {Description}"
-      // MARKER_IE_SUBMIT_APPEND_SUPPLIERNAME_DESC_V1 -- ต่อท้าย Description เดิมด้วย
-      // Supplier Name ของ Invoice นี้อีกที เป็น "{IE Number} {Description} {Supplier Name}"
-      // (ไม่แก้ State lines ที่โชว์อยู่บนจอ แปลงแค่ก่อนส่งไป Submit จริงเท่านั้น)
-      const ieNumForDesc = String(form?.invoiceNum || '').trim();
-      const supplierNameForDesc = String(vendorInfo?.['Supplier Name'] || '').trim();
-      const linesToSubmit = lines.map(l => {
-        let desc = l.desc || '';
-        if (ieNumForDesc) desc = `${ieNumForDesc} ${desc}`;
-        if (supplierNameForDesc) desc = `${desc} ${supplierNameForDesc}`;
-        return { ...l, desc };
-      });
-      const ok = await onSubmitInvoice(linesToSubmit, forceAutoGrtForThisInvoice);
+      // MARKER_IE_DESC_IENUMBER_EXPORT_TIME_COMPOSE_V1 -- ย้าย Logic ต่อ IE Number/Supplier Name เข้า Description
+      // ออกจากตอน Submit ไปทำตอน Generate ไฟล์ Export แทน (ดู GenerateExport.buildRows())
+      // เพราะเดิม Bake ลงใน desc ที่เก็บจริงตอน Submit ทำให้พอ User ไปแก้/ลบผ่าน Edit Form
+      // ทีหลัง Prefix ก็หลุดหายไปด้วย (เป็นเนื้อเดียวกับ Text ที่แก้ได้อยู่แล้ว) -- desc ที่เก็บ
+      // จริงตอน Submit ให้เป็นค่าดิบที่ User พิมพ์เองเท่านั้น ไม่ Bake อะไรเข้าไปที่นี่แล้ว
+      const ok = await onSubmitInvoice(lines, forceAutoGrtForThisInvoice);
       if (ok) {
         // MARKER_FLOW_INCREMENT_USAGE_ON_SUBMIT_V1
         // ── Submit สำเร็จ + มี Flow Active อยู่ -> +1 use_count ที่ Backend ──────
@@ -6235,9 +6260,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       }
       // MARKER_SUBMIT_INS_CLEAR_END_SWAP_V1
       // -- Submit = Insert เดี่ยวๆ, Clear = End เดี่ยวๆ (เดิม Submit=End, Clear=Ctrl+Delete) --
-      if (e.key === 'Insert') { e.preventDefault(); handleSubmit(); }
+      // MARKER_IE_KEYBOARD_SHORTCUT_TYPING_GUARD_V1 -- กัน Insert/End Trigger เผลอตอนกำลังพิมพ์ใน Input/Textarea
+      // (เช่น พิมพ์ Description ที่ Auto-fill ตอนเลือก Item Code แล้วกด End เพื่อเลื่อน Cursor)
+      const isTypingInFieldIEShortcut = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+      if (e.key === 'Insert') { if (isTypingInFieldIEShortcut(e.target)) return; e.preventDefault(); handleSubmit(); }
       // End → Clear form (lines + header fields)
       if (e.key === 'End') {
+        if (isTypingInFieldIEShortcut(e.target)) return;
         e.preventDefault();
         setLines([{ hl: 'H', itemCode: '', amount: '', tax: '', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' }]);
         // MARKER_APCONTROLLER_FLOW_ACTION_SESSION_V1
@@ -6632,16 +6661,40 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                   </div>
                 ) : (
                   <input type={type}
-                    value={form?.[key] || ''}
+                    // MARKER_GRTGRN_MANUAL_AP_STYLE_HIDE_PREFIX_V1 -- GRT/GRN โชว์แค่เลขที่พิมพ์เอง (Prefix ซ่อนใน State เท่านั้น) เหมือน AP
+                    value={
+                      (key === 'grtNum' || key === 'grn') ? (() => {
+                        const prefixVal = key === 'grtNum' ? grtPrefix : grnPrefix;
+                        const raw = form?.[key] || '';
+                        return (prefixVal && raw.startsWith(prefixVal)) ? raw.slice(prefixVal.length) : raw;
+                      })() :
+                      (form?.[key] || '')
+                    }
                     title={form?.[key] || ''}
-                    onChange={e => setField(key, e.target.value)}
+                    onChange={e => {
+                      if (key === 'grtNum' || key === 'grn') {
+                        const prefixVal = key === 'grtNum' ? grtPrefix : grnPrefix;
+                        const digits = e.target.value.replace(/\D/g, '');
+                        setField(key, digits ? `${prefixVal}${digits}` : '');
+                      } else {
+                        setField(key, e.target.value);
+                      }
+                    }}
                     // MARKER_GRTGRN_MANUAL_AUTOPAD_V1
                     onBlur={(key === 'grtNum' || key === 'grn') ? (e => handleGrtGrnManualBlur(key, e.target.value)) : undefined}
                     // MARKER_GRTGRN_MANUAL_PREFIX_PREFILL_V1
                     onFocus={(key === 'grtNum' || key === 'grn') ? (() => handleGrtGrnManualFocus(key)) : undefined}
                     // MARKER_IE_NUMBER_BLUE_AUTOFIELD_V1 -- Blue = Auto จาก BU+GRT (แก้เองได้)
                     // MARKER_GRT_MANUAL_CONFIRM_V1 -- GRT/GRN เป็นสีเหลืองถ้า Manual Mode + ยังว่างอยู่ (ไม่บล็อก Submit แค่เตือนสายตา)
-                    style={{ ...inputStyle(w), ...(key === 'invoiceNum' ? { background: '#E6F1FB', color: '#0C447C' } : {}), ...((key === 'grtNum' || key === 'grn') && !isAutoGrt && !form?.[key] ? { background: '#FFF3CD' } : {}) }} />
+                    style={{ ...inputStyle(w), ...(key === 'invoiceNum' ? { background: '#E6F1FB', color: '#0C447C' } : {}), ...((() => {
+                      // MARKER_GRT_MANUAL_CONFIRM_TAXCODE_GRN_CHECK_V1 -- GRT เหลืองถ้าว่างเสมอ / GRN เหลืองเฉพาะตอนต้องใช้จริง (มี VAT7 หรือ Cal Vat)
+                      if (key === 'grtNum') return (!isAutoGrt && !form?.[key]) ? { background: '#FFF3CD' } : {};
+                      if (key === 'grn') {
+                        const needsGrnStyle = lines.some(l => { const tc = String(l?.taxCode || ''); return (tc.includes('VAT7') && !tc.includes('SVAT7')) || l?._isRealVendorVatLine; });
+                        return (!isAutoGrt && !form?.[key] && needsGrnStyle) ? { background: '#FFF3CD' } : {};
+                      }
+                      return {};
+                    })()) }} />
                 )}
               </div>
             ))}
@@ -7034,11 +7087,24 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                             </div>
                           ) : (
                           <div style={{ position: 'relative' }}>
+                          {/* MARKER_IE_DESC_IENUMBER_VIEW_ONLY_V1 -- ไม่ Show IE Number ตอน Invoice Detail แล้ว (เอา Badge เดิมออก) */}
                           <input
                               type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
                               title={key === 'desc' ? (line[key] ? line[key] + ' (Double-click เพื่อแก้ไขแบบเต็ม)' : '' ) : line[key]}
                               ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }) : undefined}
-                              onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
+                              onChange={e => {
+                                const v = e.target.value;
+                                if (MONEY_FIELDS.includes(key)) { handleMoneyChange(idx, key, v); return; }
+                                // MARKER_IE_DESC_MANUAL_FULL_LOCK_V1 -- พิมพ์ตรงในกล่อง Description เอง ให้ Lock ทั้งก้อนไว้
+                                // (แยกจาก Partial Lock "ข้อ 4" เดิมที่มาจาก Double-click Popup เท่านั้น)
+                                if (key === 'desc') {
+                                  const curItemCodeUpperDescEdit = String(lines[idx]?.itemCode ?? '').trim().toUpperCase();
+                                  if (idx === 0) { setLine1Field('desc', v); setLine1Field('_descManualFullForCode', curItemCodeUpperDescEdit); }
+                                  else { setLineField(idx, 'desc', v); setLineField(idx, '_descManualFullForCode', curItemCodeUpperDescEdit); }
+                                  return;
+                                }
+                                idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v);
+                              }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
                               onDoubleClick={key === 'desc' ? () => {
@@ -8841,6 +8907,8 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
     if (!cleanedLines[0]?.itemCode?.trim() || !cleanedLines[0]?.amount?.trim()) { confirmDialog.alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
     setSaving(true);
     const invoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo, bu) + (form.invoiceSuffix || '');
+    // MARKER_IE_DESC_IENUMBER_EXPORT_TIME_COMPOSE_V1 -- ไม่ Bake IE Number เข้า desc ตอน Edit/Save แล้ว
+    // (ย้ายไปทำตอน Generate ไฟล์ Export ใน GenerateExport.buildRows() แทน)
     const ok = await onSave({ form_data: form, lines: cleanedLines, invoiceNo });
     setSaving(false);
     if (ok) onClose();
@@ -8851,6 +8919,18 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   const totalWht = lines.reduce((s, l) => s + (parseFloat(String(l.wht).replace(/,/g, '')) || 0), 0);
   const totalNet = lines.reduce((s, l) => s + (parseFloat(String(l.total).replace(/,/g, '')) || 0), 0);
   const fmtMoney = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // MARKER_IE_DESC_IENUMBER_VIEW_ONLY_V1 -- View Mode เท่านั้นที่แสดง Description แบบ Compose เต็ม
+  // (IE Number + Description + Supplier Name) ให้ตรงกับ Batch Preview/Export จริง
+  // (buildRows() ใน GenerateExport ใช้ Logic Compose เดียวกันนี้) -- Edit Mode ยัง
+  // เห็นค่าดิบที่เก็บจริงตามปกติ ไม่ถูกแก้
+  const composeViewDesc = (rawDesc) => {
+    let d = String(rawDesc || '');
+    const ieNum = String(form?.invoiceNum || '').trim();
+    const supName = String(vendorInfo?.['Supplier Name'] || '').trim();
+    if (ieNum) d = `${ieNum} ${d}`;
+    if (supName) d = `${d} ${supName}`;
+    return d.trim();
+  };
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500, backdropFilter: 'blur(2px)' }}
@@ -9242,11 +9322,25 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
                             </div>
                           ) : (
                             <>
-                            <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]} disabled={isView}
+                            {/* MARKER_IE_DESC_IENUMBER_VIEW_ONLY_V1 -- ไม่ Show Badge ตอน Edit แล้ว (เอา Badge เดิมออก) */}
+                            <input type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'}
+                              value={key === 'desc' && isView ? composeViewDesc(line[key]) : line[key]}
+                              disabled={isView}
                               title={key === 'desc' && !isView ? (line[key] ? line[key] + ' (Double-click เพื่อแก้ไขแบบเต็ม)' : '') : line[key]}
                               // MARKER_BUCKETITEM_AMOUNT_AUTOFOCUS_V1
                               ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; }) : undefined}
-                              onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : setLineField(idx, key, v); }}
+                              onChange={e => {
+                                const v = e.target.value;
+                                if (MONEY_FIELDS.includes(key)) { handleMoneyChange(idx, key, v); return; }
+                                // MARKER_IE_DESC_MANUAL_FULL_LOCK_V1 -- พิมพ์ตรงในกล่อง Description เอง ให้ Lock ทั้งก้อนไว้
+                                if (key === 'desc') {
+                                  const curItemCodeUpperDescEdit = String(lines[idx]?.itemCode ?? '').trim().toUpperCase();
+                                  setLineField(idx, 'desc', v);
+                                  setLineField(idx, '_descManualFullForCode', curItemCodeUpperDescEdit);
+                                  return;
+                                }
+                                setLineField(idx, key, v);
+                              }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
                               onDoubleClick={key === 'desc' && !isView ? () => {
@@ -16501,6 +16595,17 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
       const taxInvoiceDateCol = derivedVat === 'Yes'
         ? (fd.realVendorTaxDate ? fmtDateDMY(fd.realVendorTaxDate) : fmtDateDMY(fd.invDate))
         : '';
+      // MARKER_IE_DESC_IENUMBER_EXPORT_TIME_COMPOSE_V1 -- Compose IE Number + Supplier Name เข้า Description ที่นี่
+      // จุดเดียว (ใช้ทั้งสร้างตาราง Batch Preview บนจอ และไฟล์ Excel จริงที่โหลดเข้าระบบ)
+      // desc ที่เก็บจริงใน DB (lines[].desc) ไม่ถูกแก้ -- Compose สดตรงนี้เท่านั้น
+      const ieNumForRowDesc = String(fd.invoiceNum || inv.invoice_no || '').trim();
+      const supplierNameForRowDesc = String(vi?.['Supplier Name'] || '').trim();
+      const composeExportDesc = (rawDesc) => {
+        let d = String(rawDesc || '');
+        if (ieNumForRowDesc) d = `${ieNumForRowDesc} ${d}`;
+        if (supplierNameForRowDesc) d = `${d} ${supplierNameForRowDesc}`;
+        return d.trim();
+      };
 
       rows.push({ type: 'H', idx, data: [
         'H',
@@ -16512,7 +16617,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         totalAmt !== 0 ? totalAmt : '',
         fd.grtNum || '',
         branchCode,
-        lines.find(l => l.hl === 'H')?.desc || lines[0]?.desc || '',
+        composeExportDesc(lines.find(l => l.hl === 'H')?.desc || lines[0]?.desc || ''),
         derivedVat,
         rule?.Method || '',
         rule?.Paygroup || '',
@@ -16532,7 +16637,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         const lAmt = parseFloat(String(line.amount || '').replace(/,/g, '')) || '';
         rows.push({ type: 'L', idx, data: [
           'L',
-          line.desc || '',
+          composeExportDesc(line.desc || ''),
           lAmt,
           line.taxCode || '',
           line.whtCode || '', // MARKER_EXPORT_WHTCODE_COLUMN_FIX_V1 -- เดิม Hardcode '' ไม่เคยดึง whtCode มาใส่เลย

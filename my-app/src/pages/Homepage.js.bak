@@ -1,8 +1,6 @@
 // MARKER_HOMEPAGE_ZONE_A_V1
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-// MARKER_HOMEPAGE_USE_SHARED_USERROLE_HOOK_V1 -- ใช้ Hook กลางเดียวกับ APController.js แทนเช็คเอง (กัน Case-sensitivity หลุด)
-import { useUserRole } from '../contexts/useUserRole';
 import { db } from '../lib/db';
 // MARKER_HOMEPAGE_NOTIFICATION_CHAT_V1
 import BatchChatDrawer from './BatchChatDrawer';
@@ -187,10 +185,8 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const today = useMemo(() => getTodayThai(), []);
   const displayName = userName || currentUser?.email || '-';
   const roleStyle = ROLE_STYLE[userRole] || ROLE_STYLE.Viewer;
-  // MARKER_HOMEPAGE_USE_SHARED_USERROLE_HOOK_V1 -- เดิมเทียบ userRole === 'Owner'/'Admin' แบบ Exact-case ตรงๆ
-  // ต่างจาก useUserRole() ที่ Normalize เป็นตัวพิมพ์เล็กก่อนเทียบเสมอ (เสี่ยง Bug เงียบถ้า
-  // Role ส่งมาเป็น 'owner'/'admin' ตัวเล็กจากที่ไหนสักที่) -- เปลี่ยนมาเรียก Hook กลางแทน
-  const { isOwner, isAdmin } = useUserRole();
+  const isOwner = userRole === 'Owner';
+  const isAdmin = userRole === 'Admin';
 
   // ── Central Queue state ──────────────────────────────────────────────────
   const [queueItems, setQueueItems] = useState([]);

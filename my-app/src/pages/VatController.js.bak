@@ -8937,7 +8937,7 @@ function evaluateVatWatchlistSimpleFormula(expr) { // MARKER_VATWATCHLISTOPS_EXC
   return result;
 }
 
-function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, formatCell, columnWidths, rightAlignKeys, cellContextMenuKey, cellContextMenuOptions, cellContextMenuLabel, cellContextMenus, columnGroups }) { // MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 -- MARKER_VATWATCHLIST_MULTI_CONTEXTMENU_V1 -- MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1 เพิ่ม columnGroups (Optional)
+function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, formatCell, columnWidths, rightAlignKeys, cellContextMenuKey, cellContextMenuOptions, cellContextMenuLabel, cellContextMenus }) { // MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 -- MARKER_VATWATCHLIST_MULTI_CONTEXTMENU_V1
   const isRightAlign = (key) => (rightAlignKeys ? rightAlignKeys.has(key) : false);
   const displayValueOf = (row, col) => (formatCell ? formatCell(row, col) : (row[col.key] ?? ''));
   const widthOf = (key) => (columnWidths && columnWidths[key]) || undefined;
@@ -9111,16 +9111,9 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
       style={{ borderCollapse: 'collapse', fontSize: '12px', outline: 'none', width: '100%' }} // MARKER_VATWATCHLISTOPS_EXCEL_GRID_TABLE_FULLWIDTH_V1 -- เดิมไม่มี width เลย ตารางเลยหดตามเนื้อหาไม่ยืดเต็ม Container ถ้า Column แคบรวมกันไม่ถึงขอบ
     >
       <thead>
-        {columnGroups && ( // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1 -- Header ชั้นบน แบ่ง Zone สีตามหมวด
-          <tr>
-            {columnGroups.map((g, gi) => (
-              <th key={gi} colSpan={g.span} style={{ padding: '6px 10px', color: '#333', fontWeight: '600', fontSize: '11px', textAlign: 'left', position: 'sticky', top: 0, background: g.color || '#f0f0f0', borderRight: '2px solid white' }}>{g.label}</th>
-            ))}
-          </tr>
-        )}
         <tr style={{ background: '#1a3a5c' }}>
           {columns.map((col, c) => ( // MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 MARKER_VATWATCHLISTOPS_EXCEL_GRID_NAV_V1 -- คลิก Header เลือกทั้ง Column
-            <th key={col.key} onClick={() => setSelection({ r1: 0, c1: c, r2: rows.length - 1, c2: c })} style={{ padding: '8px 10px', color: 'white', fontWeight: '500', textAlign: isRightAlign(col.key) ? 'right' : 'left', position: 'sticky', top: columnGroups ? '29px' : 0, width: widthOf(col.key), whiteSpace: 'nowrap', cursor: 'pointer' }}>{col.label}</th>
+            <th key={col.key} onClick={() => setSelection({ r1: 0, c1: c, r2: rows.length - 1, c2: c })} style={{ padding: '8px 10px', color: 'white', fontWeight: '500', textAlign: isRightAlign(col.key) ? 'right' : 'left', position: 'sticky', top: 0, width: widthOf(col.key), whiteSpace: 'nowrap', cursor: 'pointer' }}>{col.label}</th>
           ))}
         </tr>
       </thead>
@@ -9725,7 +9718,7 @@ function VatInputRecPage() { // MARKER_VATCONTROLLER_MOUNT_DASHBOARD_V1
 }
 
 // MARKER_VATWATCHLISTOPS_TAX_INVOICE_PAGE_V1 -- หน้า Tax Invoice (ยังไม่ Matching) เก็บใน vat_backup_tax_invoice
-const VAT_TAX_INVOICE_COLUMNS = [ // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1 -- ตัด Status/Source ออกจากตาราง (ยัง Filter ได้ปกติ) + เพิ่ม Merchant ID
+const VAT_TAX_INVOICE_COLUMNS = [
   { key: 'bu', label: 'BU' },
   { key: 'business_name', label: 'Business Name' },
   { key: 'bu_tax_id', label: 'BU Tax ID' },
@@ -9733,7 +9726,6 @@ const VAT_TAX_INVOICE_COLUMNS = [ // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_ME
   { key: 'supplier_name', label: 'Supplier Name' },
   { key: 'tax_id_supplier', label: 'Tax ID Supplier' },
   { key: 'branch_supplier', label: 'Branch Supplier' },
-  { key: 'merchant_id', label: 'Merchant ID' },
   { key: 'doc_date', label: 'Date' },
   { key: 'tax_invoice_number', label: 'Tax Invoice' },
   { key: 'gross_value', label: 'Gross Value' },
@@ -9741,12 +9733,8 @@ const VAT_TAX_INVOICE_COLUMNS = [ // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_ME
   { key: 'total_value', label: 'Total Value' },
   { key: 'doc_type', label: 'Doc Type' },
   { key: 'invoice_ref', label: 'Invoice Ref.' },
-];
-
-const VAT_TAX_INVOICE_COLUMN_GROUPS = [ // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1
-  { label: 'BU Info', span: 4, color: '#DCEBFB' },
-  { label: 'Supplier Info', span: 4, color: '#FBEADC' },
-  { label: 'Invoice Info', span: 7, color: '#DCFBE4' },
+  { key: 'status', label: 'Status' },
+  { key: 'source_type', label: 'Source' },
 ];
 
 const VAT_TAX_INVOICE_ONEBOX_MAP = { // Excel Header -> DB Column (Onebox Format)
@@ -9766,7 +9754,7 @@ const VAT_TAX_INVOICE_ONEBOX_MAP = { // Excel Header -> DB Column (Onebox Format
 };
 
 function VatTaxInvoiceManualFormModal({ onClose, onSaved, username }) {
-  const emptyForm = { bu: '', business_name: '', bu_tax_id: '', bu_branch: '', supplier_name: '', tax_id_supplier: '', branch_supplier: '', merchant_id: '', doc_date: '', tax_invoice_number: '', gross_value: '', vat_value: '', total_value: '', doc_type: '', invoice_ref: '' }; // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1
+  const emptyForm = { bu: '', business_name: '', bu_tax_id: '', bu_branch: '', supplier_name: '', tax_id_supplier: '', branch_supplier: '', doc_date: '', tax_invoice_number: '', gross_value: '', vat_value: '', total_value: '', doc_type: '', invoice_ref: '' };
   const [form, setForm] = React.useState(emptyForm);
   const [saving, setSaving] = React.useState(false);
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -9793,7 +9781,7 @@ function VatTaxInvoiceManualFormModal({ onClose, onSaved, username }) {
   const inputStyle = { width: '100%', padding: '7px 9px', fontSize: '12.5px', border: '0.5px solid #ccc', borderRadius: '6px', boxSizing: 'border-box' };
   const FIELDS = [
     ['bu', 'BU'], ['business_name', 'Business Name'], ['bu_tax_id', 'BU Tax ID'], ['bu_branch', 'BU Branch'],
-    ['supplier_name', 'Supplier Name'], ['tax_id_supplier', 'Tax ID Supplier'], ['branch_supplier', 'Branch Supplier'], ['merchant_id', 'Merchant ID'], // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1
+    ['supplier_name', 'Supplier Name'], ['tax_id_supplier', 'Tax ID Supplier'], ['branch_supplier', 'Branch Supplier'],
     ['doc_date', 'Date'], ['tax_invoice_number', 'Tax Invoice'], ['gross_value', 'Gross Value'], ['vat_value', 'VAT Value'],
     ['total_value', 'Total Value'], ['doc_type', 'Doc Type'], ['invoice_ref', 'Invoice Ref.'],
   ];
@@ -9924,7 +9912,6 @@ function VatTaxInvoicePage() {
         ) : (
           <ExcelStyleGrid
             columns={VAT_TAX_INVOICE_COLUMNS}
-            columnGroups={VAT_TAX_INVOICE_COLUMN_GROUPS} // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1
             rows={filteredRows}
             emptyText="ยังไม่มีข้อมูล"
             numericKeys={new Set(['gross_value', 'vat_value', 'total_value'])}

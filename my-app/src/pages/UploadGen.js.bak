@@ -302,7 +302,7 @@ function parseAP09RowsFromRaw(rawRows) {
     });
 }
 
-function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MAP, db, userName, currentUser, onSave, onClose, saving, setSaving, genSerial, pdfQueue, setPdfQueue, pdfSelected, setPdfSelected, folder, showToast }) {
+function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MAP, db, userName, currentUser, onSave, onClose, saving, setSaving, genSerial, pdfQueue, setPdfQueue, pdfSelected, setPdfSelected, folder }) {
   // pdfQueue และ setPdfQueue มาจาก AddFileModal — สลับ tab ไม่หาย
   const selected = pdfSelected;
   const setSelected = setPdfSelected;
@@ -421,19 +421,7 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
       // ไฟล์จะหลุดออกจาก Queue ก็ต่อเมื่อ "ทุก Group" resolve ครบแล้วเท่านั้น (matched_attached หรือ _saved)
       const allResolved = groups.length > 0 && groups.every(g => g.status === 'matched_attached' || g._saved);
       if (allResolved) {
-        // MARKER_PDFOCRTAB_AUTOMATCH_SUMMARY_TOAST_V1 -- สรุปยอดก่อนหลุดจาก Queue เงียบๆ
-        // Auto-Match ตอนแรก (was_manual_add=false/undefined) vs เพิ่มเอง (was_manual_add=true)
-        setPdfQueue(q => {
-          const item = q.find(x => x.id === queueId);
-          if (!item) return q; // ถูกลบไปแล้ว -- กันโชว์ Toast ซ้ำ
-          const autoCount   = groups.filter(g => !g.was_manual_add).length;
-          const manualCount = groups.filter(g => g.was_manual_add).length;
-          const parts = [];
-          if (autoCount)   parts.push(`Auto-Match ${autoCount} Serial Code`);
-          if (manualCount) parts.push(`เพิ่มเอง ${manualCount} Serial Code`);
-          if (showToast) showToast(`✅ ${item.fileName || item.file?.name || 'ไฟล์'} เสร็จสมบูรณ์ — ${parts.join(' · ')}`);
-          return q.filter(x => x.id !== queueId);
-        });
+        setPdfQueue(q => q.filter(item => item.id !== queueId));
       } else {
         setPdfQueue(q => q.map(item => item.id === queueId ? { ...item, groups } : item));
       }
@@ -2103,7 +2091,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         {/* ── Tab content ── */}
         {tab==='pdf' ? (
           <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-            <PdfOcrTab serialCode={serialCode} setSerialCode={setSerialCode} docType={docType} setDocType={setDocType} DOC_TYPE_MAP={DOC_TYPE_MAP} db={db} userName={userName} currentUser={currentUser} onSave={onSave} onClose={onClose} saving={saving} setSaving={setSaving} genSerial={genSerial} pdfQueue={pdfQueue} setPdfQueue={setPdfQueue} pdfSelected={pdfSelected} setPdfSelected={setPdfSelected} folder={folder} showToast={showToast}/>
+            <PdfOcrTab serialCode={serialCode} setSerialCode={setSerialCode} docType={docType} setDocType={setDocType} DOC_TYPE_MAP={DOC_TYPE_MAP} db={db} userName={userName} currentUser={currentUser} onSave={onSave} onClose={onClose} saving={saving} setSaving={setSaving} genSerial={genSerial} pdfQueue={pdfQueue} setPdfQueue={setPdfQueue} pdfSelected={pdfSelected} setPdfSelected={setPdfSelected} folder={folder}/>
           </div>
         ) : (
         <div style={{ padding:'0 18px 14px', overflowY:'auto', flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>

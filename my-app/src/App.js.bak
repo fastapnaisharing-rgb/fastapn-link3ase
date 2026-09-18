@@ -1578,65 +1578,20 @@ function MainApp() {
     } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   };
 
-  // MARKER_APP_IDLE_LOGOUT_DRAFT_HEARTBEAT_V1 -- Auto-Logout Prevention 3 ชั้น
-  // ── ชั้น 1: Timer หลัก 1 ชม. เดิม -- Reset ได้จาก Real Activity หรือ Heartbeat ──
-  // ── จาก Invoice Draft ที่ Dirty (กันดีดทิ้งระหว่างทำงานจริงอยู่) ────────────────
-  // ── ชั้น 2: Timer Real Activity แยก 2 ชม. -- Heartbeat ไม่นับ Reset ตัวนี้ ──────
-  // ── ไม่มี Real Activity เลยเกิน 2 ชม. -> เด้งเตือนถาม ────────────────────────
-  // ── ชั้น 3: Grace Period 5 นาที -- ไม่ตอบ = Logout จริง (ไม่มี DB Backup ──────
-  // ── ข้อมูลที่พิมพ์ค้างในหน่วยความจำจะหายไปตามความเสี่ยงที่ยอมรับไว้แล้ว) ──────
   useEffect(() => {
     if (!currentUser) return;
-    const IDLE_TIMEOUT = 60 * 60 * 1000; // 1 ชม.
-    const REAL_ACTIVITY_WARNING = 2 * 60 * 60 * 1000; // 2 ชม.
-    const GRACE_PERIOD = 5 * 60 * 1000; // 5 นาที
+    const IDLE_TIMEOUT = 60 * 60 * 1000;
     let timer = null;
-    let realActivityTimer = null;
-    let warningActive = false;
-
-    const doLogout = async () => { await logout(); };
-
     const resetTimer = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(doLogout, IDLE_TIMEOUT);
+      timer = setTimeout(async () => { await logout(); }, IDLE_TIMEOUT);
     };
-
-    const resetRealActivityTimer = () => {
-      if (realActivityTimer) clearTimeout(realActivityTimer);
-      realActivityTimer = setTimeout(showIdleWarning, REAL_ACTIVITY_WARNING);
-    };
-
-    const showIdleWarning = async () => {
-      if (warningActive) return;
-      warningActive = true;
-      const gracePromise = new Promise((resolve) => setTimeout(() => resolve(false), GRACE_PERIOD));
-      const confirmPromise = confirmDialog.confirm(
-        'ไม่มีการใช้งานมานานกว่า 2 ชั่วโมง ต้องการต่อเวลาทำงานหรือไม่?',
-        { confirmText: 'ต่อเวลา', cancelText: 'ออกจากระบบ', variant: 'warning' }
-      );
-      const extend = await Promise.race([confirmPromise, gracePromise]);
-      warningActive = false;
-      if (extend) {
-        resetRealActivityTimer();
-        resetTimer();
-      } else {
-        await doLogout();
-      }
-    };
-
     const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
-    const handleRealActivity = () => { resetTimer(); resetRealActivityTimer(); };
-    const handleHeartbeat = () => { resetTimer(); }; // Heartbeat จาก Draft Dirty -- Reset แค่ Timer หลัก ไม่ Reset Real Activity Timer
-
-    events.forEach(e => window.addEventListener(e, handleRealActivity));
-    window.addEventListener('fastapn:invoice-draft-heartbeat', handleHeartbeat);
+    events.forEach(e => window.addEventListener(e, resetTimer));
     resetTimer();
-    resetRealActivityTimer();
     return () => {
       if (timer) clearTimeout(timer);
-      if (realActivityTimer) clearTimeout(realActivityTimer);
-      events.forEach(e => window.removeEventListener(e, handleRealActivity));
-      window.removeEventListener('fastapn:invoice-draft-heartbeat', handleHeartbeat);
+      events.forEach(e => window.removeEventListener(e, resetTimer));
     };
   }, [currentUser]);
 

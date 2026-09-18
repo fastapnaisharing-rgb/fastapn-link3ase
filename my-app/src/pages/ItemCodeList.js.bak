@@ -498,10 +498,6 @@ function ItemCodeList() {
       spi1:        item.spi1        || '',
       spec_tx:     item.spec_tx     || '',
       keyword:     item.keyword     || '',
-      // MARKER_ITEMCODELIST_HANDLEEDIT_SOURCEMODE_FIX_V1 -- เดิม handleEdit ไม่โหลด source_mode ของ item เข้าฟอร์ม
-      // ทำให้ Owner กด Edit แล้วปุ่ม Module (AP/IE/All) ค้างค่าเดิมจาก State ก่อนหน้า ไม่ตรงกับของจริง
-      // กด Save ไปเสี่ยงเขียนทับ source_mode ของ Record เดิมผิดโดยไม่ตั้งใจ
-      source_mode: item.source_mode || 'AP',
       item:          item.item          || '',
       dis_g_desc:    item.dis_g_desc    || '',
       i_and_g_desc:  item.i_and_g_desc  || '',
