@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Zone Results — Total Row Mockup</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:6px; max-width:900px; }
+  .option-label { font-size:12px; font-weight:700; color:#1a3a5c; margin:22px 0 8px; }
+  .wrap { border:0.5px solid #e8eaf0; border-radius:8px; overflow:hidden; background:#fff; max-width:900px; }
+
+  .header-row { display:grid; grid-template-columns: 50px 2fr 1fr 1fr 1fr; background:#faf6ef; border-bottom:0.5px solid #f0f0f0; }
+  .header-row > div { padding:5px 12px; font-size:10px; font-weight:600; color:#a8875a; text-transform:uppercase; letter-spacing:0.03em; border-right:0.5px solid #f0f0f0; }
+  .header-row > div:last-child { border-right:none; }
+  .card-wrap { padding:4px; display:flex; flex-direction:column; gap:4px; }
+  .card-row { display:grid; grid-template-columns: 40px 2fr 1fr 1fr 1fr; align-items:center; background:#fbf9f5; border-radius:8px; padding:6px 12px; }
+  .card-row > div { font-size:13.5px; font-weight:500; color:#ccc; }
+  .num { width:24px; height:24px; border-radius:6px; background:#faf6ef; color:#a8875a; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+
+  /* Option A: Total แถบเดียว 3 ช่องเท่ากัน อยู่เหนือ Header ตาราง (พื้นเข้มกว่าเล็กน้อย แยกชัดจาก Header) */
+  .total-a { display:grid; grid-template-columns: 1fr 1fr 1fr; background:#f3ede0; border-bottom:1px solid #e8dcc4; }
+  .total-a > div { padding:10px 14px; }
+  .total-a .lbl { font-size:9.5px; font-weight:700; color:#a8875a; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px; }
+  .total-a .val { font-size:15px; font-weight:700; color:#4a3a24; }
+  .total-a > div:not(:last-child) { border-right:0.5px solid #e8dcc4; }
+
+  /* Option B: Total เป็น Card ลอยเหมือนแถวข้อมูล แต่ใหญ่กว่า/เข้มกว่า วางเหนือ Card-Wrap (แยกกรอบต่างหาก) */
+  .total-b-wrap { padding:8px 8px 4px 8px; }
+  .total-b { display:grid; grid-template-columns: 1fr 1fr 1fr; background:#1a3a5c0d; border:1px solid #e8dcc4; border-radius:8px; padding:10px 14px; }
+  .total-b > div { text-align:center; }
+  .total-b .lbl { font-size:9.5px; font-weight:700; color:#a8875a; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px; }
+  .total-b .val { font-size:15px; font-weight:700; color:#4a3a24; }
+
+  /* Option C: Total แบบ Inline บรรทัดเดียว ชิดขวา เหนือ Header (กระชับสุด ไม่กินพื้นที่สูง) */
+  .total-c { display:flex; justify-content:flex-end; gap:22px; padding:8px 14px; background:#fbf9f5; border-bottom:0.5px solid #f0f0f0; }
+  .total-c .item { display:flex; align-items:baseline; gap:6px; }
+  .total-c .lbl { font-size:10px; font-weight:600; color:#a8875a; text-transform:uppercase; letter-spacing:0.04em; }
+  .total-c .val { font-size:14px; font-weight:700; color:#4a3a24; }
+</style>
+</head>
+<body>
+  <div class="caption">
+    ตำแหน่ง: วาง "Total" ไว้บนสุดของกล่อง Zone Results (เหนือ Header ตาราง # | Results-Segment All | Line Value | Side | Rate) ทั้ง 3 Option ยังเป็น Static Placeholder (ใส่เลขตัวอย่างให้ดู Layout เฉยๆ)
+  </div>
+
+  <div class="option-label">Option A — แถบ Total เท่ากัน 3 ช่อง (Gross / Vat / Amount) มีเส้นแบ่ง Column ชัดเจน เด่นสุด</div>
+  <div class="wrap">
+    <div class="total-a">
+      <div><div class="lbl">Gross</div><div class="val">12,840.00</div></div>
+      <div><div class="lbl">Vat</div><div class="val">899.80</div></div>
+      <div><div class="lbl">Amount</div><div class="val">13,739.80</div></div>
+    </div>
+    <div class="header-row"><div>#</div><div>Results - Segment All</div><div>Line Value</div><div>Side</div><div>Rate</div></div>
+    <div class="card-wrap">
+      <div class="card-row"><div><span class="num">1</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+      <div class="card-row"><div><span class="num">2</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    </div>
+  </div>
+
+  <div class="option-label">Option B — Total เป็นกรอบลอยแยกต่างหากเหนือตาราง (มีระยะห่าง มีกรอบของตัวเอง เบากว่า Option A)</div>
+  <div class="wrap">
+    <div class="total-b-wrap">
+      <div class="total-b">
+        <div><div class="lbl">Gross</div><div class="val">12,840.00</div></div>
+        <div><div class="lbl">Vat</div><div class="val">899.80</div></div>
+        <div><div class="lbl">Amount</div><div class="val">13,739.80</div></div>
+      </div>
+    </div>
+    <div class="header-row"><div>#</div><div>Results - Segment All</div><div>Line Value</div><div>Side</div><div>Rate</div></div>
+    <div class="card-wrap">
+      <div class="card-row"><div><span class="num">1</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+      <div class="card-row"><div><span class="num">2</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    </div>
+  </div>
+
+  <div class="option-label">Option C — Total แบบ Inline บรรทัดเดียว ชิดขวา (กระชับสุด ไม่กินพื้นที่สูงเพิ่ม)</div>
+  <div class="wrap">
+    <div class="total-c">
+      <div class="item"><span class="lbl">Gross</span><span class="val">12,840.00</span></div>
+      <div class="item"><span class="lbl">Vat</span><span class="val">899.80</span></div>
+      <div class="item"><span class="lbl">Amount</span><span class="val">13,739.80</span></div>
+    </div>
+    <div class="header-row"><div>#</div><div>Results - Segment All</div><div>Line Value</div><div>Side</div><div>Rate</div></div>
+    <div class="card-wrap">
+      <div class="card-row"><div><span class="num">1</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+      <div class="card-row"><div><span class="num">2</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    </div>
+  </div>
+</body>
+</html>

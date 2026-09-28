@@ -20,7 +20,7 @@ import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db } from './lib/db';
 import { useRealtimeRefresh } from './useRealtimeRefresh';
-import { broadcastWs } from './wsManager';
+import { broadcastWs, subscribeWsStatus } from './wsManager'; // MARKER_APP_SIGNAL_DOT_V1 -- เพิ่ม subscribeWsStatus สำหรับ Signal Dot หน้าชื่อ (ความเสี่ยงขาดการเชื่อมต่อ)
 // MARKER_APP_BATCH_REVIEW_BELL_V1
 import BatchChatDrawer from './pages/BatchChatDrawer';
 import FilePreviewPopup from './FilePreviewPopup';
@@ -29,6 +29,110 @@ import ConfirmDialogHost from './ConfirmDialogHost';
 import { ALL_FUNCTION_MENUS, AP_CONTROLLER_MENU, VAT_CONTROLLER_MENU, IE_CONTROLLER_MENU, GL_FUNCTIONAL_MENU } from './menuConfig'; // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT // MARKER_GL_FUNCTIONAL_MENU_APP_V1
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+
+// MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1 -- Hover Popup คน Online ที่ไอคอนโปรไฟล์ Sidebar (Owner/Admin เท่านั้น)
+// เอา Query + Permission Filter Logic เดียวกับการ์ด "ทีม" ใน Homepage.js มาต่อยอด
+// (Self-contained เพราะ Sidebar Render อยู่ทุกหน้า ไม่ใช่แค่หน้า Home)
+const TEAM_PERMISSION_KEYS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual', 'ApproveBatch'];
+const TEAM_ROLE_STYLE = {
+  Owner:  { background: '#d4f0e7', color: '#0F6E56' },
+  Admin:  { background: '#FCEBEB', color: '#791F1F' },
+  Editor: { background: '#EAF3DE', color: '#27500A' },
+  Viewer: { background: '#f0f0f0', color: '#888'    },
+};
+const TEAM_MENU_LABELS = {
+  'ap-gr': 'AP Controller',
+  'vat-controller': 'VAT Controller',
+  'i-expense': 'I-Expense',
+  'gl-functional': 'GL Functional',
+  'i-pro-interface': 'I-Pro Interface',
+  'document-center': 'Document Center',
+  'ap-ocr': 'AP OCR',
+  'upload': 'Upload',
+  'users': 'จัดการ Users',
+  'vendor-apcode': 'Vendor AP Code',
+  'home': 'หน้าหลัก',
+};
+function formatTeamAgo(ts) {
+  if (!ts) return '';
+  const diffMin = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+  if (diffMin < 1) return 'เมื่อครู่';
+  if (diffMin < 60) return `${diffMin} นาทีที่แล้ว`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} ชม.ที่แล้ว`;
+  return `${Math.floor(diffHr / 24)} วันก่อน`;
+}
+
+function TeamOnlinePopup({ anchorRef, isOwner, onlineUsers, offlineUsers, teamMyPerm, filter, onFilterChange, onMouseEnter, onMouseLeave }) {
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (anchorRef?.current) {
+      const rect = anchorRef.current.getBoundingClientRect();
+      setPos({ bottom: window.innerHeight - rect.top + 8, left: rect.right + 8 });
+    }
+  }, [anchorRef]);
+
+  const hasPermOverlap = (otherRow) => {
+    if (!teamMyPerm || !otherRow) return true;
+    return TEAM_PERMISSION_KEYS.some(k => teamMyPerm?.permissions?.[k] && otherRow?.permissions?.[k]);
+  };
+  const visibleOnline = isOwner ? onlineUsers : onlineUsers.filter(hasPermOverlap);
+  const visibleOffline = isOwner ? offlineUsers : offlineUsers.filter(hasPermOverlap);
+  const filterKeys = isOwner ? TEAM_PERMISSION_KEYS : TEAM_PERMISSION_KEYS.filter(k => k !== 'ApproveBatch' && teamMyPerm?.permissions?.[k]);
+  const base = [...visibleOnline, ...visibleOffline];
+  const list = filter === 'All' ? base : base.filter(u => u.permissions?.[filter]);
+  const onlineSet = new Set(visibleOnline.map(o => o.username));
+
+  return (
+    <div onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} style={{
+      position: 'fixed',
+      bottom: pos ? `${pos.bottom}px` : '76px',
+      left: pos ? `${pos.left}px` : '68px',
+      width: '240px', background: 'white', border: '0.5px solid #e0e0e0', borderRadius: '12px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '12px', zIndex: 999,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+        <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c' }}>👥 ทีม Online</div>
+        <span style={{ background: '#EAF3DE', color: '#27500A', fontSize: '9px', padding: '2px 7px', borderRadius: '20px' }}>{visibleOnline.length} online</span>
+      </div>
+      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        {['All', ...filterKeys].map(k => (
+          <button key={k} onClick={() => onFilterChange(k)}
+            style={{ fontSize: '9px', padding: '3px 8px', borderRadius: '12px', border: '0.5px solid ' + (filter === k ? '#1a3a5c' : '#ddd'), background: filter === k ? '#1a3a5c' : 'white', color: filter === k ? 'white' : '#666', cursor: 'pointer' }}>
+            {k}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', maxHeight: '220px', overflowY: 'auto' }}>
+        {list.length === 0 ? (
+          <p style={{ fontSize: '10.5px', color: '#aaa', textAlign: 'center', margin: '12px 0' }}>ไม่มีรายการ</p>
+        ) : list.map(u => {
+          const online = onlineSet.has(u.username);
+          return (
+            <div key={u.username} style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <div style={{ position: 'relative', width: '20px', height: '20px', flexShrink: 0 }}>
+                <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: online ? '#E6F1FB' : '#f5f5f5', border: online ? 'none' : '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: '500', color: online ? '#0C447C' : '#bbb' }}>{(u.username || '?')[0].toUpperCase()}</div>
+                {online && <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '6px', height: '6px', borderRadius: '50%', background: '#639922', border: '1.5px solid white' }}></div>}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <p style={{ fontSize: '10.5px', margin: 0, color: online ? '#111' : '#bbb' }}>{u.username}</p>
+                  <span style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '20px', ...(TEAM_ROLE_STYLE[u.role] || TEAM_ROLE_STYLE.Viewer) }}>{u.role || 'Viewer'}</span>
+                </div>
+                {online && u.role !== 'Owner' && (
+                  <p style={{ fontSize: '9px', margin: '1px 0 0', color: '#aaa' }}>กำลังทำ · {TEAM_MENU_LABELS[u.menu_id] || u.menu_id || '-'}</p>
+                )}
+                {!online && u.lastSeen && (
+                  <p style={{ fontSize: '8px', margin: '1px 0 0', color: '#ccc' }}>{formatTeamAgo(u.lastSeen)}</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -115,7 +219,7 @@ const SEVERITY_META = {
 };
 
 // MARKER_APP_BELLMODAL_SUPPORT_SECTION_V1
-function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe, onClosePeriod, onGotoBatch, onOpenChatBatch, onRejectBatch, onPreviewFile, onDismissHandled, onDismissSupportNotif, bellRef, onGotoUpload, currentUsername, onDataIntegrityClick }) { // MARKER_APP_DATA_INTEGRITY_BELL_SCOPE_FIX_V1
+function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, onGoAccess, apNotifications, onMarkApNotifRead, onClearOrphanSafe, onClosePeriod, onGotoBatch, onOpenChatBatch, onRejectBatch, onPreviewFile, onDismissHandled, onDismissSupportNotif, bellRef, onGotoUpload, currentUsername }) { // MARKER_APP_DATAINTEGRITY_REMOVED_V1 -- ถอด onDataIntegrityClick ออก (ไม่มี Category นี้แล้ว ย้ายไปดักตอน Save แทน)
   // MARKER_APP_BELL_AGREEMENT_SYSTEM_V1
   const [supportPopupAgreeing, setSupportPopupAgreeing] = useState(false);
   const [supportPopupDisagreeing, setSupportPopupDisagreeing] = useState(false);
@@ -181,6 +285,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
   const [supportPopupImageUrls, setSupportPopupImageUrls] = useState({});
   const [supportPopupLightboxUrl, setSupportPopupLightboxUrl] = useState(null);
   const [supportPopupReplyText, setSupportPopupReplyText] = useState('');
+  // MARKER_APP_BELL_SUPPORT_REPLY_IMAGE_V1 -- แนบรูปตอบกลับได้จาก Bell Popup ตรงๆ (Paste Ctrl+V) ไม่ต้องไปเปิด Resource Center
+  const [supportPopupReplyAttachments, setSupportPopupReplyAttachments] = useState([]);
   const [supportPopupSending, setSupportPopupSending] = useState(false);
   const [supportPopupFinishing, setSupportPopupFinishing] = useState(false);
   const [supportPopupRejecting, setSupportPopupRejecting] = useState(false);
@@ -232,6 +338,7 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
     setSupportPopupImages([]);
     setSupportPopupImageUrls({});
     setSupportPopupReplyText('');
+    setSupportPopupReplyAttachments([]);
     try {
       const token = sessionStorage.getItem('fastapn_token');
       const res = await fetch(`${API}/api/support/threads/${n.link_to}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -245,8 +352,31 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
     setSupportPopupLoading(false);
   };
 
+  // MARKER_APP_BELL_SUPPORT_REPLY_IMAGE_V1 -- Paste รูปจาก Clipboard (Ctrl+V) เข้าช่องตอบกลับใน Bell Popup โดยตรง
+  const handleSupportPopupImagePaste = (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const imageItems = Array.from(items).filter(item => item.type && item.type.startsWith('image/'));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    const maxImages = 5;
+    if (supportPopupReplyAttachments.length + imageItems.length > maxImages) {
+      alert(`แนบได้สูงสุด ${maxImages} รูปครับ`);
+      return;
+    }
+    imageItems.slice(0, maxImages - supportPopupReplyAttachments.length).forEach(item => {
+      const file = item.getAsFile();
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        setSupportPopupReplyAttachments(prev => [...prev, { name: file.name || 'pasted-image.png', data: ev.target.result, mime: file.type }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleSupportPopupSend = async () => {
-    if (!supportPopup || !supportPopupReplyText.trim()) return;
+    if (!supportPopup || (!supportPopupReplyText.trim() && supportPopupReplyAttachments.length === 0)) return;
     setSupportPopupSending(true);
     try {
       const token = sessionStorage.getItem('fastapn_token');
@@ -258,7 +388,22 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
       const data = await res.json();
       if (data.ok) {
         setSupportPopupComments(prev => [...prev, data.comment]);
+        // MARKER_APP_BELL_SUPPORT_REPLY_IMAGE_V1 -- อัปโหลดรูปที่แนบมา (ถ้ามี) ผูกกับ Comment นี้ (Flow เดียวกับ Resource Center)
+        for (const att of supportPopupReplyAttachments) {
+          const base64 = att.data.split(',')[1];
+          try {
+            await fetch(`${API}/api/file-storage/upload-image`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ module: 'support-feedback', refId: supportPopup.thread.id, subRefId: data.comment.id, fileBase64: base64 }),
+            });
+          } catch (_) {}
+          const tempImgId = `local_${data.comment.id}_${Math.random().toString(36).slice(2)}`;
+          setSupportPopupImages(prev => [...prev, { id: tempImgId, sub_ref_id: data.comment.id }]);
+          setSupportPopupImageUrls(prev => ({ ...prev, [tempImgId]: att.data }));
+        }
         setSupportPopupReplyText('');
+        setSupportPopupReplyAttachments([]);
         // MARKER_APP_BELL_COMMENT_BROADCAST_V1 -- แจ้ง Realtime ให้อีกฝ่าย (Home/Bell) Refresh ทันที
         broadcastWs('support_comment_added', { threadId: supportPopup.thread.id });
       } else {
@@ -469,12 +614,12 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
   });
 
   // ── แยก Notification ตาม category — AP Period / Orphan ปลอดภัย / System Alert (RAM) แสดงคนละ Section ──
+  // MARKER_APP_DATAINTEGRITY_REMOVED_V1 -- ถอด category 'data-integrity' ออกทั้งหมด (Cron ฝั่ง Backend ถูกปิดแล้ว
+  // เปลี่ยนไปบล็อกตั้งแต่จุด Save เข้า Bucket List แทน — ไม่มีประโยชน์แล้วที่จะเตือนทีหลัง)
   const apPeriodNotifs = (apNotifications || []).filter(n => n.category !== 'RAM_ANOMALY' && n.category !== 'RAM_ORPHAN_SAFE' && n.category !== 'support-feedback' && n.category !== 'data-integrity');
   const orphanSafeNotifs = (apNotifications || []).filter(n => n.category === 'RAM_ORPHAN_SAFE');
   const ramNotifs = (apNotifications || []).filter(n => n.category === 'RAM_ANOMALY');
   const supportFeedbackNotifs = (apNotifications || []).filter(n => n.category === 'support-feedback');
-  // MARKER_APP_DATA_INTEGRITY_BELL_V1
-  const dataIntegrityNotifs = (apNotifications || []).filter(n => n.category === 'data-integrity');
 
   // MARKER_APP_SUPPORT_BELL_LIST_REVERT_V1
   return (
@@ -690,30 +835,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
             </>
           )}
 
-          {/* ── Section: Data Integrity ── */} {/* MARKER_APP_DATA_INTEGRITY_BELL_V1 */}
-          {dataIntegrityNotifs.length > 0 && (
-            <>
-              <div style={{ padding: '6px 18px', background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0' }}>
-                <span style={{ fontSize: '11px', fontWeight: '500', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Data Integrity</span>
-              </div>
-              {dataIntegrityNotifs.map(n => (
-                <div key={n.id} onClick={() => { if (!n.is_read) onMarkApNotifRead(n.id); onDataIntegrityClick(n); }}
-                  style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', cursor: 'pointer', background: n.is_read ? 'white' : '#FCEBEB' }}>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                    <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#FCEBEB', color: '#791F1F', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>⚠️</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                        {!n.is_read && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#791F1F', flexShrink: 0 }} />}
-                        <span style={{ fontSize: '13px', fontWeight: '500', color: '#791F1F' }}>{n.title}</span>
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>{n.message}</div>
-                      <div style={{ fontSize: '11px', color: '#aaa' }}>{formatTime(n.created_at)}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
+          {/* MARKER_APP_DATAINTEGRITY_REMOVED_V1 -- ถอด Section "Data Integrity" ออกจาก Bell ทั้งหมด
+              (Backend Cron ที่เคย Insert Notification ประเภทนี้ถูกปิดแล้ว — ไปบล็อกตั้งแต่จุด Save เข้า Bucket List แทน) */}
 
           {/* ── Section: Support & Feedback ── */}
           {supportFeedbackNotifs.length > 0 && (
@@ -863,13 +986,26 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
 
                 {supportPopup.thread.status !== 'resolved' && (
                   <div style={{ padding: '12px 18px', borderTop: '0.5px solid #eee', flexShrink: 0 }}>
+                    {/* MARKER_APP_BELL_SUPPORT_REPLY_IMAGE_V1 -- Thumbnail รูปที่ Paste รอส่ง (ลบทีละรูปได้) */}
+                    {supportPopupReplyAttachments.length > 0 && (
+                      <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                        {supportPopupReplyAttachments.map((a, i) => (
+                          <div key={i} style={{ position: 'relative', flexShrink: 0 }}>
+                            <img src={a.data} alt={a.name} style={{ width: '36px', height: '36px', borderRadius: '6px', objectFit: 'cover', border: '0.5px solid #ddd' }} />
+                            <button onClick={() => setSupportPopupReplyAttachments(prev => prev.filter((_, j) => j !== i))}
+                              style={{ position: 'absolute', top: '-5px', right: '-5px', width: '15px', height: '15px', borderRadius: '50%', border: 'none', background: '#c0392b', color: 'white', cursor: 'pointer', fontSize: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                       <textarea value={supportPopupReplyText} onChange={e => setSupportPopupReplyText(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSupportPopupSend(); } }}
-                        rows={1} placeholder="พิมพ์ข้อความตอบกลับ..."
+                        onPaste={e => handleSupportPopupImagePaste(e)}
+                        rows={1} placeholder="พิมพ์ข้อความตอบกลับ... (Paste รูปได้เลย)"
                         style={{ flex: 1, padding: '8px 12px', borderRadius: '16px', border: '0.5px solid #ddd', fontSize: '12px', boxSizing: 'border-box', resize: 'none' }} />
-                      <button onClick={handleSupportPopupSend} disabled={supportPopupSending || !supportPopupReplyText.trim()}
-                        style={{ fontSize: '12px', padding: '8px 16px', borderRadius: '16px', border: 'none', background: '#1a3a5c', color: 'white', cursor: 'pointer', opacity: (supportPopupSending || !supportPopupReplyText.trim()) ? 0.5 : 1, flexShrink: 0 }}>
+                      <button onClick={handleSupportPopupSend} disabled={supportPopupSending || (!supportPopupReplyText.trim() && supportPopupReplyAttachments.length === 0)}
+                        style={{ fontSize: '12px', padding: '8px 16px', borderRadius: '16px', border: 'none', background: '#1a3a5c', color: 'white', cursor: 'pointer', opacity: (supportPopupSending || (!supportPopupReplyText.trim() && supportPopupReplyAttachments.length === 0)) ? 0.5 : 1, flexShrink: 0 }}>
                         {supportPopupSending ? '...' : 'ส่ง'}
                       </button>
                     </div>
@@ -1167,14 +1303,35 @@ function MainApp() {
   const [apNotifications, setApNotifications] = useState([]);
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
   const [incomingBatch, setIncomingBatch] = useState(null); // ✅ batch transfer notification
-  const [toast, setToast] = useState(null); // { type: 'success' | 'error', message }
+  const [toast, setToast] = useState(null); // { type: 'success' | 'warning' | 'error', message }
   const toastTimerRef = useRef(null);
-  const showToast = (type, message) => {
+  const showToast = (type, message, durationMs = 10000) => { // MARKER_APP_MAINTENANCE_COUNTDOWN_V1 -- เพิ่ม durationMs (Optional) ให้ Toast ของ Maintenance อยู่นานกว่าปกติได้ (Default เดิม 10000 ไม่เปลี่ยน)
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ type, message });
-    toastTimerRef.current = setTimeout(() => setToast(null), 10000);
+    toastTimerRef.current = setTimeout(() => setToast(null), durationMs);
   };
+  // ── MARKER_APP_MAINTENANCE_COUNTDOWN_V1 -- Ref เก็บสถานะ/ค่าล่าสุดที่เคยเด้ง Toast แจ้งไปแล้ว กันเด้งซ้ำ ──
+  const maintenanceWasClosedRef = useRef(false); // จำว่ารอบก่อน Full Maintenance ปิดอยู่หรือไม่ -- ใช้ตรวจจับ Transition ปิด -> เปิด
+  const maintenanceInitRef = useRef(false); // กัน Toast ขึ้นเท็จตอน Mount ครั้งแรก (ยังไม่รู้ค่าก่อนหน้า)
+  const maintenanceNotifiedScheduleRef = useRef(null); // เก็บค่า maintenance_scheduled_at ล่าสุดที่เด้ง Toast "เริ่ม Countdown" ไปแล้ว
+  const maintenanceNotifiedFinalRef = useRef(null); // เก็บค่า maintenance_scheduled_at ล่าสุดที่เด้ง Toast "เหลือ 5 นาที" ไปแล้ว
+  const [maintenancePending, setMaintenancePending] = useState(false); // true ตอนมี Countdown ค้างอยู่ -- ใช้คุมความถี่ Poll เท่านั้น ไม่ผูกกับ UI ใดๆ
+  // MARKER_APP_SIGNAL_DOT_V1 -- State สำหรับ Signal Dot หน้าชื่อ User (เขียว/เหลือง/แดง)
+  // ── เฉพาะเรื่องเน็ต/VPN หลุดระหว่างทำงานปกติเท่านั้น -- ไม่เกี่ยวกับ Maintenance Countdown (คนละเรื่องกัน ตัดออกแล้ว) ──
+  const [wsConnStatus, setWsConnStatus] = useState('connected'); // 'connected' | 'reconnecting' | 'disconnected' จาก wsManager
+  useEffect(() => {
+    const unsubscribe = subscribeWsStatus(setWsConnStatus);
+    return unsubscribe;
+  }, []);
   const bellRef = React.useRef(null);
+  // MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1
+  const profileIconRef = useRef(null);
+  const teamHoverTimerRef = useRef(null);
+  const [showTeamPopup, setShowTeamPopup] = useState(false);
+  const [teamOnlineUsers, setTeamOnlineUsers] = useState([]);
+  const [teamOfflineUsers, setTeamOfflineUsers] = useState([]);
+  const [teamMyPerm, setTeamMyPerm] = useState(null);
+  const [teamPopupFilter, setTeamPopupFilter] = useState('All');
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
@@ -1206,6 +1363,11 @@ function MainApp() {
   const isVATActive    = VAT_PAGES.includes(activePage);
   const isIEActive     = IE_PAGES.includes(activePage);
   const isGLActive     = GL_PAGES.includes(activePage);
+  // MARKER_GL_GENERIC_PERMISSION_V1 — GL Functional เป็น Central Operation รวมหลาย Permission,
+  // เลยเช็คทีละ Item ตาม requiredPermissions ใน menuConfig.js แทนเช็คที่ Module รวม
+  const hasAnyPermission = (reqPerms) => isOwner || (Array.isArray(reqPerms) && reqPerms.some(p => userPermissions?.[p]));
+  const GL_ALL_ITEMS = GL_FUNCTIONAL_MENU.groups.flatMap(g => g.items);
+  const canAccessGLModule = GL_ALL_ITEMS.some(it => hasAnyPermission(it.requiredPermissions));
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
@@ -1229,6 +1391,45 @@ function MainApp() {
     const interval = setInterval(() => { fetchRequests(); fetchApNotifications(); }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [currentUser]);
+
+  // MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1 -- Poll คน Online สำหรับ Hover Popup (เฉพาะ Owner/Admin ที่ใช้)
+  const loadTeamOnline = async () => {
+    if (!(isOwner || isAdmin)) return;
+    try {
+      const [{ data: roles }, { data: sessions }] = await Promise.all([
+        db.from('user_roles').select('*'),
+        db.from('menu_active_sessions').select('*'),
+      ]);
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      const sessByUser = {};
+      (sessions || []).forEach(s => { sessByUser[s.user_name] = s; });
+      const online = [];
+      const offline = [];
+      (roles || []).forEach(r => {
+        const sess = sessByUser[r.username];
+        const lastSeen = sess?.last_seen ? new Date(sess.last_seen).getTime() : 0;
+        const entry = { ...r, menu_id: sess?.menu_id, lastSeen: sess?.last_seen };
+        if (lastSeen >= cutoff) online.push(entry); else offline.push(entry);
+      });
+      // MARKER_APP_TEAM_ONLINE_OWNER_FIX_V1 -- Owner ไม่มีแถวอยู่ใน user_roles เลย (Query ดึงจากตารางนี้ตรงๆ)
+      // ทำให้ Owner ไม่เคยถูกนับเป็น Online ในลิสต์นี้ได้เลย ไม่ว่าจะ Active จริงแค่ไหน -- เพิ่มตัวเองเข้าไปด้วยตรงนี้
+      const myUsername = userName || currentUser?.email;
+      if (isOwner && myUsername && !(roles || []).some(r => r.username === myUsername)) {
+        const mySess = sessByUser[myUsername];
+        online.push({ username: myUsername, role: 'Owner', permissions: {}, menu_id: mySess?.menu_id, lastSeen: mySess?.last_seen || new Date().toISOString() });
+      }
+      setTeamOnlineUsers(online);
+      setTeamOfflineUsers(offline);
+      setTeamMyPerm((roles || []).find(r => r.username === (userName || currentUser?.email)) || null);
+    } catch (e) { console.error('[sidebar team popup load]', e); }
+  };
+  useEffect(() => {
+    if (!currentUser || !(isOwner || isAdmin)) return;
+    loadTeamOnline();
+    const teamIv = setInterval(loadTeamOnline, 30000);
+    return () => clearInterval(teamIv);
+  }, [currentUser, isOwner, isAdmin, userName]);
+  useRealtimeRefresh(['team_status_updated'], () => loadTeamOnline());
 
   // ── Real-time: ฟัง broadcast 'bucket_sent'/'bucket_recalled' จาก server ────
   // ── ให้ Toast ขึ้น/หายทันที ไม่ต้องรอ Poll รอบ 30 วิด้านบน ─────────────────
@@ -1396,13 +1597,51 @@ function MainApp() {
   // MARKER_APP_MAINTENANCE_EVENT_V1
   // ── เดิม checkMaintenance ถูกประกาศซ้อนอยู่ใน useEffect เข้าถึงจากข้างนอกไม่ได้ ──
   // ── ย้ายออกมาเป็นฟังก์ชันระดับ Component เพื่อให้ useRealtimeRefresh เรียกได้ด้วย ──
-  const checkMaintenance = async () => {
+  const checkMaintenance = async () => { // MARKER_APP_MAINTENANCE_COUNTDOWN_V1 -- เพิ่ม maintenance_scheduled_at/maintenance_message เข้า Query + Logic Countdown Toast (เด้งครั้งเดียวตอนเริ่ม + ตอนเหลือ 5 นาที) + Reopen Toast + Best-effort Flip ตอนหมดเวลา
     try {
-      const { data } = await db.from('system_settings').select('key, value').in('key', ['maintenance_mode', 'maintenance_menus']);
+      const { data } = await db.from('system_settings').select('key, value').in('key', ['maintenance_mode', 'maintenance_menus', 'maintenance_scheduled_at', 'maintenance_message']);
       if (data) {
         const fullMode = data.find(d => d.key === 'maintenance_mode');
         const menusRow = data.find(d => d.key === 'maintenance_menus');
-        if (fullMode?.value === 'true' && !isOwner) { await logout(); return; }
+        const scheduledRow = data.find(d => d.key === 'maintenance_scheduled_at');
+        const msgRow = data.find(d => d.key === 'maintenance_message');
+        const scheduledAtVal = scheduledRow?.value || '';
+        const remainingMs = scheduledAtVal ? (new Date(scheduledAtVal).getTime() - Date.now()) : null;
+        const isPastSchedule = !!scheduledAtVal && remainingMs <= 0;
+        const isClosedNow = fullMode?.value === 'true';
+
+        // ── Best-effort: หมดเวลา Countdown แล้วแต่ยังไม่มีใคร Flip maintenance_mode จริง -- ให้ Owner Tab ไหนก็ได้ที่เปิดอยู่ Flip ให้ (ไม่มี Backend Cron แยก) ──
+        if (isPastSchedule && !isClosedNow && isOwner) {
+          const nowIso = new Date().toISOString();
+          await db.from('system_settings').upsert([{ key: 'maintenance_mode', value: 'true', updated_by: userName || currentUser?.email || '', updated_at: nowIso }], { onConflict: 'key' });
+          await db.from('system_settings').upsert([{ key: 'maintenance_scheduled_at', value: '', updated_by: userName || currentUser?.email || '', updated_at: nowIso }], { onConflict: 'key' });
+          broadcastWs('maintenance_mode_changed', { key: 'maintenance_mode', value: 'true' });
+        }
+        if ((isClosedNow || isPastSchedule) && !isOwner) { await logout(); return; }
+
+        // ── Toast แจ้งตอนระบบเพิ่งเปิดกลับมาใช้ได้ (Transition ปิด -> เปิด เท่านั้น ไม่ขึ้นตอน Mount ครั้งแรก) ──
+        if (maintenanceInitRef.current && maintenanceWasClosedRef.current && !isClosedNow) {
+          showToast('success', '✓ ระบบใช้งานได้ปกติแล้ว หากหน้าจอไม่ Update กรุณากด Ctrl+Shift+R');
+        }
+        maintenanceWasClosedRef.current = isClosedNow;
+        maintenanceInitRef.current = true;
+
+        // ── Countdown Toast: เด้งครั้งเดียวตอนเจอ Schedule ใหม่ + อีกครั้งตอนเหลือ <= 5 นาที (ไม่ค้างจอตลอด ตามที่ผู้ใช้ขอ) ──
+        if (scheduledAtVal && !isPastSchedule) {
+          setMaintenancePending(true);
+          if (maintenanceNotifiedScheduleRef.current !== scheduledAtVal) {
+            maintenanceNotifiedScheduleRef.current = scheduledAtVal;
+            maintenanceNotifiedFinalRef.current = null; // Schedule ใหม่ -- Reset สิทธิ์เตือนรอบ 5 นาที ให้เตือนได้อีกครั้งสำหรับรอบนี้
+            const minsLeftFP = Math.max(1, Math.round(remainingMs / 60000));
+            showToast('warning', `⚠️ ระบบจะปิดปรับปรุงในอีก ${minsLeftFP} นาที${msgRow?.value ? ' — ' + msgRow.value : ''} กรุณาบันทึกงานที่ทำค้างอยู่ให้เรียบร้อย`, 20000);
+          } else if (remainingMs <= 5 * 60000 && maintenanceNotifiedFinalRef.current !== scheduledAtVal) {
+            maintenanceNotifiedFinalRef.current = scheduledAtVal;
+            showToast('error', '🔴 ระบบจะปิดปรับปรุงในอีก 5 นาที กรุณาบันทึกงานทันที!', 20000);
+          }
+        } else {
+          setMaintenancePending(false);
+          if (!scheduledAtVal) { maintenanceNotifiedScheduleRef.current = null; maintenanceNotifiedFinalRef.current = null; }
+        }
         try { setMaintenanceMenus(JSON.parse(menusRow?.value || '[]')); } catch { setMaintenanceMenus([]); }
       }
     } catch (err) { console.error('maintenance check error:', err); }
@@ -1417,6 +1656,13 @@ function MainApp() {
     const interval = setInterval(checkMaintenance, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [currentUser, isOwner]);
+
+  // MARKER_APP_MAINTENANCE_COUNTDOWN_V1 -- ระหว่างมี Countdown ค้างอยู่ (maintenancePending) เช็คถี่ขึ้นทุก 20 วิ กันหมดเวลาแล้ว Flip/Logout/เตือน 5 นาทีช้าเกินไป (Poll ปกติทุก 5 นาทีนานเกินไปสำหรับ Countdown สั้นๆ) -- เลิกเช็คถี่ทันทีที่ไม่มี Countdown ค้างแล้ว ไม่กระทบ Load ปกติ
+  useEffect(() => {
+    if (!currentUser || !maintenancePending) return;
+    const interval = setInterval(checkMaintenance, 20000);
+    return () => clearInterval(interval);
+  }, [currentUser, maintenancePending]);
 
   // ── Real-time: ฟัง 'maintenance_mode_changed' -- Admin เพิ่ง Toggle Maintenance ──
   // ── Mode เช็คทันที ไม่ต้องรอ Poll รอบ Fallback ด้านบน (ฝั่งส่งต้องเพิ่มที่จุด ──
@@ -1546,13 +1792,7 @@ function MainApp() {
     handleOpenInbox('inbox');
     setShowBell(false);
   };
-  // MARKER_APP_DATA_INTEGRITY_BELL_V1 -- Navigate เข้า Batch View เดียวกับ handlePreviewFileForReq (Reuse Signal เดิม)
-  const handleDataIntegrityClick = (n) => {
-    if (!n.link_to) { confirmDialog.alert('ไม่พบ Batch ID'); return; }
-    setPendingViewBatchId(n.link_to);
-    handleOpenInbox('inbox');
-    setShowBell(false);
-  };
+  // MARKER_APP_DATAINTEGRITY_REMOVED_V1 -- ถอด handleDataIntegrityClick ออก (Category 'data-integrity' เลิกใช้แล้ว)
 
   const handleReject = async (req) => {
     try {
@@ -1578,32 +1818,28 @@ function MainApp() {
     } catch (err) { confirmDialog.alert('เกิดข้อผิดพลาด: ' + err.message, { variant: 'danger' }); }
   };
 
-  // MARKER_APP_IDLE_LOGOUT_DRAFT_HEARTBEAT_V1 -- Auto-Logout Prevention 3 ชั้น
-  // ── ชั้น 1: Timer หลัก 1 ชม. เดิม -- Reset ได้จาก Real Activity หรือ Heartbeat ──
-  // ── จาก Invoice Draft ที่ Dirty (กันดีดทิ้งระหว่างทำงานจริงอยู่) ────────────────
-  // ── ชั้น 2: Timer Real Activity แยก 2 ชม. -- Heartbeat ไม่นับ Reset ตัวนี้ ──────
-  // ── ไม่มี Real Activity เลยเกิน 2 ชม. -> เด้งเตือนถาม ────────────────────────
-  // ── ชั้น 3: Grace Period 5 นาที -- ไม่ตอบ = Logout จริง (ไม่มี DB Backup ──────
-  // ── ข้อมูลที่พิมพ์ค้างในหน่วยความจำจะหายไปตามความเสี่ยงที่ยอมรับไว้แล้ว) ──────
+  // MARKER_APP_IDLE_LOGOUT_DYNAMIC_THRESHOLD_V1 -- Threshold ปรับตาม Operation ค้างอยู่จริงไหม
+  // ── ไม่มี Operation ค้าง -> นิ่งจริงๆครบ 1 ชม. ขึ้น Dialog เตือน ─────────────────
+  // ── มี Operation ค้างอยู่จริง (Heartbeat จาก Draft Dirty มาไม่เกิน 6 นาทีที่ผ่านมา) ──
+  // ── ให้เวลามากกว่า -- นิ่งจริงๆครบ 2 ชม. ค่อยขึ้น Dialog เตือน ───────────────────
+  // ── ทั้ง 2 กรณี Reset ได้จาก Real Activity เหมือนกัน แค่ระยะเวลาต่างกัน ─────────
   useEffect(() => {
     if (!currentUser) return;
-    const IDLE_TIMEOUT = 60 * 60 * 1000; // 1 ชม.
-    const REAL_ACTIVITY_WARNING = 2 * 60 * 60 * 1000; // 2 ชม.
-    const GRACE_PERIOD = 5 * 60 * 1000; // 5 นาที
+    const IDLE_TIMEOUT = 60 * 60 * 1000; // 1 ชม. -- ไม่มี Operation ค้าง
+    const OPERATION_TIMEOUT = 2 * 60 * 60 * 1000; // 2 ชม. -- มี Operation ค้างอยู่จริง
+    const HEARTBEAT_RECENT_WINDOW = 6 * 60 * 1000; // Heartbeat ยิงทุก 5 นาทีตอน Dirty -- Buffer 1 นาที กัน Miss รอบเดียวแล้วตกไป 1 ชม.ทันที
+    const GRACE_PERIOD = 5 * 60 * 1000; // 5 นาที -- ไม่ตอบ = Logout จริง
     let timer = null;
-    let realActivityTimer = null;
     let warningActive = false;
+    let lastHeartbeatAt = 0;
 
     const doLogout = async () => { await logout(); };
 
+    const currentTimeout = () => (Date.now() - lastHeartbeatAt) < HEARTBEAT_RECENT_WINDOW ? OPERATION_TIMEOUT : IDLE_TIMEOUT;
+
     const resetTimer = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(doLogout, IDLE_TIMEOUT);
-    };
-
-    const resetRealActivityTimer = () => {
-      if (realActivityTimer) clearTimeout(realActivityTimer);
-      realActivityTimer = setTimeout(showIdleWarning, REAL_ACTIVITY_WARNING);
+      timer = setTimeout(showIdleWarning, currentTimeout());
     };
 
     const showIdleWarning = async () => {
@@ -1611,33 +1847,39 @@ function MainApp() {
       warningActive = true;
       const gracePromise = new Promise((resolve) => setTimeout(() => resolve(false), GRACE_PERIOD));
       const confirmPromise = confirmDialog.confirm(
-        'ไม่มีการใช้งานมานานกว่า 2 ชั่วโมง ต้องการต่อเวลาทำงานหรือไม่?',
+        'ไม่มีการใช้งานมานานแล้ว ต้องการต่อเวลาทำงานหรือไม่?',
         { confirmText: 'ต่อเวลา', cancelText: 'ออกจากระบบ', variant: 'warning' }
       );
       const extend = await Promise.race([confirmPromise, gracePromise]);
       warningActive = false;
       if (extend) {
-        resetRealActivityTimer();
         resetTimer();
       } else {
+        // MARKER_APP_DISMISS_CONFIRMDIALOG_ON_LOGOUT_V1 -- ปิด Dialog ที่ยังค้างรอ User กดปุ่มอยู่ก่อน Logout จริง
+        confirmDialog.dismiss();
         await doLogout();
       }
     };
 
     const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
-    const handleRealActivity = () => { resetTimer(); resetRealActivityTimer(); };
-    const handleHeartbeat = () => { resetTimer(); }; // Heartbeat จาก Draft Dirty -- Reset แค่ Timer หลัก ไม่ Reset Real Activity Timer
+    const handleRealActivity = () => { resetTimer(); };
+    // MARKER_APP_IDLE_LOGOUT_DYNAMIC_THRESHOLD_V1 -- Heartbeat จาก Draft ที่ยัง Dirty -- จำเวลาไว้ใช้เลือก Threshold รอบถัดไป
+    const handleHeartbeat = () => { lastHeartbeatAt = Date.now(); resetTimer(); };
 
     events.forEach(e => window.addEventListener(e, handleRealActivity));
     window.addEventListener('fastapn:invoice-draft-heartbeat', handleHeartbeat);
     resetTimer();
-    resetRealActivityTimer();
     return () => {
       if (timer) clearTimeout(timer);
-      if (realActivityTimer) clearTimeout(realActivityTimer);
       events.forEach(e => window.removeEventListener(e, handleRealActivity));
       window.removeEventListener('fastapn:invoice-draft-heartbeat', handleHeartbeat);
     };
+  }, [currentUser]);
+
+  // MARKER_APP_DISMISS_CONFIRMDIALOG_ON_LOGOUT_V1 -- Safety Net: currentUser หายไปจากสาเหตุอะไรก็ตาม
+  // -- (รวม Force Logout จาก Path อื่นที่ไม่รู้จัก Dialog นี้เลย) บังคับปิด Dialog ที่ค้างอยู่ทันที
+  useEffect(() => {
+    if (!currentUser) confirmDialog.dismiss();
   }, [currentUser]);
 
   // MARKER_FIX_HEARTBEAT_HOOKS_ORDER_V1
@@ -1666,13 +1908,28 @@ function MainApp() {
   if (!currentUser) return <Login />;
 
   const roleColor = { Owner: '#5DCAA5', Admin: '#e74c3c', Editor: '#0F6E56', Viewer: '#888' };
+  // MARKER_APP_SIGNAL_DOT_V1 -- คำนวณสี Signal Dot หน้าชื่อ User จาก WS Connection Status เท่านั้น (เน็ต/VPN หลุดระหว่างทำงานปกติ -- ไม่เกี่ยวกับ Maintenance)
+  let signalLevel = 'green';
+  let signalReason = 'เชื่อมต่อกับระบบปกติ';
+  if (wsConnStatus === 'disconnected') {
+    signalLevel = 'red';
+    signalReason = 'ขาดการเชื่อมต่อกับระบบ (เน็ต/VPN หลุด) — กำลังพยายามเชื่อมต่อใหม่';
+  } else if (wsConnStatus === 'reconnecting') {
+    signalLevel = 'yellow';
+    signalReason = 'การเชื่อมต่อช้า/กำลังเชื่อมต่อใหม่';
+  }
+  const signalColor = { green: '#5DCAA5', yellow: '#EF9F27', red: '#E24B4A' }[signalLevel];
   // ── รวม Badge count จากทั้ง Access Request (pending) และ AP Period Notification (ยังไม่อ่าน) ──
   const pendingRequestCount = requests.filter(r => r.status === 'pending').length;
   const unreadApCount = apNotifications.filter(n => !n.is_read).length;
   const totalBadgeCount = pendingRequestCount + unreadApCount;
   const initial = (userName || currentUser.email || '?')[0].toUpperCase();
 
-  const handleProfileIconClick = () => { selectPage('users'); };
+  const handleProfileIconClick = () => { // MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_CLICK_CLOSE_V1 -- กด Click ปิด Team Online Popup ทันที (เผื่อ Hover เปิดอยู่ก่อน)
+    clearTeamHoverTimer();
+    setShowTeamPopup(false);
+    selectPage('users');
+  };
   const clearCloseTimer = () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); };
   const startCloseTimer = () => {
     clearCloseTimer();
@@ -1687,6 +1944,18 @@ function MainApp() {
   const handleIEEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ie'); };
   const handleGLEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('gl'); }; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
   const handleMouseLeave   = () => { startCloseTimer(); };
+  // MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1 -- Hover ไอคอนโปรไฟล์ค้าง ~200ms ถึงเด้ง Popup (กัน Hover พลาด)
+  // ปิดหลัง Mouse Leave ~300ms (เผื่อขยับเมาส์เข้า Popup ต่อ) -- Logic แบบเดียวกับ Flyout เมนู
+  const clearTeamHoverTimer = () => { if (teamHoverTimerRef.current) clearTimeout(teamHoverTimerRef.current); };
+  const handleTeamIconEnter = () => {
+    if (!(isOwner || isAdmin)) return;
+    clearTeamHoverTimer();
+    teamHoverTimerRef.current = setTimeout(() => setShowTeamPopup(true), 200);
+  };
+  const handleTeamIconLeave = () => {
+    clearTeamHoverTimer();
+    teamHoverTimerRef.current = setTimeout(() => setShowTeamPopup(false), 300);
+  };
   const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
 
   // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — ALL_FUNCTION_MENUS มาจาก menuConfig.js แล้ว (ลบ Local Array ซ้ำออก)
@@ -1777,14 +2046,16 @@ function MainApp() {
               flyoutOpen={openMenu === 'vat'}
             />
           : <NoAccessPage />;
-      case 'gl-ap-recon':
-        return (isOwner || userPermissions?.['GL'])
+      case 'gl-ap-recon': { // MARKER_GL_GENERIC_PERMISSION_V1
+        const glApReconItem = GL_ALL_ITEMS.find(it => it.id === 'gl-ap-recon');
+        return hasAnyPermission(glApReconItem?.requiredPermissions)
           ? <GLFunctionalController
               activeSubTab={activePage}
               onSubTabChange={sub => setActivePage(sub)}
               flyoutOpen={openMenu === 'gl'}
             />
-          : <NoAccessPage />; // MARKER_GL_AP_RECON_COMPONENT_V1
+          : <NoAccessPage />;
+      }
       case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
 
       // Master Data
@@ -1910,7 +2181,7 @@ function MainApp() {
               </div>
             )}
             {/* GL Functional — flyout trigger */} {/* MARKER_GL_FUNCTIONAL_MENU_APP_V1 */}
-            {(isOwner || (userPermissions?.['GL'] && !maintenanceMenus.includes('gl-functional'))) && (
+            {(canAccessGLModule && !maintenanceMenus.includes('gl-functional')) && ( /* MARKER_GL_GENERIC_PERMISSION_V1 */
               <div onClick={handleGLEnter} title={!sidebarExpanded ? 'GL Functional' : ''}
                 style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isGLActive || openMenu === 'gl' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'gl' ? 'rgba(93,202,165,0.12)' : isGLActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isGLActive || openMenu === 'gl' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                 {sidebarExpanded ? <><span>📊 GL Functional</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>📊</span>}
@@ -1936,7 +2207,17 @@ function MainApp() {
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' }}>
+                      {/* MARKER_APP_SIGNAL_DOT_V1 -- Signal Dot บอกความเสี่ยงเน็ต/VPN หลุด (เขียว/เหลือง/แดง) -- Hover ดูเหตุผล ไม่มี Action ให้กด เพราะเป็นแค่สถานะ Auto-detect */}
+                      <span
+                        title={signalReason}
+                        style={{
+                          width: '7px', height: '7px', borderRadius: '50%', background: signalColor, flexShrink: 0,
+                          animation: signalLevel === 'red' ? 'signalDotPulse 1.2s ease-in-out infinite' : 'none',
+                        }}
+                      />
+                      <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || currentUser.email}</div>
+                    </div>
                     <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -1949,7 +2230,7 @@ function MainApp() {
                         </span>
                       )}
                     </button>
-                    <button onClick={handleProfileIconClick}
+                    <button ref={profileIconRef} onClick={handleProfileIconClick} onMouseEnter={handleTeamIconEnter} onMouseLeave={handleTeamIconLeave}
                       style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <UserIcon />
                     </button>
@@ -1968,7 +2249,7 @@ function MainApp() {
                     <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
                   )}
                 </button>
-                <button onClick={handleProfileIconClick}
+                <button ref={profileIconRef} onClick={handleProfileIconClick} onMouseEnter={handleTeamIconEnter} onMouseLeave={handleTeamIconLeave}
                   style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <UserIcon />
                 </button>
@@ -2049,13 +2330,17 @@ function MainApp() {
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📊 GL Functional</div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
-              {GL_FUNCTIONAL_MENU.groups.map((g, gi) => (
-                <React.Fragment key={g.label}>
-                  {gi > 0 && fpDiv()}
-                  {fpGroup(g.icon, g.label)}
-                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
-                </React.Fragment>
-              ))}
+              {GL_FUNCTIONAL_MENU.groups.map((g, gi) => { // MARKER_GL_GENERIC_PERMISSION_V1
+                const visibleItems = g.items.filter(it => hasAnyPermission(it.requiredPermissions));
+                if (visibleItems.length === 0) return null;
+                return (
+                  <React.Fragment key={g.label}>
+                    {gi > 0 && fpDiv()}
+                    {fpGroup(g.icon, g.label)}
+                    {visibleItems.map(it => fpSub(it.id, it.icon, it.label))}
+                  </React.Fragment>
+                );
+              })}
             </div>
           </div>
         )}
@@ -2112,9 +2397,22 @@ function MainApp() {
           onOpenChatBatch={handleOpenChatBatch}
           onRejectBatch={handleRejectBatchFromBell}
           onPreviewFile={handlePreviewFileForReq}
-          onDataIntegrityClick={handleDataIntegrityClick} // MARKER_APP_DATA_INTEGRITY_BELL_SCOPE_FIX_V1
           onDismissHandled={handleDismissNotif}
           onDismissSupportNotif={handleDismissSupportNotif}
+        />
+      )}
+      {/* MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1 */}
+      {showTeamPopup && (isOwner || isAdmin) && (
+        <TeamOnlinePopup
+          anchorRef={profileIconRef}
+          isOwner={isOwner}
+          onlineUsers={teamOnlineUsers}
+          offlineUsers={teamOfflineUsers}
+          teamMyPerm={teamMyPerm}
+          filter={teamPopupFilter}
+          onFilterChange={setTeamPopupFilter}
+          onMouseEnter={clearTeamHoverTimer}
+          onMouseLeave={handleTeamIconLeave}
         />
       )}
       {/* MARKER_APP_BELL_REJECT_CHOICE_DIALOG_V1 */}
@@ -2168,9 +2466,12 @@ function MainApp() {
           onClose={() => setPreviewFile(null)}
         />
       )}
-      {toast && (
-        <div style={{ position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: '500', color: toast.type === 'success' ? '#27500A' : '#791F1F', background: toast.type === 'success' ? '#EAF3DE' : '#FCEBEB', border: `0.5px solid ${toast.type === 'success' ? '#c0dd97' : '#f7c1c1'}`, boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}>
-          {toast.type === 'success' ? '✓ ' : '✕ '}{toast.message}
+      {toast && ( // MARKER_APP_MAINTENANCE_COUNTDOWN_V1 -- เพิ่ม Toast Type 'warning' (สีเหลือง) สำหรับ Countdown แจ้งเตือน Maintenance -- 'success'/'error' เดิมไม่เปลี่ยน
+        <div style={{ position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: '500', maxWidth: '480px', textAlign: 'center',
+          color: toast.type === 'success' ? '#27500A' : toast.type === 'warning' ? '#856404' : '#791F1F',
+          background: toast.type === 'success' ? '#EAF3DE' : toast.type === 'warning' ? '#FFF3CD' : '#FCEBEB',
+          border: `0.5px solid ${toast.type === 'success' ? '#c0dd97' : toast.type === 'warning' ? '#ffc107' : '#f7c1c1'}`, boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}>
+          {toast.type === 'success' ? '✓ ' : toast.type === 'warning' ? '' : '✕ '}{toast.message}
         </div>
       )}
 

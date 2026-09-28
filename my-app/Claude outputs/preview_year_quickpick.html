@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Preview: เลือกปีเห็น พ.ศ. ตอนกำลังเลือก</title>
+<style>
+  body{font-family:Segoe UI, Tahoma, sans-serif; background:#eef0f3; margin:0; padding:24px; color:#222;}
+  h1{font-size:16px; margin:0 0 4px;}
+  p.sub{color:#666; font-size:12.5px; margin:0 0 20px; line-height:1.6;}
+  .card{background:#fff; border:1px solid #e2e4e8; border-radius:10px; padding:16px; width:280px; box-shadow:0 1px 3px rgba(16,24,40,.06); position:relative;}
+  label.f{font-size:11px; color:#888; display:block; margin-bottom:4px;}
+  .wrap{position:relative;}
+  input.d{width:100%; box-sizing:border-box; padding:6px 62px 6px 8px; font-size:12px; border:0.5px solid #d8dbe0; border-radius:8px; background:#FFFBEA;}
+  .ico{position:absolute; right:34px; top:50%; transform:translateY(-50%); font-size:13px; color:#888;}
+  .ybtn{position:absolute; right:4px; top:50%; transform:translateY(-50%); font-size:10px; font-weight:700; color:#fff; background:#1a3a5c; border:none; border-radius:5px; padding:3px 6px; cursor:pointer;}
+  .ybtn:hover{background:#123049;}
+  .pop{position:absolute; top:calc(100% + 4px); left:0; width:170px; max-height:220px; overflow-y:auto; background:#fff; border:1px solid #d8dbe0; border-radius:8px; box-shadow:0 6px 18px rgba(16,24,40,.15); z-index:10; display:none;}
+  .pop.open{display:block;}
+  .yr-row{display:flex; align-items:center; justify-content:space-between; padding:7px 10px; cursor:pointer; border-bottom:1px solid #f0f1f3;}
+  .yr-row:last-child{border-bottom:none;}
+  .yr-row:hover{background:#eef3fb;}
+  .yr-row.now{background:#f4f7fb;}
+  .ce{font-size:13px; font-weight:600; color:#222;}
+  .be{font-size:11px; color:#b45309; font-weight:600;}
+  .result{margin-top:12px; font-size:11.5px; color:#2e7d32; background:#eef7ee; border-radius:6px; padding:6px 8px; display:none;}
+  .result.show{display:block;}
+</style>
+</head>
+<body>
+<h1>Preview — เห็น พ.ศ. "ระหว่างกำลังเลือกปี" (ไม่ใช่หลังเลือกแล้ว)</h1>
+<p class="sub">
+Popup ปฏิทินเดิมของ Browser แก้ไม่ได้แน่นอน (ยืนยันแล้ว) จึงเพิ่มปุ่ม <b>"ปี"</b> เล็กๆ ข้างช่องวันที่แทน<br>
+กดปุ่มนี้ → เห็นรายการปีพร้อม พ.ศ. คู่กันทันที เลือกได้เลยระหว่างดู ไม่ต้องคำนวณเอง ไม่ต้องเลือกไปก่อนแล้วมาดูทีหลัง
+</p>
+
+<div class="card">
+  <label class="f">Tax Invoice Date</label>
+  <div class="wrap">
+    <input class="d" id="dateText" value="09/24/2026" readonly>
+    <span class="ico">📅</span>
+    <button class="ybtn" id="yBtn">ปี ▾</button>
+    <div class="pop" id="pop"></div>
+  </div>
+  <div class="result" id="result"></div>
+</div>
+
+<script>
+const startY = new Date().getFullYear() - 4;
+const pop = document.getElementById('pop');
+const btn = document.getElementById('yBtn');
+const dateText = document.getElementById('dateText');
+const result = document.getElementById('result');
+let currentDay = '24', currentMonth = '09';
+
+function toBE(y){ return y + 543; }
+
+function buildPop(){
+  pop.innerHTML = '';
+  for(let i=0;i<9;i++){
+    const y = startY + i;
+    const row = document.createElement('div');
+    row.className = 'yr-row' + (y === 2026 ? ' now' : '');
+    row.innerHTML = `<span class="ce">${y}</span><span class="be">พ.ศ. ${toBE(y)}</span>`;
+    row.onclick = () => {
+      dateText.value = `${currentMonth}/${currentDay}/${y}`;
+      result.textContent = `✅ ตั้งวันที่เป็น ${currentMonth}/${currentDay}/${y} — เลือกจากปุ่ม "พ.ศ. ${toBE(y)}" ตรงๆ`;
+      result.classList.add('show');
+      pop.classList.remove('open');
+    };
+    pop.appendChild(row);
+  }
+}
+buildPop();
+btn.onclick = (e) => { e.stopPropagation(); pop.classList.toggle('open'); };
+document.addEventListener('click', () => pop.classList.remove('open'));
+</script>
+</body>
+</html>

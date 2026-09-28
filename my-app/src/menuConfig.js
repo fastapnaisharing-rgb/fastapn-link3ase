@@ -94,7 +94,7 @@ export const GL_FUNCTIONAL_MENU = {
   id: 'gl-functional', icon: '📊', label: 'GL Functional', color: '#EEEDFE',
   groups: [
     { label: 'Reconcile', icon: '🔗', items: [
-      { id: 'gl-ap-recon', icon: '🧾', label: 'Account Payable Recon.' },
+      { id: 'gl-ap-recon', icon: '🧾', label: 'Account Payable Recon.', requiredPermissions: ['Manual', 'IE', 'I-Pro'] }, // MARKER_GL_ITEM_PERMISSIONS_V1
     ]},
   ],
 };

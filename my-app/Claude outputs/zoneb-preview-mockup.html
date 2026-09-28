@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Zone B Preview Mockup</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; color:#1a3a5c; }
+  .caption { font-size:13px; color:#666; margin-bottom:14px; }
+  .zoneA { background:#fff; border:0.5px solid #ddd; border-radius:10px; padding:16px; display:flex; gap:14px; margin-bottom:16px; }
+  .field { flex:1; }
+  .field label { display:block; font-size:12px; color:#6b7280; margin-bottom:5px; }
+  .field input, .field select { width:100%; box-sizing:border-box; height:34px; padding:0 10px; font-size:13px; border:1px solid #d1d5db; border-radius:8px; }
+  .highlight input { border-color:#fde68a; background:#fffbeb; }
+  .zoneB { border:2px solid #22c55e; border-radius:10px; overflow:hidden; background:#fff; }
+  .strip { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:0.5px solid #e8eaf0; flex-wrap:wrap; background:#f8f9fa; }
+  .chip { font-size:11px; padding:3px 10px; border-radius:20px; font-weight:600; color:#fff; background:#1a3a5c; }
+  .chip.ok { background:#EAF3DE; color:#27500A; font-weight:500; }
+  .vendorname { font-size:14px; font-weight:600; }
+  .meta { font-size:12px; color:#666; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  thead th { background:#1a3a5c; color:#fff; padding:9px 12px; text-align:left; font-weight:500; white-space:nowrap; }
+  thead th.num { text-align:right; }
+  tbody td { padding:9px 12px; border-top:0.5px solid #eee; }
+  tbody td.num { text-align:right; font-weight:500; }
+  tbody tr:nth-child(2) { background:#fafbfc; }
+  .foot { padding:20px; text-align:center; font-size:11px; color:#aaa; }
+  .label-row { padding:14px 20px 0 20px; font-size:12px; color:#9ca3af; }
+</style>
+</head>
+<body>
+  <div class="caption">Mockup ตัวอย่าง — Zone A (บน) เหมือนหน้าจริงตอนนี้ / Zone B (ล่าง กรอบเขียว) คือส่วนที่เสนอเปลี่ยนตอนเจอ SM-Code</div>
+
+  <div class="zoneA">
+    <div class="field"><label>Code</label><input value="RIS-APBC/T36" readonly /></div>
+    <div class="field highlight"><label>TIV date</label><input value="" readonly /></div>
+    <div class="field highlight"><label>TIV number</label><input value="" readonly /></div>
+    <div class="field highlight"><label>Amount</label><input value="15,000.00" readonly /></div>
+    <div class="field"><label>Form type</label><input value="" readonly /></div>
+    <div class="field highlight"><label>PO number</label><input value="" readonly /></div>
+  </div>
+
+  <div class="zoneB">
+    <div class="strip">
+      <span class="chip">RIS-APBC/T36</span>
+      <span class="vendorname">บริษัท ริชแอสเสท จำกัด</span>
+      <span class="meta">Tax ID: 0105548012345</span>
+      <span class="meta">Branch: 00001</span>
+      <span class="chip ok">AT-Match: T36</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Line</th>
+          <th>Account Code (CPC-Acc-SubAcc)</th>
+          <th>Description</th>
+          <th class="num">Debit</th>
+          <th class="num">Credit</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1 (Dr)</td>
+          <td>99999-11610752-999999</td>
+          <td>บริษัท ริชแอสเสท จำกัด / INV / PO-2026-001</td>
+          <td class="num">15,000.00</td>
+          <td class="num" style="color:#ccc">—</td>
+        </tr>
+        <tr>
+          <td>2 (Cr)</td>
+          <td>99999-11630052-999999</td>
+          <td>บริษัท ริชแอสเสท จำกัด / INV / PO-2026-001</td>
+          <td class="num" style="color:#ccc">—</td>
+          <td class="num">15,000.00</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="foot">ตัวอย่าง: Debit = Credit = Amount ตรงๆ ก่อน (ยังไม่แยก VAT ตาม Amount Type) — จุดนี้รอ Confirm สูตรคำนวณจริงก่อนค่อยเขียนโค้ด</div>
+  </div>
+</body>
+</html>

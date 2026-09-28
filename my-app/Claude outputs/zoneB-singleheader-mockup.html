@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Zone B — Single Header Mockup</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:14px; max-width:900px; }
+  .wrap {
+    border: 0.5px solid #eceff3;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+    max-width: 900px;
+  }
+  .header-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    background: #faf6ef;
+    border-bottom: 0.5px solid #f0f0f0;
+  }
+  .header-row > div {
+    padding: 6px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #a8875a;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-right: 0.5px solid #f0f0f0;
+  }
+  .header-row > div:last-child { border-right: none; }
+  .data-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    border-bottom: 0.5px solid #f0f0f0;
+  }
+  .data-row:last-child { border-bottom: none; }
+  .data-row > div {
+    padding: 17px 12px;
+    font-size: 14.5px;
+    font-weight: 500;
+    color: #ddd;
+    border-right: 0.5px solid #f0f0f0;
+  }
+  .data-row > div:last-child { border-right: none; }
+  .data-row > div:first-child { color: #4a3a24; }
+</style>
+</head>
+<body>
+  <div class="caption">
+    Mockup (ตามที่ Apply ไปในโค้ดจริงแล้ว): เหลือ Header แถวเดียวใช้ร่วมกัน (Segment All | Line Value | Side | Rate)
+    ส่วน Results 1-4 เป็นแค่แถวข้อมูลธรรมดา (ไม่มี Header ซ้ำทุก Block แล้ว)
+  </div>
+
+  <div class="wrap">
+    <div class="header-row">
+      <div>Segment All</div>
+      <div>Line Value</div>
+      <div>Side</div>
+      <div>Rate</div>
+    </div>
+    <div class="data-row"><div>Results 1</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="data-row"><div>Results 2</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="data-row"><div>Results 3</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="data-row"><div>Results 4</div><div>—</div><div>—</div><div>—</div></div>
+  </div>
+</body>
+</html>

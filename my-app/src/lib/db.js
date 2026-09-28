@@ -56,6 +56,23 @@ class QueryBuilder {
   lt(col, val) { this._filters[`lt_${col}`] = val; return this; }
   ilike(col, val) { this._filters[`ilike_${col}`] = val.replace(/%/g, ''); return this; }
 
+  // MARKER_DB_RAW_FILTER_V1 -- ทางออกสำหรับ Query Param ที่ไม่มี Prefix (search, search_cols,
+  // distinct_group ฯลฯ ที่ genericTable.js อ่านตรงๆ จาก req.query ไม่ผ่าน eq_/ilike_ ฯลฯ)
+  raw(key, val) { this._filters[key] = val; return this; }
+
+  // MARKER_DB_SEARCH_METHOD_V1 -- Wire เข้ากับ search/search_cols ที่ Backend รองรับอยู่แล้ว
+  // แต่ก่อนหน้านี้ไม่มี Method ให้เรียกจาก Frontend เลย
+  search(term, cols, opts = {}) {
+    this.raw('search', term);
+    this.raw('search_cols', Array.isArray(cols) ? cols.join(',') : cols);
+    if (opts.mode) this.raw('search_mode', opts.mode);
+    return this;
+  }
+
+  // MARKER_DB_DISTINCT_GROUP_METHOD_V1 -- Wire เข้ากับ distinct_group ที่ Backend รองรับอยู่แล้ว
+  // (ต้องระบุ 2 Column เสมอ — ถ้าต้องการนับแค่ 1 Column ให้ส่งชื่อเดิมซ้ำ 2 ครั้ง)
+  distinctGroup(colA, colB) { this.raw('distinct_group', `${colA},${colB}`); return this; }
+
   order(col, opts = {}) {
     const dir = opts.ascending === false ? 'desc' : 'asc';
     this._order = this._order ? `${this._order},${col}.${dir}` : `${col}.${dir}`;
@@ -140,7 +157,29 @@ class QueryBuilder {
       const params = new URLSearchParams();
       Object.entries(this._filters).forEach(([k, v]) => params.set(k, v));
       if (this._order) params.set('order', this._order);
+      // MARKER_DB_SELECT_PARAM_V1 -- Bug Fix: this._select ถูกเก็บไว้จาก .select(cols) แต่ไม่เคยถูกส่งไป
+      // Backend เลย (ขาดบรรทัดนี้มาตลอด) ทำให้ทุก .select('col1,col2') ทั่วทั้ง Frontend เป็น No-op จริงๆ
+      // Backend ได้ SELECT * เสมอไม่ว่าจะระบุ Column ไว้กี่ตัว -- ถ้าตารางมี Column ใหญ่ (เช่น JSONB เก็บ
+      // ข้อมูลทั้งชุด) จะโดนลากมาด้วยทุกครั้งแม้หน้า List จะใช้แค่ไม่กี่ Column ก็ตาม เป็นสาเหตุหลักที่ทำให้
+      // การดึงรายการ (เช่น Document/Resource Center) ช้า
+      if (this._select && this._select !== '*') params.set('select', this._select);
+
+      // MARKER_DB_COUNT_EXACT_HEAD_V1 -- โหมดขอแค่จำนวนรวม (count:'exact', head:true) ก่อนหน้านี้
+      // ไม่เคยยิง count=true ไป Backend จริง (แค่นับความยาวข้อมูลที่ดึงมา ซึ่งอาจถูก limit ตัดไปแล้ว
+      // ทำให้ Total ผิด) ตอนนี้ให้ Database นับให้ตรงๆ เร็วกว่าและถูกต้องกว่า
+      if (this._count === 'exact' && this._head) {
+        params.set('count', 'true');
+        const query = params.toString() ? `?${params.toString()}` : '';
+        const result = await apiFetch(`/${this.table}${query}`);
+        if (result.error) return { data: null, error: result.error, count: null };
+        const total = result.data && typeof result.data.total === 'number' ? result.data.total : 0;
+        return { data: null, error: null, count: total };
+      }
+
       if (this._limit) params.set('limit', this._limit);
+      // MARKER_DB_RANGE_OFFSET_V1 -- .range(from,to) เดิมตั้งแค่ this._limit แต่ไม่เคยส่ง offset
+      // ไปที่ Backend เลย ทำให้ทุกหน้าที่เรียกผ่าน .range() ได้ข้อมูลจากตำแหน่ง 0 เสมอ (Bug เดียวกับ select)
+      if (this._range) params.set('offset', this._range.from);
 
       const query = params.toString() ? `?${params.toString()}` : '';
       const result = await apiFetch(`/${this.table}${query}`);
@@ -150,10 +189,6 @@ class QueryBuilder {
 
       if (this._single || this._maybeSingle) {
         return { data: Array.isArray(data) ? data[0] || null : data, error: null, count: null };
-      }
-
-      if (this._count === 'exact' && this._head) {
-        return { data: null, error: null, count: Array.isArray(data) ? data.length : 0 };
       }
 
       return { data, error: null, count: Array.isArray(data) ? data.length : null };

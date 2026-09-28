@@ -23,6 +23,25 @@ const listeners = new Set(); // { events: string[], onEvent: (event, payload) =>
 let reconnectAttempts = 0;
 const RECONNECT_DELAYS = [0, 1000, 2000, 4000, 5000];
 
+// MARKER_WSMANAGER_CONNECTION_STATUS_V1
+// ── Track สถานะ Connection ('connected' | 'reconnecting' | 'disconnected') ──
+// ── เดิมรู้แค่ภายในไฟล์นี้ไฟล์เดียว ไม่มีจุดอื่นในแอพ Subscribe ดูได้เลย ──
+// ── ใช้สำหรับ Signal Dot หน้าชื่อ User (บอกความเสี่ยงขาดการเชื่อมต่อ เน็ต/VPN หลุด) ──
+let wsStatus = 'disconnected';
+const statusListeners = new Set(); // (status: string) => void
+// Reconnect ไม่สำเร็จติดกันครบเท่านี้ถือว่าเสี่ยงจะเป็น "ขาดการเชื่อมต่อจริงๆ ต่อเนื่อง" (Backend ไม่ตอบสนอง)
+// ตั้งไว้ 2 ครั้ง (~3-4 วิ) แทนที่จะรอ 3 ครั้ง (~7-8 วิ) เพื่อให้ขึ้นแดง "ก่อน" จะกลายเป็นวิกฤตจริง
+// (สะดุดครั้งเดียวจากจราจรหนา ยังเป็นเหลืองอยู่ ไม่โดนตัดสินเป็นแดงจนกว่าจะพลาดต่อกัน 2 ครั้ง)
+const RED_THRESHOLD = 2;
+
+function setWsStatus(next) {
+  if (wsStatus === next) return;
+  wsStatus = next;
+  statusListeners.forEach((cb) => {
+    try { cb(wsStatus); } catch (e) { console.error('[wsManager] status listener error:', e); }
+  });
+}
+
 function getApiBase() {
   return (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 }
@@ -54,8 +73,9 @@ function getWsUrl() {
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   ws = new WebSocket(getWsUrl());
+  setWsStatus('reconnecting'); // MARKER_WSMANAGER_CONNECTION_STATUS_V1 -- กำลังพยายามเชื่อมต่อ (ครั้งแรก หรือหลังหลุด)
 
-  ws.onopen = () => { reconnectAttempts = 0; }; // MARKER_WSMANAGER_RECONNECT_BACKOFF_V1 -- เชื่อมต่อสำเร็จ รีเซ็ต Backoff กลับเป็นต่อทันทีในรอบหน้า
+  ws.onopen = () => { reconnectAttempts = 0; setWsStatus('connected'); }; // MARKER_WSMANAGER_RECONNECT_BACKOFF_V1 -- เชื่อมต่อสำเร็จ รีเซ็ต Backoff กลับเป็นต่อทันทีในรอบหน้า -- MARKER_WSMANAGER_CONNECTION_STATUS_V1
 
   ws.onmessage = ({ data }) => {
     let parsed;
@@ -76,7 +96,11 @@ function connect() {
       clearTimeout(reconnectTimer);
       const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)]; // MARKER_WSMANAGER_RECONNECT_BACKOFF_V1
       reconnectAttempts += 1;
+      // MARKER_WSMANAGER_CONNECTION_STATUS_V1 -- ยังไม่ถึงเกณฑ์ = แค่สะดุด (เหลือง), เกินเกณฑ์ = เน็ต/VPN หลุดจริง (แดง)
+      setWsStatus(reconnectAttempts >= RED_THRESHOLD ? 'disconnected' : 'reconnecting');
       reconnectTimer = setTimeout(connect, delay);
+    } else {
+      setWsStatus('disconnected'); // MARKER_WSMANAGER_CONNECTION_STATUS_V1 -- ไม่มีใคร Subscribe แล้ว (เช่น Logout) ถือว่าไม่เชื่อมต่อ
     }
   };
 }
@@ -100,6 +124,26 @@ export function subscribeWs(events, onEvent) {
       ws = null;
     }
   };
+}
+
+/**
+ * คืนสถานะ Connection ปัจจุบัน ('connected' | 'reconnecting' | 'disconnected')
+ * MARKER_WSMANAGER_CONNECTION_STATUS_V1
+ */
+export function getWsStatus() {
+  return wsStatus;
+}
+
+/**
+ * Subscribe ฟังการเปลี่ยนสถานะ Connection (สำหรับ Signal Dot หน้าชื่อ User เป็นต้น)
+ * @param {(status: string) => void} onChange
+ * @returns {() => void} unsubscribe function
+ * MARKER_WSMANAGER_CONNECTION_STATUS_V1
+ */
+export function subscribeWsStatus(onChange) {
+  statusListeners.add(onChange);
+  onChange(wsStatus); // แจ้งสถานะปัจจุบันทันทีตอน Subscribe ครั้งแรก กันหน้าจอค้างค่า Default ผิด
+  return () => statusListeners.delete(onChange);
 }
 
 /**

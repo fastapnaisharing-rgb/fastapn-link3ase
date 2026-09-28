@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Ofin Code / CPC / Account / Sub Acc — Mockup v3</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:14px; max-width:960px; line-height:1.6; }
+  .option-label { font-size:12px; font-weight:700; color:#1a3a5c; margin:26px 0 8px; }
+  .card { background:#fff; border:0.5px solid #e5e7eb; border-radius:10px; padding:16px; max-width:960px; }
+  .row1 { display:flex; gap:14px; margin-bottom:12px; }
+  .row1 .f { flex:1; min-width:0; }
+  .row1 label { display:block; font-size:12px; font-weight:500; color:#6b7280; margin-bottom:5px; }
+  .row1 input { width:100%; box-sizing:border-box; height:34px; font-size:13px; padding:0 10px; border:1px solid #fde68a; background:#fffbeb; border-radius:8px; }
+  .ro { color:#0C447C; font-weight:600; }
+  .ofin-inp { width:100%; box-sizing:border-box; border:1px solid #fde68a; background:#fffbeb; border-radius:5px; color:#1a3a5c; }
+
+  /* Option 1: ของเดิมตอนนี้ (แถวเดียว Dr/Cr Tag สี่เหลี่ยม + Ofin Code + 3 ช่อง พื้นฟ้าอ่อน) */
+  .opt1-wrap { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .opt1-side { display:grid; grid-template-columns: 36px 1fr 1fr 1fr 1fr; border:0.5px solid #e8eaf0; border-radius:6px; overflow:hidden; height:34px; }
+  .opt1-tag { color:white; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .opt1-side.dr .opt1-tag { background:#1a3a5c; }
+  .opt1-side.cr .opt1-tag { background:#7a3b1a; }
+  .opt1-cell { border-left:0.5px solid #e8eaf0; padding:2px 8px; display:flex; flex-direction:column; justify-content:center; background:#E6F1FB; }
+  .opt1-cell .lbl { font-size:8.5px; color:#7a95ad; }
+  .opt1-cell .val { font-size:11.5px; }
+  .opt1-cell.ofin { background:#fff; padding:3px 6px; justify-content:center; }
+  .opt1-cell.ofin input { height:22px; font-size:11.5px; padding:0 6px; }
+
+  /* Option 2: เหมือน Debit Account / Credit Account Block ใน Edit Simple Code Modal (Header แถบเข้ม + Grid ด้านล่าง) */
+  .opt2-wrap { display:grid; grid-template-columns: 1fr 1fr; border:0.5px solid #e8eaf0; border-radius:6px; overflow:hidden; }
+  .opt2-side { }
+  .opt2-side.dr { border-right:0.5px solid #e8eaf0; }
+  .opt2-header { padding:6px 10px; font-size:11px; color:white; font-weight:600; text-align:center; }
+  .opt2-side.dr .opt2-header { background:#1a3a5c; }
+  .opt2-side.cr .opt2-header { background:#7a3b1a; }
+  .opt2-ofinrow { padding:6px 8px; border-bottom:0.5px solid #e8eaf0; background:#fafafa; }
+  .opt2-ofinrow label { font-size:10px; color:#888; display:block; margin-bottom:3px; }
+  .opt2-ofinrow input { height:24px; font-size:11.5px; padding:0 6px; }
+  .opt2-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; }
+  .opt2-grid > div { padding:5px 8px; }
+  .opt2-grid > div:not(:last-child) { border-right:0.5px solid #e8eaf0; }
+  .opt2-grid .lbl { font-size:9.5px; color:#888; text-align:center; display:block; margin-bottom:2px; }
+  .opt2-grid .val { font-size:12px; text-align:center; display:block; }
+
+  /* Option 3: Card แบบเดียวกับ Zone Results (พื้น fbf9f5 มุมโค้ง) Label บนค่าล่าง แถวเดียวยาว 8 ช่อง (4+4) */
+  .opt3-wrap { display:flex; gap:10px; }
+  .opt3-side { flex:1; display:flex; align-items:center; gap:10px; background:#fbf9f5; border-radius:8px; padding:8px 12px; }
+  .opt3-tag { width:26px; height:26px; border-radius:6px; color:white; font-size:10.5px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .opt3-side.dr .opt3-tag { background:#1a3a5c; }
+  .opt3-side.cr .opt3-tag { background:#7a3b1a; }
+  .opt3-item { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .opt3-item .lbl { font-size:10px; color:#a8875a; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; }
+  .opt3-item .val { font-size:13px; color:#4a3a24; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .opt3-item.ofin input { height:24px; font-size:12px; padding:0 6px; }
+</style>
+</head>
+<body>
+  <div class="caption">
+    Confirm แล้วว่า 4 ช่อง/ฝั่งคือ <b>Ofin Code | CPC | Account | Sub Acc</b> — Mockup นี้เป็นแค่ปรับ Layout/หน้าตาให้ดูดีขึ้น (โครงสร้างข้อมูลเดิมไม่เปลี่ยน) 3 แบบให้เลือก
+  </div>
+
+  <div class="card">
+    <div class="row1">
+      <div class="f"><label>Code</label><input value="" /></div>
+      <div class="f"><label>Tax invoice Date</label><input value="MM/DD/YYYY" /></div>
+      <div class="f"><label>TIV number</label><input value="" /></div>
+      <div class="f"><label>Amount</label><input value="" /></div>
+      <div class="f"><label>PO number</label><input value="ไม่จำเป็น" /></div>
+    </div>
+
+    <div class="option-label">Option 1 — ของเดิมตอนนี้ (Tag สี่เหลี่ยมเล็ก + พื้นฟ้าอ่อน)</div>
+    <div class="opt1-wrap">
+      <div class="opt1-side dr">
+        <div class="opt1-tag">Dr</div>
+        <div class="opt1-cell ofin"><input class="ofin-inp" placeholder="Ofin Code" /></div>
+        <div class="opt1-cell"><span class="lbl">CPC</span><span class="val ro">—</span></div>
+        <div class="opt1-cell"><span class="lbl">Account</span><span class="val ro">—</span></div>
+        <div class="opt1-cell"><span class="lbl">Sub Acc</span><span class="val ro">—</span></div>
+      </div>
+      <div class="opt1-side cr">
+        <div class="opt1-tag">Cr</div>
+        <div class="opt1-cell ofin"><input class="ofin-inp" placeholder="Ofin Code" /></div>
+        <div class="opt1-cell"><span class="lbl">CPC</span><span class="val ro">—</span></div>
+        <div class="opt1-cell"><span class="lbl">Account</span><span class="val ro">—</span></div>
+        <div class="opt1-cell"><span class="lbl">Sub Acc</span><span class="val ro">—</span></div>
+      </div>
+    </div>
+
+    <div class="option-label">Option 2 — สไตล์เดียวกับ Debit/Credit Account Block ใน Edit Simple Code Modal (Header แถบเข้ม + Ofin Code เต็มแถว + Grid 3 ช่องล่าง)</div>
+    <div class="opt2-wrap">
+      <div class="opt2-side dr">
+        <div class="opt2-header">Debit</div>
+        <div class="opt2-ofinrow"><label>Ofin Code</label><input class="ofin-inp" style="width:100%;box-sizing:border-box;" placeholder="Ofin Code" /></div>
+        <div class="opt2-grid">
+          <div><span class="lbl">CPC</span><span class="val ro">—</span></div>
+          <div><span class="lbl">Account</span><span class="val ro">—</span></div>
+          <div><span class="lbl">Sub Acc</span><span class="val ro">—</span></div>
+        </div>
+      </div>
+      <div class="opt2-side cr">
+        <div class="opt2-header">Credit</div>
+        <div class="opt2-ofinrow"><label>Ofin Code</label><input class="ofin-inp" style="width:100%;box-sizing:border-box;" placeholder="Ofin Code" /></div>
+        <div class="opt2-grid">
+          <div><span class="lbl">CPC</span><span class="val ro">—</span></div>
+          <div><span class="lbl">Account</span><span class="val ro">—</span></div>
+          <div><span class="lbl">Sub Acc</span><span class="val ro">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="option-label">Option 3 — Card Style เหมือน Zone Results (พื้นครีมมุมโค้ง, Label เล็กสีน้ำตาลทอง, ตัวเลขใหญ่ชัด)</div>
+    <div class="opt3-wrap">
+      <div class="opt3-side dr">
+        <div class="opt3-tag">Dr</div>
+        <div class="opt3-item ofin"><span class="lbl">Ofin Code</span><input class="ofin-inp" placeholder="กรอก" /></div>
+        <div class="opt3-item"><span class="lbl">CPC</span><span class="val">—</span></div>
+        <div class="opt3-item"><span class="lbl">Account</span><span class="val">—</span></div>
+        <div class="opt3-item"><span class="lbl">Sub Acc</span><span class="val">—</span></div>
+      </div>
+      <div class="opt3-side cr">
+        <div class="opt3-tag">Cr</div>
+        <div class="opt3-item ofin"><span class="lbl">Ofin Code</span><input class="ofin-inp" placeholder="กรอก" /></div>
+        <div class="opt3-item"><span class="lbl">CPC</span><span class="val">—</span></div>
+        <div class="opt3-item"><span class="lbl">Account</span><span class="val">—</span></div>
+        <div class="opt3-item"><span class="lbl">Sub Acc</span><span class="val">—</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

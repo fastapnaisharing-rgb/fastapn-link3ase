@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Draft Monitor Button - v3 (BU+COM, ขยาย Dropdown)</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", sans-serif; background: #f5f6f8; padding: 40px; }
+  .zone {
+    width: 340px;
+    min-height: 90px;
+    border: 1.5px dashed #ccc;
+    border-radius: 10px;
+    background: #ffffff;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 20px;
+    box-sizing: border-box;
+  }
+  .caption { margin-top: 14px; font-size: 12.5px; color: #777; line-height: 1.6; max-width: 340px; }
+  h2 { font-size: 16px; color: #222; }
+</style>
+</head>
+<body>
+
+  <h2>v3: Chip โชว์ "BU (COM)" ไม่มีตัวเลข 1|2 แล้ว + ขยายพื้นที่ Chip/Dropdown ให้กว้างขึ้น</h2>
+
+  <div class="zone">
+    <div style="position:relative; width:300px;">
+      <button type="button" style="width:100%; display:flex; align-items:center; justify-content:flex-start; gap:10px; padding:9px 14px; font-size:13.5px; border-radius:22px; border:none; background:#1a3a5c; color:#fff; cursor:pointer; font-weight:500;">
+        <span style="background:#2e5a86; border-radius:12px; padding:4px 12px; font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:5px; min-width:90px; justify-content:center;">REV (0572) <span style="opacity:0.8; font-size:9px;">▾</span></span>
+        <span style="flex:1;">Draft Monitor</span>
+      </button>
+      <select style="position:absolute; left:8px; top:0; bottom:0; width:110px; opacity:0; cursor:pointer;">
+        <option>REV (0572)</option>
+        <option>MPS (0219)</option>
+        <option>CFW (0402)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="caption">
+    Chip ฝั่งซ้ายกว้างขึ้น (min-width 90px, padding มากขึ้น) โชว์ "BU (COM)" เช่น "REV (0572)" แทนตัวเลขจำนวน Draft ที่ตัดออกแล้ว<br/>
+    โซนกดเปิด Dropdown (Select โปร่งใสซ้อนทับ) ก็ขยายตามความกว้าง Chip ไปด้วย (110px) กดง่ายขึ้น
+  </div>
+
+</body>
+</html>

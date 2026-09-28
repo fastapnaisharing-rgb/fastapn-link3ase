@@ -1,0 +1,553 @@
+﻿/**
+ * apReconcile.js
+ * ==========================================================================
+ * FASTAPN Link3ase — Feature: GL Functional > Reconcile > Account Payable Recon.
+ * ส่วนที่ 1: AP Cutting (Detail) — รับไฟล์ Raw จาก Oracle EBS
+ *            "Accounts Payable Trial Balance Summary(New) (Custom)" (.out)
+ *
+ * ไฟล์นี้แยก Namespace ออกจาก vat-reconcile.js โดยตั้งใจ (Confirm กับผู้ใช้แล้ว)
+ * เพราะ AP Cutting เป็นข้อมูล Detail-grain (รายบรรทัด Invoice) คนละ Table/Concept
+ * กับ TB (Balance-grain, ใช้ vat_reconcile_tb ร่วมกับ VAT อยู่แล้ว ไม่ต้องแตะที่นี่)
+ *
+ * ⚠️ ตาราง ap_cutting_staging มีอยู่แล้วจริงในฐานข้อมูล (สร้างไว้นอกรอบ Session นี้,
+ *    ตอนตรวจสอบพบว่ายังว่างเปล่า 0 Row) ห้ามรัน ap_cutting_staging_v1.sql ซ้ำ —
+ *    ไฟล์นั้นปรับเป็น Documentation ให้ตรง Schema จริงแล้ว ไม่ต้อง Migrate อะไรเพิ่ม
+ *    Router นี้ Insert ตาม Column ชุดจริงของตาราง มี 4 จุดที่เป็นการ "สันนิษฐาน"
+ *    ความหมาย Column ที่หาโค้ด/เอกสารอ้างอิงเดิมไม่เจอ (Comment กำกับไว้ในจุด Insert
+ *    ของ /ap-cutting/commit) — ผู้ใช้ควรตรวจทานหลัง Deploy ว่าตรงกับที่ออกแบบไว้เดิม
+ *
+ * db.js อยู่ที่ src/db.js, ไฟล์นี้อยู่ที่ src/routes/apReconcile.js จึง import ด้วย "../db.js"
+ * (Pattern เดียวกับ vatReconcile.js ทุกอย่าง — Auth Middleware เดิม (verifyAuthLocal +
+ * attachAppRole) Apply ระดับ app.js อยู่แล้วก่อนถึง Router นี้ ไม่ต้องเพิ่มเอง)
+ *
+ * Flow:
+ *   1) POST /ap-reconcile/ap-cutting/preview -> Parse ไฟล์ + Resolve BU จาก Branch
+ *      คืน Summary/Records ให้ดูก่อน (ไม่เขียน DB)
+ *   2) POST /ap-reconcile/ap-cutting/commit  -> Parse ไฟล์ซ้ำ + Replace ทั้งก้อน
+ *      (DELETE ข้อมูลเก่าของ (bu, period) นั้นก่อน แล้ว Insert ใหม่ทั้งหมด)
+ *      เหตุผลที่ Replace ทั้งก้อนแทน Upsert ทีละแถวแบบ TB: เพราะเป็นข้อมูลระดับ
+ *      Invoice ณ วันที่ Snapshot — ถ้ารอบใหม่ไม่มี Invoice ที่เคยมี ต้องไม่เหลือค้าง
+ *      (Pattern เดียวกับ /input-summary/commit ใน vatReconcile.js)
+ *
+ * Whitelist Account (Liability Account 7-Segment ตำแหน่งที่ 6 — GL Account):
+ *   ยืนยันจาก VBA Macro (Z_Option_TB_Cutting_for_Reconcile) + Validate กับไฟล์จริง
+ *   3 Book (REV/CRG/TOPS) แล้ว ครบทั้ง 6 รหัส ไม่มี Unmatched Line เหลือเลย
+ *
+ * ⚠️ Retention: ยังไม่มี Auto-Delete ของ ap_cutting_staging (ผู้ใช้บอกจะแจ้ง
+ *    Logic ลบเองทีหลัง — ตอนนี้ข้อมูลจะอยู่ถาวรจนกว่าจะมี Instruction เพิ่ม)
+ * ==========================================================================
+ */
+
+import express from "express";
+import multer from "multer";
+import crypto from "crypto";
+import { pool, getUsernameByEmail } from "../db.js";
+
+const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage() });
+
+// ── ตัวแปลง windows-874 (cp874/Thai) เอง — Copy จาก vatReconcile.js (ไม่ Export ที่นั่น
+// เลย Duplicate มาแทนที่จะแก้ไฟล์ VAT เดิม กันความเสี่ยงต่อ Endpoint ที่ทำงานอยู่แล้ว) ──
+const CP874_HIGH_BYTE_TABLE = [
+  8364, 65533, 65533, 65533, 65533, 8230, 65533, 65533, 65533, 65533, 65533, 65533, 65533, 65533, 65533, 65533,
+  65533, 8216, 8217, 8220, 8221, 8226, 8211, 8212, 65533, 65533, 65533, 65533, 65533, 65533, 65533, 65533,
+  160, 3585, 3586, 3587, 3588, 3589, 3590, 3591, 3592, 3593, 3594, 3595, 3596, 3597, 3598, 3599,
+  3600, 3601, 3602, 3603, 3604, 3605, 3606, 3607, 3608, 3609, 3610, 3611, 3612, 3613, 3614, 3615,
+  3616, 3617, 3618, 3619, 3620, 3621, 3622, 3623, 3624, 3625, 3626, 3627, 3628, 3629, 3630, 3631,
+  3632, 3633, 3634, 3635, 3636, 3637, 3638, 3639, 3640, 3641, 3642, 65533, 65533, 65533, 65533, 3647,
+  3648, 3649, 3650, 3651, 3652, 3653, 3654, 3655, 3656, 3657, 3658, 3659, 3660, 3661, 3662, 3663,
+  3664, 3665, 3666, 3667, 3668, 3669, 3670, 3671, 3672, 3673, 3674, 3675, 65533, 65533, 65533, 65533,
+];
+function decodeCp874(buffer) {
+  let result = "";
+  for (let i = 0; i < buffer.length; i++) {
+    const b = buffer[i];
+    result += b < 0x80 ? String.fromCharCode(b) : String.fromCharCode(CP874_HIGH_BYTE_TABLE[b - 0x80]);
+  }
+  return result;
+}
+
+// ── Whitelist GL Account ของ AP Cutting (ยืนยันแล้วจาก VBA + ไฟล์จริง 3 Book) ──
+const TARGET_GL_ACCOUNTS = new Set([
+  "21930052", "21930054", "21930100", "21930084", "21930085", "21930220",
+]);
+
+/**
+ * Parse ไฟล์ AP Cutting (.out จาก Oracle EBS "Accounts Payable Trial Balance
+ * Summary(New) (Custom)") — Validate แล้วกับไฟล์จริง 3 Book (REV/CRG/TOPS),
+ * Unmatched Line = 0 ทั้ง 3 ไฟล์
+ *
+ * โครงสร้างไฟล์ (Fixed-width หลัง Header):
+ *   ' Liability Account:  1-05-0572-057201-99999-21930052-018408'
+ *     7-Segment: Company-CostCenter-Department-Branch-Future-GLAccount-SubAccount
+ *   'Supplier :  N-131483          : ชื่อ Supplier ภาษาไทย'
+ *   'P7201/2010009685/1/2  23-JUL-25  THB              728.03              728.03   คำอธิบาย'
+ *     Column Width ตาม Dash Header: Invoice No(20) Date(9) Curr(4) Amount(18) Remaining(18) Desc(เหลือ)
+ *   บรรทัดที่ต้องข้าม: ว่าง, '---...', 'Total for Supplier/Liability Account/Report',
+ *                      'Page: N', 'Invoice Number'/'Invoice' (Header ซ้ำตอนขึ้นหน้าใหม่)
+ *   Form Feed (\x0c) อาจติดอยู่หน้าบรรทัดถัดไปเลย (ไม่ได้แยกเป็นบรรทัดของตัวเอง
+ *   เสมอ — แล้วแต่ Book) ต้อง Strip ออกก่อนเช็คเงื่อนไขอื่นทุกครั้ง
+ */
+function parseApCuttingText(rawText) {
+  const lines = rawText.split("\n");
+  let book = null;
+  let asOfDate = null;
+  const records = [];
+  const unmatchedLines = [];
+
+  let curLiability = null; // { company, costCenter, department, branch, future, glAccount, subAccount }
+  let curSupplierCode = null;
+  let curSupplierName = null;
+
+  const liabRe = /^\s*Liability Account:\s+([\d-]+)\s*$/;
+  const supplierRe = /^Supplier\s*:\s*([^\s:]+)\s*:\s*(.*)$/;
+  const dashRe = /^-{10,}/;
+
+  for (let i = 0; i < lines.length; i++) {
+    // Strip Form Feed (Page Break) ที่อาจติดหน้าบรรทัด + Trailing \r (CRLF เดิม)
+    const line = lines[i].replace(/\f/g, "").replace(/\r+$/, "");
+    const stripped = line.trim();
+
+    if (book === null && i < 15 && stripped && !stripped.startsWith("Page:")) {
+      // ชื่อ Book คือกลุ่มคำแรกก่อนช่องว่างยาว (เช่น "REV BOOK" จาก
+      // "REV BOOK                    ...   Report Date: ...")
+      const m = line.match(/^(\S+(?:\s\S+)*?)\s{2,}/);
+      book = m ? m[1].trim() : stripped;
+      continue;
+    }
+    if (line.startsWith("                     As of Date:")) {
+      asOfDate = line.split(":").slice(1).join(":").trim();
+      continue;
+    }
+
+    const liabM = liabRe.exec(line);
+    if (liabM) {
+      const segs = liabM[1].split("-");
+      curLiability = segs.length === 7
+        ? {
+            company: segs[0], costCenter: segs[1], department: segs[2],
+            branch: segs[3], future: segs[4], glAccount: segs[5], subAccount: segs[6],
+          }
+        : null;
+      curSupplierCode = null;
+      curSupplierName = null;
+      continue;
+    }
+
+    const supM = supplierRe.exec(line);
+    if (supM) {
+      curSupplierCode = supM[1].trim();
+      curSupplierName = supM[2].trim();
+      continue;
+    }
+
+    if (
+      stripped.startsWith("Total for Supplier") ||
+      stripped.startsWith("Total for Liability Account") ||
+      stripped.startsWith("Total for Report") ||
+      stripped.startsWith("Page:") ||
+      stripped.startsWith("Invoice Number") ||
+      stripped.startsWith("Invoice")
+    ) {
+      continue;
+    }
+    if (dashRe.test(line) || stripped === "") continue;
+
+    if (
+      curLiability &&
+      TARGET_GL_ACCOUNTS.has(curLiability.glAccount) &&
+      line.length > 40 &&
+      line[0] !== " "
+    ) {
+      const invNo = line.slice(0, 20).trim();
+      const invDate = line.slice(22, 31).trim();
+      const curr = line.slice(33, 37).trim();
+      const amount = line.slice(39, 57).trim();
+      const remaining = line.slice(59, 77).trim();
+      const desc = line.slice(79).trim();
+
+      if (invNo && invDate) {
+        records.push({
+          book,
+          branch: curLiability.branch,
+          gl_account: curLiability.glAccount,
+          sub_account: curLiability.subAccount,
+          supplier_code: curSupplierCode,
+          supplier_name: curSupplierName,
+          invoice_no: invNo,
+          invoice_date: invDate,
+          currency: curr,
+          amount_raw: amount,
+          remaining_amount_raw: remaining,
+          description: desc,
+        });
+      } else {
+        unmatchedLines.push(line);
+      }
+    }
+  }
+
+  return { book, asOfDate, records, unmatchedLines };
+}
+
+/** แปลง "31-AUG-26" (Oracle Date Format) -> "2026-08-31" (ISO) เพื่อเก็บเป็น DATE ใน Postgres */
+function oracleDateToIso(oracleDate) {
+  if (!oracleDate) return null;
+  const MONTHS = {
+    JAN: "01", FEB: "02", MAR: "03", APR: "04", MAY: "05", JUN: "06",
+    JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12",
+  };
+  const m = /^(\d{2})-([A-Z]{3})-(\d{2})$/.exec(oracleDate.trim());
+  if (!m) return null;
+  const [, dd, mon, yy] = m;
+  const month = MONTHS[mon.toUpperCase()];
+  if (!month) return null;
+  // Oracle 2-digit year: 00-68 => 2000-2068, 69-99 => 1969-1999 (Standard Oracle Rule)
+  const year = parseInt(yy, 10) <= 68 ? `20${yy}` : `19${yy}`;
+  return `${year}-${month}-${dd}`;
+}
+
+/** แปลง "(3,791.44)" (ติดลบแบบวงเล็บ) หรือ "3,791.44" -> Number */
+function parseAmount(text) {
+  if (!text) return 0;
+  const negative = text.startsWith("(") && text.endsWith(")");
+  const cleaned = text.replace(/[(),]/g, "").trim();
+  const num = parseFloat(cleaned) || 0;
+  return negative ? -num : num;
+}
+
+/** Period จาก As-of-Date เช่น "31-AUG-26" -> "2026-08" */
+function periodFromAsOfDate(asOfDate) {
+  const iso = oracleDateToIso(asOfDate);
+  return iso ? iso.slice(0, 7) : null;
+}
+
+// ── resolveBranchToBu / resolveBuToNumeric / resolveAllBranches — Copy จาก
+// vatReconcile.js (ไม่ Export ที่นั่น เลย Duplicate แทนที่จะแก้ไฟล์ VAT เดิม) ──
+async function resolveBranchToBu(branch) {
+  const direct = await pool.query(
+    `SELECT cl."COMPANY CODE" AS company_code
+     FROM branch_list bl
+     JOIN company_list cl ON cl.bu = bl.bu
+     WHERE bl."Branch Code" = $1 AND bl.deleted IS NOT TRUE
+     LIMIT 1`,
+    [branch]
+  );
+  const companyCode = direct.rows[0]?.company_code;
+  if (companyCode) {
+    const segments = companyCode.split("-");
+    const numericBu = segments[2];
+    if (numericBu) return { bu: numericBu, source: "branch_list" };
+  }
+
+  const { rows: ranges } = await pool.query(
+    `SELECT group_name, range_start, range_end, exclude_start, exclude_end, prefix_length
+     FROM vat_watchlist_bu_group_range`
+  );
+  const branchNum = branch.replace(/\D/g, "");
+  for (const r of ranges) {
+    const key = r.prefix_length ? branchNum.slice(0, r.prefix_length) : branchNum;
+    const rangeStart = r.prefix_length ? r.range_start.slice(0, r.prefix_length) : r.range_start;
+    const rangeEnd = r.prefix_length ? r.range_end.slice(0, r.prefix_length) : r.range_end;
+    if (key >= rangeStart && key <= rangeEnd) {
+      if (r.exclude_start && r.exclude_end && branchNum >= r.exclude_start && branchNum <= r.exclude_end) {
+        continue;
+      }
+      return { bu: r.group_name, source: "group_range" };
+    }
+  }
+  return { bu: null, source: "unmatched" };
+}
+
+async function resolveAllBranches(records) {
+  const cache = new Map();
+  const resolved = [];
+  const unmatched = [];
+  for (const r of records) {
+    if (!cache.has(r.branch)) {
+      cache.set(r.branch, await resolveBranchToBu(r.branch));
+    }
+    const { bu, source } = cache.get(r.branch);
+    if (!bu) {
+      unmatched.push(r);
+      continue;
+    }
+    resolved.push({ ...r, bu, branch_match_source: source });
+  }
+  return { resolved, unmatched };
+}
+
+/**
+ * POST /ap-reconcile/ap-cutting/preview
+ * รับไฟล์ AP Cutting ดิบ -> Parse + Resolve BU -> คืน Summary/Records (ไม่เขียน DB)
+ */
+router.post("/ap-cutting/preview", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "ไม่พบไฟล์ที่อัปโหลด" });
+    }
+    const rawText = decodeCp874(req.file.buffer);
+
+    const { book, asOfDate, records, unmatchedLines } = parseApCuttingText(rawText);
+    const period = periodFromAsOfDate(asOfDate);
+
+    if (!period) {
+      return res.status(422).json({
+        error: "ไม่สามารถอ่าน Period จาก Header ของไฟล์ได้ กรุณาตรวจสอบว่าเป็นไฟล์ AP Cutting ที่ถูกต้อง",
+      });
+    }
+
+    const { resolved, unmatched } = await resolveAllBranches(records);
+    const buSet = [...new Set(resolved.map((r) => r.bu))];
+
+    const summary = {
+      book,
+      period,
+      bu_list: buSet,
+      total: records.length,
+      resolved_count: resolved.length,
+      unmatched_branch_count: unmatched.length,
+      unmatched_lines_count: unmatchedLines.length,
+    };
+
+    res.json({ summary, records: resolved, unmatchedLines, unmatchedBranches: unmatched });
+  } catch (err) {
+    console.error("[apReconcile] ap-cutting preview error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างประมวลผลไฟล์", detail: err.message });
+  }
+});
+
+/**
+ * POST /ap-reconcile/ap-cutting/commit
+ * Parse ไฟล์ซ้ำ -> Replace ทั้งก้อน: DELETE (bu, period, book) เดิม -> Insert ใหม่ทั้งหมด
+ * Body เพิ่มเติม (form field): file_id (จาก file_storage ถ้ามี)
+ */
+router.post("/ap-cutting/commit", upload.single("file"), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "ไม่พบไฟล์ที่อัปโหลด" });
+    }
+    const rawText = decodeCp874(req.file.buffer);
+    const fileId = req.body.file_id ? parseInt(req.body.file_id, 10) : null;
+    const updatedBy = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
+
+    const { book, asOfDate, records, unmatchedLines } = parseApCuttingText(rawText);
+    const period = periodFromAsOfDate(asOfDate);
+
+    if (!period) {
+      return res.status(422).json({ error: "ไม่สามารถอ่าน Period จาก Header ของไฟล์ได้" });
+    }
+
+    const { resolved, unmatched } = await resolveAllBranches(records);
+    const buSet = [...new Set(resolved.map((r) => r.bu))];
+
+    // ── ตาราง ap_cutting_staging มีอยู่แล้วจริงในฐานข้อมูล (สร้างไว้ก่อนหน้านี้
+    // นอกรอบ Session นี้ — ตอน Deploy ห้ามรัน ap_cutting_staging_v1.sql เพราะจะชน
+    // Schema เดิม) — จึง Insert ตาม Column ชุดจริงที่มีอยู่ ไม่ใช่ Schema ที่ผมออกแบบเอง
+    // แรกเริ่ม ส่วนที่แม็พ 1:1 ชัดเจน (source_book/period/branch_code/gl_account/... )
+    // กับส่วนที่ "สันนิษฐาน" (มี Comment กำกับ) เพราะไม่พบโค้ดเดิมอ้างอิงความหมาย:
+    //   - branch_cpc_key  = ใช้เก็บค่า BU ที่ Resolve ได้จาก Branch (เทียบเท่า bu เดิม)
+    //   - brand_group     = ตัวอักษรแรกของ Book (REV->'R', CRG->'C', TOPS->'T')
+    //   - is_special_case = true เมื่อ Resolve BU ผ่าน Fallback (vat_watchlist_bu_group_range)
+    //                       แทนการ Match ตรงจาก branch_list (branch_match_source==='group_range')
+    //   - status          = ค่าเริ่มต้น 'imported' (ยังไม่มี Workflow สถานะอื่นตอนนี้)
+    //   - source_request_id = ปล่อย NULL (ไม่พบ Concept นี้ใช้ที่ไหนในระบบตอนนี้)
+    // ผู้ใช้ควรตรวจสอบ 4 จุดที่สันนิษฐานนี้หลัง Deploy ว่าตรงกับที่ออกแบบไว้เดิมหรือไม่
+    const batchId = crypto.randomUUID();
+
+    await client.query("BEGIN");
+
+    let deletedCount = 0;
+    if (buSet.length) {
+      const del = await client.query(
+        `DELETE FROM ap_cutting_staging WHERE branch_cpc_key = ANY($1) AND period = $2 AND source_book = $3`,
+        [buSet, period, book]
+      );
+      deletedCount = del.rowCount;
+    }
+
+    const now = new Date();
+    const asOfDateIso = oracleDateToIso(asOfDate);
+    let insertedCount = 0;
+    for (const r of resolved) {
+      const brandGroup = (book || "").trim().charAt(0).toUpperCase() || null;
+      const isSpecialCase = r.branch_match_source === "group_range";
+
+      await client.query(
+        `INSERT INTO ap_cutting_staging (
+            batch_id, source_book, source_request_id, source_file_name, as_of_date, period,
+            branch_code, gl_account, sub_account, supplier_code, supplier_name,
+            invoice_number, invoice_date, currency, amount, remaining_amount, description,
+            branch_cpc_key, brand_group, is_special_case, status, imported_at, imported_by
+         ) VALUES (
+            $1,$2,$3,$4,$5,$6,
+            $7,$8,$9,$10,$11,
+            $12,$13,$14,$15,$16,$17,
+            $18,$19,$20,$21,$22,$23
+         )`,
+        [
+          batchId, book, fileId != null ? String(fileId) : null, req.file.originalname || null, asOfDateIso, period,
+          r.branch, r.gl_account, r.sub_account, r.supplier_code, r.supplier_name,
+          r.invoice_no, oracleDateToIso(r.invoice_date), r.currency, parseAmount(r.amount_raw), parseAmount(r.remaining_amount_raw), r.description,
+          r.bu, brandGroup, isSpecialCase, "imported", now, updatedBy,
+        ]
+      );
+      insertedCount++;
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      book,
+      period,
+      bu_list: buSet,
+      deleted: deletedCount,
+      inserted: insertedCount,
+      unmatched_branch_count: unmatched.length,
+      unmatched_lines_count: unmatchedLines.length,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[apReconcile] ap-cutting commit error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างบันทึกข้อมูล", detail: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * GET /ap-reconcile/dashboard/status?period=YYYY-MM
+ * ────────────────────────────────────────────────────────────────────────
+ * ใช้แทน MOCK_BU_ROWS ใน GLFunctionalController.js (Frontend) — คืนรายชื่อ BU
+ * ที่ "มีข้อมูลจริง" ใน Period นั้น (จาก ap_cutting_staging และ/หรือ vat_reconcile_tb)
+ * พร้อมสถานะต่อ 1 ใน 6 Account Whitelist (TARGET_GL_ACCOUNTS) ของแต่ละ BU
+ *
+ * ออกแบบตาม Pattern เดียวกับ vatReconcile.js's GET /dashboard/status
+ * (Batch Query ด้วย GROUP BY ครั้งเดียวต่อตาราง แทนที่จะ Query วนทีละ BU)
+ * แต่ต่างจาก VAT ตรงที่ "รายชื่อ BU" ไม่ได้มาจาก company_list — ผู้ใช้ยืนยันแล้วว่า
+ * อยากให้ BUSINESS UNIT Dropdown ขึ้นเฉพาะ BU ที่มีข้อมูลจริงใน Period ที่เลือก
+ * (Data-Driven ล้วนๆ) จึงรวบรวม BU จาก Distinct branch_cpc_key/bu ที่เจอใน
+ * 2 ตารางนี้โดยตรงแทน
+ *
+ * Response Shape (ตรงกับที่ ReconcileZoneLayout.js ฝั่ง Frontend ต้องการ V4):
+ *   { period, bu_rows: [ { bu, cells: { [account]: { count, tbActive, exported } }, last_activity_at } ] }
+ *
+ * ⚠️ exported จะเป็น false เสมอตอนนี้ — ยังไม่มี Infra เก็บสถานะ "Export ไปแล้ว"
+ *    (ตาราง/Column สำหรับ Track เรื่องนี้ยังไม่ถูกออกแบบ รอ Feature Export จริง
+ *    ที่ต้องรอไฟล์ Macro "A_Reconcile" + Template Master Reconcile ก่อน)
+ */
+// MARKER_DASHBOARD_STATUS_BU_FORMAT_FIX_V2 — แก้บั๊กสำคัญ: vat_reconcile_tb.bu เก็บเป็น
+// "เลข BU" (เช่น "3218") ไม่ใช่ Short Code (เช่น "CDS") แบบที่ ap_cutting_staging.branch_cpc_key
+// ใช้ — ยืนยันจาก vatReconcile.js (resolveBuToNumeric, Comment บรรทัด ~656 พูดถึงปัญหานี้ตรงๆ
+// ว่า "กันปัญหา BTM vs 3218 ไม่ตรงกันที่เจอซ้ำหลายรอบ") ตอน V1 เขียน Query เทียบ bu ตรงๆ
+// ไม่ได้แปลง Format เลย ทำให้ TB ขึ้น "No Data" เสมอไม่ว่าจะมีข้อมูลจริงหรือไม่ — แก้โดย Join
+// company_list แปลง Short Code <-> เลข BU ทั้ง 2 ทาง (Pattern เดียวกับ vatReconcile.js)
+router.get("/dashboard/status", async (req, res) => {
+  try {
+    const period = req.query.period;
+    if (!period || !/^\d{4}-\d{2}$/.test(period)) {
+      return res.status(400).json({ error: "ต้องระบุ period รูปแบบ YYYY-MM เช่น ?period=2026-08" });
+    }
+    const accounts = [...TARGET_GL_ACCOUNTS];
+
+    // Batch Query จำนวน Row AP Cutting ต่อ (BU, Account) — ใช้ branch_cpc_key เป็น "bu"
+    // (Column เดียวกับที่ /ap-cutting/commit Insert ค่า Resolve BU ลงไป) — เป็น Short Code เสมอ
+    const cuttingRows = await pool.query(
+      `SELECT branch_cpc_key AS bu, gl_account AS account, COUNT(*) AS cnt, MAX(imported_at) AS last_activity
+       FROM ap_cutting_staging
+       WHERE period = $1 AND gl_account = ANY($2::text[]) AND branch_cpc_key IS NOT NULL
+       GROUP BY branch_cpc_key, gl_account`,
+      [period, accounts]
+    );
+    const cuttingMap = new Map(
+      cuttingRows.rows.map((r) => [`${r.bu}|${r.account}`, { count: parseInt(r.cnt, 10), lastActivity: r.last_activity }])
+    );
+
+    // แปลง Short Code <-> เลข BU ทั้งระบบ (ตาราง company_list เล็ก โหลดทีเดียวจบ ไม่ต้อง Query
+    // ทีละ BU) — Format "COMPANY CODE" เป็น Flexfield Prefix "1-32-3218-" เอา Segment ที่ 3
+    const companyRows = await pool.query(
+      `SELECT bu, "COMPANY CODE" AS company_code FROM company_list WHERE deleted IS NOT TRUE`
+    );
+    const shortToNumericBu = new Map();
+    const numericToShortBu = new Map();
+    for (const r of companyRows.rows) {
+      const numericBu = r.company_code ? r.company_code.split("-")[2] : null;
+      if (r.bu && numericBu) {
+        shortToNumericBu.set(r.bu, numericBu);
+        numericToShortBu.set(numericBu, r.bu);
+      }
+    }
+
+    // Batch Query สถานะ TB ต่อ (BU, Account) — vat_reconcile_tb.bu เป็นเลข BU เสมอ ต้องแปลง
+    // กลับเป็น Short Code ก่อนเทียบกับฝั่ง AP Cutting (ไม่งั้นจะไม่ Match กันเลย)
+    const tbRows = await pool.query(
+      `SELECT bu AS numeric_bu, account, MAX(updated_at) AS last_activity
+       FROM vat_reconcile_tb
+       WHERE period = $1 AND account = ANY($2::text[])
+       GROUP BY bu, account`,
+      [period, accounts]
+    );
+    const tbMap = new Map(
+      tbRows.rows.map((r) => [`${numericToShortBu.get(r.numeric_bu) || r.numeric_bu}|${r.account}`, r.last_activity])
+    );
+
+    // MARKER_DASHBOARD_STATUS_AP_DRIVEN_ROWS_V1 — ผู้ใช้ยืนยันว่า BU ที่จะโชว์ในตาราง ต้อง
+    // Trigger จาก AP Cutting เป็นหลักเท่านั้น (ไม่ใช่ Union กับ TB เหมือน V2 เดิม) เพราะ TB
+    // มีโอกาสมีข้อมูลอยู่แล้วในหลาย BU/Account แทบทุกตัวเป็นปกติ (ไม่ผูกกับ Period) ในขณะที่
+    // AP Cutting ผูกกับ Period จริงๆ — ถ้าเอา TB มา Union ด้วยจะทำให้เห็น BU ที่ไม่มี AP
+    // ให้ Reconcile เลยในเดือนนี้โผล่มาปนด้วย ไม่ตรงกับของจริงที่ต้องทำ
+    const buSet = new Set(cuttingRows.rows.map((r) => r.bu));
+
+    const buRowsResult = [...buSet].sort().map((bu) => {
+      const cells = {};
+      let lastActivity = null;
+      for (const account of accounts) {
+        const key = `${bu}|${account}`;
+        const cutting = cuttingMap.get(key);
+        const tbLast = tbMap.get(key) || null;
+        cells[account] = {
+          count: cutting ? cutting.count : null,
+          tbActive: tbLast !== null,
+          exported: false,
+        };
+        for (const c of [cutting?.lastActivity, tbLast].filter(Boolean)) {
+          if (!lastActivity || new Date(c) > new Date(lastActivity)) lastActivity = c;
+        }
+      }
+      return { bu, cells, last_activity_at: lastActivity ? new Date(lastActivity).toISOString() : null };
+    });
+
+    // เรียงจาก Activity ล่าสุดขึ้นก่อน (ไม่มี Activity เลย -> ท้ายสุด เรียงตามชื่อ BU)
+    buRowsResult.sort((a, b) => {
+      if (a.last_activity_at && b.last_activity_at) return new Date(b.last_activity_at) - new Date(a.last_activity_at);
+      if (a.last_activity_at) return -1;
+      if (b.last_activity_at) return 1;
+      return a.bu.localeCompare(b.bu);
+    });
+
+    res.json({ period, bu_rows: buRowsResult });
+  } catch (err) {
+    console.error("[apReconcile] dashboard status error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างดึงสถานะ Dashboard", detail: err.message });
+  }
+});
+
+// MARKER_DASHBOARD_PERIODS_REAL_DB_V1 — ผู้ใช้ยืนยันว่า Dropdown PERIOD ต้อง Default เป็นค่าว่าง
+// "-" เสมอ (ไม่ Auto-Fetch จน Users เลือกเอง) แล้ว List ตัวเลือกต้องดึงจาก DB จริงว่าตอนนี้มี
+// Period ไหนที่มีข้อมูล ap_cutting_staging อยู่บ้าง (ไม่ใช่ List Hardcode ในโค้ด Frontend อีกต่อไป)
+// ส่วน BUSINESS UNIT Dropdown ฝั่ง Frontend Filter ต่อจาก bu_rows ของ /dashboard/status?period=
+// ที่ Fetch มาแล้วอยู่แล้ว (ตาม Period ที่เลือก) ไม่ต้องเพิ่ม Endpoint แยกสำหรับ BU
+router.get("/periods", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT period FROM ap_cutting_staging WHERE period IS NOT NULL ORDER BY period DESC`
+    );
+    res.json({ periods: result.rows.map((r) => r.period) });
+  } catch (err) {
+    console.error("[apReconcile] periods list error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างดึงรายการ Period", detail: err.message });
+  }
+});
+
+export default router;

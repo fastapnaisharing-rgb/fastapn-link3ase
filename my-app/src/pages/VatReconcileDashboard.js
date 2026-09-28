@@ -1,4 +1,4 @@
-// VatReconcileDashboard.js
+﻿// VatReconcileDashboard.js
 // ============================================================================
 // FASTAPN Link3ase — หน้า Dashboard ของ Feature Reconcile รายงานภาษีซื้อ
 //
@@ -63,10 +63,11 @@ const REPORT_LABEL_TO_TYPE = {
   'Simple AVG Report': 'simple_avg',
 };
 
-async function fetchReportPreview({ type, bu, account, period, view }) {
+async function fetchReportPreview({ type, bu, account, period, view, branch }) {
   const token = sessionStorage.getItem('fastapn_token');
   const params = new URLSearchParams({ type, bu, account, period });
   if (view) params.set('view', view);
+  if (branch) params.set('branch', branch); // DASHBOARD_SIMPLE_HEADER_AND_BRANCH_DETAIL_PATCH_APPLIED -- กรอง Detail เฉพาะสาขา
   const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report?${params}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -407,6 +408,10 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
   const [previewError, setPreviewError] = useState('');
   const [previewView] = useState('detail'); // Input Summary Report โชว์ Detail เสมอ (ตัด Summary ออกแล้ว)
 
+  // DASHBOARD_SIMPLE_DETAIL_MODAL_PATCH_APPLIED -- Modal ดู Detail เต็มจอ ของ Simple 100/AVG (แยก State จาก previewData หลัก)
+  const [simpleDetailModal, setSimpleDetailModal] = useState(null); // null | { loading, error, data }
+  const SIMPLE_REPORT_TYPES = new Set(['simple_100', 'simple_avg']);
+
   const loadStatus = useCallback(async (p) => {
     setLoading(true);
     setErrorMessage('');
@@ -451,12 +456,27 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
     setCcMode('');
     setPreviewData(null);
     setPreviewError('');
+    setSimpleDetailModal(null);
   }, [defaultPeriod]);
+
+  // DASHBOARD_SIMPLE_DETAIL_MODAL_PATCH_APPLIED -- เปิด Popup เต็มจอ ดึง Detail ราย Invoice ของ Simple 100/AVG
+  const handleViewSimpleDetail = useCallback(async (branch) => {
+    const type = REPORT_LABEL_TO_TYPE[ccMode];
+    if (!type || !ccBusinessUnit || !ccAccountCode) return;
+    setSimpleDetailModal({ loading: true, error: '', data: null, branch: branch || null });
+    try {
+      const data = await fetchReportPreview({ type, bu: ccBusinessUnit, account: ccAccountCode, period, view: 'detail', branch });
+      setSimpleDetailModal({ loading: false, error: '', data, branch: branch || null });
+    } catch (err) {
+      console.error('VatReconcileDashboard simple detail error:', err);
+      setSimpleDetailModal({ loading: false, error: err?.message || 'เกิดข้อผิดพลาดระหว่างดึง Detail', data: null, branch: branch || null });
+    }
+  }, [ccMode, ccBusinessUnit, ccAccountCode, period]);
 
   const handlePreview = useCallback(async (viewOverride) => {
     const type = REPORT_LABEL_TO_TYPE[ccMode];
     if (!type || !ccBusinessUnit || !ccAccountCode) return;
-    const view = viewOverride || (type === 'input_summary' ? previewView : undefined);
+    const view = viewOverride || (type === 'input_summary' ? previewView : SIMPLE_REPORT_TYPES.has(type) ? 'summary' : undefined);
 
     setPreviewLoading(true);
     setPreviewError('');
@@ -678,7 +698,12 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
           {previewLoading && <p style={{ fontSize: 13, color: '#666' }}>กำลังโหลด...</p>}
           {previewError && <p style={{ fontSize: 13, color: '#a30d16' }}>{previewError}</p>}
           {!previewLoading && !previewError && previewData && (
-            <ReportPreviewTable data={previewData} />
+            // DASHBOARD_SIMPLE_SUMMARY_FINAL_COLUMNS_PATCH_APPLIED -- ตัด Header Card ออก ใช้ Column ในตารางแทน
+            <ReportPreviewTable
+              data={previewData}
+              onRowAction={SIMPLE_REPORT_TYPES.has(previewData.type) ? (row) => handleViewSimpleDetail(row.branch) : undefined}
+              actionLabel="ดู Detail"
+            />
           )}
           {!previewLoading && !previewError && !previewData && (
             <p style={{ fontSize: 13, color: '#999', textAlign: 'center', padding: '40px 0' }}>
@@ -687,6 +712,46 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
           )}
         </div>
       </div>
+
+      {/* DASHBOARD_SIMPLE_DETAIL_MODAL_PATCH_APPLIED -- Modal เต็มจอ ดู Detail ราย Invoice ของ Simple 100/AVG */}
+      {simpleDetailModal && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000,
+            background: 'rgba(15, 23, 42, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => setSimpleDetailModal(null)}
+        >
+          <div
+            style={{
+              background: '#fff', borderRadius: 12, width: '95vw', height: '92vh',
+              display: 'flex', flexDirection: 'column', padding: '1.25rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexShrink: 0 }}>
+              <p style={{ fontSize: 15, fontWeight: 600, color: '#334155', margin: 0 }}>
+                Detail · {ccMode} · {ccBusinessUnit}{simpleDetailModal.branch ? ` · สาขา ${simpleDetailModal.branch}` : ''} · {formatPeriodLabel(period)}
+              </p>
+              <button
+                type="button"
+                aria-label="ปิด"
+                onClick={() => setSimpleDetailModal(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#666' }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              {simpleDetailModal.loading && <p style={{ fontSize: 13, color: '#666' }}>กำลังโหลด...</p>}
+              {simpleDetailModal.error && <p style={{ fontSize: 13, color: '#a30d16' }}>{simpleDetailModal.error}</p>}
+              {!simpleDetailModal.loading && !simpleDetailModal.error && simpleDetailModal.data && (
+                <ReportPreviewTable data={simpleDetailModal.data} />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -702,12 +767,21 @@ const COLUMN_LABELS = {
   ending_balance: 'Ending Balance',
   claimed100_amount: 'ภาษีซื้อที่ใช้สิทธิ์ 100% (มูลค่าสินค้า)',
   claimed100_vat: 'ภาษีซื้อที่ใช้สิทธิ์ 100% (เงินภาษี)',
+  // DASHBOARD_SIMPLE_REPORT_LABELS_PATCH_APPLIED
+  claimed_amount: 'มูลค่าที่ใช้สิทธิ์',
+  claimed_vat: 'ภาษีที่ใช้สิทธิ์',
+  tax_type_code: 'Tax Type',
   invoice_count: 'จำนวน Invoice',
   tb_amount: 'ยอด TB',
   input_summary_amount: 'ยอด Input Summary',
   difference: 'ผลต่าง',
   status: 'สถานะ',
   operator_name: 'ชื่อผู้ประกอบการ',
+  // DASHBOARD_SIMPLE_SUMMARY_FINAL_COLUMNS_PATCH_APPLIED
+  // DASHBOARD_SIMPLE_ENGLISH_LABELS_PATCH_APPLIED
+  company_tax_id: 'Tax ID',
+  branch_no: 'No.',
+  claim_percent: '%',
   receive_date: 'วันที่ (รับสินค้า)',
   grt_no: 'GRT_No. (รับสินค้า)',
   tax_invoice_date: 'วันที่ใบกำกับภาษี',
@@ -722,14 +796,17 @@ const COLUMN_LABELS = {
   calculate_tax: 'Calculate Tax (M-O)',
 };
 
-function ReportPreviewTable({ data }) {
+function ReportPreviewTable({ data, onRowAction, actionLabel }) {
   if (!data.rows || data.rows.length === 0) {
     return <p style={{ fontSize: 13, color: '#999', textAlign: 'center', padding: '24px 0' }}>ไม่พบข้อมูล</p>;
   }
   const columns = Object.keys(data.rows[0]);
 
   // Column ที่เป็นรหัส/เลขอ้างอิง (ไม่ใช่ยอดเงิน) แม้จะดูเป็นตัวเลขก็ไม่ต้อง Format/ชิดขวา
-  const ID_COLUMNS = new Set(['cpc', 'account', 'subacc', 'grt_no', 'tax_id', 'tax_invoice_no', 'ho', 'branch_field']);
+  // RUNNING_NO_FORMAT_FIX_PATCH_APPLIED -- running_no เป็น ID ไม่ใช่จำนวนเงิน ห้าม Format Comma/ทศนิยม
+  // CLAIM_PERCENT_PLAIN_TEXT_PATCH_APPLIED -- claim_percent โชว์เป็น Text ดิบ (เช่น "100") ไม่บังคับทศนิยม
+  // DASHBOARD_SIMPLE_DISPLAY_POLISH_PATCH_APPLIED -- company_tax_id/branch_no เป็น ID ไม่ใช่จำนวนเงิน ห้าม Format ตัวเลข
+  const ID_COLUMNS = new Set(['cpc', 'account', 'subacc', 'grt_no', 'tax_id', 'tax_invoice_no', 'ho', 'branch_field', 'running_no', 'claim_percent', 'company_tax_id', 'branch_no']);
 
   // เช็คแบบทนทาน: รับได้ทั้ง Number จริง (Backend Cast แล้ว) และ String ตัวเลข (เผื่อ Backend ยังไม่ Cast)
   // กันปัญหา Backend Deploy ไม่ทัน Frontend แล้วตัวเลขไม่ชิดขวา/ไม่มี Comma
@@ -743,7 +820,21 @@ function ReportPreviewTable({ data }) {
 
   // Column "branch" ใช้ Label ต่างกันตามชนิด Report: TB ต้องเป็น "Branch" (อังกฤษ, ตรงไฟล์ Recon_TB)
   // ส่วน Input Summary ต้องเป็น "สาขา" (ไทย, ตรงไฟล์ Detail Sheet) -- Report อื่นๆ ใช้ตาม COLUMN_LABELS ปกติ
+  // DASHBOARD_SIMPLE_ALL_ENGLISH_HEADERS_PATCH_APPLIED -- Header ภาษาอังกฤษทั้งตาราง เฉพาะ Report Simple 100/AVG
+  // (ไม่แตะ COLUMN_LABELS Global กันกระทบ Report อื่นที่ใช้ Field ชื่อเดียวกัน เช่น TB/Input Summary)
+  const SIMPLE_REPORT_LABELS = {
+    branch: 'Branch code',
+    operator_name: 'Company name',
+    company_tax_id: 'Tax ID',
+    branch_no: 'No.',
+    invoice_count: 'Invoice count',
+    claimed_amount: 'Claimed amount',
+    claimed_vat: 'Claimed VAT',
+    claim_percent: '%',
+  };
+  const isSimpleReport = data.type === 'simple_100' || data.type === 'simple_avg';
   const getLabel = (c) => {
+    if (isSimpleReport && SIMPLE_REPORT_LABELS[c]) return SIMPLE_REPORT_LABELS[c];
     if (c === 'branch' && data.type === 'tb') return 'Branch';
     if (c === 'branch') return 'สาขา';
     return COLUMN_LABELS[c] || c;
@@ -783,7 +874,7 @@ function ReportPreviewTable({ data }) {
               <th key={c} style={{
                 position: 'sticky', top: 0,
                 background: 'linear-gradient(180deg, #eef4ff, #e3ecfb)',
-                textAlign: isNumericColumn(c) ? 'right' : 'left',
+                textAlign: isSimpleReport ? 'center' : (isNumericColumn(c) ? 'right' : 'left'),
                 padding: '8px 12px', color: '#334155', fontWeight: 600,
                 zIndex: 1, whiteSpace: 'nowrap',
                 border: '1px solid #d0d7de',
@@ -791,6 +882,17 @@ function ReportPreviewTable({ data }) {
                 {getLabel(c)}
               </th>
             ))}
+            {onRowAction && (
+              <th style={{
+                position: 'sticky', top: 0,
+                background: 'linear-gradient(180deg, #eef4ff, #e3ecfb)',
+                textAlign: isSimpleReport ? 'center' : 'left',
+                padding: '8px 12px', color: '#334155', fontWeight: 600,
+                border: '1px solid #d0d7de', zIndex: 1, whiteSpace: 'nowrap',
+              }}>
+                Action
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -814,18 +916,50 @@ function ReportPreviewTable({ data }) {
                     </td>
                   );
                 }
+                // DASHBOARD_SIMPLE_DETAIL_FORMAT_FIX_PATCH_APPLIED
+                if (c === 'branch_no' || c === 'branch_field') {
+                  return (
+                    <td key={c} style={{ padding: '8px 12px', color: '#57606a', border: '1px solid #eaeef2', whiteSpace: 'nowrap' }}>
+                      {String(r[c] ?? '0').padStart(5, '0')}
+                    </td>
+                  );
+                }
+                if (c === 'tax_id' || c === 'company_tax_id') {
+                  return (
+                    <td key={c} style={{ padding: '8px 12px', color: '#57606a', border: '1px solid #eaeef2', whiteSpace: 'nowrap' }}>
+                      {r[c] ? String(r[c]).padStart(13, '0') : ''}
+                    </td>
+                  );
+                }
                 const numVal = toNumericOrNull(r[c], c);
                 const isNum = numVal !== null;
                 return (
                   <td key={c} style={{
                     padding: '8px 12px', textAlign: isNum ? 'right' : 'left',
                     color: isNum ? '#24292f' : '#57606a', border: '1px solid #eaeef2',
-                    whiteSpace: isNum ? 'nowrap' : 'normal',
+                    whiteSpace: 'nowrap',
+                    overflow: isNum ? 'visible' : 'hidden',
+                    textOverflow: isNum ? 'clip' : 'ellipsis',
+                    maxWidth: isNum ? 'none' : 280,
                   }}>
                     {isNum ? numVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(r[c] ?? '')}
                   </td>
                 );
               })}
+              {onRowAction && (
+                <td style={{ padding: '8px 12px', border: '1px solid #eaeef2', whiteSpace: 'nowrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => onRowAction(r)}
+                    style={{
+                      fontSize: 12, fontWeight: 600, color: '#1a56db', background: '#eef2ff',
+                      border: '1px solid #c7d2fe', borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+                    }}
+                  >
+                    {actionLabel || 'Detail'}
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/db';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
@@ -130,23 +130,52 @@ async function checkDuplicateSerial(db, serialCode, docType) {
   return data || null;
 }
 
+// MARKER_LOOKUP_COMPANY_BY_BU_SHARED_V1 -- รวม Logic หา BU ใน company_list ไว้จุดเดียว
+// เดิมมีโค้ด Lookup แบบนี้เขียนแยกซ้ำกันเองมากกว่า 10 จุดทั่วไฟล์ (ตอน Upload ผ่าน OCR/Paste/File/
+// Draft/Input Summary ฯลฯ) แต่ละจุดใช้ .eq('bu', code) ตรงตัว (Exact Match ไม่ Trim/ไม่ Case-insensitive)
+// ทำให้พอเจอบั๊ก BU Code หาไม่เจอ (เช่นมีช่องว่างปนมาจาก Filename ตอน Parse หรือตัวพิมพ์ต่างกันนิดเดียว)
+// ต้องมานั่งไล่แก้ทีละจุด แก้จุดนี้จุดนั้นก็ยังไม่หาย เพราะจุดอื่นที่เหลือยังเป็น Logic เดิม — ต่อจากนี้ทุกจุด
+// ที่ต้องการ Lookup BU Code ให้เรียกฟังก์ชันนี้แทนเขียน Query เอง (ILIKE ดึงผู้สมัครมาก่อน แล้วเทียบแบบ
+// Trim+Uppercase เองฝั่ง Client เพื่อกัน False Match จาก Code อื่นที่บังเอิญเป็น Substring กัน)
+// คืนค่า { bu, bu_code_name, thaiName } หรือ null ถ้าหาไม่เจอจริงๆ
+async function lookupCompanyByBu(db, rawBuCode) {
+  const buCodeTrim = String(rawBuCode || '').trim();
+  if (!buCodeTrim) return null;
+  try {
+    const { data: clList } = await db.from('company_list')
+      .select('bu,bu_code_name,"THAI COMPANY NAME"')
+      .ilike('bu', buCodeTrim);
+    const candidates = Array.isArray(clList) ? clList : (clList ? [clList] : []);
+    const cl = candidates.find(r => String(r.bu || '').trim().toUpperCase() === buCodeTrim.toUpperCase()) || null;
+    if (!cl) return null;
+    return { bu: cl.bu, bu_code_name: cl.bu_code_name || null, thaiName: cl['THAI COMPANY NAME'] || null };
+  } catch (_) {
+    return null;
+  }
+}
+
 // checkAllDuplicates: exact match only — 0% or 100%
 // APN01: Invoice Number + Branch + มูลค่ารวม ต้องตรงทั้งหมด
 // AP09:  Tax Invoice No. + Branch + ยอดรวม ต้องตรงทั้งหมด
 // ไม่ใช้ Batch Name / Vendor เพราะ Supplier เดียวกันมีหลาย invoice โดยธรรมชาติ
-async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
+// MARKER_VATINPUT_DUP_BU_CHECK_V1
+// expectedBuCode (Optional): ถ้าระบุมา จะเช็คด้วยว่า bu_code ของ Record เดิมตรงกับ BU ที่กำลัง Import ด้วย
+// (เดิมเช็คแค่ Tax Invoice No. อย่างเดียวสำหรับ AP09 — ทำให้เลขใบกำกับภาษีที่บังเอิญซ้ำกันข้าม BU/บริษัท
+// (เช่น CFW vs LKS) โดนเข้าใจผิดว่าเป็น Duplicate ทั้งที่เป็นคนละบริษัทกันจริงๆ) — ไม่ระบุ = ไม่เช็ค BU (Backward Compat)
+async function checkAllDuplicates(db, rows, currentSerial, expectedDocType, expectedBuCode) {
   if (!rows || rows.length === 0) return [];
   const norm  = v => String(v||'').trim().toLowerCase();
   const toNum = v => parseFloat(String(v||'0').replace(/,/g,''))||0;
   const checkAPN01 = expectedDocType !== 'AP09';
   const checkAP09  = expectedDocType !== 'APN01';
+  const buFilter = norm(expectedBuCode); // '' = ไม่เช็ค BU
   try {
     const found = {};
 
     // ── APN01: ต้องตรงทั้ง Invoice Number + Branch + Amount (recheck doc_type: ข้ามถ้า expectedDocType เป็น AP09) ──
     if (checkAPN01) {
       const { data: apn01 } = await db.from('doc_collection')
-        .select('serial_code,doc_type,rows,uploaded_by,created_at,status')
+        .select('id,serial_code,doc_type,bu_code,rows,uploaded_by,created_at,status')
         .eq('doc_type','APN01').neq('serial_code', currentSerial);
 
       for (const r of rows) {
@@ -156,6 +185,7 @@ async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
         if (!inv) continue;
 
         for (const rec of (apn01||[])) {
+          if (buFilter && norm(rec.bu_code) !== buFilter) continue; // MARKER_VATINPUT_DUP_BU_CHECK_V1
           for (const d of (rec.rows||[])) {
             const dInv    = norm(d['Invoice Number']||d['Invoice Num']);
             const dBranch = norm(d['Branch']||d['Site']);
@@ -171,6 +201,7 @@ async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
                   batch: d['Batch Name']||d['[ ]']||'',
                   serial: rec.serial_code, uploadedBy: rec.uploaded_by, createdAt: rec.created_at,
                   status: rec.status || 'active',
+                  id: rec.id, // MARKER_VATINPUT_DELETE_DRAFT_INLINE_V1 -- ใช้ลบ Draft จาก Preview โดยตรง
                 };
               }
             }
@@ -182,7 +213,7 @@ async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
     // ── AP09: ต้องตรงทั้ง Tax Invoice No. + Branch + ยอดรวม (recheck doc_type: ข้ามถ้า expectedDocType เป็น APN01) ──
     if (checkAP09) {
       const { data: ap09 } = await db.from('doc_collection')
-        .select('serial_code,doc_type,rows,uploaded_by,created_at,status')
+        .select('id,serial_code,doc_type,bu_code,rows,uploaded_by,created_at,status')
         .eq('doc_type','AP09').neq('serial_code', currentSerial);
 
       for (const r of rows) {
@@ -192,13 +223,14 @@ async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
         if (!tax) continue;
 
         for (const rec of (ap09||[])) {
+          if (buFilter && norm(rec.bu_code) !== buFilter) continue; // MARKER_VATINPUT_DUP_BU_CHECK_V1 — เลขใบกำกับภาษีซ้ำกันข้าม BU ได้ ไม่ใช่ Duplicate จริง
           for (const d of (rec.rows||[])) {
             const dTax    = norm(d['Tax Invoice No.']);
             const dBranch = norm(d['Branch']||d['Site']);
             const dAmt    = toNum(d['ยอดรวม']);
             if (!dTax) continue;
 
-            // เช็คแค่ Tax Invoice No. — unique อยู่แล้ว ไม่ต้องรวม Branch
+            // เช็คแค่ Tax Invoice No. (+ BU ถ้าระบุ) — ไม่ต้องรวม Branch
             if (tax === dTax) {
               const key = 'ap09|' + tax;
               if (!found[key]) {
@@ -208,6 +240,7 @@ async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
                   batch: d['Batch Name']||'',
                   serial: rec.serial_code, uploadedBy: rec.uploaded_by, createdAt: rec.created_at,
                   status: rec.status || 'active',
+                  id: rec.id, // MARKER_VATINPUT_DELETE_DRAFT_INLINE_V1 -- ใช้ลบ Draft จาก Preview โดยตรง
                 };
               }
             }
@@ -217,7 +250,7 @@ async function checkAllDuplicates(db, rows, currentSerial, expectedDocType) {
     }
 
     const result = Object.values(found);
-    console.log('[checkAllDuplicates] rows:', rows.length, 'expectedDocType:', expectedDocType||'both', 'results:', result.length,
+    console.log('[checkAllDuplicates] rows:', rows.length, 'expectedDocType:', expectedDocType||'both', 'buFilter:', buFilter||'(none)', 'results:', result.length,
       result.map(r => r.invoiceNo + ' (' + r.docType + ')'));
     return result;
   } catch(e) { console.error('checkAllDuplicates error:', e); return []; }
@@ -300,6 +333,547 @@ function parseAP09RowsFromRaw(rawRows) {
         'ยอดรวม':          invAmt,
       };
     });
+}
+
+// MARKER_VATINPUT_PARSER_V1
+// ── รองรับ Paste/Upload รายงานภาษีซื้อ Oracle EBS (APCRC201) 2 รูปแบบ ──────────
+// ── "Input" = .out Text ดิบ (Fixed-width, Show Summary Report:N)             ──
+// ── "Simple" = .xlsx Export (Cell-based, Sheet ชื่อ Simple)                  ──
+// ── ทั้งคู่เป็น AP09-only เสมอ (ไม่มี APN01) — Amount ที่เก็บจริงคือยอดเต็ม ──
+// ── ตามใบกำกับภาษี (Amount/VAT "ที่ชำระ") ไม่ใช่ยอด Asset-Average ที่ใช้สิทธิ์ ──
+// MARKER_VATINPUT_INPUTSUMMARY_PORT_V1
+// ── Column Offset/Regex ชุดนี้ Port มาจาก parseInputSummaryText() ใน vatReconcile.js (Backend) ──
+// ── ซึ่งเป็น Logic ที่ผ่านการยืนยันถูกต้องแล้วกับไฟล์ APCRC201 (.out) จริงในระบบ VAT Reconcile ──
+// ── แทนที่ Offset ชุดเดิมที่ยังไม่ได้ยืนยัน (Guess จากตัวอย่างที่ตัวอักษรบางส่วนเพี้ยน) ──
+const VAT_INPUT_DATE_LINE_RE = /^\d{2}-[A-Za-z]{3}-\d{2}\s/;
+// Branch Header ต้องเป็นบรรทัดสั้น (<20 ตัวอักษร) รูปแบบ "<ข้อความไม่มีเลข>: <รหัสสาขา 5-6 หลัก>"
+// เช่น "สาขา : 040201" หรือ "Branch : 040201" — กันไม่ให้ไป Match มั่วกับบรรทัดข้อมูล/สรุปยอดที่มี ":" ปนอยู่
+const VAT_INPUT_BRANCH_LINE_RE = /^[^\d]{2,15}:\s*(\d{5,6}[A-Za-z0-9]*)\s*$/;
+// แถวสรุปยอด "รวมตามสาขา" ท้ายแต่ละสาขา (มี ":" + รหัสสาขา + ยอดเงิน 4 คอลัมน์ต่อกัน) — ต้องข้าม ไม่ใช่ Record จริง
+const VAT_INPUT_BRANCH_SUBTOTAL_RE = /:\s*\d{5,6}\s+[\d,]+\.\d{2}/;
+// MARKER_VATINPUT_COLUMN_FIX_V1
+// Column Offset ชุดเดิม (Port มาจาก vatReconcile.js) ไม่ตรงกับไฟล์ APCRC201 จริงที่ User ใช้งาน (เช็คแล้วพบว่า
+// Vendor Name ดึงเลยเข้าไปกิน Tax ID/HO ทำให้คอลัมน์หลังจากนั้นเพี้ยนหมด) — คำนวณตำแหน่งใหม่จากเส้นคั่น
+// "----------" ใต้ Header ของรายงานจริง (ASCII ล้วน ไม่มีปัญหา Encoding เลย เชื่อถือได้ 100%) แทนการเดา
+// ตัดคอลัมน์ "branchFlag" ออก (เส้นคั่นจริงไม่มีคอลัมน์แยกสำหรับ สาขาที่ — รวมอยู่กับ Description แทน)
+const VAT_INPUT_FIELD_POSITIONS = [0, 12, 28, 42, 60, 93, 112, 125, 160, 165, 180, 184, 199, 204, 219, 222, 237];
+const VAT_INPUT_FIELD_NAMES = [
+  'receiveDate', 'grtNo', 'taxInvDate', 'taxInvNo',
+  'vendorName', 'taxId', 'ho', 'description', '_gap1',
+  'amtPaid', '_gap2', 'vatPaid', '_gap3', 'amtClaimed', '_gap4', 'vatClaimed',
+];
+// claimPct (Calculate Tax) ไม่มีเส้นคั่นแยกในรายงานจริง (คอลัมน์สุดท้าย) — ดึงจากท้ายบรรทัดที่เหลือแทน
+const VAT_INPUT_CLAIMPCT_START = 237;
+// MARKER_VATINPUT_PASTE_TAB_V1
+// ── ลำดับ Field จริง (ไม่รวม _gap) เรียงเหมือน VAT_INPUT_FIELD_NAMES เป๊ะ ใช้ตอน Paste (Ctrl+V) แล้วช่องว่าง ──
+// ── ระหว่างคอลัมน์ของ .out ดิบ (Fixed-width เดิม) ถูกแปลงเป็น Tab แทน (พบว่าบาง App/Clipboard/Website ที่ User ──
+// ── เปิดไฟล์ .out มา Copy ทำแบบนี้ระหว่าง Copy — ต่างจากตอนโยนไฟล์ .out ดิบที่ยังเป็น Fixed-width Space Padding ──
+// ── ปกติ) — ถ้าเป็นแบบนี้ตำแหน่ง Character (VAT_INPUT_FIELD_POSITIONS) จะไม่ตรงกับ Field จริงอีกต่อไป ต้อง Split ──
+// ── ด้วย Tab แทน ไม่งั้นได้ค่า Field เพี้ยนหมดจนกรอง GRT ไม่ผ่าน/Field ว่าง แล้วตกไปเข้า Flow Paste ปกติ (APN01) ──
+const VAT_INPUT_FIELD_NAMES_TABBED = [
+  'receiveDate', 'grtNo', 'taxInvDate', 'taxInvNo',
+  'vendorName', 'taxId', 'ho', 'description',
+  'amtPaid', 'vatPaid', 'amtClaimed', 'vatClaimed', 'claimPct',
+];
+// Page Header ที่พิมพ์ซ้ำทุกครั้งที่ขึ้นหน้าใหม่ (Page Break) — ต้องข้าม ไม่ต่อเข้า vendorName
+// (บรรทัดต่อเนื่องที่ไม่ใช่ Junk พวกนี้จะถูกต่อเข้ากับ vendorName ของ Record ก่อนหน้า)
+const VAT_INPUT_PAGE_HEADER_SUBSTRINGS = [
+  'BOOK', 'APCRC201', 'FAPMGR008',
+  '----------',
+  'Calculate Tax',
+  '<', '>',
+  'TOTAL GROUP',
+  'รวมตามสาขา',
+  'รวมทั้งสิ้น',
+  'รวม :',
+  '====',
+  'TAPVATIN',
+];
+function isVatInputPageHeaderJunk(strippedLine) {
+  return VAT_INPUT_PAGE_HEADER_SUBSTRINGS.some(s => strippedLine.includes(s));
+}
+const VAT_INPUT_MONTH_MAP = {
+  JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
+  JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12',
+};
+// MARKER_VATINPUT_DATEFMT_DDMMMYY_V1 -- แสดงเป็น "DD-Mon-YY" (เช่น "17-Aug-26") ให้ตรงกับ Format
+// ของ Simple (.xlsx/Paste) แทนที่จะเป็น ISO "YYYY-MM-DD" แบบเดิม (ตาราง Preview จะได้ Format เดียวกันทุก Format แหล่งที่มา)
+function vatInputParseDate(raw) {
+  const m = String(raw || '').trim().match(/^(\d{2})-([A-Za-z]{3})-(\d{2})/);
+  if (!m) return '';
+  const mm = VAT_INPUT_MONTH_MAP[m[2].toUpperCase()];
+  if (!mm) return '';
+  const monthAbbr = VAT_INPUT_MONTHS_ABBR[parseInt(mm, 10) - 1];
+  return `${m[1]}-${monthAbbr}-${m[3]}`;
+}
+function vatInputParseAmount(raw) {
+  let s = String(raw || '').trim().replace(/,/g, '');
+  if (!s || s === '-') return 0;
+  const negative = s.startsWith('(') && s.endsWith(')');
+  if (negative) s = s.slice(1, -1);
+  const value = parseFloat(s);
+  if (Number.isNaN(value)) return 0;
+  return negative ? -value : value;
+}
+function vatInputParseRowFields(line) {
+  // MARKER_VATINPUT_PASTE_TAB_V1 -- เจอ Tab ในบรรทัดนี้ = Padding เดิมถูกแปลงเป็น Tab แล้ว (ไม่ใช่ Fixed-width
+  // ตรงๆ อีกต่อไป) ให้ Split ด้วย Tab ตาม Field จริงแทน — ไม่งั้นตัดตำแหน่ง Character เดิมจะเพี้ยนหมด
+  if (line.indexOf('\t') >= 0) {
+    const cells = line.split('\t');
+    const values = {};
+    VAT_INPUT_FIELD_NAMES_TABBED.forEach((name, i) => { values[name] = (cells[i] || '').trim(); });
+    return values;
+  }
+  const values = {};
+  for (let i = 0; i < VAT_INPUT_FIELD_NAMES.length; i++) {
+    const start = VAT_INPUT_FIELD_POSITIONS[i];
+    const end = VAT_INPUT_FIELD_POSITIONS[i + 1];
+    const name = VAT_INPUT_FIELD_NAMES[i];
+    if (name.startsWith('_gap')) continue; // ช่องว่างระหว่างคอลัมน์ (เว้นตามเส้นคั่นจริง) — ไม่ใช่ Field ข้อมูล
+    values[name] = start < line.length ? line.slice(start, end).trim() : '';
+  }
+  // MARKER_VATINPUT_COLUMN_FIX_V1 -- claimPct (Calculate Tax) เป็นคอลัมน์สุดท้าย ไม่มีเส้นคั่นกำกับความกว้างแน่นอน
+  // ดึงจากตำแหน่งเริ่มที่เหลือถึงท้ายบรรทัดแทน
+  values.claimPct = VAT_INPUT_CLAIMPCT_START < line.length ? line.slice(VAT_INPUT_CLAIMPCT_START).trim() : '';
+  return values;
+}
+// MARKER_VATINPUT_GRT_FILTER_V1
+// เงื่อนไขเฉพาะ "Input" (.out ดิบ) เท่านั้น — ดึงเฉพาะแถวที่ GRT No. หลักที่ 2-3 เป็น 41,71,91
+// (หลักที่ 1 = ตัวเลขปีคอศ,  หลักที่ 2-3 = รหัสประเภท GRT — ใช้กรองว่าเป็นรายการที่เข้าเงื่อนไข AP09)
+const VAT_INPUT_ALLOWED_GRT_SEGMENTS = ['41', '71', '91'];
+function isVatInputEligibleGrt(grtNo) {
+  const digits = String(grtNo || '').replace(/\D/g, '');
+  if (digits.length < 3) return false;
+  const seg = digits.slice(1, 3); // หลักที่ 2-3 (0-indexed slice(1,3))
+  return VAT_INPUT_ALLOWED_GRT_SEGMENTS.includes(seg);
+}
+
+// MARKER_VATINPUT_SIMPLE_EXCLUDE_POR36_V1
+// ── "Simple" (.xlsx/Paste) เท่านั้น — ถ้า Description เป็น ภ.พ.36 (ตัดจ่ายเอง/ไม่ใช่ใบกำกับภาษีที่ต้องเก็บใน AP09) ──
+// ── ให้ตัดแถวนั้นออกเลย ไม่ Import เข้ามา (รองรับเขียนได้ทั้ง "ภพ.36" / "ภ.พ.36" / "ภ.พ. 36" / "ภพ36") ──
+const VAT_INPUT_POR36_RE = /ภ\s*\.?\s*พ\s*\.?\s*36/;
+function isVatInputPor36Description(desc) {
+  return VAT_INPUT_POR36_RE.test(String(desc || ''));
+}
+
+// MARKER_VATINPUT_BIDI_STRIP_V1
+// ── ไฟล์ Simple (.xlsx) บาง Cell (เช่น GRT No./Tax Invoice No./Tax ID) มี Unicode Bidi Control ──
+// ── Character แทรกอยู่ (U+200E/F, U+202A-E, U+2066-9 เช่น "‭6250800298‬") ซึ่ง Oracle/Excel ──
+// ── ใส่มาให้อัตโนมัติตอน Export — ทำให้ Regex ตัวเลขล้วน (/^\d{6,}$/) ไม่ Match ต้อง Strip ──
+// ── ออกก่อนเช็ค/ใช้งานค่าเหล่านี้เสมอ ไม่งั้น Detect ไม่ออกว่าเป็นไฟล์ Simple ──
+function stripBidiMarks(v) {
+  return String(v == null ? '' : v).replace(/[‎‏‪-‮⁦-⁩]/g, '');
+}
+
+// MARKER_VATINPUT_DATEFMT_FIX_V1
+// SheetJS อ่าน Simple .xlsx ด้วย raw:false ทำให้ Cell วันที่กลายเป็น String รูปแบบ
+// M/D/YYYY หรือ M/D/YY (Locale Default ของเครื่อง) ไม่ใช่ Date Object เลยไม่เข้าเงื่อนไข
+// "v instanceof Date" — ต้อง Parse ซ้ำให้เป็น "DD-Mon-YY" ให้ตรงกับ Format อื่นในตาราง (Input Summary)
+const VAT_INPUT_MONTHS_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function normalizeVatInputDateStr(v) {
+  const raw = stripBidiMarks(v).trim();
+  if (!raw) return raw;
+  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(raw);
+  if (mdy) {
+    const mo = parseInt(mdy[1], 10);
+    const da = parseInt(mdy[2], 10);
+    let yr = parseInt(mdy[3], 10);
+    if (mdy[3].length === 4) yr = yr % 100;
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
+      return `${String(da).padStart(2, '0')}-${VAT_INPUT_MONTHS_ABBR[mo - 1]}-${String(yr).padStart(2, '0')}`;
+    }
+  }
+  return raw; // รูปแบบอื่น (เช่น "DD-Mon-YY" อยู่แล้ว) ปล่อยผ่านตามเดิม
+}
+
+// MARKER_VATINPUT_DETECT_FILE_OUT_V1
+// ถอด ArrayBuffer ของไฟล์แนบ (.out) เป็น Text
+// ── Oracle EBS Export รายงาน APCRC201 บน Windows เป็น windows-874 (TIS-620) เสมอ ไม่ใช่ UTF-8 ──
+// ── ต้อง Decode เป็น windows-874 ตรงๆ (ไม่ลอง UTF-8 ก่อน) เพราะ windows-874 เป็น Single-byte Encoding ──
+// ── ASCII (ตัวเลข/วันที่/เส้นแบ่ง) จะได้ 1 Byte = 1 Char ตรงกับตำแหน่ง Column คงที่ (VAT_INPUT_FIELD_POSITIONS) ──
+// ── เป๊ะเสมอ — ถ้าลอง UTF-8 ก่อนแล้วดันผ่าน Threshold (เช่น ไฟล์มีสัดส่วนภาษาไทยน้อย) จะได้ Thai Text ──
+// ── เพี้ยนแบบตรวจจับไม่ออก แถมพัง Fixed-width Column Position ทั้งบรรทัดที่มีภาษาไทยปนอยู่ด้วย ──
+function decodeVatInputFileText(buf) {
+  try { return new TextDecoder('windows-874', { fatal: false }).decode(buf); } catch (_) {}
+  try { return new TextDecoder('utf-8', { fatal: false }).decode(buf); } catch (_) { return ''; }
+}
+
+// Detect ว่า Text ที่วางเข้ามาเป็น "Input" (.out ดิบ) หรือเปล่า — ไม่ใช่ Invoice Batch ปกติ
+function detectVatInputRawText(text) {
+  if (!text) return false;
+  const lines = text.split(/\r?\n/).slice(0, 300);
+  const hits = lines.filter(l => VAT_INPUT_DATE_LINE_RE.test(l.trim())).length;
+  return hits >= 1;
+}
+
+// MARKER_VATINPUT_INPUTSUMMARY_PORT_V1
+// ── Parse .out ดิบ ด้วย Logic เดียวกับ parseInputSummaryText() ใน vatReconcile.js ──
+// ── 2-Pass: (1) สร้าง Record ทีละบรรทัด พร้อมต่อบรรทัด Vendor Name ที่ล้นบรรทัด (Continuation) ──
+// ── (2) กรอง GRT Eligibility (41/71/91) และแปลงเป็น AP09 Row ตอนจบ (หลัง Vendor Name สมบูรณ์แล้ว) ──
+function parseVatInputRawText(rawText) {
+  if (!rawText) return [];
+  const lines = rawText.split(/\r?\n/);
+  const records = [];
+  let currentBranch = null;
+  let currentRecord = null;
+
+  for (let rawLine of lines) {
+    const line = rawLine.replace(/\r$/, '');
+    const stripped = line.trim();
+    if (!stripped) continue;
+
+    const bh = stripped.match(VAT_INPUT_BRANCH_LINE_RE);
+    if (bh && stripped.length < 20) {
+      currentBranch = bh[1];
+      currentRecord = null;
+      continue;
+    }
+
+    if (stripped.includes(':') && VAT_INPUT_BRANCH_SUBTOTAL_RE.test(stripped)) {
+      currentRecord = null;
+      continue; // บรรทัดสรุป "รวมตามสาขา" — ไม่ใช่ Record จริง
+    }
+
+    if (VAT_INPUT_DATE_LINE_RE.test(line)) {
+      if (!currentBranch) continue; // ยังไม่เจอ Branch Header มาก่อน ข้ามทิ้ง (กันขยะต้นไฟล์)
+      const f = vatInputParseRowFields(line);
+      const rec = {
+        branch:      currentBranch,
+        receiveDate: vatInputParseDate(f.receiveDate),
+        grtNo:       f.grtNo,
+        taxInvDate:  vatInputParseDate(f.taxInvDate),
+        taxInvNo:    f.taxInvNo.replace(/^\*\s*/, '').trim(),
+        vendorName:  f.vendorName.trim(),
+        taxId:       f.taxId,
+        description: f.description,
+        amtPaid:     vatInputParseAmount(f.amtPaid),
+        vatPaid:     vatInputParseAmount(f.vatPaid),
+        amtClaimed:  vatInputParseAmount(f.amtClaimed),
+        vatClaimed:  vatInputParseAmount(f.vatClaimed),
+        claimPct:    vatInputParseAmount(f.claimPct),
+      };
+      records.push(rec);
+      currentRecord = rec;
+      continue;
+    }
+
+    if (currentRecord) {
+      if (isVatInputPageHeaderJunk(stripped)) continue; // ข้าม Page Header ที่พิมพ์ซ้ำทุกหน้า ไม่ใช่ข้อมูลจริง
+      currentRecord.vendorName = (currentRecord.vendorName + ' ' + stripped).trim();
+    }
+  }
+
+  // MARKER_VATINPUT_GRT_FILTER_V1 -- กลับมาใช้เงื่อนไข GRT หลักที่ 2-3 = 41/71/91 สำหรับ Input (.out) ตามเดิม
+  // (ตัดแถวที่ไม่เข้าเงื่อนไขออกไปเลย ไม่ต้องแสดงใน Preview)
+  const out = [];
+  for (const rec of records) {
+    if (!rec.grtNo || !rec.taxInvNo) continue; // กันบรรทัดขยะที่ผ่าน Regex มาแบบผิดๆ
+    if (!isVatInputEligibleGrt(rec.grtNo)) continue; // MARKER_VATINPUT_GRT_FILTER_V1
+    out.push(vatInputRecToAP09Row(rec));
+  }
+  return out;
+}
+
+// MARKER_VATINPUT_REVIEW_XLSX_V1
+// ── "Input" อีก Format นึง: Export ตรงจาก Oracle เป็น .xlsx ที่แยก Column ชัดเจนแล้ว (Sheet "Input Review")
+// ── ข้อมูลชุดเดียวกับ .out ดิบ แต่ดึงง่ายกว่ามาก — ไม่ต้องง้อ Fixed-width Position/Windows-874 Decode เลย
+// ── แค่ตัด Column ตาม Header แถวแรกตรงๆ + Branch Code จริง ("สาขา") อยู่ Column A ทุกแถวอยู่แล้ว
+// ── (ไม่ต้องเดาจาก Text Header "สาขาที่ XXXXXX"/Footer "รวมสาขา" เหมือน .out/Simple) ── ใช้ Proof BU ได้ตรงๆ เลย
+// MARKER_VATINPUT_REVIEW_CONTENT_PROOF_V1
+// ── Proof ว่าเป็นไฟล์ Input Review จริง ต้องเช็ค 2 ชั้น ไม่ใช่แค่มี Keyword โผล่ที่ไหนก็ได้ในแถว Header:
+// ── (1) หัว Column แต่ละตำแหน่งต้องตรงกับที่คาดไว้ "เป๊ะตามตำแหน่ง" (Column A=สาขา, D=GRT_No., F=เลขที่ใบกำกับภาษี,
+// ──     G=ชื่อผู้ค้า) — กันไฟล์อื่นที่บังเอิญมี Column ชื่อคล้ายกันแต่อยู่คนละตำแหน่ง หลุดเข้ามา
+// ── (2) ข้อมูลแถวจริงด้านใน (ข้าม Header) ต้องมีอย่างน้อย 1 แถวที่ GRT No.(D) เป็นตัวเลขล้วน ≥6 หลัก,
+// ──     เลขที่ใบกำกับภาษี(F) ไม่ว่าง, สาขา(A) เป็นรูปแบบรหัสสาขา (ตัวเลข/ตัวอักษรผสม 4-8 ตัว) ──
+const VAT_INPUT_REVIEW_HEADER_COLS = [
+  { idx: 0, hint: 'สาขา' },
+  { idx: 3, hint: 'GRT_No' },
+  { idx: 5, hint: 'เลขที่ใบกำกับภาษี' },
+  { idx: 6, hint: 'ชื่อผู้ค้า' },
+];
+const VAT_INPUT_REVIEW_BRANCH_RE = /^[0-9A-Za-z]{4,8}$/;
+function hasVatInputReviewHeaderProof(headerRow) {
+  if (!Array.isArray(headerRow)) return false;
+  return VAT_INPUT_REVIEW_HEADER_COLS.every(({ idx, hint }) => String(headerRow[idx] == null ? '' : headerRow[idx]).includes(hint));
+}
+function hasVatInputReviewDataProof(allRows) {
+  if (!allRows || allRows.length < 2) return false;
+  for (let i = 1; i < Math.min(allRows.length, 50); i++) {
+    const row = allRows[i];
+    if (!Array.isArray(row)) continue;
+    const grt = stripBidiMarks(row[3]).replace(/,/g, '').trim();
+    const taxInvNo = stripBidiMarks(row[5]).trim();
+    const branch = stripBidiMarks(row[0]).trim();
+    if (/^\d{6,}$/.test(grt) && taxInvNo && VAT_INPUT_REVIEW_BRANCH_RE.test(branch)) return true;
+  }
+  return false;
+}
+function detectVatInputReviewXlsx(allRows) {
+  if (!allRows || !allRows[0] || !Array.isArray(allRows[0])) return false;
+  if (!hasVatInputReviewHeaderProof(allRows[0])) return false; // MARKER_VATINPUT_REVIEW_CONTENT_PROOF_V1 -- อ่านหัว Column ตามตำแหน่งจริง
+  return hasVatInputReviewDataProof(allRows); // ตามด้วย Proof จากข้อมูลจริงด้านในอีกชั้น ก่อนยืนยันว่าเป็น Input
+}
+// รวม Date Format 2 แบบที่อาจเจอได้จาก Cell นี้: (1) "DD-MON-YY" Text ตรงๆ (ปกติของไฟล์นี้)
+// (2) SheetJS แปลง Cell วันที่เป็น "M/D/YYYY" String ตาม Locale เครื่อง (เผื่อ Cell เป็น Date Type จริง)
+function vatInputReviewDate(v) {
+  const norm = normalizeVatInputDateStr(v); // "M/D/YYYY" -> "DD-Mon-YY", รูปแบบอื่นผ่านเฉยๆ
+  return vatInputParseDate(norm) || norm; // "DD-MON-YY" (case ใดก็ได้) -> "DD-Mon-YY"
+}
+function parseVatInputReviewXlsxRows(allRows) {
+  const out = [];
+  for (let i = 1; i < allRows.length; i++) {
+    const row = allRows[i];
+    if (!Array.isArray(row)) continue;
+    const grt = stripBidiMarks(row[3]).replace(/,/g, '').trim();
+    if (!grt) continue; // แถวว่าง/บรรทัดสรุปท้ายไฟล์ (ไม่มี GRT No.)
+    if (!isVatInputEligibleGrt(grt)) continue; // MARKER_VATINPUT_GRT_FILTER_V1 -- เงื่อนไขเดียวกับ Input (.out): GRT หลักที่ 2-3 = 41/71/91
+    const taxInvNo = stripBidiMarks(row[5]).replace(/^\*\s*/, '').trim();
+    if (!taxInvNo) continue;
+    out.push(vatInputRecToAP09Row({
+      branch:      stripBidiMarks(row[0]).trim(), // สาขา -- Branch Code จริงต่อแถว ใช้ Proof BU ได้เลย ไม่ต้องเดา
+      receiveDate: vatInputReviewDate(row[2]),
+      grtNo:       grt,
+      taxInvDate:  vatInputReviewDate(row[4]),
+      taxInvNo:    taxInvNo,
+      vendorName:  stripBidiMarks(row[6]).trim(),
+      taxId:       stripBidiMarks(row[7]).trim(),
+      description: stripBidiMarks(row[10]).trim(),
+      amtPaid:     row[11],
+      vatPaid:     row[12],
+      amtClaimed:  row[13],
+      vatClaimed:  row[14],
+      claimPct:    row[15],
+    }));
+  }
+  return out;
+}
+
+// MARKER_VATINPUT_REVIEW_PASTE_V1
+// ── รองรับ "Input Review" (.xlsx Format ใหม่) แบบ Copy จาก Excel มา Paste เป็น Text (Tab-delimited) ด้วย ──
+// ── (User โยนไฟล์ .out ดิบเข้า Paste Tab ก็ต้องรองรับเหมือนโยนไฟล์อยู่แล้ว — Input Review ก็ต้องทำแบบเดียวกัน) ──
+// ── ใช้ Column Index/Logic เดียวกับ .xlsx เป๊ะ (detectVatInputReviewXlsx/parseVatInputReviewXlsxRows) ──
+// ── เพียงแต่ Cell มาจาก Tab Split แทน Array ที่ SheetJS อ่านมาให้ ──
+function detectVatInputReviewRawText(text) {
+  if (!text) return false;
+  const lines = text.split(/\r?\n/).slice(0, 50);
+  for (const line of lines) {
+    if (line.indexOf('\t') < 0) continue;
+    const cells = line.split('\t');
+    const grt = stripBidiMarks(cells[3]).replace(/,/g, '').trim();
+    const taxInvNo = stripBidiMarks(cells[5]).trim();
+    const branch = stripBidiMarks(cells[0]).trim();
+    if (/^\d{6,}$/.test(grt) && taxInvNo && VAT_INPUT_REVIEW_BRANCH_RE.test(branch)) return true; // MARKER_VATINPUT_REVIEW_CONTENT_PROOF_V1 -- Proof จากข้อมูลจริงเหมือน .xlsx
+  }
+  return false;
+}
+function parseVatInputReviewRawText(text) {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  for (const line of lines) {
+    if (line.indexOf('\t') < 0) continue;
+    const cells = line.split('\t');
+    const grt = stripBidiMarks(cells[3]).replace(/,/g, '').trim();
+    if (!grt) continue; // แถวว่าง/Header/บรรทัดสรุป (ไม่มี GRT No.)
+    if (!isVatInputEligibleGrt(grt)) continue; // MARKER_VATINPUT_GRT_FILTER_V1 -- เงื่อนไขเดียวกับ Input (.out)/Input Review (.xlsx): GRT หลักที่ 2-3 = 41/71/91
+    const taxInvNo = stripBidiMarks(cells[5]).replace(/^\*\s*/, '').trim();
+    if (!taxInvNo) continue;
+    out.push(vatInputRecToAP09Row({
+      branch:      stripBidiMarks(cells[0]).trim(),
+      receiveDate: vatInputReviewDate(cells[2]),
+      grtNo:       grt,
+      taxInvDate:  vatInputReviewDate(cells[4]),
+      taxInvNo:    taxInvNo,
+      vendorName:  stripBidiMarks(cells[6]).trim(),
+      taxId:       stripBidiMarks(cells[7]).trim(),
+      description: stripBidiMarks(cells[10]).trim(),
+      amtPaid:     cells[11],
+      vatPaid:     cells[12],
+      amtClaimed:  cells[13],
+      vatClaimed:  cells[14],
+      claimPct:    cells[15],
+    }));
+  }
+  return out;
+}
+
+// Detect ว่า Sheet ที่อ่านมาเป็น "Simple" Report VAT หรือเปล่า (Array-of-array จาก header:1)
+function detectVatSimpleSheet(allRows) {
+  if (!allRows || allRows.length < 10) return false;
+  // MARKER_VATINPUT_BIDI_STRIP_V1 -- Strip ทั้ง Bidi Control Char และ Comma ก่อนเช็คว่าเป็นตัวเลขล้วน
+  // ไม่งั้น Detect ไม่ออกว่าเป็น Simple (ดู stripBidiMarks ด้านบน)
+  return allRows.some(row => Array.isArray(row) && /^\d{6,}$/.test(stripBidiMarks(row[2]).replace(/,/g, '').trim()));
+}
+
+// "Simple" .xlsx: Meta 6+ แถวบน + Header 2 แถว ก่อนถึงข้อมูลจริง — หาแถวข้อมูล
+// ด้วยเงื่อนไข Column C (idx2) เป็นเลขล้วน (GRT No.) กัน Subtotal("รวมสาขา")/Grand Total("รวมสุทธิ")/Blank
+function parseVatSimpleXlsxRows(allRows) {
+  const toDateStr = (v) => {
+    if (v instanceof Date) {
+      const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${String(v.getDate()).padStart(2,'0')}-${months[v.getMonth()]}-${String(v.getFullYear()).slice(2)}`;
+    }
+    return normalizeVatInputDateStr(v); // MARKER_VATINPUT_DATEFMT_FIX_V1
+  };
+  // MARKER_VATINPUT_SIMPLE_BRANCH_MARKER_V1
+  // ── Column P (idx15) เป็นแค่ Flag ("0") ไม่ใช่รหัสสาขาจริง — รหัสสาขาจริงต้องดึงจากบรรทัด ──
+  // ── Subtotal "รวมสาขา XXXXXX" ที่ Column Q (idx16) ท้ายแต่ละสาขา (รองรับหลายสาขาในไฟล์เดียว) ──
+  // ── เหมือน Logic parseSimpleReportBuffer() ใน vatReconcile.js (Backend) ที่ยืนยันถูกต้องแล้ว ──
+  const out = [];
+  let buffer = [];
+  const flushBuffer = (branchCode) => {
+    for (const rec of buffer) {
+      rec.branch = branchCode || rec.branch || '';
+      out.push(vatInputRecToAP09Row(rec));
+    }
+    buffer = [];
+  };
+  for (const row of allRows) {
+    if (!Array.isArray(row)) continue;
+    const marker = stripBidiMarks(row[16]).trim();
+    if (marker.startsWith('รวมสุทธิ')) { flushBuffer(''); break; } // จบไฟล์
+    if (marker.startsWith('รวมสาขา')) {
+      const m = /รวมสาขา\s*(\S+)/.exec(marker);
+      flushBuffer(m ? m[1] : '');
+      continue;
+    }
+    // MARKER_VATINPUT_BIDI_STRIP_V1 -- Strip Bidi Control Char + Comma ที่ SheetJS raw:false อาจแทรกมา
+    // (เช่น "‭6,250,800,298‬") ไม่งั้น Regex ตัวเลขล้วนไม่ Match
+    const grt = stripBidiMarks(row[2]).replace(/,/g, '').trim();
+    if (!/^\d{6,}$/.test(grt)) continue;
+    if (!isVatInputEligibleGrt(grt)) continue; // MARKER_VATINPUT_GRT_FILTER_V1 — เงื่อนไขเดียวกับ Input (.out): GRT หลักที่ 2-3 = 41/71/91
+    const description = stripBidiMarks(row[16]).trim();
+    if (isVatInputPor36Description(description)) continue; // MARKER_VATINPUT_SIMPLE_EXCLUDE_POR36_V1 — ตัดแถว ภ.พ.36 ออก
+    buffer.push({
+      receiveDate: toDateStr(row[1]),
+      grtNo:       grt,
+      taxInvDate:  toDateStr(row[4]),
+      taxInvNo:    stripBidiMarks(row[7]).trim(),
+      vendorName:  stripBidiMarks(row[9]).trim(),
+      taxId:       stripBidiMarks(row[13]).trim(),
+      branch:      '', // จะถูกเติมตอน Flush จาก Marker "รวมสาขา"
+      description,
+      amtPaid:     row[20],
+      vatPaid:     row[21],
+      amtClaimed:  row[22],
+      vatClaimed:  row[24],
+      claimPct:    row[26],
+    });
+  }
+  if (buffer.length) flushBuffer(''); // ไฟล์ไม่มี "รวมสุทธิ" ปิดท้าย (ผิดปกติ) — Flush ที่เหลือแบบไม่มี Branch
+  return out;
+}
+
+// MARKER_VATINPUT_SIMPLE_PASTE_V1
+// ── รองรับ "Simple" แบบ Copy จาก Excel มา Paste เป็น Text (Tab-delimited) เข้าแท็บวางด้วย ──
+// ── ใช้ Column Index เดียวกับไฟล์ .xlsx (parseVatSimpleXlsxRows) เพียงแต่ Cell มาจาก Tab Split ──
+function detectVatSimpleRawText(text) {
+  if (!text) return false;
+  const lines = text.split(/\r?\n/).slice(0, 300);
+  let hits = 0;
+  for (const line of lines) {
+    if (line.indexOf('\t') < 0) continue;
+    const cells = line.split('\t');
+    if (cells.length > 2 && /^\d{6,}$/.test(stripBidiMarks(cells[2]).replace(/,/g, '').trim())) hits++;
+  }
+  return hits >= 1;
+}
+
+function parseVatSimpleRawText(text) {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  // MARKER_VATINPUT_SIMPLE_BRANCH_MARKER_V1 -- Logic เดียวกับ parseVatSimpleXlsxRows: รหัสสาขาจริง
+  // ดึงจากบรรทัด "รวมสาขา XXXXXX" ท้ายแต่ละสาขา ไม่ใช่ Column P (idx15) ซึ่งเป็นแค่ Flag
+  const out = [];
+  let buffer = [];
+  const flushBuffer = (branchCode) => {
+    for (const rec of buffer) {
+      rec.branch = branchCode || rec.branch || '';
+      out.push(vatInputRecToAP09Row(rec));
+    }
+    buffer = [];
+  };
+  for (const line of lines) {
+    if (line.indexOf('\t') < 0) continue;
+    const cells = line.split('\t');
+    const marker = stripBidiMarks(cells[16]).trim();
+    if (marker.startsWith('รวมสุทธิ')) { flushBuffer(''); break; }
+    if (marker.startsWith('รวมสาขา')) {
+      const m = /รวมสาขา\s*(\S+)/.exec(marker);
+      flushBuffer(m ? m[1] : '');
+      continue;
+    }
+    const grt = stripBidiMarks(cells[2]).replace(/,/g, '').trim();
+    if (!/^\d{6,}$/.test(grt)) continue;
+    if (!isVatInputEligibleGrt(grt)) continue; // MARKER_VATINPUT_GRT_FILTER_V1
+    const description = stripBidiMarks(cells[16]).trim();
+    if (isVatInputPor36Description(description)) continue; // MARKER_VATINPUT_SIMPLE_EXCLUDE_POR36_V1 — ตัดแถว ภ.พ.36 ออก
+    buffer.push({
+      receiveDate: normalizeVatInputDateStr(cells[1]), // MARKER_VATINPUT_DATEFMT_FIX_V1
+      grtNo:       grt,
+      taxInvDate:  normalizeVatInputDateStr(cells[4]), // MARKER_VATINPUT_DATEFMT_FIX_V1
+      taxInvNo:    stripBidiMarks(cells[7]).trim(),
+      vendorName:  stripBidiMarks(cells[9]).trim(),
+      taxId:       stripBidiMarks(cells[13]).trim(),
+      branch:      '', // จะถูกเติมตอน Flush จาก Marker "รวมสาขา"
+      description,
+      amtPaid:     cells[20],
+      vatPaid:     cells[21],
+      amtClaimed:  cells[22],
+      vatClaimed:  cells[24],
+      claimPct:    cells[26],
+    });
+  }
+  if (buffer.length) flushBuffer('');
+  return out;
+}
+
+// รวม Record ดิบ (จากทั้ง 2 Format) → AP09 Row Shape เดียวกัน
+// MARKER_VATINPUT_FULLAMOUNT_ONLY_V1
+// ── เก็บเฉพาะยอดเต็มตามใบกำกับภาษี (Amount/VAT "ที่ชำระ") ให้ตรง Shape AP09 ปกติ ──
+// ── (Branch/Vendor/Date/GRT/Tax Invoice/Description/ยอดก่อนภาษี/ยอดภาษี/ยอดรวม 10 คอลัมน์) ──
+// ── ไม่ต้องเก็บยอด/ภาษี/% ที่ใช้สิทธิ์ (Asset-Average) — Simple/Input ก็ไม่ต้องดึง Rate มาแล้ว ──
+// MARKER_VATINPUT_VENDORNAME_STRIP_STAR_V1
+// ── Oracle Export (.out/Simple/Input Review) ใส่ "*" นำหน้าชื่อผู้ค้าเสมอ (ไม่มีความหมายทางข้อมูล) ──
+// ── ตัดออกให้ตรง Format ปกติที่ใช้แสดง/เก็บใน AP09 (Trim ช่องว่างที่อาจเหลือหลัง "*" ด้วย) ──
+function stripVatInputVendorStar(v) {
+  return String(v || '').replace(/^\*\s*/, '').trim();
+}
+function vatInputRecToAP09Row(rec) {
+  const num = v => parseFloat(String(v||'0').replace(/,/g,'')) || 0;
+  const amtPaid = num(rec.amtPaid);
+  const vatPaid = num(rec.vatPaid);
+  return {
+    'Branch':                rec.branch || '',
+    'Vendor Name':           stripVatInputVendorStar(rec.vendorName), // MARKER_VATINPUT_VENDORNAME_STRIP_STAR_V1
+    'Receive Date':          rec.receiveDate || '',
+    'GRT No.':               rec.grtNo || '',
+    'Tax Invoice Date':      rec.taxInvDate || '',
+    'Tax Invoice No.':       rec.taxInvNo || '',
+    'Description':           rec.description || '',
+    'ยอดก่อนภาษี':          Math.round(amtPaid * 100) / 100,
+    'ยอดภาษี':              Math.round(vatPaid * 100) / 100,
+    'ยอดรวม':               Math.round((amtPaid + vatPaid) * 100) / 100,
+  };
+}
+
+// MARKER_VATINPUT_DRAFT_GROUP_V1
+// Draft "Inputsummary" (จาก Input .out / Simple .xlsx → AP09) ต้องแยกกลุ่มออกจาก Draft AP09 ปกติ
+// (Invoice Register/Input Tax Invoice) ใน UI เท่านั้น — doc_type จริงในฐานข้อมูลยังเป็น 'AP09' เหมือนเดิม
+// เพื่อไม่กระทบ handleSubmitDraft / checkAllDuplicates / Logic AP09 อื่นๆ ที่มีอยู่แล้ว
+function getDraftGroupKey(d) {
+  if (d && d.doc_type === 'AP09' && d.doc_name === 'Inputsummary') return 'AP09_SUMMARY';
+  return d ? d.doc_type : null;
+}
+function getDraftGroupLabel(key) {
+  if (key === 'AP09_SUMMARY') return 'Inputsummary (AP09)';
+  if (key === 'AP09') return 'AP09 - Tax Invoice';
+  if (key === 'AP07') return 'AP07';
+  if (key) return key + ' - Invoice Register';
+  return '';
+}
+function getDraftGroupColor(key) {
+  return (key === 'AP09_SUMMARY' || key === 'AP09') ? '#0F6E56' : '#1a3a5c';
 }
 
 function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MAP, db, userName, currentUser, onSave, onClose, saving, setSaving, genSerial, pdfQueue, setPdfQueue, pdfSelected, setPdfSelected, folder, showToast }) {
@@ -652,12 +1226,10 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
     const buShort = meta.bu_short || meta.bu_code?.split('-')[0]?.trim() || '';
     let insertBuCode = buShort, insertBuCodeName = meta.bu_code || '', insertBuName = meta.bu_name || meta.bu_name_ocr || '';
     if (buShort) {
-      try {
-        const { data: cl } = await db.from('company_list')
-          .select('bu,bu_code_name,"THAI COMPANY NAME"')
-          .ilike('bu_code_name', buShort + '%').maybeSingle();
-        if (cl) { insertBuCode = cl.bu || buShort; insertBuCodeName = cl.bu_code_name || insertBuCodeName; insertBuName = cl['THAI COMPANY NAME'] || insertBuName; }
-      } catch(_) {}
+      // MARKER_UPLOADGEN_BU_LOOKUP_COLUMN_FIX_V1 -- ใช้ lookupCompanyByBu() กลาง (ดู
+      // MARKER_LOOKUP_COMPANY_BY_BU_SHARED_V1) แทนเขียน Query เอง กัน Trim/Case-sensitive Bug เดิม
+      const cl = await lookupCompanyByBu(db, buShort);
+      if (cl) { insertBuCode = cl.bu || buShort; insertBuCodeName = cl.bu_code_name || insertBuCodeName; insertBuName = cl.thaiName || insertBuName; }
     }
     const ocrDocType = meta.doc_type || group.doc_type || docType;
     const baseSerial = genSerial(insertBuCode || 'XX', ocrDocType);
@@ -747,16 +1319,13 @@ function PdfOcrTab({ serialCode, setSerialCode, docType, setDocType, DOC_TYPE_MA
             let insertBuCodeName = meta.bu_code || '';
             let insertBuName     = meta.bu_name || meta.bu_name_ocr || '';
             if (buShort) {
-              try {
-                const { data: cl } = await db.from('company_list')
-                  .select('bu,bu_code_name,"THAI COMPANY NAME"')
-                  .ilike('bu_code_name', buShort + '%').maybeSingle();
-                if (cl) {
-                  insertBuCode     = cl.bu || buShort;
-                  insertBuCodeName = cl.bu_code_name || insertBuCodeName;
-                  insertBuName     = cl['THAI COMPANY NAME'] || insertBuName;
-                }
-              } catch(_) {}
+              // MARKER_UPLOADGEN_BU_LOOKUP_COLUMN_FIX_V1 -- ใช้ lookupCompanyByBu() กลางเหมือนจุดอื่น
+              const cl = await lookupCompanyByBu(db, buShort);
+              if (cl) {
+                insertBuCode     = cl.bu || buShort;
+                insertBuCodeName = cl.bu_code_name || insertBuCodeName;
+                insertBuName     = cl.thaiName || insertBuName;
+              }
             }
             const finalSerial = item.serial || serialCode.trim() || item.result.serial_code || item.file.name;
             const ocrDocType  = meta.doc_type || docType;
@@ -1269,6 +1838,10 @@ function AlertModal({ title, message, onClose, type='error' }) {
 // MARKER_APMANUAL_EDITOR_PERM_AND_VIEW_V1
 function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner, isAdmin, isEditor }) {
   const [docType, setDocType] = React.useState('APN01');
+  // MARKER_DOCCOLLECTION_FILLTIME_V2 -- Ref เก็บเวลาเปิด Modal, บันทึกลง fill_started_at ของ doc_collection เอง
+  // (ยังไม่ส่งไปที่ Backend/Transaction Dashboard -- รอ Design ต่อในเฟสถัดไป)
+  const docCollectionFillStartedAtRef = React.useRef(null);
+  React.useEffect(() => { docCollectionFillStartedAtRef.current = new Date(); }, []); // MARKER_DOCCOLLECTION_FILLTIME_V2
   const [tab, setTab] = React.useState('paste');
   const [pasteSubTab, setPasteSubTab] = React.useState('new');
   const [dupWarnings, setDupWarnings] = React.useState([]);
@@ -1311,6 +1884,32 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
   const showAlert = (message, type='error', title='') => setAlertModal({title, message, type});
   const [formatWarning, setFormatWarning] = React.useState('');
   const [sciInvNums, setSciInvNums] = React.useState(new Set());
+  // MARKER_VATINPUT_STATE_V1 -- Preview + Checkbox-select สำหรับ Input(.out)/Simple(.xlsx) → AP09-only
+  const [vatInputRows, setVatInputRows] = React.useState([]); // แถวที่ Parse แล้ว ยังไม่ได้ Save
+  const [vatInputSelected, setVatInputSelected] = React.useState(() => new Set()); // index ที่ติ๊กเลือก
+  // MARKER_VATINPUT_FILLSTART_CHECKBOX_V1 -- เริ่มนับ fill_started_at ตอนติ๊ก Checkbox ครั้งแรกใน Preview (0 -> มากกว่า 0)
+  // เคลียร์กลับเป็น null ถ้าปลดออกจนหมด (กลับเป็น 0) รอ Stamp ใหม่รอบถัดไป -- Pattern เดียวกับ
+  // selectionFillStartedAtRef ของ VatController.js -- ใช้เฉพาะ Path "บันทึกเลย" (ไม่ผ่าน Draft)
+  const vatInputFillStartedAtRef = React.useRef(null);
+  React.useEffect(() => {
+    if (vatInputSelected.size > 0) {
+      if (!vatInputFillStartedAtRef.current) vatInputFillStartedAtRef.current = new Date();
+    } else {
+      vatInputFillStartedAtRef.current = null;
+    }
+  }, [vatInputSelected]);
+  const [vatInputDupTax, setVatInputDupTax] = React.useState(() => new Set()); // Tax Invoice No. ที่ซ้ำกับ Record สถานะ Report(active) — ใช้กันเลือกอัตโนมัติ
+  // MARKER_VATINPUT_DUP_DISPLAY_V1 -- เก็บผล Dup ทุกสถานะ (Report+Draft) ไว้แสดงผลแบบเดียวกับ Preview ทั่วไป
+  // (Dup %/Updated by/Updated at) ต่างจากฟอร์มอื่นตรงที่ Draft "ไม่นับ" สำหรับกันเลือก/บล็อก Save (ดู vatInputDupTax
+  // ด้านบน — Inputsummary ใหญ่กว่า Draft เดิมเสมอ จะไป Delete ทับตอน Save) แต่ยังต้องโชว์ให้เห็นว่ามี Draft ซ้ำอยู่
+  const [vatInputDupMap, setVatInputDupMap] = React.useState({}); // { [taxInvoiceNoLower]: {confidence,status,uploadedBy,createdAt,docType} }
+  const [vatInputSourceLabel, setVatInputSourceLabel] = React.useState(''); // 'Input (.out)' / 'Simple (.xlsx)' โชว์ใน Preview
+  const [vatInputConfirmModal, setVatInputConfirmModal] = React.useState(null); // { rows, isDraft } รอ Confirm ก่อน Save จริง
+  // MARKER_VATINPUT_SEARCH_V1 -- Search Engine สำหรับ Preview Input(.out)/Simple(.xlsx) — ค้นได้ทุกคอลัมน์
+  const [vatInputSearch, setVatInputSearch] = React.useState('');
+  // MARKER_VATINPUT_PEEK_DRAFT_V1 -- กด "ดู Draft" ระหว่างมี Preview ค้างอยู่ได้ โดยไม่ล้าง Preview/Selected ทิ้ง
+  // (สลับไปโชว์ Tab Report/Draft ชั่วคราว แล้วกด "กลับไป Preview" คืนกลับมาทำต่อได้)
+  const [vatInputPeekDraft, setVatInputPeekDraft] = React.useState(false);
   const fileRef = React.useRef(null);
   const [attachments, setAttachments] = React.useState([]); // max 3 รูป
   const [dragOver, setDragOver] = React.useState(false);
@@ -1350,6 +1949,14 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
     return `${bu||'XX'}_${DOC_TYPE_MAP[type]||type}_${type}-${yy}${mm}${dd}.${hh}${mi}${ss}${seq}`;
   };
 
+  // MARKER_VATINPUT_GENSERIAL_V1 -- Serial สำหรับ Input(.out)/Simple(.xlsx) → {BU}_Inputsummary_AP09-{วันที่}.{เวลา}
+  const genInputSummarySerial = (bu) => {
+    const now = new Date();
+    const p = (n) => String(n).padStart(2,'0');
+    const yy=String(now.getFullYear()).slice(2),mm=p(now.getMonth()+1),dd=p(now.getDate()),hh=p(now.getHours()),mi=p(now.getMinutes());
+    return `${bu||'XX'}_Inputsummary_AP09-${yy}${mm}${dd}.${hh}${mi}`;
+  };
+
   const parseTabText = (text) => {
     const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
     if (lines.length < 2) return { headers:[], rows:[] };
@@ -1369,7 +1976,97 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
     return { headers, rows };
   };
 
+  // MARKER_VATINPUT_DUP_REFRESH_V1 -- Re-run Dup Check เฉพาะ (ไม่ reset vatInputRows/vatInputSelected)
+  // ใช้หลัง Save Draft สำเร็จ และหลังลบ Draft สำเร็จ ให้คอลัมน์ Dup %/Updated by/Updated at ใน Preview
+  // อัปเดตทันที ไม่ต้องปิด Modal แล้วโยนไฟล์เข้าใหม่ (Logic เช็คซ้ำก๊อปมาจาก loadVatInputRows ด้านล่าง)
+  const refreshVatInputDupCheck = async (rows) => {
+    if (!rows || rows.length === 0) return;
+    let vatInputBuCode = serialCode ? serialCode.split('_')[0] : '';
+    if (!vatInputBuCode) {
+      const branchVal0 = (rows[0]?.['Branch'] || '').trim();
+      if (branchVal0) {
+        try {
+          const { data: bl0 } = await db.from('branch_list').select('bu').eq('Branch Code', branchVal0).maybeSingle();
+          vatInputBuCode = bl0?.bu || '';
+        } catch(_) {}
+      }
+    }
+    const dups = await checkAllDuplicates(db, rows, '__vatinput_check__', 'AP09', vatInputBuCode);
+    const dupSet = new Set(dups.filter(d=>d.confidence>=80 && (d.status||'active')==='active').map(d=>d.invoiceNo));
+    setVatInputDupTax(dupSet);
+    const dupMapObj = {};
+    dups.forEach(d => { if (d.confidence>=80 && !dupMapObj[d.invoiceNo]) dupMapObj[d.invoiceNo] = d; });
+    setVatInputDupMap(dupMapObj);
+  };
+
+  // MARKER_VATINPUT_LOAD_ROWS_V1 -- ใช้ร่วมกันทั้ง Paste (.out) และ แนบไฟล์ (.xlsx Simple)
+  const loadVatInputRows = async (rows, sourceLabel) => {
+    setParsedRows([]); setParsedHeaders([]); setPasteText(''); setFormatWarning(''); setDupWarnings([]);
+    setFileQueue([]);
+    setVatInputSourceLabel(sourceLabel);
+    setVatInputRows(rows);
+    // MARKER_VATINPUT_DUP_BU_CHECK_V1 -- หา BU ของรอบ Import นี้ "ก่อน" เช็ค Duplicate เสมอ (ย้ายมาจากเดิมที่หาทีหลัง)
+    // เพราะ Tax Invoice No. ที่ซ้ำกันข้าม BU/บริษัท (เช่น CFW vs LKS) ไม่ใช่ Duplicate จริง — ถ้าไม่รู้ BU ก่อน
+    // เช็คจะ False Positive ข้าม BU ได้ ใช้ Serial Code เดิมถ้ามีอยู่แล้ว (ตัดจาก Prefix ก่อน "_") ไม่งั้น Lookup จาก Branch
+    let vatInputBuCode = serialCode ? serialCode.split('_')[0] : '';
+    if (!vatInputBuCode) {
+      const branchVal0 = (rows[0]?.['Branch'] || '').trim();
+      if (branchVal0) {
+        try {
+          const { data: bl0 } = await db.from('branch_list').select('bu').eq('Branch Code', branchVal0).maybeSingle();
+          vatInputBuCode = bl0?.bu || '';
+        } catch(_) {}
+      }
+    }
+    // MARKER_VATINPUT_DUP_STATUS_SPLIT_V1
+    // ── ซ้ำกับ Record สถานะ "Report" (active) → เตือน + ไม่เลือกอัตโนมัติ (Logic ปกติ) ──
+    // ── ซ้ำกับ Record สถานะ "Draft" → ไม่ต้องเตือน/ไม่ต้องกันเลือก เพราะ Inputsummary ──
+    // ── ใหญ่กว่าเสมอ — ตอน Save จะไป Delete ข้อมูลแถวนั้นออกจาก Draft เดิมแทน ──
+    const dups = rows.length > 0 ? await checkAllDuplicates(db, rows, '__vatinput_check__', 'AP09', vatInputBuCode) : [];
+    const dupSet = new Set(dups.filter(d=>d.confidence>=80 && (d.status||'active')==='active').map(d=>d.invoiceNo));
+    setVatInputDupTax(dupSet);
+    // MARKER_VATINPUT_DUP_DISPLAY_V1 -- เก็บ Dup ทุกสถานะ (Report+Draft) ไว้แสดงผล Dup %/Updated by/Updated at
+    // เหมือน Preview ทั่วไป — Draft ไม่นับกันเลือก (ดู vatInputDupTax) แต่ยังต้องโชว์ว่ามี Draft ซ้ำอยู่ให้ User เห็น
+    const dupMapObj = {};
+    dups.forEach(d => { if (d.confidence>=80 && !dupMapObj[d.invoiceNo]) dupMapObj[d.invoiceNo] = d; });
+    setVatInputDupMap(dupMapObj);
+    // MARKER_VATINPUT_NO_AUTOSELECT_V1 -- ไม่ต้อง Auto-select ทุกแถวตั้งแต่แรก เริ่มจาก 0 แล้วให้ User เลือกเอง
+    // (ทีละแถว หรือกด Checkbox หัวตาราง Select All/Deselect All เอาเองทั้งหมด — ดู MARKER_VATINPUT_SEARCH_V1)
+    setVatInputSelected(new Set());
+    if (!serialCode) {
+      // Input/Simple ไม่มีคอลัมน์ BU ตรงๆ — ใช้ vatInputBuCode ที่หาไว้แล้วด้านบน (กันไม่ต้อง Lookup ซ้ำ)
+      // ถ้าไม่เจอ ปล่อยว่าง ('XX') ให้ User แก้ที่ช่อง Serial Code เองได้เสมอ
+      setSerialCode(genInputSummarySerial(vatInputBuCode));
+    }
+  };
+
   const handlePaste = async (text) => {
+    // MARKER_VATINPUT_DETECT_PASTE_V1 -- Auto-detect "Input" (.out ดิบ) ก่อนเข้า Flow Invoice Batch ปกติ
+    // MARKER_VATINPUT_MULTIFILE_V1 -- Detect ผ่านแล้ว ถือว่าเป็น Input แน่นอน ต้องจบที่นี่เสมอ (Toast + return)
+    // ไม่ปล่อยให้ไหลต่อไปเข้า Flow Paste ปกติ (APN01) เหมือนที่เคยเกิด Bug ตอน 0 แถวผ่านเงื่อนไข GRT — ต้องทำ
+    // แบบเดียวกับตอนโยนไฟล์ (.out/Input Review .xlsx) เข้า Tab แนบไฟล์ ที่มี Toast แจ้งแล้ว return ทันทีเหมือนกัน
+    if (text.trim().length >= 5 && detectVatInputRawText(text)) {
+      setPasteText(text);
+      const rows = parseVatInputRawText(text);
+      if (rows.length > 0) { await loadVatInputRows(rows, 'Input (.out)'); return; }
+      showToast(`ไม่พบแถวที่เข้าเงื่อนไข GRT หลักที่ 2-3 = 41/71/91 ในข้อมูลที่วาง`, 'error'); // MARKER_VATINPUT_GRT_FILTER_V1
+      return;
+    }
+    // MARKER_VATINPUT_REVIEW_PASTE_V1 -- Auto-detect "Input Review" (.xlsx Format ใหม่) ที่ Copy จาก Excel มา Paste
+    if (text.trim().length >= 5 && detectVatInputReviewRawText(text)) {
+      setPasteText(text);
+      const rows = parseVatInputReviewRawText(text);
+      if (rows.length > 0) { await loadVatInputRows(rows, 'Input Review (Paste)'); return; }
+      showToast(`ไม่พบแถวที่เข้าเงื่อนไข GRT หลักที่ 2-3 = 41/71/91 ในข้อมูลที่วาง`, 'error'); // MARKER_VATINPUT_GRT_FILTER_V1
+      return;
+    }
+    // MARKER_VATINPUT_SIMPLE_PASTE_V1 -- Auto-detect "Simple" ที่ Copy จาก Excel มา Paste เป็น Text (Tab-delimited)
+    if (text.trim().length >= 5 && detectVatSimpleRawText(text)) {
+      setPasteText(text);
+      const rows = parseVatSimpleRawText(text);
+      if (rows.length > 0) { await loadVatInputRows(rows, 'Simple (Paste)'); return; }
+    }
+    setVatInputRows([]); setVatInputSelected(new Set()); setVatInputDupTax(new Set()); setVatInputDupMap({}); setVatInputSourceLabel('');
     setPasteText(text);
     if (text.trim().length < 5) { setParsedRows([]); return; }
     // ── เช็ค Scientific Notation จาก raw text ก่อน parse ──
@@ -1477,17 +2174,80 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
     }));
     setFileQueue(newQueue);
 
+    // MARKER_VATINPUT_MULTIFILE_V1
+    // ── รองรับโยนไฟล์ Input (.out / Input Review .xlsx / Simple .xlsx) เข้าพร้อมกันได้หลายไฟล์ในครั้งเดียว ──
+    // ── สะสมแถวจากทุกไฟล์ที่ Detect ว่าเป็น Input ไว้ก่อน (แทนที่จะยิง loadVatInputRows() แยกทีละไฟล์ทันที ──
+    // ── ซึ่งแต่ละไฟล์ทำงาน Async กันคนละจังหวะ ไฟล์หลังจะ setVatInputRows() ทับไฟล์แรกจนเหลือไฟล์เดียว) ──
+    // ── รอให้อ่านครบทุกไฟล์ในรอบ Drop นี้ก่อน (นับจาก reader.onload/onerror ของทุกไฟล์) แล้วค่อย Load รวมทีเดียว ──
+    let vatInputCombinedRows = [];
+    const vatInputLabelCounts = {};
+    let vatInputFilesRemaining = files.length;
+    const maybeFlushVatInput = () => {
+      vatInputFilesRemaining -= 1;
+      if (vatInputFilesRemaining > 0) return;
+      if (vatInputCombinedRows.length === 0) return;
+      const label = Object.entries(vatInputLabelCounts).map(([k, c]) => c > 1 ? `${k} x${c}` : k).join(' + ');
+      loadVatInputRows(vatInputCombinedRows, label);
+    };
+
     // อ่านแต่ละไฟล์ด้วย SheetJS
     files.forEach((file, idx) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
+          // MARKER_VATINPUT_DETECT_FILE_OUT_V1 -- Auto-detect "Input" (.out ดิบ) ก่อนพยายามอ่านเป็น Excel
+          // (.out เป็น Fixed-width Text ดิบ ไม่ใช่ Excel จริง — ถ้าปล่อยให้ XLSX.read พยายาม Parse
+          // จะไม่ Error แต่ได้ Header/แถวมั่วๆ ออกมาแทน เห็นเป็นตาราง APN01 ว่างเปล่าทั้งตาราง)
+          // เช็คแค่ไฟล์นามสกุล .out เท่านั้น (กันไม่ให้ไป Decode ไฟล์ .xlsx จริงเป็น Text แล้วเผลอ Match มั่วๆ
+          // จน Simple .xlsx ที่ทำงานปกติอยู่แล้วหลุดไป Flow ผิด)
+          if (/\.out$/i.test(file.name)) {
+            const vatInputRawText = decodeVatInputFileText(e.target.result);
+            if (vatInputRawText && detectVatInputRawText(vatInputRawText)) {
+              const inputRows = parseVatInputRawText(vatInputRawText);
+              setFileQueue(prev => prev.filter((_, i) => i !== idx)); // เอาไฟล์นี้ออกจาก Queue ปกติ ไม่ให้ปนกับ APN01
+              if (inputRows.length > 0) {
+                vatInputCombinedRows = vatInputCombinedRows.concat(inputRows); // MARKER_VATINPUT_MULTIFILE_V1
+                vatInputLabelCounts['Input (.out)'] = (vatInputLabelCounts['Input (.out)'] || 0) + 1;
+              } else {
+                showToast(`ไม่พบแถวที่เข้าเงื่อนไข GRT หลักที่ 2-3 = 41/71/91 ในไฟล์ ${file.name}`, 'error'); // MARKER_VATINPUT_GRT_FILTER_V1
+              }
+              maybeFlushVatInput();
+              return;
+            }
+          }
           const XLSX = require('xlsx');
           const wb   = XLSX.read(e.target.result, { type: 'array', cellText: false, cellDates: true });
           const ws   = wb.Sheets[wb.SheetNames[0]];
 
           // ── อ่านทุก row เป็น array ก่อน (raw:false เพื่อให้ Date เป็น string) ──
           const allRows = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '', header: 1 });
+
+          // MARKER_VATINPUT_REVIEW_XLSX_V1 -- Auto-detect "Input Review" (.xlsx Format ใหม่ ดึงง่ายกว่า .out)
+          // เช็คก่อน Simple เพราะ Header เฉพาะตัวกว่า (Simple เช็คแค่ Column C เป็นเลขล้วน กว้างกว่า)
+          if (detectVatInputReviewXlsx(allRows)) {
+            const reviewRows = parseVatInputReviewXlsxRows(allRows);
+            setFileQueue(prev => prev.filter((_, i) => i !== idx)); // เอาไฟล์นี้ออกจาก Queue ปกติ ไม่ให้ปนกับ APN01
+            if (reviewRows.length > 0) {
+              vatInputCombinedRows = vatInputCombinedRows.concat(reviewRows); // MARKER_VATINPUT_MULTIFILE_V1
+              vatInputLabelCounts['Input Review (.xlsx)'] = (vatInputLabelCounts['Input Review (.xlsx)'] || 0) + 1;
+            } else {
+              showToast(`ไม่พบแถวที่เข้าเงื่อนไข GRT หลักที่ 2-3 = 41/71/91 ในไฟล์ ${file.name}`, 'error'); // MARKER_VATINPUT_GRT_FILTER_V1
+            }
+            maybeFlushVatInput();
+            return;
+          }
+
+          // MARKER_VATINPUT_DETECT_FILE_V1 -- Auto-detect "Simple" Report VAT (.xlsx) ก่อน Flow APN01/AP07 ปกติ
+          if (detectVatSimpleSheet(allRows)) {
+            const simpleRows = parseVatSimpleXlsxRows(allRows);
+            setFileQueue(prev => prev.filter((_, i) => i !== idx)); // เอาไฟล์นี้ออกจาก Queue ปกติ ไม่ให้ปนกับ APN01
+            if (simpleRows.length > 0) {
+              vatInputCombinedRows = vatInputCombinedRows.concat(simpleRows); // MARKER_VATINPUT_MULTIFILE_V1
+              vatInputLabelCounts['Simple (.xlsx)'] = (vatInputLabelCounts['Simple (.xlsx)'] || 0) + 1;
+            }
+            maybeFlushVatInput();
+            return;
+          }
 
           // ── ดึง metadata จาก A1-A4 (col 0 = label, col 1 = value) ──
           const getCellVal = (rowIdx) => String(allRows[rowIdx]?.[1] || '').trim();
@@ -1556,9 +2316,15 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
               setFileQueue(prev => prev.map((f, i) => i === idx ? { ...f, dupWarnings: _dw, ap09DupWarnings: _adw } : f));
             } catch(_) {}
           })();
+          maybeFlushVatInput(); // MARKER_VATINPUT_MULTIFILE_V1 -- ไฟล์ที่ไม่ใช่ Input (เข้า Flow APN01/AP07 ปกติ) ก็ต้องนับด้วย ไม่งั้นตัวนับค้าง
         } catch (err) {
           setFileQueue(prev => prev.map((f, i) => i === idx ? { ...f, loading: false, status: 'error', error: 'อ่านไฟล์ไม่ได้: ' + err.message } : f));
+          maybeFlushVatInput(); // MARKER_VATINPUT_MULTIFILE_V1 -- อ่านไฟล์นี้พังก็ต้องนับ ไม่งั้นไฟล์ Input อื่นที่รออยู่จะไม่ถูก Flush
         }
+      };
+      reader.onerror = () => {
+        setFileQueue(prev => prev.map((f, i) => i === idx ? { ...f, loading: false, status: 'error', error: 'อ่านไฟล์ไม่ได้' } : f));
+        maybeFlushVatInput(); // MARKER_VATINPUT_MULTIFILE_V1
       };
       reader.readAsArrayBuffer(file);
     });
@@ -1641,9 +2407,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       const buCode = serial.split('_')[0] || null;
       let buCodeName=null, buNameThai=null;
       if (buCode) {
-        const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', buCode).maybeSingle();
-        buCodeName = buData?.bu_code_name || null;
-        buNameThai = buData?.['THAI COMPANY NAME'] || null;
+        const cl = await lookupCompanyByBu(db, buCode);
+        buCodeName = cl?.bu_code_name || null;
+        buNameThai = cl?.thaiName || null;
       }
       if (target === 'APN01' || target === 'Both') {
         await db.from('doc_collection').insert([{
@@ -1654,6 +2420,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           file_date: parsedRows[0]?.['Invoice Date'] || parsedRows[0]?.['Receive Date'] || now.split('T')[0],
           uploaded_by: userName || currentUser?.email || '',
           created_at: now, updated_at: now,
+          fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
         }]);
       }
       if (target === 'AP09' || target === 'Both') {
@@ -1668,6 +2435,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
             file_date: ap09Rows[0]?.['Receive Date'] || now.split('T')[0],
             uploaded_by: userName || currentUser?.email || '',
             created_at: now, updated_at: now,
+            fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
           }]);
         }
       }
@@ -1698,9 +2466,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
 
       // lookup BU info
       let buCodeName = null, buNameThai = null;
-      const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', bu).maybeSingle();
-      buCodeName = buData?.bu_code_name || null;
-      buNameThai = buData?.['THAI COMPANY NAME'] || null;
+      const cl = await lookupCompanyByBu(db, bu);
+      buCodeName = cl?.bu_code_name || null;
+      buNameThai = cl?.thaiName || null;
 
       // insert batch ใหม่ status='active'
       const _submitNow = new Date().toISOString();
@@ -1720,6 +2488,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         uploaded_by:   userName || currentUser?.email || '',
         created_at:    _submitNow,
         updated_at:    _submitNow,
+        fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
       }]);
       if (insErr) throw insErr;
 
@@ -1756,9 +2525,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         let buNameThai = f.metaBuName || null;
         let buCodeName = f.metaBuCode || null;
         if (buCodeShort && buCodeShort !== 'XX') {
-          const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', buCodeShort).maybeSingle();
-          if (buData?.["THAI COMPANY NAME"]) buNameThai = buData["THAI COMPANY NAME"];
-          if (buData?.bu_code_name) buCodeName = buData.bu_code_name;
+          const cl = await lookupCompanyByBu(db, buCodeShort);
+          if (cl?.thaiName) buNameThai = cl.thaiName;
+          if (cl?.bu_code_name) buCodeName = cl.bu_code_name;
         }
         // Duplicate check — invoice-level (serial gen ใหม่ทุกครั้งจึงเช็ค serial ซ้ำไม่ได้ ต้องเช็คที่ Invoice Number จริง) + recheck doc_type
         const apn01Dups = await checkAllDuplicates(db, f.rows, serial, 'APN01');
@@ -1787,6 +2556,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           file_date:    (f.metaReceiveDate && f.metaReceiveDate !== '0' && !isNaN(Date.parse(f.metaReceiveDate))) ? f.metaReceiveDate : now.split('T')[0],
           uploaded_by:  userName || currentUser?.email || '',
           created_at:   now, updated_at: now,
+          fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
         }]);
         if (err) throw err;
         // insert AP09 draft แยก record ถ้ามีข้อมูลเหลือหลังกรองซ้ำ
@@ -1801,6 +2571,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
             file_date:    cleanAP09[0]?.['Receive Date'] || ap09Now.split('T')[0],
             uploaded_by:  userName || currentUser?.email || '',
             created_at:   ap09Now, updated_at: ap09Now,
+            fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
           }]);
         }
         setFileQueue(prev => prev.map(p => p.name === f.name ? { ...p, status:'done' } : p));
@@ -1809,6 +2580,144 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
       setFileQueue([]); setSelectedFileIdx(0);
       loadDrafts();
     } catch(e) { setError('บันทึก Draft ไม่สำเร็จ: ' + (e?.message || e?.details || e?.hint || JSON.stringify(e))); }
+    setSaving(false);
+  };
+
+  // MARKER_VATINPUT_CLEANUP_APN01DRAFT_V1
+  // ── Inputsummary ใหญ่กว่า Draft อื่นเสมอ (ทั้ง Invoice Register/APN01 และ AP09 Draft ปกติ) ──
+  // ── Duplicate ที่เจอกับ Record สถานะ "Report" (active) ปล่อยให้ Logic เช็คปกติจัดการ ──
+  // ── (เตือน/ไม่เลือกอัตโนมัติ — ดู MARKER_VATINPUT_DUP_STATUS_SPLIT_V1) ──
+  // ── ส่วน Duplicate ที่เจอกับ Record สถานะ "Draft" ให้ลบแถวเดียวกันออกจาก Draft เดิมทิ้ง ──
+  // ── กันไม่ให้ข้อมูลซ้ำค้างอยู่ทั้ง 2 ที่ตอน Submit Draft ในอนาคต — excludeId กันลบ Draft ──
+  // ── ตัวที่เพิ่ง Save/Merge เข้าไปเอง (กรณี Merge เข้า Draft Inputsummary เดิม) ──
+  const cleanupApn01DraftDuplicates = async (savedRows, excludeId, excludeSerial) => {
+    const taxSet = new Set(savedRows.map(r => String(r['Tax Invoice No.']||'').trim().toLowerCase()).filter(Boolean));
+    if (taxSet.size === 0) return;
+    const isExcluded = (d) => (excludeId && d.id === excludeId) || (excludeSerial && d.serial_code === excludeSerial);
+    try {
+      let totalRemoved = 0, touchedSerials = [];
+
+      // 1) Draft APN01 (Invoice Register) — ลบแถวดิบที่ [ ] ถอดออกมาเป็น AP09 แล้วตรงกับ Tax Invoice No. ที่ซ้ำ
+      const { data: apn01Drafts } = await db.from('doc_collection').select('id,serial_code,rows').eq('doc_type','APN01').eq('status','draft');
+      for (const d of (apn01Drafts||[])) {
+        if (isExcluded(d)) continue;
+        const embeddedAP09 = parseAP09RowsFromRaw(d.rows||[]);
+        const dupTaxNos = new Set(embeddedAP09.filter(r => taxSet.has(String(r['Tax Invoice No.']||'').trim().toLowerCase())).map(r => String(r['Tax Invoice No.']||'').trim().toLowerCase()));
+        if (dupTaxNos.size === 0) continue;
+        // ลบเฉพาะแถวดิบใน rows ที่ [ ] ถอดออกมาแล้วตรงกับ Tax Invoice No. ที่ซ้ำ
+        const newRows = (d.rows||[]).filter(r => {
+          const parts = smartSplitBracket(r['[ ]']);
+          const yesIdx = parts.findIndex(p => p.toLowerCase()==='yes');
+          if (yesIdx < 0) return true; // ไม่ใช่แถวที่ Gen AP09 อยู่แล้ว เก็บไว้
+          const taxNo = (parts[yesIdx+4]||'').trim().toLowerCase();
+          return !dupTaxNos.has(taxNo);
+        });
+        if (newRows.length !== (d.rows||[]).length) {
+          await db.from('doc_collection').update({ rows: newRows, updated_at: new Date().toISOString() }).eq('id', d.id);
+          totalRemoved += (d.rows||[]).length - newRows.length;
+          touchedSerials.push(d.serial_code);
+        }
+      }
+
+      // 2) Draft AP09 ปกติ (รวม Inputsummary Draft ของ BU อื่นถ้ามี) — ลบแถวตรงๆ ที่ Tax Invoice No. ซ้ำ
+      const { data: ap09Drafts } = await db.from('doc_collection').select('id,serial_code,rows').eq('doc_type','AP09').eq('status','draft');
+      for (const d of (ap09Drafts||[])) {
+        if (isExcluded(d)) continue;
+        const newRows = (d.rows||[]).filter(r => !taxSet.has(String(r['Tax Invoice No.']||'').trim().toLowerCase()));
+        if (newRows.length !== (d.rows||[]).length) {
+          await db.from('doc_collection').update({ rows: newRows, updated_at: new Date().toISOString() }).eq('id', d.id);
+          totalRemoved += (d.rows||[]).length - newRows.length;
+          touchedSerials.push(d.serial_code);
+        }
+      }
+
+      if (totalRemoved > 0) {
+        showToast(`Inputsummary ทับ Draft เดิม — ลบแถวซ้ำ ${totalRemoved} แถวจาก ${touchedSerials.join(', ')}`, 'warning');
+        loadDrafts();
+      }
+    } catch(e) { console.error('[cleanupApn01DraftDuplicates]', e); }
+  };
+
+  // MARKER_VATINPUT_SAVE_V1 -- Save/Save Draft สำหรับ Input(.out)/Simple(.xlsx) → AP09-only
+  const handleSaveVatInput = (isDraft) => {
+    const selRows = vatInputRows.filter((_,i) => vatInputSelected.has(i));
+    if (selRows.length === 0) return;
+    if (isDraft) { setVatInputConfirmModal({ rows: selRows }); return; }
+    doSaveVatInputFinal(selRows);
+  };
+
+  const doSaveVatInputDraft = async (rows) => {
+    setSaving(true);
+    try {
+      const serial = (serialCode||'').trim() || genInputSummarySerial('XX');
+      const buCode = serial.split('_')[0] || null;
+      let buCodeName=null, buNameThai=null;
+      if (buCode && buCode!=='XX') {
+        const cl = await lookupCompanyByBu(db, buCode);
+        buCodeName = cl?.bu_code_name || null;
+        buNameThai = cl?.thaiName || null;
+      }
+      const now = new Date().toISOString();
+      // เช็คว่ามี Draft "Inputsummary" ค้างอยู่ของ BU เดียวกันรึยัง — ถ้ามี Merge เข้าเดิม คงไว้ 1 Record
+      const { data: existing } = await db.from('doc_collection').select('*')
+        .eq('status','draft').eq('doc_type','AP09').eq('doc_name','Inputsummary').eq('bu_code', buCode).maybeSingle();
+      let targetDraftId = null; // MARKER_VATINPUT_CLEANUP_APN01DRAFT_V1 -- กัน Cleanup ลบ Draft ตัวที่เพิ่ง Save/Merge เข้าไปเอง
+      if (existing) {
+        const existingTax = new Set((existing.rows||[]).map(r=>String(r['Tax Invoice No.']||'').trim().toLowerCase()));
+        const newOnly = rows.filter(r=>!existingTax.has(String(r['Tax Invoice No.']||'').trim().toLowerCase()));
+        const mergedRows = [...(existing.rows||[]), ...newOnly];
+        await db.from('doc_collection').update({ rows: mergedRows, updated_at: now }).eq('id', existing.id); // MARKER_DOCCOLLECTION_VATINPUT_FILLSTART_REFINE_V1 -- Draft ยังไม่นับ fill_started_at
+        targetDraftId = existing.id;
+        showToast(`Merge เข้า Draft เดิม (${existing.serial_code}) — รวม ${mergedRows.length} แถว`);
+      } else {
+        const { data: inserted } = await db.from('doc_collection').insert([{
+          serial_code: serial, doc_type: 'AP09', doc_name: 'Inputsummary',
+          bu_code: buCode, bu_code_name: buCodeName, bu_name: buNameThai,
+          rows: rows, attachments: [], source: 'upload', status: 'draft',
+          file_date: rows[0]?.['Receive Date'] || now.split('T')[0],
+          uploaded_by: userName || currentUser?.email || '',
+          created_at: now, updated_at: now, // MARKER_DOCCOLLECTION_VATINPUT_FILLSTART_REFINE_V1 -- Draft ยังไม่นับ fill_started_at
+        }]);
+        targetDraftId = inserted?.[0]?.id || null;
+        showToast(`บันทึก Draft Inputsummary ใหม่ (${serial}) — ${rows.length} แถว`);
+      }
+      await cleanupApn01DraftDuplicates(rows, targetDraftId, existing ? existing.serial_code : serial);
+      loadDrafts();
+      // MARKER_VATINPUT_DUP_REFRESH_V1 -- Save Draft แล้ว sync สถานะ Dup %/Updated by ใน Preview ทันที
+      refreshVatInputDupCheck(vatInputRows);
+      // ── ไม่เคลียร์ Preview — ให้ทยอยวาง/โยนไฟล์ก้อนถัดไปต่อได้ทันที ──
+    } catch(e) { setError('บันทึก Draft ไม่สำเร็จ: ' + (e?.message||e?.details||e?.hint||JSON.stringify(e))); }
+    setSaving(false);
+  };
+
+  const doSaveVatInputFinal = async (rows) => {
+    setSaving(true);
+    try {
+      const serial = (serialCode||'').trim() || genInputSummarySerial('XX');
+      const buCode = serial.split('_')[0] || null;
+      let buCodeName=null, buNameThai=null;
+      if (buCode && buCode!=='XX') {
+        const cl = await lookupCompanyByBu(db, buCode);
+        buCodeName = cl?.bu_code_name || null;
+        buNameThai = cl?.thaiName || null;
+      }
+      const now = new Date().toISOString();
+      const { error: err } = await db.from('doc_collection').insert([{
+        serial_code: serial, doc_type: 'AP09', doc_name: 'Inputsummary',
+        bu_code: buCode, bu_code_name: buCodeName, bu_name: buNameThai,
+        rows: rows, attachments: [], source: 'upload', status: 'active',
+        file_date: rows[0]?.['Receive Date'] || now.split('T')[0],
+        uploaded_by: userName || currentUser?.email || '',
+        created_at: now, updated_at: now,
+        fill_started_at: vatInputFillStartedAtRef.current ? vatInputFillStartedAtRef.current.toISOString() : now, // MARKER_VATINPUT_FILLSTART_CHECKBOX_V1 -- ใช้เวลาติ๊ก Checkbox แรกใน Preview เป็นจุดเริ่ม (ไม่ใช่เวลา Submit) Fallback เป็น now ถ้าไม่มีค่า (กันเคส Edge)
+        cross_check: { checked: [], started_at: (vatInputFillStartedAtRef.current ? vatInputFillStartedAtRef.current.toISOString() : now), confirmed: true, confirmed_at: now, confirmed_by: userName || currentUser?.email || '', completed_at: now }, // MARKER_VATINPUT_FILLSTART_CHECKBOX_V1 -- "บันทึกเลย" ถือเป็น Confirm ในตัวทันที (ระบบรู้อยู่แล้วว่าเป็น Inputsummary) ไม่ต้องเข้า Cross Check ซ้ำ
+      }]);
+      if (err) throw err;
+      await cleanupApn01DraftDuplicates(rows);
+      showToast(`บันทึกสำเร็จ — ${rows.length} แถว → ${serial}`);
+      setVatInputRows([]); setVatInputSelected(new Set()); setVatInputDupTax(new Set()); setVatInputDupMap({}); setVatInputSourceLabel(''); setSerialCode(''); setVatInputPeekDraft(false); // MARKER_VATINPUT_PEEK_DRAFT_V1
+      onSave();
+    } catch(e) { setError('เกิดข้อผิดพลาด: ' + e.message); }
     setSaving(false);
   };
 
@@ -1830,9 +2739,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
         const buCode = serial.split('_')[0] || null;
         let buCodeName = null, buNameThai = null;
         if (buCode) {
-          const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', buCode).maybeSingle();
-          buCodeName = buData?.bu_code_name || null;
-          buNameThai = buData?.['THAI COMPANY NAME'] || null;
+          const cl = await lookupCompanyByBu(db, buCode);
+          buCodeName = cl?.bu_code_name || null;
+          buNameThai = cl?.thaiName || null;
         }
         const _apSer = serial.replace('APN01','AP09').replace('Invoice Register','Input Tax Invoice');
         const _finalAP09 = _apSer !== serial ? _apSer : serial+'_AP09';
@@ -1864,6 +2773,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           uploaded_by:  userName || currentUser?.email || '',
           created_at:   now,
           updated_at:   now,
+          fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
         }]);
         if (err) throw err;
 
@@ -1883,6 +2793,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
               uploaded_by:  userName || currentUser?.email || '',
               created_at:   ap09Now,
               updated_at:   ap09Now,
+              fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
             }]);
         }
         setPasteText(''); setParsedRows([]); setParsedHeaders([]); setSerialCode(''); setFormatWarning(''); setDupWarnings([]);
@@ -1913,9 +2824,9 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           let buNameThai    = f.metaBuName || null;
           let buCodeName    = f.metaBuCode || null;
           if (buCodeShort && buCodeShort !== 'XX') {
-            const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', buCodeShort).maybeSingle();
-            if (buData?.["THAI COMPANY NAME"]) buNameThai = buData["THAI COMPANY NAME"];
-            if (buData?.bu_code_name) buCodeName = buData.bu_code_name;
+            const cl = await lookupCompanyByBu(db, buCodeShort);
+            if (cl?.thaiName) buNameThai = cl.thaiName;
+            if (cl?.bu_code_name) buCodeName = cl.bu_code_name;
           }
           // Duplicate check — invoice-level (เหมือน Paste tab และ Preview columns) กันซ้ำข้าม serial + recheck doc_type
           const apn01Dups = await checkAllDuplicates(db, f.rows, serial, 'APN01');
@@ -1951,6 +2862,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
             uploaded_by:  userName || currentUser?.email || '',
             created_at:   now,
             updated_at:   now,
+            fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
           };
           const { data: insertData, error: err } = await db.from('doc_collection').insert([insertPayload]).select();
           console.log('[insert result] data:', insertData, 'error:', err);
@@ -1971,6 +2883,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
               uploaded_by:  userName || currentUser?.email || '',
               created_at:   ap09Now,
               updated_at:   ap09Now,
+              fill_started_at: docCollectionFillStartedAtRef.current ? docCollectionFillStartedAtRef.current.toISOString() : null, /* MARKER_DOCCOLLECTION_FILLTIME_V2 */
             }]);
           }
           setFileQueue(prev => prev.map(p => p.name === f.name ? { ...p, status:'done' } : p));
@@ -2031,7 +2944,37 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                 setSelectedDraft(null); setSelectedDraftIds([]);
               }
               setConfirmDraftDelete(null); loadDrafts();
+              // MARKER_VATINPUT_DUP_REFRESH_V1 -- ลบ Draft แล้ว sync สถานะ Dup %/Updated by ใน Preview ทันที (ถ้ามี Preview ค้างอยู่)
+              if (vatInputRows.length > 0) {
+                // MARKER_VATINPUT_UNSELECT_AFTER_DELETE_V1 -- Auto Unselect เฉพาะแถวที่เพิ่งลบ Draft ไป กันติ๊กค้าง
+                const deletedIds = confirmDraftDelete.multi ? confirmDraftDelete.ids : [confirmDraftDelete.id];
+                setVatInputSelected(prev => {
+                  const n = new Set(prev);
+                  vatInputRows.forEach((r, idx) => {
+                    const tk = String(r['Tax Invoice No.']||'').trim().toLowerCase();
+                    const di = vatInputDupMap[tk];
+                    if (di && deletedIds.includes(di.id)) n.delete(idx);
+                  });
+                  return n;
+                });
+                refreshVatInputDupCheck(vatInputRows);
+              }
             }} style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:'#c0392b',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}>ลบ</button>
+          </div>
+        </div>
+      </div>
+    )}
+    {vatInputConfirmModal && (
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:100000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <div style={{background:'white',borderRadius:'12px',border:'0.5px solid #e0e0e0',width:'360px',overflow:'hidden'}}>
+          <div style={{padding:'14px 18px',borderBottom:'0.5px solid #f0f0f0'}}>
+            <div style={{fontSize:'13px',fontWeight:'500',color:'#1a3a5c'}}>📋 บันทึก Draft Inputsummary</div>
+            <div style={{fontSize:'11px',color:'#888',marginTop:'3px'}}>จะบันทึก {vatInputConfirmModal.rows.length} ใบเข้า Draft — ต้องการดำเนินการต่อหรือไม่?</div>
+          </div>
+          <div style={{padding:'14px 18px',display:'flex',justifyContent:'flex-end',gap:'8px'}}>
+            <button onClick={()=>setVatInputConfirmModal(null)} style={{padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer',color:'#555'}}>ยกเลิก</button>
+            <button onClick={async()=>{ const rows = vatInputConfirmModal.rows; setVatInputConfirmModal(null); await doSaveVatInputDraft(rows); }}
+              style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:'#1a3a5c',color:'white',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}>OK — ดำเนินการต่อ</button>
           </div>
         </div>
       </div>
@@ -2107,7 +3050,119 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
           </div>
         ) : (
         <div style={{ padding:'0 18px 14px', overflowY:'auto', flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
-          {tab==='paste' ? (
+          {/* MARKER_VATINPUT_PREVIEW_UI_V1 -- Preview + Checkbox-select สำหรับ Input(.out)/Simple(.xlsx) → AP09-only */}
+          {/* MARKER_VATINPUT_PEEK_DRAFT_V1 -- ถ้ากด "ดู Draft" ไว้ ให้สลับไปโชว์ฝั่ง Tab ปกติ (pasteSubTab==='draft') ชั่วคราว
+              โดยไม่ล้าง vatInputRows/vatInputSelected ทิ้ง กด "กลับไป Preview" แล้ว Preview เดิมจะกลับมาเหมือนเดิมทุกอย่าง */}
+          {vatInputRows.length > 0 && !vatInputPeekDraft ? (() => {
+            // MARKER_VATINPUT_SEARCH_V1 -- Search ได้ทุกคอลัมน์ (Branch/Vendor/Date/GRT/Tax Invoice/Description/ยอด)
+            // Filter ตารางเหลือแค่แถวที่ตรงเงื่อนไข ส่วน Select/Highlight ยังทำทีละแถวได้ตามปกติ (Index อ้างอิง vatInputRows เดิมเสมอ)
+            const VAT_INPUT_SEARCH_COLS = ['Branch','Vendor Name','Receive Date','GRT No.','Tax Invoice Date','Tax Invoice No.','Description','ยอดก่อนภาษี','ยอดภาษี','ยอดรวม'];
+            const searchTerm = vatInputSearch.trim().toLowerCase();
+            const filteredIdx = searchTerm === ''
+              ? vatInputRows.map((_, i) => i)
+              : vatInputRows.reduce((acc, row, i) => {
+                  const hit = VAT_INPUT_SEARCH_COLS.some(h => String(row[h] ?? '').toLowerCase().includes(searchTerm));
+                  if (hit) acc.push(i);
+                  return acc;
+                }, []);
+            const allFilteredChecked = filteredIdx.length > 0 && filteredIdx.every(i => vatInputSelected.has(i));
+            const fmtVatInputDupDate = (d) => { try { return new Date(d).toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'2-digit'}); } catch(_) { return d ? String(d).slice(0,10) : '—'; } };
+            return (
+            <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
+              <div style={{ padding:'8px 0',borderBottom:'0.5px solid #f0f0f0',flexShrink:0,display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap' }}>
+                <span style={{ fontSize:'11px',padding:'2px 10px',borderRadius:'20px',background:'#0F6E56',color:'white',border:'0.5px solid #0F6E56' }}>AP09 · {vatInputSourceLabel}</span>
+                <span style={{ fontSize:'11px',color:'#0C447C',fontWeight:'500' }}>เลือกแล้ว {vatInputSelected.size} / {vatInputRows.length} ใบ</span>
+                {/* MARKER_VATINPUT_DUP_DISPLAY_V1 -- เอา Banner สรุปด้านบนออก ย้ายไปโชว์ Inline ต่อแถวในตาราง
+                    (Dup %/Updated by/Updated at + Highlight สีต่อแถว) แทน ไม่ต้องอ่านสรุปแยกอีกที่ */}
+                <div style={{ position:'relative',marginLeft:'auto' }}>
+                  <input type="text" value={vatInputSearch} onChange={e=>setVatInputSearch(e.target.value)}
+                    placeholder="🔍 ค้นหา (ทุกคอลัมน์)..."
+                    style={{ fontSize:'11px',padding:'4px 10px',borderRadius:'6px',border:'0.5px solid #ccc',width:'200px',outline:'none' }}/>
+                  {vatInputSearch && (
+                    <button onClick={()=>setVatInputSearch('')} title="ล้างคำค้นหา"
+                      style={{ position:'absolute',right:'4px',top:'50%',transform:'translateY(-50%)',border:'none',background:'transparent',color:'#999',cursor:'pointer',fontSize:'11px',padding:'2px 4px' }}>✕</button>
+                  )}
+                </div>
+                {searchTerm !== '' && <span style={{ fontSize:'10px',color:'#888' }}>พบ {filteredIdx.length} / {vatInputRows.length} แถว</span>}
+                {/* MARKER_VATINPUT_PEEK_DRAFT_V1 -- ดู Draft ระหว่างมี Preview ค้างอยู่ได้ ไม่ต้อง Cancel ออกไปหน้าแรก */}
+                <button onClick={()=>{ setPasteSubTab('draft'); setDraftLevel(1); setDraftDocType(null); setDraftBU(null); setSelectedDraftIds([]); setSelectedDraft(null); loadDrafts(); setVatInputPeekDraft(true); }}
+                  style={{ fontSize:'11px',padding:'3px 10px',borderRadius:'6px',border:'0.5px solid #c8d8ec',background:'#f0f6ff',color:'#1a3a5c',cursor:'pointer',fontWeight:'500' }}>📋 ดู Draft</button>
+                <button onClick={()=>{ setVatInputRows([]); setVatInputSelected(new Set()); setVatInputDupTax(new Set()); setVatInputDupMap({}); setVatInputSourceLabel(''); setVatInputSearch(''); setVatInputPeekDraft(false); }}
+                  style={{ fontSize:'11px',padding:'3px 10px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',color:'#791F1F',cursor:'pointer' }}>✕ ล้าง</button>
+              </div>
+              <div style={{ flex:1,overflow:'auto',border:'0.5px solid #e8e8e8',borderRadius:'6px',marginTop:'8px' }}>
+                <table style={{borderCollapse:'collapse',fontSize:'10px',whiteSpace:'nowrap',minWidth:'100%'}}>
+                  <thead><tr>
+                    <th style={{padding:'5px 8px',background:'#0F6E56',position:'sticky',top:0,zIndex:1,textAlign:'center',width:'28px'}}>
+                      <input type="checkbox"
+                        checked={allFilteredChecked}
+                        onChange={e=>setVatInputSelected(prev=>{
+                          const n = new Set(prev);
+                          filteredIdx.forEach(i => e.target.checked ? n.add(i) : n.delete(i));
+                          return n;
+                        })}
+                        style={{cursor:'pointer'}}/>
+                    </th>
+                    <th style={{padding:'5px 8px',background:'#0F6E56',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'center',position:'sticky',top:0,zIndex:1,width:'32px'}}>#</th>
+                    {/* MARKER_VATINPUT_FULLAMOUNT_ONLY_V1 -- Preview เหลือแค่ 10 คอลัมน์ Shape AP09 ปกติ ไม่มี ยอด/ภาษี/% ที่ใช้สิทธิ์ */}
+                    {VAT_INPUT_SEARCH_COLS.map((h,i)=>{
+                      const isNum = ['ยอดก่อนภาษี','ยอดภาษี','ยอดรวม'].includes(h);
+                      return <th key={i} style={{padding:'5px 8px',background:'#0F6E56',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:isNum?'right':'left',position:'sticky',top:0,zIndex:1,borderRight:'0.5px solid rgba(255,255,255,0.1)'}}>{h}</th>;
+                    })}
+                    {/* MARKER_VATINPUT_DUP_DISPLAY_V1 -- คอลัมน์ Dup %/Updated by/Updated at เหมือน Preview ทั่วไป (ทุกสถานะ Report+Draft) */}
+                    <th style={{padding:'5px 8px',background:'#633806',color:'rgba(255,255,255,0.85)',fontWeight:'500',textAlign:'center',position:'sticky',top:0,zIndex:1}}>Dup %</th>
+                    <th style={{padding:'5px 8px',background:'#633806',color:'rgba(255,255,255,0.85)',fontWeight:'500',position:'sticky',top:0,zIndex:1}}>Updated by</th>
+                    <th style={{padding:'5px 8px',background:'#633806',color:'rgba(255,255,255,0.85)',fontWeight:'500',position:'sticky',top:0,zIndex:1,whiteSpace:'nowrap'}}>Updated at</th>
+                  </tr></thead>
+                  <tbody>{filteredIdx.length === 0 ? (
+                    <tr><td colSpan={15} style={{padding:'16px',textAlign:'center',color:'#999',fontSize:'11px'}}>ไม่พบแถวที่ตรงกับ "{vatInputSearch}"</td></tr>
+                  ) : filteredIdx.map(i => {
+                    const row = vatInputRows[i];
+                    const taxKey = String(row['Tax Invoice No.']||'').trim().toLowerCase();
+                    const isDup = vatInputDupTax.has(taxKey); // ซ้ำกับ Report(active) — กันเลือกอัตโนมัติ
+                    // MARKER_VATINPUT_DUP_DISPLAY_V1 -- dupInfo ครอบคลุมทุกสถานะ (Report+Draft) ไว้แสดงผลเฉยๆ
+                    const dupInfo = vatInputDupMap[taxKey];
+                    const isDraftDup = !!dupInfo && (dupInfo.status||'active')==='draft';
+                    const isChk = vatInputSelected.has(i);
+                    const NUM_COLS2 = ['ยอดก่อนภาษี','ยอดภาษี','ยอดรวม'];
+                    // MARKER_VATINPUT_SEARCH_V1 -- Select แล้ว Highlight ค้างไว้ตลอด (เหลือง) ทุกแถวที่ติ๊ก ไม่ใช่แค่แถวล่าสุด
+                    // ส่วน Hover ใช้สีน้ำเงินอ่อนแยกกันคนละสี (ชี้เมาส์ชั่วคราว ไม่ค้าง) ผ่าน onMouseEnter/onMouseLeave ด้านล่าง
+                    // MARKER_VATINPUT_DUP_DISPLAY_V1 -- แถวที่ซ้ำกับ Report(active) ต้องแดงเด่นไว้ก่อนเสมอ แม้จะถูกติ๊กเลือกอยู่ก็ตาม
+                    // (ใช้ Ring สีทองซ้อนทับแทนพื้นเหลืองเต็ม กันไม่ให้สัญญาณ "ซ้ำ Report" หายไปตอนเลือก)
+                    const rowBg = isDup ? '#F8D0D0' : isChk ? '#FFF6D8' : isDraftDup ? '#FFFBF0' : (i%2===0?'white':'#f8f9fa');
+                    return (
+                      <tr key={i} style={{background:rowBg, boxShadow:isChk?'inset 0 0 0 1px #E8B400':'none', cursor:'pointer'}}
+                        onMouseEnter={e=>e.currentTarget.style.background='#E8F0FE'}
+                        onMouseLeave={e=>e.currentTarget.style.background=rowBg}
+                        onDoubleClick={()=>setVatInputSelected(prev=>{ const n=new Set(prev); if(n.has(i)) n.delete(i); else n.add(i); return n; })}
+                        title="Double-click เพื่อเลือก/ยกเลิกทั้งแถว">
+                        <td style={{padding:'4px 8px',textAlign:'center'}}>
+                          <input type="checkbox" checked={isChk}
+                            onChange={e=>{
+                              setVatInputSelected(prev=>{ const n=new Set(prev); if(e.target.checked) n.add(i); else n.delete(i); return n; });
+                            }}
+                            style={{cursor:'pointer'}}/>
+                        </td>
+                        <td style={{padding:'4px 8px',textAlign:'center',color:'#aaa'}}>{i+1}</td>
+                        {VAT_INPUT_SEARCH_COLS.map((h,j)=>{
+                          const isNum = NUM_COLS2.includes(h);
+                          const v = row[h];
+                          const isDesc = h==='Description';
+                          const fv = isNum && v!==''&&v!=null ? Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : (v||'');
+                          return <td key={j} title={isDesc?String(fv):undefined} style={{padding:'4px 8px',borderBottom:'0.5px solid #f0f0f0',borderRight:'0.5px solid #f5f5f5',textAlign:isNum?'right':'left',maxWidth:isDesc?'160px':'none',overflow:isDesc?'hidden':'visible',textOverflow:isDesc?'ellipsis':'clip',whiteSpace:'nowrap',color:isDup?'#a55':'inherit'}}>{fv}</td>;
+                        })}
+                        {/* MARKER_VATINPUT_DUP_DISPLAY_V1 -- Draft ไม่กันเลือก แต่ยัง Explain ให้เห็นว่าเป็น Draft ที่จะถูกลบแทนที่ */}
+                        <td style={{padding:'4px 8px',textAlign:'center',borderBottom:'0.5px solid #f0f0f0',fontWeight:'500',color:dupInfo?(dupInfo.confidence>=90?'#791F1F':'#856404'):'#ccc'}}>{dupInfo?dupInfo.confidence+'%':'—'}</td>
+                        <td style={{padding:'4px 8px',borderBottom:'0.5px solid #f0f0f0',fontSize:'10px',color:dupInfo?'#555':'#ccc',whiteSpace:'nowrap'}}>{dupInfo?((isDraftDup?'Draft by ':'Report by ')+(dupInfo.uploadedBy||'—')+(isDraftDup?'':'')):'—'}</td>
+                        <td style={{padding:'4px 8px',borderBottom:'0.5px solid #f0f0f0',fontSize:'10px',color:dupInfo?'#888':'#ccc',whiteSpace:'nowrap'}}>{dupInfo?fmtVatInputDupDate(dupInfo.createdAt):'—'}</td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              </div>
+            </div>
+            );
+          })() : tab==='paste' ? (
             <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
               {/* sub-tabs: + New | Report / Draft */}
               <div style={{ display:'flex',borderBottom:'0.5px solid #eee',flexShrink:0,margin:'0 -18px',padding:'0 18px',background:'#f8f9fa' }}>
@@ -2133,6 +3188,14 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                   )}
                 </button>
               </div>
+              {/* MARKER_VATINPUT_PEEK_DRAFT_V1 -- แถบเตือนตอนแวะมาดู Draft ระหว่างมี Preview (Inputsummary) ค้างอยู่ */}
+              {vatInputPeekDraft && (
+                <div style={{padding:'6px 18px',margin:'0 -18px',background:'#EAF3FF',borderBottom:'0.5px solid #c8d8ec',flexShrink:0,display:'flex',alignItems:'center',gap:'8px'}}>
+                  <span style={{fontSize:'10px',color:'#1a3a5c'}}>📋 แวะมาดู Draft — Preview เดิม ({vatInputRows.length} แถว, เลือกแล้ว {vatInputSelected.size}) ยังอยู่ครบ</span>
+                  <button onClick={()=>setVatInputPeekDraft(false)}
+                    style={{marginLeft:'auto',fontSize:'10px',padding:'3px 10px',borderRadius:'6px',border:'0.5px solid #1a3a5c',background:'white',color:'#1a3a5c',cursor:'pointer',fontWeight:'500'}}>← กลับไป Preview</button>
+                </div>
+              )}
               {pasteSubTab==='draft' ? (
                 <div style={{display:'flex',flex:1,minHeight:0,marginTop:'8px',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden'}}>
                   {/* Left: list */}
@@ -2142,7 +3205,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                         if (!(draftLevel===2 && draftDocType && draftBU)) {
                           return <span style={{fontSize:'10px',color:'#bbb'}}>เลือก BU ก่อนจึงจะเลือกหลายรายการได้</span>;
                         }
-                        const scopedDrafts = drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU);
+                        const scopedDrafts = drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU);
                         const scopedIds = scopedDrafts.map(d=>d.id);
                         const selInScope = selectedDraftIds.filter(id=>scopedIds.includes(id));
                         const allChk = scopedDrafts.length>0 && selInScope.length===scopedDrafts.length;
@@ -2159,13 +3222,13 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                       <div style={{flex:1,overflowY:'auto'}}>
                         {draftsLoading&&<div style={{fontSize:'12px',color:'#888',padding:'20px',textAlign:'center'}}>กำลังโหลด...</div>}
                         {!draftsLoading&&drafts.length===0&&<div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>No Draft</div>}
-                        {['APN01','AP09','AP07'].filter(t=>drafts.some(d=>d.doc_type===t)).map(t=>{
-                          const cnt=drafts.filter(d=>d.doc_type===t).length;
-                          const label=t==='AP09'?'AP09 - Tax Invoice':t==='AP07'?'AP07':t+' - Invoice Register';
+                        {['APN01','AP09_SUMMARY','AP09','AP07'].filter(t=>drafts.some(d=>getDraftGroupKey(d)===t)).map(t=>{
+                          const cnt=drafts.filter(d=>getDraftGroupKey(d)===t).length;
+                          const label=getDraftGroupLabel(t);
                           return <div key={t} onClick={()=>{ setDraftDocType(t); setDraftLevel(2); setDraftBU(null); setSelectedDraftIds([]); setSelectedDraft(null); }}
                             style={{padding:'12px 14px',borderBottom:'0.5px solid #e8e8e8',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'white'}}>
                             <div>
-                              <div style={{fontSize:'12px',fontWeight:'500',color:t==='AP09'?'#0F6E56':'#1a3a5c'}}>{label}</div>
+                              <div style={{fontSize:'12px',fontWeight:'500',color:getDraftGroupColor(t)}}>{label}</div>
                               <div style={{fontSize:'10px',color:'#aaa',marginTop:'2px'}}>{cnt} draft</div>
                             </div>
                             <span style={{fontSize:'16px',color:'#ccc'}}>›</span>
@@ -2180,8 +3243,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                           <span style={{fontSize:'11px',fontWeight:'600',color:draftDocType==='AP09'?'#0F6E56':'#1a3a5c',marginLeft:'4px'}}>{draftDocType}</span>
                         </div>
                         <div style={{flex:1,overflowY:'auto'}}>
-                          {[...new Set(drafts.filter(d=>d.doc_type===draftDocType).map(d=>d.bu_code||(d.serial_code||'').split('_')[0]||'?'))].map(bu=>{
-                            const buDrafts=drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===bu);
+                          {[...new Set(drafts.filter(d=>getDraftGroupKey(d)===draftDocType).map(d=>d.bu_code||(d.serial_code||'').split('_')[0]||'?'))].map(bu=>{
+                            const buDrafts=drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===bu);
                             return <div key={bu} onClick={()=>{ setDraftBU(bu); setSelectedDraftIds([]); setSelectedDraft(null); }}
                               style={{padding:'10px 14px',borderBottom:'0.5px solid #e8e8e8',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'white'}}>
                               <div>
@@ -2204,7 +3267,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                         </div>
 
                         <div style={{flex:1,overflowY:'auto'}}>
-                          {drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
+                          {drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
                             const isChk=selectedDraftIds.includes(d.id);
                             const isSel=selectedDraft?.id===d.id;
                             return <div key={d.id} onClick={()=>{ setSelectedDraft(d); const newIds=selectedDraftIds.includes(d.id)?selectedDraftIds.filter(x=>x!==d.id):[...selectedDraftIds,d.id]; setSelectedDraftIds(newIds); const sel=drafts.filter(x=>newIds.includes(x.id)); if(sel.length>0){const bu=sel[0].bu_code||(sel[0].serial_code||'').split('_')[0]||'XX'; setSerialCode(genSerial(bu,sel[0].doc_type||'APN01'));} else setSerialCode(''); }}
@@ -2416,6 +3479,14 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                   )}
                 </button>
               </div>
+              {/* MARKER_VATINPUT_PEEK_DRAFT_V1 -- แถบเตือนตอนแวะมาดู Draft ระหว่างมี Preview (Inputsummary) ค้างอยู่ */}
+              {vatInputPeekDraft && (
+                <div style={{padding:'6px 18px',margin:'0 -18px',background:'#EAF3FF',borderBottom:'0.5px solid #c8d8ec',flexShrink:0,display:'flex',alignItems:'center',gap:'8px'}}>
+                  <span style={{fontSize:'10px',color:'#1a3a5c'}}>📋 แวะมาดู Draft — Preview เดิม ({vatInputRows.length} แถว, เลือกแล้ว {vatInputSelected.size}) ยังอยู่ครบ</span>
+                  <button onClick={()=>setVatInputPeekDraft(false)}
+                    style={{marginLeft:'auto',fontSize:'10px',padding:'3px 10px',borderRadius:'6px',border:'0.5px solid #1a3a5c',background:'white',color:'#1a3a5c',cursor:'pointer',fontWeight:'500'}}>← กลับไป Preview</button>
+                </div>
+              )}
               {pasteSubTab==='draft' ? (
                 <div style={{display:'flex',flex:1,minHeight:0,marginTop:'8px',border:'0.5px solid #e0e0e0',borderRadius:'8px',overflow:'hidden'}}>
                   {/* Left: list */}
@@ -2425,7 +3496,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                         if (!(draftLevel===2 && draftDocType && draftBU)) {
                           return <span style={{fontSize:'10px',color:'#bbb'}}>เลือก BU ก่อนจึงจะเลือกหลายรายการได้</span>;
                         }
-                        const scopedDrafts = drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU);
+                        const scopedDrafts = drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU);
                         const scopedIds = scopedDrafts.map(d=>d.id);
                         const selInScope = selectedDraftIds.filter(id=>scopedIds.includes(id));
                         const allChk = scopedDrafts.length>0 && selInScope.length===scopedDrafts.length;
@@ -2442,13 +3513,13 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                       <div style={{flex:1,overflowY:'auto'}}>
                         {draftsLoading&&<div style={{fontSize:'12px',color:'#888',padding:'20px',textAlign:'center'}}>กำลังโหลด...</div>}
                         {!draftsLoading&&drafts.length===0&&<div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>No Draft</div>}
-                        {['APN01','AP09','AP07'].filter(t=>drafts.some(d=>d.doc_type===t)).map(t=>{
-                          const cnt=drafts.filter(d=>d.doc_type===t).length;
-                          const label=t==='AP09'?'AP09 - Tax Invoice':t==='AP07'?'AP07':t+' - Invoice Register';
+                        {['APN01','AP09_SUMMARY','AP09','AP07'].filter(t=>drafts.some(d=>getDraftGroupKey(d)===t)).map(t=>{
+                          const cnt=drafts.filter(d=>getDraftGroupKey(d)===t).length;
+                          const label=getDraftGroupLabel(t);
                           return <div key={t} onClick={()=>{ setDraftDocType(t); setDraftLevel(2); setDraftBU(null); setSelectedDraftIds([]); setSelectedDraft(null); }}
                             style={{padding:'12px 14px',borderBottom:'0.5px solid #e8e8e8',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'white'}}>
                             <div>
-                              <div style={{fontSize:'12px',fontWeight:'500',color:t==='AP09'?'#0F6E56':'#1a3a5c'}}>{label}</div>
+                              <div style={{fontSize:'12px',fontWeight:'500',color:getDraftGroupColor(t)}}>{label}</div>
                               <div style={{fontSize:'10px',color:'#aaa',marginTop:'2px'}}>{cnt} draft</div>
                             </div>
                             <span style={{fontSize:'16px',color:'#ccc'}}>›</span>
@@ -2463,8 +3534,8 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                           <span style={{fontSize:'11px',fontWeight:'600',color:draftDocType==='AP09'?'#0F6E56':'#1a3a5c',marginLeft:'4px'}}>{draftDocType}</span>
                         </div>
                         <div style={{flex:1,overflowY:'auto'}}>
-                          {[...new Set(drafts.filter(d=>d.doc_type===draftDocType).map(d=>d.bu_code||(d.serial_code||'').split('_')[0]||'?'))].map(bu=>{
-                            const buDrafts=drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===bu);
+                          {[...new Set(drafts.filter(d=>getDraftGroupKey(d)===draftDocType).map(d=>d.bu_code||(d.serial_code||'').split('_')[0]||'?'))].map(bu=>{
+                            const buDrafts=drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===bu);
                             return <div key={bu} onClick={()=>{ setDraftBU(bu); setSelectedDraftIds([]); setSelectedDraft(null); }}
                               style={{padding:'10px 14px',borderBottom:'0.5px solid #e8e8e8',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'white'}}>
                               <div>
@@ -2487,7 +3558,7 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
                         </div>
 
                         <div style={{flex:1,overflowY:'auto'}}>
-                          {drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
+                          {drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
                             const isChk=selectedDraftIds.includes(d.id);
                             const isSel=selectedDraft?.id===d.id;
                             return <div key={d.id} onClick={()=>{ setSelectedDraft(d); const newIds=selectedDraftIds.includes(d.id)?selectedDraftIds.filter(x=>x!==d.id):[...selectedDraftIds,d.id]; setSelectedDraftIds(newIds); const sel=drafts.filter(x=>newIds.includes(x.id)); if(sel.length>0){const bu=sel[0].bu_code||(sel[0].serial_code||'').split('_')[0]||'XX'; setSerialCode(genSerial(bu,sel[0].doc_type||'APN01'));} else setSerialCode(''); }}
@@ -2724,6 +3795,38 @@ function AddFileModal({ folder, onClose, onSave, userName, currentUser, isOwner,
             {saving&&saveProgress>0 && <span style={{ fontSize:'11px',color:'#1a3a5c',fontWeight:'500' }}>{saveProgress}%</span>}
             <button style={{ padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #ddd',background:'white',fontSize:'12px',cursor:'pointer',color:'#555' }} onClick={onClose}>ยกเลิก</button>
             {(()=>{
+              // MARKER_VATINPUT_ACTIONBAR_V1 -- ปุ่ม Save/Save Draft เฉพาะโหมด Input(.out)/Simple(.xlsx)
+              if (vatInputRows.length > 0) {
+                const selCount = vatInputSelected.size;
+                // MARKER_VATINPUT_DELETE_DRAFT_INLINE_V1 -- รวบรวม Draft id (status==='draft') จากแถวที่ Select ไว้
+                // ในตาราง Preview นี้ ให้ลบได้เลยโดยไม่ต้องสลับไปแท็บ Report/Draft
+                const draftDupIds = [...vatInputSelected].reduce((acc, idx) => {
+                  const r = vatInputRows[idx];
+                  const tk = String(r['Tax Invoice No.']||'').trim().toLowerCase();
+                  const di = vatInputDupMap[tk];
+                  if (di && (di.status||'active')==='draft' && di.id && !acc.includes(di.id)) acc.push(di.id);
+                  return acc;
+                }, []);
+                return (
+                  <>
+                    {draftDupIds.length > 0 && (
+                      <button style={{padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',fontSize:'12px',cursor:'pointer',color:'#791F1F',fontWeight:'500'}}
+                        onClick={()=>setConfirmDraftDelete({multi:true, ids:draftDupIds, serial:`Draft ที่ซ้ำ ${draftDupIds.length} รายการ`})}
+                        disabled={saving}>
+                        🗑 ลบ Draft ซ้ำ ({draftDupIds.length})
+                      </button>
+                    )}
+                    <button style={{padding:'6px 14px',borderRadius:'6px',border:'0.5px solid #b5d4f4',background:'#E6F1FB',fontSize:'12px',cursor:selCount>0?'pointer':'default',color:'#0C447C',fontWeight:'500',opacity:selCount>0?1:0.5}}
+                      onClick={()=>selCount>0 && handleSaveVatInput(true)} disabled={saving||selCount===0}>
+                      {saving?'กำลังบันทึก...':`📋 บันทึก Draft (${selCount})`}
+                    </button>
+                    <button style={{padding:'6px 16px',borderRadius:'6px',border:'none',background:(saving||selCount===0)?'#ccc':'#1a3a5c',color:'white',fontSize:'12px',cursor:selCount>0?'pointer':'default',fontWeight:'500'}}
+                      onClick={()=>selCount>0 && handleSaveVatInput(false)} disabled={saving||selCount===0}>
+                      {saving?'กำลังบันทึก...':`💾 บันทึก (${selCount})`}
+                    </button>
+                  </>
+                );
+              }
               const isDraftTab = pasteSubTab==='draft'; // ทั้ง Paste tab และ File tab ใช้ pasteSubTab ร่วมกัน
               const isNewTab = tab==='paste' && pasteSubTab==='new';
               const isFileTab = tab==='file';
@@ -2838,7 +3941,7 @@ function mapRowsForExcel(rawRows, docType) {
   });
 }
 
-function DocDetailModal({ file, onClose, searchQuery='' }) {
+function DocDetailModal({ file, onClose, searchQuery='', userName, currentUser, onConfirmed }) {  // MARKER_DOCCOLLECTION_CROSSCHECK_SYNCAFTERCONFIRM_V1
   const rawRows = Array.isArray(file.rows) ? file.rows : [];
 
   const fmtNum = (n) => {
@@ -2863,6 +3966,89 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
 
   const API_BASE = 'http://10.101.87.126:4000/api';
   const [downloading, setDownloading] = useState(false);
+  // MARKER_DOCCOLLECTION_CROSSCHECK_V3 -- แยก "Draft" ออกจาก "Cross Check" เป็นคนละเงื่อนไขกัน
+  // isDraft: เอกสารที่ยังเป็น Draft (ไม่ว่า Module ไหน) Download ไม่ได้เด็ดขาด
+  // จนกว่าจะถูก Submit เป็น Active ก่อน -- ไม่เกี่ยวกับ Cross Check เลย
+  const isDraft = file.status === 'draft';
+  // requiresCrossCheck: ใช้ตัดสินเฉพาะเอกสาร Active แล้วเท่านั้น ว่าต้องตรวจก่อนถึง Download ได้
+  // Batch เก่า (ไม่มี fill_started_at) และ AP09 Inputsummary ที่ Save Final ตรง ไม่ต้องตรวจซ้ำ
+  const requiresCrossCheck = !isDraft && !!file.fill_started_at && !(file.doc_type === 'AP09' && file.doc_name === 'Inputsummary');
+  const [checkedRows, setCheckedRows] = useState(() => new Set(Array.isArray(file.cross_check?.checked) ? file.cross_check.checked : []));
+  const [confirmed, setConfirmed] = useState(!!file.cross_check?.confirmed);
+  const [checkCompletedAt, setCheckCompletedAt] = useState(file.cross_check?.completed_at || null);
+  // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1 -- เลิกใช้ checkStartedAtRef (นับตอนติ๊ก Checkbox แรก + ค้างค่าเดิมจาก DB ข้าม Session)
+  // เปลี่ยนเป็น viewFormOpenedAtRef ทั้งหมด (นับตอนเปิด View Form ทุกครั้ง, ปิดไม่ Confirm ไม่ค้างเวลาเก่า)
+  // MARKER_DOCCOLLECTION_CROSSCHECK_DASHBOARD_REPORT_V1 -- จับเวลาตอนเปิด View Form (Local เท่านั้น, Reset ทุกครั้งที่เปิด Modal ใหม่เพราะ Unmount/Remount)
+  const viewFormOpenedAtRef = React.useRef(null);
+  React.useEffect(() => { viewFormOpenedAtRef.current = new Date(); }, []);
+  const persistCrossCheck = (patch) => {
+    const payload = {
+      checked: Array.from(checkedRows),
+      started_at: viewFormOpenedAtRef.current ? viewFormOpenedAtRef.current.toISOString() : null, // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1
+      confirmed,
+      confirmed_at: file.cross_check?.confirmed_at || null,
+      confirmed_by: file.cross_check?.confirmed_by || null,
+      completed_at: checkCompletedAt,
+      ...patch,
+    };
+    (async () => {
+      try { await db.from('doc_collection').update({ cross_check: payload }).eq('id', file.id); }
+      catch (err) { console.error('[' + 'MARKER_DOCCOLLECTION_CROSSCHECK_HOTFIX_V1' + ']', err); }
+    })();
+    return payload;
+  };
+  const toggleRow = (idx) => {
+    setCheckedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1 -- ไม่ต้อง Set ตอนติ๊ก Checkbox แล้ว เพราะ viewFormOpenedAtRef Set ไปแล้วตั้งแต่ Mount
+      (async () => {
+        try {
+          await db.from('doc_collection').update({ cross_check: {
+            checked: Array.from(next),
+            started_at: viewFormOpenedAtRef.current ? viewFormOpenedAtRef.current.toISOString() : null, // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1
+            confirmed,
+            confirmed_at: file.cross_check?.confirmed_at || null,
+            confirmed_by: file.cross_check?.confirmed_by || null,
+            completed_at: checkCompletedAt,
+          } }).eq('id', file.id);
+        } catch (err) { console.error('[' + 'MARKER_DOCCOLLECTION_CROSSCHECK_HOTFIX_V1' + ']', err); }
+      })();
+      return next;
+    });
+  };
+  const toggleAll = () => {
+    setCheckedRows(prev => {
+      const allNow = prev.size === mappedRows.length && mappedRows.length > 0;
+      const next = allNow ? new Set() : new Set(mappedRows.map((_, i) => i));
+      // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1 -- ไม่ต้อง Set ตอนติ๊ก Checkbox แล้ว เพราะ viewFormOpenedAtRef Set ไปแล้วตั้งแต่ Mount
+      (async () => {
+        try {
+          await db.from('doc_collection').update({ cross_check: {
+            checked: Array.from(next),
+            started_at: viewFormOpenedAtRef.current ? viewFormOpenedAtRef.current.toISOString() : null, // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1
+            confirmed,
+            confirmed_at: file.cross_check?.confirmed_at || null,
+            confirmed_by: file.cross_check?.confirmed_by || null,
+            completed_at: checkCompletedAt,
+          } }).eq('id', file.id);
+        } catch (err) { console.error('[' + 'MARKER_DOCCOLLECTION_CROSSCHECK_HOTFIX_V1' + ']', err); }
+      })();
+      return next;
+    });
+  };
+  const checkPercent = mappedRows.length > 0 ? (checkedRows.size / mappedRows.length * 100) : 0;
+  const canConfirm = checkPercent > 70 && !confirmed;
+  // MARKER_DOCCOLLECTION_CROSSCHECK_DASHBOARD_REPORT_REVERT_V1 -- ปิด Shadow-Insert เข้า bucket_list แล้ว (Backend Query ตรงจาก doc_collection แทน ผ่าน patch_app_js_doccollection_dashboard_union_v1.py) -- เหลือไว้เป็น No-op กัน handleConfirmCheck ที่ยังเรียกใช้อยู่พัง
+  const reportCrossCheckConfirmToDashboard = (confirmedNow) => {};
+  const handleConfirmCheck = () => {
+    if (checkPercent <= 70) return;
+    setConfirmed(true);
+    const confirmedNow = new Date();
+    const confirmedPayload = persistCrossCheck({ confirmed: true, confirmed_at: confirmedNow.toISOString(), confirmed_by: userName || currentUser?.email || '' });
+    reportCrossCheckConfirmToDashboard(confirmedNow);
+    onConfirmed?.(file.id, confirmedPayload); // MARKER_DOCCOLLECTION_CROSSCHECK_SYNCAFTERCONFIRM_V1 -- แจ้ง List ให้ Update สถานะทันที ไม่ต้องรอ Refresh
+  };
 
   // MARKER_APMANUAL_VIEW_MODAL_UX_V1
   useEffect(() => {
@@ -2873,6 +4059,8 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
 
   const handleDownloadExcel = async () => {
     if (downloading) return;
+    if (isDraft) { alert('เอกสารนี้ยังเป็น Draft อยู่ ต้อง Submit เป็น Active ก่อนถึงจะ Download ได้'); return; } // MARKER_DOCCOLLECTION_CROSSCHECK_V3
+    if (requiresCrossCheck && !confirmed) { alert('กรุณาติ๊กตรวจ (Cross Check) ให้เกิน 70% แล้วกด Confirm ก่อนถึงจะ Download ได้'); return; } // MARKER_DOCCOLLECTION_CROSSCHECK_V3
     setDownloading(true);
     try {
       const token = sessionStorage.getItem('fastapn_token');
@@ -2892,6 +4080,14 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
       a.download = `${file.serial_code || 'Invoice_Register'}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
+      if (requiresCrossCheck && !checkCompletedAt) { // MARKER_DOCCOLLECTION_CROSSCHECK_V3 -- Download สำเร็จครั้งแรกหลัง Confirm = ถือว่าทำเรียบร้อยแล้ว
+        const completedNow = new Date().toISOString();
+        setCheckCompletedAt(completedNow);
+        persistCrossCheck({ completed_at: completedNow });
+      }
+      // MARKER_DOCCOLLECTION_DOWNLOADED_AT_TRIGGER_V1 -- บันทึกเวลาที่โหลดไว้เสมอ (เพื่อ Audit Trail
+      // ให้ครบชุดเดียวกันทุกช่องทาง Download แม้เอกสารนี้ผ่าน Cross Check Confirm แล้วก็ตาม)
+      db.from('doc_collection').update({ downloaded_at: new Date().toISOString() }).eq('id', file.id).catch(()=>{});
     } catch (err) {
       alert('Download ไม่สำเร็จ: ' + err.message);
     }
@@ -2947,7 +4143,32 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
             <span style={{fontSize:'13px',fontWeight:'500',color:'#1a3a5c',maxWidth:'600px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.serial_code}</span>
           </div>
           <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-            <button onClick={handleDownloadExcel} disabled={downloading} style={{padding:'5px 12px',fontSize:'11px',borderRadius:'6px',border:'0.5px solid #1a3a5c',background: downloading ? '#ccc' : '#1a3a5c',cursor: downloading ? 'default' : 'pointer',color:'white'}}>
+            {/* MARKER_DOCCOLLECTION_CROSSCHECK_V3 -- Draft: แจ้งเตือนแทน Progress/Confirm เพราะยัง Download ไม่ได้อยู่ดี */}
+            {isDraft && (
+              <span style={{fontSize:'11px',fontWeight:'500',color:'#8a4a00'}}>
+                ⚠ ยังเป็น Draft — Submit เป็น Active ก่อนถึงจะตรวจและ Download ได้
+              </span>
+            )}
+            {/* Progress + Confirm แสดงเฉพาะเอกสาร Active ที่ requiresCrossCheck */}
+            {requiresCrossCheck && (
+              <>
+                <span style={{fontSize:'11px',fontWeight:'500',color: checkPercent>70 ? '#27500A' : '#8a4a00'}}>
+                  ตรวจแล้ว {checkedRows.size}/{mappedRows.length} ({checkPercent.toFixed(0)}%)
+                </span>
+                <button onClick={handleConfirmCheck} disabled={!canConfirm}
+                  title={confirmed ? 'Confirm แล้ว' : (checkPercent<=70 ? 'ต้องตรวจเกิน 70% ก่อน' : 'กด Confirm')}
+                  style={{padding:'5px 12px',fontSize:'11px',borderRadius:'6px',
+                    border:'0.5px solid ' + (confirmed?'#27500A':'#97C459'),
+                    background: confirmed ? '#EAF3DE' : (canConfirm ? '#97C459' : '#eee'),
+                    cursor: canConfirm ? 'pointer' : 'default',
+                    color: confirmed ? '#27500A' : (canConfirm ? 'white' : '#999')}}>
+                  {confirmed ? '✓ Confirmed' : 'Confirm'}
+                </button>
+              </>
+            )}
+            <button onClick={handleDownloadExcel} disabled={downloading || isDraft || (requiresCrossCheck && !confirmed)}
+              title={isDraft ? 'ยังเป็น Draft อยู่ ต้อง Submit เป็น Active ก่อน' : ((requiresCrossCheck && !confirmed) ? 'ต้อง Confirm การตรวจก่อนถึงจะ Download ได้' : '')}
+              style={{padding:'5px 12px',fontSize:'11px',borderRadius:'6px',border:'0.5px solid #1a3a5c',background: (downloading||isDraft||(requiresCrossCheck && !confirmed)) ? '#ccc' : '#1a3a5c',cursor: (downloading||isDraft||(requiresCrossCheck && !confirmed)) ? 'default' : 'pointer',color:'white'}}>
               {downloading ? 'กำลัง Generate...' : '⬇ Download Excel'}
             </button>
             <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:'22px',color:'#aaa',lineHeight:1}}>×</button>
@@ -2972,6 +4193,11 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
                 {COLS.map((h,i)=>(
                   <th key={i} style={{...S.th,whiteSpace:'nowrap',textAlign:NUM_COLS.includes(h)?'right':'left'}}>{h}</th>
                 ))}
+                {requiresCrossCheck && !confirmed && ( // MARKER_DOCCOLLECTION_CROSSCHECK_HIDEAFTERCONFIRM_V1
+                  <th style={{...S.th,textAlign:'center',width:'40px'}}>
+                    <input type="checkbox" checked={checkedRows.size===mappedRows.length && mappedRows.length>0} onChange={toggleAll} title="เลือกทั้งหมด"/>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -2994,6 +4220,11 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
                         {NUM_COLS.includes(h) ? fmtNum(row[h]) : (h==='Receive Date'||h==='Tax Invoice Date') ? fmtDate(row[h]) : hlText(row[h])}
                       </td>
                     ))}
+                    {requiresCrossCheck && !confirmed && ( // MARKER_DOCCOLLECTION_CROSSCHECK_HIDEAFTERCONFIRM_V1
+                      <td style={{...S.td,textAlign:'center'}}>
+                        <input type="checkbox" checked={checkedRows.has(i)} onChange={()=>toggleRow(i)}/>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -3013,6 +4244,7 @@ function DocDetailModal({ file, onClose, searchQuery='' }) {
                     </td>
                   );
                 })}
+                {requiresCrossCheck && !confirmed && <td style={{...S.td,borderBottom:'none'}}></td>} {/* MARKER_DOCCOLLECTION_CROSSCHECK_HIDEAFTERCONFIRM_V1 */}
               </tr>
             </tbody>
           </table>
@@ -3178,6 +4410,9 @@ function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
       a.href = upscaled;
       a.download = att.name || 'attachment.jpg';
       a.click();
+      // MARKER_DOCCOLLECTION_DOWNLOADED_AT_TRIGGER_V1 -- ดาวน์โหลดรูปแนบไม่ผ่าน Cross Check Gate
+      // เช่นกัน จึงบันทึก downloaded_at ไว้เป็น Trigger ให้ Cron Auto-Confirm (ดู marker เดียวกันจุดอื่น)
+      if (file?.id) db.from('doc_collection').update({ downloaded_at: new Date().toISOString() }).eq('id', file.id).catch(()=>{});
     } catch (e) {
       alert('ดาวน์โหลดไม่สำเร็จ: ' + e.message);
     }
@@ -3345,9 +4580,9 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
       const newSerial = genSerial(bu, docType);
 
       let buCodeName = null, buNameThai = null;
-      const { data: buData } = await db.from('company_list').select('bu_code_name,"THAI COMPANY NAME"').eq('bu', bu).maybeSingle();
-      buCodeName = buData?.bu_code_name || null;
-      buNameThai = buData?.['THAI COMPANY NAME'] || null;
+      const cl = await lookupCompanyByBu(db, bu);
+      buCodeName = cl?.bu_code_name || null;
+      buNameThai = cl?.thaiName || null;
 
       const _submitNow = new Date().toISOString();
       const _fileDate = mergedRows[0]?.['Receive Date'] || mergedRows[0]?.['Invoice Date'] || _submitNow.split('T')[0];
@@ -3519,7 +4754,7 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
           <div style={{width:'230px',flexShrink:0,borderRight:'0.5px solid #e0e0e0',overflowY:'auto',background:'#f8f9fa',display:'flex',flexDirection:'column'}}>
             <div style={{padding:'5px 10px',borderBottom:'0.5px solid #e0e0e0',display:'flex',alignItems:'center',gap:'6px',background:'#f0f2f5',flexShrink:0,minHeight:'27px'}}>
               {(()=>{
-                const scopedDrafts = q ? searchResults : (draftLevel===2 && draftDocType && draftBU ? drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU) : null);
+                const scopedDrafts = q ? searchResults : (draftLevel===2 && draftDocType && draftBU ? drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU) : null);
                 if (!scopedDrafts) return <span style={{fontSize:'10px',color:'#bbb'}}>เลือก BU ก่อนจึงจะเลือกหลายรายการได้</span>;
                 const scopedIds = scopedDrafts.map(d=>d.id);
                 const selInScope = selectedDraftIds.filter(id=>scopedIds.includes(id));
@@ -3556,13 +4791,13 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
               <div style={{flex:1,overflowY:'auto'}}>
                 {draftsLoading&&<div style={{fontSize:'12px',color:'#888',padding:'20px',textAlign:'center'}}>กำลังโหลด...</div>}
                 {!draftsLoading&&drafts.length===0&&<div style={{fontSize:'12px',color:'#aaa',padding:'40px 10px',textAlign:'center'}}>No Draft</div>}
-                {['APN01','AP09','AP07'].filter(t=>drafts.some(d=>d.doc_type===t)).map(t=>{
-                  const cnt=drafts.filter(d=>d.doc_type===t).length;
-                  const label=t==='AP09'?'AP09 - Tax Invoice':t==='AP07'?'AP07':t+' - Invoice Register';
+                {['APN01','AP09_SUMMARY','AP09','AP07'].filter(t=>drafts.some(d=>getDraftGroupKey(d)===t)).map(t=>{
+                  const cnt=drafts.filter(d=>getDraftGroupKey(d)===t).length;
+                  const label=getDraftGroupLabel(t);
                   return <div key={t} onClick={()=>{ setDraftDocType(t); setDraftLevel(2); setDraftBU(null); setSelectedDraftIds([]); setSelectedDraft(null); }}
                     style={{padding:'12px 14px',borderBottom:'0.5px solid #e8e8e8',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'white'}}>
                     <div>
-                      <div style={{fontSize:'12px',fontWeight:'500',color:t==='AP09'?'#0F6E56':'#1a3a5c'}}>{label}</div>
+                      <div style={{fontSize:'12px',fontWeight:'500',color:getDraftGroupColor(t)}}>{label}</div>
                       <div style={{fontSize:'10px',color:'#aaa',marginTop:'2px'}}>{cnt} draft</div>
                     </div>
                     <span style={{fontSize:'16px',color:'#ccc'}}>›</span>
@@ -3577,8 +4812,8 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
                   <span style={{fontSize:'11px',fontWeight:'600',color:draftDocType==='AP09'?'#0F6E56':'#1a3a5c',marginLeft:'4px'}}>{draftDocType}</span>
                 </div>
                 <div style={{flex:1,overflowY:'auto'}}>
-                  {[...new Set(drafts.filter(d=>d.doc_type===draftDocType).map(d=>d.bu_code||(d.serial_code||'').split('_')[0]||'?'))].map(bu=>{
-                    const buDrafts=drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===bu);
+                  {[...new Set(drafts.filter(d=>getDraftGroupKey(d)===draftDocType).map(d=>d.bu_code||(d.serial_code||'').split('_')[0]||'?'))].map(bu=>{
+                    const buDrafts=drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===bu);
                     return <div key={bu} onClick={()=>{ setDraftBU(bu); setSelectedDraftIds([]); setSelectedDraft(null); }}
                       style={{padding:'10px 14px',borderBottom:'0.5px solid #e8e8e8',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'white'}}>
                       <div>
@@ -3600,7 +4835,7 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
                   <span style={{fontSize:'11px',fontWeight:'600',color:'#1a3a5c'}}>{draftBU}</span>
                 </div>
                 <div style={{flex:1,overflowY:'auto'}}>
-                  {drafts.filter(d=>d.doc_type===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
+                  {drafts.filter(d=>getDraftGroupKey(d)===draftDocType&&(d.bu_code||(d.serial_code||'').split('_')[0]||'?')===draftBU).map(d=>{
                     const isChk=selectedDraftIds.includes(d.id);
                     const isSel=selectedDraft?.id===d.id;
                     return <div key={d.id} onClick={()=>toggleSelect(d)}
@@ -3657,6 +4892,17 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const [sortBy, setSortBy] = useState('updated_desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(100);
+  // MARKER_FOLDERDETAIL_SERVER_BROWSE_V1 -- State สำหรับโหมด "เรียกดูปกติ" (ยังไม่พิมพ์ค้นหา)
+  // ให้ Backend กรอง/แบ่งหน้า/นับมาให้ แทนการดึงทั้งตารางมากรองเองเหมือนเดิม
+  const [browseFiles, setBrowseFiles] = useState([]);
+  const [browseTotal, setBrowseTotal] = useState(0);
+  // MARKER_FOLDERDETAIL_REFRESHING_STATE_V1 -- true เฉพาะตอน "Refresh เงียบๆ" (มีข้อมูลเก่าโชว์อยู่แล้ว)
+  // ต่างจาก `loading` ที่ใช้แค่ตอนโหลดครั้งแรกสุด (ยังไม่มีอะไรให้โชว์เลย)
+  const [refreshing, setRefreshing] = useState(false);
+  const [tabCounts, setTabCounts] = useState({});     // Badge ต่อ Tab
+  const [buCounts, setBuCounts] = useState({});        // Pill ต่อ BU ของ Tab ปัจจุบัน
+  const [totalAllCount, setTotalAllCount] = useState(0); // "xx รายการทั้งหมด" บน Header
+  const hasSearchDataRef = React.useRef(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showDraftPanel, setShowDraftPanel] = useState(false);
   // MARKER_UPLOADGEN_BROADCAST_SAVE_LIGHTWEIGHT_V1
@@ -3808,7 +5054,12 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
       const rotatedData = await rotateDataUrlFD(current.data, lightboxRotation);
       const newAttachments = lightbox.attachments.map((a,i)=> i===idx ? { ...a, data: rotatedData } : a);
       await db.from('doc_collection').update({ attachments: newAttachments }).eq('id', lightbox.fileId);
+      // MARKER_FOLDERDETAIL_BROWSE_STATE_MIRROR_FIX_V1 -- Bug Fix: หลังแยก State เป็น files (โหมด
+      // ค้นหา) กับ browseFiles (โหมดปกติ) จุดนี้เดิมอัปเดตแค่ files ตัวเดียว -- โหมดปกติ (ที่ตารางใช้
+      // browseFiles Render) เลยไม่เห็นผลการหมุนที่เพิ่ง Save ทันที ต้องรอ Refresh หน้าใหม่ก่อนถึงจะเห็น
+      // -- แก้ให้ Sync ทั้งสอง State พร้อมกันเสมอ
       setFiles(prev => prev.map(f => f.id === lightbox.fileId ? { ...f, attachments: newAttachments } : f));
+      setBrowseFiles(prev => prev.map(f => f.id === lightbox.fileId ? { ...f, attachments: newAttachments } : f));
       setLightbox(p => p ? { ...p, attachments: newAttachments } : p);
       setLightboxRotation(0);
     } catch (e) {
@@ -3817,6 +5068,13 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     setLightboxSaving(false);
   };
   const [attachModal, setAttachModal] = useState(null); // file object ที่กำลังแก้ไข attachment
+  // MARKER_FOLDERDETAIL_ROW_CONTEXT_MENU_V1 -- คลิกขวาที่แถว เพื่อ Recheck/Rematch ข้อมูลที่ขาดไป
+  // (เช่น BU Company Name ว่าง เพราะ company_list Lookup ตอน Upload หาไม่เจอ)
+  const [rowContextMenu, setRowContextMenu] = useState(null); // { x, y, file }
+  const [rechecking, setRechecking] = useState(null); // id ของแถวที่กำลัง Recheck อยู่
+  // MARKER_FOLDERDETAIL_RECHECK_ALERT_MODAL_V1 -- ใช้ AlertModal (Component เดิมที่มีอยู่แล้ว ใช้กับ
+  // AddFileModal) แทน alert() ของ Browser ที่หน้าตาไม่สวย/Block UI ทั้งหน้าจอ — { type, title, message }
+  const [recheckAlert, setRecheckAlert] = useState(null);
   const [showQueue, setShowQueue] = useState(false);
   const [qSideTab, setQSideTab]   = useState('dashboard');
   const [qStatus,  setQStatus]    = useState('active');
@@ -3849,6 +5107,123 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     try { await db.from('activity_log').insert([{ user_email:currentUser?.email||'', username:userName||currentUser?.email||'', action, target, detail, created_at:new Date().toISOString() }]); } catch(e){}
   };
 
+  // MARKER_FOLDERDETAIL_APPLY_TAB_FILTER_V1
+  const applyTabFilter = (q, tabKey) => {
+    if (tabKey === 'TRANS') return q.in('doc_type', ['TRANS', 'STORE']);
+    if (tabKey === 'AP09')  return q.eq('doc_type', 'AP09');
+    return q.eq('doc_type', tabKey); // APN01, AP07
+  };
+
+  // MARKER_FOLDERDETAIL_FETCH_BROWSE_V1 -- โหมดปกติ: ดึงเฉพาะ Tab+BU+หน้าที่เห็นอยู่ตอนนี้
+  // MARKER_FOLDERDETAIL_STALE_WHILE_REVALIDATE_V1 -- ครั้งแรกสุดที่เปิดหน้า (ยังไม่เคยมีข้อมูลเลย)
+  // ยังโชว์ "กำลังโหลด..." เหมือนเดิม แต่ตั้งแต่ครั้งที่ 2 เป็นต้นไป (สลับ Tab/BU/หน้า/Sort) จะไม่ล้าง
+  // ตารางเดิมทิ้งแล้วค้างจอเปล่าเหมือนก่อนหน้านี้ -- โชว์ของเก่าค้างไว้ + Indicator บางๆ (ดู `refreshing`
+  // ที่ใช้ใน JSX) จนกว่าของใหม่จะมาแทนที่ ลดอาการ "กระพริบ/รอ" ให้รู้สึกน้อยลงมาก
+  const hasLoadedBrowseOnceRef = React.useRef(false);
+  // MARKER_FOLDERDETAIL_PREFETCH_CACHE_V1 -- Cache หน้าถัดไปที่ Prefetch ไว้เงียบๆ เบื้องหลัง
+  const prefetchCacheRef = React.useRef(new Map());
+  const browseCacheKey = (tab, bu, sort, page, pp) => `${tab}|${bu}|${sort}|${page}|${pp}`;
+
+  const runBrowseQuery = React.useCallback(async (tab, bu, sort, page, pp) => {
+    if (sort === 'amount_desc') {
+      // Amount ไม่มี Column เก็บตรงๆ (คำนวณจาก rows) ต้องดึง Tab+BU นี้มาทั้งหมด (ไม่ใช่ทั้งตาราง)
+      // แล้วคำนวณ+เรียง+แบ่งหน้าในเบราว์เซอร์ เหมือนพฤติกรรมเดิมทุกประการ
+      let q = db.from('doc_collection').select('*').neq('status', 'draft');
+      q = applyTabFilter(q, tab);
+      if (bu !== 'ALL') q = q.eq('bu_code', bu);
+      const { data } = await q;
+      const toNum = v => parseFloat(String(v || '0').replace(/,/g, '')) || 0;
+      const getTotal = f => {
+        const rows = Array.isArray(f.rows) ? f.rows : [];
+        return rows.reduce((s, r) => s + toNum(r['ยอดรวม'] || r['มูลค่ารวม'] || r['Total Value'] || r['Invoice Amount']), 0);
+      };
+      const sorted = [...(data || [])].sort((a, b) => getTotal(b) - getTotal(a));
+      const start = (page - 1) * pp;
+      return { rows: sorted.slice(start, start + pp), total: sorted.length };
+    }
+    let orderCol = 'updated_at', ascending = false;
+    if (sort === 'bu_asc')   { orderCol = 'bu_code';   ascending = true; }
+    if (sort === 'bu_desc')  { orderCol = 'bu_code';   ascending = false; }
+    if (sort === 'date_desc'){ orderCol = 'file_date'; ascending = false; }
+
+    let q = db.from('doc_collection').select('*').neq('status', 'draft').order(orderCol, { ascending });
+    q = applyTabFilter(q, tab);
+    if (bu !== 'ALL') q = q.eq('bu_code', bu);
+    const start = (page - 1) * pp;
+    q = q.range(start, start + pp - 1);
+
+    let cq = db.from('doc_collection').select('id', { count: 'exact', head: true }).neq('status', 'draft');
+    cq = applyTabFilter(cq, tab);
+    if (bu !== 'ALL') cq = cq.eq('bu_code', bu);
+
+    // MARKER_FOLDERDETAIL_PARALLEL_FETCH_V1 -- ยิงขอข้อมูล+จำนวนรวมพร้อมกัน แทนที่จะรอทีละอัน
+    // (ก่อนหน้านี้ await ทีละคำสั่ง ทำให้จังหวะรอนานเป็น 2 เท่าของ Round-trip โดยไม่จำเป็น)
+    const [dataRes, countRes] = await Promise.all([q, cq]);
+    return { rows: dataRes.data || [], total: countRes.count || 0 };
+  }, []);
+
+  const fetchBrowseFiles = useCallback(async () => {
+    const key = browseCacheKey(activeTab, buFilter, sortBy, currentPage, perPage);
+    const cached = prefetchCacheRef.current.get(key);
+    if (cached) {
+      // มี Prefetch ไว้แล้ว ใช้ได้ทันทีไม่ต้องรอ Network เลย
+      prefetchCacheRef.current.delete(key);
+      setBrowseFiles(cached.rows);
+      setBrowseTotal(cached.total);
+      hasLoadedBrowseOnceRef.current = true;
+      return;
+    }
+
+    const isFirst = !hasLoadedBrowseOnceRef.current;
+    if (isFirst) setLoading(true); else setRefreshing(true);
+    try {
+      const { rows, total } = await runBrowseQuery(activeTab, buFilter, sortBy, currentPage, perPage);
+      setBrowseFiles(rows);
+      setBrowseTotal(total);
+      hasLoadedBrowseOnceRef.current = true;
+
+      // MARKER_FOLDERDETAIL_PREFETCH_NEXT_PAGE_V1 -- Prefetch หน้าถัดไปเงียบๆ เบื้องหลัง
+      // (ถ้ามีจริง) เพื่อให้กดหน้าถัดไปแล้วรู้สึกเหมือนไม่มีจังหวะรอเลย
+      if (sortBy !== 'amount_desc') {
+        const totalPagesNow = Math.max(1, Math.ceil(total / perPage));
+        if (currentPage < totalPagesNow) {
+          const nextKey = browseCacheKey(activeTab, buFilter, sortBy, currentPage + 1, perPage);
+          runBrowseQuery(activeTab, buFilter, sortBy, currentPage + 1, perPage)
+            .then(res => { prefetchCacheRef.current.set(nextKey, res); })
+            .catch(() => {});
+        }
+      }
+    } catch (e) { console.error(e); }
+    if (isFirst) setLoading(false); else setRefreshing(false);
+  }, [activeTab, buFilter, sortBy, currentPage, perPage, runBrowseQuery]);
+
+  // MARKER_FOLDERDETAIL_FETCH_COUNTS_V1 -- Badge/Pill/Total: Query นับอย่างเดียว ไม่ดึง rows/attachments/ocr_text
+  const fetchCounts = useCallback(async () => {
+    try {
+      const tabDefs = [
+        { key: 'APN01', build: q => q.eq('doc_type', 'APN01') },
+        { key: 'AP07',  build: q => q.eq('doc_type', 'AP07') },
+        { key: 'AP09',  build: q => q.eq('doc_type', 'AP09') },
+        { key: 'TRANS', build: q => q.in('doc_type', ['TRANS', 'STORE']) },
+      ];
+      const [tabResults, allCountRes, buGroupRes] = await Promise.all([
+        Promise.all(tabDefs.map(({ build }) =>
+          build(db.from('doc_collection').select('id', { count: 'exact', head: true }).neq('status', 'draft'))
+        )),
+        db.from('doc_collection').select('id', { count: 'exact', head: true }).neq('status', 'draft'),
+        applyTabFilter(db.from('doc_collection').distinctGroup('bu_code', 'bu_code').neq('status', 'draft'), activeTab),
+      ]);
+      const nextTabCounts = {};
+      tabDefs.forEach(({ key }, i) => { nextTabCounts[key] = tabResults[i]?.count || 0; });
+      setTabCounts(nextTabCounts);
+      setTotalAllCount(allCountRes?.count || 0);
+      const groups = buGroupRes?.data?.rows || [];
+      const map = {};
+      groups.forEach(g => { map[g.bu_code || '?'] = g.count || 0; });
+      setBuCounts(map);
+    } catch (e) { console.error(e); }
+  }, [activeTab]);
+
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     try {
@@ -3875,24 +5250,47 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     });
   };
 
-  useEffect(() => { fetchFiles(); }, [fetchFiles]);
+  // MARKER_FOLDERDETAIL_MODE_SWITCH_V1 -- โหมดค้นหา: fetchFiles() เดิม ดึงครั้งเดียวตอนเริ่มพิมพ์
+  // (ไม่ยิงซ้ำทุกตัวอักษร — filteredAll เดิมกรองฝั่ง Browser อยู่แล้วจากข้อมูลก้อนเดียวกันนี้) ==
+  // โหมดปกติ: fetchBrowseFiles() + fetchCounts() ที่เบากว่ามาก (Scope แค่ Tab+BU+หน้าที่เห็น)
+  useEffect(() => {
+    if (search) {
+      if (!hasSearchDataRef.current) {
+        hasSearchDataRef.current = true;
+        fetchFiles();
+      }
+    } else {
+      hasSearchDataRef.current = false;
+    }
+  }, [search, fetchFiles]);
+
+  useEffect(() => { if (!search) fetchBrowseFiles(); }, [search, fetchBrowseFiles]);
+  useEffect(() => { if (!search) fetchCounts(); }, [search, fetchCounts]);
+
   useEffect(() => {
     // MARKER_UPLOADGEN_BROADCAST_DELETE_LIGHTWEIGHT_V1 / MARKER_UPLOADGEN_BROADCAST_SAVE_LIGHTWEIGHT_V1
-    // ── action==='delete' ── ลบแถวออกจาก State ตรงๆ ไม่ต้อง Fetch ซ้ำ (หนัก) ──
-    // ── action==='save' ── Fetch เฉพาะแถวใหม่ตั้งแต่ ts มา Merge เข้า State (ไม่ Fetch ทั้งตาราง) ──
-    // ── อย่างอื่น (หรือไม่มี Payload) ── คง fetchFiles() เดิม (Fallback ปลอดภัย) ──
+    // ── โหมดค้นหา: พฤติกรรมเดิมทุกประการ (Merge เฉพาะแถวใหม่ หรือลบออกจาก State ตรงๆ) ──
+    // ── โหมดปกติ: Refresh เฉพาะหน้า/Badge ปัจจุบัน (เบากว่าเดิมมาก) ──
     const unsub = subscribeWs(['doc_collection_updated'], async (payload) => {
-      if (payload?.action === 'delete' && payload.id != null) {
-        setFiles(prev => prev.filter(f => f.id !== payload.id));
-      } else if (payload?.action === 'save' && payload.ts) {
-        const newRows = await fetchNewSince(payload.ts);
-        mergeNewFiles(newRows);
+      if (search) {
+        if (payload?.action === 'delete' && payload.id != null) {
+          setFiles(prev => prev.filter(f => f.id !== payload.id));
+        } else if (payload?.action === 'save' && payload.ts) {
+          const newRows = await fetchNewSince(payload.ts);
+          mergeNewFiles(newRows);
+        } else {
+          fetchFiles();
+        }
       } else {
-        fetchFiles();
+        // ข้อมูลเปลี่ยน (Save/Delete จากที่ไหนก็ตาม) — เคลียร์หน้าที่ Prefetch ไว้ล่วงหน้าทิ้ง
+        // กันไม่ให้กดหน้าถัดไปแล้วได้ข้อมูลเก่าที่ Cache ไว้ก่อนมีการเปลี่ยนแปลง
+        prefetchCacheRef.current.clear();
+        fetchBrowseFiles();
+        fetchCounts();
       }
     });
     return unsub;
-  }, [fetchFiles]);
+  }, [search, fetchFiles, fetchBrowseFiles, fetchCounts]);
 
   // ── Queue: ดึงรายการและนับ pending/ocring ────────────────────────────────
   const fetchQueue = React.useCallback(async () => {
@@ -3949,9 +5347,84 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
       // ── ส่ง id ไปด้วย ให้เครื่องอื่นลบแถวออกจาก State ตรงๆ ได้ ไม่ต้อง Fetch ซ้ำ ──
       broadcastWs('doc_collection_updated', { action:'delete', id:file.id, serial:file.serial_code });
       setConfirmDelete(null);
+      // MARKER_FOLDERDETAIL_BROWSE_STATE_MIRROR_FIX_V1 -- เหมือนจุดอื่นด้านบน ต้องลบออกจาก
+      // browseFiles ด้วย ไม่งั้นโหมดปกติ (ไม่ได้ค้นหา) จะยังเห็นแถวที่เพิ่งลบค้างอยู่จนกว่าจะ Refresh
       setFiles(prev => prev.filter(f => f.id !== file.id));
+      setBrowseFiles(prev => prev.filter(f => f.id !== file.id));
     } catch(e){ alert('ลบไม่สำเร็จ: '+e.message); }
   };
+
+  // MARKER_FOLDERDETAIL_RECHECK_BU_V1 -- คลิกขวาที่แถว > "Recheck & Rematch BU" สำหรับแถวที่
+  // ข้อมูลบางส่วนขาดไป (เช่น BU Company Name ว่าง เพราะ company_list Lookup ตอน Upload หาไม่เจอ
+  // ด้วยบั๊กเดิม -- ดู MARKER_UPLOADGEN_BU_LOOKUP_COLUMN_FIX_V1) ให้ลอง Match ใหม่ทันทีโดยไม่ต้อง
+  // ลบแล้ว Upload ซ้ำ
+  const detectMissingFields = (file) => {
+    const missing = [];
+    if (!file.bu_code_name) missing.push('BU Company Name');
+    if (!file.bu_name) missing.push('ชื่อบริษัท (ไทย)');
+    return missing;
+  };
+
+  const handleRecheckRow = async (file) => {
+    setRowContextMenu(null);
+    const missing = detectMissingFields(file);
+    if (missing.length === 0) {
+      setRecheckAlert({ type:'info', title:'ข้อมูลครบถ้วนแล้ว', message:`"${file.serial_code}" ไม่พบจุดที่ต้อง Rematch` });
+      return;
+    }
+    if (!file.bu_code) {
+      setRecheckAlert({ type:'warning', title:'Matching Failed', message:`"${file.serial_code}" ไม่มี BU Code ให้ใช้ค้นหา — ต้องแก้ BU Code ก่อนถึงจะ Rematch ได้` });
+      return;
+    }
+    setRechecking(file.id);
+    try {
+      // MARKER_FOLDERDETAIL_RECHECK_BU_TRIM_CASE_FIX_V1 -- ใช้ lookupCompanyByBu() กลาง (ดู
+      // MARKER_LOOKUP_COMPANY_BY_BU_SHARED_V1) แทนเขียน Query เอง กันปัญหา .eq() Exact Match ตรงตัว
+      // (ไม่ Trim/ไม่ Case-insensitive) ที่ทำให้ bu_code ซึ่งมีช่องว่างปนมา (เช่นจาก Parse Serial ตอน
+      // Upload) หรือตัวพิมพ์ต่างกันนิดเดียว หาไม่เจอทั้งที่โชว์เป็น "LKS" เหมือนแถวอื่นที่ผ่านได้ปกติ
+      const cl = await lookupCompanyByBu(db, file.bu_code);
+      if (!cl) {
+        setRecheckAlert({ type:'error', title:'Matching Failed', message:`ไม่พบ BU Code "${file.bu_code}" ใน company_list — กรุณาตรวจสอบ Code ด้วยตนเอง` });
+        return;
+      }
+      const patch = {};
+      // ถือโอกาสแก้ bu_code ให้ตรงกับ company_list เป๊ะๆ (ตัด/Trim ช่องว่างที่ปนมา) กันปัญหาเดิมเกิดซ้ำ
+      if (cl.bu && cl.bu !== file.bu_code) patch.bu_code = cl.bu;
+      if (!file.bu_code_name && cl.bu_code_name) patch.bu_code_name = cl.bu_code_name;
+      if (!file.bu_name && cl.thaiName) patch.bu_name = cl.thaiName;
+      if (Object.keys(patch).length === 0) {
+        setRecheckAlert({ type:'error', title:'Matching Failed', message:`พบ BU Code "${file.bu_code}" ใน company_list แล้ว แต่ Column ชื่อบริษัทฝั่ง company_list เองก็ว่างเหมือนกัน — ต้องแก้ที่ company_list ก่อน` });
+        return;
+      }
+      patch.updated_at = new Date().toISOString();
+      const { error: err } = await db.from('doc_collection').update(patch).eq('id', file.id);
+      if (err) throw new Error(err);
+      // อัปเดต State ตรงๆ ให้เห็นผลทันที ไม่ต้องรอ Refetch รอบใหม่
+      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, ...patch } : f));
+      setBrowseFiles(prev => prev.map(f => f.id === file.id ? { ...f, ...patch } : f));
+      await logActivity('recheck_bu', file.serial_code, { patch });
+      broadcastWs('doc_collection_updated', { action:'update', id:file.id });
+      setRecheckAlert({ type:'success', title:'Matching Completed', message:`"${file.serial_code}" → ${patch.bu_code_name || file.bu_code_name || ''}` });
+    } catch(e) {
+      setRecheckAlert({ type:'error', title:'Matching Failed', message: e.message });
+    }
+    setRechecking(null);
+  };
+
+  // ปิด Context Menu เมื่อคลิกที่อื่น หรือกด Esc หรือ Scroll ตาราง
+  React.useEffect(() => {
+    if (!rowContextMenu) return;
+    const closeMenu = () => setRowContextMenu(null);
+    const onKeyDown = (e) => { if (e.key === 'Escape') closeMenu(); };
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [rowContextMenu]);
 
   const API_BASE_ROW = 'http://10.101.87.126:4000/api';
   const [downloadingRow, setDownloadingRow] = useState(null);
@@ -3991,6 +5464,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
 
   const handleRowDownload = async (file) => {
     if (downloadingRow === file.id) return;
+    // MARKER_DOCCOLLECTION_CROSSCHECK_ROWDOWNLOAD_V1 -- Gate เดียวกับ DocDetailModal (Cross Check v3) แต่ใช้ field จากแถวโดยตรง
+    if (file.status === 'draft') { alert('เอกสารนี้ยังเป็น Draft อยู่ ต้อง Submit เป็น Active ก่อนถึงจะ Download ได้'); return; }
+    const rowRequiresCrossCheck = !!file.fill_started_at && !(file.doc_type === 'AP09' && file.doc_name === 'Inputsummary');
+    if (rowRequiresCrossCheck && !file.cross_check?.confirmed) { alert('กรุณากด "ดู" เพื่อเปิด Cross Check ตรวจให้เกิน 70% แล้วกด Confirm ก่อนถึงจะ Download ได้'); return; }
     setDownloadingRow(file.id);
     try {
       // ocr_pdf → download PDF image แทน Excel
@@ -4000,6 +5477,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
         a.href = att.data.startsWith('data:') ? att.data : `data:${att.mime||'image/jpeg'};base64,${att.data}`;
         a.download = `${file.serial_code || 'ocr_preview'}.jpg`;
         a.click();
+        db.from('doc_collection').update({ downloaded_at: new Date().toISOString() }).eq('id', file.id).catch(()=>{}); // MARKER_DOCCOLLECTION_DOWNLOADED_AT_TRIGGER_V1
         setDownloadingRow(null);
         return;
       }
@@ -4021,11 +5499,13 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
       a.download = `${file.serial_code || 'Invoice_Register'}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
+      db.from('doc_collection').update({ downloaded_at: new Date().toISOString() }).eq('id', file.id).catch(()=>{}); // MARKER_DOCCOLLECTION_DOWNLOADED_AT_TRIGGER_V1
     } catch (err) { alert('Download ไม่สำเร็จ: ' + err.message); }
     setDownloadingRow(null);
   };
 
   const filteredAll = React.useMemo(() => {
+    if (!search) return null; // โหมดปกติไม่ใช้ตัวนี้ — Backend กรอง/แบ่งหน้ามาให้แล้ว
     const base = files.filter(f => {
       const matchTab = (() => {
         if (activeTab === 'TRANS') return ['TRANS','STORE'].includes(f.doc_type);
@@ -4072,9 +5552,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     });
   }, [files, activeTab, buFilter, search, sortBy]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredAll.length / perPage));
+  const totalCountForFooter = search ? (filteredAll?.length || 0) : browseTotal;
+  const totalPages = Math.max(1, Math.ceil(totalCountForFooter / perPage));
   const safePage   = Math.min(currentPage, totalPages);
-  const filtered   = filteredAll.slice((safePage-1)*perPage, safePage*perPage);
+  const filtered   = search ? (filteredAll || []).slice((safePage-1)*perPage, safePage*perPage) : browseFiles;
 
   // reset page เมื่อเปลี่ยน tab / buFilter / search
   useEffect(() => { setCurrentPage(1); }, [activeTab, buFilter, search]);
@@ -4121,20 +5602,26 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   }, [showMoreBU]);
 
   const buList = React.useMemo(() => {
-    const base = files.filter(f => {
-      if (activeTab === 'TRANS') return ['TRANS','STORE'].includes(f.doc_type);
-      if (activeTab === 'AP09')  return f.doc_type === 'AP09';
-      return f.doc_type === activeTab;
-    });
-    const map = {};
-    base.forEach(f => { const k = f.bu_code||'?'; map[k] = (map[k]||0)+1; });
-    return Object.entries(map).sort((a,b)=>a[0].localeCompare(b[0])).map(([code,cnt])=>({ code, cnt }));
-  }, [files, activeTab]);
+    if (search) {
+      const base = files.filter(f => {
+        if (activeTab === 'TRANS') return ['TRANS','STORE'].includes(f.doc_type);
+        if (activeTab === 'AP09')  return f.doc_type === 'AP09';
+        return f.doc_type === activeTab;
+      });
+      const map = {};
+      base.forEach(f => { const k = f.bu_code||'?'; map[k] = (map[k]||0)+1; });
+      return Object.entries(map).sort((a,b)=>a[0].localeCompare(b[0])).map(([code,cnt])=>({ code, cnt }));
+    }
+    return Object.entries(buCounts).sort((a,b)=>a[0].localeCompare(b[0])).map(([code,cnt])=>({ code, cnt }));
+  }, [files, activeTab, search, buCounts]);
 
   const tabCount = (key) => {
-    if (key === 'TRANS') return files.filter(f => ['TRANS','STORE'].includes(f.doc_type)).length;
-    if (key === 'AP09') return files.filter(f => f.doc_type === 'AP09').length;
-    return files.filter(f => f.doc_type === key).length;
+    if (search) {
+      if (key === 'TRANS') return files.filter(f => ['TRANS','STORE'].includes(f.doc_type)).length;
+      if (key === 'AP09') return files.filter(f => f.doc_type === 'AP09').length;
+      return files.filter(f => f.doc_type === key).length;
+    }
+    return tabCounts[key] || 0;
   };
   const tabHasSearch = (key) => {
     if (!search) return false;
@@ -4207,7 +5694,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
             <div style={{ width:'32px',height:'32px',borderRadius:'8px',background:folder.color,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px',flexShrink:0 }}>{folder.icon}</div>
             <div style={{ flex:1,minWidth:0 }}>
               <div style={{ fontSize:'14px',fontWeight:'600',color:'#1a3a5c',lineHeight:1.2 }}>{folder.label}</div>
-              <div style={{ fontSize:'11px',color:'#aaa' }}>{files.length} รายการทั้งหมด</div>
+              <div style={{ fontSize:'11px',color:'#aaa' }}>{search ? files.length : totalAllCount} รายการทั้งหมด</div>
             </div>
             {/* Toolbar right */}
             <div style={{ display:'flex',gap:'8px',alignItems:'center',flexShrink:0 }}>
@@ -4316,12 +5803,20 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
 
       {/* ── MIDDLE: Table + Footer อยู่ใน scroll container เดียวกัน ── */}
       <div style={{ flex:'1 1 0',overflow:'hidden',padding:'8px 16px 0',display:'flex',flexDirection:'column',minHeight:0 }}>
-        <div style={{ flex:'1 1 0',overflowY:'auto',overflowX:'auto',background:'white',border:'0.5px solid #e8e8e8',borderRadius:'6px',display:'flex',flexDirection:'column' }}>
+        <div style={{ flex:'1 1 0',overflowY:'auto',overflowX:'auto',background:'white',border:'0.5px solid #e8e8e8',borderRadius:'6px',display:'flex',flexDirection:'column',position:'relative' }}>
+          {/* MARKER_FOLDERDETAIL_REFRESHING_BAR_V1 -- แถบบางๆ ด้านบน โชว์เฉพาะตอน Refresh เงียบๆ
+              (ตารางเดิมยังค้างโชว์อยู่ ไม่กระพริบเป็นจอเปล่าเหมือนก่อนหน้านี้) */}
+          {refreshing && (
+            <div style={{ position:'sticky',top:0,left:0,right:0,height:'2px',zIndex:3,overflow:'hidden',background:'#e8eef5' }}>
+              <div style={{ height:'100%',width:'40%',background:'#1a3a5c',animation:'folderDetailRefreshBar 1s linear infinite' }} />
+              <style>{`@keyframes folderDetailRefreshBar { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }`}</style>
+            </div>
+          )}
           {/* Table area */}
           <div style={{ flex:'1 1 auto' }}>
         {loading ? (
           <div style={{ padding:'40px',textAlign:'center',color:'#aaa',fontSize:'13px' }}>กำลังโหลด...</div>
-        ) : filteredAll.length===0 ? (
+        ) : totalCountForFooter===0 ? (
           <div style={{ padding:'32px',textAlign:'center',color:'#aaa',fontSize:'12px' }}>
             {search ? 'ไม่พบรายการที่ค้นหา' : `ยังไม่มีรายการ ${activeTab}`}
           </div>
@@ -4366,12 +5861,18 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                     (Array.isArray(file.rows)&&file.rows.some(row=>Object.values(row).some(v=>String(v||'').toLowerCase().includes(q))));
                 })();
                 const rowBg = isMatch ? '#FFFBF0' : 'white';
+                const rowMissing = detectMissingFields(file);
                 return (
-                  <tr key={file.id} style={{background:rowBg,borderLeft:isMatch?'3px solid #F59E0B':'3px solid transparent'}} onMouseEnter={e=>e.currentTarget.style.background=isMatch?'#FFF3CD':'#e8f0fe'} onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
+                  <tr key={file.id} style={{background:rowBg,borderLeft:isMatch?'3px solid #F59E0B':'3px solid transparent'}}
+                    onMouseEnter={e=>e.currentTarget.style.background=isMatch?'#FFF3CD':'#e8f0fe'} onMouseLeave={e=>e.currentTarget.style.background=rowBg}
+                    onContextMenu={e=>{ e.preventDefault(); setRowContextMenu({ x:e.clientX, y:e.clientY, file }); }}>
                     <td style={S.td}>
                       <div style={{ fontWeight:'500',color:'#1a3a5c',maxWidth:'240px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }} title={file.serial_code}>{file.serial_code}</div>
                       </td>
-                    <td style={{ ...S.td,fontSize:'10px',maxWidth:'200px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#555' }} title={file.bu_code_name||''}>{file.bu_code_name||'-'}</td>
+                    <td style={{ ...S.td,fontSize:'10px',maxWidth:'200px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color: rowMissing.length?'#C0392B':'#555',background: rowMissing.length?'#FDF2F2':undefined }}
+                      title={rowMissing.length ? `ข้อมูลขาด: ${rowMissing.join(', ')} — คลิกขวาที่แถวนี้เพื่อ Recheck & Rematch` : (file.bu_code_name||'')}>
+                      {file.bu_code_name || (rechecking===file.id ? 'กำลัง Recheck...' : '⚠ -')}
+                    </td>
                     <td style={{ ...S.td,textAlign:'center' }}>{(() => { const c=getBuColor(file.bu_code); return <span style={{ display:'inline-block',padding:'2px 8px',borderRadius:'20px',fontSize:'10px',fontWeight:'700',background:c.bg,color:c.color,border:`1px solid ${c.border}`,letterSpacing:'0.3px' }}>{file.bu_code||'-'}</span>; })()}</td>
                     <td style={{ ...S.td, textAlign:'center', width:'95px' }}>{fmtDate(receiveDate)}</td>
                     <td style={{ ...S.td,textAlign:'right' }}>{totalAmt>0?fmtNum(totalAmt):'-'}</td>
@@ -4401,10 +5902,14 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                               a.href = att.data.startsWith('data:') ? att.data : `data:${att.mime||'image/jpeg'};base64,${att.data}`;
                               a.download = att.name || (file.serial_code + '.jpg');
                               a.click();
+                              // MARKER_DOCCOLLECTION_DOWNLOADED_AT_TRIGGER_V1 -- ปุ่มนี้ไม่ผ่าน Cross Check Gate
+                              // (Bypass) จึงต้องบันทึก downloaded_at ไว้เป็น Trigger ให้ Cron Auto-Confirm
+                              // (6 ชม.หลังโหลด + มี fill_started_at + created_at ครบ → Confirm ให้อัตโนมัติ)
+                              db.from('doc_collection').update({ downloaded_at: new Date().toISOString() }).eq('id', file.id).catch(()=>{});
                             }} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #0F6E56',background:'#0F6E56',cursor:'pointer',fontSize:'9px',color:'white',fontWeight:'700',padding:'0',display:'flex',alignItems:'center',justifyContent:'center' }}>PDF</button>
                           : <button title="ดู" onClick={()=>setViewFile(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>👁</button>
                         }
-                        <button title="Download" onClick={()=>handleRowDownload(file)} disabled={downloadingRow===file.id} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background: downloadingRow===file.id ? '#eee' : 'white',cursor: downloadingRow===file.id ? 'default' : 'pointer',fontSize:'12px' }}>⬇</button>
+                        <button title={file.status==='draft' ? 'ยังเป็น Draft — Submit เป็น Active ก่อน' : ((!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed) ? 'ต้อง Cross Check + Confirm ก่อนถึงจะ Download ได้' : 'Download')} onClick={()=>handleRowDownload(file)} disabled={downloadingRow===file.id || file.status==='draft' || (!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background: (downloadingRow===file.id || file.status==='draft' || (!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed)) ? '#eee' : 'white',cursor: (downloadingRow===file.id || file.status==='draft' || (!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed)) ? 'default' : 'pointer',fontSize:'12px' }}>⬇</button> {/* MARKER_DOCCOLLECTION_CROSSCHECK_ROWDOWNLOAD_V1 */}
                         <button title="จัดการรูปแนบ" onClick={()=>setAttachModal(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #1a3a5c',background:'white',cursor:'pointer',fontSize:'12px' }}>📎</button>
                         {(isOwner || isAdmin || file.uploaded_by===(userName||currentUser?.email||'')) && <button title="ลบ" onClick={()=>setConfirmDelete(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #f7c1c1',background:'#FCEBEB',cursor:'pointer',fontSize:'12px' }}>🗑</button>}
                       </div>
@@ -4424,7 +5929,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
           <div style={{ position:'sticky',bottom:0,left:0,borderTop:'1px solid #e8e8e8',background:'white',padding:'8px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',zIndex:2,minWidth:'800px' }}>
             {/* แสดงข้อมูล */}
             <div style={{ fontSize:'11px',color:'#999',whiteSpace:'nowrap' }}>
-              แสดง <strong style={{ color:'#333' }}>{filteredAll.length===0?0:(safePage-1)*perPage+1}–{Math.min(safePage*perPage,filteredAll.length)}</strong> จาก <strong style={{ color:'#333' }}>{filteredAll.length}</strong> รายการ
+              แสดง <strong style={{ color:'#333' }}>{totalCountForFooter===0?0:(safePage-1)*perPage+1}–{Math.min(safePage*perPage,totalCountForFooter)}</strong> จาก <strong style={{ color:'#333' }}>{totalCountForFooter}</strong> รายการ
             </div>
             {/* Page buttons */}
             <div style={{ display:'flex',alignItems:'center',gap:'3px' }}>
@@ -4457,6 +5962,43 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
       </div>
 
       {viewFile && <DocDetailModal file={viewFile} onClose={()=>setViewFile(null)} searchQuery={search}/>}
+
+      {/* MARKER_FOLDERDETAIL_ROW_CONTEXT_MENU_RENDER_V1 -- เมนูคลิกขวา: Recheck & Rematch ข้อมูลที่ขาด */}
+      {rowContextMenu && (() => {
+        const missing = detectMissingFields(rowContextMenu.file);
+        return (
+          <div onClick={e=>e.stopPropagation()} onContextMenu={e=>e.preventDefault()}
+            style={{ position:'fixed', top:rowContextMenu.y, left:rowContextMenu.x, zIndex:1000,
+              background:'white', border:'0.5px solid #ddd', borderRadius:'8px',
+              boxShadow:'0 4px 16px rgba(0,0,0,0.15)', minWidth:'240px', overflow:'hidden', fontSize:'12px' }}>
+            <div style={{ padding:'8px 12px', borderBottom:'0.5px solid #eee', color:'#888', fontSize:'11px', maxWidth:'260px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={rowContextMenu.file.serial_code}>
+              {rowContextMenu.file.serial_code}
+            </div>
+            <button
+              onClick={() => handleRecheckRow(rowContextMenu.file)}
+              disabled={rechecking === rowContextMenu.file.id}
+              style={{ display:'flex', alignItems:'center', gap:'8px', width:'100%', padding:'9px 12px', border:'none',
+                background:'white', textAlign:'left', cursor: rechecking===rowContextMenu.file.id ? 'default' : 'pointer', color:'#1a3a5c' }}
+              onMouseEnter={e=>e.currentTarget.style.background='#f0f4f8'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              🔄 Recheck &amp; Rematch BU
+              {missing.length > 0 && (
+                <span style={{ marginLeft:'auto', fontSize:'10px', color:'#C0392B' }}>ขาด {missing.length} จุด</span>
+              )}
+            </button>
+            {missing.length === 0 && (
+              <div style={{ padding:'6px 12px 9px', fontSize:'10px', color:'#4E8079' }}>✓ ข้อมูลครบถ้วนแล้ว</div>
+            )}
+          </div>
+        );
+      })()}
+      {recheckAlert && (
+        <AlertModal
+          type={recheckAlert.type}
+          title={recheckAlert.title}
+          message={recheckAlert.message}
+          onClose={() => setRecheckAlert(null)}
+        />
+      )}
       {attachModal && (
         <AttachmentModal
           file={attachModal}
@@ -4465,7 +6007,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
             // MARKER_UPLOADGEN_ATTACH_SKIP_FULL_REFETCH_V1
             // ── อัปเดต attachments เฉพาะแถวนี้ใน State โดยตรง ──
             // ── ไม่ต้อง fetchFiles() ดึงทุก Column ของทุกแถว (attachments/rows หนัก) ซ้ำ ──
+            // MARKER_FOLDERDETAIL_BROWSE_STATE_MIRROR_FIX_V1 -- เหมือนจุด Rotate ด้านบน ต้อง Sync
+            // browseFiles ด้วย ไม่งั้นโหมดปกติ (ไม่ได้ค้นหา) จะไม่เห็นรูปแนบที่เพิ่งแก้ทันที
             setFiles(prev => prev.map(f => f.id === attachModal.id ? { ...f, attachments: updatedAttachments } : f));
+            setBrowseFiles(prev => prev.map(f => f.id === attachModal.id ? { ...f, attachments: updatedAttachments } : f));
             setAttachModal(null);
           }}
           db={db}
@@ -5925,7 +7470,12 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
           </div>
         </div>
       )}
-      {detailViewFile && <DocDetailModal file={detailViewFile} onClose={()=>setDetailViewFile(null)} searchQuery={detailSearch}/>}
+      {detailViewFile && <DocDetailModal file={detailViewFile} onClose={()=>setDetailViewFile(null)} searchQuery={detailSearch} userName={userName} currentUser={currentUser}
+        onConfirmed={(fid, crossCheckPayload) => { // MARKER_DOCCOLLECTION_CROSSCHECK_SYNCAFTERCONFIRM_UNDEFSETTERS_FIX_V1 -- DocumentCenter ไม่มี files/browseFiles State (คนละ Component กับ FolderDetail) จึง Sync แค่ detailViewFile ของตัวเอง + broadcastWs ให้ Session/Tab อื่น Sync ต่อ
+          setDetailViewFile(prev => (prev && prev.id === fid) ? { ...prev, cross_check: crossCheckPayload } : prev);
+          broadcastWs('doc_collection_updated', { action:'update', id: fid });
+        }}
+      />} {/* MARKER_DOCCOLLECTION_CROSSCHECK_SYNCAFTERCONFIRM_UNDEFSETTERS_FIX_V1 */}
       <div style={{ display:'flex', gap:'4px', borderBottom:'1px solid #eee', marginBottom:'16px' }}>
         <button onClick={()=>setActiveTab('folders')} style={{ padding:'8px 4px', marginRight:'20px', fontSize:'14px', fontWeight: activeTab==='folders'?'600':'400', color: activeTab==='folders'?'#1a3a5c':'#888', background:'none', border:'none', borderBottom: activeTab==='folders'?'2px solid #1a3a5c':'2px solid transparent', cursor:'pointer' }}>Document Center</button>
         <button onClick={()=>setActiveTab('setup')} style={{ padding:'8px 4px', fontSize:'14px', fontWeight: activeTab==='setup'?'600':'400', color: activeTab==='setup'?'#1a3a5c':'#888', background:'none', border:'none', borderBottom: activeTab==='setup'?'2px solid #1a3a5c':'2px solid transparent', cursor:'pointer' }}>Setup - Tools</button>

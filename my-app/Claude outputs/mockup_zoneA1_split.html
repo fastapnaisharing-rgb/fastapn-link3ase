@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Mockup - Zone A-1 แบ่งกรอบ</title>
+<style>
+  body { font-family: -apple-system, 'Segoe UI', Tahoma, sans-serif; background: #f3f4f6; padding: 30px; }
+  .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; max-width: 900px; }
+  .row5 { display: flex; gap: 14px; }
+  .field { flex: 1; min-width: 0; }
+  label { display: block; font-size: 12px; font-weight: 500; color: #6b7280; margin-bottom: 5px; }
+  input, select { width: 100%; box-sizing: border-box; height: 34px; font-size: 13px; padding: 0 10px; border: 1px solid #fde68a; background: #fffbeb; border-radius: 8px; outline: none; }
+  .dc-grid { display: grid; grid-template-columns: 1fr 1fr; border: 0.5px solid #e8eaf0; border-radius: 6px; overflow: hidden; margin-top: 10px; }
+  .dc-col { border-right: 0.5px solid #e8eaf0; }
+  .dc-col:last-child { border-right: none; }
+  .dc-head { padding: 4px 10px; font-size: 10.5px; font-weight: 600; text-align: center; border-bottom: 0.5px solid #e8eaf0; }
+  .dc-head.debit { color: #3d5872; background: #eef2f6; }
+  .dc-head.credit { color: #7a5a3d; background: #f5eee7; }
+  .dc-cells { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .dc-cell { padding: 4px 6px; border-right: 0.5px solid #e8eaf0; }
+  .dc-cell:last-child { border-right: none; }
+  .dc-cell input { height: 26px; font-size: 11.5px; border: 1px solid #b8d4ec; background: #E6F1FB; color: #0C447C; text-align: center; }
+
+  /* -- ส่วนที่เพิ่ม: กรอบ Zone บน / Zone ล่าง -- */
+  .zone-top {
+    border: 1.5px solid #93c5fd;
+    border-radius: 10px;
+    padding: 14px;
+    background: #fafcff;
+    position: relative;
+    margin-bottom: 14px;
+  }
+  .zone-bottom {
+    padding: 14px 2px 0 2px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+  }
+  .zone-tag {
+    position: absolute;
+    top: -10px;
+    left: 12px;
+    background: #fff;
+    padding: 0 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .zone-tag.top { color: #2563eb; }
+
+  .btn-add {
+    height: 34px;
+    padding: 0 18px;
+    border-radius: 8px;
+    border: none;
+    background: #1a3a5c;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-clear {
+    height: 34px;
+    padding: 0 18px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    color: #4b5563;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .note { font-size: 11px; color: #9ca3af; margin-left: auto; }
+  h2 { font-size: 15px; color: #1a3a5c; margin: 0 0 14px 0; }
+</style>
+</head>
+<body>
+  <h2>Mockup -- ขอบเฉพาะ Zone ใส่ข้อมูล / Zone ปุ่มกด ไม่มีขอบ</h2>
+  <div class="panel">
+
+    <div class="zone-top">
+      <span class="zone-tag top">ZONE บน -- ข้อมูลรายการ</span>
+      <div class="row5">
+        <div class="field">
+          <label>Code</label>
+          <input value="BTM-C7068/1" readonly>
+        </div>
+        <div class="field">
+          <label>Tax invoice Date</label>
+          <input value="09/24/2026" readonly>
+        </div>
+        <div class="field">
+          <label>TIV number</label>
+          <input value="600001" readonly>
+        </div>
+        <div class="field">
+          <label>Amount</label>
+          <input value="" readonly>
+        </div>
+        <div class="field">
+          <label>PO number</label>
+          <input value="" placeholder="ไม่จำเป็น" readonly>
+        </div>
+      </div>
+
+      <div class="dc-grid">
+        <div class="dc-col">
+          <div class="dc-head debit">Debit</div>
+          <div class="dc-cells">
+            <div class="dc-cell"><input value="321801" readonly></div>
+            <div class="dc-cell"><input value="99999" readonly></div>
+            <div class="dc-cell"><input value="11610752" readonly></div>
+            <div class="dc-cell"><input value="999999" readonly></div>
+          </div>
+        </div>
+        <div class="dc-col">
+          <div class="dc-head credit">Credit</div>
+          <div class="dc-cells">
+            <div class="dc-cell"><input value="321801" readonly></div>
+            <div class="dc-cell"><input value="99999" readonly></div>
+            <div class="dc-cell"><input value="11630052" readonly></div>
+            <div class="dc-cell"><input value="999999" readonly></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="zone-bottom">
+      <button class="btn-add">+ Add</button>
+      <button class="btn-clear">Clear</button>
+      <span class="note">(ตัวอย่างปุ่ม -- ไม่มีขอบ -- รอ Confirm ว่าต้องการปุ่มอะไรบ้าง)</span>
+    </div>
+
+  </div>
+</body>
+</html>

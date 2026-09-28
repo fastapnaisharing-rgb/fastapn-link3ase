@@ -247,6 +247,7 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   // MARKER_COMBOINPUT_KEYBOARD_NAV_V1 -- เพิ่ม Keyboard Navigation (เดิมไม่มี onKeyDown เลย)
   const [activeIdx, setActiveIdx] = useState(-1);
+  const [justOpened, setJustOpened] = useState(true); // MARKER_COMBOINPUT_SHOWALL_ON_OPEN_V1 -- เปิด Dropdown ครั้งแรกให้โชว่ List เต็ม ไม่ Filter ด้วยค่าเดิม
   const inputRef = useRef(null);
   const ref = useRef(null);
   const listRef = useRef(null);
@@ -258,7 +259,7 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
 
-  const q = String(value || '').trim().toLowerCase();
+  const q = justOpened ? '' : String(value || '').trim().toLowerCase(); // MARKER_COMBOINPUT_SHOWALL_ON_OPEN_V1
   const filtered = q ? options.filter(o => o.toLowerCase().includes(q)) : options;
 
   useEffect(() => { setActiveIdx(-1); }, [q, open]);
@@ -287,10 +288,10 @@ function ComboInput({ value, onChange, options = [], placeholder = '' }) {
       <input
         ref={inputRef}
         value={value || ''}
-        onChange={e => onChange(e.target.value)}
-        onFocus={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); }}
+        onChange={e => { onChange(e.target.value); setJustOpened(false); }} // MARKER_COMBOINPUT_SHOWALL_ON_OPEN_V1
+        onFocus={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); setJustOpened(true); }} // MARKER_COMBOINPUT_SHOWALL_ON_OPEN_V1
         // MARKER_COMBOINPUT_ONCLICK_REOPEN_V1 -- คลิกซ้ำตอน Focus ค้างอยู่แล้ว ต้องเปิด List ได้อีก
-        onClick={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); }}
+        onClick={(e) => { const r = e.target.getBoundingClientRect(); setDropPos({ top: r.bottom + 2, left: r.left, width: r.width }); setOpen(true); setJustOpened(true); }} // MARKER_COMBOINPUT_SHOWALL_ON_OPEN_V1
         // MARKER_COMBOINPUT_ONBLUR_CLOSE_V1 -- ปิด Dropdown ตอน Focus หลุด (เช่น Tab ออก)
         // ── หน่วง 150ms กัน Race Condition กับคลิกเลือก Option ด้วยเมาส์ ──────
         onBlur={() => { setTimeout(() => setOpen(false), 150); }}
@@ -2335,6 +2336,7 @@ const invFmtYYMMDD   = (d) => invFmtYY(d) + invFmtMM(d) + invFmtDD(d);
 // pattern builders: (Fp, Mp, Lp, d, result) => string — ตาม Invoice No. rule code ของ supplier
 const INVOICE_PATTERN_BUILDERS = {
   'AF-2Y2M':     (Fp, Mp, Lp, d, r) => `${Fp}${invFmtYYMM(d)}${Mp}${r}`,
+  '2Y2M':        (Fp, Mp, Lp, d, r) => `${invFmtYYMM(d)}${Mp}${r}`, // MARKER_INVOICERULE_2Y2M_NOAF_V1 -- YYMM + Mid Part + เลขรัน (ไม่ใช้ First Part)
   'AF-T2Y2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 43}${invFmtMM(d)}${Mp}${r}`,
   // MARKER_INVOICERULE_AFTFY2M_YYYY_FIX_V1 -- แก้ YY เป็น YYYY
   'AF-TFY2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYYYY(d), 10) + 543}${invFmtMM(d)}${Mp}${r}`,
@@ -2342,7 +2344,7 @@ const INVOICE_PATTERN_BUILDERS = {
   '2D2MFY':      (Fp, Mp, Lp, d, r) => `${invFmtDDMMYYYY(d)}${Mp}${r}`,
   'FY':          (Fp, Mp, Lp, d, r) => `${invFmtYYYY(d)}${Mp}${r}`,
   'T2Y':         (Fp, Mp, Lp, d, r) => `${parseInt(invFmtYY(d), 10) + 43}${Mp}${r}`,
-  'AF-2M':       (Fp, Mp, Lp, d, r) => `${invFmtMM(d)}${Mp}${r}`,
+  'AF-2M':       (Fp, Mp, Lp, d, r) => `${Fp}${invFmtMM(d)}${Mp}${r}`, // MARKER_INVOICERULE_AF2M_USE_FIRSTPART_FIX_V1 -- เติม Fp นำหน้า ให้ตรง Convention AF- เหมือน Pattern อื่น (เดิมไม่มี Fp เลย)
   'AF-T2Y':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYY(d), 10) + 43}${Mp}${r}`,
   'AF-TFY':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(invFmtYYYY(d), 10) + 543}${Mp}${r}`,
   'TFY':         (Fp, Mp, Lp, d, r) => `${parseInt(invFmtYYYY(d), 10) + 543}${Mp}${r}`,
@@ -2386,6 +2388,27 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
   const builder = INVOICE_PATTERN_BUILDERS[ruleCode];
   if (!builder || !d || isNaN(d.getTime())) return `${Fp}${result}`;
   return builder(Fp, Mp, Lp, d, result);
+};
+
+// MARKER_SUPPLIER_INVOICE_PART_USAGE_V1 -- เช็คว่า First/Mid/Last Part "มีผลจริง" กับ Invoice Rule (Pattern) + Digit ที่เลือกอยู่หรือไม่
+// ใช้ Sentinel Probe เรียก Builder Function จริง ดูว่าค่าไหนถูกใช้ในผลลัพธ์บ้าง (ไม่ต้อง Mapping มือทีละ Pattern)
+// Digit = FULL -> ไม่ใช้ Pattern เลย (ดู MARKER_INVOICENUM_DIGIT_FULL_BYPASS_V1 ด้านบน) เลยไม่มี Field ไหน "มีผล"
+const getUsedInvoiceParts = (ruleCode, digitRule) => {
+  const digitNorm = String(digitRule || '').trim().toUpperCase();
+  if (digitNorm === 'FULL') return { fp: false, mp: false, lp: false };
+  const ruleNorm = String(ruleCode || '').trim().toUpperCase();
+  const builder = INVOICE_PATTERN_BUILDERS[String(ruleCode || '').trim()];
+  if (!builder) return { fp: false, mp: false, lp: false };
+  const SENTINEL_FP = '__FPSENTINEL__', SENTINEL_MP = '__MPSENTINEL__', SENTINEL_LP = '__LPSENTINEL__';
+  let out = '';
+  try { out = builder(SENTINEL_FP, SENTINEL_MP, SENTINEL_LP, new Date(), '0001') || ''; } catch (e) { out = ''; }
+  const sentinelFp = out.includes(SENTINEL_FP), sentinelMp = out.includes(SENTINEL_MP), sentinelLp = out.includes(SENTINEL_LP);
+  // MARKER_SUPPLIER_INVOICE_PART_USAGE_AF_PIPE_V1 -- AF: First Part บังคับเสมอ, Mid Part บังคับเฉพาะ Pattern แบบผสม (มี "|" เช่น AF-FY|2M), Last Part ตามจริง (ครอบคลุม AF-YYMMDD-1/AF-2YMM-1 ที่ใช้ Last Part แทน Mid Part)
+  if (ruleNorm.startsWith('AF')) {
+    const hasPipe = ruleNorm.includes('|');
+    return { fp: true, mp: hasPipe ? sentinelMp : false, lp: sentinelLp };
+  }
+  return { fp: sentinelFp, mp: sentinelMp, lp: sentinelLp };
 };
 
 const TAX_TYPE_OPTS = ['VN','SN','NN','V1','V2','V3','V5','S1','S2','S3','S5','N1','N2','N3','N5','NV7'];
@@ -2458,8 +2481,12 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   }, [active]);
 
   // MARKER_SUPPLIER_SAVE_EVENT_DRIVEN_V3_HOOKFIX -- ย้ายมาไว้ก่อน Early Return เสมอ (Rules of Hooks)
+  // MARKER_SUPPLIER_SEARCH_RESULTS_REALTIME_SYNC_V1 -- results (จาก /supplier-search) แยกวงจรจาก
+  // supplierItems/fetchCollection ทำให้ Save/Delete Supplier แล้วตาราง Search ไม่ Update Realtime
+  // ต้อง bump refreshTick ให้ useEffect ค้นหาด้านล่าง (Dependency [..., refreshTick]) รันซ้ำด้วย
   useRealtimeRefresh(['supplier_list_updated'], () => {
     if (fetchCollection) fetchCollection('SupplierList', true).catch(e => console.error('[SupplierList] fetchCollection background error:', e));
+    setRefreshTick(t => t + 1);
   });
 
   // MARKER_SUPPLIER_SERVER_SEARCH_V1 -- ย้าย buLower/buHasOwnCodes/effectiveBookFilter มาไว้ก่อน Early Return
@@ -2473,6 +2500,10 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   const [results, setResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const searchSeqRef = useRef(0);
+  // MARKER_SUPPLIER_SEARCH_RESULTS_REALTIME_SYNC_V1 -- ตัวนับ bump เพื่อบังคับค้นหาใหม่ทันที
+  // เวลามี supplier_list_updated เข้ามา (Save/Delete จาก Tab นี้เองหรือ Tab/User อื่น) โดยไม่ต้อง
+  // รอ User พิมพ์ Query ใหม่ (เดิม Dependency ไม่มีตัวนี้ -- ตารางเลยค้างค่าเก่าหลังกด Save)
+  const [refreshTick, setRefreshTick] = useState(0);
   useEffect(() => {
     if (!show) return;
     const controller = new AbortController();
@@ -2493,7 +2524,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       }
     }, 300);
     return () => { clearTimeout(t); controller.abort(); };
-  }, [show, query, bu, effectiveBookFilter, sortField, sortDir]);
+  }, [show, query, bu, effectiveBookFilter, sortField, sortDir, refreshTick]);
 
   if (!show) return null;
 
@@ -2801,6 +2832,9 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
               )}
               {/* Row 4+5: Invoice Rule section — headers + values (Format เดียวกับ Contact) */}
               {/* ── 6 คอลัมน์เท่ากัน — Digit + Due Date รวมอยู่ในคอลัมน์เดียวกัน (แบ่งซ้าย-ขวา) ── */}
+              {/* MARKER_SUPPLIER_INVOICE_STRUCTURE_LABEL_V1 -- กรอบชัดขึ้น + ป้ายชื่อ "Invoice Structure" มุมซ้ายบนของ Zone นี้ */}
+              <div style={{ position: 'relative', border: '1px solid #b9c4d6', borderRadius: '6px', marginTop: '14px' }}>
+                <span style={{ position: 'absolute', top: '-9px', left: '10px', padding: '0 6px', background: 'white', fontSize: '10px', fontWeight: '600', color: '#1a3a5c', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Invoice Structure</span>
               <div style={{ border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', borderBottom: '0.5px solid #e8eaf0' }}>
                   {['Invoice Rule','First Part','Mid Part','Last Part'].map((h) => (
@@ -2814,15 +2848,73 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
                   {(() => { const opts = getOpts('Invoice No.'); return <div key="invno" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => setField('Invoice No.', v)} options={opts} /></div>; })()}
-                  <div key="fp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
-                  <div key="mp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
-                  <div key="lp" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                  {(() => { // MARKER_SUPPLIER_INVOICE_PART_USAGE_V1 -- Highlight สีเหลืองเฉพาะ Field ที่ Pattern+Digit ปัจจุบันใช้จริง
+                    const _usedParts = getUsedInvoiceParts(form['Invoice No.'], form['Digit']);
+                    const _partCellStyle = (used) => ({ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0', background: used ? '#FFF3CD' : 'transparent' });
+                    return (
+                      <>
+                        <div key="fp" style={_partCellStyle(_usedParts.fp)}><input value={form['First Part'] || ''} onChange={e => setField('First Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                        <div key="mp" style={_partCellStyle(_usedParts.mp)}><input value={form['Mid Part'] || ''} onChange={e => setField('Mid Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                        <div key="lp" style={_partCellStyle(_usedParts.lp)}><input value={form['Last Part'] || ''} onChange={e => setField('Last Part', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
+                      </>
+                    );
+                  })()}
                   <div key="digdue" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderRight: '0.5px solid #e8eaf0' }}>
                     <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Digit'] || ''} onChange={v => setField('Digit', v)} options={getOpts('Digit')} placeholder="-" /></div>
                     <div style={{ padding: '4px 6px' }}><input value={form['Due'] || ''} onChange={e => setField('Due', e.target.value)} style={{ ...baseInput, background: 'transparent', border: 'none', outline: 'none', width: '100%', height: '28px' }} /></div>
                   </div>
                   {(() => { const opts = getOpts('Notice'); return <div key="notice" style={{ padding: '4px 6px' }}><ComboInput value={form['Notice'] || ''} onChange={v => setField('Notice', v)} options={opts} /></div>; })()}
                 </div>
+                {/* MARKER_SUPPLIER_INVOICE_STRUCTURE_PREVIEW_V1 -- ตัวอย่างเลข Invoice สดๆ จาก First/Mid/Last Part + Digit ที่กรอกอยู่ -- ใช้ Logic เดียวกับ buildInvoiceNumber() ที่ Invoice Detail ใช้จริง */}
+                {(() => {
+                  const disabledFieldsForPreview = Array.isArray(form['disabled_fields']) ? form['disabled_fields'] : [];
+                  const digitRuleForPreview = String(form['Digit'] || '').trim().toUpperCase();
+                  const ruleCodeForPreview = String(form['Invoice No.'] || '').trim();
+                  const ruleCodeNormForPreview = ruleCodeForPreview.toUpperCase();
+                  const digitEmptyForPreview = !digitRuleForPreview || digitRuleForPreview === '-';
+                  const ruleEmptyForPreview = !ruleCodeNormForPreview || ruleCodeNormForPreview === 'N';
+                  let invoiceStructurePreview = '';
+                  if (disabledFieldsForPreview.includes('Invoice num')) {
+                    invoiceStructurePreview = 'Custom - GRT Reference';
+                  } else if (digitEmptyForPreview && ruleEmptyForPreview) {
+                    return null;
+                  } else if (digitRuleForPreview === 'FULL') {
+                    invoiceStructurePreview = 'Digit = FULL → ใช้เลขที่พิมพ์ในช่อง Invoice num ตรงๆ ทั้งหมด (ไม่ใช้ First/Mid/Last Part หรือ Pattern)';
+                  } else {
+                    const dmForPreview = digitRuleForPreview.match(/^(\d{1,2})DB$/);
+                    const nForPreview = dmForPreview ? parseInt(dmForPreview[1], 10) : 0;
+                    const placeholderRunForPreview = nForPreview > 0 ? '1'.padStart(nForPreview, '0') : '0001';
+                    const todayForPreview = new Date().toISOString().slice(0, 10);
+                    const builtForPreview = buildInvoiceNumber(placeholderRunForPreview, todayForPreview, {
+                      'First Part': form['First Part'] || '',
+                      'Mid Part': form['Mid Part'] || '',
+                      'Last Part': form['Last Part'] || '',
+                      'Invoice No.': ruleCodeForPreview,
+                      'Digit': digitRuleForPreview,
+                    });
+                    invoiceStructurePreview = builtForPreview || '— ระบุไม่ครบ หรือไม่มี Pattern นี้ —';
+                  }
+                  return (
+                    <div style={{ padding: '7px 10px', borderTop: '0.5px solid #e8eaf0', background: '#f8f9fa', fontSize: '11px', color: '#888', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <span>ตัวอย่างเลข Invoice (อิงวันที่วันนี้ เพื่อดูตัวอย่าง):</span>
+                      <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#1a3a5c', background: '#eef3fb', border: '1px solid #d8e3f4', borderRadius: '5px', padding: '2px 8px' }}>{invoiceStructurePreview}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+              {/* MARKER_SUPPLIER_INVOICE_STRUCTURE_RESET_BTN_V1 -- ปุ่ม Reset มุมขวาล่างกล่อง Invoice Structure: ล้าง Invoice Rule/First/Mid/Last Part + ตั้ง Digit = FULL (ไม่แตะ Due/Notice) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setField('Invoice No.', '');
+                  setField('First Part', '');
+                  setField('Mid Part', '');
+                  setField('Last Part', '');
+                  setField('Digit', 'FULL');
+                }}
+                style={{ position: 'absolute', bottom: '6px', right: '10px', padding: '2px 8px', fontSize: '10px', fontWeight: '600', color: '#888', background: 'white', border: '1px solid #d8dee8', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.02em' }} // MARKER_SUPPLIER_INVOICE_STRUCTURE_RESET_BTN_POS_V1
+                title="Reset Invoice Rule / First-Mid-Last Part / ตั้ง Digit = FULL"
+              >Reset</button>
               </div>
 
               {/* Row 6: Contact + Email */}
@@ -4605,6 +4697,27 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       return next;
     });
   };
+  // MARKER_APCONTROLLER_INVOICE_DRAFT_HEARTBEAT_V1 -- Mirror จาก IEController.js เป๊ะๆ
+  // -- ใช้ Ref เก็บ lines/form ล่าสุด กัน Interval ถูก Reset ทุกครั้งที่พิมพ์ --
+  const draftLinesRef = useRef(lines);
+  useEffect(() => { draftLinesRef.current = lines; }, [lines]);
+  const draftFormRef = useRef(form);
+  useEffect(() => { draftFormRef.current = form; }, [form]);
+  useEffect(() => {
+    if (!show) return;
+    const checkDirty = () => {
+      const l = draftLinesRef.current || [];
+      const f = draftFormRef.current || {};
+      const hasLineData = l.some(row => (row.itemCode && String(row.itemCode).trim()) || (row.desc && String(row.desc).trim()) || (row.amount !== '' && row.amount != null && Number(String(row.amount).replace(/,/g, '')) !== 0));
+      const hasFormData = !!(f?.backDesc1?.trim?.() || f?.backDesc2?.trim?.() || f?.backDesc3?.trim?.() || (!isAutoGrt && (f?.grtNum?.trim?.() || f?.grn?.trim?.())));
+      return hasLineData || hasFormData;
+    };
+    const id = setInterval(() => {
+      if (checkDirty()) window.dispatchEvent(new Event('fastapn:invoice-draft-heartbeat'));
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [show]);
+
   // MARKER_WHT_QUICKCALC_STATE_V1
   // -- เลือกแถวใน Invoice Lines แล้วคำนวณ WHT% จากยอดรวมที่เลือก Auto-Add แถวใหม่ --
   const [selectedLineIdx, setSelectedLineIdx] = useState(new Set());
@@ -5500,9 +5613,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const invDateRef = useRef(null);
   // MARKER_INVOICEDETAIL_INVDATE_STAR_AUTOFOCUS_V1 -- Ref สำหรับ Auto Focus หลังกด * ที่ Inv Date
   const invoiceNumRef = useRef(null);
+  // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- Ref เก็บเวลาที่เริ่มกรอก Invoice นี้ (ใช้คำนวณเวลาต่อ Transaction)
+  const fillStartedAtRef = useRef(null);
   useEffect(() => {
     if (show) {
       setTimeout(() => invDateRef.current?.focus(), 80);
+      // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- Reset เวลาเริ่มกรอกทุกครั้งที่เปิด Modal ใหม่ (Invoice ใบใหม่)
+      fillStartedAtRef.current = new Date();
       // MARKER_MODAL_OPEN_RESET_FLOW_STATE_V1
       // ── Reset State ของ Flow/Real Vendor + Guard ทุกครั้งที่เปิด Modal ใหม่ ──
       // ── กัน State ค้างจาก Invoice ใบก่อนหน้า (Modal ไม่ได้ Remount ใหม่) ──────
@@ -6097,7 +6214,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
-      const ok = await onSubmitInvoice(lines, forceAutoGrtForThisInvoice);
+      // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- ส่งเวลาที่เริ่มกรอกไปให้ handleSubmitInvoice แนบเข้า bucket_list
+      const ok = await onSubmitInvoice(lines, forceAutoGrtForThisInvoice, fillStartedAtRef.current);
       if (ok) {
         // MARKER_FLOW_INCREMENT_USAGE_ON_SUBMIT_V1
         // ── Submit สำเร็จ + มี Flow Active อยู่ -> +1 use_count ที่ Backend ──────
@@ -9750,7 +9868,17 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
   // ── "เข้าไปทำต่อ" พาไป Invoice Entry (Step 2) ทันที ไม่ต้องกด Start Batch ──
   // ── ซ้ำ — คำนวณ mode/Running/Prefix เองตรงนี้เลย (ไม่พึ่ง State ที่ยังไม่ ──
   // ── Re-render เพราะ setState เป็น Async อ่านค่าเก่าไม่ได้ทันที) ────────
-  const handleResumeOnProcess = (g) => {
+  const handleResumeOnProcess = async (g) => {
+    // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- เช็คว่าเจ้าของ Batch จริง (g.user) Active อยู่ตอนนี้ไหม ก่อนเข้าไปดู/ทำต่อ (เฉพาะ Batch ของคนอื่น)
+    let onProcessViewOnly = false;
+    const onProcessTargetUser = (g.user && g.user !== myOnProcessIdentity) ? g.user : null;
+    if (onProcessTargetUser) {
+      try {
+        const activeCutoff = new Date(Date.now() - 60000).toISOString();
+        const { data: activeRows } = await db.from('ap_active_sessions').select('user_name').eq('bu', g.bu).eq('user_name', onProcessTargetUser).gte('last_seen', activeCutoff);
+        if (activeRows && activeRows.length > 0) onProcessViewOnly = true;
+      } catch (e) { console.error('[ResumeOnProcess] เช็ค Active Session ไม่สำเร็จ:', e); }
+    }
     // MARKER_CHANNEL_FEATURE_PHASE1_2_V1 -- สลับไป Channel ของกลุ่มที่กด Resume อัตโนมัติ
     setActiveChannel(g.channel || 1);
     const matched = infoItems.find(i => i['bu'] === g.bu);
@@ -9787,7 +9915,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
       apGrtRunning: runningGrt, apGrnRunning: runningGrn,
       grtPrefix: buildResumePrefix('GRT'), grnPrefix: buildResumePrefix('GRN'),
       buInfo: matched,
+      // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- ส่งต่อผ่าน config -> batchConfig ให้ InvoiceEntry ใช้
+      resumeAsUser: onProcessTargetUser,
+      viewOnly: onProcessViewOnly,
     });
+    if (onProcessViewOnly) {
+      confirmDialog.alert(onProcessTargetUser + ' กำลังทำงาน Batch นี้อยู่ — เปิดให้ดูอย่างเดียว (View Only) ไม่สามารถเพิ่ม/แก้ไข/ลบได้จนกว่าอีกฝ่ายจะออกจากหน้านี้', { variant: 'warning' });
+    }
   };
 
   const fmtOnProcessNum = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -9927,6 +10061,14 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
         method: 'DELETE',
         headers: { Authorization: `Bearer ${delToken}` },
       }).catch((e) => console.error('delete batch_notifications:', e));
+      // ── MARKER_CASCADE_DELETE_APEXPORT_IMAGES_ON_BATCHDELETE_V1 — ลบรูปประกอบ (module='ap-export') ที่ผูกกับ Batch นี้ด้วย ──
+      // ── กันรูปค้างเป็นขยะเมื่อ Batch ถูกลบก่อนที่ Cron จะมา Join เจอ (Endpoint
+      // ── นี้ Backend เตรียมไว้ให้ใช้ตรงนี้อยู่แล้ว — เดิมไม่เคยถูกเรียกใช้) ─────────────
+      await fetch(`${delApiBase}/api/file-storage/delete-by-ref`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${delToken}` },
+        body: JSON.stringify({ refIds: [b.batch_id] }),
+      }).catch((e) => console.error('[MARKER_CASCADE_DELETE_APEXPORT_IMAGES_ON_BATCHDELETE_V1] delete-by-ref (handleDeleteBatchRow):', e));
       // ── ลบ batch_list — ?hard=true (Bundle เข้า Recycle Bin ไปแล้วข้างบน) ──
       const batchDelRes = await fetch(`${delApiBase}/api/batch_list/${b.id}?hard=true`, {
         method: 'DELETE',
@@ -10128,7 +10270,14 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
   const [pvViewMode, setPvViewMode] = useState('grid');
   const [pvRegSelectedIdx, setPvRegSelectedIdx] = useState(null);
   const [pvCheckedInvoices, setPvCheckedInvoices] = useState(() => new Set());
-  const togglePvChecked = (invoice) => setPvCheckedInvoices(prev => {
+  // MARKER_PVREG_CHECKED_TOTAL_SUM_V1 -- Double-click/ติ๊กข้าม Supplier -> Reset ยอดเดิมทิ้ง เริ่มรวมยอดใหม่จากแถวนี้แถวเดียว
+  const togglePvChecked = (invoice, vendor) => setPvCheckedInvoices(prev => {
+    if (prev.size > 0 && vendor && pvRegisterRowsMerged) {
+      const firstChecked = pvRegisterRowsMerged.find(r => prev.has(r.invoice));
+      if (firstChecked && firstChecked.vendor !== vendor) {
+        return new Set([invoice]);
+      }
+    }
     const next = new Set(prev);
     next.has(invoice) ? next.delete(invoice) : next.add(invoice);
     return next;
@@ -10447,6 +10596,22 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
     // MARKER_INVOICELIST_SORT_BY_NUMBER_V1
     return Array.from(map.values()).sort((a, b) => String(a.invoice ?? '').localeCompare(String(b.invoice ?? ''), undefined, { numeric: true, sensitivity: 'base' }));
   }, [pvRegisterRows]);
+  // MARKER_PVREG_CHECKED_TOTAL_SUM_V1 -- ยอดรวมของแถวที่ติ๊กไว้ (Amount/Vat/Wht/Total) สำหรับแถวสรุปท้ายตาราง
+  const pvCheckedTotals = useMemo(() => {
+    const acc = { amount: 0, vat: 0, wht: 0, total: 0, vendor: null, count: 0 };
+    if (!pvRegisterRowsMerged) return acc;
+    pvRegisterRowsMerged.forEach((r) => {
+      if (pvCheckedInvoices.has(r.invoice)) {
+        acc.amount += r.amount || 0;
+        acc.vat += r.vat || 0;
+        acc.wht += r.wht || 0;
+        acc.total += r.total || 0;
+        acc.count += 1;
+        if (!acc.vendor) acc.vendor = r.vendor;
+      }
+    });
+    return acc;
+  }, [pvRegisterRowsMerged, pvCheckedInvoices]);
   // MARKER_PVREG_AUTOSELECT_DEFAULT_V2
   useEffect(() => {
     if (pvRegisterRowsMerged && pvRegisterRowsMerged.length > 0 && pvRegSelectedIdx === null) {
@@ -10459,9 +10624,8 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
     if (!q) return pvRegisterRowsMerged;
     return pvRegisterRowsMerged.filter(r => (r.vendor + ' ' + r.invoice).toLowerCase().includes(q));
   }, [pvRegisterRowsMerged, pvRegSearchQuery]);
-  const PV_REG_PAGE_SIZE = 5;
-  const pvRegTotalPages = Math.max(1, Math.ceil(pvRegFilteredRows.length / PV_REG_PAGE_SIZE));
-  const pvRegVisibleRows = pvRegFilteredRows.slice(pvRegPage * PV_REG_PAGE_SIZE, pvRegPage * PV_REG_PAGE_SIZE + PV_REG_PAGE_SIZE);
+  // MARKER_PVREG_REMOVE_BLUE_TFOOT_AND_PAGINATION_V1 -- เลิก Pagination แสดง pvRegFilteredRows ทั้งหมดในหน้าเดียว
+  const pvRegVisibleRows = pvRegFilteredRows;
 
   const pvColCount = filePreview ? Math.max(1, ...filePreview.rows.map(r => r.length)) : 0;
   const pvPadCount = filePreview ? Math.max(0, 100 - filePreview.rows.length) : 0;
@@ -11661,15 +11825,11 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
                     {pvRegisterRowsMerged && (
                       <span style={{ fontSize: '11px', color: '#1a7a1a', fontWeight: 500 }}>✓ {pvCheckedInvoices.size}/{pvRegisterRowsMerged.length} ตรวจแล้ว</span>
                     )}
-                    {/* MARKER_PVREG_PAGINATION_TOPBAR_V1 */}
+                    {/* MARKER_PVREG_REMOVE_BLUE_TFOOT_AND_PAGINATION_V1 -- ตัด Pagination ออก แสดงทุกแถวในหน้าเดียว */}
                     <div style={{ flex: 1 }} />
-                    <button onClick={() => setPvRegPage(p => Math.max(0, p - 1))} disabled={pvRegPage === 0}
-                      style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: pvRegPage === 0 ? 'default' : 'pointer', color: pvRegPage === 0 ? '#ccc' : '#333' }}>‹ ก่อนหน้า</button>
-                    <span style={{ fontSize: '11px', color: '#888' }}>หน้า {pvRegPage + 1}/{pvRegTotalPages}</span>
-                    <button onClick={() => setPvRegPage(p => Math.min(pvRegTotalPages - 1, p + 1))} disabled={pvRegPage >= pvRegTotalPages - 1}
-                      style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '5px', border: '0.5px solid #ddd', background: 'white', cursor: pvRegPage >= pvRegTotalPages - 1 ? 'default' : 'pointer', color: pvRegPage >= pvRegTotalPages - 1 ? '#ccc' : '#333' }}>ถัดไป ›</button>
                   </div>
-                  <div style={{ minHeight: '190px', maxHeight: '190px', overflowY: 'auto', flexShrink: 0 }}>
+                  {/* MARKER_PVREG_ADD_SCROLL_BACK_V1 -- เอา Scroll กลับมาใส่ เพราะตอนนี้แสดงทุกแถวในหน้าเดียว ไม่มี Pagination จำกัดความสูงแล้ว */}
+                  <div style={{ maxHeight: '340px', overflowY: 'auto', flexShrink: 0 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
                     <colgroup>
                       <col style={{ width: '5%' }} /><col style={{ width: '19%' }} /><col style={{ width: '13%' }} /><col style={{ width: '15%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} /><col style={{ width: '23%' }} />
@@ -11691,11 +11851,13 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
                         const isChecked = pvCheckedInvoices.has(r.invoice);
                         return (
                           <tr key={origIdx} onClick={() => setPvRegSelectedIdx(origIdx)}
+                            onDoubleClick={() => togglePvChecked(r.invoice, r.vendor)} // MARKER_PVREG_CHECKED_TOTAL_SUM_V1
                             onMouseEnter={e => { e.currentTarget.style.background = '#F2F6FC'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = isChecked ? '#EAF7EA' : 'white'; }}
                             style={{ borderTop: '0.5px solid #f0f0f0', cursor: 'pointer', background: isChecked ? '#EAF7EA' : 'white' }}>
-                            <td style={{ padding: '7px 4px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                              <input type="checkbox" checked={isChecked} onChange={() => togglePvChecked(r.invoice)} style={{ cursor: 'pointer' }} />
+                            {/* MARKER_PVREG_CHECKBOX_SELECT_REFRESH_V1 -- กด Checkbox แล้ว Select แถวนี้ด้วย ให้ยอดสรุป Group Invoice ด้านล่าง Refresh ตาม */}
+                            <td style={{ padding: '7px 4px', textAlign: 'center' }} onClick={e => { e.stopPropagation(); setPvRegSelectedIdx(origIdx); }}>
+                              <input type="checkbox" checked={isChecked} onChange={() => togglePvChecked(r.invoice, r.vendor)} style={{ cursor: 'pointer' }} />
                             </td>
                             <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.invoice}</td>
                             <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.branch || '-'}</td>
@@ -11707,20 +11869,34 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
                         );
                       })}
                     </tbody>
+                    {/* MARKER_PVREG_REMOVE_BLUE_TFOOT_AND_PAGINATION_V1 -- เอา Row ฟ้า (tfoot ยอดรวมที่ติ๊ก) ออก -- ยอดสรุปยังคงแสดงอยู่ที่ Grid ใต้ตาราง (MARKER_PVREG_SUPPLIERDETAIL_TOTAL_SUMMARY_V1) เหมือนเดิม */}
                   </table>
                   </div>
                   {pvRegSelectedIdx !== null && pvRegisterRowsMerged[pvRegSelectedIdx] && (() => {
                     const d = pvRegisterRowsMerged[pvRegSelectedIdx];
+                    // MARKER_PVREG_GROUP_RELATED_INVOICE_V1 -- รวมยอด Invoice ที่เป็นเลขฐานเดียวกัน (ตัดส่วนหลัง "_" หรือ "/" ทิ้งก่อนเทียบ)
+                    // เช่น "D12139511" กับ "D12139511_NV" ถือเป็น Invoice เดียวกัน รวมยอดเข้าด้วยกัน
+                    const pvGroupBase = String(d.invoice || '').replace(/[_/].*$/, '').trim();
+                    const pvGroupRows = pvRegisterRowsMerged.filter(r => String(r.invoice || '').replace(/[_/].*$/, '').trim() === pvGroupBase);
+                    const pvGroupTotals = pvGroupRows.reduce((acc, r) => {
+                      acc.amount += r.amount || 0;
+                      acc.vat += r.vat || 0;
+                      acc.wht += r.wht || 0;
+                      acc.total += r.total || 0;
+                      return acc;
+                    }, { amount: 0, vat: 0, wht: 0, total: 0 });
                     return (
                       <div style={{ borderTop: '0.5px solid #e8eaf0', padding: '10px 12px', background: '#fafbfc', flexShrink: 0 }}>
                         {/* MARKER_PVREG_SUPPLIERDETAIL_TOTAL_SUMMARY_V1 */}
-                        <div style={{ display: 'flex', gap: '18px', marginBottom: '8px', paddingBottom: '8px', borderBottom: '0.5px solid #e8eaf0', fontSize: '11px' }}>
-                          {[['Amount', d.amount], ['Vat', d.vat], ['Wht', d.wht], ['Total', d.total]].map(([k, v]) => (
-                            <div key={k}>
-                              <span style={{ color: '#aaa' }}>{k}: </span>
-                              <span style={{ color: '#1a3a5c', fontWeight: '600' }}>{v ? v.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</span>
-                            </div>
-                          ))}
+                        {/* MARKER_PVREG_TOTAL_ALIGN_COLUMNS_V1 -- ตำแหน่งตรงกับ Column บนตาราง (5/19/13/15/12/13/23%) ไม่มี Label กำกับ */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '5% 19% 13% 15% 12% 13% 23%', marginBottom: '8px', paddingBottom: '8px', borderBottom: '0.5px solid #e8eaf0', fontSize: '12px' }}>
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                          <div style={{ textAlign: 'right', paddingRight: '10px', color: '#1a3a5c', fontWeight: '600' }}>{pvGroupTotals.amount ? pvGroupTotals.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</div>
+                          <div style={{ textAlign: 'right', paddingRight: '10px', color: '#1a3a5c', fontWeight: '600' }}>{pvGroupTotals.vat ? pvGroupTotals.vat.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</div>
+                          <div style={{ textAlign: 'right', paddingRight: '10px', color: '#1a3a5c', fontWeight: '600' }}>{pvGroupTotals.wht ? pvGroupTotals.wht.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</div>
+                          <div style={{ textAlign: 'right', paddingRight: '10px', color: '#1a3a5c', fontWeight: '600' }}>{pvGroupTotals.total ? pvGroupTotals.total.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-'}</div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
                           <div style={{ fontSize: '12px', fontWeight: '600', color: '#1a3a5c', flex: 1 }}>{d.vendor} · {d.invoice}</div>
@@ -13150,11 +13326,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     if (found && found['Code'] && String(found['Code']).trim().toLowerCase() !== String(code || '').trim().toLowerCase()) {
       setField('supplierCode', found['Code']);
     }
-    // MARKER_LOOKUPVENDOR_NOTICE_TCR_AUTOBRANCH_000011_V1
-    // ── Supplier ที่ Notice = "TCR" -- Auto เติม Branch no. = 000011 เสมอ ──
+    // MARKER_LOOKUPVENDOR_NOTICE_TCR_AUTOBRANCH_000011_V1 -- แก้เลขเป็น 810202 แล้ว (คงชื่อ Marker เดิมเพื่อไม่ให้ Patch นี้รันซ้ำ)
+    // ── Supplier ที่ Notice = "TCR" -- Auto เติม Branch no. = 810202 เสมอ ──
     if (found) {
       const noticesLV = String(found['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
-      if (noticesLV.includes('TCR')) resolveBranch('000011');
+      if (noticesLV.includes('TCR')) resolveBranch('810202');
     }
   };
   // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3
@@ -13296,7 +13472,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
           .from('bucket_list')
           .select('*')
           .eq('bu', bu)
-          .eq('created_by', me)
+          // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- เข้ามาดู/ทำแทน Batch คนอื่น (resumeAsUser) ให้โหลด Bucket ของเจ้าของจริง
+          .eq('created_by', batchConfig?.resumeAsUser || me)
           .eq('module', 'AP')
           .in('status', ['pending', 'sent', 'rejected'])
           .order('created_at', { ascending: true });
@@ -13314,7 +13491,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
               .from('bucket_list')
               .select('*')
               .eq('bu', bu)
-              .eq('created_by', me)
+              // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- เหมือนรอบแรก ใช้ resumeAsUser ถ้ามี
+              .eq('created_by', batchConfig?.resumeAsUser || me)
               .eq('module', 'AP')
               .in('status', ['pending', 'sent', 'rejected'])
               .order('created_at', { ascending: true });
@@ -13531,7 +13709,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
 
   // ── presence heartbeat: แจ้งตัวเอง + เช็คว่ามี session อื่นของ BU เดียวกันไหม ──
   const heartbeat = async () => {
-    if (!batchConfig?.batchId || !batchConfig?.bu) return;
+    // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- View-Only ไม่ต้องส่ง Presence/Heartbeat (ไม่ใช่เจ้าของ Batch จริง)
+    if (!batchConfig?.batchId || !batchConfig?.bu || batchConfig?.viewOnly) return;
     try {
       await db.from('ap_active_sessions').upsert(
         { bu: batchConfig.bu, batch_id: batchConfig.batchId, user_name: userName || currentUser?.email || '', last_seen: new Date().toISOString() },
@@ -13602,6 +13781,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   // MARKER_EDITGROUP_RESPLIT_V1 -- Array ID ทุกแถวในกลุ่ม (null = แก้แถวเดียวปกติ)
   const [bucketPopupGroupIds, setBucketPopupGroupIds] = useState(null);
   const handleSaveBucketItem = async ({ form_data, lines, invoiceNo }) => {
+    // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- View-Only Mode ห้ามแก้ไข Invoice เด็ดขาด
+    if (batchConfig?.viewOnly) {
+      confirmDialog.alert('โหมดดูอย่างเดียว (View Only) — ไม่สามารถแก้ไข Invoice ได้', { variant: 'warning' });
+      return;
+    }
     // MARKER_UNIVERSAL_RESPLIT_V1 -- ทุกครั้งที่ Save ให้วิเคราะห์กลุ่มใหม่เสมอ (ไม่ว่าจะ Edit ใบเดียวหรือหลายใบ)
     // ถือว่า Edit ใบเดียวเป็น "กลุ่มขนาด 1" แล้วรัน Logic เดียวกับตอน Submit ครั้งแรกทุกครั้ง
     const effectiveGroupIds = (bucketPopupGroupIds && bucketPopupGroupIds.length > 0)
@@ -13684,6 +13868,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
             form_data: updFormData,
             lines: cleanLines,
           };
+          // MARKER_BUCKETLIST_BRANCH_REQUIRED_SMARTMATCH_UPDATE_V1 -- ด่านบังคับ Branch ครบก่อน Update ใบเดิมจาก Smart Match/Resplit
+          if (!String(upd.branch_no || '').trim() || !String(upd.branch_label || '').trim()) {
+            confirmDialog.alert(`Invoice "${upd.invoice_no || ''}" Branch No/Branch Label ไม่ครบ — กรุณาเลือก Branch ให้ครบก่อนบันทึก`, { variant: 'danger' });
+            return false;
+          }
           if (origInv._synced && origInv.id) {
             const { error } = await db.from('bucket_list').update({
               invoice_no: upd.invoice_no, branch_no: upd.branch_no, branch_label: upd.branch_label, inv_date: upd.inv_date, period: upd.period,
@@ -13709,6 +13898,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
 // MARKER_SMARTMATCH_INSERT_MODULE_FIELD_V1
             form_data: newFormData, lines: cleanLines, status: 'pending', created_by: userName || currentUser?.email || '', module: 'AP',
           };
+          // MARKER_BUCKETLIST_BRANCH_REQUIRED_SMARTMATCH_INSERT_V1 -- ด่านบังคับ Branch ครบก่อน Insert ใบใหม่จาก Smart Match/Resplit
+          if (!String(insertPayload.branch_no || '').trim() || !String(insertPayload.branch_label || '').trim()) {
+            confirmDialog.alert(`Invoice "${insertPayload.invoice_no || ''}" Branch No/Branch Label ไม่ครบ — กรุณาเลือก Branch ให้ครบก่อนบันทึก`, { variant: 'danger' });
+            return false;
+          }
           const { data: insData, error: insErr } = await db.from('bucket_list').insert([insertPayload]);
           if (insErr) {
             // MARKER_FIX_INSERT_ERROR_MESSAGE_V1 -- เดิมใช้ .message ตรงๆ บาง Error Shape ไม่มี Field นี้ เห็นแค่ "undefined"
@@ -13786,6 +13980,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
 
   // ✅ ลบรายการที่เลือกไว้ใน Batch Bucket (bulk delete) ────────────────────
   const handleDeleteSelected = async () => {
+    // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- View-Only Mode ห้ามลบ Invoice เด็ดขาด
+    if (batchConfig?.viewOnly) {
+      confirmDialog.alert('โหมดดูอย่างเดียว (View Only) — ไม่สามารถลบ Invoice ได้', { variant: 'warning' });
+      return;
+    }
     if (!selectedRows.size) return;
     if (!(await confirmDialog.confirm(`ต้องการลบ ${selectedRows.size} รายการที่เลือก?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     const toDelete = invoices.filter((inv, i) => selectedRows.has(inv.id || inv._localId || i));
@@ -13817,6 +14016,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   };
   // ── Batch Bucket Summary: ลบทั้งกลุ่ม (ทุกบรรทัดย่อยของ Invoice หลัก) ──
   const handleDeleteGroup = async (baseNo) => {
+    // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- View-Only Mode ห้ามลบ Invoice เด็ดขาด
+    if (batchConfig?.viewOnly) {
+      confirmDialog.alert('โหมดดูอย่างเดียว (View Only) — ไม่สามารถลบ Invoice ได้', { variant: 'warning' });
+      return;
+    }
     const toDelete = invoices.filter(inv => String(inv.invoice_no || '-').replace(/(\/\d+|_NV)$/, '') === baseNo);
     if (!toDelete.length) return;
     if (!(await confirmDialog.confirm(`ต้องการลบ Invoice ${baseNo} ทั้งหมด ${toDelete.length} บรรทัด?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
@@ -13945,7 +14149,19 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     }
   };
 
-  const handleSubmitInvoice = async (lines, forceAutoGrtForThisInvoice = false) => {
+  const handleSubmitInvoice = async (lines, forceAutoGrtForThisInvoice = false, fillStartedAt = null) => {
+    // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- fillStartedAt: เวลาที่ User เริ่มกรอก Invoice นี้ (จาก InvoiceDetailPopup)
+    // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- View-Only Mode ห้าม Submit Invoice ใหม่เด็ดขาด
+    if (batchConfig?.viewOnly) {
+      confirmDialog.alert('โหมดดูอย่างเดียว (View Only) — ไม่สามารถเพิ่ม Invoice ได้', { variant: 'warning' });
+      return false;
+    }
+    // MARKER_BUCKETLIST_BRANCH_REQUIRED_SUBMIT_V1 -- ด่านบังคับ Branch No/Branch Label ครบก่อน Submit เข้า Batch Bucket
+    // (เดิมปล่อยผ่านได้ทั้งที่ว่าง ไปเจอทีหลังตอน Export Gate เท่านั้น — เปลี่ยนเป็นเช็คตั้งแต่จุด Submit เลย)
+    if (!form.branchNo?.trim() || !form.branchDirectLabel?.trim()) {
+      confirmDialog.alert('กรุณาเลือก Branch ให้ครบก่อน Submit Invoice (Branch No / Branch Label ห้ามว่าง)', { variant: 'danger' });
+      return false;
+    }
     // MARKER_GRT_MANUAL_CONFIRM_V1
     const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     // MARKER_APCONTROLLER_ROUND2_ON_SUBMIT_V1
@@ -14116,6 +14332,17 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         period_mode:     batchConfig?.periodMode || 'current',
         created_by:      userName || currentUser?.email || '',
         created_by_role: roleLabel,
+        // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- เวลาที่เริ่มกรอก Invoice นี้ (ใช้คำนวณเวลาต่อ Transaction คู่กับ created_at)
+        // MARKER_FILL_STARTED_AT_NAIVE_BANGKOK_FIX_V1 -- เก็บเป็นเวลาไทย (Local) แบบไม่มี Timezone Suffix ตรงๆ
+        // เดิมใช้ .toISOString() (UTC) ทำให้ Insert เข้าคอลัมน์ timestamp WITHOUT time zone แล้ว
+        // Offset โดนตัดทิ้ง กลายเป็นเวลาเพี้ยนไป 7 ชม. (Bug ที่เจอจาก Production Data จริง)
+        fill_started_at: (() => {
+          if (!fillStartedAt) return null;
+          const d = new Date(fillStartedAt);
+          const p2 = (n) => String(n).padStart(2, '0');
+          return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+        })(),
+        fill_started_at_estimated: false,
         _localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}-${gi}`,
         id: null,
         _synced: false,
@@ -14324,6 +14551,10 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   };
 
 const handleSelectBranch = (item, meta = {}) => {
+  // MARKER_BRANCH_SELECT_GUARD_BLUR_V1 -- กัน Blur ที่ยิงตามมาทันทีหลังเลือก Branch จาก Popup
+  // ไม่ให้ resolveBranch() เอา Branch Code ล้วน (ไม่มี '+') ไปตีความใหม่
+  // เป็น Direct Mode จนเขียนทับ branchIBLabel ที่เพิ่งตั้งไว้ให้หายไป
+  branchJustResolved.current = true;
   const ownLabel = formatBranchLabel(item);
   const branchCpc = String(item['cpc'] ?? '').trim();
   if (meta.isIB) {
@@ -14818,7 +15049,15 @@ const handleSelectBranch = (item, meta = {}) => {
                   ) : null}
                 </td>
                 <td style={{ padding: '6px 9px' }}>
-                  {inv.status === 'sent' ? (
+                  {/* MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- View-Only โชว์แค่ปุ่ม View ปุ่มเดียว ไม่ให้ Edit/Delete/Recall ได้ */}
+                  {batchConfig?.viewOnly ? (
+                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                      <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', rowKey })}
+                        style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                    </div>
+                  ) : inv.status === 'sent' ? (
                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
                       <button title="View" onClick={() => setBucketPopup({ show: true, mode: 'view', rowKey })}
                         style={{ width: '24px', height: '24px', borderRadius: '5px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -16183,6 +16422,14 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             method: 'DELETE',
             headers: { Authorization: `Bearer ${delToken}` },
           }).catch((e) => console.error('delete batch_notifications on restore:', e));
+          // ── MARKER_CASCADE_DELETE_APEXPORT_IMAGES_ON_BATCHDELETE_V1 — ลบรูปประกอบ (module='ap-export') ที่ผูกกับ Batch นี้ด้วย ──
+          // ── กันรูปค้างเป็นขยะเมื่อ Batch ถูกลบก่อนที่ Cron จะมา Join เจอ (Endpoint
+          // ── นี้ Backend เตรียมไว้ให้ใช้ตรงนี้อยู่แล้ว — เดิมไม่เคยถูกเรียกใช้) ─────────────
+          await fetch(`${delApiBase}/api/file-storage/delete-by-ref`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${delToken}` },
+            body: JSON.stringify({ refIds: [g.batch_id] }),
+          }).catch((e) => console.error('[MARKER_CASCADE_DELETE_APEXPORT_IMAGES_ON_BATCHDELETE_V1] delete-by-ref (restore-then-delete):', e));
           const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
           if (bErr) console.error('[batch_list delete on restore]', bErr);
         }
@@ -16229,6 +16476,14 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             method: 'DELETE',
             headers: { Authorization: `Bearer ${delToken}` },
           }).catch((e) => console.error('delete batch_notifications on delete:', e));
+          // ── MARKER_CASCADE_DELETE_APEXPORT_IMAGES_ON_BATCHDELETE_V1 — ลบรูปประกอบ (module='ap-export') ที่ผูกกับ Batch นี้ด้วย ──
+          // ── กันรูปค้างเป็นขยะเมื่อ Batch ถูกลบก่อนที่ Cron จะมา Join เจอ (Endpoint
+          // ── นี้ Backend เตรียมไว้ให้ใช้ตรงนี้อยู่แล้ว — เดิมไม่เคยถูกเรียกใช้) ─────────────
+          await fetch(`${delApiBase}/api/file-storage/delete-by-ref`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${delToken}` },
+            body: JSON.stringify({ refIds: [g.batch_id] }),
+          }).catch((e) => console.error('[MARKER_CASCADE_DELETE_APEXPORT_IMAGES_ON_BATCHDELETE_V1] delete-by-ref (handleDeleteBatch):', e));
           const { error: bErr } = await db.from('batch_list').delete().eq('id', blRow.id);
           if (bErr) console.error('[batch_list delete on delete]', bErr);
         }
@@ -17907,6 +18162,11 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
     fetchCollection('ItemcodeList'); fetchCollection('VendorCategory'); fetchCollection('NoticeList'); fetchCollection('VendorRule');
     fetchCollection('SmCodeList');
   }, []);
+  // MARKER_VENDORRULE_REALTIME_SYNC_V1 -- VendorRule เดิม Fetch ครั้งเดียวตอน Mount เท่านั้น ไม่เคยดัก
+  // Realtime Event เลย -- แก้ Vendor Rule/Notice จาก VendorMaster แล้ว Invoice Entry หน้านี้ไม่เห็นการเปลี่ยนแปลง
+  useRealtimeRefresh(['vendor_rule_updated'], () => {
+    if (fetchCollection) fetchCollection('VendorRule', true).catch(e => console.error('[VendorRule] fetchCollection background error:', e));
+  });
 
   const infoItemsRaw    = getCached('CompanyList') || [];
   // ✅ merge ค่า ap_grt/ap_grn ล่าสุด (optimistic) เข้ากับ CompanyList ก่อนส่งให้ BatchSetup
@@ -17965,7 +18225,11 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
     setRecycleBinLoading(true);
     try {
       const data = await apiFetch('/recycle_bin?eq_source_table=bucket_list&order=deleted_at.desc&limit=200');
-      setRecycleBinItems(Array.isArray(data) ? data : []);
+      // MARKER_INVOICE_RECYCLEBIN_SPLIT_COLUMNS_FILTER_AP_V1
+      // -- Recycle Bin นี้อยู่ในหน้า AP Controller -- Filter เฉพาะ Invoice ที่ module --
+      // -- เป็น 'AP' เท่านั้น (bucket_list ถูกใช้ร่วมกันหลาย Module เช่น REV ด้วย) --
+      const apOnly = (Array.isArray(data) ? data : []).filter(it => it?.data?.module === 'AP');
+      setRecycleBinItems(apOnly);
     } catch (e) { console.error('[Invoice Recycle Bin fetch]', e); }
     setRecycleBinLoading(false);
   };
@@ -18104,7 +18368,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
       {showInvoiceRecycleBin && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onMouseDown={e => { if (e.target === e.currentTarget) setShowInvoiceRecycleBin(false); }}>
-          <div style={{ background: 'white', borderRadius: '12px', width: '720px', maxWidth: '94vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '860px', maxWidth: '94vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
               <span style={{ fontSize: '18px' }}>🗑️</span>
               <div style={{ fontSize: '15px', fontWeight: 500, color: '#1a3a5c' }}>Recycle Bin — Invoice</div>
@@ -18116,7 +18380,10 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
                 <thead>
                   <tr style={{ background: '#1a3a5c', color: 'white' }}>
                     <th style={{ padding: '8px', width: '30px' }}></th>
-                    <th style={{ padding: '8px', textAlign: 'left' }}>Key</th>
+                    {/* MARKER_INVOICE_RECYCLEBIN_SPLIT_COLUMNS_FILTER_AP_V1 -- แยก Key เป็น 3 Column, ตัด Key (UUID) ออก */}
+                    <th style={{ padding: '8px', textAlign: 'left', width: '130px' }}>เลขที่ Invoice</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>Supplier Name</th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: '70px' }}>BU</th>
                     <th style={{ padding: '8px', textAlign: 'left', width: '100px' }}>ลบโดย</th>
                     <th style={{ padding: '8px', textAlign: 'left', width: '140px' }}>วันที่ลบ</th>
                     <th style={{ padding: '8px', textAlign: 'center', width: '90px' }}>Action</th>
@@ -18124,7 +18391,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
                 </thead>
                 <tbody>
                   {recycleBinItems.length === 0 && (
-                    <tr><td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: '#aaa' }}>
+                    <tr><td colSpan={7} style={{ padding: '30px', textAlign: 'center', color: '#aaa' }}>
                       {recycleBinLoading ? 'กำลังโหลด...' : 'ไม่มีรายการใน Recycle Bin'}
                     </td></tr>
                   )}
@@ -18134,12 +18401,10 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
                         <input type="checkbox" checked={recycleBinSelected.includes(item.id)}
                           onChange={() => setRecycleBinSelected(prev => prev.includes(item.id) ? prev.filter(s => s !== item.id) : [...prev, item.id])} />
                       </td>
-                      <td style={{ padding: '8px' }}>
-                        <div style={{ color: '#1a3a5c', fontFamily: 'monospace', fontSize: '11px' }}>{item.source_key}</div>
-                        <div style={{ color: '#888', fontSize: '11px', marginTop: '2px' }}>
-                          {item.data?.invoice_no || '-'} · {item.data?.vendor_name || ''} {item.data?.bu ? `(${item.data.bu})` : ''}
-                        </div>
-                      </td>
+                      {/* MARKER_INVOICE_RECYCLEBIN_SPLIT_COLUMNS_FILTER_AP_V1 -- 3 Column แยกจาก Key เดิม */}
+                      <td style={{ padding: '8px', color: '#1a3a5c', fontWeight: 500 }}>{item.data?.invoice_no || '-'}</td>
+                      <td style={{ padding: '8px', color: '#333' }}>{item.data?.vendor_name || '-'}</td>
+                      <td style={{ padding: '8px', color: '#666' }}>{item.data?.bu || '-'}</td>
                       <td style={{ padding: '8px' }}>{item.deleted_by || '-'}</td>
                       <td style={{ padding: '8px' }}>{item.deleted_at ? new Date(item.deleted_at).toLocaleString('th-TH') : '-'}</td>
                       <td style={{ padding: '8px', textAlign: 'center' }}>

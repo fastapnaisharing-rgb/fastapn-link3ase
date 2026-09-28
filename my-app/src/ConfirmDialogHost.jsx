@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { registerConfirmDialogHost } from './confirmDialog';
 
 // ConfirmDialogHost.jsx
@@ -19,12 +19,18 @@ export default function ConfirmDialogHost() {
   const cancelBtnRef = useRef(null);
 
   useEffect(() => {
-    registerConfirmDialogHost((config) => {
-      return new Promise((resolve) => {
-        resolveRef.current = resolve;
-        setDialog(config);
-      });
-    });
+    // MARKER_CONFIRMDIALOGHOST_DISMISS_V1 -- ส่ง close(false) เป็น Dismiss Function คู่กับ Show Function
+    // -- ใช้ Closure ของ Render แรก แต่ปลอดภัยเพราะ close() ข้างในใช้แต่ Ref/State Setter --
+    // -- ที่ Identity คงที่ทุก Render (setDialog, resolveRef) เหมือนที่ Show Function เดิมทำอยู่แล้ว --
+    registerConfirmDialogHost(
+      (config) => {
+        return new Promise((resolve) => {
+          resolveRef.current = resolve;
+          setDialog(config);
+        });
+      },
+      () => close(false)
+    );
   }, []);
 
   useEffect(() => {

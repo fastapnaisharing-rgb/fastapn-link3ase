@@ -5651,9 +5651,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const lineItemCodeRefs = useRef([]);
   // ── Default Focus: Inv Date เมื่อเปิด Popup "Invoice Detail" ────────────────
   const invDateRef = useRef(null);
+  // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- Ref เก็บเวลาที่เริ่มกรอก Invoice นี้ (ใช้คำนวณเวลาต่อ Transaction)
+  const fillStartedAtRef = useRef(null);
   useEffect(() => {
     if (show) {
       setTimeout(() => invDateRef.current?.focus(), 80);
+      // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- Reset เวลาเริ่มกรอกทุกครั้งที่เปิด Modal ใหม่ (Invoice ใบใหม่)
+      fillStartedAtRef.current = new Date();
       // MARKER_MODAL_OPEN_RESET_FLOW_STATE_V1
       // ── Reset State ของ Flow/Real Vendor + Guard ทุกครั้งที่เปิด Modal ใหม่ ──
       // ── กัน State ค้างจาก Invoice ใบก่อนหน้า (Modal ไม่ได้ Remount ใหม่) ──────
@@ -6160,7 +6164,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       // เพราะเดิม Bake ลงใน desc ที่เก็บจริงตอน Submit ทำให้พอ User ไปแก้/ลบผ่าน Edit Form
       // ทีหลัง Prefix ก็หลุดหายไปด้วย (เป็นเนื้อเดียวกับ Text ที่แก้ได้อยู่แล้ว) -- desc ที่เก็บ
       // จริงตอน Submit ให้เป็นค่าดิบที่ User พิมพ์เองเท่านั้น ไม่ Bake อะไรเข้าไปที่นี่แล้ว
-      const ok = await onSubmitInvoice(lines, forceAutoGrtForThisInvoice);
+      // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- ส่งเวลาที่เริ่มกรอกไปให้ handleSubmitInvoice แนบเข้า bucket_list
+      const ok = await onSubmitInvoice(lines, forceAutoGrtForThisInvoice, fillStartedAtRef.current);
       if (ok) {
         // MARKER_FLOW_INCREMENT_USAGE_ON_SUBMIT_V1
         // ── Submit สำเร็จ + มี Flow Active อยู่ -> +1 use_count ที่ Backend ──────
@@ -14964,7 +14969,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     }
   };
 
-  const handleSubmitInvoice = async (lines, forceAutoGrtForThisInvoice = false) => {
+  const handleSubmitInvoice = async (lines, forceAutoGrtForThisInvoice = false, fillStartedAt = null) => {
+    // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- fillStartedAt: เวลาที่ User เริ่มกรอก Invoice นี้ (จาก InvoiceDetailPopup)
     // MARKER_GRT_MANUAL_CONFIRM_V1
     const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     // MARKER_APCONTROLLER_ROUND2_ON_SUBMIT_V1
@@ -15135,6 +15141,9 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         period_mode:     batchConfig?.periodMode || 'current',
         created_by:      userName || currentUser?.email || '',
         created_by_role: roleLabel,
+        // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- เวลาที่เริ่มกรอก Invoice นี้ (ใช้คำนวณเวลาต่อ Transaction คู่กับ created_at)
+        fill_started_at: fillStartedAt ? new Date(fillStartedAt).toISOString() : null,
+        fill_started_at_estimated: false,
         _localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}-${gi}`,
         id: null,
         _synced: false,
@@ -20309,6 +20318,11 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
     fetchCollection('ItemcodeList'); fetchCollection('VendorCategory'); fetchCollection('NoticeList'); fetchCollection('VendorRule');
     fetchCollection('SmCodeList');
   }, []);
+  // MARKER_VENDORRULE_REALTIME_SYNC_V1 -- VendorRule เดิม Fetch ครั้งเดียวตอน Mount เท่านั้น ไม่เคยดัก
+  // Realtime Event เลย -- แก้ Vendor Rule/Notice จาก VendorMaster แล้ว Invoice Entry หน้านี้ไม่เห็นการเปลี่ยนแปลง
+  useRealtimeRefresh(['vendor_rule_updated'], () => {
+    if (fetchCollection) fetchCollection('VendorRule', true).catch(e => console.error('[VendorRule] fetchCollection background error:', e));
+  });
 
   const infoItemsRaw    = getCached('CompanyList') || [];
   // ✅ merge ค่า ie_grt/ie_grn ล่าสุด (optimistic) เข้ากับ CompanyList ก่อนส่งให้ BatchSetup
@@ -20471,6 +20485,58 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
     }
   };
 
+  // MARKER_IE_RECYCLEBIN_POPUP_V1 -- Popup Recycle Bin เฉพาะ Invoice (bucket_list module='IE') เปิดตรงในหน้านี้เลย
+  const [showInvoiceRecycleBin, setShowInvoiceRecycleBin] = useState(false);
+  const [recycleBinItems, setRecycleBinItems] = useState([]);
+  const [recycleBinLoading, setRecycleBinLoading] = useState(false);
+  const [recycleBinSelected, setRecycleBinSelected] = useState([]);
+
+  const fetchInvoiceRecycleBin = async () => {
+    setRecycleBinLoading(true);
+    try {
+      const data = await apiFetch('/recycle_bin?eq_source_table=bucket_list&order=deleted_at.desc&limit=200');
+      // MARKER_IE_RECYCLEBIN_POPUP_V1 -- Filter เฉพาะ Invoice ที่ module เป็น 'IE' เท่านั้น
+      // (bucket_list ถูกใช้ร่วมกันหลาย Module เช่น AP, REV ด้วย)
+      const ieOnly = (Array.isArray(data) ? data : []).filter(it => it?.data?.module === 'IE');
+      setRecycleBinItems(ieOnly);
+    } catch (e) { console.error('[Invoice Recycle Bin fetch]', e); }
+    setRecycleBinLoading(false);
+  };
+
+  useEffect(() => {
+    if (showInvoiceRecycleBin) { fetchInvoiceRecycleBin(); setRecycleBinSelected([]); }
+  }, [showInvoiceRecycleBin]);
+
+  const handleRestoreRecycleBinItem = async (item) => {
+    setRecycleBinLoading(true);
+    try {
+      const data = { ...item.data };
+      delete data.deleted; delete data.deleted_by; delete data.deleted_at;
+      const { error } = await db.from('bucket_list').insert([{ ...data, id: item.source_id }]);
+      if (error) throw error;
+      await db.from('recycle_bin').delete().eq('id', item.id);
+      setRecycleBinSelected(prev => prev.filter(s => s !== item.id));
+      await fetchInvoiceRecycleBin();
+      try { broadcastWs('bucket_item_deleted', {}); } catch (e) { console.error('[broadcast]', e); }
+    } catch (e) {
+      confirmDialog.alert('กู้คืนไม่สำเร็จ: ' + e.message, { variant: 'danger' });
+    }
+    setRecycleBinLoading(false);
+  };
+
+  const handlePermanentDeleteRecycleBinItem = async (item) => {
+    if (!(await confirmDialog.confirm('ต้องการลบถาวร Invoice นี้ใช่หรือไม่? (กู้คืนไม่ได้อีก)', { variant: 'danger', confirmText: 'ลบถาวร' }))) return;
+    setRecycleBinLoading(true);
+    try {
+      await db.from('recycle_bin').delete().eq('id', item.id);
+      setRecycleBinSelected(prev => prev.filter(s => s !== item.id));
+      await fetchInvoiceRecycleBin();
+    } catch (e) {
+      confirmDialog.alert('ลบถาวรไม่สำเร็จ: ' + e.message, { variant: 'danger' });
+    }
+    setRecycleBinLoading(false);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
       <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
@@ -20489,6 +20555,13 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
           style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
           🔗 Account/CPC Rules
         </button>
+        {/* MARKER_IE_RECYCLEBIN_POPUP_V1 -- ปุ่มเปิด Recycle Bin -- Owner/Admin เท่านั้น (เหมือน AP) */}
+        {(isInvoicePopupOwner || isInvoicePopupAdmin) && (
+          <button onClick={() => setShowInvoiceRecycleBin(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
+            🗑️ Recycle Bin (Invoice)
+          </button>
+        )}
       </div>
 
       {showAccountCpcManage && (
@@ -20553,6 +20626,68 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
           </div>
         </div>
       )}
+      {/* MARKER_IE_RECYCLEBIN_POPUP_V1 -- Popup Recycle Bin -- Owner/Admin เท่านั้น */}
+      {showInvoiceRecycleBin && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseDown={e => { if (e.target === e.currentTarget) setShowInvoiceRecycleBin(false); }}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '860px', maxWidth: '94vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+              <span style={{ fontSize: '18px' }}>🗑️</span>
+              <div style={{ fontSize: '15px', fontWeight: 500, color: '#1a3a5c' }}>Recycle Bin — Invoice (IE)</div>
+              <span style={{ fontSize: '11px', background: '#f0f2f5', color: '#666', padding: '2px 8px', borderRadius: '10px' }}>{recycleBinItems.length} รายการ</span>
+              <button onClick={() => setShowInvoiceRecycleBin(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', fontSize: '18px', color: '#999', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1, border: '0.5px solid #e8e8e8', borderRadius: '8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#1a3a5c', color: 'white' }}>
+                    <th style={{ padding: '8px', width: '30px' }}></th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: '130px' }}>เลขที่ Invoice</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>Supplier Name</th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: '70px' }}>BU</th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: '100px' }}>ลบโดย</th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: '140px' }}>วันที่ลบ</th>
+                    <th style={{ padding: '8px', textAlign: 'center', width: '90px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recycleBinItems.length === 0 && (
+                    <tr><td colSpan={7} style={{ padding: '30px', textAlign: 'center', color: '#aaa' }}>
+                      {recycleBinLoading ? 'กำลังโหลด...' : 'ไม่มีรายการใน Recycle Bin'}
+                    </td></tr>
+                  )}
+                  {recycleBinItems.map(item => (
+                    <tr key={item.id} style={{ borderTop: '0.5px solid #f0f0f0' }}>
+                      <td style={{ padding: '8px', textAlign: 'center' }}>
+                        <input type="checkbox" checked={recycleBinSelected.includes(item.id)}
+                          onChange={() => setRecycleBinSelected(prev => prev.includes(item.id) ? prev.filter(s => s !== item.id) : [...prev, item.id])} />
+                      </td>
+                      <td style={{ padding: '8px', color: '#1a3a5c', fontWeight: 500 }}>{item.data?.invoice_no || '-'}</td>
+                      <td style={{ padding: '8px', color: '#333' }}>{item.data?.vendor_name || '-'}</td>
+                      <td style={{ padding: '8px', color: '#666' }}>{item.data?.bu || '-'}</td>
+                      <td style={{ padding: '8px' }}>{item.deleted_by || '-'}</td>
+                      <td style={{ padding: '8px' }}>{item.deleted_at ? new Date(item.deleted_at).toLocaleString('th-TH') : '-'}</td>
+                      <td style={{ padding: '8px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                          <button title="กู้คืน" onClick={() => handleRestoreRecycleBinItem(item)} disabled={recycleBinLoading}
+                            style={{ width: '28px', height: '24px', borderRadius: '5px', border: '0.5px solid #97C459', background: '#EAF3DE', color: '#27500A', cursor: recycleBinLoading ? 'default' : 'pointer' }}>♻️</button>
+                          <button title="ลบถาวร" onClick={() => handlePermanentDeleteRecycleBinItem(item)} disabled={recycleBinLoading}
+                            style={{ width: '28px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: recycleBinLoading ? 'default' : 'pointer' }}>🛡️</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+              <button onClick={() => setShowInvoiceRecycleBin(false)}
+                style={{ padding: '7px 18px', borderRadius: '7px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showPrefixModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => { if (systemPrefix) setShowPrefixModal(false); }}>

@@ -1,4 +1,4 @@
-// MARKER_HOMEPAGE_ZONE_A_V1
+﻿// MARKER_HOMEPAGE_ZONE_A_V1
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 // MARKER_HOMEPAGE_USE_SHARED_USERROLE_HOOK_V1 -- ใช้ Hook กลางเดียวกับ APController.js แทนเช็คเอง (กัน Case-sensitivity หลุด)
@@ -12,6 +12,15 @@ import { confirmDialog } from '../confirmDialog';
 import { useRealtimeRefresh } from '../useRealtimeRefresh';
 // MARKER_HOMEPAGE_AGREEMENT_SYNC_V1
 import { broadcastWs } from '../wsManager';
+
+// MARKER_HOMEPAGE_DEPLOY_STATUS_STRIP_V1
+// -- Frontend Build Time ฝังมาตอน Build จาก prebuild.js (REACT_APP_BUILD_TIME) --
+// -- ไม่มี Backend แยก DEV/PROD จริง (เช็คแล้วจาก App.js/DeployMonitor.jsx) --
+// -- DEV/PROD เป็นแค่ Label ฝั่ง Frontend Build เท่านั้น Backend ใช้ร่วมกันตัวเดียว --
+const getFrontendBuildTime = () => {
+  const ts = Number(process.env.REACT_APP_BUILD_TIME);
+  return isNaN(ts) ? null : ts;
+};
 
 const ROLE_STYLE = {
   Owner:  { background: '#d4f0e7', color: '#0F6E56' },
@@ -191,6 +200,18 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   // ต่างจาก useUserRole() ที่ Normalize เป็นตัวพิมพ์เล็กก่อนเทียบเสมอ (เสี่ยง Bug เงียบถ้า
   // Role ส่งมาเป็น 'owner'/'admin' ตัวเล็กจากที่ไหนสักที่) -- เปลี่ยนมาเรียก Hook กลางแทน
   const { isOwner, isAdmin } = useUserRole();
+  // MARKER_HOMEPAGE_DEPLOY_STATUS_STRIP_V1 -- ดึง /health ครั้งเดียวตอน Mount มาเทียบ Sync กับ Frontend Build
+  const [deployHealth, setDeployHealth] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        // MARKER_HOMEPAGE_DEPLOY_STATUS_USE_VERSION_ENDPOINT_V1 -- ใช้ /version (เบา ไม่มี CPU Sampling) แทน /health (ช้าเพราะยิง PowerShell วัด CPU)
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        const res = await fetch(`${apiBase}/version`);
+        if (res.ok) setDeployHealth(await res.json());
+      } catch (e) { console.error('[deploy status health fetch]', e); }
+    })();
+  }, []);
 
   // ── Central Queue state ──────────────────────────────────────────────────
   const [queueItems, setQueueItems] = useState([]);
@@ -720,6 +741,31 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
             <p style={{ fontSize: '12px', color: '#aaa', margin: 0 }}>
               Accounts Payable Invoice Management
             </p>
+            {/* MARKER_HOMEPAGE_DEPLOY_STATUS_STRIP_V1 -- โชว์เฉพาะตอนมีข้อมูลครบ ไม่งั้นไม่ต้องขึ้นอะไรเลย */}
+            {(() => {
+              const feBuildTs = getFrontendBuildTime();
+              const beStartedTs = deployHealth?.startedAt ? new Date(deployHealth.startedAt).getTime() : null;
+              if (!feBuildTs && !beStartedTs) return null;
+              const fmt = (ts) => ts ? new Date(ts).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+              // Backend เก่ากว่า Frontend Build เกิน 5 นาที = ยังไม่ Restart ตาม Deploy ล่าสุด
+              const isStale = feBuildTs && beStartedTs && (beStartedTs < feBuildTs - 5 * 60 * 1000);
+              return (
+                <div style={{
+                  marginTop: '8px', display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px',
+                  padding: '4px 10px', borderRadius: '7px', fontSize: '10.5px',
+                  background: isStale ? '#FFF8E1' : '#f4f6f8',
+                  color: isStale ? '#8a6100' : '#667',
+                }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', display: 'inline-block', background: isStale ? '#F0A400' : '#3FA34D' }} />
+                    {isStale ? '⚠️ Backend ยังไม่ Restart หลัง Deploy ล่าสุด' : 'Synced'}
+                  </span>
+                  {feBuildTs && (<><span style={{ color: isStale ? '#e0c98a' : '#ccc' }}>|</span><span>🖥️ Frontend Build: <b>{fmt(feBuildTs)}</b></span></>)}
+                  {beStartedTs && (<><span style={{ color: isStale ? '#e0c98a' : '#ccc' }}>|</span><span>⚙️ Backend Restart: <b>{fmt(beStartedTs)}</b></span></>)}
+                  {deployHealth?.git?.commit && (<><span style={{ color: isStale ? '#e0c98a' : '#ccc' }}>|</span><span>Commit: <b>{deployHealth.git.commit}</b>{deployHealth.git.message ? ` "${deployHealth.git.message}"` : ''}</span></>)}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -867,8 +913,12 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
 
         {/* ── A3: OCR Queue Monitor ── */}
         {(() => {
+          // MARKER_HOMEPAGE_MINIMONITOR_NO_DONE_FALLBACK_V1
+          // -- ใช้ activeQ อย่างเดียว ไม่ Fallback ไปที่ queueItems (เดิม Fallback --
+          // -- ทำให้งาน done/error โผล่กลับมาโชว์ตอนคิวว่างพอดี -- เสร็จแล้วต้อง --
+          // -- ดีดออกจริงๆ ไม่ใช่โผล่มาใหม่ตอนไม่มีงาน Active) --------------------
           const activeQ = queueItems.filter(it => ['pending','ocring','processing','waiting_ap'].includes(it.status));
-          const previewQ = activeQ.length > 0 ? activeQ.slice(0, QUEUE_PREVIEW) : queueItems.slice(0, QUEUE_PREVIEW);
+          const previewQ = activeQ.slice(0, QUEUE_PREVIEW);
           const apBusy  = queueItems.some(it => it.source === 'ap_ocr' && ['pending','processing'].includes(it.status));
           return (
             <div style={{ background: 'white', borderRadius: '12px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -913,9 +963,10 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                     </div>
                   );
                 })}
-                {queueItems.length > QUEUE_PREVIEW && (
+                {/* MARKER_HOMEPAGE_MINIMONITOR_NO_DONE_FALLBACK_V1 -- นับจาก activeQ ไม่ใช่ queueItems (กันนับรวม Done/Error ที่ไม่ใช่คิวจริง) */}
+                {activeQ.length > QUEUE_PREVIEW && (
                   <div style={{ padding: '5px 12px', textAlign: 'center', fontSize: '10px', color: '#888', borderTop: '0.5px solid #f5f5f5', cursor: 'pointer', background: '#fafafa' }} onClick={() => setQueueModal(true)}>
-                    และอีก {queueItems.length - QUEUE_PREVIEW} รายการ
+                    และอีก {activeQ.length - QUEUE_PREVIEW} รายการ
                   </div>
                 )}
               </div>

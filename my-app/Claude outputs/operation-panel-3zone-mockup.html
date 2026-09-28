@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Operation Panel — Zone A/B/C Mockup (Warm Neutral)</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:14px; }
+  .panel { border:0.5px solid #e8eaf0; border-radius:8px; overflow:hidden; background:#fff; max-width:960px; }
+  .header { background:#faf6ef; border-bottom:0.5px solid #f0f0f0; padding:6px 14px; }
+  .header span { font-size:10px; font-weight:600; color:#a8875a; text-transform:uppercase; letter-spacing:0.05em; }
+
+  .row1 { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; border-bottom:0.5px solid #f0f0f0; }
+  .row2 { display:grid; grid-template-columns: 1fr 1fr 1fr 2fr 1fr; border-bottom:0.5px solid #f0f0f0; }
+  .cell { display:flex; flex-direction:column; gap:3px; padding:10px 14px; border-right:0.5px solid #f0f0f0; }
+  .cell:last-child { border-right:none; }
+  .k { font-size:11px; color:#b3a998; }
+  .v { font-size:14.5px; font-weight:500; color:#4a3a24; }
+  .v.empty { color:#ddd; }
+
+  /* พื้นที่ว่างเดิม (กรอบเขียวในภาพ) -- กรอบนอกใหม่ 1 เส้น ไม่มีเส้นแบ่งด้านใน
+     ด้านในแบ่งเป็น 2 แถว: แถวบน = Zone A (Tax Invoice Detail, เต็มความกว้าง)
+     แถวล่าง = Zone B : Zone C สัดส่วน 70 : 30 */
+  .abc-wrap {
+    margin: 14px;
+    border: 0.5px solid #e8eaf0;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+  }
+  .zone-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: #a8875a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .zone-a {
+    padding: 14px 16px;
+  }
+  .bc-row {
+    display: flex;
+    flex: 1;
+  }
+  .zone-b {
+    flex: 70;
+    padding: 14px 16px;
+  }
+  .zone-c {
+    flex: 30;
+    padding: 14px 16px;
+  }
+  .zone-line { display:flex; flex-direction:column; gap:2px; }
+</style>
+</head>
+<body>
+  <div class="caption">
+    Mockup (แก้ตามที่บอก): กรอบใหญ่ 1 เส้น ล้อมพื้นที่ว่างเดิม ไม่มีเส้นแบ่งด้านใน แบ่งเป็น 2 แถว —
+    แถวบนสุด = <b>Zone A</b> (Tax Invoice Detail, เต็มความกว้าง) แถวล่าง = <b>Zone B : Zone C</b> สัดส่วน 70 : 30 —
+    ยังเป็น Mockup โครงสร้างเท่านั้น รอ Confirm ว่า Zone B กับ Zone C แสดงข้อมูลอะไร
+  </div>
+
+  <div class="panel">
+    <div class="header"><span>Operation</span></div>
+    <div class="row1">
+      <div class="cell"><span class="k">Vendor Name</span><span class="v">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell"><span class="k">Tax ID</span><span class="v" style="font-family:monospace;">0105546131747</span></div>
+      <div class="cell"><span class="k">Branch No.</span><span class="v">00000</span></div>
+      <div class="cell"><span class="k">AT-Match</span><span class="v">ADJ3A</span></div>
+    </div>
+    <div class="row2">
+      <div class="cell"><span class="k">First Part</span><span class="v">TKT</span></div>
+      <div class="cell"><span class="k">Mid Part</span><span class="v empty">—</span></div>
+      <div class="cell"><span class="k">Last Part</span><span class="v empty">—</span></div>
+      <div class="cell"><span class="k">Expense Type</span><span class="v">63047000-ค่าบริการอื่นๆ</span></div>
+      <div class="cell"><span class="k">Simple Rule</span><span class="v">NNN+SP</span></div>
+    </div>
+
+    <div class="abc-wrap">
+      <div class="zone-a">
+        <div class="zone-title">Zone A — Tax Invoice Detail</div>
+        <div style="display:flex; gap:32px; margin-bottom:12px;">
+          <div class="zone-line"><span class="k">Tax Invoice</span><span class="v">—</span></div>
+          <div class="zone-line"><span class="k">Tax Invoice Date</span><span class="v">—</span></div>
+          <div class="zone-line"><span class="k">Period</span><span class="v">—</span></div>
+          <div class="zone-line"><span class="k">Category</span><span class="v">—</span></div>
+          <div class="zone-line"><span class="k">Source</span><span class="v">—</span></div>
+        </div>
+        <div style="display:flex; gap:32px;">
+          <div class="zone-line" style="flex:1;"><span class="k">Description Item</span><span class="v empty">—</span></div>
+        </div>
+      </div>
+      <div class="bc-row">
+        <div class="zone-b">
+          <div class="zone-title">Zone B (70%) — รอระบุ</div>
+          <div class="zone-line"><span class="k">—</span><span class="v empty">—</span></div>
+        </div>
+        <div class="zone-c">
+          <div class="zone-title">Zone C (30%) — รอระบุ</div>
+          <div class="zone-line"><span class="k">—</span><span class="v empty">—</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -11,6 +11,41 @@ import VatReconcileDashboard from "./VatReconcileDashboard"; // MARKER_VATCONTRO
 import { useUserRole } from "../contexts/useUserRole"; // MARKER_VATWATCHLISTOPS_ROUND_BASED_STATUS_V1 -- สำหรับเช็ค Owner/Admin ตอนกด Confirm รอบ
 // MARKER_VATWATCHLISTOPS_IMPORT_ORDER_FIX_V1 -- ย้าย Import ทั้งหมดขึ้นมาไว้บนสุด (แก้ ESLint import/first)
 
+// MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- Helper: เช็คว่าเน็ต/VPN หลุดจริงไหม ด้วย Ping /version (เบาที่สุด ไม่แตะ DB)
+async function pingIsOnline() {
+  try { await apiFetch('/version'); return true; } catch { return false; }
+}
+// MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- รอ Reconnect สูงสุด timeoutMs (Default 30 วิ) Ping ทุก intervalMs (Default 3 วิ)
+// onTick(secondsLeft) เรียกทุกครั้งที่ Ping เพื่ออัปเดต Countdown บนจอ
+async function waitForReconnect(timeoutMs = 30000, intervalMs = 3000, onTick) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const secondsLeft = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    if (onTick) onTick(secondsLeft);
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (await pingIsOnline()) return true;
+  }
+  if (onTick) onTick(0);
+  return false;
+}
+// MARKER_VATCONTROLLER_FULLPAGE_CASE2_ROLLBACK_RETRY_V1 -- ลบทุกอย่างที่เขียนไปแล้วภายใต้ draft_id นี้ทิ้ง (3 ตาราง) แบบ Retry-safe
+// ใช้ตอน Rollback ก่อน Retry ทั้งชุดใหม่ (เคสที่ Resume ทีละแถวไม่ปลอดภัยพอ)
+async function rollbackDraftId(draftId, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await apiFetch(`/vat_upload_popvatdraft?eq_draft_id=${encodeURIComponent(draftId)}&hard=true`, { method: 'DELETE' });
+      await apiFetch(`/vat_simpleinputdraft?eq_draft_id=${encodeURIComponent(draftId)}&hard=true`, { method: 'DELETE' });
+      await apiFetch(`/vat_adi_transferdraft?eq_draft_id=${encodeURIComponent(draftId)}&hard=true`, { method: 'DELETE' });
+      return true;
+    } catch (err) {
+      console.error(`rollbackDraftId attempt ${attempt}/${maxAttempts} failed for draft_id=${draftId}:`, err);
+      if (attempt >= maxAttempts) return false; // ลบไม่สำเร็จหลัง Retry ครบ -- อาจมีขยะค้าง DB ต้องเข้า Draft Monitor ไปลบเอง
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+  return false;
+}
+
 // MARKER_VATWATCHLISTOPS_HYBRID_TAXINVOICEDATE_V1 -- Port มาจาก APController.js แบบเป๊ะ สำหรับ Hybrid Date Field (พิมพ์ได้ + เลือก Calendar ได้)
 const isoIfValidFlexDate = (y, mo, d) => {
   if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1000 || y > 9999) return null;
@@ -62,6 +97,61 @@ const formatDateDisplayMDY = (iso) => {
   const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[2]}/${m[3]}/${m[1]}` : iso;
 };
+
+// MARKER_VATCONTROLLER_INVOICE_STRUCTURE_APPLY_V1 -- ก็อปมาจาก Logic "Invoice Structure" ของ AP (APController.js: buildInvoiceNumber/INVOICE_PATTERN_BUILDERS)
+// เพื่อ Apply กับ SM-Code: Special Rule1 ใช้แทน "Invoice No." (Invoice Rule/Pattern code), Digit ใช้ Field "Digit" ที่มีอยู่แล้วใน SM-Code (Confirm แล้ว)
+const vcPad2 = (n) => String(n).padStart(2, '0');
+const vcInvFmtYY       = (d) => vcPad2(d.getFullYear() % 100);
+const vcInvFmtYYYY     = (d) => String(d.getFullYear());
+const vcInvFmtMM       = (d) => vcPad2(d.getMonth() + 1);
+const vcInvFmtDD       = (d) => vcPad2(d.getDate());
+const vcInvFmtYYMM     = (d) => vcInvFmtYY(d) + vcInvFmtMM(d);
+const vcInvFmtYYYYMM   = (d) => vcInvFmtYYYY(d) + vcInvFmtMM(d);
+const vcInvFmtDDMMYYYY = (d) => vcInvFmtDD(d) + vcInvFmtMM(d) + vcInvFmtYYYY(d);
+const vcInvFmtYYMMDD   = (d) => vcInvFmtYY(d) + vcInvFmtMM(d) + vcInvFmtDD(d);
+const VC_INVOICE_PATTERN_BUILDERS = {
+  'AF-2Y2M':     (Fp, Mp, Lp, d, r) => `${Fp}${vcInvFmtYYMM(d)}${Mp}${r}`,
+  '2Y2M':        (Fp, Mp, Lp, d, r) => `${vcInvFmtYYMM(d)}${Mp}${r}`,
+  'AF-T2Y2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(vcInvFmtYY(d), 10) + 43}${vcInvFmtMM(d)}${Mp}${r}`,
+  'AF-TFY2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(vcInvFmtYYYY(d), 10) + 543}${vcInvFmtMM(d)}${Mp}${r}`,
+  'FY2M':        (Fp, Mp, Lp, d, r) => `${vcInvFmtYYYYMM(d)}${Mp}${r}`,
+  '2D2MFY':      (Fp, Mp, Lp, d, r) => `${vcInvFmtDDMMYYYY(d)}${Mp}${r}`,
+  'FY':          (Fp, Mp, Lp, d, r) => `${vcInvFmtYYYY(d)}${Mp}${r}`,
+  'T2Y':         (Fp, Mp, Lp, d, r) => `${parseInt(vcInvFmtYY(d), 10) + 43}${Mp}${r}`,
+  'AF-2M':       (Fp, Mp, Lp, d, r) => `${Fp}${vcInvFmtMM(d)}${Mp}${r}`,
+  'AF-T2Y':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(vcInvFmtYY(d), 10) + 43}${Mp}${r}`,
+  'AF-TFY':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(vcInvFmtYYYY(d), 10) + 543}${Mp}${r}`,
+  'TFY':         (Fp, Mp, Lp, d, r) => `${parseInt(vcInvFmtYYYY(d), 10) + 543}${Mp}${r}`,
+  'AF-FY2M':     (Fp, Mp, Lp, d, r) => `${Fp}${vcInvFmtYYYYMM(d)}${Mp}${r}`,
+  'AF-2Y':       (Fp, Mp, Lp, d, r) => `${Fp}${vcInvFmtYY(d)}${Mp}${r}`,
+  'AF-TFY|2M':   (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(vcInvFmtYYYY(d), 10) + 543}${Mp}${vcInvFmtMM(d)}${Lp}${r}`,
+  'AF-FY|2M':    (Fp, Mp, Lp, d, r) => `${Fp}${vcInvFmtYYYY(d)}${Mp}${vcInvFmtMM(d)}${Lp}${r}`,
+  'AF-2Y|2M':    (Fp, Mp, Lp, d, r) => `${Fp}${vcInvFmtYY(d)}${Mp}${vcInvFmtMM(d)}${Lp}${r}`,
+  'AF-T2Y|2M':   (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(vcInvFmtYY(d), 10) + 43}${Mp}${vcInvFmtMM(d)}${Lp}${r}`,
+  'AF-YYMMDD-1': (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setDate(d2.getDate() - 1); return `${Fp}${vcInvFmtYYMMDD(d2)}${Lp}${r}`; },
+  'AF-2YMM-1':   (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setMonth(d2.getMonth() - 1); return `${Fp}${vcInvFmtYYMM(d2)}${Lp}${r}`; },
+  // MARKER_VATCONTROLLER_INVOICE_STRUCTURE_T2Y2M_ADD_V1 -- (ถอนออกแล้ว) เดิมเข้าใจผิดว่า Special Rule1 ของ SM-Code นี้ค่าเป็น "T2Y2M" เฉยๆ (อ่านจากภาพที่ถูกครอปมุม)
+  // ที่จริงค่าจริงคือ "AF-T2Y2M" (มี AF- นำหน้า) ซึ่งมี Builder อยู่แล้วตั้งแต่ต้น (บรรทัด 'AF-T2Y2M' ด้านบน) ตรงกับที่ต้องการ (TKT + 69 + 09 + เลขรัน = TKT69090001) พอดี ไม่ต้องเพิ่ม Pattern ใหม่
+};
+// vendorInfo = { 'First Part', 'Mid Part', 'Last Part', 'Invoice No.' (= SM-Code Special Rule1), 'Digit' }
+const vcBuildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
+  const raw = String(typedNum ?? '').trim();
+  if (!raw) return '';
+  const Fp = String(vendorInfo?.['First Part'] ?? '').trim();
+  const Mp = String(vendorInfo?.['Mid Part'] ?? '').trim();
+  const Lp = String(vendorInfo?.['Last Part'] ?? '').trim();
+  const ruleCode = String(vendorInfo?.['Invoice No.'] ?? '').trim();
+  const digitRule = String(vendorInfo?.['Digit'] ?? '').trim().toUpperCase();
+  if (digitRule === 'FULL') return raw;
+  const dm = digitRule.match(/^(\d{1,2})DB$/);
+  const n = dm ? parseInt(dm[1], 10) : 0;
+  if (n > 0 && raw.length > n) return raw;
+  const result = (n > 0 && /^\d+$/.test(raw)) ? raw.padStart(n, '0') : raw;
+  const d = invDateStr ? new Date(`${invDateStr}T00:00:00`) : null;
+  const builder = VC_INVOICE_PATTERN_BUILDERS[ruleCode];
+  if (!builder || !d || isNaN(d.getTime())) return `${Fp}${result}`;
+  return builder(Fp, Mp, Lp, d, result);
+};
 // MARKER_VATWATCHLISTOPS_ADI_UPLOAD_FIX_DATEFORMAT_SCOPE_V1 -- Module-level version ของ formatQuickActionReceiveDateText (เดิมเป็น Local Scope เรียกข้าม Component ไม่ได้)
 const MODULE_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const formatDateDDMMMYY = (isoDateStr) => { // 'YYYY-MM-DD' -> 'DD-MMM-YY'
@@ -77,12 +167,83 @@ const formatDateDDMMMYY = (isoDateStr) => { // 'YYYY-MM-DD' -> 'DD-MMM-YY'
 const roundMoney2 = (num) => Math.round((Number(num) + Number.EPSILON) * 100) / 100;
 const truncateMoney2 = (num) => Math.floor((Number(num) + Number.EPSILON) * 100) / 100;
 
+function copyTextToClipboardFP(text) { // MARKER_VATWATCHLISTOPS_CLIPBOARD_FALLBACK_V1 -- ใช้ navigator.clipboard.writeText() ก่อนถ้ามี (ต้องเป็น Secure Context / HTTPS) ถ้าไม่มี (เช่น เปิดผ่าน HTTP ธรรมดาในเครือข่ายภายใน -- navigator.clipboard จะเป็น undefined) หรือเรียกแล้ว Fail จะ Fallback ไปใช้ execCommand('copy') ผ่าน Textarea ซ่อนแทน กัน Copy เงียบๆ ไม่ทำงานเลยแบบไม่มี Error ให้เห็น
+  const fallbackCopyFP = () => {
+    try {
+      const taFP = document.createElement('textarea');
+      taFP.value = text;
+      taFP.style.position = 'fixed';
+      taFP.style.top = '-9999px';
+      taFP.style.left = '-9999px';
+      document.body.appendChild(taFP);
+      taFP.focus();
+      taFP.select();
+      document.execCommand('copy');
+      document.body.removeChild(taFP);
+    } catch (errFP) { /* เบราว์เซอร์ไม่รองรับทั้ง 2 วิธี -- ทำอะไรไม่ได้แล้วจริงๆ */ }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(fallbackCopyFP);
+  } else {
+    fallbackCopyFP();
+  }
+}
+
 // MARKER_VATCONTROLLER_PLACEHOLDER_AUTOMAP_V1
 // ── ดึง Label จาก menuConfig.js อัตโนมัติ — ไม่ Hardcode ชื่อเมนูซ้ำในไฟล์นี้ ──
 // ── เพิ่มเมนูใหม่ในอนาคต: แก้แค่ menuConfig.js ที่เดียว หน้านี้ตามเองเสมอ ────
 const VAT_MENU_LABEL_MAP = VAT_CONTROLLER_MENU.groups
   .flatMap(g => g.items)
   .reduce((acc, item) => { acc[item.id] = item.label; return acc; }, {});
+
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_SKELETON_V1 -- Column ตาม Schema จริง vat_simpleinputdraft (อ้างอิงชุดเดียวกับ SIMPLE_DRAFT_COLUMNS ใน IncompleteBuOperationTest)
+const VAT_SIMPLE_INPUT_OPS_COLUMNS = [
+  { key: 'liability_cost_center_special', label: 'Liability Cost Center (Special)' },
+  { key: 'liability_account_special', label: 'Liability Account (Special)' },
+  { key: 'liability_sub_account_special', label: 'Liability Sub Account (Special)' },
+  { key: 'supplier_code', label: 'Supplier Code' },
+  { key: 'supplier_name', label: 'Supplier Name' },
+  { key: 'receive_date', label: 'Receive Date' },
+  { key: 'tax_invoice_number', label: 'Tax Invoice Number' },
+  { key: 'tax_invoice_date', label: 'Tax Invoice Date' },
+  { key: 'vendor_tax_invoice_number', label: 'Vendor Tax Invoice Number' },
+  { key: 'tax_id', label: 'เลขประจำตัวผู้เสียภาษี' },
+  { key: 'branch_no', label: 'สาขาที่' },
+  { key: 'line_number', label: 'Line Number' },
+  { key: 'expense_type', label: 'Expense Type' },
+  { key: 'description', label: 'รายการ' },
+  { key: 'amount_ex_vat', label: 'Amount Ex VAT' },
+  { key: 'vat_amount', label: 'VAT Amount' },
+  { key: 'branch_code', label: 'Branch Code' },
+  { key: 'cpc_special', label: 'CPC (Special)' },
+  { key: 'sub_account_special', label: 'Sub Account (Special)' },
+  { key: 'cpc_tax_special', label: 'CPC Tax (Special)' },
+  { key: 'vat_average_percent', label: 'VAT Average%' },
+  { key: 'invoice_ref', label: 'Invoice Type' }, // MARKER_VATCONTROLLER_SIMPLEINPUT_INVOICEREF_V1 -- ตามที่แจ้ง: ต้องระบุว่าเป็น 'Invoice' หรือ 'Credit' (Port จาก Full Page's invoice_ref field ใน vat_simpleinputdraft)
+];
+
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_TABS_V1 -- Column ตาม Schema จริง vat_adi_transferdraft (อ้างอิงชุดเดียวกับ ADI_DRAFT_COLUMNS ใน IncompleteBuOperationTest)
+const VAT_ADI_TRANSFER_COLUMNS = [
+  { key: 'category', label: 'Category' },
+  { key: 'source', label: 'Source' },
+  { key: 'acc_date', label: 'Acc Date' },
+  { key: 'bus', label: 'Bus' },
+  { key: 'grp', label: 'Grp' },
+  { key: 'com', label: 'Com' },
+  { key: 'branch', label: 'Branch' },
+  { key: 'cpc', label: 'CPC' },
+  { key: 'acc', label: 'Acc' },
+  { key: 'sub_acc', label: 'Sub_Acc' },
+  { key: 'debit', label: 'Debit' },
+  { key: 'credit', label: 'Credit' },
+  { key: 'adi_period', label: 'Period' },
+  { key: 'batch_name', label: 'Batch Name' },
+  { key: 'batch_description', label: 'Batch Description' },
+  { key: 'journal_name', label: 'Journal Name' },
+  { key: 'journal_description', label: 'Journal Description' },
+  { key: 'line_description', label: 'Line Description' },
+  { key: 'line_dff', label: 'Line DFF' },
+];
 
 function PlaceholderPage({ title }) {
   return (
@@ -210,8 +371,24 @@ function parseVatWatchlistRawText(rawText) {
   if (!rawText) return [];
   const lines = rawText.split(/\r?\n/);
   const rows = [];
+  let lastRow = null; // MARKER_VATWATCHLISTOPS_VENDORNAME_LINEWRAP_FIX_V1 -- จำแถวล่าสุด ไว้ต่อท้าย vendor_name ถ้าชื่อยาวล้นไปอีกบรรทัด
+  let inPageBreak = false; // MARKER_VATWATCHLISTOPS_VENDORNAME_PAGEBREAK_FIX_V1 -- เจอ Page Break (\x0c) แล้ว ข้ามหัวกระดาษหน้าใหม่ทั้งหมด กันข้อความ "ตั้งแต่วันที่ : ..." หลุดเข้าไปต่อท้าย vendor_name ผิดแถว
   for (const line of lines) {
-    if (!VAT_WATCHLIST_DATE_LINE_RE.test(line)) continue; // ข้าม Header/Dash/บรรทัดว่าง
+    if (line.includes('\f')) { inPageBreak = true; continue; } // MARKER_VATWATCHLISTOPS_VENDORNAME_PAGEBREAK_FIX_V1 -- เจอ Page Break -- เข้าสู่โหมดข้ามหัวกระดาษ
+    if (!VAT_WATCHLIST_DATE_LINE_RE.test(line)) {
+      // MARKER_VATWATCHLISTOPS_VENDORNAME_LINEWRAP_FIX_V1 -- บรรทัดที่ไม่ขึ้นต้นด้วยวันที่ อาจเป็น "ชื่อผู้ค้าล้นบรรทัด"
+      // (ชื่อยาวเกิน Column vendor_name เลยพิมพ์ต่อบรรทัดถัดไป โดยเว้นช่องว่างมาจนถึง Column เดียวกัน)
+      // เงื่อนไข: ไม่ได้อยู่ในโหมดหัวกระดาษ (กันข้อความหัวกระดาษ) + มีแถวก่อนหน้าอยู่แล้ว
+      // + Column ก่อนหน้า vendor_name (0-123) ว่างสนิท + มีเนื้อหาจริงต่อจากนั้น
+      if (!inPageBreak && lastRow && line.slice(0, 123).trim() === '') {
+        const overflow = line.slice(123).trim();
+        if (overflow) {
+          lastRow.vendor_name = lastRow.vendor_name ? `${lastRow.vendor_name} ${overflow}` : overflow;
+        }
+      }
+      continue; // ข้าม Header/Dash/บรรทัดว่าง (หรือบรรทัดล้นที่เพิ่งต่อไปแล้วด้านบน)
+    }
+    inPageBreak = false; // MARKER_VATWATCHLISTOPS_VENDORNAME_PAGEBREAK_FIX_V1 -- เจอบรรทัดข้อมูลจริงแล้ว ออกจากโหมดหัวกระดาษ
     const row = {};
     for (const col of VAT_WATCHLIST_COLUMNS) {
       const raw = col.end != null ? line.slice(col.start, col.end) : line.slice(col.start);
@@ -222,6 +399,7 @@ function parseVatWatchlistRawText(rawText) {
       row[col.key] = value;
     }
     rows.push(row);
+    lastRow = row; // MARKER_VATWATCHLISTOPS_VENDORNAME_LINEWRAP_FIX_V1
   }
   return rows;
 }
@@ -518,6 +696,12 @@ function VatCheckReturnMatchContent({ files, onClose }) {
   const [manualMatchSelected, setManualMatchSelected] = React.useState(() => new Set());
   const [manualMatchSaving, setManualMatchSaving] = React.useState(false);
   const [manualMatchedKeys, setManualMatchedKeys] = React.useState(() => new Set());
+  const [singleSavedKeys, setSingleSavedKeys] = React.useState(() => new Set()); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- จำแถว Old Ref ที่ยอดไม่ตรง แต่กดปุ่ม Save เดี่ยวยืนยันไปแล้ว
+  const [oldRefDetailRow, setOldRefDetailRow] = React.useState(null); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- แถวที่กำลังเปิดดู Detail ประกอบยอด (ใช้ได้กับทุกแถวที่ Match แล้ว ไม่ใช่แค่ Old Ref ที่ยอดไม่ตรง)
+  const [detailAddedKeys, setDetailAddedKeys] = React.useState(() => new Set()); // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_UNMATCH_V1 -- Invoice_ref (ฝั่ง Unmatch) ที่กดปุ่ม Add แล้วใน Detail Modal -- เขียน Note สำเร็จ ถือว่า Recorded (Key: `${bu}|||${checkNo}|||${supplierCode}|||${invoice_ref}`)
+  const [detailAddSaving, setDetailAddSaving] = React.useState(() => new Set()); // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_UNMATCH_V1 -- กำลังบันทึกปุ่ม Add อยู่ (กันกดซ้ำ/กดรัว)
+  const [showBatchAddRemarkPopup, setShowBatchAddRemarkPopup] = React.useState(false); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- แสดง Popup ให้กรอก Remark ก่อนยืนยัน "+ Add ทั้งหมด" จริง
+  const [batchAddRemarkText, setBatchAddRemarkText] = React.useState(''); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- ข้อความ Remark ที่พิมพ์เอง (ถ้าปล่อยว่าง ใช้ค่า Default ของระบบ)
   const [manualConsumedRefs, setManualConsumedRefs] = React.useState(() => new Set()); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_EXCLUDE_USED_V1 -- Invoice_ref ที่ถูก Manual Match ไปแล้วในรอบนี้ (กันเลือกซ้ำถ้า Manual Match ติดๆกันหลายรอบ)
   const [unmatchSearch, setUnmatchSearch] = React.useState(''); // MARKER_VATWATCHLISTOPS_CHECKRETURN_UNMATCH_SEARCH_V1 -- คำค้นหาใน Tab Unmatch
   const [notfoundSegments, setNotfoundSegments] = React.useState([]); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIFILE_V1 -- Segment3 ที่หา BU ใน company_list ไม่เจอ
@@ -603,8 +787,13 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         const cleanCheckNo = (cn) => String(cn || '').replace(/-CHECK$/i, '').trim();
         let allExpiredRows = [];
         const groupMap = new Map();
+        // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_TIER_V1
+        // ── Index เพิ่มด้วย old_ref_check_no (เลขที่เช็คก่อน Migrate) เผื่อไฟล์ APN-Return-chq อ้างอิงเลขที่เช็คเก่า ──
+        // ── ใช้เป็น Tier 1.5: ลองก่อนจะปล่อยไป Exact Match (Tier 2 -- Supplier+วันที่) ──────────────
+        const oldRefGroupMap = new Map();
         const foundNoteDescByBu = {};
         const notedGroupKeysByBu = {}; // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_BY_NOTEKEY_V1 -- Key เช็คสำรอง: เลขที่เช็ค(Clean)+Supplier Code ที่มี Note Accept-with-Condition จริง (ไม่สนใจ remark เลย ครอบคลุมทุกช่องทางที่มาบันทึก Note)
+        const notedInvoiceKeysByBu = {}; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_PERSIST_V1 -- เก็บ notedInvoiceKeys (invoice_ref+supplier_code ที่มี Note Accept-with-Condition จริง) ไว้ต่อ BU ใช้เช็คฝั่ง Unmatch (extraLines) ทีหลัง ว่า Recorded ไปแล้วจริงหรือยัง (Mechanism เดียวกับฝั่ง Matched เป๊ะ)
 
         buFetchResults.forEach(({ bu: buCode, allRows, existingNotesList }) => {
           const effectivePeriodMonth = effectivePeriodMonthByBu[buCode];
@@ -615,6 +804,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
               .filter((n) => n.status === 'accept_with_condition')
               .map((n) => `${String(n.invoice_ref || '').trim()}|||${String(n.supplier_code || '').trim()}`)
           );
+          notedInvoiceKeysByBu[buCode] = notedInvoiceKeys; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_PERSIST_V1
           const expiredRowsForBu = allRows.filter((row) => {
             if (row.note_status === 'accept_with_condition') return false; // มี Note อยู่แล้ว ข้าม กันเขียนทับ (เช็คจาก Field บนแถวเอง -- คงไว้เดิม)
             if (notedInvoiceKeys.has(`${String(row.invoice_ref || '').trim()}|||${String(row.supplier_code || '').trim()}`)) return false; // MARKER_VATWATCHLISTOPS_CHECKRETURN_EXCLUDE_NOTEDINVOICE_LIVE_V1 -- เช็คซ้ำจาก Note สดๆ กันเคส note_status บนแถวยังไม่ Sync
@@ -627,10 +817,18 @@ function VatCheckReturnMatchContent({ files, onClose }) {
           expiredRowsForBu.forEach((r) => {
             const cn = cleanCheckNo(r.check_no);
             const sc = String(r.supplier_code || '').trim();
-            if (!cn || !sc) return;
-            const key = `${buCode}|||${cn}|||${sc}`;
-            if (!groupMap.has(key)) groupMap.set(key, []);
-            groupMap.get(key).push(r);
+            if (cn && sc) {
+              const key = `${buCode}|||${cn}|||${sc}`;
+              if (!groupMap.has(key)) groupMap.set(key, []);
+              groupMap.get(key).push(r);
+            }
+            // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_TIER_V1
+            const oldCn = cleanCheckNo(r.old_ref_check_no);
+            if (oldCn && sc) {
+              const oldKey = `${buCode}|||${oldCn}|||${sc}`;
+              if (!oldRefGroupMap.has(oldKey)) oldRefGroupMap.set(oldKey, []);
+              oldRefGroupMap.get(oldKey).push(r);
+            }
           });
 
           notedGroupKeysByBu[buCode] = new Set( // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_BY_NOTEKEY_V1 -- Key เช็คสำรอง Populate ต่อ BU (ไม่ยุ่งกับ foundNoteDescByBu เดิมเลย)
@@ -647,6 +845,50 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         // MARKER_VATWATCHLISTOPS_CHECKRETURN_TABS_MANUALMATCH_V1 -- เก็บไว้ใช้หา Candidate ตอน Manual Match
         if (!cancelled) setExpiredRows(allExpiredRows);
 
+        // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1
+        // ── ดึง "กลุ่มเต็ม" ของทุกเลขที่เช็คเก่าที่เจอ (รวมใบที่จ่ายจบไปแล้ว ไม่อยู่ใน Incomplete ปัจจุบันแล้ว) ──
+        // ── จาก vat_watchlist_old_incomplete_ref มาเตรียมไว้ก่อน เผื่อยอดจากใบที่เหลือ Incomplete ไม่ครบเต็มเช็ค ──
+        const fullRefGroupByCheck = new Map();
+        {
+          const checkPairsSeen = new Set();
+          const checkPairs = [];
+          allExpiredRows.forEach((r) => {
+            const oldCn = String(r.old_ref_check_no || '').trim();
+            if (!oldCn) return;
+            const pairKey = `${r.__bu}|||${oldCn}`;
+            if (checkPairsSeen.has(pairKey)) return;
+            checkPairsSeen.add(pairKey);
+            checkPairs.push({ bu: r.__bu, check_no: oldCn });
+          });
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_GROUP_FALLBACK_V1 -- Seed เพิ่มจากเลขที่เช็ค (ทั้ง check_no ปัจจุบัน และ old_ref_check_no) ของ Note ที่มีอยู่แล้วทุกใบ
+          // ครอบคลุมกรณี Invoice ทุกใบในเช็คนั้นถูก Record ไปหมดแล้ว จนไม่เหลือแถว Expired ให้ Seed จาก allExpiredRows ข้างบนเลยสักใบ (ไม่งั้นจะหา "กลุ่มเต็ม" มาโชว์ยอด/รายละเอียดไม่ได้อีกเลย)
+          buFetchResults.forEach(({ bu: buCodeSeed, existingNotesList: notesForSeed }) => {
+            (notesForSeed || []).forEach((n) => {
+              [n.check_no, n.old_ref_check_no].forEach((cn) => {
+                const cleanedCn = String(cn || '').trim();
+                if (!cleanedCn) return;
+                const pairKey = `${buCodeSeed}|||${cleanedCn}`;
+                if (checkPairsSeen.has(pairKey)) return;
+                checkPairsSeen.add(pairKey);
+                checkPairs.push({ bu: buCodeSeed, check_no: cleanedCn });
+              });
+            });
+          });
+          if (checkPairs.length > 0) {
+            try {
+              const lookupResp = await apiFetch('/vat_watchlist_old_incomplete_ref/lookup_by_checks', { method: 'POST', body: JSON.stringify({ pairs: checkPairs }) });
+              const lookupRows = Array.isArray(lookupResp?.rows) ? lookupResp.rows : [];
+              lookupRows.forEach((row) => {
+                const key = `${row.bu}|||${cleanCheckNo(row.check_no)}|||${String(row.supplier_code || '').trim()}`;
+                if (!fullRefGroupByCheck.has(key)) fullRefGroupByCheck.set(key, []);
+                fullRefGroupByCheck.get(key).push(row);
+              });
+            } catch (e) {
+              // เงียบไว้ -- ถ้าดึงกลุ่มเต็มไม่ได้ (เช่น Backend ยังไม่มี Endpoint นี้) ยัง Fallback ไปใช้ยอดจากใบที่เหลือ Incomplete ปัจจุบันตามปกติ (Tier 1.5 เดิม) ไม่ทำให้หน้าจอพังทั้งหมด
+            }
+          }
+        }
+
         function extractCheckFromDescription(desc) {
           const m = String(desc || '').match(/หน้าเช็คCheques Inhouse No\s*(\d+)/);
           return m ? m[1] : null;
@@ -655,6 +897,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         const WHT_RATES = [{ rate: 0, label: 'ไม่หัก' }, { rate: 0.01, label: '1%' }, { rate: 0.02, label: '2%' }, { rate: 0.03, label: '3%' }, { rate: 0.05, label: '5%' }];
         const TOLERANCE = 1;
         const usedGroupKeys = new Set(); // MARKER_VATWATCHLISTOPS_CHECKRETURN_EXACTMATCH_V1 -- เก็บ Key กลุ่มที่ Match ไปแล้วรอบแรก กัน Exact Match รอบ 2 หยิบซ้ำ
+        const oldRefMatchedLineKeys = new Set(); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_TIER_V1 -- เก็บ Invoice ที่ Match ผ่าน Tier 1.5 (Old Ref Check No.) กัน Tier 2/3 หยิบซ้ำ
 
         // ── Matching หลัก -- แต่ละแถวในไฟล์หา BU ของตัวเองก่อน (จาก Liability Account ของแถวนั้น) ──
         const matchResults = [];
@@ -690,8 +933,110 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             }
           }
 
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- Tier 1 เจอ Group ด้วย Check_no ปัจจุบันแล้ว แต่ยังไม่การันตีว่า Reconcile ผ่าน
+          // ── เช็คก่อนว่า Group ของ Tier 1 นี้ Reconcile ยอดได้จริงหรือไม่ -- ถ้าไม่ผ่าน ให้ลอง Old Ref (Tier 1.5) ก่อน
+          // ── (เผื่อมี APN Return Chq จริงที่ตรงกว่า) แทนที่จะปล่อยตกไป Tier 2/3/4 ทันทีเหมือนเดิม ──
+          const reconcilesQuick = (pv, vt) => WHT_RATES.some(({ rate }) => Math.abs(pv * (1 - rate) + vt - reportAmount) <= TOLERANCE);
+          let tier1GroupFallback = null;
+          if (group) {
+            const pv1 = group.reduce((s, r) => s + (Number(r.exp_amount) || 0), 0);
+            const vt1 = group.reduce((s, r) => s + (Number(r.exp_vat) || 0), 0);
+            if (!reconcilesQuick(pv1, vt1)) {
+              tier1GroupFallback = group;
+              group = null;
+            }
+          }
+
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_TIER_V1
+          // ── Tier 1.5: เลขที่เช็คปัจจุบันหาไม่เจอ (หรือเจอแต่ Reconcile ไม่ผ่าน) -- ลองสลับไปหาด้วย "เลขที่เช็คเก่าก่อน Migrate" (old_ref_check_no) แทน ──
+          // ── ก่อนจะปล่อยไป Exact Match (Tier 2 -- Supplier+วันที่ชำระ) ──────────────────────────────────
+          let isOldRefMatch = false;
+          if (!group) {
+            const oldRefKey = `${rowBu}|||${cleanCheckNo(invoiceNum)}|||${supplierNum}`;
+            const oldRefGroup = oldRefGroupMap.get(oldRefKey);
+            if (oldRefGroup) {
+              group = oldRefGroup;
+              matchedGroupKey = oldRefKey;
+              matchMethod = 'Old Ref Check No.';
+              isOldRefMatch = true;
+            } else if (tier1GroupFallback) { // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- ไม่มี Old Ref รองรับเลย -- คืน Group เดิมของ Tier 1 กลับมา (พฤติกรรมเดิม)
+              group = tier1GroupFallback;
+            }
+          }
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DIAGNOSE_V1
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_ADDTARGET_500361406_V1
+          const __DEBUG_TARGET_INVOICE_NUMS__ = []; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DISABLE_ALL_V1 -- ปิด Debug แล้ว
+          if (__DEBUG_TARGET_INVOICE_NUMS__.includes(invoiceNum)) {
+            console.log('[CHECKRETURN_DEBUG]', {
+              invoiceNum, supplierNum, rowBu, reportAmount,
+              tier1RawGroupFound: !!tier1GroupFallback || !!(groupMap.get(`${rowBu}|||${invoiceNum}|||${supplierNum}`)),
+              tier1GroupFallbackTotal: tier1GroupFallback ? {
+                count: tier1GroupFallback.length,
+                pv: tier1GroupFallback.reduce((s, r) => s + (Number(r.exp_amount) || 0), 0),
+                vt: tier1GroupFallback.reduce((s, r) => s + (Number(r.exp_vat) || 0), 0),
+                invoiceRefs: tier1GroupFallback.map((r) => r.invoice_ref),
+              } : null,
+              oldRefKeyTried: `${rowBu}|||${cleanCheckNo(invoiceNum)}|||${supplierNum}`,
+              oldRefGroupFound: !!oldRefGroupMap.get(`${rowBu}|||${cleanCheckNo(invoiceNum)}|||${supplierNum}`),
+              finalGroupAfterFallback: group ? {
+                count: group.length,
+                pv: group.reduce((s, r) => s + (Number(r.exp_amount) || 0), 0),
+                vt: group.reduce((s, r) => s + (Number(r.exp_vat) || 0), 0),
+                invoiceRefs: group.map((r) => r.invoice_ref),
+                checkNos: group.map((r) => r.check_no),
+                oldRefCheckNos: group.map((r) => r.old_ref_check_no),
+              } : null,
+              matchMethod, isOldRefMatch,
+            });
+          }
+
           if (!group) {
             // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_V1 -- เช็คว่าเคย Match (มี Note ตรง Description นี้) ไปแล้วหรือยัง
+            // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_GROUP_FALLBACK_V1 -- ก่อนปล่อยเป็นแถวเปล่าๆ ลองหา "กลุ่มเต็ม" จาก vat_watchlist_old_incomplete_ref (เผื่อ Invoice
+            // ทุกใบในเช็คนี้ถูก Record/จ่ายจบไปหมดแล้ว ไม่เหลือแถว Expired ให้ Match ในรอบนี้เลย) มาโชว์ยอด/รายละเอียดแทน -- Status เปลี่ยนเป็น Recorded ก็จริง แต่ข้อมูล
+            // Invoice/ยอดเงิน/ภาษี ต้องยังดึงมาโชว์เหมือนเดิม ไม่ใช่หายไปเฉยๆ -- ทำเฉพาะกรณี isFoundNote จริง (มี Note ยืนยันแล้ว) เท่านั้น กันโชว์ยอดผิดแถวที่ไม่เกี่ยวข้อง
+            const recordedFallbackKey = `${rowBu}|||${cleanCheckNo(invoiceNum)}|||${supplierNum}`;
+            const recordedFallbackGroupRaw = fullRefGroupByCheck.get(recordedFallbackKey);
+            if (isFoundNote && recordedFallbackGroupRaw && recordedFallbackGroupRaw.length > 0) {
+              const seenRFK = new Set();
+              const dedupRF = [];
+              recordedFallbackGroupRaw.forEach((x) => {
+                const k = `${x.invoice_ref}|||${x.supplier_code}`;
+                if (seenRFK.has(k)) return;
+                seenRFK.add(k);
+                dedupRF.push(x);
+              });
+              const preVatSumRF = dedupRF.reduce((s, x) => s + (Number(x.exp_amount) || 0), 0);
+              const vatSumRF = dedupRF.reduce((s, x) => s + (Number(x.exp_vat) || 0), 0);
+              const matchedLinesRF = dedupRF.map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null, alreadyRecorded: (notedInvoiceKeysByBu[rowBu] || new Set()).has(`${x.invoice_ref}|||${supplierNum}`) }));
+              // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_GROUP_FALLBACK_V2 -- ไล่หา WHT Rate ที่ใกล้เคียงที่สุดจริง (เหมือน closestMatch/bestMatch ใน Flow หลัก) แทนที่จะปล่อย matchedRate/calcAmount เป็น null
+              // เพื่อให้ Detail Modal คำนวณ "ยอด (สุทธิ @ Rate)" ถูกต้อง ไม่ใช่แค่ยอดก่อนหัก WHT (Rate 0% เสมอ) ตามที่ผู้ใช้ขอดู Detail ให้ครบ
+              let bestMatchRF = null;
+              let closestMatchRF = null;
+              WHT_RATES.forEach(({ rate, label }) => {
+                const calc = preVatSumRF * (1 - rate) + vatSumRF;
+                const diff = Math.abs(calc - reportAmount);
+                if (!closestMatchRF || diff < closestMatchRF.diff) closestMatchRF = { rateLabel: label, calc, diff };
+                if (diff <= TOLERANCE && (!bestMatchRF || diff < bestMatchRF.diff)) bestMatchRF = { rateLabel: label, calc, diff };
+              });
+              const displayMatchRF = bestMatchRF || closestMatchRF;
+              matchResults.push({
+                bu: rowBu, checkNo: invoiceNum, supplierCode: supplierNum,
+                vendorName: dedupRF[0]?.vendor_name || reportRow['Supplier'] || '',
+                invoiceCount: dedupRF.length, invoiceRefs: dedupRF.map((x) => x.invoice_ref),
+                preVatSum: preVatSumRF, vatSum: vatSumRF, reportAmount, description,
+                matched: false,
+                matchedRate: displayMatchRF ? displayMatchRF.rateLabel : null,
+                calcAmount: displayMatchRF ? displayMatchRF.calc : null,
+                matchMethod: 'Old Ref Check No. (Recorded ไปแล้วทั้งหมด)',
+                oldRefAmountMismatch: false, matchRemark: null, oldRefSoftCandidate: null,
+                matchedLines: matchedLinesRF, extraLines: [],
+                invoiceDate: reportRow['Invoice Date'] || null,
+                foundNote: isFoundNote,
+                alreadyRecorded: true, // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_GROUP_FALLBACK_V1 -- เข้าเงื่อนไขนี้ได้ต้องมี isFoundNote (มี Note จริง) อยู่แล้ว จึง Recorded แน่นอน
+              });
+              return;
+            }
             matchResults.push({ bu: rowBu, checkNo: invoiceNum, supplierCode: supplierNum, vendorName: reportRow['Supplier'] || '', matched: false, reportAmount, description, invoiceDate: reportRow['Invoice Date'] || null, foundNote: isFoundNote }); // MARKER_VATWATCHLISTOPS_CHECKRETURN_TABS_MANUALMATCH_V1
             return;
           }
@@ -700,13 +1045,102 @@ function VatCheckReturnMatchContent({ files, onClose }) {
           const vatSum = group.reduce((s, r) => s + (Number(r.exp_vat) || 0), 0);
 
           let bestMatch = null;
+          let closestMatch = null; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- เก็บยอดที่ใกล้เคียงที่สุด (ไม่สนใจ Tolerance) ไว้โชว์อ้างอิงเวลา Tier 1.5 เจอเลขที่เช็คตรงแต่ยอดไม่ Reconcile
           WHT_RATES.forEach(({ rate, label }) => {
             const calc = preVatSum * (1 - rate) + vatSum;
             const diff = Math.abs(calc - reportAmount);
+            if (!closestMatch || diff < closestMatch.diff) closestMatch = { rateLabel: label, calc, diff };
             if (diff <= TOLERANCE && (!bestMatch || diff < bestMatch.diff)) bestMatch = { rateLabel: label, calc, diff };
           });
 
-          if (bestMatch) usedGroupKeys.add(matchedGroupKey); // MARKER_VATWATCHLISTOPS_CHECKRETURN_EXACTMATCH_V1 -- Match รอบแรกสำเร็จจริง กันรอบ 2 หยิบกลุ่มนี้ซ้ำ
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1
+          // ── Tier 1.5 ต้อง "Additive" เท่านั้น: จับจอง Line ทันทีก็ต่อเมื่อยอด Reconcile จริงเท่านั้น ──
+          // ── (จากใบที่เหลือ Incomplete ปัจจุบัน หรือจาก "กลุ่มเต็ม" ของเช็คเดิมที่ดึงจาก Ref Table มา) ──
+          // ── ถ้ายอดยังไม่ Reconcile เลยแม้แต่กลุ่มเต็ม -- ห้ามจับจอง Line ตอนนี้ ปล่อยให้ Tier 2/3/4 ──
+          // ── ได้ลองก่อน (บั๊กเดิมใน FIX3: จับจอง Line ทันทีไม่ว่ายอดจะตรงหรือไม่ ทำให้ Tier อื่น Match ──
+          // ── Line พวกนี้ไม่ได้อีกเลย ทั้งที่ตรงกับ Tier อื่นได้จริง -- ยอด Match รวมเลยลดลงจากเดิม) ──
+          // ── เก็บไว้เป็น "Soft Candidate" แทน แล้วค่อยจับจองเท่าที่เหลือในรอบสุดท้ายหลัง Tier 2/3/4 ──
+          let oldRefAmountMismatch = false;
+          let matchRemark = null;
+          let oldRefSoftCandidate = null;
+          let fullBestMatch = null;
+          let fullGroupForRemark = null;
+          let missingLinesForRemark = [];
+
+          if (isOldRefMatch && !bestMatch) {
+            const fullKey = `${rowBu}|||${cleanCheckNo(invoiceNum)}|||${supplierNum}`;
+            const candidateFullGroup = fullRefGroupByCheck.get(fullKey);
+            if (candidateFullGroup && candidateFullGroup.length > group.length) {
+              const subsetRefKeys = new Set(group.map((x) => `${x.invoice_ref}|||${x.supplier_code}`));
+              const seenFullKeys = new Set();
+              const dedupFull = [];
+              candidateFullGroup.forEach((x) => {
+                const k = `${x.invoice_ref}|||${x.supplier_code}`;
+                if (seenFullKeys.has(k)) return;
+                seenFullKeys.add(k);
+                dedupFull.push(x);
+              });
+              fullGroupForRemark = dedupFull;
+              const preVatSumFull = dedupFull.reduce((s, x) => s + (Number(x.exp_amount) || 0), 0);
+              const vatSumFull = dedupFull.reduce((s, x) => s + (Number(x.exp_vat) || 0), 0);
+              WHT_RATES.forEach(({ rate, label }) => {
+                const calc = preVatSumFull * (1 - rate) + vatSumFull;
+                const diff = Math.abs(calc - reportAmount);
+                if (diff <= TOLERANCE && (!fullBestMatch || diff < fullBestMatch.diff)) fullBestMatch = { rateLabel: label, calc, diff };
+              });
+              missingLinesForRemark = dedupFull.filter((x) => !subsetRefKeys.has(`${x.invoice_ref}|||${x.supplier_code}`));
+            }
+          }
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DIAGNOSE_V2
+          if ([].includes(invoiceNum)) { // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DISABLE_ALL_V1 -- ปิด Debug แล้ว
+            console.log('[CHECKRETURN_DEBUG_B]', {
+              invoiceNum, isOldRefMatch,
+              bestMatchFound: !!bestMatch,
+              fullKeyTried: `${rowBu}|||${cleanCheckNo(invoiceNum)}|||${supplierNum}`,
+              candidateFullGroupCount: (fullRefGroupByCheck.get(`${rowBu}|||${cleanCheckNo(invoiceNum)}|||${supplierNum}`) || []).length,
+              fullBestMatchFound: !!fullBestMatch,
+              fullBestMatch,
+              willBecomeSoftCandidate: isOldRefMatch && !bestMatch && !fullBestMatch,
+            });
+          }
+
+          if (isOldRefMatch && bestMatch) {
+            // ยอดจากใบที่เหลือ Incomplete ปัจจุบัน Reconcile ได้จริง -- จับจอง Line ทันที (เหมือน Tier 1.5 เดิม)
+            group.forEach((line) => {
+              oldRefMatchedLineKeys.add(`${rowBu}|||${line.invoice_ref}|||${line.supplier_code}`);
+              const lineCurrentKey = `${rowBu}|||${cleanCheckNo(line.check_no)}|||${supplierNum}`;
+              if (cleanCheckNo(line.check_no)) usedGroupKeys.add(lineCurrentKey);
+            });
+          } else if (isOldRefMatch && fullBestMatch) {
+            // ยอดจากใบที่เหลือไม่ครบ แต่ยอดรวม "ทั้งเช็คเดิม" (รวมใบที่จ่ายจบไปแล้ว) Reconcile ได้ -- ยืนยัน Match จริง
+            group.forEach((line) => {
+              oldRefMatchedLineKeys.add(`${rowBu}|||${line.invoice_ref}|||${line.supplier_code}`);
+              const lineCurrentKey = `${rowBu}|||${cleanCheckNo(line.check_no)}|||${supplierNum}`;
+              if (cleanCheckNo(line.check_no)) usedGroupKeys.add(lineCurrentKey);
+            });
+            const missingRefs = missingLinesForRemark.map((x) => x.invoice_ref).join(', ');
+            const missingPreVat = missingLinesForRemark.reduce((s, x) => s + (Number(x.exp_amount) || 0), 0);
+            const missingVat = missingLinesForRemark.reduce((s, x) => s + (Number(x.exp_vat) || 0), 0);
+            const rateInfo = WHT_RATES.find((w) => w.label === fullBestMatch.rateLabel) || { rate: 0 };
+            const missingAmount = missingPreVat * (1 - rateInfo.rate) + missingVat;
+            matchRemark = `อ้างอิงเช็คเดิม ${cleanCheckNo(invoiceNum)}: ยอดตามใบที่เหลือไม่ครบเต็มเช็ค ขาดยอด ${missingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท หลังหักภาษี ${fullBestMatch.rateLabel} ด้วย Invoice No. ${missingRefs} (จ่ายจบไปแล้ว)`;
+          } else if (isOldRefMatch) {
+            // ยอดไม่ Reconcile แม้แต่กลุ่มเต็ม -- ห้ามจับจอง Line ตอนนี้ -- เก็บไว้เป็น Soft Candidate ให้ Tier 2/3/4 ได้ลองก่อน
+            oldRefSoftCandidate = { group, fullGroup: fullGroupForRemark || group, rowBu, supplierNum };
+          } else if (bestMatch) { // MARKER_VATWATCHLISTOPS_CHECKRETURN_EXACTMATCH_V1 -- Match รอบแรกสำเร็จจริง กันรอบ 2 หยิบกลุ่มนี้ซ้ำ
+            usedGroupKeys.add(matchedGroupKey);
+          }
+
+          const displayMatch = bestMatch || fullBestMatch || closestMatch;
+
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_INNEROUTER_RECORDED_SYNC_V1 -- คำนวณ matchedLines/extraLines (พร้อม alreadyRecorded ต่อใบ) ไว้ก่อนสร้าง Object หลัก
+          // เพื่อเอาไปใช้ตัดสิน Badge "Recorded" ของแถว Outer ให้ตรงกับ Detail Modal เป๊ะ (ก่อนหน้านี้ Outer เช็คแค่ระดับ เลขที่เช็ค+Supplier
+          // (notedGroupKeysByBu) ซึ่งเจอ Note "บาง" ใบในกลุ่มก็ขึ้น Recorded ทั้ง Lot ทันที ทั้งที่ Detail ข้างในบางใบยังเป็น Matched อยู่จริง -- ไม่ Sync กัน)
+          const matchedLinesComputed = group.map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null, alreadyRecorded: (notedInvoiceKeysByBu[rowBu] || new Set()).has(`${x.invoice_ref}|||${supplierNum}`) }));
+          const extraLinesComputed = (fullBestMatch ? missingLinesForRemark : []).map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null, alreadyRecorded: (notedInvoiceKeysByBu[rowBu] || new Set()).has(`${x.invoice_ref}|||${supplierNum}`) }));
+          const allLotLinesComputed = [...matchedLinesComputed, ...extraLinesComputed]; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_INNEROUTER_RECORDED_SYNC_V1
+          const allLotRecorded = allLotLinesComputed.length > 0 && allLotLinesComputed.every((x) => x.alreadyRecorded); // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_INNEROUTER_RECORDED_SYNC_V1 -- Recorded จริงต้องครบทุกใบใน Lot เท่านั้น (Matched + Unmatch/extraLines รวมกัน) ตรงกับเงื่อนไข pendingAddCount === 0 ใน Detail Modal เป๊ะ
+          const descBasedFoundNote = !!description && (foundNoteDescByBu[rowBu] || new Set()).has(String(description).trim()); // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_INNEROUTER_RECORDED_SYNC_V1 -- เก็บเฉพาะการเช็คแบบ Description (Legacy) ไว้ต่างหาก ไม่ใช้ notedGroupKeysByBu (เลขที่เช็ค+Supplier แบบหลวม) ต่อแล้ว
 
           matchResults.push({
             bu: rowBu,
@@ -716,12 +1150,30 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             invoiceCount: group.length,
             invoiceRefs: group.map((r) => r.invoice_ref),
             preVatSum, vatSum, reportAmount, description,
-            matched: !!bestMatch,
-            matchedRate: bestMatch ? bestMatch.rateLabel : null,
-            calcAmount: bestMatch ? bestMatch.calc : null,
-            matchMethod,
+            matched: isOldRefMatch ? !!(bestMatch || fullBestMatch) : !!bestMatch, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1 -- Additive: Matched ทันทีเฉพาะยอด Reconcile จริง (ใบที่เหลือ หรือกลุ่มเต็ม) เท่านั้น -- ไม่ Reconcile เลยปล่อย false รอ Tier 2/3/4 หรือรอบสุดท้าย
+            matchedRate: displayMatch ? displayMatch.rateLabel : null,
+            calcAmount: displayMatch ? displayMatch.calc : null,
+            matchMethod: fullBestMatch ? 'Old Ref Check No. (เต็มเช็ค)' : matchMethod,
+            oldRefAmountMismatch, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- ตั้งจริงเฉพาะรอบสุดท้าย (ถ้าจับจองแบบยอดไม่ตรง)
+            matchRemark, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1 -- หมายเหตุกรณี Match ผ่านกลุ่มเต็ม (ระบุใบที่จ่ายจบไปแล้ว + ยอด) -- เก็บลง Note (match_remark)
+            oldRefSoftCandidate, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1 -- รอ Claim รอบสุดท้ายถ้าไม่มี Tier ไหน Match ได้เลย
+            matchedLines: matchedLinesComputed, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- เก็บ Line ละเอียดไว้โชว์ Detail ประกอบยอด (ใช้ได้ทุก Tier) -- MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 alreadyRecorded: เคยมี Note (จาก Add ทั้ง Lot) แล้วจริงหรือยัง -- MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_INNEROUTER_RECORDED_SYNC_V1 คำนวณไว้ล่วงหน้าแล้วด้านบน (ใช้ร่วมกับ allLotRecorded)
+            extraLines: extraLinesComputed, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- ใบอื่นภายใต้เช็คเดิมเดียวกันที่ไม่ได้นำมารวม (จ่ายจบไปแล้ว) เฉพาะกรณี Old Ref เต็มเช็ค -- MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_PERSIST_V1 alreadyRecorded: เคยมี Note (จากปุ่ม Add เดิมหรือช่องทางอื่น) แล้วจริงหรือยัง -- MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_INNEROUTER_RECORDED_SYNC_V1 คำนวณไว้ล่วงหน้าแล้วด้านบน
             invoiceDate: reportRow['Invoice Date'] || null, // MARKER_VATWATCHLISTOPS_CHECKRETURN_TABS_MANUALMATCH_V1
-            alreadyRecorded: isFoundNote, // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_V1 -- เคยมี Note บันทึกไว้แล้ว โชว์ "Recorded" แทน "Matched"
+            alreadyRecorded: allLotRecorded || descBasedFoundNote, // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_V1 -- เคยมี Note บันทึกไว้แล้ว โชว์ "Recorded" แทน "Matched" -- MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_INNEROUTER_RECORDED_SYNC_V1 เปลี่ยนจากเช็คแบบหลวม (เลขที่เช็ค+Supplier) เป็นเช็คว่าทุกใบใน Lot นี้ (matchedLines+extraLines) มี Note ครบจริงหรือไม่ ให้ตรงกับ Detail Modal เป๊ะ (เหลือแค่ Fallback Description แบบเดิมไว้เผื่อ Note เก่าที่ไม่มี invoice_ref ตรง)
+          });
+        });
+
+        // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_RESERVE_SOFTCANDIDATE_LINES_V2
+        // ── สร้าง oldRefSoftCandidateLineKeys "ก่อน" Tier 2 จะเริ่มรัน (ย้ายมาจาก v1 ที่สร้าง ──
+        // ── หลัง Tier 2 จบไปแล้ว ทำให้ Tier 2 ไม่เห็น Line เหล่านี้เลย และไป Claim Group ──
+        // ── ที่มี Line พวกนี้อยู่ก่อน Tier 3/4 จะได้มีสิทธิ์กันด้วยซ้ำ) ──────────────────────
+        const oldRefSoftCandidateLineKeys = new Set();
+        matchResults.forEach((r) => {
+          if (!r.oldRefSoftCandidate) return;
+          const { group: softGroup, rowBu: softRowBu } = r.oldRefSoftCandidate;
+          (softGroup || []).forEach((line) => {
+            oldRefSoftCandidateLineKeys.add(`${softRowBu}|||${line.invoice_ref}|||${line.supplier_code}`);
           });
         });
 
@@ -738,7 +1190,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         }
         const EXACTMATCH_DAY_WINDOW = 31; // ± ไม่เกิน 1 เดือน (โดยประมาณ)
         matchResults.forEach((r) => {
-          if (r.matched) return;
+          if (r.matched || r.oldRefSoftCandidate) return; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_PRIORITY_OVER_HIGHCONF_V1 -- เจอ Old Ref จริงแล้ว (รอ Claim รอบสุดท้าย) ห้าม Tier 2 มาแซง
           const reportDate = parseAnyDateForExactMatch(r.invoiceDate);
           if (!reportDate) return;
 
@@ -748,9 +1200,10 @@ function VatCheckReturnMatchContent({ files, onClose }) {
           groupMap.forEach((groupRows, key) => {
             if (usedGroupKeys.has(key)) return;
             if (!key.startsWith(`${r.bu}|||`)) return;
+            if ((groupRows || []).some((gr) => oldRefSoftCandidateLineKeys.has(`${key.split('|||')[0]}|||${gr.invoice_ref}|||${gr.supplier_code}`))) return; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_RESERVE_SOFTCANDIDATE_LINES_V2 -- กัน Group ที่มี Line เป็นของ Old Ref Soft Candidate อยู่แล้ว ไม่ให้ Row อื่นมา Claim
             const groupSupplier = String(groupRows[0]?.supplier_code || '').trim();
             if (groupSupplier !== r.supplierCode) return;
-            const groupDate = parseAnyDateForExactMatch(groupRows[0]?.payment_date);
+            const groupDate = parseAnyDateForExactMatch(groupRows[0]?.payment_date); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_TIER2DATE_FIX2_V1 -- Revert: Tier 2 เป็น Logic "วันที่ใกล้เคียงกับไฟล์ปัจจุบัน" อย่าใช้ old_ref_pay_date (เป็นวันที่เก่าปี 2023 ก่อนหน้า) เทียบกับวันที่ปัจจุบัน เพราะ Diff วันจะเกิน 31 วันเสมอ ทำให้ Match ตกไปหมด -- old_ref_pay_date ใช้ได้เฉพาะใน Tier 1.5 (เช็คเลขที่เช็คเก่าตรงกันพอ ไม่เช็ควันที่)
             if (!groupDate) return;
             const diffDays = Math.abs(reportDate.getTime() - groupDate.getTime()) / 86400000;
             if (diffDays > EXACTMATCH_DAY_WINDOW) return;
@@ -780,17 +1233,27 @@ function VatCheckReturnMatchContent({ files, onClose }) {
           r.matchedRate = bestMatchExact.rateLabel;
           r.calcAmount = bestMatchExact.calc;
           r.matchMethod = 'Supplier+Date (Exact Match)';
+          r.matchedLines = bestGroup.map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null })); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1
         });
 
         // MARKER_VATWATCHLISTOPS_CHECKRETURN_HIGHCONF_V3 -- รอบ 3: ไม่เช็ควันที่ Invoice เลย มองเป็นรายบรรทัดของ Supplier เดียวกันใน List หมดอายุ (ที่ยังไม่ถูกใช้ในรอบ 1/2)
         // แบ่งเป็น 2 รอบย่อย: (3a) กวาดหา "Line เดียวที่ตรงพอดี" ทุก Report Row ก่อน ตัด Line ที่ตรงออกจาก Pool ทันที
         // (3b) ค่อยลองรวมหลาย Line ที่เหลือ (Subset อย่างน้อย 2 Line) ให้ Report Row ที่ยังไม่ Match -- เผื่อกรณีเช็คใบเดียวถูกตัดจ่ายเป็นหลายรายการในไฟล์ APN-Return-chq (บาง Invoice จ่ายเดี่ยว บาง Invoice จ่ายรวมเป็นกลุ่ม)
-        const usedInvoiceLineKeys = new Set();
+        const usedInvoiceLineKeys = new Set(oldRefMatchedLineKeys); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_TIER_V1 -- เริ่มจากแถวที่ Match ผ่าน Tier 1.5 (Old Ref Check No.) ไปแล้ว
+        // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_RESERVE_SOFTCANDIDATE_LINES_V3
+        // ── ตอนแปลง usedGroupKeys (Group ตามเลขที่เช็คปัจจุบัน) เป็น usedInvoiceLineKeys ──
+        // ── ต้อง "ข้าม" Line ที่เป็นของ Old Ref Soft Candidate อยู่แล้ว ไม่ Reserve ซ้ำ ──
+        // ── (Group เดียวกันอาจมี Invoice ปนกันจากคนละเช็คเก่า -- Reserve แค่บางใบพอ) ──────
         usedGroupKeys.forEach((gk) => {
           (groupMap.get(gk) || []).forEach((line) => {
-            usedInvoiceLineKeys.add(`${gk.split('|||')[0]}|||${line.invoice_ref}|||${line.supplier_code}`);
+            const __lineKey = `${gk.split('|||')[0]}|||${line.invoice_ref}|||${line.supplier_code}`;
+            if (oldRefSoftCandidateLineKeys.has(__lineKey)) return; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_RESERVE_SOFTCANDIDATE_LINES_V3
+            usedInvoiceLineKeys.add(__lineKey);
           });
         });
+
+        // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_RESERVE_SOFTCANDIDATE_LINES_V2 -- ลบการสร้าง oldRefSoftCandidateLineKeys ตำแหน่งเดิม (v1) ออก
+        // ── ย้ายไปสร้างเร็วขึ้นก่อน Tier 2 แล้วด้านบน (กัน Identifier ประกาศซ้ำ) ──
 
         function lineKeyOf(row) { return `${row.__bu}|||${row.invoice_ref}|||${row.supplier_code}`; }
 
@@ -799,6 +1262,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             if (row.__bu !== r.bu) return false;
             const sc = String(row.supplier_code || '').trim();
             if (sc !== r.supplierCode) return false;
+            if (oldRefSoftCandidateLineKeys.has(lineKeyOf(row))) return false; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_RESERVE_SOFTCANDIDATE_LINES_V1
             return !usedInvoiceLineKeys.has(lineKeyOf(row));
           });
         }
@@ -816,11 +1280,12 @@ function VatCheckReturnMatchContent({ files, onClose }) {
           r.matchedRate = rateLabel;
           r.calcAmount = calc;
           r.matchMethod = chosenLines.length === 1 ? 'Line Match (High Conf.)' : `Group Match ${chosenLines.length} Line (High Conf.)`;
+          r.matchedLines = chosenLines.map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null })); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1
         }
 
         // (3a) Line Match sweep -- ทำให้ทุก Report Row ก่อน ค่อยไปทำ (3b)
         matchResults.forEach((r) => {
-          if (r.matched) return;
+          if (r.matched || r.oldRefSoftCandidate) return; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_PRIORITY_OVER_HIGHCONF_V1 -- เจอ Old Ref จริงแล้ว (รอ Claim รอบสุดท้าย) ห้าม Tier 3a มาแซง
           const candidateLines = getHighConfCandidateLines(r);
           let best = null;
           candidateLines.forEach((line) => {
@@ -896,7 +1361,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         }
 
         matchResults.forEach((r) => {
-          if (r.matched) return;
+          if (r.matched || r.oldRefSoftCandidate) return; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_PRIORITY_OVER_HIGHCONF_V1 -- เจอ Old Ref จริงแล้ว (รอ Claim รอบสุดท้าย) ห้าม Tier 3b มาแซง
           const candidateLines = getHighConfCandidateLines(r);
           if (candidateLines.length < 2) return;
           const best = findHighConfSubset(candidateLines, r.reportAmount, 2);
@@ -988,7 +1453,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         }
 
         const middleConfSupplierPairs = new Set();
-        matchResults.forEach((r) => { if (!r.matched) middleConfSupplierPairs.add(`${r.bu}|||${r.supplierCode}`); });
+        matchResults.forEach((r) => { if (!r.matched && !r.oldRefSoftCandidate) middleConfSupplierPairs.add(`${r.bu}|||${r.supplierCode}`); }); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_PRIORITY_OVER_HIGHCONF_V1
 
         middleConfSupplierPairs.forEach((pairKey) => {
           const sepIdx = pairKey.indexOf('|||');
@@ -997,9 +1462,9 @@ function VatCheckReturnMatchContent({ files, onClose }) {
           let keepGoing = true;
           while (keepGoing) {
             keepGoing = false;
-            const rowsPool = matchResults.filter((r) => !r.matched && r.bu === pairBu && r.supplierCode === pairSupplier);
+            const rowsPool = matchResults.filter((r) => !r.matched && !r.oldRefSoftCandidate && r.bu === pairBu && r.supplierCode === pairSupplier); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_PRIORITY_OVER_HIGHCONF_V1
             if (rowsPool.length < 2) break;
-            const linesPool = allExpiredRows.filter((row) => row.__bu === pairBu && String(row.supplier_code || '').trim() === pairSupplier && !usedInvoiceLineKeys.has(lineKeyOf(row)));
+            const linesPool = allExpiredRows.filter((row) => row.__bu === pairBu && String(row.supplier_code || '').trim() === pairSupplier && !usedInvoiceLineKeys.has(lineKeyOf(row)) && !oldRefSoftCandidateLineKeys.has(lineKeyOf(row))); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_RESERVE_SOFTCANDIDATE_LINES_V1
             if (linesPool.length < 1) break;
             const found = findMiddleConfGroup(rowsPool, linesPool);
             if (!found) break;
@@ -1023,9 +1488,86 @@ function VatCheckReturnMatchContent({ files, onClose }) {
               r.noteDescription = joinedDesc;
               r.matchingStatus = matchingStatus; // MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_STATUS_V1
               r.matchMethod = `Middle Conf. (${chosenRows.length} Report x ${chosenLines.length} Invoice)`;
+              r.matchedLines = chosenLines.map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null })); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1
             });
             keepGoing = true;
           }
+        });
+
+        // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DIAGNOSE_V3
+        if (false) { // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DISABLE_ALL_V1 -- ปิด Debug แล้ว
+          const __DEBUG_TARGET_REFS__ = ['CLLRP3/1301521045', 'CTLRP3/1301528044', 'FCLRP/1301273047', 'FCLRP3/1301273046', 'FHLRP3/1301393045', 'FHLRP3/1301393046', 'KSLRP3/1301527044', 'LPLRP3/1301519045', 'PKLRP3/1301518045', 'PTLRP3/1301531045', 'R2LRP3/1301522045', 'BNLRP3/1301520044', 'BNLRP3/1301520045', 'SCLRP3/1301526045', 'RSLRP3/1301524044', 'RSLRP3/1301524045', 'SMLRP3/1301812042', 'SMLRP3/1301812043'];
+          const __STOLEN_BY__ = matchResults.filter((rr) => rr.matched && Array.isArray(rr.invoiceRefs) && rr.invoiceRefs.some((ref) => __DEBUG_TARGET_REFS__.includes(ref)));
+          console.log('[CHECKRETURN_DEBUG_D]', {
+            groupKey10134_inUsedGroupKeys: usedGroupKeys.has('CDS|||10134|||N-100629'),
+            usedGroupKeysSample: Array.from(usedGroupKeys).filter((k) => k.includes('N-100629')),
+            stolenByRows: __STOLEN_BY__.map((rr) => ({ checkNo: rr.checkNo, matchMethod: rr.matchMethod, isExactMatch: !!rr.isExactMatch, isHighConf: !!rr.isHighConf, isMiddleConf: !!rr.isMiddleConf, invoiceRefs: rr.invoiceRefs, oldRefSoftCandidate: !!rr.oldRefSoftCandidate })),
+          });
+        }
+
+        // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1
+        // ── รอบสุดท้าย: เก็บตกกลุ่ม Tier 1.5 ที่ยอดไม่ Reconcile (Soft Candidate) -- Tier 2/3/4 ลองหมดแล้ว ──
+        // ── เหลือ Line ไหนที่ยังไม่ถูกใช้บ้าง ค่อยจับจองเท่าที่เหลือ ตั้งเป็น Matched + Badge "ตรวจสอบยอด" ──
+        // ── ให้ AP Review เอง พร้อม Remark บอกยอดที่ขาด + Invoice No. ที่เกี่ยวข้อง เสมอ (ไม่ว่ายอดจะ ──
+        // ── Reconcile ได้หรือไม่ก็ตาม -- ตามที่ Confirm กับ User) ──────────────────────────────────────
+        matchResults.forEach((r) => {
+          if (r.matched || !r.oldRefSoftCandidate) return;
+          const { group: softGroup, fullGroup: softFullGroup, rowBu, supplierNum } = r.oldRefSoftCandidate;
+          const remainingLines = softGroup.filter((line) => !usedInvoiceLineKeys.has(`${rowBu}|||${line.invoice_ref}|||${line.supplier_code}`));
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DIAGNOSE_V2
+          if ([].includes(r.checkNo)) { // MARKER_VATWATCHLISTOPS_CHECKRETURN_DEBUG_DISABLE_ALL_V1 -- ปิด Debug แล้ว
+            console.log('[CHECKRETURN_DEBUG_C]', {
+              checkNo: r.checkNo, rowBu,
+              softGroupCount: softGroup.length,
+              remainingLinesCount: remainingLines.length,
+              softGroupRefs: softGroup.map((x) => x.invoice_ref),
+              remainingRefs: remainingLines.map((x) => x.invoice_ref),
+              consumedRefs: softGroup.filter((line) => usedInvoiceLineKeys.has(`${rowBu}|||${line.invoice_ref}|||${line.supplier_code}`)).map((x) => x.invoice_ref),
+            });
+          }
+          if (remainingLines.length === 0) return; // Line ทั้งหมดถูก Tier 2/3/4 เอาไปใช้จริงหมดแล้ว -- ตกไปกอง Unmatch ตามจริง ไม่มีอะไรเหลือให้ Tier 1.5 จับจอง
+
+          remainingLines.forEach((line) => {
+            usedInvoiceLineKeys.add(`${rowBu}|||${line.invoice_ref}|||${line.supplier_code}`);
+            oldRefMatchedLineKeys.add(`${rowBu}|||${line.invoice_ref}|||${line.supplier_code}`);
+            const lineCurrentKey = `${rowBu}|||${cleanCheckNo(line.check_no)}|||${supplierNum}`;
+            if (cleanCheckNo(line.check_no)) usedGroupKeys.add(lineCurrentKey);
+          });
+
+          const preVatSumRemain = remainingLines.reduce((s, x) => s + (Number(x.exp_amount) || 0), 0);
+          const vatSumRemain = remainingLines.reduce((s, x) => s + (Number(x.exp_vat) || 0), 0);
+          let closestRemain = null;
+          WHT_RATES.forEach(({ rate, label }) => {
+            const calc = preVatSumRemain * (1 - rate) + vatSumRemain;
+            const diff = Math.abs(calc - r.reportAmount);
+            if (!closestRemain || diff < closestRemain.diff) closestRemain = { rateLabel: label, calc, diff };
+          });
+
+          const remainingRefs = remainingLines.map((x) => x.invoice_ref).join(', ');
+          const shortfall = closestRemain ? Math.abs(r.reportAmount - closestRemain.calc) : null;
+          const remainKeySet = new Set(remainingLines.map((x) => `${x.invoice_ref}|||${x.supplier_code}`));
+          const softGroupKeySet = new Set(softGroup.map((x) => `${x.invoice_ref}|||${x.supplier_code}`));
+          const extraMissing = (softFullGroup || []).filter((x) => {
+            const k = `${x.invoice_ref}|||${x.supplier_code}`;
+            return !remainKeySet.has(k) && !softGroupKeySet.has(k);
+          });
+          let remark = `เจอเลขที่เช็คเดิมตรงกัน แต่ยอดไม่ Reconcile -- ขาดยอด ${shortfall != null ? shortfall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'} บาท หลังหักภาษี ${closestRemain ? closestRemain.rateLabel : '-'} ด้วย Invoice No. ${remainingRefs}`;
+          if (extraMissing.length > 0) {
+            remark += ` (มีใบที่จ่ายจบไปแล้วเพิ่มเติม: ${extraMissing.map((x) => x.invoice_ref).join(', ')})`;
+          }
+
+          r.matched = true;
+          r.oldRefAmountMismatch = true;
+          r.invoiceCount = remainingLines.length;
+          r.invoiceRefs = remainingLines.map((x) => x.invoice_ref);
+          r.preVatSum = preVatSumRemain;
+          r.vatSum = vatSumRemain;
+          r.matchedRate = closestRemain ? closestRemain.rateLabel : r.matchedRate;
+          r.calcAmount = closestRemain ? closestRemain.calc : r.calcAmount;
+          r.matchMethod = 'Old Ref Check No. (ยอดไม่ตรง)';
+          r.matchRemark = remark;
+          r.matchedLines = remainingLines.map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null, alreadyRecorded: (notedInvoiceKeysByBu[r.bu] || new Set()).has(`${x.invoice_ref}|||${r.supplierCode}`) })); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1
+          r.extraLines = extraMissing.map((x) => ({ invoice_ref: x.invoice_ref, exp_amount: Number(x.exp_amount) || 0, exp_vat: Number(x.exp_vat) || 0, check_no: x.check_no || null, old_ref_pay_date: x.old_ref_pay_date || null, payment_date: x.payment_date || null, payment_date_old: x.payment_date_old || null, alreadyRecorded: (notedInvoiceKeysByBu[r.bu] || new Set()).has(`${x.invoice_ref}|||${r.supplierCode}`) })); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_PERSIST_V1
         });
 
         if (cancelled) return;
@@ -1040,34 +1582,157 @@ function VatCheckReturnMatchContent({ files, onClose }) {
   }, [files]);
 
   const displayResults = buTab === 'all' ? results : results.filter((r) => r.bu === buTab); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1 -- Filter ตาม Tab BU ที่เลือก
-  const matchedResults = displayResults.filter((r) => r.matched);
-  const unmatchedResults = displayResults.filter((r) => !r.matched);
+  const matchedResults = displayResults.filter((r) => r.matched || r.foundNote || r.alreadyRecorded); // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_TO_MATCHED_TAB_V1 -- แถวที่เคยมี Note (Found Note!!! เดิม) ถือว่าจัดการไปแล้วจริง ย้ายไปนับเป็น Matched แทนที่จะไปกอง Unmatch (ทำให้ Unmatch เหลือแต่รายการที่ต้องตรวจสอบจริงๆ)
+  const conditionResults = matchedResults.filter((r) => r.oldRefAmountMismatch); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- แยก Match ที่ "ไม่ 100%" (ยอดไม่ Reconcile เป๊ะ ต้อง Review เอง) ออกมาเป็น Tab ต่างหาก ตามที่ Confirm กับ User
+  const cleanMatchedResults = matchedResults.filter((r) => !r.oldRefAmountMismatch); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- Matched Tab เดิม เหลือเฉพาะ Match ที่มั่นใจ 100% เท่านั้น
+  const unmatchedResults = displayResults.filter((r) => !r.matched && !r.foundNote && !r.alreadyRecorded); // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_TO_MATCHED_TAB_V1 -- ตัดแถวที่เคยมี Note (Found Note!!!) ออกจาก Unmatch เพราะย้ายไปนับใน Matched แล้ว (เดิมสถานะนี้ใน Unmatch ไม่ Sync กับ Matched Tab)
   const unmatchSearchLower = unmatchSearch.trim().toLowerCase(); // MARKER_VATWATCHLISTOPS_CHECKRETURN_UNMATCH_SEARCH_V1
   const unmatchResultsFiltered = unmatchSearchLower
     ? unmatchedResults.filter((r) => `${r.bu || ''} ${r.checkNo || ''} ${r.supplierCode || ''} ${r.vendorName || ''} ${r.description || ''}`.toLowerCase().includes(unmatchSearchLower))
     : unmatchedResults;
-  const matchedToSaveCount = matchedResults.filter((r) => !(r.alreadyRecorded || r.foundNote)).length; // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_V1 -- นับเฉพาะที่ยังไม่เคยบันทึก -- MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_V1 เผื่อ Match จาก Tier 2/3/4 ที่ไม่ได้ Sync alreadyRecorded ไว้ตรงๆ ใช้ foundNote (Set ไว้ตั้งแต่ต้น) แทน
+  const matchedToSaveCount = matchedResults.filter((r) => !(r.alreadyRecorded || r.foundNote || r.oldRefAmountMismatch)).length; // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_V1 -- นับเฉพาะที่ยังไม่เคยบันทึก -- MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_V1 เผื่อ Match จาก Tier 2/3/4 ที่ไม่ได้ Sync alreadyRecorded ไว้ตรงๆ ใช้ foundNote (Set ไว้ตั้งแต่ต้น) แทน -- MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 ไม่รวม Old Ref ที่ยอดไม่ตรง (ต้อง Review เอง ทีละรายการ)
 
   const handleConfirmSave = async () => {
     setSaving(true);
     try {
+      // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_V1
+      // ── Lookup 2nd Ref (old_ref_check_no/old_ref_pay_date) ต่อ Invoice จาก expiredRows -- ค่าติดมากับแถว vat_watchlist_report อยู่แล้ว ──
+      const oldRefByKey = {};
+      expiredRows.forEach((row) => {
+        oldRefByKey[`${row.__bu}|||${row.invoice_ref}|||${row.supplier_code}`] = {
+          old_ref_check_no: row.old_ref_check_no || null,
+          old_ref_pay_date: row.old_ref_pay_date || null,
+        };
+      });
       for (const r of matchedResults) {
-        if (r.alreadyRecorded || r.foundNote) continue; // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_V1 -- เคยบันทึกไปแล้ว ไม่ต้องเขียนซ้ำ -- MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_V1
+        if (r.alreadyRecorded || r.foundNote || r.oldRefAmountMismatch) continue; // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_V1 -- เคยบันทึกไปแล้ว ไม่ต้องเขียนซ้ำ -- MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_V1 -- MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 ยอดไม่ตรง ต้องกดปุ่ม Save เดี่ยวยืนยันเองต่อแถว ไม่ Auto บันทึกรวม
         for (const invoiceRef of r.invoiceRefs) {
+          const oldRef = oldRefByKey[`${r.bu}|||${invoiceRef}|||${r.supplierCode}`] || {}; // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_V1
           const payload = {
             bu: r.bu, invoice_ref: invoiceRef, supplier_code: r.supplierCode, // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1 -- ใช้ bu ของแต่ละแถวผลลัพธ์ แทน bu ตัวแปรกลาง
             note: r.noteDescription || r.description, remark: 'Check Return', check_no: r.checkNo, // MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_V1 -- ถ้าเป็น Middle Conf. (รวมหลาย Report Row) ใช้ Description รวมคั่น | แทน
+            old_ref_check_no: oldRef.old_ref_check_no, old_ref_pay_date: oldRef.old_ref_pay_date, // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_V1 -- เก็บ 2nd Ref ไว้ใน Note ด้วย (เดิมดึงจาก New Incomplete อย่างเดียว)
+            match_remark: r.matchRemark || null, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1 -- Remark ขาดยอด/Invoice No. กรณี Match ผ่าน Old Ref (เต็มเช็ค หรือยอดไม่ตรง)
             status: 'accept_with_condition', note_by: userName, note_at: new Date().toISOString(),
             image_ids: JSON.stringify([]),
           };
           await apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', { method: 'POST', body: JSON.stringify(payload) });
         }
       }
+      // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1 -- แจ้งให้หน้า Incomplete Detail / Aging Overview รู้ว่า Note เปลี่ยนแล้ว (Event เดิม มี Listener ฟังอยู่แล้ว)
+      const touchedByBuCRM1 = {};
+      matchedResults.forEach((r) => {
+        if (r.alreadyRecorded || r.foundNote || r.oldRefAmountMismatch) return;
+        (touchedByBuCRM1[r.bu] = touchedByBuCRM1[r.bu] || []).push(...r.invoiceRefs);
+      });
+      Object.keys(touchedByBuCRM1).forEach((buKeyCRM1) => {
+        broadcastWs('vat_watchlist_draft_updated', { bu: buKeyCRM1, invoice_refs: touchedByBuCRM1[buKeyCRM1] });
+      });
       setSaveDone(true);
     } catch (err) {
       confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (err?.message || ''), { title: 'ผิดพลาด', variant: 'danger' });
     }
     setSaving(false);
+  };
+
+  // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- Save เดี่ยวต่อแถว สำหรับเคส Old Ref เจอเลขที่เช็คตรง แต่ยอดไม่ Reconcile -- ให้ AP Review เองก่อนกดยืนยันทีละรายการ
+  const handleSaveSingleMatch = async (r) => {
+    const rowKey = `${r.bu}|||${r.checkNo}|||${r.supplierCode}`;
+    try {
+      const oldRefByKey = {};
+      expiredRows.forEach((row) => {
+        oldRefByKey[`${row.__bu}|||${row.invoice_ref}|||${row.supplier_code}`] = {
+          old_ref_check_no: row.old_ref_check_no || null,
+          old_ref_pay_date: row.old_ref_pay_date || null,
+        };
+      });
+      for (const invoiceRef of r.invoiceRefs) {
+        const oldRef = oldRefByKey[`${r.bu}|||${invoiceRef}|||${r.supplierCode}`] || {};
+        const payload = {
+          bu: r.bu, invoice_ref: invoiceRef, supplier_code: r.supplierCode,
+          note: r.noteDescription || r.description, remark: 'Check Return', check_no: r.checkNo,
+          old_ref_check_no: oldRef.old_ref_check_no, old_ref_pay_date: oldRef.old_ref_pay_date,
+          match_remark: r.matchRemark || null, // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1
+          status: 'accept_with_condition', note_by: userName, note_at: new Date().toISOString(),
+          image_ids: JSON.stringify([]),
+        };
+        await apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', { method: 'POST', body: JSON.stringify(payload) });
+      }
+      broadcastWs('vat_watchlist_draft_updated', { bu: r.bu, invoice_refs: r.invoiceRefs }); // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1
+      setSingleSavedKeys((prev) => { const next = new Set(prev); next.add(rowKey); return next; });
+    } catch (err) {
+      confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (err?.message || ''), { title: 'ผิดพลาด', variant: 'danger' });
+    }
+  };
+
+  // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_UNMATCH_V1 -- เหมือน handleSaveSingleMatch เป๊ะ แต่ทำแค่ Invoice เดียว (ใช้กับปุ่ม "+ Add" รายบรรทัดในฝั่ง Unmatch ของ Detail Modal)
+  const handleAddUnmatchInvoiceNote = async (dr, x, overrideRemark) => { // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- เพิ่ม overrideRemark: ถ้ามีพิมพ์มาให้ใช้แทน Remark อัตโนมัติ
+    const invoiceRef = x.invoice_ref;
+    const itemKey = `${dr.bu}|||${dr.checkNo}|||${dr.supplierCode}|||${invoiceRef}`;
+    setDetailAddSaving((prev) => { const next = new Set(prev); next.add(itemKey); return next; });
+    try {
+      const oldRefByKey = {};
+      expiredRows.forEach((row) => {
+        oldRefByKey[`${row.__bu}|||${row.invoice_ref}|||${row.supplier_code}`] = {
+          old_ref_check_no: row.old_ref_check_no || null,
+          old_ref_pay_date: row.old_ref_pay_date || null,
+        };
+      });
+      const oldRef = oldRefByKey[`${dr.bu}|||${invoiceRef}|||${dr.supplierCode}`] || {};
+      // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- Fallback ไปใช้ค่าที่มีอยู่แล้วในตัวแถว/Lot เอง (dr.checkNo, x.old_ref_pay_date/x.payment_date_old)
+      // เวลา expiredRows (List ใบที่ยัง Expired อยู่ปัจจุบัน) หาไม่เจอ เช่น ใบที่ "จ่ายจบไปแล้ว" (extraLines) จะไม่อยู่ใน List นี้เลยตั้งแต่ต้น แต่ค่าที่ถูกต้องมีอยู่แล้วในตัวแถว/dr
+      const resolvedOldRefCheckNo = oldRef.old_ref_check_no || dr.checkNo || null;
+      const resolvedOldRefPayDate = oldRef.old_ref_pay_date || x.old_ref_pay_date || x.payment_date_old || null;
+      // MARKER_VATWATCHLISTOPS_NOTES_CHECKRETURN_LOT_GATE_V1 -- เติมเลขที่เช็คของ Lot (APN-Return-Chq) ไว้ใน match_remark เสมอ
+      // ให้เห็นชัดว่า Invoice นี้ผูกกับ Check Return Lot ไหน (สำหรับ AP Review) -- Idempotent กันเติมซ้ำ
+      const lotRefTag = `APN-Return-Chq: ${dr.checkNo}`;
+      const baseMatchRemark = (overrideRemark && String(overrideRemark).trim()) ? String(overrideRemark).trim() : (dr.matchRemark || null); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- ถ้า User พิมพ์ Remark เองมา (ไม่ว่าง) ใช้ข้อความนั้นแทน Remark ที่ระบบคำนวณอัตโนมัติ
+      const taggedMatchRemark = baseMatchRemark
+        ? (String(baseMatchRemark).includes(lotRefTag) ? baseMatchRemark : `${baseMatchRemark} | ${lotRefTag}`)
+        : lotRefTag;
+      const payload = {
+        bu: dr.bu, invoice_ref: invoiceRef, supplier_code: dr.supplierCode,
+        note: dr.noteDescription || dr.description, remark: 'Check Return', check_no: dr.checkNo,
+        old_ref_check_no: resolvedOldRefCheckNo, old_ref_pay_date: resolvedOldRefPayDate,
+        match_remark: taggedMatchRemark,
+        status: 'accept_with_condition', note_by: userName, note_at: new Date().toISOString(),
+        image_ids: JSON.stringify([]),
+      };
+      await apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', { method: 'POST', body: JSON.stringify(payload) });
+      broadcastWs('vat_watchlist_draft_updated', { bu: dr.bu, invoice_refs: [invoiceRef] }); // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1
+      setDetailAddedKeys((prev) => { const next = new Set(prev); next.add(itemKey); return next; });
+    } catch (err) {
+      confirmDialog.alert('เพิ่มไม่สำเร็จ: ' + (err?.message || ''), { title: 'ผิดพลาด', variant: 'danger' });
+      setDetailAddSaving((prev) => { const next = new Set(prev); next.delete(itemKey); return next; });
+      return false; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_RECORDED_SYNC_OUTER_V1 -- ไม่สำเร็จ ให้ handleAddAllUnmatchInvoices รู้ว่า Lot นี้ยังไม่ครบ ห้าม Sync Recorded กลับตาราง Outer
+    }
+    setDetailAddSaving((prev) => { const next = new Set(prev); next.delete(itemKey); return next; });
+    return true; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_RECORDED_SYNC_OUTER_V1 -- สำเร็จ ให้ handleAddAllUnmatchInvoices เอาไปเช็คว่า Sync กลับตาราง Outer ได้หรือยัง
+  };
+
+  // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_BATCH_V1 -- Add ทั้งล็อต: วนเขียน Note ให้ทุก Invoice ฝั่ง Unmatch ที่ยังไม่ได้ Add พร้อมกัน (เรียก handleAddUnmatchInvoiceNote ซ้ำ ใช้ Logic/Payload เดิมทุกจุด เพียงแต่ทำทีเดียวทั้งชุดแทนกดทีละ Invoice)
+  const handleAddAllUnmatchInvoices = async (dr, extraLines, overrideRemark) => { // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- เพิ่ม overrideRemark ส่งต่อให้ทุก Invoice ในล็อต
+    const drKeyBatch = `${dr.bu}|||${dr.checkNo}|||${dr.supplierCode}`;
+    const isPendingLot = (x) => !x.alreadyRecorded && !detailAddedKeys.has(`${drKeyBatch}|||${x.invoice_ref}`); // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_PERSIST_V1 -- Skip รายการที่ Recorded อยู่แล้วจาก Note เดิม กันเขียนซ้ำ
+    // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- เอาเข้าทั้ง Lot จริงๆ: matchedLines (ฝั่ง Match) ก็ต้อง Add ด้วย ไม่ใช่แค่ extraLines (ฝั่ง Unmatch) เหมือนเดิม -- Payload เดียวกันทุกจุด (handleAddUnmatchInvoiceNote) ตามที่ยืนยัน "รายการที่ Match ทำเข้าเหมือนเดิม"
+    const matchedPending = (dr.matchedLines || []).filter(isPendingLot);
+    const unmatchPending = (extraLines || []).filter(isPendingLot);
+    if (matchedPending.length === 0 && unmatchPending.length === 0) return;
+    // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- เปลี่ยนจาก Promise.all (ยิงพร้อมกันหมด) เป็น Sequential (ทีละรายการ) ตาม Pattern เดียวกับ handleSaveSingleMatch (for...of + await) กัน Backend Upsert ชนกันเอง (Race Condition) จนบาง Invoice หายไป ("เข้าแค่รายการเดียว")
+    let allSucceeded = true; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_RECORDED_SYNC_OUTER_V1
+    for (const x of [...matchedPending, ...unmatchPending]) {
+      const ok = await handleAddUnmatchInvoiceNote(dr, x, overrideRemark); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- ส่ง overrideRemark ต่อให้ทุก Invoice ในล็อต
+      if (!ok) allSucceeded = false; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_RECORDED_SYNC_OUTER_V1 -- มีรายการไหน Fail ก็ตาม ห้ามถือว่าทั้ง Lot Recorded ครบ
+    }
+    // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_RECORDED_SYNC_OUTER_V1 -- Add ทั้ง Lot สำเร็จครบทุกรายการแล้ว -- Sync กลับไปที่ตาราง Outer (Tab Matched / Match with Condition)
+    // ให้ Badge "Recorded" ขึ้นทันที ไม่ต้องปิด Modal แล้วเปิดใหม่ หรือ Refresh หน้าถึงจะเห็น
+    if (allSucceeded) {
+      setResults((prev) => prev.map((r) => (
+        r.bu === dr.bu && r.checkNo === dr.checkNo && r.supplierCode === dr.supplierCode
+          ? { ...r, alreadyRecorded: true }
+          : r
+      )));
+    }
   };
 
   // MARKER_VATWATCHLISTOPS_CHECKRETURN_TABS_MANUALMATCH_V1 -- หา Candidate + Save Manual Match
@@ -1097,6 +1762,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         const payload = {
           bu: manualMatchRow.bu, invoice_ref: t.invoice_ref, supplier_code: t.supplier_code, // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1
           note: manualMatchRow.description, remark: 'Check Return', check_no: manualMatchRow.checkNo,
+          old_ref_check_no: t.old_ref_check_no || null, old_ref_pay_date: t.old_ref_pay_date || null, // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_V1 -- t มาจาก expiredRows ตรงๆ อยู่แล้ว มี 2 Field นี้ติดมาด้วย
           status: 'accept_with_condition', note_by: userName, note_at: new Date().toISOString(),
           image_ids: JSON.stringify([]),
         };
@@ -1213,7 +1879,11 @@ function VatCheckReturnMatchContent({ files, onClose }) {
               <button
                 onClick={() => setActiveTab('matched')}
                 style={{ padding: '8px 14px', fontSize: '12px', border: 'none', background: 'none', cursor: 'pointer', color: activeTab === 'matched' ? '#1a3a5c' : '#999', fontWeight: activeTab === 'matched' ? '500' : '400', borderBottom: activeTab === 'matched' ? '2px solid #1a3a5c' : '2px solid transparent' }}
-              >Matched ({matchedResults.length})</button>
+              >Matched ({cleanMatchedResults.length})</button>
+              <button
+                onClick={() => setActiveTab('condition')} // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- Tab ใหม่: Match ได้แต่ไม่ 100%
+                style={{ padding: '8px 14px', fontSize: '12px', border: 'none', background: 'none', cursor: 'pointer', color: activeTab === 'condition' ? '#1a3a5c' : '#999', fontWeight: activeTab === 'condition' ? '500' : '400', borderBottom: activeTab === 'condition' ? '2px solid #1a3a5c' : '2px solid transparent' }}
+              >Match with Condition ({conditionResults.length})</button>
               <button
                 onClick={() => setActiveTab('unmatch')}
                 style={{ padding: '8px 14px', fontSize: '12px', border: 'none', background: 'none', cursor: 'pointer', color: activeTab === 'unmatch' ? '#1a3a5c' : '#999', fontWeight: activeTab === 'unmatch' ? '500' : '400', borderBottom: activeTab === 'unmatch' ? '2px solid #1a3a5c' : '2px solid transparent' }}
@@ -1227,7 +1897,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                   <tr style={{ background: '#f5f5f5', position: 'sticky', top: 0 }}> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_LAYOUT_V2 -- แถวหัวกลุ่ม: Incomplete / ไฟล์ Report / Results */}
                     <th colSpan={6} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd' }}>Incomplete</th>
                     <th colSpan={1} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd' }}>ไฟล์ Report</th>
-                    <th colSpan={5} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd' }}>Results</th>
+                    <th colSpan={6} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd' }}>Results</th>
                   </tr>
                   <tr style={{ background: '#f5f5f5', position: 'sticky', top: '25px' }}>
                     <th style={{ textAlign: 'left', padding: '8px' }}>BU</th>
@@ -1242,10 +1912,11 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                     <th style={{ textAlign: 'left', padding: '8px' }}>Remark</th>
                     <th style={{ textAlign: 'left', padding: '8px' }}>Description</th>
                     <th style={{ textAlign: 'left', padding: '8px' }}>สถานะ</th>
+                    <th style={{ textAlign: 'center', padding: '8px' }}>Detail</th>{/* MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 */}
                   </tr>
                 </thead>
                 <tbody>
-                  {matchedResults.map((r, i) => (
+                  {cleanMatchedResults.map((r, i) => (
                     <tr key={i} style={{ borderTop: '0.5px solid #eee' }}>
                       <td style={{ padding: '8px', fontWeight: '500' }}>{r.bu}</td>
                       <td style={{ padding: '8px' }}>{r.checkNo}</td>
@@ -1267,31 +1938,101 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                           <span style={{ background: '#FEF3C7', color: '#92400E', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>High Conf.</span>
                         ) : r.isMiddleConf ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_V1 -- Match ด้วยการรวมยอดทั้ง Report หลายใบ และ Incomplete หลายใบ เข้าด้วยกัน
                           <span style={{ background: '#CCFBF1', color: '#0F766E', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>Middle Conf.</span>
+                        ) : r.matchMethod === 'Old Ref Check No. (เต็มเช็ค)' ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1 -- ยืนยัน Match จริงจากยอดรวม "ทั้งเช็คเดิม" (มีบางใบจ่ายจบไปแล้ว) -- ไม่ต้อง Review เดี่ยว แต่โชว์ Remark ให้เห็นว่าขาดใบไหนไปบ้าง
+                          <span style={{ background: '#DBEAFE', color: '#1E40AF', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }} title={r.matchRemark || ''}>Matched (อ้างอิงเช็คเดิม)</span>
+                        ) : r.oldRefAmountMismatch ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- เจอเลขที่เช็คเก่าตรงกัน แต่ยอดไม่ Reconcile (เช่นบางใบในเช็คเดิมจ่ายจบไปแล้ว) -- ให้ AP Review เองก่อน Save
+                          singleSavedKeys.has(`${r.bu}|||${r.checkNo}|||${r.supplierCode}`) ? (
+                            <span style={{ background: '#E4EDF7', color: '#1a3a5c', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>บันทึกแล้ว</span>
+                          ) : (
+                            <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                              <span style={{ background: '#FEE2E2', color: '#991B1B', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }} title={r.matchRemark || 'เจอเลขที่เช็คเก่าตรงกัน แต่ยอดรวมไม่ Reconcile -- อาจมีบางใบในเช็คเดิมจ่ายจบไปแล้ว โปรดตรวจสอบก่อนบันทึก'}>Old Ref - ตรวจสอบยอด</span> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1 -- Tooltip โชว์ Remark จริง (ขาดยอด/Invoice No.) แทนข้อความทั่วไป */}
+                              <button onClick={() => handleSaveSingleMatch(r)} style={{ fontSize: '11px', padding: '2px 8px', border: '1px solid #991B1B', borderRadius: '4px', background: 'white', color: '#991B1B', cursor: 'pointer' }}>บันทึก</button>
+                            </span>
+                          )
                         ) : (
                           <span style={{ background: '#EAF3DE', color: '#27500A', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>Matched</span>
                         )}
+                      </td>
+                      <td style={{ padding: '8px', textAlign: 'center' }}>{/* MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- ดู Detail ประกอบยอด ใช้ได้กับทุก Row ที่ Match แล้ว */}
+                        <button onClick={() => setOldRefDetailRow(r)} style={{ fontSize: '11px', padding: '2px 8px', border: '0.5px solid #ccc', borderRadius: '4px', background: 'white', color: '#1a3a5c', cursor: 'pointer' }}>Detail</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
-                  {(() => { // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHED_SUMMARY_FOOTER_V1 -- แถวสรุปยอดรวมท้ายตาราง Matched: จำนวน Invoice / มูลค่าสินค้า / เงินภาษี / Amount รวมทั้งหมดที่ Match สำเร็จ
-                    const totalInvoiceCount = matchedResults.reduce((s, r) => s + (Number(r.invoiceCount) || 0), 0);
-                    const totalPreVat = matchedResults.reduce((s, r) => s + (Number(r.preVatSum) || 0), 0);
-                    const totalVat = matchedResults.reduce((s, r) => s + (Number(r.vatSum) || 0), 0);
-                    const totalAmount = matchedResults.reduce((s, r) => s + (Number(r.reportAmount) || 0), 0);
+                  {(() => { // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHED_SUMMARY_FOOTER_V1 -- แถวสรุปยอดรวมท้ายตาราง Matched: จำนวน Invoice / มูลค่าสินค้า / เงินภาษี / Amount รวมทั้งหมดที่ Match สำเร็จ -- MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 เปลี่ยนมาใช้ cleanMatchedResults (ไม่รวม Match แบบมีเงื่อนไข ย้ายไป Tab ใหม่แล้ว)
+                    const totalInvoiceCount = cleanMatchedResults.reduce((s, r) => s + (Number(r.invoiceCount) || 0), 0);
+                    const totalPreVat = cleanMatchedResults.reduce((s, r) => s + (Number(r.preVatSum) || 0), 0);
+                    const totalVat = cleanMatchedResults.reduce((s, r) => s + (Number(r.vatSum) || 0), 0);
+                    const totalAmount = cleanMatchedResults.reduce((s, r) => s + (Number(r.reportAmount) || 0), 0);
                     return (
                       <tr style={{ borderTop: '1.5px solid #ccc', background: '#F7F8FA', fontWeight: 500, position: 'sticky', bottom: 0 }}>
-                        <td colSpan={3} style={{ padding: '8px', textAlign: 'right' }}>รวมทั้งหมด {matchedResults.length.toLocaleString()} รายการ</td>
+                        <td colSpan={3} style={{ padding: '8px', textAlign: 'right' }}>รวมทั้งหมด {cleanMatchedResults.length.toLocaleString()} รายการ</td>
                         <td style={{ padding: '8px', textAlign: 'center' }}>{totalInvoiceCount.toLocaleString()}</td>
                         <td style={{ padding: '8px', textAlign: 'right' }}>{totalPreVat.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
                         <td style={{ padding: '8px', textAlign: 'right' }}>{totalVat.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
                         <td style={{ padding: '8px', textAlign: 'right', borderLeft: '0.5px solid #ddd' }}>{totalAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-                        <td colSpan={5}></td>
+                        <td colSpan={6}></td>
                       </tr>
                     );
                   })()}
                 </tfoot>
+              </table>
+            </div>
+            )}
+
+            {activeTab === 'condition' && ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- Tab ใหม่: Match ได้แต่ไม่ 100% (Old Ref เจอเลขที่เช็คเดิมตรง แต่ยอดไม่ Reconcile) แยกออกจาก Matched ปกติ ตามที่ Confirm กับ User ("แยกตัวที่ Match ได้แต่ไม่ 100%")
+            <div style={{ border: '0.5px solid #ddd', borderRadius: '8px', overflow: 'auto', flex: 1, minHeight: 0 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#f5f5f5', position: 'sticky', top: 0 }}>
+                    <th style={{ textAlign: 'left', padding: '8px' }}>BU</th>
+                    <th style={{ textAlign: 'left', padding: '8px' }}>เลขที่เช็คเดิม</th>
+                    <th style={{ textAlign: 'left', padding: '8px' }}>Supplier</th>
+                    <th style={{ textAlign: 'center', padding: '8px' }}>Invoice</th>
+                    <th style={{ textAlign: 'right', padding: '8px' }}>มูลค่าสินค้า</th>
+                    <th style={{ textAlign: 'right', padding: '8px' }}>เงินภาษี</th>
+                    <th style={{ textAlign: 'right', padding: '8px', borderLeft: '0.5px solid #ddd' }}>Amount (Report)</th>
+                    <th style={{ textAlign: 'right', padding: '8px', background: '#FFF7E0' }}>ยอดที่คำนวณได้ (ใกล้เคียงสุด)</th>
+                    <th style={{ textAlign: 'left', padding: '8px' }}>Remark</th>
+                    <th style={{ textAlign: 'left', padding: '8px', width: '190px' }}>สถานะ / Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conditionResults.map((r, i) => {
+                    const condKey = `${r.bu}|||${r.checkNo}|||${r.supplierCode}`;
+                    const condSaved = singleSavedKeys.has(condKey);
+                    return (
+                      <tr key={i} style={{ borderTop: '0.5px solid #eee' }}>
+                        <td style={{ padding: '8px', fontWeight: '500' }}>{r.bu}</td>
+                        <td style={{ padding: '8px' }}>{r.checkNo}</td>
+                        <td style={{ padding: '8px' }}>{r.supplierCode}{r.vendorName ? ` — ${r.vendorName}` : ''}</td>
+                        <td style={{ padding: '8px', textAlign: 'center' }}>{r.invoiceCount ?? '—'}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{r.preVatSum != null ? r.preVatSum.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{r.vatSum != null ? r.vatSum.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
+                        <td style={{ padding: '8px', textAlign: 'right', borderLeft: '0.5px solid #eee' }}>{r.reportAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                        <td style={{ padding: '8px', textAlign: 'right', background: '#FFFBF0' }}>{r.calcAmount != null ? r.calcAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
+                        <td style={{ padding: '8px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.matchRemark || ''}>{r.matchRemark || '—'}</td>
+                        <td style={{ padding: '8px' }}>
+                          <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                            {condSaved ? (
+                              <span style={{ background: '#E4EDF7', color: '#1a3a5c', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>บันทึกแล้ว</span>
+                            ) : ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- เปลี่ยนชื่อ+สีจาก "ตรวจสอบยอด" (แดง) เป็น "Match with Condition" (เหลืองอำพัน) + เพิ่ม Tooltip โชว์ Remark
+                              <span style={{ background: '#FEF3C7', color: '#92400E', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }} title={r.matchRemark || ''}>Match with Condition</span>
+                            )}
+                            <button onClick={() => setOldRefDetailRow(r)} style={{ fontSize: '11px', padding: '2px 8px', border: '0.5px solid #ccc', borderRadius: '4px', background: 'white', color: '#1a3a5c', cursor: 'pointer' }}>Detail</button>
+                            {!condSaved && (
+                              <button onClick={() => handleSaveSingleMatch(r)} style={{ fontSize: '11px', padding: '2px 8px', border: '1px solid #991B1B', borderRadius: '4px', background: 'white', color: '#991B1B', cursor: 'pointer' }}>บันทึก</button>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {conditionResults.length === 0 && (
+                    <tr><td colSpan={10} style={{ padding: '16px', textAlign: 'center', color: '#999' }}>ไม่มีรายการที่ต้องตรวจสอบยอด</td></tr>
+                  )}
+                </tbody>
               </table>
             </div>
             )}
@@ -1471,6 +2212,166 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             </div>
           </div>
         )}
+
+        {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- Modal Detail ประกอบยอด ใช้ได้กับทุกแถวที่ Match แล้ว (matchedLines มาจาก Field ที่เพิ่มใน Patch นี้) */}
+        {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_BATCH_V1 -- เปลี่ยนจากปุ่ม "+ Add" รายบรรทัดในแถว Unmatch (Patch ก่อนหน้า) เป็นปุ่มเดียว "Add ทั้งหมด" ตามที่ผู้ใช้ขอ: "ไม่ได้หมายถึงแบบนี้ หมายถึงว่า Add ทั้ง ล็อตนี้เลย แล้วก็ทำเป็น Recorded ไปเลย" -- กดครั้งเดียว เขียน Note ทุก Invoice ฝั่ง Unmatch ที่เหลือพร้อมกัน แล้วเปลี่ยนเป็น Recorded ทั้งหมด */}
+        {oldRefDetailRow && (() => {
+          const dr = oldRefDetailRow;
+          const detailLines = dr.matchedLines || [];
+          const extraLines = dr.extraLines || [];
+          const WHT_RATE_MAP_DETAIL = { 'ไม่หัก': 0, '1%': 0.01, '2%': 0.02, '3%': 0.03, '5%': 0.05 }; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_WHT_SPLIT_V1 -- แปลง Label อัตรา WHT (dr.matchedRate) กลับเป็นตัวเลข ไว้คำนวณ WHT รายบรรทัด
+          const drRateVal = WHT_RATE_MAP_DETAIL[dr.matchedRate] != null ? WHT_RATE_MAP_DETAIL[dr.matchedRate] : 0;
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_UNIFIED_TABLE_V1 -- คำนวณ ยอด (สุทธิ) รายบรรทัด ด้วย Rate เดียวกันทั้ง Matching และ Unmatch (ไม่ลองไล่หาอัตราที่ Net พอดีแล้ว -- ใช้อัตราของ Check Return นี้ตรงๆ)
+          const lineNetDetail = (x) => (Number(x.exp_amount) || 0) * (1 - drRateVal) + (Number(x.exp_vat) || 0);
+          const drKey = `${dr.bu}|||${dr.checkNo}|||${dr.supplierCode}`;
+          const isFromOldRef = String(dr.matchMethod || '').indexOf('Old Ref Check No.') === 0; // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- Lot นี้ Match ผ่าน Old Ref Check No. (Tier 1.5) จริงหรือไม่ -- ถ้า Match ผ่าน Invoice Num/Description/Supplier+Date ตรงๆ (Tier 1/2/3/4) ไม่ได้มาจาก Old Incomplete เลย ไม่ควรมี "Old Payment" ให้โชว์
+          const drSaved = singleSavedKeys.has(drKey);
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_UNIFIED_TABLE_V1 -- รวมทั้ง 2 ฝั่งเป็น Array เดียว ใส่ status ไว้แยกสี/Badge ในตาราง
+          const allDetailRows = [
+            ...detailLines.map((x) => ({ ...x, __status: 'matched' })),
+            ...extraLines.map((x) => ({ ...x, __status: 'unmatch' })),
+          ];
+          const matchedNetTotal = detailLines.reduce((s, x) => s + lineNetDetail(x), 0);
+          const extraNetTotal = extraLines.reduce((s, x) => s + lineNetDetail(x), 0);
+          const combinedNetTotal = matchedNetTotal + extraNetTotal;
+          const combinedDiff = combinedNetTotal - dr.reportAmount;
+          // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_BATCH_V1 -- นับว่าฝั่ง Unmatch เหลือกี่รายการที่ยังไม่ได้ Add / กำลัง Add ทั้ง Batch อยู่หรือไม่
+          const pendingAddCount = allDetailRows.filter((x) => !x.alreadyRecorded && !detailAddedKeys.has(`${drKey}|||${x.invoice_ref}`)).length; // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- นับทั้ง Lot (Matched+Unmatch) ไม่ใช่แค่ Unmatch เพราะ Add ทั้งหมด ครอบคลุมทั้ง Lot แล้ว
+          const isBatchAdding = allDetailRows.some((x) => detailAddSaving.has(`${drKey}|||${x.invoice_ref}`)); // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- เช็คทั้ง Lot
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 320 }}>
+              <div style={{ background: 'white', borderRadius: '12px', padding: '1.5rem', width: '1040px', maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', flexShrink: 0 }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600' }}>Detail — APN Return Chq {dr.checkNo}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '999px', background: '#1a3a5c', color: 'white' }}>{dr.bu}</div>
+                </div>
+                {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_UNIFIED_TABLE_V1 -- ตาราง Header แบบย่อ: Supplier Num / Supplier Name / Receive Date / Invoice Num / Rate / Total */}
+                <table style={{ borderCollapse: 'collapse', fontSize: '11px', marginBottom: '6px', flexShrink: 0 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left', padding: '3px 18px 3px 0', color: '#999', fontWeight: 600 }}>Supplier Num</th>
+                      <th style={{ textAlign: 'left', padding: '3px 18px 3px 0', color: '#999', fontWeight: 600 }}>Supplier Name</th>
+                      <th style={{ textAlign: 'left', padding: '3px 18px 3px 0', color: '#999', fontWeight: 600 }}>Receive Date</th>
+                      <th style={{ textAlign: 'left', padding: '3px 18px 3px 0', color: '#999', fontWeight: 600 }}>Rate</th> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- ลบ Column "Invoice Num" ออก ซ้ำกับ Badge "Chq" ที่หัว Modal (ค่าเดียวกัน dr.checkNo) และ Label เดิมทำให้เข้าใจผิดว่าเป็นเลข Invoice จริง ทั้งที่เป็นเลขที่เช็ค */}
+                      <th style={{ textAlign: 'right', padding: '3px 0', color: '#999', fontWeight: 600 }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: '3px 18px 3px 0', fontWeight: 600 }}>{dr.supplierCode || '—'}</td>
+                      <td style={{ padding: '3px 18px 3px 0' }}>{dr.vendorName || '—'}</td>
+                      <td style={{ padding: '3px 18px 3px 0' }}>{formatReportDate(dr.invoiceDate)}</td>
+                      <td style={{ padding: '3px 18px 3px 0', fontWeight: 600 }}>{dr.matchedRate || '—'}</td> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 */}
+                      <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: 700 }}>{dr.reportAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                {dr.description && (
+                  <div style={{ fontSize: '11px', color: '#bbb', marginBottom: '10px', flexShrink: 0 }}>Description: {dr.description}</div>
+                )}
+                {dr.matchRemark && (
+                  <div style={{ fontSize: '12px', color: '#991B1B', background: '#FEE2E2', padding: '8px 10px', borderRadius: '8px', marginBottom: '10px', flexShrink: 0 }}>{dr.matchRemark}</div>
+                )}
+                {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_BATCH_V1 -- Action Bar: ปุ่มเดียว Add ทั้งหมด (เฉพาะรายการ Unmatch ที่ยังไม่ Add) แสดงเฉพาะตอนมีฝั่ง Unmatch */}
+                {allDetailRows.length > 0 && ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- แสดง Action Bar ทุกครั้งที่มีข้อมูลใน Lot (ไม่ใช่แค่ตอนมีฝั่ง Unmatch เท่านั้น) เพราะตอนนี้ต้องเอาเข้าทั้ง Lot
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '6px', flexShrink: 0 }}>
+                    {pendingAddCount === 0 ? (
+                      <span style={{ fontSize: '11px', color: '#1a3a5c', fontWeight: 600 }}>✓ ทั้งหมด Recorded แล้ว ({allDetailRows.length} รายการ)</span> // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_PERSIST_V1 -- "ทั้งหมด" ต้องอ้างอิงทั้ง Lot (Matched+Unmatch รวมกัน) ไม่ใช่แค่ฝั่ง Unmatch
+                    ) : (
+                      <button
+                        onClick={() => { setBatchAddRemarkText(''); setShowBatchAddRemarkPopup(true); }} // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- เปิด Popup ให้กรอก Remark ก่อน ไม่ยิง Save ตรงทันทีเหมือนเดิม
+                        disabled={isBatchAdding}
+                        style={{ fontSize: '11px', padding: '5px 12px', border: '1px solid #1a3a5c', borderRadius: '6px', background: 'white', color: '#1a3a5c', cursor: isBatchAdding ? 'default' : 'pointer', fontWeight: 600, opacity: isBatchAdding ? 0.6 : 1 }}
+                      >{isBatchAdding ? 'กำลังเพิ่มทั้งหมด...' : `+ Add ทั้งหมด (${allDetailRows.length} รายการ) → Recorded`}</button> // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_PERSIST_V1 -- โชว์จำนวนทั้ง Lot (allDetailRows.length) ไม่ใช่ pendingAddCount -- Logic เขียน Note จริงใน handleAddAllUnmatchInvoices ยังเขียนเฉพาะรายการ Unmatch ที่ค้างเหมือนเดิม
+                    )}
+                  </div>
+                )}
+                {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_UNIFIED_TABLE_V1 -- ตารางเดียว รวม Matching + Unmatch แยกด้วย Status column + Highlight สีพื้นแถว, Old Payment คงที่ทั้งตาราง (=dr.checkNo), New Payment แสดงเฉพาะแถวที่ Match ได้ */}
+                <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', border: '0.5px solid #eee', borderRadius: '8px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                    <thead>
+                      <tr style={{ background: '#F7F8FA', position: 'sticky', top: 0 }}>
+                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Invoice No.</th>
+                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Status</th>
+                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Old Payment</th>
+                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Old Payment Date</th>
+                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>New Payment</th>
+                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>New Payment Date</th>
+                        <th style={{ textAlign: 'right', padding: '6px 8px' }}>มูลค่าสินค้า</th>
+                        <th style={{ textAlign: 'right', padding: '6px 8px' }}>เงินภาษี</th>
+                        <th style={{ textAlign: 'right', padding: '6px 8px' }}>ยอด (สุทธิ @ {dr.matchedRate || '—'})</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allDetailRows.map((x, i) => {
+                        const isMatched = x.__status === 'matched';
+                        const oldPayDate = formatReportDate(x.old_ref_pay_date || x.payment_date_old || null);
+                        const newPayDate = formatReportDate(x.payment_date || null);
+                        // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_UNMATCH_V1 -- Key เฉพาะ Invoice นี้ (แยกกันข้าม Check Return / Supplier) ใช้เช็คว่ากด Add ไปแล้วหรือกำลังบันทึกอยู่
+                        const itemKey = `${drKey}|||${x.invoice_ref}`;
+                        const isAdded = x.alreadyRecorded || detailAddedKeys.has(itemKey); // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- ใช้ได้ทั้งแถว Matched และ Unmatch แล้ว (เอาเข้าทั้ง Lot) -- x.alreadyRecorded: มี Note อยู่แล้วจริงใน DB (persist ข้ามการเปิด-ปิด Modal)
+                        const isAdding = detailAddSaving.has(itemKey);
+                        const rowBg = isAdded ? '#EAF1FA' : (isMatched ? '#F3FAF1' : '#FCEFEF');
+                        return (
+                          <tr key={`${x.__status}-${x.invoice_ref || i}`} style={{ background: rowBg, borderTop: '2px solid white' }}>
+                            <td style={{ padding: '6px 8px', fontWeight: 600, color: isMatched || isAdded ? '#1a1a1a' : '#991B1B' }}>{x.invoice_ref}</td>
+                            <td style={{ padding: '6px 8px' }}>
+                              {isAdded ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDALL_WHOLELOT_V1 -- Recorded มาก่อนเสมอ (ไม่ว่าเดิมจะเป็น Matched หรือ Unmatch) เพราะตอนนี้ Add ทั้ง Lot เขียน Note ให้ทั้ง 2 ฝั่ง -- แก้ "ทำไมมันไม่ Recorded ทั้งหมดละ"
+                                <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 700, background: '#E4EDF7', color: '#1a3a5c' }}>Recorded</span>
+                              ) : isAdding ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_ADDINVOICE_BATCH_V1 -- กำลังบันทึกอยู่ระหว่างกด "Add ทั้งหมด"
+                                <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 700, background: '#FEF3C7', color: '#92400E' }}>กำลังเพิ่ม...</span>
+                              ) : isMatched ? (
+                                <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 700, background: '#DCF2D6', color: '#27500A' }}>Matched</span>
+                              ) : (
+                                <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 700, background: '#F6D9D9', color: '#991B1B' }}>Unmatch</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '6px 8px', color: isMatched || isAdded ? '#555' : '#991B1B' }}>{isFromOldRef ? dr.checkNo : '—'}</td> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- ไม่ได้มาจาก Old Incomplete ไม่ต้องโชว์ Old Payment */}
+                            <td style={{ padding: '6px 8px', color: '#888' }}>{isFromOldRef ? (oldPayDate || '—') : '—'}</td> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- ไม่ได้มาจาก Old Incomplete ไม่ต้องโชว์ Old Payment Date */}
+                            <td style={{ padding: '6px 8px', color: isMatched ? '#1a3a5c' : (isAdded ? '#1a3a5c' : '#c99'), fontWeight: isMatched ? 600 : 400 }}>{isMatched ? (x.check_no || '—') : (isAdded ? '— (เพิ่มด้วยตนเอง)' : '— (ไม่พบใน New Incomplete)')}</td>
+                            <td style={{ padding: '6px 8px', color: isMatched ? '#555' : '#c99' }}>{isMatched ? (newPayDate || '—') : '—'}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: isMatched || isAdded ? '#1a1a1a' : '#991B1B' }}>{Number(x.exp_amount || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: isMatched || isAdded ? '#1a1a1a' : '#991B1B' }}>{Number(x.exp_vat || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, color: isMatched || isAdded ? '#1a1a1a' : '#991B1B' }}>{lineNetDetail(x).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                          </tr>
+                        );
+                      })}
+                      {allDetailRows.length === 0 && (
+                        <tr><td colSpan={9} style={{ padding: '10px', textAlign: 'center', color: '#999' }}>ไม่พบรายละเอียด</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_DETAIL_UNIFIED_TABLE_V1 -- Footer: ยอดรวมที่คำนวณได้ (Matched + Unmatch รวมกัน คำนวณที่ Rate เดียวกัน) + Diff บรรทัดเดียว */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#F7F8FA', borderRadius: '10px', padding: '12px 18px', marginTop: '10px', fontSize: '13px', flexShrink: 0 }}>
+                  <div style={{ color: '#555' }}>ยอดรวมที่คำนวณได้ ({allDetailRows.length} รายการ): <b style={{ fontSize: '15px', color: '#1a1a1a' }}>{combinedNetTotal.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</b></div>
+                  <div style={{ fontWeight: 700, fontSize: '13px', color: Math.abs(combinedDiff) <= 1 ? '#27500A' : '#991B1B' }}>Diff (คำนวณที่ Rate {dr.matchedRate || '—'}) = {combinedDiff >= 0 ? '+' : ''}{combinedDiff.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}{Math.abs(combinedDiff) <= 1 ? ' ✓' : ''}</div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px', flexShrink: 0 }}>
+                  <button onClick={() => setOldRefDetailRow(null)} style={{ padding: '7px 14px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer' }}>ปิด</button>
+                  {dr.oldRefAmountMismatch && !drSaved && (
+                    <button onClick={() => { handleSaveSingleMatch(dr); setOldRefDetailRow(null); }} style={{ padding: '7px 14px', fontSize: '12px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>ยืนยัน & บันทึก</button>
+                  )}
+                </div>
+                {showBatchAddRemarkPopup && ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_MATCHWITHCONDITION_V1 -- Popup ยืนยัน + ช่อง Remark ก่อนกด "+ Add ทั้งหมด" จริง (ปล่อยว่าง = ใช้ Remark อัตโนมัติของระบบ)
+                  <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 330 }}>
+                    <div style={{ width: '380px', background: 'white', borderRadius: '12px', padding: '18px', boxShadow: '0 12px 32px rgba(0,0,0,0.25)' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#1a3a5c', marginBottom: '10px' }}>ยืนยัน Add ทั้งหมด</div>
+                      <div style={{ fontSize: '11px', color: '#888', marginBottom: '12px', lineHeight: 1.6 }}>เช็ค {dr.checkNo} · Supplier {dr.supplierCode} · {allDetailRows.length} รายการ</div>
+                      <label style={{ fontSize: '11px', color: '#555', marginBottom: '5px', display: 'block' }}>Remark (พิมพ์เพื่อ Override / เว้นว่างไว้ใช้ค่าอัตโนมัติ)</label>
+                      <textarea value={batchAddRemarkText} onChange={(e) => setBatchAddRemarkText(e.target.value)} placeholder={dr.matchRemark || ''} style={{ width: '100%', boxSizing: 'border-box', minHeight: '64px', border: '1px solid #ddd', borderRadius: '8px', padding: '8px', fontSize: '12px', fontFamily: 'inherit', resize: 'vertical', color: '#1a3a5c' }} />
+                      <div style={{ fontSize: '10px', color: '#aaa', marginTop: '6px' }}>ปล่อยว่าง = ใช้ Remark ที่ระบบคำนวณให้อัตโนมัติ</div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+                        <button onClick={() => setShowBatchAddRemarkPopup(false)} style={{ padding: '6px 14px', fontSize: '12px', borderRadius: '8px', border: '0.5px solid #ccc', background: 'white', color: '#666', cursor: 'pointer' }}>ยกเลิก</button>
+                        <button onClick={() => { const remarkToUse = batchAddRemarkText; setShowBatchAddRemarkPopup(false); handleAddAllUnmatchInvoices(dr, extraLines, remarkToUse); }} style={{ padding: '6px 14px', fontSize: '12px', borderRadius: '8px', border: 'none', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>ยืนยัน & บันทึก</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }
@@ -1507,6 +2408,16 @@ function VatWatchlistUploadModal({ onClose }) {
   React.useEffect(() => { setPreviewPage(1); }, [buFilter, previewRows]);
   const [incompleteToIso, setIncompleteToIso] = React.useState(null); // MARKER_VATWATCHLISTOPS_INCOMPLETE_TO_STATE_V1
 
+  // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_STATE_V1
+  // ── State: Flow "Old Incomplete -> Match Preview -> Confirm บันทึกเป็น Ref." ──
+  // ── oldIncompleteMatch เก็บทั้ง rowsForMatch (ดิบ, ไว้ส่งซ้ำให้ confirm_save Re-match เอง) ──
+  // ── และผลจาก match_preview (matched/byBu/matchedCount ฯลฯ) ไว้โชว์ Preview ──────────
+  const [oldIncompleteMatch, setOldIncompleteMatch] = React.useState(null);
+  const [oldIncompleteBuFilter, setOldIncompleteBuFilter] = React.useState(null);
+  const [isMatchingOldIncomplete, setIsMatchingOldIncomplete] = React.useState(false);
+  const [isSavingOldIncomplete, setIsSavingOldIncomplete] = React.useState(false);
+  const oldIncompleteDisplayRows = oldIncompleteMatch ? (oldIncompleteBuFilter ? oldIncompleteMatch.matched.filter((r) => r.bu === oldIncompleteBuFilter) : oldIncompleteMatch.matched) : []; // BU Tabs ใช้ oldIncompleteMatch.byBu ที่ Backend สรุปนับมาให้แล้วโดยตรง
+
   // MARKER_VATWATCHLISTOPS_SCROLLRESET_V1
   // ── หลัง Paste Cursor จะอยู่ท้ายข้อความ ทำให้ Browser Auto-Scroll ไปขวา ──────
   // ── Reset ไปซ้ายสุด-บนสุดเสมอ จะได้เห็นคอลัมน์สำคัญ (วันที่/เลขที่) ก่อน ─────
@@ -1538,6 +2449,10 @@ function VatWatchlistUploadModal({ onClose }) {
           const d = new Date(dateIso);
           if (!isNaN(d.getTime())) dateStr = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
         }
+        // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_DETECT_V1
+        // ── Auto-Detect Old vs New Incomplete: เทียบปีของ "ข้อมูล ณ วันที่" ในไฟล์กับปีปัจจุบัน ──
+        // ── ไม่ต้องให้ User เลือกเอง -- ถ้าไม่พบวันที่ในไฟล์เลย ถือว่าเป็น New (ปลอดภัยไว้ก่อน) ──
+        const isOldIncomplete = dateIso ? (new Date(dateIso).getFullYear() < new Date().getFullYear()) : false;
         const byBu = {}; // MARKER_VATWATCHLISTOPS_FILECHECK_SPLIT_BY_TAXTYPE_V1 -- เปลี่ยนจากนับรวม (matchedCount) เป็นนับแยกตาม Type (byType)
         rawRows.forEach((row) => {
           // MARKER_VATWATCHLISTOPS_MULTIFILE_GROUPRANGE_PRIORITY_V1 -- Group Range เช็คก่อนเสมอ ชนะ branch_list ถ้าเจอ
@@ -1588,7 +2503,7 @@ function VatWatchlistUploadModal({ onClose }) {
             buRows.push({ bu, pending: cnt.pending, complete: cnt.complete, taxTypes: type, noData: false }); // MARKER_VATWATCHLISTOPS_FILECHECK_PENDING_COMPLETED_COLS_V1
           });
         });
-        results.push({ fileName: file.name, dateStr, rawText: text, buRows, hasData: rawRows.length > 0 });
+        results.push({ fileName: file.name, dateStr, rawText: text, buRows, hasData: rawRows.length > 0, isOldIncomplete }); // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_DETECT_V1
       }
       setFileCheckResults((prev) => [...prev, ...results]); // MARKER_VATWATCHLISTOPS_MULTIFILE_APPEND_FIX_V1
     } catch (err) {
@@ -1675,13 +2590,14 @@ function VatWatchlistUploadModal({ onClose }) {
 
     setIsChecking(true);
     try {
-      const [branches, companies, vendorCategories, periodStatus, buGroupRanges, existingNotes] = await Promise.all([
+      const [branches, companies, vendorCategories, periodStatus, buGroupRanges, existingNotes, existingOldIncompleteRefs] = await Promise.all([
         apiFetch('/branch_list'),
         apiFetch('/company_list'),
         apiFetch('/vendor_category'),
         apiFetch('/vat/period/status').catch(() => null),
         apiFetch('/vat_watchlist_bu_group_range').catch(() => []), // MARKER_VATWATCHLISTOPS_BU_GROUP_RANGE_FALLBACK_V1
         apiFetch('/vat_watchlist_notes').catch(() => []), // MARKER_VATWATCHLISTOPS_AGING_ACCEPT_CONDITION_UNCOUNT_V1 -- ดึงทุก BU เพราะ Modal นี้ Process ได้หลาย BU พร้อมกัน
+        apiFetch('/vat_watchlist_old_incomplete_ref').catch(() => []), // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_UNMATCH_EXEMPT_V1 -- ดึงมาเช็ค Exemption Note ที่ผูกกับ Old Ref Check No. ไม่ให้โดน Auto-Unmatch ถ้ายังมี Old Incomplete ค้างอยู่
       ]);
       const existingNoteMap = {}; // MARKER_VATWATCHLISTOPS_AGING_ACCEPT_CONDITION_UNCOUNT_V1
       (Array.isArray(existingNotes) ? existingNotes : []).forEach((n) => {
@@ -1838,18 +2754,78 @@ function VatWatchlistUploadModal({ onClose }) {
         const matchedKeysInThisUpload = new Set(
           allMatchedRowsThisUpload.map((r) => `${r.bu}|${r.invoice_ref || ''}|${r.supplier_code || ''}`)
         );
+        // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_UNMATCH_EXEMPT_V1
+        // ── Note ที่ผูกกับ Old Ref Check No. (Match ผ่าน Check Return Tier 1.5) อ้างอิงใบเก่าที่พอจ่ายจบ ──
+        // ── ก็จะหายไปจาก New Incomplete เองโดยธรรมชาติอยู่แล้ว -- ถ้ายังมี Old Incomplete ──────────────
+        // ── (vat_watchlist_old_incomplete_ref) อ้างอิงเช็คเดิมเดียวกันค้างอยู่ ถือว่ายังถูกต้อง ห้าม Unmatch ──
+        const cleanCheckNoForExemption = (cn) => String(cn || '').replace(/-CHECK$/i, '').trim();
+        const oldIncompleteKeysForExemption = new Set(
+          (Array.isArray(existingOldIncompleteRefs) ? existingOldIncompleteRefs : [])
+            .map((o) => `${o.bu || ''}|||${cleanCheckNoForExemption(o.check_no)}|||${String(o.supplier_code || '').trim()}`)
+        );
         const notesToUnmatch = (Array.isArray(existingNotes) ? existingNotes : []).filter((n) => {
           if (!matchedBusInThisUpload.has(n.bu)) return false; // ไม่แตะ Note ของ BU ที่ไม่ได้อยู่ในไฟล์นี้
           if (n.status === 'unmatch') return false; // Unmatch ไปแล้ว ไม่ยิงซ้ำ กัน Timestamp Reset
           const key = `${n.bu}|${n.invoice_ref || ''}|${n.supplier_code || ''}`;
-          return !matchedKeysInThisUpload.has(key);
+          if (matchedKeysInThisUpload.has(key)) return false;
+          if (n.old_ref_check_no) { // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_UNMATCH_EXEMPT_V1 -- Exempt ถ้ายังมี Old Incomplete อ้างอิงเช็คเดิมค้างอยู่
+            const oldRefKey = `${n.bu || ''}|||${cleanCheckNoForExemption(n.old_ref_check_no)}|||${String(n.supplier_code || '').trim()}`;
+            if (oldIncompleteKeysForExemption.has(oldRefKey)) return false;
+          }
+          return true;
         });
-        if (notesToUnmatch.length > 0) {
-          await Promise.all(notesToUnmatch.map((n) =>
+        // MARKER_VATWATCHLISTOPS_NOTES_CHECKRETURN_LOT_GATE_V1
+        // ── Lot Gate: Note ที่ remark เป็น 'Check Return' ต้องรอให้ทุก Invoice ใน Lot เดียวกัน ──────
+        // ── (bu + check_no + supplier_code เดียวกัน -- เฉพาะ Note ที่ยังไม่ Unmatch) หาไม่เจอพร้อมกันหมด ──
+        // ── ถึงจะ Mark Unmatch จริง -- กันไม่ให้ Invoice ตัวเดียวใน Lot โดน Unmatch/นับอายุไปก่อนเพื่อน ────
+        // ── ("มี Match 4 Unmatch 1 แล้วตัวที่ Match หายไป ไม่ควรค้างนับคนเดียว ต้องรอให้เคลียร์หมดพร้อมกัน") ──
+        const lotKeyOfNote = (n) => `${n.bu || ''}|||${String(n.check_no || '').trim()}|||${String(n.supplier_code || '').trim()}`;
+        const pendingCheckReturnNotes = (Array.isArray(existingNotes) ? existingNotes : []).filter(
+          (n) => n.remark === 'Check Return' && n.status !== 'unmatch'
+        );
+        const checkReturnLotGroups = {};
+        pendingCheckReturnNotes.forEach((n) => {
+          const lk = lotKeyOfNote(n);
+          if (!checkReturnLotGroups[lk]) checkReturnLotGroups[lk] = [];
+          checkReturnLotGroups[lk].push(n);
+        });
+        const notesToUnmatchKeySet = new Set(
+          notesToUnmatch.map((n) => `${n.bu}|${n.invoice_ref || ''}|${n.supplier_code || ''}`)
+        );
+        const notesToUnmatchGated = notesToUnmatch.filter((n) => {
+          if (n.remark !== 'Check Return') return true; // ไม่ใช่ Check Return Lot ไม่ต้อง Gate ทำงานแบบเดิม
+          const group = checkReturnLotGroups[lotKeyOfNote(n)] || [n];
+          return group.every((m) => notesToUnmatchKeySet.has(`${m.bu}|${m.invoice_ref || ''}|${m.supplier_code || ''}`)); // ต้องพร้อม Unmatch ครบทุกตัวใน Lot เดียวกันก่อน ไม่งั้นพักทั้ง Lot ไว้ก่อน
+        });
+        // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_UNMATCH_EXEMPT_V1
+        // ── Note ที่ Exempt ด้วยเหตุผลข้างบน (มี old_ref_check_no + ยังเจอใน Old Incomplete แต่หาไม่เจอใน ──
+        // ── New Incomplete รอบนี้) ยังคง Status เดิมไว้ (ไม่ Unmatch) แต่บันทึกร่องรอยไว้ใน match_remark ──
+        // ── (ไม่แตะ remark ซึ่งยังเป็น 'Check Return' เหมือนเดิม) เพื่อให้ AP Review ย้อนหลังได้ -- เติมครั้งเดียว ──
+        const NOTFOUND_TAG = 'Notfound ใน New Incomplete (อ้างอิงจาก Old Incomplete)';
+        const notesToTagNotfound = (Array.isArray(existingNotes) ? existingNotes : []).filter((n) => {
+          if (!matchedBusInThisUpload.has(n.bu)) return false;
+          if (n.status === 'unmatch') return false;
+          if (!n.old_ref_check_no) return false;
+          const key = `${n.bu}|${n.invoice_ref || ''}|${n.supplier_code || ''}`;
+          if (matchedKeysInThisUpload.has(key)) return false; // ยังเจอใน New Incomplete ปกติ ไม่ต้อง Tag
+          const oldRefKey = `${n.bu || ''}|||${cleanCheckNoForExemption(n.old_ref_check_no)}|||${String(n.supplier_code || '').trim()}`;
+          if (!oldIncompleteKeysForExemption.has(oldRefKey)) return false; // ไม่เข้าเงื่อนไข Exempt -- โดน Mark Unmatch ตามปกติแทน ไม่ต้อง Tag
+          return !String(n.match_remark || '').includes(NOTFOUND_TAG); // Idempotent -- Tag ไปแล้วไม่ต้องเติมซ้ำ
+        });
+        if (notesToUnmatchGated.length > 0) { // MARKER_VATWATCHLISTOPS_NOTES_CHECKRETURN_LOT_GATE_V1 -- ใช้ List ที่ผ่าน Lot Gate แล้ว แทน notesToUnmatch ดิบ
+          await Promise.all(notesToUnmatchGated.map((n) =>
             apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', {
               method: 'POST',
               body: JSON.stringify({ ...n, status: 'unmatch' }),
             }).catch((err) => console.error('mark unmatch error:', n, err))
+          ));
+        }
+        if (notesToTagNotfound.length > 0) { // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_UNMATCH_EXEMPT_V1 -- บันทึก match_remark ให้ Note ที่ Exempt ไว้
+          await Promise.all(notesToTagNotfound.map((n) =>
+            apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', {
+              method: 'POST',
+              body: JSON.stringify({ ...n, match_remark: n.match_remark ? `${n.match_remark} | ${NOTFOUND_TAG}` : NOTFOUND_TAG }),
+            }).catch((err) => console.error('tag notfound error:', n, err))
           ));
         }
       } catch (err) {
@@ -1865,6 +2841,68 @@ function VatWatchlistUploadModal({ onClose }) {
       setPreviewRows(rawRows); // Fallback: Match ไม่ได้ก็โชว์ดิบไปก่อน ไม่ปิดกั้นผู้ใช้
     }
     setIsChecking(false);
+  };
+
+  // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_HANDLERS_V1
+  // ── Step 1: Parse ไฟล์ Old Incomplete + หา BU (3-Tier เดียวกับ runQuickFileCheck) ──
+  // ── แล้วส่งไป Match กับ New Incomplete ปัจจุบันที่ Backend (ยังไม่ Save อะไรทั้งสิ้น) ──
+  const handleOldIncompleteMatch = async (fileResult) => {
+    if (!fileResult) return;
+    setIsMatchingOldIncomplete(true);
+    try {
+      const [branches, companies, buGroupRanges] = await Promise.all([
+        apiFetch('/branch_list'), apiFetch('/company_list'), apiFetch('/vat_watchlist_bu_group_range').catch(() => []),
+      ]);
+      const branchToBu = {};
+      (Array.isArray(branches) ? branches : []).forEach((b) => { branchToBu[b['Branch Code']] = b.bu; });
+      const segment3ToCompany = {};
+      (Array.isArray(companies) ? companies : []).forEach((c) => { if (c.SEGMENT3) segment3ToCompany[c.SEGMENT3] = c; });
+      const groupRangesList = Array.isArray(buGroupRanges) ? buGroupRanges : [];
+      const rawRows = parseVatWatchlistRawText(fileResult.rawText);
+      const rowsWithCheckNo = rawRows.filter((row) => String(row.check_no || '').trim() !== ''); // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_REQUIRE_CHECKNO_V1
+      const rowsForMatch = rowsWithCheckNo
+        .map((row) => {
+          const seg3 = (row.branch || '').replace(/^[ATF]/, '').slice(0, 4);
+          const bu = matchVatWatchlistBuGroup(row.branch, groupRangesList) || branchToBu[row.branch] || (segment3ToCompany[seg3] ? segment3ToCompany[seg3].bu : null) || null;
+          return {
+            bu, invoice_ref: row.invoice_ref || null, supplier_code: row.supplier_code || null,
+            exp_amount: row.exp_amount, exp_vat: row.exp_vat,
+            check_no: row.check_no, payment_date_old: row.payment_date || null,
+            vendor_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_SEND_VENDORNAME_V1 -- ชื่อผู้ขายจากไฟล์ Old Incomplete เอง (Fixed-width Position 123-166) -- ให้ Backend ใช้เป็น Fallback โชว์ชื่อผู้ขายของ "ใบพี่น้อง" ในหน้า Preview
+          };
+        })
+        .filter((r) => r.bu);
+      const resp = await apiFetch('/vat_watchlist_old_incomplete_ref/match_preview', { method: 'POST', body: JSON.stringify({ rows: rowsForMatch }) });
+      setOldIncompleteMatch({ fileName: fileResult.fileName, dateStr: fileResult.dateStr, rowsForMatch, ...resp });
+      setOldIncompleteBuFilter(null);
+    } catch (err) {
+      console.error('handleOldIncompleteMatch error:', err);
+      alert('ตรวจสอบ Matching ไม่สำเร็จ: ' + err.message);
+    }
+    setIsMatchingOldIncomplete(false);
+  };
+
+  // ── Step 2: Confirm -- ส่ง rowsForMatch (ดิบ) ชุดเดิมซ้ำให้ Backend Re-match + Save ──
+  // ── (ไม่เชื่อผล Match ที่ Frontend เก็บไว้เฉยๆ -- Backend Re-derive จาก Raw Rows เป๊ะๆ) ──
+  const handleOldIncompleteConfirmSave = async () => {
+    if (!oldIncompleteMatch || !Array.isArray(oldIncompleteMatch.rowsForMatch) || oldIncompleteMatch.rowsForMatch.length === 0) return;
+    setIsSavingOldIncomplete(true);
+    try {
+      const resp = await apiFetch('/vat_watchlist_old_incomplete_ref/confirm_save', { method: 'POST', body: JSON.stringify({ rows: oldIncompleteMatch.rowsForMatch }) });
+      await confirmDialog.alert(
+        `บันทึกเป็น Ref. สำเร็จ ${(resp && resp.savedCount != null ? resp.savedCount : oldIncompleteMatch.matchedCount).toLocaleString()} รายการ`,
+        { title: 'บันทึกสำเร็จ', variant: 'success' }
+      );
+      setOldIncompleteMatch(null);
+      setOldIncompleteBuFilter(null);
+      setFileCheckResults([]);
+      setSelectedFiles([]);
+      setHasTextInput(false);
+    } catch (err) {
+      console.error('handleOldIncompleteConfirmSave error:', err);
+      alert('บันทึกไม่สำเร็จ: ' + err.message);
+    }
+    setIsSavingOldIncomplete(false);
   };
 
   const [isSaving, setIsSaving] = React.useState(false);
@@ -1989,6 +3027,76 @@ function VatWatchlistUploadModal({ onClose }) {
             <VatCheckReturnMatchContent files={checkReturnFiles} onClose={() => setCheckReturnFiles([])} />
           </div>
         )}
+        {oldIncompleteMatch && ( // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_OVERLAY_V1 -- Match Preview เต็มจอ ก่อนกด Confirm บันทึกเป็น Ref. ถาวร
+          <div style={{ position: 'absolute', inset: 0, background: 'white', borderRadius: '10px', padding: '28px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', zIndex: 10 }}>
+            <div style={{ fontSize: '17px', fontWeight: '500', marginBottom: '4px' }}>Old Incomplete — ผล Matching กับ Incomplete ปัจจุบัน</div>
+            <div style={{ fontSize: '12px', color: '#777', marginBottom: '14px', flexShrink: 0 }}>ไฟล์: {oldIncompleteMatch.fileName} · ข้อมูล ณ {oldIncompleteMatch.dateStr} · แสดงรายการที่ Matchedกับ New Incomplete ปัจจุบัน + รายการ Related ที่ใช้เลขที่เช็คเดียวกัน</div> {/* MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_RELATED_LABEL_V1 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#EAF3DE', borderRadius: '10px', padding: '10px 16px', marginBottom: '14px', flexShrink: 0 }}>
+              <span style={{ fontSize: '20px' }}>✓</span>
+              <span style={{ fontSize: '13px', color: '#27500A' }}>
+                {/* MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_PREVIEW_SIBLING_FE_V1 -- โชว์ยอดแยก Direct Match + ใบพี่น้อง ให้ตรงกับจำนวนที่ confirm_save จะบันทึกจริง (savedCount) ไม่ใช่แค่ Direct Match เหมือนเดิม */}
+                <b>รวม {(oldIncompleteMatch.matchedCount || 0).toLocaleString()} รายการ</b>
+                {' '}({(oldIncompleteMatch.directMatchCount ?? oldIncompleteMatch.matchedCount ?? 0).toLocaleString()} Matched + {(oldIncompleteMatch.siblingCount ?? 0).toLocaleString()} Related จากเช็คเดียวกัน)
+                {' '}จากทั้งหมด {(oldIncompleteMatch.totalWithCheckNo || 0).toLocaleString()} รายการที่มีเลขที่เช็คในไฟล์เก่า
+                {(oldIncompleteMatch.totalWithCheckNo || 0) - (oldIncompleteMatch.matchedCount || 0) > 0 && (
+                  <> (อีก {Math.max(0, (oldIncompleteMatch.totalWithCheckNo || 0) - (oldIncompleteMatch.matchedCount || 0)).toLocaleString()} รายการ ไม่ได้ใช้เลขที่เช็คร่วมกับใบที่ Matchedเลย — จะไม่ถูกเก็บ)</>
+                )}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px', flexShrink: 0 }}>
+              <span onClick={() => setOldIncompleteBuFilter(null)} style={{ padding: '5px 14px', fontSize: '12px', borderRadius: '14px', cursor: 'pointer', background: !oldIncompleteBuFilter ? '#1a3a5c' : 'transparent', color: !oldIncompleteBuFilter ? 'white' : '#555', border: !oldIncompleteBuFilter ? 'none' : '0.5px solid #ccc' }}>ทั้งหมด ({(oldIncompleteMatch.matchedCount || 0).toLocaleString()})</span>
+              {(oldIncompleteMatch.byBu || []).map((b) => (
+                <span key={b.bu} onClick={() => setOldIncompleteBuFilter(b.bu)} style={{ padding: '5px 14px', fontSize: '12px', borderRadius: '14px', cursor: 'pointer', background: oldIncompleteBuFilter === b.bu ? '#1a3a5c' : 'transparent', color: oldIncompleteBuFilter === b.bu ? 'white' : '#555', border: oldIncompleteBuFilter === b.bu ? 'none' : '0.5px solid #ccc' }}>{b.bu} ({b.count.toLocaleString()})</span>
+              ))}
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8e8e8', borderRadius: '10px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', position: 'sticky', top: 0 }}>BU</th>
+                    <th style={{ padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', position: 'sticky', top: 0 }}>Invoice No.</th>
+                    <th style={{ padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', position: 'sticky', top: 0 }}>Supplier Code</th>
+                    <th style={{ padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', position: 'sticky', top: 0 }}>ชื่อผู้ขาย</th>
+                    <th style={{ padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'right', position: 'sticky', top: 0 }}>มูลค่าสินค้า</th>
+                    <th style={{ padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'right', position: 'sticky', top: 0 }}>เงินภาษี</th>
+                    <th style={{ padding: '8px 10px', background: '#7a4e00', color: 'white', fontWeight: '500', textAlign: 'left', position: 'sticky', top: 0 }}>2nd Ref. Check No.</th>
+                    <th style={{ padding: '8px 10px', background: '#7a4e00', color: 'white', fontWeight: '500', textAlign: 'left', position: 'sticky', top: 0 }}>2nd Ref Paydate</th>
+                    <th style={{ padding: '8px 10px', background: '#7a4e00', color: 'white', fontWeight: '500', textAlign: 'left', position: 'sticky', top: 0 }}>สถานะ</th> {/* MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_PREVIEW_SIBLING_FE_V1 */}
+                  </tr>
+                </thead>
+                <tbody>
+                  {oldIncompleteDisplayRows.map((r, i) => (
+                    <tr key={`${r.bu}-${r.invoice_ref}-${r.supplier_code}-${i}`} style={{ borderTop: '0.5px solid #e8e8e8', background: i % 2 === 1 ? '#fafafa' : 'transparent' }}>
+                      <td style={{ padding: '8px 10px' }}>{r.bu}</td>
+                      <td style={{ padding: '8px 10px' }}>{r.invoice_ref}</td>
+                      <td style={{ padding: '8px 10px' }}>{r.supplier_code}</td>
+                      <td style={{ padding: '8px 10px' }}>{r.vendor_name}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{Number(r.exp_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{Number(r.exp_vat || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '8px 10px', background: '#FFF6E5', fontWeight: '500' }}>{r.old_ref_check_no}</td>
+                      <td style={{ padding: '8px 10px', background: '#FFF6E5', fontWeight: '500' }}>{r.old_ref_pay_date ? String(r.old_ref_pay_date).slice(0, 10) : ''}</td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {/* MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_PREVIEW_SIBLING_FE_V1 -- is_direct_match มาจาก Backend (undefined = ไฟล์ Backend เก่ายังไม่ได้ Patch -- ถือเป็น Matchedไปก่อน กัน UI พัง) */}
+                        {r.is_direct_match === false ? (
+                          <span style={{ background: '#DBEAFE', color: '#1E40AF', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }} title="Related (เลขที่เช็คเดียวกับใบที่ Matched) -- เก็บเป็น Reference เท่านั้น ไม่ได้ Match กับ New Incomplete ปัจจุบัน -- จะไม่ถูกเขียนลง old_ref_check_no ของแถวไหนเลย">Related</span>
+                        ) : (
+                          <span style={{ background: '#EAF3DE', color: '#27500A', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>Matched</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', flexShrink: 0 }}>
+              <span style={{ fontSize: '11px', color: '#999' }}>แถวสีส้ม = ค่า Ref. ที่จะถูกเก็บไว้ -- เฉพาะแถว Badge "Matched" เท่านั้นที่จะถูกเขียนลง old_ref_check_no / old_ref_pay_date ของแถวนั้นใน New Incomplete ด้วย ส่วน "Related" จะถูกเก็บไว้เป็น Reference ในอนาคตเท่านั้น</span> {/* MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_RELATED_LABEL_V1 */}
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={() => { setOldIncompleteMatch(null); setOldIncompleteBuFilter(null); }} disabled={isSavingOldIncomplete} style={{ padding: '9px 22px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', color: '#333', cursor: isSavingOldIncomplete ? 'default' : 'pointer' }}>ปิด</button>
+                <button onClick={handleOldIncompleteConfirmSave} disabled={isSavingOldIncomplete || (oldIncompleteMatch.matchedCount || 0) === 0} style={{ padding: '9px 22px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: isSavingOldIncomplete ? 'default' : 'pointer', fontWeight: '500', opacity: (oldIncompleteMatch.matchedCount || 0) === 0 ? 0.5 : 1 }}>{isSavingOldIncomplete ? 'กำลังบันทึก...' : `ยืนยัน & บันทึกเป็น Ref. (${(oldIncompleteMatch.matchedCount || 0).toLocaleString()} รายการ)`}</button>
+              </div>
+            </div>
+          </div>
+        )}
         <div style={{ fontSize: '16px', fontWeight: '500', marginBottom: '16px' }}>Import Overall file</div>
 
         {!previewRows ? (
@@ -2035,6 +3143,15 @@ function VatWatchlistUploadModal({ onClose }) {
             }}
           />
         ) : null}
+        {!previewRows && !oldIncompleteMatch && fileCheckResults.some((r) => r.isOldIncomplete) && ( // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_BANNER_V1
+          <div style={{ border: '1px solid #F3C969', background: '#FEF7E6', borderRadius: '10px', padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '16px' }}>
+            <span style={{ fontSize: '16px', lineHeight: 1 }}>🔎</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div style={{ fontSize: '13px', color: '#6B4E00', fontWeight: 600 }}>ตรวจพบไฟล์นี้เป็น Old Incomplete</div>
+              <div style={{ fontSize: '12px', color: '#8a6d1f' }}>ข้อมูลล่าสุดในไฟล์ไม่ถึงปีปัจจุบัน — ระบบจะไม่ Import ทับ Incomplete ปัจจุบัน แต่จะนำไป Matching หา Invoice ที่ยังค้างอยู่ใน Incomplete ตอนนี้แทน</div>
+            </div>
+          </div>
+        )}
         {/* MARKER_VATWATCHLISTOPS_MULTIFILE_CHECK_V1 -- ตารางสรุปผลเช็คไฟล์ */}
         {!previewRows && (isCheckingFiles || fileCheckResults.length > 0) && (
           <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '10px', marginBottom: '16px', maxHeight: '260px', overflow: 'auto' }}>
@@ -2296,7 +3413,16 @@ function VatWatchlistUploadModal({ onClose }) {
 
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '10px 16px', fontSize: '13px', border: '0.5px solid #ccc', background: 'transparent', borderRadius: '8px', cursor: 'pointer' }}>ปิด</button>
-          {!previewRows ? (
+          {/* MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_FOOTER_BRANCH_V1 -- แตกเป็น 3 ทาง: Old Incomplete ตรวจ Matching / ปกติตรวจสอบข้อมูล / ปกติยืนยันบันทึก */}
+          {!previewRows && !oldIncompleteMatch && fileCheckResults.some((r) => r.isOldIncomplete) ? (
+            <button
+              onClick={() => handleOldIncompleteMatch(fileCheckResults.find((r) => r.isOldIncomplete))}
+              disabled={isMatchingOldIncomplete}
+              style={{ padding: '10px 16px', fontSize: '13px', border: 'none', background: isMatchingOldIncomplete ? '#ccc' : '#1a3a5c', color: 'white', borderRadius: '8px', cursor: isMatchingOldIncomplete ? 'not-allowed' : 'pointer' }}
+            >
+              {isMatchingOldIncomplete ? 'กำลังตรวจ Matching...' : 'ตรวจสอบ Matching →'}
+            </button>
+          ) : !previewRows ? (
             <button
               onClick={handleCheckData}
               disabled={!hasInput}
@@ -3195,7 +4321,89 @@ function VatWatchlistConfigModal({ company, baseOptions, prepareByOptions, taxTy
   );
 }
 
-function VatWatchlistMonitorTable({ onGoto } = {}) { // MARKER_VATWATCHLISTOPS_INCOMPLETE_BU_OPS_TEST_V1
+// MARKER_VATWATCHLISTOPS_MONITOR_ROW_AGING_DETAIL_MODAL_V14
+// ── Double-click แถว BU ในตาราง Monitor -- แสดง Modal สรุป Aging + Type ของ BU นั้นแบบละเอียด ──
+// ── ใช้สี 5 เฉดเดียวกับกราฟเส้น (VAT_AGING_LINE_BUCKETS) เพราะเป็น Detail View ของ BU เดียว ──
+function VatWatchlistBuAgingDetailModal({ bu, onClose }) {
+  const [agingRow, setAgingRow] = React.useState(null); // { '0','2-1','4-3','6-5',expired,uncount } -- SUM(exp_vat)
+  const [typeRowsLocal, setTypeRowsLocal] = React.useState([]); // [{bus_type, sum}]
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const [agingRes, typeRes] = await Promise.all([
+          apiFetch(`/vat_watchlist_report?eq_status=pending&eq_bu=${encodeURIComponent(bu)}&aging_bucket_counts=true&aging_bucket_sum_col=exp_vat`),
+          apiFetch(`/vat_watchlist_report?eq_status=pending&eq_bu=${encodeURIComponent(bu)}&distinct_group=bus_type&sum_col=exp_vat`),
+        ]);
+        if (cancelled) return;
+        setAgingRow(agingRes?.counts || null);
+        setTypeRowsLocal(Array.isArray(typeRes?.rows) ? typeRes.rows : []);
+      } catch (err) {
+        console.error('VatWatchlistBuAgingDetailModal load error:', err);
+        if (!cancelled) { setAgingRow(null); setTypeRowsLocal([]); }
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [bu]);
+
+  const agingList = VAT_AGING_LINE_BUCKETS.map((b) => ({ ...b, value: agingRow ? Number(agingRow[b.key] || 0) : 0 }));
+  const agingTotal = agingList.reduce((s, a) => s + a.value, 0);
+  const agingMax = Math.max(...agingList.map((a) => a.value), 1);
+
+  const typeList = typeRowsLocal
+    .filter((r) => Object.prototype.hasOwnProperty.call(VAT_TYPE_OVERVIEW_COLORS, r.bus_type))
+    .map((r) => ({ key: r.bus_type, label: r.bus_type, value: Number(r.sum || 0), color: VAT_TYPE_OVERVIEW_COLORS[r.bus_type] }))
+    .sort((a, b) => b.value - a.value);
+  const typeMax = Math.max(...typeList.map((t) => t.value), 1);
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ background: 'white', borderRadius: '12px', padding: '20px', width: '480px', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 30px rgba(0,0,0,0.25)' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c' }}>BU {bu} · Pending แยกละเอียด</div>
+          <button onClick={onClose} style={{ border: 'none', background: 'transparent', fontSize: '20px', cursor: 'pointer', color: '#888', lineHeight: 1 }}>×</button>
+        </div>
+        {loading && <div style={{ fontSize: '12px', color: '#aaa', padding: '20px 0', textAlign: 'center' }}>กำลังโหลด...</div>}
+        {!loading && (
+          <>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px', fontWeight: '500' }}>แยกตาม Aging (รวม {formatVatCompact(agingTotal)})</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '18px' }}>
+              {agingList.map((a) => (
+                <div key={a.key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '11px', width: '52px', flexShrink: 0, color: '#555' }}>{a.label}</span>
+                  <div style={{ flex: 1, height: '14px', background: '#f2f2f2', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{ width: `${agingMax > 0 ? (a.value / agingMax) * 100 : 0}%`, background: a.color, height: '100%', minWidth: a.value > 0 ? '3px' : 0 }} />
+                  </div>
+                  <span style={{ fontSize: '11px', width: '80px', textAlign: 'right', color: '#333', flexShrink: 0 }}>{formatVatFull(a.value)}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px', fontWeight: '500' }}>แยกตาม Type</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {typeList.length === 0 && <div style={{ fontSize: '11px', color: '#aaa' }}>ไม่มีข้อมูล</div>}
+              {typeList.map((t) => (
+                <div key={t.key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '11px', width: '52px', flexShrink: 0, color: '#555' }}>{t.label}</span>
+                  <div style={{ flex: 1, height: '14px', background: '#f2f2f2', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{ width: `${typeMax > 0 ? (t.value / typeMax) * 100 : 0}%`, background: t.color, height: '100%', minWidth: t.value > 0 ? '3px' : 0 }} />
+                  </div>
+                  <span style={{ fontSize: '11px', width: '80px', textAlign: 'right', color: '#333', flexShrink: 0 }}>{formatVatFull(t.value)}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VatWatchlistMonitorTable({ onGoto, search, setSearch, baseFilter, setBaseFilter, setChartFocusBu } = {}) { // MARKER_VATWATCHLISTOPS_INCOMPLETE_BU_OPS_TEST_V1 // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- รับ Search/Base เป็น Controlled Props จาก Lobby แทน State ในตัวเอง // MARKER_VATWATCHLISTOPS_CHART_FOCUS_DECOUPLE_V30
   const { rows, loading } = useVatWatchlistMonitorRows();
   const { userName, currentUser } = useAuth(); // MARKER_VATWATCHLISTOPS_ACTION_LOG_V1
   const [currentPeriodMonth, setCurrentPeriodMonth] = React.useState(null); // MARKER_VATWATCHLISTOPS_MONITOR_STATUS_BADGE_V1
@@ -3245,11 +4453,11 @@ function VatWatchlistMonitorTable({ onGoto } = {}) { // MARKER_VATWATCHLISTOPS_I
   };
 
   const [activeTab, setActiveTab] = React.useState('active');
-  const [search, setSearch] = React.useState('');
-  const [baseFilter, setBaseFilter] = React.useState('');
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- search/baseFilter ยกขึ้นไปเป็น Props จาก Lobby แล้ว (ไม่มี Local State ที่นี่อีกต่อไป)
   const [page, setPage] = React.useState(1); // MARKER_VATWATCHLISTOPS_PAGINATION_V1
   const [pageSize, setPageSize] = React.useState(100);
   const [configBu, setConfigBu] = React.useState(null);
+  const [agingDetailBu, setAgingDetailBu] = React.useState(null); // MARKER_VATWATCHLISTOPS_MONITOR_ROW_AGING_DETAIL_MODAL_V14
   // MARKER_VATWATCHLISTOPS_MONITOR_SORT_V1
   const [sortKey, setSortKey] = React.useState(null);
   const [sortDir, setSortDir] = React.useState('asc');
@@ -3404,7 +4612,10 @@ function VatWatchlistMonitorTable({ onGoto } = {}) { // MARKER_VATWATCHLISTOPS_I
                 }
               }
               return (
-                <tr key={c.id || c.bu} style={{ background: i % 2 === 0 ? 'white' : '#f7f9fb', borderTop: '0.5px solid #e8e8e8' }}>
+                <tr
+                  key={c.id || c.bu} style={{ background: i % 2 === 0 ? 'white' : '#f7f9fb', borderTop: '0.5px solid #e8e8e8', cursor: 'pointer' }}
+                  onDoubleClick={() => { setChartFocusBu && setChartFocusBu(c.bu); }} // MARKER_VATWATCHLISTOPS_CHART_FOCUS_DECOUPLE_V30 -- เปลี่ยนจาก setSearch เป็น setChartFocusBu แยกต่างหาก ไม่ไปแก้ช่อง Search จริงที่ผู้ใช้พิมพ์ไว้ (เดิม v29 ใช้ setSearch ทำให้ Filter ตารางที่พิมพ์ไว้หายไปด้วย)
+                >
                   <td style={{ padding: '7px 8px' }}>{c.bu}</td>
                   <td style={{ padding: '7px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c['ENGLISH COMPANY NAME']}</td>
                   <td style={{ padding: '7px 8px', color: '#555' }}>{c['TAX ID']}</td>
@@ -3487,6 +4698,9 @@ function VatWatchlistMonitorTable({ onGoto } = {}) { // MARKER_VATWATCHLISTOPS_I
       {configBu && (
         <VatWatchlistConfigModal company={configBu} baseOptions={baseOptions} prepareByOptions={prepareByOptions} taxTypeOptions={taxTypeOptions} onClose={() => setConfigBu(null)} />
       )}
+      {agingDetailBu && ( // MARKER_VATWATCHLISTOPS_MONITOR_ROW_AGING_DETAIL_MODAL_V14
+        <VatWatchlistBuAgingDetailModal bu={agingDetailBu} onClose={() => setAgingDetailBu(null)} />
+      )}
     </div>
   );
 }
@@ -3512,10 +4726,14 @@ const VAT_INCOMPLETE_ALL_FIELDS = [
   { key: 'note', label: 'Note' }, { key: 'remark', label: 'Remark' },
   { key: 'sub_type', label: 'Sub Type' },
   { key: 'related_persons', label: 'Related Persons' }, // (payment_type ตัดออกแล้ว)
+  // MARKER_VATWATCHLISTOPS_OLDREF_REPORT_COLUMNS_V1
+  // ── 2 คอลัมน์ Bridge จาก Old Incomplete (ระบบเก่าก่อน Migration) -- Sync มาจาก vat_watchlist_old_incomplete_ref ──
+  { key: 'old_ref_check_no', label: '2nd Ref. Check No.' },
+  { key: 'old_ref_pay_date', label: '2nd Ref Paydate' },
 ];
 
 // MARKER_VATWATCHLISTOPS_INCOMPLETE_DATE_FORMAT_V1
-const VAT_INCOMPLETE_DATE_KEYS = new Set(['doc_date', 'payment_date', 'check_date', 'receive_doc_date']);
+const VAT_INCOMPLETE_DATE_KEYS = new Set(['doc_date', 'payment_date', 'check_date', 'receive_doc_date', 'old_ref_pay_date']); // MARKER_VATWATCHLISTOPS_OLDREF_REPORT_COLUMNS_V1
 const VAT_INCOMPLETE_NUMBER_KEYS = new Set(['exp_amount', 'exp_vat', 'avg_amount', 'avg_vat']); // MARKER_VATWATCHLISTOPS_EXPORT_NUMBER_FORMAT_V1 -- Column ตัวเลขที่ต้องเป็น Number Type จริงตอน Export
 
 // MARKER_VATWATCHLISTOPS_EXPIRE_CHECK_PAYMENT_TEMPLATE_V1 -- Template สำเร็จรูป "Config - Expire by Check Payment"
@@ -3533,6 +4751,28 @@ const EXPIRE_CHECK_PAYMENT_COLS = [
   { key: 'remark', label: 'Remark', is_custom: false },
   { key: 'note', label: 'Note', is_custom: false },
 ];
+
+// MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1 -- Template สำเร็จรูป "Config - Report Check Return"
+// -- ดึง vat_watchlist_notes ที่ remark = 'Check Return' (Matched + Unmatch) แล้ว Join กับ
+// -- vat_watchlist_report (ตาม bu+invoice_ref+supplier_code) เพื่อดึง ยอดเงิน/ยอดภาษี/ชื่อผู้ค้า
+// -- (Unmatch ที่จ่ายจบไปแล้วจะไม่มีใน vat_watchlist_report -> ยอดเงิน/ยอดภาษี จะว่าง)
+const CHECK_RETURN_REPORT_COLS = [
+  { key: 'bu', label: 'BU', is_custom: false },
+  { key: 'check_no', label: 'เลขที่เช็ค (Lot)', is_custom: false },
+  { key: 'supplier_display', label: 'Supplier', is_custom: false },
+  { key: 'invoice_ref', label: 'Invoice No.', is_custom: false },
+  { key: 'description', label: 'Description', is_custom: false },
+  { key: 'status_label', label: 'สถานะ', is_custom: false },
+  { key: 'exp_amount', label: 'ยอดเงิน', is_custom: false },
+  { key: 'exp_vat', label: 'ยอดภาษี', is_custom: false },
+  { key: 'total_amount', label: 'ยอดรวม', is_custom: false },
+  { key: 'match_remark', label: 'Match Remark', is_custom: false },
+  { key: 'note_by', label: 'บันทึกโดย', is_custom: false },
+  { key: 'note_at', label: 'วันที่บันทึก', is_custom: false },
+];
+const CHECK_RETURN_REPORT_DATE_KEYS = new Set(['note_at']); // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1
+const CHECK_RETURN_REPORT_NUMBER_KEYS = new Set(['exp_amount', 'exp_vat', 'total_amount']); // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1
+
 function formatVatIncompleteDate(val) {
   if (!val) return '';
   const d = new Date(val);
@@ -3634,7 +4874,7 @@ function VatIncompleteConfigModal({ allConfigs, currentUsername, currentVisible,
 
 // MARKER_VATWATCHLISTOPS_ADD_SUPPLIER_SMCOMBOBOX_V1 -- Copy มาจาก APController.js ทั้งดุ้น (Combo พิมพ์กรองได้)
 // MARKER_VATWATCHLISTOPS_SMCOMBOBOX_FULL_KEYBOARD_V1 -- Combobox เต็มรูปแบบ: Focus โชว่ทั้งหมด, Arrow Up/Down, Enter, Tab/Blur ปิด
-function SmComboBox({ value, onChange, options = [], center = false }) {
+function SmComboBox({ value, onChange, options = [], center = false, disabled = false }) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState(value || '');
   const [hasTyped, setHasTyped] = React.useState(false);
@@ -3675,6 +4915,19 @@ function SmComboBox({ value, onChange, options = [], center = false }) {
       setOpen(false);
     }
   };
+  // MARKER_VATCONTROLLER_SMCODE_VIEWONLY_SMCOMBOBOX_DISABLED_V1 -- เพิ่ม disabled prop สำหรับโหมด View (แสดงค่าเฉย ๆ ไม่ให้แก้ไข/เปิด Dropdown)
+  if (disabled) {
+    return (
+      <div style={{ position: 'relative', width: '100%' }}>
+        <input
+          value={query}
+          readOnly
+          disabled
+          style={{ height: '24px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#999', width: '100%', boxSizing: 'border-box', textAlign: center ? 'center' : 'left', cursor: 'not-allowed' }}
+        />
+      </div>
+    );
+  }
   return (
     <div ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
       <input
@@ -3704,6 +4957,37 @@ function SmComboBox({ value, onChange, options = [], center = false }) {
 function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER_VATWATCHLISTOPS_CROSS_PAGE_BU_NAVIGATION_V1
   const { userName, currentUser } = useAuth();
   const username = userName || currentUser?.email || 'unknown';
+  // MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1 -- Ref เก็บเวลาเปิด Quick Action (ใช้คำนวณเวลาต่อ Transaction คู่กับตอน Add/Cancel)
+  const quickActionFillStartedAtRef = React.useRef(null);
+  // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2 -- Ref เก็บเวลาเปิด Full Page Trigger (ใช้คำนวณเวลาต่อ Transaction คู่กับตอน Add Data/Cancel)
+  const fullPageFillStartedAtRef = React.useRef(null);
+  // MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1 -- ส่ง Transaction VAT (Popvat) เข้า bucket_list ให้นับรวมกับ AP/IE ใน
+  // Transaction Dashboard เดียวกัน (System Console > User Management) -- Fire-and-forget ไม่หน่วง Flow เดิม
+  const reportVatTransactionToDashboard = (draftId, count, startedAt) => {
+    try {
+      if (!count || count <= 0) return;
+      const p2 = (n) => String(n).padStart(2, '0');
+      const naive = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+      apiFetch('/bucket_list', {
+        method: 'POST',
+        body: JSON.stringify({
+          module: 'VAT',
+          invoice_no: draftId,
+          bu: bu?.bu || '',
+          branch_no: '', branch_label: '', inv_date: naive(new Date()).slice(0, 10), // MARKER_VAT_DASHBOARD_PAYLOAD_SAFETY_V3 -- กัน NOT NULL Error (AP เองใส่ 3 Field นี้เสมอทุกครั้งที่ Insert bucket_list)
+          vendor_name: '',
+          description: 'VAT Transaction',
+          amount: 0, vat: 0, wht: 0, net: 0,
+          period: '',
+          form_data: {},
+          status: 'done',
+          created_by: username,
+          lines: Array.from({ length: count }, () => ({})),
+          fill_started_at: startedAt ? naive(new Date(startedAt)) : null,
+        }),
+      }).catch((err) => console.error('[' + 'MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1' + ']', err));
+    } catch (e) { console.error('[' + 'MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1' + ']', e); }
+  };
   const { smCodes, branches, vendorCategories } = useVatSupportingData(); // MARKER_VATWATCHLISTOPS_ADD_SUPPLIER_SMCOMBOBOX_V1 -- ผูก Hook ที่เตรียมไว้แล้วแต่ยังไม่เคยใช้
 
   // MARKER_VATWATCHLISTOPS_DETAIL_SERVERSIDE_V1
@@ -3713,10 +4997,11 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
   const [detailReloadKey, setDetailReloadKey] = React.useState(0); // MARKER_VATWATCHLISTOPS_RESTORE_BROADCAST_SYNC_V1 -- Bump ค่านี้เพื่อสั่ง Refetch detailRows/AgingBucketCounts ใหม่ (เช่น ตอนได้รับ Broadcast Restore จาก Session อื่น)
   const [loadingDetail, setLoadingDetail] = React.useState(true);
   const [allConfigs, setAllConfigs] = React.useState([]);
-  const VAT_INCOMPLETE_DEFAULT_VISIBLE = ['doc_date','doc_no','site','pay_group','branch','tax_type','invoice_ref','supplier_code','vendor_name','payment_date','check_date','check_no','receive_doc_date','receive_doc_no','exp_amount','exp_vat','avg_amount','avg_vat','ap_source','ap_batch_name','bu','bus_type','sub_type','aging_label']; // MARKER_VATWATCHLISTOPS_DEFAULT_VISIBLE_ADD_TYPE_AGING_V1
+  const VAT_INCOMPLETE_DEFAULT_VISIBLE = ['doc_date','doc_no','site','pay_group','branch','tax_type','invoice_ref','supplier_code','vendor_name','payment_date','check_date','check_no','old_ref_check_no','old_ref_pay_date','receive_doc_date','receive_doc_no','exp_amount','exp_vat','avg_amount','avg_vat','ap_source','ap_batch_name','bu','bus_type','sub_type','aging_label']; // MARKER_VATWATCHLISTOPS_DEFAULT_VISIBLE_ADD_TYPE_AGING_V1 -- MARKER_VATWATCHLISTOPS_OLDREF_REPORT_COLUMNS_V1
   const [visibleColumns, setVisibleColumns] = React.useState(VAT_INCOMPLETE_DEFAULT_VISIBLE);
   const [columnFilters, setColumnFilters] = React.useState({});
   const [openFilterKey, setOpenFilterKey] = React.useState(null);
+  const [openFilterAlign, setOpenFilterAlign] = React.useState('left'); // MARKER_VATWATCHLISTOPS_FILTERDROPDOWN_EDGE_ALIGN_V1 -- จำด้านที่ Dropdown Filter ควรชิด กันดันขอบขวาล้นออกจากพื้นที่ Scroll
   const [expandedFilterGroups, setExpandedFilterGroups] = React.useState({});
   const [filterSearchText, setFilterSearchText] = React.useState('');
   const [columnDistinctCache, setColumnDistinctCache] = React.useState({});
@@ -3987,19 +5272,24 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
       const vatNum = parseFloat(vatRaw);
       if (!isNaN(vatNum)) finalAmount = (vatNum * 100 / 7).toFixed(2);
     }
-    if (!finalAmount.trim() && !vatRaw.trim()) { // MARKER_VATWATCHLISTOPS_ADDTAX_AMOUNT_VAT_FALLBACK_LISTSUM_V1 -- ว่างทั้งคู่ -> ดึงจากยอดรวมของ List (Logic เดียวกับที่แสดงผลใต้ตาราง Invoice List)
-      const qFallback = detailSearch.trim().toLowerCase();
-      const qTermsFallback = qFallback.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-      const listRowsFallback = qTermsFallback.length === 0 ? [] : detailRows.filter((r) =>
-        qTermsFallback.some((term) =>
-          String(r.invoice_ref || '').toLowerCase().includes(term) ||
-          String(r.receive_doc_no || '').toLowerCase().includes(term) ||
-          String(r.vendor_name || '').toLowerCase().includes(term) ||
-          String(r.check_no || '').toLowerCase().includes(term)
-        )
-      );
-      const selectedListRowsFallback = listRowsFallback.filter((r) => selectedFullPageInvoices.has(getNoteKey(r)));
-      const listRowsForSumFallback = selectedListRowsFallback.length > 0 ? selectedListRowsFallback : listRowsFallback;
+    if (!finalAmount.trim() && !vatRaw.trim()) { // MARKER_VATWATCHLISTOPS_ADDTAX_FALLBACK_USE_SELECTED_SOURCE_V1 -- ว่างทั้งคู่ -> ดึงจากยอดรวมของ List (มี Selection ใช้ fullPagePopvatRows ตรงๆ Sync กับที่แสดงผลจริง)
+      let listRowsForSumFallback;
+      if (selectedNoteRows.size > 0) {
+        listRowsForSumFallback = fullPagePopvatRows;
+      } else {
+        const qFallback = detailSearch.trim().toLowerCase();
+        const qTermsFallback = qFallback.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+        const listRowsFallback = qTermsFallback.length === 0 ? [] : detailRows.filter((r) =>
+          qTermsFallback.some((term) =>
+            String(r.invoice_ref || '').toLowerCase().includes(term) ||
+            String(r.receive_doc_no || '').toLowerCase().includes(term) ||
+            String(r.vendor_name || '').toLowerCase().includes(term) ||
+            String(r.check_no || '').toLowerCase().includes(term)
+          )
+        );
+        const selectedListRowsFallback = listRowsFallback.filter((r) => selectedFullPageInvoices.has(getNoteKey(r)));
+        listRowsForSumFallback = selectedListRowsFallback.length > 0 ? selectedListRowsFallback : listRowsFallback;
+      }
       const listSumAmountFallback = listRowsForSumFallback.reduce((sum, r) => sum + (Number(r.exp_amount) || 0), 0);
       const listSumVatFallback = listRowsForSumFallback.reduce((sum, r) => sum + (Number(r.exp_vat) || 0), 0);
       // MARKER_VATWATCHLISTOPS_ADDTAX_FALLBACK_SUBTRACT_ADDED_V1 -- หักผลรวมของ Tax Invoice List ที่ Add ไปแล้วออกก่อน (Logic เดียวกับ Card "ผลรวมของ Tax Invoice List" ที่แสดงผลอยู่แล้ว) เหลือเท่าไหร่ค่อยเอามาใส่ ไม่ใช่ยอดเต็มของ List
@@ -4030,6 +5320,25 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
     setAddTaxInvoiceVat(''); // MARKER_VATWATCHLISTOPS_ADDTAX_RESET_AMOUNT_VAT_V1
   };
   const handleRemoveTaxFromList = (id) => setAddTaxInvoiceList((prev) => prev.filter((r) => r.id !== id));
+  const [editingTaxRowId, setEditingTaxRowId] = React.useState(null); // MARKER_VATWATCHLISTOPS_ADDTAX_LIST_INLINE_EDIT_V1 -- ID ของแถวที่กำลังแก้ไขอยู่ใน Tax Invoice List (null = ไม่มีแถวไหนกำลังแก้)
+  const [editingTaxRowDraft, setEditingTaxRowDraft] = React.useState(null); // MARKER_VATWATCHLISTOPS_ADDTAX_LIST_INLINE_EDIT_V1 -- ค่าที่กำลังพิมพ์แก้ไข (ยังไม่บันทึกจนกว่าจะกด Update)
+  const startEditTaxRow = (row) => { // MARKER_VATWATCHLISTOPS_ADDTAX_LIST_INLINE_EDIT_V1 -- คลิกที่ Cell ไหนก็ได้ในแถว เริ่มแก้ไขทั้งแถวพร้อมกัน
+    setEditingTaxRowId(row.id);
+    setEditingTaxRowDraft({ taxInvoiceNo: row.taxInvoiceNo || '', taxInvoiceDate: row.taxInvoiceDate || '', grn: row.grn || '', amount: String(row.amount ?? ''), vat: String(row.vat ?? '') });
+  };
+  const cancelEditTaxRow = () => { setEditingTaxRowId(null); setEditingTaxRowDraft(null); }; // MARKER_VATWATCHLISTOPS_ADDTAX_LIST_INLINE_EDIT_V1
+  const commitEditTaxRow = () => { // MARKER_VATWATCHLISTOPS_ADDTAX_LIST_INLINE_EDIT_V1 -- กด Update -- บันทึกค่าที่แก้กลับเข้า addTaxInvoiceList แล้วกลับเป็นข้อความปกติ
+    setAddTaxInvoiceList((prev) => prev.map((r) => (r.id !== editingTaxRowId ? r : {
+      ...r,
+      taxInvoiceNo: editingTaxRowDraft.taxInvoiceNo,
+      taxInvoiceDate: editingTaxRowDraft.taxInvoiceDate,
+      grn: editingTaxRowDraft.grn,
+      amount: Number(String(editingTaxRowDraft.amount).replace(/,/g, '')) || 0,
+      vat: Number(String(editingTaxRowDraft.vat).replace(/,/g, '')) || 0,
+    })));
+    setEditingTaxRowId(null);
+    setEditingTaxRowDraft(null);
+  };
   const handleBulkDeleteTaxInvoice = async () => { // MARKER_VATWATCHLISTOPS_ADDTAX_BULK_DELETE_V1 MARKER_VATWATCHLISTOPS_DELETE_TAX_CONFIRM_ALL_V1 -- ไม่ติ๊กเลย = ลบทั้งหมด, ติ๊กไว้ = ลบเฉพาะที่เลือก, มี Popup ยืนยันก่อนเสมอ
     const deleteAll = selectedTaxInvoiceRows.size === 0;
     const targetIds = deleteAll ? new Set(addTaxInvoiceList.map((r) => r.id)) : selectedTaxInvoiceRows;
@@ -4044,8 +5353,20 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
     setAddTaxInvoiceList((prev) => prev.filter((r) => !targetIds.has(r.id)));
     setSelectedTaxInvoiceRows(new Set());
   };
-  const toggleSelectFullPageInvoice = (row) => {
+  const toggleSelectFullPageInvoice = async (row) => { // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECT_CROSSCHECK_SUPPLIER_CODE_V1 -- เพิ่ม Cross-Check Supplier Code
     const key = getNoteKey(row);
+    const isCurrentlySelectedFPInv = selectedFullPageInvoices.has(key);
+    if (!isCurrentlySelectedFPInv && row.supplier_code) {
+      const existingSuppliersFPInv = new Set(
+        Array.from(selectedFullPageInvoices)
+          .map((k) => fullPagePopvatRows.find((r) => getNoteKey(r) === k)?.supplier_code)
+          .filter(Boolean)
+      );
+      if (existingSuppliersFPInv.size > 0 && !existingSuppliersFPInv.has(row.supplier_code)) { // MARKER_VATWATCHLISTOPS_CROSSCHECK_NO_CONFIRM_AUTO_UNSELECT_V1 -- Auto Unselect ทันที ไม่ต้องถาม
+        setSelectedFullPageInvoices(new Set([key]));
+        return;
+      }
+    }
     setSelectedFullPageInvoices((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
@@ -4263,11 +5584,15 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
         }
         debugStep = `DELETE vat_upload_popvatdraft (draft_id=${did})`;
         await apiFetch(`/vat_upload_popvatdraft?eq_draft_id=${encodeURIComponent(did)}&hard=true`, { method: 'DELETE' });
-        debugStep = `DELETE vat_simpleinputdraft (draft_id=${did})`;
-        await apiFetch(`/vat_simpleinputdraft?eq_draft_id=${encodeURIComponent(did)}&hard=true`, { method: 'DELETE' }).catch(() => {});
-        debugStep = `DELETE vat_adi_transferdraft (draft_id=${did})`;
-        await apiFetch(`/vat_adi_transferdraft?eq_draft_id=${encodeURIComponent(did)}&hard=true`, { method: 'DELETE' }).catch(() => {});
+        debugStep = `DELETE vat_simpleinputdraft (draft_id=${did})`; // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1 -- เอา .catch(() => {}) ออก เดิมพังแล้วเงียบ ไม่มีใครรู้
+        await apiFetch(`/vat_simpleinputdraft?eq_draft_id=${encodeURIComponent(did)}&hard=true`, { method: 'DELETE' });
+        debugStep = `DELETE vat_adi_transferdraft (draft_id=${did})`; // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1 -- เอา .catch(() => {}) ออก เดิมพังแล้วเงียบ ไม่มีใครรู้
+        await apiFetch(`/vat_adi_transferdraft?eq_draft_id=${encodeURIComponent(did)}&hard=true`, { method: 'DELETE' });
       }
+      // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1 -- Protect: Reconcile vat_watchlist_report กลับ 'pending' ด้วย SQL ฝั่ง Backend (Join bu+invoice_ref ล้วนๆ ไม่พึ่ง branch)
+      // กันเคส Report ค้าง Draft แบบเงียบๆ ไม่ว่าจะเกิดจากอะไรก็ตาม (Branch mismatch/เน็ตสะดุด/Silent catch เดิม)
+      debugStep = `POST /vat_watchlist_report/sync_draft_status (bu=${bu?.bu})`;
+      await apiFetch('/vat_watchlist_report/sync_draft_status', { method: 'POST', body: JSON.stringify({ bu: bu?.bu }) });
       setDraftPopvatRows((prev) => prev.filter((r) => !uniqueDraftIds.includes(r.draft_id)));
       setDraftSimpleRows((prev) => prev.filter((r) => !uniqueDraftIds.includes(r.draft_id)));
       setDraftAdiRows((prev) => prev.filter((r) => !uniqueDraftIds.includes(r.draft_id))); // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_ADI_SELECT_RESTORE_V1
@@ -4304,6 +5629,16 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
   const SEARCH_IGNORED_WORDS = ['ยื่น', 'excel'];
   const [fullPagePopvatRows, setFullPagePopvatRows] = React.useState([]); // MARKER_VATWATCHLISTOPS_FULLPAGE_SEARCH_BACKEND_V1 MARKER_VATWATCHLISTOPS_FIX_FULLPAGEPOPVATROWS_TDZ_V1 -- ย้ายมาประกาศก่อน Effect ที่ใช้งาน กัน Temporal Dead Zone Error
   const [selectedNoteRows, setSelectedNoteRows] = React.useState(() => new Map()); // MARKER_VATWATCHLISTOPS_FIX_SELECTEDNOTEROWS_TDZ_V1 -- ย้ายมาประกาศก่อน Effect FULLPAGE_SEARCH_BACKEND ที่ใช้งาน กัน Temporal Dead Zone Error (Pattern เดียวกับ fullPagePopvatRows ด้านบน)
+  // MARKER_VATWATCHLISTOPS_REMOVE_ACTION_GUIDE_V1 -- ลบ dtShowActionGuide ออก (ผู้ใช้แจ้งว่า Action Guide Popup ไม่ช่วยอะไร เอาออก)
+  // MARKER_VAT_SELECTION_FILLSTART_V1 -- fill_start ผูกกับ "จังหวะที่มีการเลือก" แทน "ตอนเปิด Popup": มีเลือกครั้งแรก (0 -> มากกว่า 0) Stamp เวลาใหม่ / Unselect ทั้งหมด (กลับเป็น 0) Clear เวลาทิ้ง รอ Stamp ใหม่รอบถัดไป
+  const selectionFillStartedAtRef = React.useRef(null);
+  React.useEffect(() => {
+    if (selectedNoteRows.size > 0) {
+      if (!selectionFillStartedAtRef.current) selectionFillStartedAtRef.current = new Date();
+    } else {
+      selectionFillStartedAtRef.current = null;
+    }
+  }, [selectedNoteRows]);
   // MARKER_VATWATCHLISTOPS_ADDTAXINVOICE_BRANCH_LIST_LOOKUP_V1
   // ── Logic Lookup Brand Code (=Branch Code) ──────────────────────────────
   // ── ถ้า No. ว่าง -> ดูจาก Invoice List ที่ Search เจอตอนนี้ (Branch ไม่ซ้ำ ──
@@ -4312,16 +5647,21 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
   React.useEffect(() => {
     const noVal = String(addTaxInvoiceBranchNo || '').trim();
     if (!noVal) {
-      const q = detailSearch.trim().toLowerCase();
-      const qTerms = q.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-      const rows = qTerms.length === 0 ? [] : fullPagePopvatRows.filter((r) => // MARKER_VATWATCHLISTOPS_FIX_AUTODETECT_SOURCE_FULLPAGE_V1 -- ใช้ข้อมูลของ Full Page List จริง แทน Incomplete Detail (detailRows)
-        qTerms.some((term) =>
-          String(r.invoice_ref || '').toLowerCase().includes(term) ||
-          String(r.receive_doc_no || '').toLowerCase().includes(term) ||
-          String(r.vendor_name || '').toLowerCase().includes(term) ||
-          String(r.check_no || '').toLowerCase().includes(term)
-        )
-      );
+      let rows; // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECTION_PRIORITY_REMAINING_V1 -- มี Selection ใช้ fullPagePopvatRows ตรงๆ เสมอ
+      if (selectedNoteRows.size > 0) {
+        rows = fullPagePopvatRows;
+      } else {
+        const q = detailSearch.trim().toLowerCase();
+        const qTerms = q.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+        rows = qTerms.length === 0 ? [] : fullPagePopvatRows.filter((r) => // MARKER_VATWATCHLISTOPS_FIX_AUTODETECT_SOURCE_FULLPAGE_V1 -- ใช้ข้อมูลของ Full Page List จริง แทน Incomplete Detail (detailRows)
+          qTerms.some((term) =>
+            String(r.invoice_ref || '').toLowerCase().includes(term) ||
+            String(r.receive_doc_no || '').toLowerCase().includes(term) ||
+            String(r.vendor_name || '').toLowerCase().includes(term) ||
+            String(r.check_no || '').toLowerCase().includes(term)
+          )
+        );
+      }
       const distinctBranches = [...new Set(rows.map((r) => String(r.branch || '').trim()).filter(Boolean))];
       setAddTaxInvoiceBrandCode(distinctBranches.length > 0 ? distinctBranches[0] : ''); // MARKER_VATWATCHLISTOPS_BRANDCODE_MULTIBRANCH_MATCHING_V1 -- Auto Fill Branch แรกที่เจอเสมอ (เดิม Auto แค่ตอนเจอ 1 Branch เท่านั้น)
       setAddTaxInvoiceDistinctBranches(distinctBranches); // MARKER_VATWATCHLISTOPS_BRANDCODE_MULTIBRANCH_MATCHING_V1 -- เก็บไว้ใช้กับ Popup เลือก Branch
@@ -4352,14 +5692,26 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
   React.useEffect(() => { // MARKER_VATWATCHLISTOPS_FULLPAGE_SEARCH_BACKEND_V1 -- Search Full Page - Popvat จาก Backend อัตโนมัติตาม detailSearchDebounced
     if (!showFullPagePopvat) return;
     const q = detailSearchDebounced.trim();
+    // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECTION_PRIORITY_V1 -- มี Select ไว้ก่อน (selectedNoteRows) ให้ยึด Selection
+    // เป็นตัวขับหลักเสมอ ไม่เอาข้อความในช่อง Search มาปนเลย (กันปัญหา Search เก่าค้างไปทับ/บัง Selection ปัจจุบัน)
     if (!q && selectedNoteRows.size === 0) { setFullPagePopvatRows([]); return; } // MARKER_VATWATCHLISTOPS_FULLPAGE_SHOW_SELECTED_ONLY_V1 -- ไม่มี Search และไม่มี Select เลย ไม่ต้องโหลดอะไร
     setFullPagePopvatSearchLoading(true);
     const params = new URLSearchParams();
     if (bu?.bu) params.set('eq_bu', bu.bu);
-    params.set('eq_status', 'pending');
-    if (q) { // MARKER_VATWATCHLISTOPS_FULLPAGE_SHOW_SELECTED_ONLY_V1 -- ถ้ามี Select อยู่แล้วแต่ไม่ได้พิมพ์ Search ไว้ ให้ดึงมาก่อนกว้างๆ แล้วค่อยกรองเฉพาะที่ Select ทีหลัง
-      params.set('search', q);
-      params.set('search_cols', 'invoice_ref,receive_doc_no,vendor_name,check_no,branch');
+    if (selectedNoteRows.size > 0) { // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECT_USE_INVOICE_REF_V1 -- มี Selection: ดึงตาม invoice_ref ของแถวที่เลือกไว้ตรงๆ ไม่พึ่ง eq_status=pending (กันแถวหายถ้า Status ไม่ตรง)
+      const invoiceRefsFP = Array.from(new Set(Array.from(selectedNoteRows.values()).map((v) => v.invoice_ref).filter(Boolean)));
+      if (invoiceRefsFP.length > 0) params.set('in_invoice_ref', invoiceRefsFP.join(','));
+    } else {
+      params.set('eq_status', 'pending');
+      if (q) { // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECTION_PRIORITY_V1 -- ใช้ Search เป็นตัวขับได้ก็ต่อเมื่อไม่มี Selection เลย (โหมด Browse ล้วนๆ)
+        const qTermsFP = q.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+        if (qTermsFP.length > 1) {
+          params.set('in_check_no', qTermsFP.join(','));
+        } else {
+          params.set('search', q);
+          params.set('search_cols', 'invoice_ref,receive_doc_no,vendor_name,check_no,branch');
+        }
+      }
     }
     params.set('limit', '500');
     apiFetch(`/vat_watchlist_report?${params.toString()}`)
@@ -4455,12 +5807,13 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
     window.addEventListener('keydown', handleArrowKeys);
     return () => window.removeEventListener('keydown', handleArrowKeys);
   }, [typeDropdownOpen, typeDropdownFlatRows, focusedTypeIndex]);
+  // MARKER_VATWATCHLISTOPS_AGING_BUTTON_MATCH_HIGHLIGHT_V19 -- ให้สีปุ่ม Filter ตรงกับสี Highlight แถวในตาราง (VAT_AGING_TIER_COLORS ชุดเดียวกัน)
   const AGING_BUCKETS = [
-    { key: 'expired', label: 'Expired', bg: '#F1EFE8', color: '#444441' },
-    { key: '6-5', label: '6-5', bg: '#FAEEDA', color: '#854F0B' },
-    { key: '4-3', label: '4-3', bg: '#FEF9E4', color: '#8A6D06' },
-    { key: '2-1', label: '2-1', bg: '#EAF3DE', color: '#27500A' },
-    { key: '0', label: '0', bg: '#E6F1FB', color: '#0C447C' },
+    { key: 'expired', label: 'Expired', bg: VAT_AGING_TIER_COLORS.expired.bg, color: '#444441' },
+    { key: '6-5', label: '6-5', bg: VAT_AGING_TIER_COLORS.warn.bg, color: '#A13A36' },
+    { key: '4-3', label: '4-3', bg: VAT_AGING_TIER_COLORS.mid.bg, color: '#8A6D06' },
+    { key: '2-1', label: '2-1', bg: VAT_AGING_TIER_COLORS.fresh.bg, color: '#27500A' },
+    { key: '0', label: '0', bg: VAT_AGING_TIER_COLORS.zero.bg, color: '#0C447C' },
     { key: 'uncount', label: 'Uncount', bg: '#F0F0F0', color: '#777777' }, // MARKER_VATWATCHLISTOPS_AGING_UNCOUNT_BUTTON_V1
   ];
   const toggleAgingBucket = (key) => {
@@ -4571,6 +5924,8 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
   const [quickActionTaxInvoiceDate, setQuickActionTaxInvoiceDate] = React.useState('');
   const [quickActionTaxInvoiceNumber, setQuickActionTaxInvoiceNumber] = React.useState('');
   const [quickActionSaving, setQuickActionSaving] = React.useState(false);
+  const [quickActionConnLost, setQuickActionConnLost] = React.useState(false); // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1
+  const [quickActionReconnectSecondsLeft, setQuickActionReconnectSecondsLeft] = React.useState(30); // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1
   const [quickActionCancelReason, setQuickActionCancelReason] = React.useState('Cancel'); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 -- Cancel / Simple_NNN / Simple_YNY
   const openNoteModal = (row) => {
     const key = getNoteKey(row);
@@ -4588,8 +5943,16 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
 
   // MARKER_VATWATCHLISTOPS_GROUP_NOTE_SELECT_V1
   // ── Checkbox เลือกแถว (จำข้าม Page ได้ เพราะเก็บเป็น Map แยกจาก Row ที่แสดงผล) ──
-  const toggleSelectNoteRow = (row) => { // MARKER_VATWATCHLISTOPS_GROUP_NOTE_TABLE_SUMMARY_V1 -- เก็บ Field เพิ่มไว้โชว์สรุปในตาราง Group Note
+  const toggleSelectNoteRow = async (row) => { // MARKER_VATWATCHLISTOPS_SELECT_CROSSCHECK_SUPPLIER_CODE_V1 -- เพิ่ม Cross-Check Supplier Code ก่อนเลือกแถวใหม่
     const key = getNoteKey(row);
+    const isCurrentlySelectedFP = selectedNoteRows.has(key);
+    if (!isCurrentlySelectedFP && row.supplier_code) { // เลือกแถวใหม่ (ไม่ใช่ยกเลิกเลือก) -> Cross-Check Supplier Code กับที่เลือกไว้ก่อนหน้า
+      const existingSuppliersFP = new Set(Array.from(selectedNoteRows.values()).map((v) => v.supplier_code).filter(Boolean));
+      if (existingSuppliersFP.size > 0 && !existingSuppliersFP.has(row.supplier_code)) { // MARKER_VATWATCHLISTOPS_CROSSCHECK_NO_CONFIRM_AUTO_UNSELECT_V1 -- Auto Unselect ทันที ไม่ต้องถาม
+        setSelectedNoteRows(new Map([[key, { invoice_ref: row.invoice_ref, supplier_code: row.supplier_code, branch: row.branch, vendor_name: row.vendor_name, check_no: row.check_no, exp_amount: row.exp_amount, exp_vat: row.exp_vat, receive_doc_no: row.receive_doc_no, payment_date: row.payment_date }]]));
+        return;
+      }
+    }
     setSelectedNoteRows((prev) => {
       const next = new Map(prev);
       if (next.has(key)) next.delete(key);
@@ -4609,17 +5972,174 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
       return next;
     });
   };
-  const clearSelectedNoteRows = () => setSelectedNoteRows(new Map());
+  const clearSelectedNoteRows = () => { // MARKER_VATWATCHLISTOPS_CELLSELECT_CHECKBOX_SYNC_V2 -- ล้าง Checkbox พร้อม Cell-Selection ให้ Sync กัน (1 ใน 2 ทางที่ปลด Select ได้)
+    setSelectedNoteRows(new Map());
+    setDtSelectedCells(new Set());
+    dtSelectedRowKeysRef.current = new Set();
+    dtSelectionSupplierRef.current = null;
+    dtDragRestrictSupplierRef.current = null; // MARKER_VATWATCHLISTOPS_REVERT_CLEANUP_LEFTOVER_ARMEDREF_V1 -- ลบ dtSelectionArmedRef.current ที่ตกค้าง (Ref นี้ถูก Revert ออกไปแล้ว)
+  };
   // MARKER_VATWATCHLISTOPS_EXPORT_TEMPLATES_V1 -- Modal "Config - Columns Incomplete" เลือก Template ก่อน Export
   const [showExportConfigModal, setShowExportConfigModal] = React.useState(false);
   const [exportTemplates, setExportTemplates] = React.useState([]);
   const [selectedExportTemplateId, setSelectedExportTemplateId] = React.useState('__builtin__');
+  const [exportScope, setExportScope] = React.useState('bu'); // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1 -- 'bu' | 'all' -- All/BU Toggle เฉพาะ Template "Config - Report Check Return"
   const openExportConfigModal = () => {
     setSelectedExportTemplateId('__builtin__');
+    setExportScope('bu'); // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1
     setShowExportConfigModal(true);
     apiFetch('/vat_incomplete_export_templates').then((res) => setExportTemplates(Array.isArray(res) ? res : [])).catch(() => setExportTemplates([]));
   };
+  const handleExportCheckReturnReport = async () => { // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1 -- Export Template "Config - Report Check Return" (Fetch+Join แยกจาก detailRows เพราะต้อง Join vat_watchlist_report ข้าม Pagination/ข้าม BU ได้)
+    try {
+      const notesUrl = exportScope === 'all'
+        ? `/vat_watchlist_notes?eq_remark=${encodeURIComponent('Check Return')}`
+        : `/vat_watchlist_notes?eq_bu=${encodeURIComponent(bu?.bu || '')}&eq_remark=${encodeURIComponent('Check Return')}`;
+      const notesRaw = await apiFetch(notesUrl);
+      const notesList = Array.isArray(notesRaw) ? notesRaw : [];
+      if (notesList.length === 0) { alert('ไม่มี Note ที่ Remark = Check Return ให้ Export'); return; }
+      const buList = [...new Set(notesList.map((n) => n.bu).filter(Boolean))];
+      let reportRows = [];
+      if (buList.length > 0) {
+        const reportRaw = await apiFetch(`/vat_watchlist_report?in_bu=${buList.map((b) => encodeURIComponent(b)).join(',')}`);
+        reportRows = Array.isArray(reportRaw) ? reportRaw : [];
+      }
+      const reportMap = new Map();
+      reportRows.forEach((r) => { reportMap.set(`${r.bu}|||${r.invoice_ref}|||${r.supplier_code}`, r); });
+      // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_OLDREF_FALLBACK_V1 -- Note ที่ไม่เจอใน New Incomplete แล้ว (จ่ายจบไปแล้ว)
+      // -- ลอง Fallback ไปดึงยอดเงิน/ยอดภาษี/ชื่อผู้ค้า จาก "ตัวเก่า" (vat_watchlist_old_incomplete_ref) แทน
+      // -- ใช้ Endpoint เดียวกับที่หน้า Check-Return Matching เรียกอยู่แล้ว (lookup_by_checks) -- ถ้า Backend
+      // -- ยังไม่มี/ดึงไม่ได้ เงียบไว้ ไม่ทำให้ Export ทั้งหมดพัง (Pattern เดียวกับตอน Match)
+      const checkPairsSeen = new Set();
+      const checkPairs = [];
+      notesList.forEach((n) => {
+        if (!n.bu || !n.check_no) return;
+        const pairKey = `${n.bu}|||${n.check_no}`;
+        if (checkPairsSeen.has(pairKey)) return;
+        checkPairsSeen.add(pairKey);
+        checkPairs.push({ bu: n.bu, check_no: n.check_no });
+      });
+      let oldRefRows = [];
+      if (checkPairs.length > 0) {
+        try {
+          const oldRefResp = await apiFetch('/vat_watchlist_old_incomplete_ref/lookup_by_checks', { method: 'POST', body: JSON.stringify({ pairs: checkPairs }) });
+          oldRefRows = Array.isArray(oldRefResp?.rows) ? oldRefResp.rows : [];
+        } catch (e) { /* เงียบไว้ -- ถ้าดึง Old Ref ไม่ได้ ยัง Fallback เหลือแค่ยอดจาก New Incomplete ตามปกติ */ }
+      }
+      const oldRefMap = new Map();
+      oldRefRows.forEach((r) => { oldRefMap.set(`${r.bu}|||${r.invoice_ref}|||${r.supplier_code}`, r); });
+      // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_OLDREF_FALLBACK_V1 -- Fallback หาชื่อผู้ค้าจาก Supplier Code เดียวกัน
+      // -- (ไม่สน Invoice) เผื่อ Invoice นี้ไม่เจอ Join ตรงๆ เลยทั้ง New Incomplete และ Old Ref
+      const supplierNameMap = new Map();
+      [...reportRows, ...oldRefRows].forEach((r) => {
+        if (!r.vendor_name) return;
+        const key = `${r.bu}|||${r.supplier_code}`;
+        if (!supplierNameMap.has(key)) supplierNameMap.set(key, r.vendor_name);
+      });
+      const rows = notesList.map((n) => {
+        const joinKey = `${n.bu}|||${n.invoice_ref}|||${n.supplier_code}`;
+        const rpt = reportMap.get(joinKey); // ยังอยู่ใน New Incomplete จริง -- ตัวชี้วัดหลักว่า Matched (ยังค้างอยู่) หรือ Unmatch (จ่ายจบไปแล้ว)
+        const oldRpt = oldRefMap.get(joinKey); // ไม่อยู่ใน New Incomplete แล้ว -- ลอง Fallback ยอดจาก Old Ref แทน
+        const src = rpt || oldRpt;
+        const expAmount = (src && src.exp_amount != null && src.exp_amount !== '') ? Number(src.exp_amount) : null;
+        const expVat = (src && src.exp_vat != null && src.exp_vat !== '') ? Number(src.exp_vat) : null;
+        const vendorName = (src && src.vendor_name) ? src.vendor_name : (supplierNameMap.get(`${n.bu}|||${n.supplier_code}`) || null);
+        return {
+          bu: n.bu,
+          check_no: n.check_no,
+          supplier_display: `${n.supplier_code || ''}${vendorName ? ' — ' + vendorName : ''}`,
+          invoice_ref: n.invoice_ref,
+          description: n.note,
+          // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_OLDREF_FALLBACK_V1 -- ยึดตาม "ยังอยู่ใน New Incomplete จริงหรือไม่" เป็นหลัก
+          // แทนการเชื่อ Field status ของ Note เฉยๆ (กัน Note ที่ Status ผิดพลาดจาก Bug อื่น ทำให้ Report ผิดไปด้วย)
+          status_label: rpt ? 'Matched' : 'Unmatch',
+          exp_amount: expAmount,
+          exp_vat: expVat,
+          total_amount: (expAmount != null && expVat != null) ? (expAmount + expVat) : null,
+          match_remark: n.match_remark,
+          note_by: n.note_by,
+          note_at: n.note_at,
+        };
+      });
+      const cols = CHECK_RETURN_REPORT_COLS;
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('CheckReturn');
+      worksheet.columns = cols.map((c) => ({ header: c.label, key: c.key, width: 12 }));
+      rows.forEach((row) => {
+        const rowData = {};
+        cols.forEach((c) => {
+          const val = row[c.key];
+          if (CHECK_RETURN_REPORT_DATE_KEYS.has(c.key)) {
+            const d = val ? new Date(val) : null;
+            rowData[c.key] = (d && !isNaN(d.getTime())) ? d : '';
+          } else if (CHECK_RETURN_REPORT_NUMBER_KEYS.has(c.key)) {
+            const num = (val == null || val === '') ? null : Number(val);
+            rowData[c.key] = (num != null && !isNaN(num)) ? num : '';
+          } else {
+            rowData[c.key] = val == null ? '' : val;
+          }
+        });
+        const excelRow = worksheet.addRow(rowData);
+        // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_OLDREF_FALLBACK_V1 -- แยกสีพื้นหลังแถวตามสถานะ
+        const rowFillColor = row.status_label === 'Matched' ? 'FFE8F5E9' : (row.status_label === 'Unmatch' ? 'FFFDECEA' : null);
+        if (rowFillColor) {
+          excelRow.eachCell({ includeEmpty: true }, (cell) => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowFillColor } };
+          });
+        }
+      });
+      cols.forEach((c) => {
+        if (CHECK_RETURN_REPORT_DATE_KEYS.has(c.key)) worksheet.getColumn(c.key).numFmt = 'dd-mmm-yy hh:mm';
+        if (CHECK_RETURN_REPORT_NUMBER_KEYS.has(c.key)) worksheet.getColumn(c.key).numFmt = '#,##0.00';
+      });
+      worksheet.getRow(1).eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } };
+        cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+        cell.alignment = { vertical: 'middle' };
+      });
+      worksheet.columns.forEach((col) => {
+        let maxLen = col.header ? col.header.toString().length : 10;
+        col.eachCell({ includeEmpty: true }, (cell) => {
+          let displayStr = '';
+          if (cell.value instanceof Date) {
+            displayStr = formatVatIncompleteDate(cell.value);
+          } else if (typeof cell.value === 'number') {
+            displayStr = cell.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          } else if (cell.value) {
+            displayStr = cell.value.toString();
+          }
+          const len = displayStr.length;
+          if (len > maxLen) maxLen = len;
+        });
+        col.width = Math.min(maxLen + 2, 50);
+      });
+      worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const now = new Date();
+      const yyyymmdd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+      const hhmmss = `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`;
+      const scopeTag = exportScope === 'all' ? 'AllBU' : (bu?.bu || 'BU');
+      const filename = `CheckReturnReport_${scopeTag}_${yyyymmdd}_${hhmmss}.xlsx`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setShowExportConfigModal(false);
+    } catch (err) {
+      console.error('handleExportCheckReturnReport error:', err);
+      alert('Export Check Return Report ไม่สำเร็จ กรุณาลองใหม่');
+    }
+  };
   const handleExportExcelFromConfig = async () => { // MARKER_VATWATCHLISTOPS_EXPORT_EXCELJS_STYLING_V1 -- เปลี่ยนเป็น exceljs รองรับสีหัว/Autofit/Freeze
+    if (selectedExportTemplateId === '__check_return_report__') { // MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1
+      await handleExportCheckReturnReport();
+      return;
+    }
     let targets = selectedNoteRows.size > 0 ? detailRows.filter((r) => selectedNoteRows.has(getNoteKey(r))) : detailRows; // MARKER_VATWATCHLISTOPS_EXPORT_FALLBACK_ALL_FILTERED_V1 -- ไม่ติ๊กเลย -> Export ทั้งหมดที่ Filter/Search ได้แทน
     if (selectedExportTemplateId === '__expire_check_payment__') { // MARKER_VATWATCHLISTOPS_EXPIRE_CHECK_PAYMENT_TEMPLATE_V1 -- Filter เฉพาะ Aging=Expired + เลขที่เช็คมี -CHECK
       targets = targets.filter((r) => r.aging_label === 'Expired' && String(r.check_no || '').includes('-CHECK'));
@@ -4908,6 +6428,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
     setQuickActionVendor({ vendor_name: targets[0]?.vendor_name || '', supplier_code: targets[0]?.supplier_code || '', tax_id: '', branch_no: '' });
     setQuickActionReceiveDate('');
     setShowQuickAction(true);
+    quickActionFillStartedAtRef.current = selectionFillStartedAtRef.current || new Date(); // MARKER_VAT_SELECTION_FILLSTART_V1 -- มี Selection อยู่ก่อนเปิดแล้ว ใช้เวลาที่เริ่มเลือกจริง / ไม่มี (คลิกขวาแถวเดียวตรงๆ) ใช้เวลาที่เปิด Quick Action เหมือนเดิม
     try {
       const [vendorCategories, periodStatus] = await Promise.all([
         apiFetch('/vendor_category').catch(() => []),
@@ -4953,64 +6474,84 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
       return;
     }
     setQuickActionSaving(true);
+    setQuickActionConnLost(false); // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1
+    const draftId = generateQuickActionDraftId(); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_SYNC_V1 -- Draft ID เดียวกันทุกแถวใน Save รอบนี้
+    const grtCombined = quickActionGrtRunning ? `${quickActionGrtPrefix}${String(quickActionGrtRunning).padStart(quickActionGrtDigitCount, '0')}` : null;
+    const remainingRowsQA = [...quickActionRows]; // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- Queue ที่ยังไม่สำเร็จ (แถวที่สำเร็จแล้วจะถูกเอาออกทันที)
+    const savedInvoiceRefsQA = []; // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- เก็บไว้ Broadcast/Report ตอนจบ
     try {
-      const draftId = generateQuickActionDraftId(); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_SYNC_V1 -- Draft ID เดียวกันทุกแถวใน Save รอบนี้
-      const grtCombined = quickActionGrtRunning ? `${quickActionGrtPrefix}${String(quickActionGrtRunning).padStart(quickActionGrtDigitCount, '0')}` : null;
-      for (const row of quickActionRows) {
-        await apiFetch('/vat_upload_popvatdraft', {
-          method: 'POST',
-          body: JSON.stringify({
-            bu: bu?.bu,
-            book: bu?.BOOK || null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
-            period: formatQuickActionPeriodMMYYYY(quickActionPeriodMonth), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
-            draft_id: draftId,
-            branch: row.branch || null,
-            grt_number: row.receive_doc_no || null, // MARKER_VATWATCHLISTOPS_QUICKACTION_FIX_GRT_TAXINVOICE_FIELDS_V1 -- ดึงจากเลขที่ GRT เดิมของแต่ละ Invoice (เหมือน Cancel Flow) ไม่ใช่ grtCombined ที่ Auto-gen ใหม่
-            original_invoice_number: row.invoice_ref || null,
-            receipt_date: formatQuickActionReceiveDateText(quickActionReceiveDate),
-            tax_invoice_number: grtCombined, // MARKER_VATWATCHLISTOPS_QUICKACTION_TAXINVOICE_REVERT_GRTCOMBINED_V1 -- ยืนยันแล้วว่าต้องเป็น grtCombined (prefix+running) เหมือนเดิม ไม่ใช่ช่องพิมพ์เอง
-            tax_invoice_date: formatQuickActionReceiveDateText(quickActionTaxInvoiceDate), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_TAX_INVOICE_DATE_FORMAT_V1 -- Format DD-MMM-YY เหมือน Receipt Date
-            vendor_tax_invoice_number: quickActionTaxInvoiceNumber, // MARKER_VATWATCHLISTOPS_VENDOR_TAXINVOICE_USE_TYPED_V1 -- เปลี่ยนจาก grtCombined เป็นค่าที่พิมพ์จริงในช่อง Tax Invoice Number
-            supplier_tax_id: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1 -- เข้าระบบปลายทางไม่ได้ ไม่ต้องใส่แล้ว
-            supplier_branch_number: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1
-            supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
-            check_no: row.check_no || null,
-            product_value: row.exp_amount || null,
-            vat_amount: row.exp_vat || null,
-            status: 'draft',
-            action: 'Popvat', // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1
-            menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- Quick Action Popvat Normal
-          }),
-        });
-        const reportRows = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
-        const matchedReport = (Array.isArray(reportRows) ? reportRows : []).filter((r) => r.status === 'pending');
-        for (const r of matchedReport) {
-          await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+      while (remainingRowsQA.length > 0) {
+        const row = remainingRowsQA[0];
+        try {
+          await apiFetch('/vat_upload_popvatdraft', {
+            method: 'POST',
+            body: JSON.stringify({
+              bu: bu?.bu,
+              book: bu?.BOOK || null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
+              period: formatQuickActionPeriodMMYYYY(quickActionPeriodMonth), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
+              draft_id: draftId,
+              branch: row.branch || null,
+              grt_number: row.receive_doc_no || null, // MARKER_VATWATCHLISTOPS_QUICKACTION_FIX_GRT_TAXINVOICE_FIELDS_V1 -- ดึงจากเลขที่ GRT เดิมของแต่ละ Invoice (เหมือน Cancel Flow) ไม่ใช่ grtCombined ที่ Auto-gen ใหม่
+              original_invoice_number: row.invoice_ref || null,
+              receipt_date: formatQuickActionReceiveDateText(quickActionReceiveDate),
+              tax_invoice_number: grtCombined, // MARKER_VATWATCHLISTOPS_QUICKACTION_TAXINVOICE_REVERT_GRTCOMBINED_V1 -- ยืนยันแล้วว่าต้องเป็น grtCombined (prefix+running) เหมือนเดิม ไม่ใช่ช่องพิมพ์เอง
+              tax_invoice_date: formatQuickActionReceiveDateText(quickActionTaxInvoiceDate), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_TAX_INVOICE_DATE_FORMAT_V1 -- Format DD-MMM-YY เหมือน Receipt Date
+              vendor_tax_invoice_number: quickActionTaxInvoiceNumber, // MARKER_VATWATCHLISTOPS_VENDOR_TAXINVOICE_USE_TYPED_V1 -- เปลี่ยนจาก grtCombined เป็นค่าที่พิมพ์จริงในช่อง Tax Invoice Number
+              supplier_tax_id: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1 -- เข้าระบบปลายทางไม่ได้ ไม่ต้องใส่แล้ว
+              supplier_branch_number: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1
+              supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
+              check_no: row.check_no || null,
+              product_value: row.exp_amount || null,
+              vat_amount: row.exp_vat || null,
+              username, fill_started_at: (quickActionFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
+              status: 'draft',
+              action: 'Popvat', // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1
+              menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- Quick Action Popvat Normal
+            }),
+          });
+          const reportRows = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
+          const matchedReport = (Array.isArray(reportRows) ? reportRows : []).filter((r) => r.status === 'pending');
+          for (const r of matchedReport) {
+            await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+          }
+          // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- แถวนี้สำเร็จแล้ว: ลบออกจากจอทันที (Progressive) ไม่รอครบก่อน
+          const doneKeyRow = getNoteKey(row);
+          setDetailRows((prev) => prev.filter((r) => getNoteKey(r) !== doneKeyRow));
+          setSelectedNoteRows((prev) => { const next = new Map(prev); next.delete(doneKeyRow); return next; });
+          broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: [row.invoice_ref] });
+          savedInvoiceRefsQA.push(row.invoice_ref);
+          remainingRowsQA.shift(); // ออกจาก Queue ที่ยังไม่เสร็จ
+        } catch (rowErr) {
+          // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- เช็คว่าเน็ต/VPN หลุดจริงไหม (Ping /version แยกจาก Error อื่น)
+          const stillOnline = await pingIsOnline();
+          if (stillOnline) throw rowErr; // ไม่ใช่ปัญหาเน็ต (เช่น Validation) -- โยน Error จริงออกเลย ไม่ Retry
+          setQuickActionConnLost(true);
+          const reconnected = await waitForReconnect(30000, 3000, setQuickActionReconnectSecondsLeft);
+          setQuickActionConnLost(false);
+          if (!reconnected) {
+            throw new Error(`ขาดการเชื่อมต่อเกิน 30 วินาที (เหลือ ${remainingRowsQA.length} แถวที่ยังไม่สำเร็จ กรุณาตรวจสอบเน็ต/VPN แล้วลองใหม่)`);
+          }
+          // เชื่อมกลับมาได้ -- Loop จะวนมาทำแถวเดิม (remainingRowsQA[0]) ซ้ำอัตโนมัติ ไม่ shift ออก จึงไม่ข้าม ไม่ซ้ำ
         }
       }
-      const doneKeys = new Set(quickActionRows.map((r) => getNoteKey(r)));
-      setDetailRows((prev) => prev.filter((r) => !doneKeys.has(getNoteKey(r))));
-      setSelectedNoteRows((prev) => {
-        const next = new Map(prev);
-        doneKeys.forEach((k) => next.delete(k));
-        return next;
-      });
       // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_AUTOGEN_V1 -- กันเลขซ้ำรอบหน้า: Update Running ล่าสุดกลับเข้า company_list
       const usedRunning = parseInt(quickActionGrtRunning, 10);
       if (usedRunning > 0 && bu?.id) {
         await apiFetch(`/company_list/${bu.id}`, { method: 'PUT', body: JSON.stringify({ vat_grn: usedRunning }) }).catch((err) => console.error('Update vat_grn error:', err));
         setQuickActionVatGrnOverride(usedRunning); // MARKER_VATWATCHLISTOPS_VAT_GRN_REALTIME_V2 -- Session ตัวเอง Sync ทันที
         broadcastWs('vat_grn_updated', { bu: bu?.bu, vat_grn: usedRunning }); // MARKER_VATWATCHLISTOPS_VAT_GRN_REALTIME_V2 -- แจ้ง Session อื่นให้ Sync ด้วย
+        broadcastWs('company_list_updated', { bu: bu?.bu }); // MARKER_VATWATCHLISTOPS_VAT_GRN_STALE_LIST_FIX_V1 -- แจ้ง List/Lobby (Monitor Table, Recent Uploads, Upload File Lobby ฯลฯ) ให้ Reload company_list สดใหม่ กัน bu prop ค้างเลข vat_grn เก่าหลัง Remount
       }
       setDetailSearch(''); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CLEAR_SEARCH_V1
       setDetailSearchDebounced('');
-      broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: quickActionRows.map((r) => r.invoice_ref) });
+      reportVatTransactionToDashboard(draftId, savedInvoiceRefsQA.length, quickActionFillStartedAtRef.current); // MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1
       setShowQuickAction(false);
     } catch (err) {
       console.error('handleAddQuickActionData error:', err);
-      alert('บันทึก Quick Action ไม่สำเร็จ กรุณาลองใหม่');
+      alert('บันทึก Quick Action ไม่สำเร็จ: ' + (err?.message || 'กรุณาลองใหม่'));
     } finally {
       setQuickActionSaving(false);
+      setQuickActionConnLost(false);
     }
   };
   // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_FALLBACK_V1
@@ -5018,62 +6559,80 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
   const handleCancelQuickActionData = async () => {
     if (quickActionRows.length === 0) { setShowQuickAction(false); return; }
     setQuickActionSaving(true);
+    setQuickActionConnLost(false); // MARKER_VATCONTROLLER_QUICKACTION_CANCEL_PROGRESSIVE_RESUME_V1
+    const now = new Date();
+    const sentinelReceiveDate = `1989-${String(now.getMonth() + 1).padStart(2, '0')}-01`; // Sentinel วันที่ 01-เดือนปัจจุบันจริง-1989
+    const draftId = generateQuickActionDraftId(); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_SYNC_V1
+    const remainingRowsQC = [...quickActionRows]; // MARKER_VATCONTROLLER_QUICKACTION_CANCEL_PROGRESSIVE_RESUME_V1 -- Queue ที่ยังไม่สำเร็จ
+    const savedInvoiceRefsQC = []; // MARKER_VATCONTROLLER_QUICKACTION_CANCEL_PROGRESSIVE_RESUME_V1
     try {
-      const now = new Date();
-      const sentinelReceiveDate = `1989-${String(now.getMonth() + 1).padStart(2, '0')}-01`; // Sentinel วันที่ 01-เดือนปัจจุบันจริง-1989
-      const draftId = generateQuickActionDraftId(); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_SYNC_V1
-      for (const row of quickActionRows) {
-        const fallbackTaxInvoiceDate = quickActionTaxInvoiceDate || row.payment_date || null;
+      while (remainingRowsQC.length > 0) {
+        const row = remainingRowsQC[0];
+        const fallbackTaxInvoiceDate = quickActionTaxInvoiceDate || row.payment_date || sentinelReceiveDate; // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_TAXDATE_SENTINEL_FALLBACK_V1 -- เดิมไม่มี Payment Date จะปล่อยเป็น null ทำให้ Tax Invoice Date ใน Draft Monitor โล่งว่าง -- Fallback ไปใช้ Sentinel Date เดียวกับ Receipt Date (ปี 1989) แทน null
         const cancelGrtFromIncomplete = row.receive_doc_no || null; // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_GRT_INCOMPLETE_V1 -- เฉพาะ Cancel: ดึงจากเลขที่ GRT เดิมของแต่ละ Invoice
-        await apiFetch('/vat_upload_popvatdraft', {
-          method: 'POST',
-          body: JSON.stringify({
-            bu: bu?.bu,
-            book: bu?.BOOK || null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
-            period: formatQuickActionPeriodMMYYYY(quickActionPeriodMonth), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
-            draft_id: draftId,
-            branch: row.branch || null,
-            grt_number: cancelGrtFromIncomplete,
-            original_invoice_number: row.invoice_ref || null,
-            receipt_date: formatQuickActionReceiveDateText(sentinelReceiveDate),
-            tax_invoice_number: cancelGrtFromIncomplete,
-            tax_invoice_date: formatQuickActionReceiveDateText(fallbackTaxInvoiceDate), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_TAX_INVOICE_DATE_FORMAT_V1 -- Format DD-MMM-YY เหมือน Receipt Date
-            vendor_tax_invoice_number: cancelGrtFromIncomplete,
-            supplier_tax_id: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1 -- เข้าระบบปลายทางไม่ได้ ไม่ต้องใส่แล้ว
-            supplier_branch_number: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1
-            supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
-            check_no: row.check_no || null,
-            product_value: row.exp_amount || null,
-            vat_amount: row.exp_vat || null,
-            status: 'draft',
-            action: quickActionCancelReason || 'Cancel', // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1
-            menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- Quick Action Popvat Cancel
-          }),
-        });
-        const reportRows = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
-        const matchedReport = (Array.isArray(reportRows) ? reportRows : []).filter((r) => r.status === 'pending');
-        for (const r of matchedReport) {
-          await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+        try {
+          await apiFetch('/vat_upload_popvatdraft', {
+            method: 'POST',
+            body: JSON.stringify({
+              bu: bu?.bu,
+              book: bu?.BOOK || null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
+              period: formatQuickActionPeriodMMYYYY(quickActionPeriodMonth), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
+              draft_id: draftId,
+              branch: row.branch || null,
+              grt_number: cancelGrtFromIncomplete,
+              original_invoice_number: row.invoice_ref || null,
+              receipt_date: formatQuickActionReceiveDateText(sentinelReceiveDate),
+              tax_invoice_number: cancelGrtFromIncomplete,
+              tax_invoice_date: formatQuickActionReceiveDateText(fallbackTaxInvoiceDate), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_TAX_INVOICE_DATE_FORMAT_V1 -- Format DD-MMM-YY เหมือน Receipt Date
+              vendor_tax_invoice_number: cancelGrtFromIncomplete,
+              supplier_tax_id: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1 -- เข้าระบบปลายทางไม่ได้ ไม่ต้องใส่แล้ว
+              supplier_branch_number: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1
+              supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
+              check_no: row.check_no || null,
+              product_value: row.exp_amount || null,
+              vat_amount: row.exp_vat || null,
+              username, fill_started_at: (quickActionFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
+              status: 'draft',
+              action: quickActionCancelReason || 'Cancel', // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1
+              menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- Quick Action Popvat Cancel
+            }),
+          });
+          const reportRows = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
+          const matchedReport = (Array.isArray(reportRows) ? reportRows : []).filter((r) => r.status === 'pending');
+          for (const r of matchedReport) {
+            await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+          }
+          // MARKER_VATCONTROLLER_QUICKACTION_CANCEL_PROGRESSIVE_RESUME_V1 -- แถวนี้สำเร็จแล้ว: ลบออกจากจอทันที (Progressive)
+          const doneKeyRow = getNoteKey(row);
+          setDetailRows((prev) => prev.filter((r) => getNoteKey(r) !== doneKeyRow));
+          setSelectedNoteRows((prev) => { const next = new Map(prev); next.delete(doneKeyRow); return next; });
+          broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: [row.invoice_ref] });
+          savedInvoiceRefsQC.push(row.invoice_ref);
+          remainingRowsQC.shift();
+        } catch (rowErr) {
+          // MARKER_VATCONTROLLER_QUICKACTION_CANCEL_PROGRESSIVE_RESUME_V1 -- เช็คว่าเน็ต/VPN หลุดจริงไหม (Ping /version แยกจาก Error อื่น)
+          const stillOnline = await pingIsOnline();
+          if (stillOnline) throw rowErr;
+          setQuickActionConnLost(true);
+          const reconnected = await waitForReconnect(30000, 3000, setQuickActionReconnectSecondsLeft);
+          setQuickActionConnLost(false);
+          if (!reconnected) {
+            throw new Error(`ขาดการเชื่อมต่อเกิน 30 วินาที (เหลือ ${remainingRowsQC.length} แถวที่ยังไม่สำเร็จ กรุณาตรวจสอบเน็ต/VPN แล้วลองใหม่)`);
+          }
         }
       }
-      const doneKeys = new Set(quickActionRows.map((r) => getNoteKey(r)));
-      setDetailRows((prev) => prev.filter((r) => !doneKeys.has(getNoteKey(r))));
-      setSelectedNoteRows((prev) => {
-        const next = new Map(prev);
-        doneKeys.forEach((k) => next.delete(k));
-        return next;
-      });
       // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_GRT_INCOMPLETE_V1 -- Cancel ไม่ได้ใช้เลข Running จาก Auto-gen แล้ว จึงไม่ Update company_list.vat_grn
       setDetailSearch(''); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CLEAR_SEARCH_V1
       setDetailSearchDebounced('');
-      broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: quickActionRows.map((r) => r.invoice_ref) });
+      reportVatTransactionToDashboard(draftId, savedInvoiceRefsQC.length, quickActionFillStartedAtRef.current); // MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1
       setQuickActionCancelReason('Cancel'); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 -- Reset กลับ Default หลัง Save สำเร็จ
       setShowQuickAction(false);
     } catch (err) {
       console.error('handleCancelQuickActionData error:', err);
-      alert('บันทึก Quick Action ไม่สำเร็จ กรุณาลองใหม่');
+      alert('บันทึก Quick Action ไม่สำเร็จ: ' + (err?.message || 'กรุณาลองใหม่'));
     } finally {
       setQuickActionSaving(false);
+      setQuickActionConnLost(false);
     }
   };
   React.useEffect(() => { // MARKER_VATWATCHLISTOPS_QUICK_ACTION_V1 -- รับ Broadcast จาก Session อื่น ตัดแถวออกให้ Sync กัน
@@ -5306,10 +6865,18 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
 
   React.useEffect(() => { setDetailPage(1); }, [detailSearchDebounced, columnFiltersKey, selectedSubtypeKeys, selectedAgingBuckets]); // MARKER_VATWATCHLISTOPS_TYPE_SUBTYPE_TREE_V1
 
+  // MARKER_VATWATCHLISTOPS_DETAIL_SELECT_COLUMNS_PERF_V20
+  // ── Field ที่ต้องดึงมาเสมอ ไม่ว่า User จะซ่อน Column นั้นจากตารางหรือไม่ ──
+  // ── (Quick Action / Draft ใช้ค่าพวกนี้จาก Row ตรงๆ แม้ Column จะถูกซ่อนอยู่) ──
+  const VAT_DETAIL_ALWAYS_SELECT_FIELDS = ['id', 'invoice_ref', 'supplier_code', 'branch', 'vendor_name', 'check_no', 'exp_amount', 'exp_vat', 'receive_doc_no', 'payment_date', 'aging_months', 'aging_label', 'bu'];
   const buildDetailParams = React.useCallback(() => {
     const params = new URLSearchParams();
     if (bu?.bu) params.set('eq_bu', bu.bu);
     params.set('eq_status', 'pending'); // MARKER_VATWATCHLISTOPS_DETAIL_FILTER_PENDING_ONLY_V1 -- ตัด draft/done ออกจาก Ops เสมอ (Query+Count+Aging Bucket ใช้ Function นี้ร่วมกัน กรองตรงกันหมด)
+    // MARKER_VATWATCHLISTOPS_DETAIL_SELECT_COLUMNS_PERF_V20 -- จำกัด Column ที่ดึงมา (เดิม SELECT * ทุกครั้ง)
+    // ── Union ของ Column ที่มองเห็น + Field ที่ต้องใช้เสมอ (กัน Quick Action พังตอนซ่อน Column) ──
+    // ── โหมด count/aging_bucket_counts ของ Backend ไม่สนใจ select อยู่แล้ว ใส่ไปด้วยไม่มีผลกระทบ ──
+    params.set('select', Array.from(new Set([...visibleColumns, ...VAT_DETAIL_ALWAYS_SELECT_FIELDS])).join(','));
     if (detailSearchDebounced.trim()) {
       params.set('search', detailSearchDebounced.trim());
       params.set('search_cols', 'invoice_ref,supplier_code,vendor_name,check_no,receive_doc_no,doc_no,branch'); // MARKER_VATWATCHLISTOPS_SEARCH_COLS_TRIM_PERFORMANCE_V1 -- ลดจาก 18 เหลือ 7 Column แก้ Search ช้า (ตัด Category/Free-text ที่ไม่ค่อยมีใคร Search)
@@ -5335,7 +6902,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
     }
     if (selectedAgingBuckets.size > 0) params.set('aging_buckets', Array.from(selectedAgingBuckets).join(','));
     return params;
-  }, [bu?.bu, detailSearchDebounced, columnFiltersKey, selectedSubtypeKeys, selectedAgingBuckets]);
+  }, [bu?.bu, detailSearchDebounced, columnFiltersKey, selectedSubtypeKeys, selectedAgingBuckets, visibleColumns]); // MARKER_VATWATCHLISTOPS_DETAIL_SELECT_COLUMNS_PERF_V20 -- เพิ่ม visibleColumns เข้า Deps เพราะตอนนี้ใช้ในการคำนวณ select แล้ว (เปิด/ปิด Column ต้อง Refetch ใหม่)
   // MARKER_VATWATCHLISTOPS_AGING_BUTTON_COUNTS_V1 — โหลด Count ต่อ Aging Bucket
   React.useEffect(() => {
     if (!bu?.bu) return;
@@ -5364,7 +6931,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
       setLoadingDetail(true);
       try {
         const dataParams = buildDetailParams();
-        dataParams.set('order', 'aging_months.desc.nullslast');
+        dataParams.set('order', 'aging_months.desc.nullslast,check_no.asc.nullslast'); // MARKER_VATWATCHLISTOPS_SORT_CHECKNO_SECONDARY_V1 -- Secondary Sort ตามเลขที่เช็ค ให้แถวที่เช็คเดียวกันเรียงติดกัน ภายในกลุ่ม Aging เดิม
         dataParams.set('limit', String(detailPageSize));
         dataParams.set('offset', String((detailPage - 1) * detailPageSize));
         const countParams = buildDetailParams();
@@ -5495,10 +7062,25 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
     setColumnDistinctLoading((prev) => ({ ...prev, [key]: false }));
   }, [bu?.bu, columnDistinctCache]);
 
-  const openFilterDropdown = (key, isOpenNow) => {
+  const openFilterDropdown = (key, isOpenNow, evt) => { // MARKER_VATWATCHLISTOPS_FILTERDROPDOWN_EDGE_ALIGN_V1 -- เพิ่ม evt เพื่อคำนวณด้านที่ Dropdown ควรชิด ป้องกันล้นขอบขวาไปดันความกว้าง Scroll ของตาราง
     setOpenFilterKey(isOpenNow ? null : key);
     setFilterSearchText('');
-    if (!isOpenNow) fetchColumnDistinct(key);
+    if (!isOpenNow) {
+      fetchColumnDistinct(key);
+      let align = 'left';
+      try {
+        const th = evt && evt.currentTarget;
+        if (th) {
+          const thRect = th.getBoundingClientRect();
+          const tableEl = th.closest('table');
+          const scrollParent = tableEl ? tableEl.parentElement : null;
+          const containerRight = scrollParent ? scrollParent.getBoundingClientRect().right : window.innerWidth;
+          const DROPDOWN_WIDTH = 200;
+          if (thRect.left + DROPDOWN_WIDTH > containerRight) align = 'right';
+        }
+      } catch (e) { /* เงียบไว้ ถ้าคำนวณไม่ได้ ใช้ left ตามเดิม */ }
+      setOpenFilterAlign(align);
+    }
   };
 
   const toggleFilterGroup = (key, values) => {
@@ -5583,7 +7165,147 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
     return () => document.removeEventListener('keydown', handleEscKey);
   }, [openFilterKey, typeDropdownOpen, onBack, showFullPagePopvat, selectedNoteRows, showDraftMonitor]); // MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_INVOICE_LIST_V1 -- MARKER_VATWATCHLISTOPS_ESC_SELECTED_PRIORITY_V1 -- MARKER_VATWATCHLISTOPS_ESC_DRAFT_MONITOR_PRIORITY_V1 เพิ่ม showDraftMonitor ใน Dependency
 
+  React.useEffect(() => { // MARKER_VATWATCHLISTOPS_COLFILTER_OUTSIDECLICK_V1 -- เดิม Filter Dropdown (openFilterKey) ปิดได้แค่กด Esc / คลิก th เดิมซ้ำ / กดปุ่ม "ปิด" เท่านั้น -- คลิกที่อื่นนอก Dropdown (เช่น พื้นที่ว่างใต้ตาราง) ไม่ปิดให้เลย
+    if (!openFilterKey) return;
+    const handleOutsideFP = (e) => {
+      // เว้น th ทุกอันไว้ (Logic Toggle เดิมของ th onClick จัดการเปิด/ปิด/สลับ Column เองอยู่แล้ว) กันชนกันจนปิดแล้วเปิดใหม่ทันทีในคลิกเดียว
+      if (e.target.closest && (e.target.closest('[data-vat-colfilter-dropdown]') || e.target.closest('th'))) return;
+      setOpenFilterKey(null);
+    };
+    document.addEventListener('mousedown', handleOutsideFP);
+    return () => document.removeEventListener('mousedown', handleOutsideFP);
+  }, [openFilterKey]);
+
   const detailTotalPages = Math.max(1, Math.ceil(detailTotalCount / detailPageSize));
+  const [dtSelectedCells, setDtSelectedCells] = React.useState(new Set()); // MARKER_VATWATCHLISTOPS_REMOVE_DOUBLECLICK_EDIT_V1 -- Cell Selection แบบ Excel (เลือกอย่างเดียว ไม่มีโหมดแก้ไข)
+  const dtDragStartRef = React.useRef(null);
+  const dtDragBaseRef = React.useRef(new Set());
+  const dtIsDraggingRef = React.useRef(false);
+  const dtCellKey = (r, c) => `${r}-${c}`;
+  const dtDragRestrictSupplierRef = React.useRef(null); // MARKER_VATWATCHLISTOPS_CELLSELECT_SUPPLIER_ACCUMULATE_V1
+  const dtSelectionSupplierRef = React.useRef(null); // Supplier Code ของ Selection ปัจจุบัน (null = ยังไม่มี/Ctrl Mode)
+  const dtSelectedRowKeysRef = React.useRef(new Set()); // MARKER_VATWATCHLISTOPS_CELLSELECT_CHECKBOX_SYNC_V2 -- เก็บ Row Key ล่าสุดที่ Cell-Selection ติ๊ก Checkbox ให้ (ใช้ Diff) -- MARKER_VATWATCHLISTOPS_REVERT_TO_CHECKBOX_SELECTION_V1 ลบ Armed/Cursor/PreClick Ref ที่ใช้แค่ตอน Row-based Selection (ถอดไปแล้ว) ออก
+  const dtClickPreArmSnapshotRef = React.useRef({ wasArmed: false, supplier: null, prevMap: null }); // MARKER_VATWATCHLISTOPS_CLICK_ARMED_CHECKBOX_TOGGLE_V1 -- Snapshot สถานะ Checkbox "ก่อนคลิก" เก็บเฉพาะ Click แรกของ Gesture (e.detail===1) ให้ Double-click ใช้ตัดสินใจ Final State โดยไม่สน State สดที่ Mousedown ตัวแรกพึ่งแก้ไป -- MARKER_VATWATCHLISTOPS_DRAG_UNDO_CHECKBOX_TOGGLE_V1 เพิ่ม prevMap เก็บ selectedNoteRows เต็มๆ ก่อนคลิก ใช้ Undo ตอนกลายเป็นการลาก
+  const dtDragCheckboxRevertedRef = React.useRef(false); // MARKER_VATWATCHLISTOPS_DRAG_UNDO_CHECKBOX_TOGGLE_V1 -- กัน Undo ซ้ำเกิน 1 ครั้งต่อ Gesture การลากเดียวกัน
+  // MARKER_VATWATCHLISTOPS_CELLCOPY_CONTEXTMENU_VISIBLE_V1 -- MARKER_VATWATCHLISTOPS_CELLCONTEXTMENU_TDZ_FIX_V1 -- MARKER_VATWATCHLISTOPS_CELLCOPY_MERGE_ROWMENU_V1 -- ยกเลิกเมนูคลิกขวาแยกของ Cell-Selection (dtCellContextMenu) แล้ว -- รวมเข้ากับ Row Context Menu เดิม (rowContextMenu) เมนูเดียว กัน Quick Action/Find by Check No./Note หายไปตอนมี Cell-Selection ค้างอยู่ (ผู้ใช้แจ้งว่าเมนูพวกนี้หายไปหมด)
+  // MARKER_VATWATCHLISTOPS_CLICK_ARMED_CHECKBOX_TOGGLE_V1 -- ลบ dtSyncCheckboxFromCellsFP ออก (Dead Code -- ไม่มีจุดเรียกใช้แล้ว หลังเปลี่ยนมาใช้ Snapshot-based Force Final State ที่ onDoubleClick/onMouseDown แทน กัน ESLint no-unused-vars)
+  const dtRectKeys = (r1, c1, r2, c2, restrictSupplierFP) => {
+    const keys = [];
+    const rMin = Math.min(r1, r2), rMax = Math.max(r1, r2), cMin = Math.min(c1, c2), cMax = Math.max(c1, c2);
+    for (let r = rMin; r <= rMax; r++) {
+      if (restrictSupplierFP) {
+        const rowAtFP = displayDetailRows[r];
+        if (!rowAtFP || rowAtFP.supplier_code !== restrictSupplierFP) continue; // ข้าม Supplier Code ไม่ตรง -> ไม่เลือกให้
+      }
+      for (let c = cMin; c <= cMax; c++) keys.push(dtCellKey(r, c));
+    }
+    return keys;
+  };
+  React.useEffect(() => { setDtSelectedCells(new Set()); dtSelectionSupplierRef.current = null; dtSelectedRowKeysRef.current = new Set(); }, [detailPage, detailPageSize]); // เปลี่ยนหน้า -> ล้าง Selection กัน Index ไม่ตรง -- MARKER_VATWATCHLISTOPS_CELLSELECT_CHECKBOX_SYNC_V2 -- MARKER_VATWATCHLISTOPS_REVERT_CLEANUP_LEFTOVER_ARMEDREF_V1 ลบ dtSelectionArmedRef.current ที่ตกค้าง
+  React.useEffect(() => { // MARKER_VATWATCHLISTOPS_REVERT_TO_CHECKBOX_SELECTION_V1 -- Revert กลับเป็น mouseup ธรรมดา (ตัด Drag Word/Drag Cell Logic ที่ไม่ได้ใช้แล้วออก)
+    const handleUpFP = () => { dtIsDraggingRef.current = false; };
+    window.addEventListener('mouseup', handleUpFP);
+    return () => window.removeEventListener('mouseup', handleUpFP);
+  }, []);
+  // MARKER_VATWATCHLISTOPS_REMOVE_ACTION_GUIDE_V1 -- ลบ dtActionHintItems ออก (ไม่มีคนใช้แล้วหลังลบ Action Hint Text/Popup)
+  const dtSumInfo = React.useMemo(() => { // MARKER_VATWATCHLISTOPS_REVERT_TO_CHECKBOX_SELECTION_V1 -- Auto Sum อิงจาก selectedNoteRows (Checkbox) ซึ่งเป็นตัวที่ถูกต้องสำหรับ "Select Row" -- MARKER_VATWATCHLISTOPS_CELLRANGE_AUTOSUM_V1 เพิ่ม sumGross (มูลค่าสินค้า) แยกจาก sum (VAT) -- ผู้ใช้ Confirm อยากได้ Auto Gross + Auto Vat แยกกัน 2 ยอด ไม่ใช่ Autosum รวม 1 ตัว
+    let sumVatFP = 0;
+    let sumGrossFP = 0;
+    selectedNoteRows.forEach((r) => { sumVatFP += Number(r.exp_vat) || 0; sumGrossFP += Number(r.exp_amount) || 0; });
+    const countFP = selectedNoteRows.size;
+    return { count: countFP, sum: sumVatFP, sumGross: sumGrossFP, average: countFP > 0 ? sumVatFP / countFP : 0, perColSum: { exp_vat: sumVatFP, exp_amount: sumGrossFP } };
+  }, [selectedNoteRows]);
+  const dtCellSumInfo = React.useMemo(() => { // MARKER_VATWATCHLISTOPS_CELLRANGE_AUTOSUM_V1 -- Auto Sum จาก Cell-Selection (dtSelectedCells) ตรงๆ แยกอิสระจาก Checkbox โดยสิ้นเชิง -- คลิกเดียว (1 Cell) โชว์แค่ Count พอ (ไม่รวมยอด) -- Drag/เลือกหลาย Cell (>1) ที่มีตัวเลขอยู่ด้วย จึงรวมยอดให้ (ดู overallNumericCount/overallSum) -- ผู้ใช้ Confirm "ถ้าไม่ได้ Drag ยอดเงินก็ไม่ต้องรวมยอด"
+    const perColSumFP = {};
+    const perColCountFP = {};
+    let totalCountFP = 0;
+    let overallSumFP = 0;
+    let overallNumericCountFP = 0;
+    dtSelectedCells.forEach((keyStr) => {
+      const [rStr, cStr] = keyStr.split('-');
+      const r = Number(rStr), c = Number(cStr);
+      const rowFP = displayDetailRows[r];
+      const colFP = activeCols[c];
+      if (!rowFP || !colFP) return;
+      totalCountFP += 1;
+      if (!VAT_INCOMPLETE_NUMBER_KEYS.has(colFP.key)) return; // MARKER_VATWATCHLISTOPS_AUTOSUM_NUMERIC_WHITELIST_V1 -- เปลี่ยนจาก Exclusion List เป็น Whitelist เข้มงวด -- รวม Sum ได้เฉพาะ Column ที่อยู่ใน VAT_INCOMPLETE_NUMBER_KEYS (ตัวเลขเงินจริง) เท่านั้น -- Column อื่นทั้งหมด (invoice_ref/receive_doc_no/check_no/Date-Keys ฯลฯ) เป็น Text/Date -- ไม่รวม Sum แม้ค่าจะแปลงเป็น Number ได้ก็ตาม
+      const rawFP = rowFP[colFP.key];
+      const numFP = Number(rawFP);
+      if (rawFP !== '' && rawFP != null && !Number.isNaN(numFP)) {
+        perColSumFP[colFP.key] = (perColSumFP[colFP.key] || 0) + numFP;
+        perColCountFP[colFP.key] = (perColCountFP[colFP.key] || 0) + 1;
+        overallSumFP += numFP;
+        overallNumericCountFP += 1;
+      }
+    });
+    return {
+      count: totalCountFP,
+      perColSum: perColSumFP,
+      perColCount: perColCountFP,
+      overallSum: overallSumFP,
+      overallNumericCount: overallNumericCountFP,
+    };
+  }, [dtSelectedCells, displayDetailRows, activeCols]);
+  const dtCellIsDragRangeFP = dtSelectedCells.size > 1; // MARKER_VATWATCHLISTOPS_CELLRANGE_AUTOSUM_V1 -- คลิกเดียว (1 Cell) ไม่ถือว่าเป็นการ Drag/เลือกหลาย Cell -- ใช้ตัดสินใจว่าจะรวมยอดให้หรือไม่ (คลิกเดียวไม่รวม, Drag/เลือกหลาย Cell ถึงรวม)
+  React.useEffect(() => { // MARKER_VATWATCHLISTOPS_CELLSELECT_CTRLC_V1 -- Ctrl+C สำหรับ Cell-Selection (dtSelectedCells) -- Handler นี้หายไปจากไฟล์จริง (ถูก Revert Patch ก่อนหน้าตัดออกไปโดยไม่ตั้งใจ) ทั้งที่มีคอมเมนต์อื่นอ้างถึงเหมือนควรมีอยู่ -- เพิ่มกลับมาใหม่
+    const handleCellSelectCtrlCFP = (e) => {
+      const tagFP = (document.activeElement && document.activeElement.tagName) || '';
+      if (tagFP === 'INPUT' || tagFP === 'TEXTAREA') return; // กำลังพิมพ์อยู่ที่อื่น (เช่น ช่อง Search) ไม่แย่ง Key
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'c') return;
+      if (dtSelectedCells.size === 0) return;
+      e.preventDefault();
+      const cellValueFP = (r, c) => {
+        const rowFP = displayDetailRows[r];
+        const colFP = activeCols[c];
+        if (!rowFP || !colFP) return '';
+        if (colFP.key === 'remark' || colFP.key === 'note') return '';
+        if (VAT_INCOMPLETE_DATE_KEYS.has(colFP.key)) return formatVatIncompleteDate(rowFP[colFP.key]);
+        return rowFP[colFP.key] ?? '';
+      };
+      const byRowFP = new Map();
+      dtSelectedCells.forEach((keyStr) => {
+        const [rStr, cStr] = keyStr.split('-');
+        const r = Number(rStr), c = Number(cStr);
+        if (!byRowFP.has(r)) byRowFP.set(r, new Map());
+        byRowFP.get(r).set(c, String(cellValueFP(r, c)));
+      });
+      const sortedRowsFP = [...byRowFP.keys()].sort((a, b) => a - b);
+      const linesFP = sortedRowsFP.map((r) => {
+        const colMapFP = byRowFP.get(r);
+        const sortedColsFP = [...colMapFP.keys()].sort((a, b) => a - b);
+        return sortedColsFP.map((c) => colMapFP.get(c)).join('\t');
+      });
+      copyTextToClipboardFP(linesFP.join('\n')); // MARKER_VATWATCHLISTOPS_CLIPBOARD_FALLBACK_V1
+    };
+    window.addEventListener('keydown', handleCellSelectCtrlCFP);
+    return () => window.removeEventListener('keydown', handleCellSelectCtrlCFP);
+  }, [dtSelectedCells, displayDetailRows, activeCols]);
+  const copySelectedNoteRowsToClipboard = () => { // MARKER_VATWATCHLISTOPS_ROWCONTEXT_COPY_V1 -- Copy แถวที่ติ๊ก Checkbox ไว้ (selectedNoteRows) หรือถ้าไม่ได้ติ๊กเลย Copy แถวที่คลิกขวานั้นแถวเดียว (rowContextMenu.row)
+    const targetsFP = selectedNoteRows.size > 0 ? Array.from(selectedNoteRows.values()) : (rowContextMenu && rowContextMenu.row ? [rowContextMenu.row] : []);
+    if (targetsFP.length === 0) return;
+    const headerFP = ['Branch', 'ใบแจ้งหนี้', 'Supplier Code', 'ชื่อผู้ค้า', 'ชำระเงิน', 'เช็ค', 'มูลค่าสินค้า', 'เงินภาษี'];
+    const linesFP = targetsFP.map((r) => [
+      r.branch || '', r.invoice_ref || '', r.supplier_code || '', r.vendor_name || '',
+      r.payment_date ? formatVatIncompleteDate(r.payment_date) : '', r.check_no || '',
+      r.exp_amount != null ? r.exp_amount : '', r.exp_vat != null ? r.exp_vat : '',
+    ].join('\t'));
+    const textFP = [headerFP.join('\t'), ...linesFP].join('\n');
+    copyTextToClipboardFP(textFP); // MARKER_VATWATCHLISTOPS_CLIPBOARD_FALLBACK_V1
+  };
+  React.useEffect(() => { // MARKER_VATWATCHLISTOPS_ROWCONTEXT_COPY_V1 -- Ctrl+C สำหรับแถวที่ติ๊ก Checkbox ไว้ (selectedNoteRows) -- แยกจาก Ctrl+C ของ dtSelectedCells (Cell-Selection ลาก Drag) ที่ Patch ก่อนหน้าแก้ไปแล้ว กันชนกัน (ทำงานเมื่อไม่มี dtSelectedCells Active เท่านั้น)
+    const handleCheckboxCopyKeyFP = (e) => {
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'c') return;
+      if (dtSelectedCells.size > 0) return; // มี Cell-Selection Active อยู่ -- ให้ Handler ของ dtSelectedCells จัดการแทน
+      if (selectedNoteRows.size === 0) return;
+      e.preventDefault();
+      copySelectedNoteRowsToClipboard();
+    };
+    window.addEventListener('keydown', handleCheckboxCopyKeyFP);
+    return () => window.removeEventListener('keydown', handleCheckboxCopyKeyFP);
+  }, [selectedNoteRows, dtSelectedCells]);
+  // MARKER_VATWATCHLISTOPS_REMOVE_CHECKBOX_SUM_DISPLAY_V1 -- ลบ selectedNoteRowsSumInfo ออก (ผู้ใช้แจ้งว่าซ้ำซ้อนกับ Auto Sum ด้านล่างตาราง ให้ใช้ตัวเดียว)
   const detailPageStart = detailTotalCount === 0 ? 0 : (detailPage - 1) * detailPageSize;
   const detailPageEnd = detailPageStart + detailRows.length;
 
@@ -5594,7 +7316,22 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
         <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer' }}>← Back</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}> {/* MARKER_VATWATCHLISTOPS_TOPROW_SWAP_ORDER_V1 -- สลับ Full Page (ซ้าย) / Draft Monitor (ขวา) */}
           <button onClick={openExportConfigModal} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #ffcc80', borderRadius: '8px', background: '#fff3e0', color: '#e65100', cursor: 'pointer', width: '168px' }}>Export</button> {/* MARKER_VATWATCHLISTOPS_EXPORT_CONFIG_COLUMNS_V1 */} {/* MARKER_VATWATCHLISTOPS_EXPORT_BUTTON_LEFT_STYLE_V1 -- ย้ายมาซ้ายสุด + ขนาดเท่า Full Page + สีส้มอ่อน */}
-          <button onClick={() => { setShowFullPagePopvat(true); }} /* MARKER_VATWATCHLISTOPS_FULLPAGE_SEARCH_SYNC_V1 -- Copy ค่า Search จาก Incomplete Detail มาใส่ให้ตอนเปิด */ style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #90caf9', borderRadius: '8px', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer', width: '168px' }}>Full Page - Popvat</button> {/* MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_V1 */}
+          <button
+            onClick={() => { // MARKER_VATWATCHLISTOPS_FULLPAGE_VENDOR_GUARD_V1 -- ด่านสุดท้ายกัน Vendor ปนกันก่อนเปิด Full Page
+              const supplierSetFP = new Set(Array.from(selectedNoteRows.values()).map((v) => v.supplier_code).filter(Boolean));
+              if (supplierSetFP.size > 1) {
+                confirmDialog.alert(
+                  `Selection มี Supplier Code ปนกันหลายตัว (${Array.from(supplierSetFP).join(', ')}) ไม่สามารถเปิด Full Page ได้ กรุณาเลือกเฉพาะ Supplier เดียวกัน`,
+                  { title: 'Supplier Code ไม่ตรงกัน', variant: 'danger' }
+                );
+                return;
+              }
+              setShowFullPagePopvat(true);
+      fullPageFillStartedAtRef.current = selectionFillStartedAtRef.current || new Date(); // MARKER_VAT_SELECTION_FILLSTART_V1 -- มี Selection อยู่ก่อนเปิดแล้ว ใช้เวลาที่เริ่มเลือกจริง / ไม่มี ใช้เวลาที่กดเปิด Full Page เหมือนเดิม
+            }}
+            /* MARKER_VATWATCHLISTOPS_FULLPAGE_SEARCH_SYNC_V1 -- Copy ค่า Search จาก Incomplete Detail มาใส่ให้ตอนเปิด */
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #90caf9', borderRadius: '8px', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer', width: '168px' }}
+          >Full Page - Popvat</button> {/* MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_V1 */}
           <button onClick={() => setShowDraftMonitor(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #a5d6a7', borderRadius: '8px', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer', width: '148px', marginRight: '20px' }}>Draft Monitor</button> {/* MARKER_VATWATCHLISTOPS_DRAFT_MONITOR_ALIGN_EDGE_V1 -- ชดเชย Padding ขวาของการ์ด Config Columns (20px) ให้ขอบตรงกันเป๊ะ */} {/* MARKER_VATWATCHLISTOPS_DRAFT_MONITOR_REVERT_FIX_V1 -- ย้ายกลับมาแถวเดิม (Stage I รอบแรกย้ายผิดจุด) */}
         </div>
       </div>
@@ -5645,7 +7382,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
             {detailSearch && (
               <button
                 type="button"
-                onClick={() => setDetailSearch('')}
+                onClick={() => { setDetailSearch(''); setSelectedNoteRows(new Map()); }} // MARKER_VATWATCHLISTOPS_CLEARSEARCH_ALSO_CLEAR_SELECTION_V1 -- เคลียร์ Search แล้วเคลียร์ Selection ไปด้วย
                 style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', width: '20px', height: '20px', padding: 0, border: 'none', borderRadius: '50%', background: '#e8e8e8', color: '#666', fontSize: '12px', lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >✕</button>
             )}
@@ -5741,6 +7478,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
           {selectedNoteRows.size > 0 && ( // MARKER_VATWATCHLISTOPS_GROUP_NOTE_SELECT_V1
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
               <span style={{ fontSize: '12px', color: '#666' }}>เลือกแล้ว {selectedNoteRows.size} รายการ (คลิกขวาที่แถวเพื่อเปิดเมนู)</span> {/* MARKER_VATWATCHLISTOPS_ROW_CONTEXT_MENU_V1 -- ย้ายปุ่ม Group Note/ล้างการเลือก ไปเมนูคลิกขวา */}
+              {/* MARKER_VATWATCHLISTOPS_REMOVE_CHECKBOX_SUM_DISPLAY_V1 -- ถอด Auto Sum (มูลค่าสินค้า/เงินภาษี/รวม) จุดนี้ออก ผู้ใช้แจ้งว่าซ้ำกับ Auto Sum ด้านล่างตาราง (dtSumInfo) ให้เหลือจุดเดียว */}
             </div>
           )}
           <button onClick={() => setShowConfigModal(true)} style={{ padding: '6px 12px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer', flexShrink: 0, width: '148px', textAlign: 'center' }}>⚙ Config Columns</button>
@@ -5760,8 +7498,8 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                     return (
                       <th
                         key={c.key}
-                        onClick={() => openFilterDropdown(c.key, isOpen)}
-                        style={{ position: 'sticky', top: 0, zIndex: 1, padding: 0, background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', cursor: 'pointer' }}
+                        onClick={(evt) => openFilterDropdown(c.key, isOpen, evt)}
+                        style={{ position: 'sticky', top: 0, zIndex: 1, padding: 0, background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', cursor: 'pointer', width: c.key === 'vendor_name' ? '300px' : undefined }} // MARKER_VATWATCHLISTOPS_INCOMPLETE_VENDORNAME_FIXED_WIDTH_V1
                         title="กดเพื่อ Filter"
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative', padding: '8px 10px', width: '100%', boxSizing: 'border-box' }}>
@@ -5769,8 +7507,9 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                           <span style={{ color: isFiltered ? '#7DD3FC' : 'rgba(255,255,255,0.6)', fontSize: '10px', lineHeight: 1 }}>▾</span>
                           {isOpen && (
                             <div
+                              data-vat-colfilter-dropdown="1" // MARKER_VATWATCHLISTOPS_COLFILTER_OUTSIDECLICK_V1 -- ใช้เช็คว่าคลิกอยู่ในตัว Dropdown เองหรือไม่ (กัน Global Mousedown Listener ปิดตัวเองตอนคลิก Checkbox/Search/ปุ่มข้างใน)
                               onClick={(e) => e.stopPropagation()}
-                              style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'white', color: '#333', border: '0.5px solid #ccc', borderRadius: '8px', width: '200px', maxHeight: '260px', display: 'flex', flexDirection: 'column', zIndex: 20, boxShadow: '0 6px 16px rgba(0,0,0,0.18)', fontWeight: '400', textAlign: 'left' }}
+                              style={{ position: 'absolute', top: '100%', ...(openFilterAlign === 'right' ? { right: 0 } : { left: 0 }), marginTop: '4px', background: 'white', color: '#333', border: '0.5px solid #ccc', borderRadius: '8px', width: '320px', maxWidth: '90vw', maxHeight: '260px', display: 'flex', flexDirection: 'column', zIndex: 20, boxShadow: '0 6px 16px rgba(0,0,0,0.18)', fontWeight: '400', textAlign: 'left' }} /* MARKER_VATWATCHLISTOPS_COLUMNFILTER_WIDEN_V1 -- ขยายจาก 200px -> 320px กันชื่อยาวโดนตัด (มี maxWidth กันล้นจอเล็ก) */
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderBottom: '0.5px solid #eee', flexShrink: 0, background: 'white', borderRadius: '8px 8px 0 0' }}>
                                 <button type="button" onClick={() => clearColumnFilter(c.key)} style={{ fontSize: '11px', border: 'none', background: 'transparent', color: '#1a3a5c', cursor: 'pointer' }}>ล้าง Filter</button>
@@ -5856,7 +7595,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                       checked={!columnFilters[c.key] || columnFilters[c.key].size === 0 ? false : columnFilters[c.key].has(v)}
                                       onChange={() => toggleColumnFilterValue(c.key, v)}
                                     />
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v || '(ว่าง)'}</span>
+                                    <span style={{ wordBreak: 'break-word', whiteSpace: 'normal' }}>{v || '(ว่าง)'}</span> {/* MARKER_VATWATCHLISTOPS_COLUMNFILTER_WIDEN_V1 -- เอา ellipsis/nowrap ออก ให้ขึ้นบรรทัดใหม่แทนตัดข้อความทิ้ง */}
                                   </label>
                                 ))
                               )}
@@ -5880,12 +7619,13 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                   // MARKER_VATWATCHLISTOPS_DETAIL_AGING_HIGHLIGHT_V1 — Highlight สีพื้นหลังตาม Aging
                   const am = row.aging_months;
                   let rowBg = i % 2 === 0 ? 'white' : '#f7f9fb';
+                  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_CLICK_BU_LINE_V7 -- Threshold แดงขยับจาก >=3 เป็น >=5 ให้ตรงกับ Tier สีใหม่ (เขียวกว้างขึ้นถึง 4-3)
                   if (am != null) {
-                    if (am > 6) rowBg = '#F1EFE8';
-                    else if (am >= 5) rowBg = '#FAEEDA';
-                    else if (am >= 3) rowBg = '#FEF9E4';
-                    else if (am >= 1) rowBg = '#EAF3DE';
-                    else if (am === 0) rowBg = '#E6F1FB';
+                    if (am > 6) rowBg = VAT_AGING_TIER_COLORS.expired.bg;
+                    else if (am >= 5) rowBg = VAT_AGING_TIER_COLORS.warn.bg;
+                    else if (am >= 3) rowBg = VAT_AGING_TIER_COLORS.mid.bg;
+                    else if (am >= 1) rowBg = VAT_AGING_TIER_COLORS.fresh.bg;
+                    else rowBg = VAT_AGING_TIER_COLORS.zero.bg; // MARKER_VATWATCHLISTOPS_AGING_5TIER_ZERO_BLUE_V17 -- am === 0 แยกเป็นฟ้าต่างหาก
                   }
                   const noteEntry = noteMap[getNoteKey(row)];
                   const hasNote = !!(noteEntry && noteEntry.note && noteEntry.note.trim());
@@ -5912,7 +7652,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                       title={noteHighlight ? noteTitle : undefined}
                       style={{ background: rowBg, borderTop: '0.5px solid #e8e8e8', cursor: 'pointer' }}
                       onMouseDown={(e) => { if (e.detail > 1 && !e.target.closest('input, button, a')) e.preventDefault(); }} // MARKER_VATWATCHLISTOPS_ROW_DBLCLICK_NO_TEXTSELECT_V1 -- กัน Browser เลือกคำ + Windows Toolbar เด้งตอน Double-click
-                      onDoubleClick={(e) => { if (e.target.closest('input, button, a')) return; toggleSelectNoteRow(row); }} // MARKER_VATWATCHLISTOPS_ROW_DBLCLICK_SELECT_V1
+                      onDoubleClick={(e) => {}} // MARKER_VATWATCHLISTOPS_CLICK_ARMED_CHECKBOX_TOGGLE_V1 -- ปิด toggleSelectNoteRow ตัวนี้ (ย้าย Logic ไปรวมที่ <td> ทั้งหมดแล้ว กัน Double-click ชนกัน 2 Handler เดิม MARKER_VATWATCHLISTOPS_ROW_DBLCLICK_SELECT_V1
                       onContextMenu={(e) => handleRowContextMenu(e, row)} // MARKER_VATWATCHLISTOPS_DRAG_RANGE_SELECT_V1 -- Drag-select หลายแถวแล้วคลิกขวา = เลือกทั้งช่วง
                       onMouseEnter={(e) => { // MARKER_VATWATCHLISTOPS_CHECKBOX_DRAG_SELECT_V1 -- ลากผ่านแถวขณะกดเมาส์ซ้ายค้าง = ติ๊ก/ถอด Checkbox ตามโหมดที่เริ่มไว้
                         if (e.buttons !== 1 || !dragCheckboxModeRef.current) return;
@@ -5952,6 +7692,15 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                               return;
                             }
                             const willAdd = !selectedNoteRows.has(key);
+                            if (willAdd && row.supplier_code) { // MARKER_VATWATCHLISTOPS_CHECKBOX_ONMOUSEDOWN_CROSSCHECK_V1 -- Cross-Check Supplier Code ก่อนเพิ่มการเลือก (เฉพาะคลิกเดี่ยว ไม่ใช่ Shift+Click)
+                              const existingSuppliersMD = new Set(Array.from(selectedNoteRows.values()).map((v) => v.supplier_code).filter(Boolean));
+                              if (existingSuppliersMD.size > 0 && !existingSuppliersMD.has(row.supplier_code)) { // MARKER_VATWATCHLISTOPS_CROSSCHECK_NO_CONFIRM_AUTO_UNSELECT_V1 -- Auto Unselect ทันที ไม่ต้องถาม
+                                dragCheckboxModeRef.current = 'add';
+                                lastClickedRowKeyRef.current = key;
+                                setSelectedNoteRows(new Map([[key, { invoice_ref: row.invoice_ref, supplier_code: row.supplier_code, branch: row.branch, vendor_name: row.vendor_name, check_no: row.check_no, exp_amount: row.exp_amount, exp_vat: row.exp_vat, receive_doc_no: row.receive_doc_no, payment_date: row.payment_date }]]));
+                                return;
+                              }
+                            }
                             dragCheckboxModeRef.current = willAdd ? 'add' : 'remove'; // MARKER_VATWATCHLISTOPS_CHECKBOX_DRAG_SELECT_V1 -- ตั้งโหมดสำหรับแถวถัดไปที่ลากผ่าน
                             lastClickedRowKeyRef.current = key; // จำไว้เป็น Anchor สำหรับ Shift+Click ครั้งถัดไป
                             setSelectedNoteRows((prev) => {
@@ -5964,7 +7713,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                         />
                       </td>
                       {/* MARKER_VATWATCHLISTOPS_NOTES_REMAP_LEGACY_COLS_V1 */}
-                      {activeCols.map((c) => {
+                      {activeCols.map((c, ci) => { // MARKER_VATWATCHLISTOPS_INCOMPLETE_EXCELGRID_PHASE2_V1 -- Cell Selection + Edit แบบ Excel
                         // MARKER_VATWATCHLISTOPS_NOTES_REMAP_LEGACY_COLS_V1 -- Column "remark"/"note" เดิม (ว่างตลอด) ดึงจาก noteEntry แทน row
                         // MARKER_VATWATCHLISTOPS_INCOMPLETE_NUMBER_DATE_FORMAT_V1 -- ตัวเลข Comma+ชิดขวา, วันที่กึ่งกลาง
                         let cellValue;
@@ -5978,49 +7727,207 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                           cellAlign = 'right';
                         }
                         else cellValue = row[c.key] ?? '';
-                        return <td key={c.key} style={{ padding: '7px 10px', textAlign: cellAlign }}>{cellValue}</td>;
+                        const isVendorNameColFP = c.key === 'vendor_name'; // MARKER_VATWATCHLISTOPS_INCOMPLETE_VENDORNAME_FIXED_WIDTH_V1
+                        const isInteractiveColFP = c.key !== 'remark' && c.key !== 'note';
+                        if (!isInteractiveColFP) {
+                          return <td key={c.key} style={{ padding: '7px 10px', textAlign: cellAlign }}>{cellValue}</td>;
+                        }
+                        const cellKeyStrFP = dtCellKey(i, ci); // MARKER_VATWATCHLISTOPS_REMOVE_DOUBLECLICK_EDIT_V1 -- ตัด Double-click Edit ออก เหลือแค่ Selection
+                        const isSelectedFP = dtSelectedCells.has(cellKeyStrFP); // MARKER_VATWATCHLISTOPS_REVERT_TO_CHECKBOX_SELECTION_V1 -- ลบ isCursorFP ออก (dtCursorCell ไม่มีแล้ว)
+                        return (
+                          <td
+                            key={c.key}
+                            title={isVendorNameColFP ? String(cellValue) : undefined}
+                            onMouseDown={(e) => { // MARKER_VATWATCHLISTOPS_CELLSELECT_VENDOR_LOCK_STRICT_V1 -- Vendor Lock เข้มงวด ไม่มีข้อยกเว้นแม้กด Ctrl -- MARKER_VATWATCHLISTOPS_REVERT_TO_CHECKBOX_SELECTION_V1 Revert กลับเป็น Excel Cell-Select เดิม (เฉพาะ Copy/F2 ไม่เกี่ยวกับ "Select Row")
+                              if (e.button !== 0) return; // MARKER_VATWATCHLISTOPS_RIGHTCLICK_NO_MOUSEDOWN_RESET_V1 -- คลิกขวา (button 2) ก็ยิง mousedown เหมือนกัน -- กันไม่ให้ไปรัน Checkbox Toggle/Cell-Selection Reset ตอนคลิกขวา ปล่อยให้ onContextMenu จัดการเปิดเมนูอย่างเดียว
+                              if (document.activeElement && document.activeElement.blur && document.activeElement !== document.body) document.activeElement.blur(); // MARKER_VATWATCHLISTOPS_CLICK_CTRLC_FOCUS_FIX_V1 -- เอา Focus ออกจาก Input ที่ค้างอยู่ (เช่นช่อง Search) กัน Ctrl+C ของ Cell-Selection โดน Guard "activeElement เป็น INPUT" Block ทิ้งเงียบๆ
+                              const isCtrlFP = e.ctrlKey || e.metaKey;
+                              const clickedSupplierFP = row.supplier_code || null;
+                              if (e.detail === 1) { // MARKER_VATWATCHLISTOPS_CLICK_ARMED_CHECKBOX_TOGGLE_V1 -- เก็บ Snapshot + Toggle/Clear Checkbox เฉพาะ Click แรกของ Gesture เท่านั้น (กัน Click ที่ 2 ของ Double-click มา Toggle ซ้ำ)
+                                const wasArmedFP = selectedNoteRows.size > 0;
+                                const armedSupplierFP = wasArmedFP ? Array.from(selectedNoteRows.values())[0].supplier_code : null;
+                                dtClickPreArmSnapshotRef.current = { wasArmed: wasArmedFP, supplier: armedSupplierFP, prevMap: new Map(selectedNoteRows) }; // MARKER_VATWATCHLISTOPS_DRAG_UNDO_CHECKBOX_TOGGLE_V1 -- เก็บ Map เต็มๆ ไว้ Undo ถ้ากลายเป็นลาก
+                                dtDragCheckboxRevertedRef.current = false; // MARKER_VATWATCHLISTOPS_DRAG_UNDO_CHECKBOX_TOGGLE_V1 -- Reset Guard ทุกครั้งที่เริ่ม Gesture ใหม่
+                                if (wasArmedFP) {
+                                  if (clickedSupplierFP === armedSupplierFP) {
+                                    toggleSelectNoteRow(row); // Supplier เดียวกัน -> Toggle เฉพาะแถวนี้ (เพิ่ม/ปลด)
+                                  } else {
+                                    setSelectedNoteRows(new Map()); // Supplier อื่น -> ปลด Checkbox ทั้งหมด (Vendor Lock)
+                                  }
+                                }
+                              }
+                              const hasExistingFP = dtSelectedCells.size > 0 && dtSelectionSupplierRef.current;
+                              if (hasExistingFP && clickedSupplierFP !== dtSelectionSupplierRef.current) {
+                                // MARKER_VATWATCHLISTOPS_VENDORSWITCH_ONECLICK_SELECT_V1 -- Vendor ต่าง -> ล้าง Selection เดิม + เลือก Cell ที่เพิ่งคลิกทันทีในคลิกเดียว (เดิมล้างอย่างเดียวแล้ว return ต้องคลิกซ้ำถึงจะเลือกได้ -- ผู้ใช้แจ้งว่าต้อง Focus Cell ที่ Last Action เสมอ)
+                                const cellKeySwitchFP = dtCellKey(i, ci);
+                                const freshSetSwitchFP = new Set([cellKeySwitchFP]);
+                                dtDragBaseRef.current = freshSetSwitchFP;
+                                dtDragRestrictSupplierRef.current = clickedSupplierFP;
+                                dtSelectionSupplierRef.current = clickedSupplierFP;
+                                dtDragStartRef.current = { r: i, c: ci };
+                                dtIsDraggingRef.current = true;
+                                setDtSelectedCells(freshSetSwitchFP);
+                                return;
+                              }
+                              // MARKER_VATWATCHLISTOPS_CELLSELECT_CLICK_IMMEDIATE_V4 -- คลิกเดียว Select Cell นี้ทันที (Excel-Like) แทนที่เดิมต้อง Double-click/Drag ก่อนถึงจะ Select
+                              // ── Ctrl ค้าง + มี Selection เดิม (Vendor เดียวกัน) -> Toggle เพิ่ม/ปลด Cell นี้เข้า-ออกจาก Selection เดิม ──
+                              // ── ไม่ Ctrl -> เริ่ม Selection ใหม่ที่ Cell นี้ Cell เดียวทันที (พร้อมลากขยายต่อได้เลยที่ onMouseEnter) ──
+                              const cellKeyMDFP = dtCellKey(i, ci);
+                              let nextMDFP;
+                              if (isCtrlFP && hasExistingFP) {
+                                nextMDFP = new Set(dtSelectedCells);
+                                if (nextMDFP.has(cellKeyMDFP)) nextMDFP.delete(cellKeyMDFP); else nextMDFP.add(cellKeyMDFP);
+                              } else {
+                                nextMDFP = new Set([cellKeyMDFP]);
+                              }
+                              dtDragBaseRef.current = nextMDFP; // ฐานสำหรับตอนลากต่อ (onMouseEnter จะ Union Rect จากจุดนี้เข้ากับฐานนี้)
+                              dtDragRestrictSupplierRef.current = clickedSupplierFP; // จำกัด Vendor นี้เสมอ ไม่ว่า Ctrl หรือไม่
+                              dtSelectionSupplierRef.current = clickedSupplierFP;
+                              dtDragStartRef.current = { r: i, c: ci };
+                              dtIsDraggingRef.current = true; // พร้อมลากขยาย Selection ต่อทันที (onMouseEnter)
+                              setDtSelectedCells(nextMDFP); // MARKER_VATWATCHLISTOPS_SINGLECLICK_CELLONLY_DBLCLICK_CHECKBOX_V1 -- Click เดียว = Select Cell เท่านั้น ไม่ Sync Checkbox
+                            }}
+                            onMouseEnter={() => {
+                              if (!dtIsDraggingRef.current || !dtDragStartRef.current) return;
+                              if (!dtDragCheckboxRevertedRef.current) { // MARKER_VATWATCHLISTOPS_DRAG_UNDO_CHECKBOX_TOGGLE_V1 -- ยืนยันแล้วว่าเป็นการลากจริง (ไม่ใช่แค่คลิก) -- Undo การ Toggle/ปลด Checkbox ที่ mousedown ทำไปตอนยังไม่รู้ว่าจะลาก คืนกลับเป็นก่อนคลิกทันที (ทำครั้งเดียวต่อ Gesture)
+                                dtDragCheckboxRevertedRef.current = true;
+                                const snapMEFP = dtClickPreArmSnapshotRef.current;
+                                if (snapMEFP && snapMEFP.prevMap) setSelectedNoteRows(new Map(snapMEFP.prevMap));
+                              }
+                              if (window.getSelection) window.getSelection().removeAllRanges(); // MARKER_VATWATCHLISTOPS_DRAGWORD_RIGHTCLICK_CELLCOPY_V1 -- ยืนยันว่าลากข้าม Cell จริง (Drag Cell) -> ล้าง Native Text Selection ที่อาจเริ่มไว้ตอนอยู่ใน Cell แรกทิ้ง กันค้างเป็นแถบสีซ้อนกับ Cell-Select
+                              const { r: r1, c: c1 } = dtDragStartRef.current;
+                              const nextFP = new Set(dtDragBaseRef.current);
+                              dtRectKeys(r1, c1, i, ci, dtDragRestrictSupplierRef.current).forEach((k) => nextFP.add(k));
+                              setDtSelectedCells(nextFP); // MARKER_VATWATCHLISTOPS_SINGLECLICK_CELLONLY_DBLCLICK_CHECKBOX_V1 -- ลาก (Drag) = Select Cell เท่านั้น ไม่ Sync Checkbox
+                            }}
+                            onDoubleClick={() => { // MARKER_VATWATCHLISTOPS_CLICK_ARMED_CHECKBOX_TOGGLE_V1 -- Double-click: Cell-Select เหมือนเดิม (Excel-Like) + Checkbox ตัดสินใจจาก Snapshot ก่อนคลิก (ไม่สน State สดที่ Mousedown ตัวแรกพึ่งแก้ไป)
+                              const cellKeyDCFP = dtCellKey(i, ci);
+                              const isSoleSelectedFP = dtSelectedCells.size === 1 && dtSelectedCells.has(cellKeyDCFP);
+                              if (isSoleSelectedFP) {
+                                setDtSelectedCells(new Set());
+                                dtSelectionSupplierRef.current = null;
+                                dtDragRestrictSupplierRef.current = null;
+                                dtIsDraggingRef.current = false;
+                              } else {
+                                dtSelectionSupplierRef.current = row.supplier_code || null;
+                                dtDragRestrictSupplierRef.current = row.supplier_code || null;
+                                // MARKER_VATWATCHLISTOPS_CELLSELECT_CLICK_IMMEDIATE_V4 -- ไม่ Reset isDragging เป็น false อีกต่อไป
+                                // ── ปล่อยให้ลากขยาย Selection ต่อได้เลยหลัง Double-click (mousedown ของคลิกที่ 2 ตั้ง true ไว้ให้แล้ว) ──
+                                const nextFP = new Set([cellKeyDCFP]);
+                                setDtSelectedCells(nextFP);
+                              }
+                              // MARKER_VATWATCHLISTOPS_CLICK_ARMED_CHECKBOX_TOGGLE_V1 -- Checkbox: ใช้ Snapshot ก่อนคลิก Force Final State ทับเลย (ไม่ Toggle ต่อจาก State สด)
+                              const snapDCFP = dtClickPreArmSnapshotRef.current;
+                              const clickedSupplierDCFP = row.supplier_code || null;
+                              if (snapDCFP && snapDCFP.wasArmed && snapDCFP.supplier === clickedSupplierDCFP) {
+                                setSelectedNoteRows(new Map()); // Armed Supplier เดียวกัน (ไม่ว่า Double-click แถวไหนใน Supplier นี้) -> ปลด Checkbox ทั้งหมด
+                              } else {
+                                // ไม่ Armed มาก่อน หรือ Armed แต่ Supplier อื่น (สลับ Supplier) -> เริ่ม/สลับ Selection ใหม่ด้วยแถวนี้แถวเดียว
+                                const keyDCFP = getNoteKey(row);
+                                setSelectedNoteRows(new Map([[keyDCFP, { invoice_ref: row.invoice_ref, supplier_code: row.supplier_code, branch: row.branch, vendor_name: row.vendor_name, check_no: row.check_no, exp_amount: row.exp_amount, exp_vat: row.exp_vat, receive_doc_no: row.receive_doc_no, payment_date: row.payment_date }]]));
+                              }
+                            }}
+                            onContextMenu={(e) => { // MARKER_VATWATCHLISTOPS_CELLCOPY_MERGE_ROWMENU_V1 -- คลิกขวา: มี Native Text Selection (Drag Word) -> ปล่อย Browser Copy เอง / มี Cell-Selection -> เปิด Row Context Menu เดิม (มี "Copy Cell" เพิ่มไว้หัวเมนู) แทนเมนูแยก กัน Quick Action/Find by Check No./Note หายไป / ไม่มีทั้งคู่ -> ปล่อย Bubble ไป Row Context Menu ตามปกติ
+                              const hasNativeSelFP = window.getSelection && String(window.getSelection()).length > 0;
+                              if (hasNativeSelFP) return;
+                              if (dtSelectedCells.size > 0) {
+                                e.stopPropagation(); // กัน <tr onContextMenu> เปิดซ้ำอีกรอบ (เราเปิดเองด้วย handleRowContextMenu ข้างล่างนี้แล้ว)
+                                handleRowContextMenu(e, row);
+                              }
+                            }}
+                            style={{
+                              padding: '7px 10px',
+                              textAlign: cellAlign,
+                              background: isSelectedFP ? '#B5D4F4' : 'transparent',
+                              boxShadow: isSelectedFP ? 'inset 0 0 0 1.5px #185FA5' : 'none',
+                              cursor: 'cell',
+                              userSelect: 'text', // MARKER_VATWATCHLISTOPS_DRAGWORD_RIGHTCLICK_CELLCOPY_V1 -- เปลี่ยนจาก 'none' เป็น 'text' คืน Native Text Selection ให้ (Drag Word ใน Cell เดียว) -- Drag ข้าม Cell (Excel Range-Select) ยังทำงานถูกต้อง เพราะ onMouseEnter ล้าง Selection ทิ้งให้เองแล้ว
+                              ...(isVendorNameColFP ? { maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}),
+                            }}
+                          >{cellValue}</td>
+                        );
                       })}
                     </tr>
                   );
                 })}
               </tbody>
+              {(dtCellIsDragRangeFP || dtSumInfo.count > 0) && ( // MARKER_VATWATCHLISTOPS_INCOMPLETE_EXCELGRID_PHASE2_V1 -- แถว Total ตรง Column ที่มี Cell ถูกเลือก -- MARKER_VATWATCHLISTOPS_CELLRANGE_AUTOSUM_V1 โชว์เมื่อ Drag เลือกหลาย Cell (>1) หรือมี Checkbox ติ๊กไว้ -- คลิกเดียว (1 Cell) ไม่โชว์แถวนี้
+                <tfoot>
+                  <tr style={{ background: '#eef4fa', borderTop: '2px solid #185FA5' }}>
+                    <td style={{ padding: '6px 10px' }} />
+                    {activeCols.map((c, ci) => {
+                      const hasCellSelColFP = dtCellIsDragRangeFP && dtCellSumInfo.perColCount[c.key] > 0; // MARKER_VATWATCHLISTOPS_CELLRANGE_AUTOSUM_V1
+                      const valFP = hasCellSelColFP
+                        ? dtCellSumInfo.perColSum[c.key]
+                        : (!dtCellIsDragRangeFP ? dtSumInfo.perColSum[c.key] : null); // ไม่มี Drag Cell-Range เลย -> Fallback ไปใช้ผลรวมจาก Checkbox (Gross/Vat) เหมือนก่อน Patch นี้
+                      return (
+                        <td key={c.key} style={{ padding: '6px 10px', textAlign: 'right', fontWeight: '600', color: '#185FA5' }}>
+                          {valFP != null ? valFP.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </tfoot>
+              )}
             </table>
         </div>
-        {!loadingDetail && detailTotalCount > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderTop: '0.5px solid #e8e8e8', flexShrink: 0, fontSize: '12px', color: '#666' }}>
-            <span>แสดง {(detailPageStart + 1).toLocaleString()}–{detailPageEnd.toLocaleString()} จาก {detailTotalCount.toLocaleString()} รายการ</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {!loadingDetail && detailTotalCount > 0 && ( // MARKER_VATWATCHLISTOPS_PAGINATION_COMPACT_ALL_OPTION_V1 -- กระทัดรัดขึ้น + เพิ่ม Option ทั้งหมด
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', borderTop: '0.5px solid #e8e8e8', flexShrink: 0, fontSize: '11.5px', color: '#666' }}> {/* MARKER_VATWATCHLISTOPS_PAGINATION_MOVE_LEFT_V1 -- ย้าย Pagination ไปซ้าย เหลือขวาไว้ให้ Auto Sum/Count */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>{detailTotalCount.toLocaleString()} รายการ</span>
               <select
                 value={detailPageSize}
-                onChange={(e) => setDetailPageSize(Number(e.target.value))}
-                style={{ padding: '5px 8px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '6px', outline: 'none' }}
+                onChange={(e) => setDetailPageSize(e.target.value === 'all' ? detailTotalCount : Number(e.target.value))}
+                style={{ padding: '4px 6px', fontSize: '11.5px', border: '0.5px solid #ccc', borderRadius: '6px', outline: 'none' }}
               >
                 <option value="100">100 / หน้า</option>
                 <option value="200">200 / หน้า</option>
                 <option value="500">500 / หน้า</option>
                 <option value="1000">1,000 / หน้า</option>
+                <option value="all">ทั้งหมด</option>
               </select>
               <button
                 onClick={() => setDetailPage(1)}
                 disabled={detailPage <= 1}
-                style={{ padding: '5px 12px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage <= 1 ? '#f5f5f5' : 'white', color: detailPage <= 1 ? '#bbb' : '#333', cursor: detailPage <= 1 ? 'not-allowed' : 'pointer' }}
-              >« หน้าแรก</button>
+                title="หน้าแรก"
+                style={{ padding: '4px 8px', fontSize: '11.5px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage <= 1 ? '#f5f5f5' : 'white', color: detailPage <= 1 ? '#bbb' : '#333', cursor: detailPage <= 1 ? 'not-allowed' : 'pointer' }}
+              >«</button>
               <button
                 onClick={() => setDetailPage((p) => Math.max(1, p - 1))}
                 disabled={detailPage <= 1}
-                style={{ padding: '5px 12px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage <= 1 ? '#f5f5f5' : 'white', color: detailPage <= 1 ? '#bbb' : '#333', cursor: detailPage <= 1 ? 'not-allowed' : 'pointer' }}
-              >‹ ก่อนหน้า</button>
-              <span>หน้า {detailPage} / {detailTotalPages}</span>
+                title="ก่อนหน้า"
+                style={{ padding: '4px 8px', fontSize: '11.5px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage <= 1 ? '#f5f5f5' : 'white', color: detailPage <= 1 ? '#bbb' : '#333', cursor: detailPage <= 1 ? 'not-allowed' : 'pointer' }}
+              >‹</button>
+              <span>{detailPage} / {detailTotalPages}</span>
               <button
                 onClick={() => setDetailPage((p) => Math.min(detailTotalPages, p + 1))}
                 disabled={detailPage >= detailTotalPages}
-                style={{ padding: '5px 12px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage >= detailTotalPages ? '#f5f5f5' : 'white', color: detailPage >= detailTotalPages ? '#bbb' : '#333', cursor: detailPage >= detailTotalPages ? 'not-allowed' : 'pointer' }}
-              >ถัดไป ›</button>
+                title="ถัดไป"
+                style={{ padding: '4px 8px', fontSize: '11.5px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage >= detailTotalPages ? '#f5f5f5' : 'white', color: detailPage >= detailTotalPages ? '#bbb' : '#333', cursor: detailPage >= detailTotalPages ? 'not-allowed' : 'pointer' }}
+              >›</button>
               <button
                 onClick={() => setDetailPage(detailTotalPages)}
                 disabled={detailPage >= detailTotalPages}
-                style={{ padding: '5px 12px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage >= detailTotalPages ? '#f5f5f5' : 'white', color: detailPage >= detailTotalPages ? '#bbb' : '#333', cursor: detailPage >= detailTotalPages ? 'not-allowed' : 'pointer' }}
-              >หน้าสุดท้าย »</button>
+                title="หน้าสุดท้าย"
+                style={{ padding: '4px 8px', fontSize: '11.5px', border: '0.5px solid #ccc', borderRadius: '6px', background: detailPage >= detailTotalPages ? '#f5f5f5' : 'white', color: detailPage >= detailTotalPages ? '#bbb' : '#333', cursor: detailPage >= detailTotalPages ? 'not-allowed' : 'pointer' }}
+              >⏭</button> {/* MARKER_VATWATCHLISTOPS_ROWSELECT_FINAL_V1 -- เปลี่ยนจากข้อความ "หน้าสุดท้าย »" เป็น Icon อย่างเดียว ประหยัดพื้นที่ให้ Action Hint */}
+              {/* MARKER_VATWATCHLISTOPS_REMOVE_ACTION_GUIDE_V1 -- ลบ Action Hint Text + ปุ่ม "⋯ More" ออก (ผู้ใช้แจ้งว่า Action Guide ไม่ช่วยอะไร) */}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}> {/* MARKER_VATWATCHLISTOPS_INCOMPLETE_EXCELGRID_PHASE2_V1 -- Auto Sum -- MARKER_VATWATCHLISTOPS_CELLRANGE_AUTOSUM_V1 ปรับตาม Requirement ใหม่: Checkbox -> Count + Auto Gross + Auto Vat (แยก 2 ยอด, ไม่มี Avg) / Cell-Selection คลิกเดียว -> Count เท่านั้น / Drag หลาย Cell ที่มีตัวเลข -> Count + Autosum (ยอดเดียว รวมข้าม Column) */}
+              {dtSumInfo.count > 0 ? (
+                <>
+                  <span>Count: <strong>{dtSumInfo.count}</strong></span>
+                  <span>Auto Gross: <strong>{dtSumInfo.sumGross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+                  <span>Auto Vat: <strong>{dtSumInfo.sum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+                </>
+              ) : dtCellSumInfo.count > 0 ? (
+                <>
+                  <span>Count: <strong>{dtCellSumInfo.count}</strong></span>
+                  {dtCellIsDragRangeFP && dtCellSumInfo.overallNumericCount > 0 && (
+                    <span>Autosum: <strong>{dtCellSumInfo.overallSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+                  )}
+                </>
+              ) : null}
             </div>
           </div>
         )}
@@ -6046,25 +7953,97 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
           onClick={(e) => e.stopPropagation()}
           style={{ position: 'fixed', top: rowContextMenu.y, left: rowContextMenu.x, background: 'white', border: '0.5px solid #ccc', borderRadius: '8px', boxShadow: '0 6px 16px rgba(0,0,0,0.18)', zIndex: 1000, minWidth: '210px', overflow: 'hidden', fontSize: '13px' }}
         >
+          {(dtSelectedCells.size > 0 || selectedNoteRows.size > 0) && ( // MARKER_VATWATCHLISTOPS_COPY_UNIFIED_V1 -- รวม "Copy Cell" (Cell-Selection) กับ "Copy" (Checkbox-Selection) เดิมเป็นปุ่มเดียว -- ระบบเลือกเองว่าจะ Copy อะไร: มี Cell-Selection (Drag) ค้างอยู่ -> Copy ค่า Cell ที่เลือกไว้ -- ไม่มี Cell-Selection แต่มี Checkbox ติ๊กไว้ -> Copy แถวที่ติ๊ก Checkbox แทน
+            <div
+              onClick={() => {
+                if (dtSelectedCells.size > 0) {
+                  const cellValueCtxFP = (r, c) => {
+                    const rowCtxFP = displayDetailRows[r];
+                    const colCtxFP = activeCols[c];
+                    if (!rowCtxFP || !colCtxFP) return '';
+                    if (colCtxFP.key === 'remark' || colCtxFP.key === 'note') return '';
+                    if (VAT_INCOMPLETE_DATE_KEYS.has(colCtxFP.key)) return formatVatIncompleteDate(rowCtxFP[colCtxFP.key]);
+                    return rowCtxFP[colCtxFP.key] ?? '';
+                  };
+                  const byRowCtxFP = new Map();
+                  dtSelectedCells.forEach((keyStr) => {
+                    const [rStr, cStr] = keyStr.split('-');
+                    const r = Number(rStr), c = Number(cStr);
+                    if (!byRowCtxFP.has(r)) byRowCtxFP.set(r, new Map());
+                    byRowCtxFP.get(r).set(c, String(cellValueCtxFP(r, c)));
+                  });
+                  const sortedRowsCtxFP = [...byRowCtxFP.keys()].sort((a, b) => a - b);
+                  const linesCtxFP = sortedRowsCtxFP.map((r) => {
+                    const colMapCtxFP = byRowCtxFP.get(r);
+                    const sortedColsCtxFP = [...colMapCtxFP.keys()].sort((a, b) => a - b);
+                    return sortedColsCtxFP.map((c) => colMapCtxFP.get(c)).join('\t');
+                  });
+                  const textCtxFP = linesCtxFP.join('\n');
+                  copyTextToClipboardFP(textCtxFP); // MARKER_VATWATCHLISTOPS_CLIPBOARD_FALLBACK_V1
+                } else {
+                  copySelectedNoteRowsToClipboard(); // MARKER_VATWATCHLISTOPS_ROWCONTEXT_COPY_V1 -- ไม่มี Cell-Selection -- Copy แถวที่ติ๊ก Checkbox แทน
+                }
+                closeRowContextMenu();
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f5f5'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              style={{ padding: '9px 14px', cursor: 'pointer' }}
+            >📋 Select &amp; Copy{dtSelectedCells.size > 0 ? (dtSelectedCells.size > 1 ? ` (${dtSelectedCells.size} Cell)` : '') : (selectedNoteRows.size > 1 ? ` (${selectedNoteRows.size} รายการ)` : '')}</div>
+          )}
+          {dtSelectedCells.size > 0 && ( // MARKER_VATWATCHLISTOPS_CELLSELECT_SELECTALL_CHECKBOX_V1 -- "Select All" จาก Cell-Selection (Drag) -- ติ๊ก Checkbox ให้ทุกแถวที่มี Cell อยู่ใน Selection โดยอัตโนมัติ (Merge เข้า selectedNoteRows เดิม ไม่แทนที่ ไม่แก้ dtSelectedCells)
+            <div
+              onClick={() => {
+                const rowIdxSetFP = new Set();
+                dtSelectedCells.forEach((keyStr) => {
+                  const [rStr] = keyStr.split('-');
+                  rowIdxSetFP.add(Number(rStr));
+                });
+                setSelectedNoteRows((prev) => {
+                  const next = new Map(prev);
+                  rowIdxSetFP.forEach((r) => {
+                    const rowFP = displayDetailRows[r];
+                    if (!rowFP) return;
+                    next.set(getNoteKey(rowFP), { invoice_ref: rowFP.invoice_ref, supplier_code: rowFP.supplier_code, branch: rowFP.branch, vendor_name: rowFP.vendor_name, check_no: rowFP.check_no, exp_amount: rowFP.exp_amount, exp_vat: rowFP.exp_vat, receive_doc_no: rowFP.receive_doc_no, payment_date: rowFP.payment_date });
+                  });
+                  return next;
+                });
+                setDtSelectedCells(new Set()); // MARKER_VATWATCHLISTOPS_SELECTALL_CLEAR_CELLSELECTION_V1 -- เคลียร์ Cell-Selection ทิ้งทันทีที่กด Select All -- แปลงเป็น Checkbox-Selection แบบเบ็ดเสร็จ ให้ "Select & Copy" ครั้งต่อไป Copy เป็นทั้งแถวครบทุกคอลัมน์ (ไม่ใช่แค่ Cell ที่ Drag ไว้แต่แรก)
+                closeRowContextMenu();
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f5f5'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              style={{ padding: '9px 14px', cursor: 'pointer', borderTop: '0.5px solid #eee' }}
+            >✅ Select All ({new Set(Array.from(dtSelectedCells).map((k) => k.split('-')[0])).size} แถว)</div>
+          )}
           <div
             onClick={() => { openQuickAction(rowContextMenu.row); closeRowContextMenu(); }}
             onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f5f5'; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-            style={{ padding: '9px 14px', cursor: 'pointer' }}
+            style={{ padding: '9px 14px', cursor: 'pointer', borderTop: (dtSelectedCells.size > 0 || selectedNoteRows.size > 0) ? '0.5px solid #eee' : 'none' }} // MARKER_VATWATCHLISTOPS_COPY_UNIFIED_V1 -- เพิ่มขีดคั่นด้านบน เฉพาะตอนมี Copy/Select All โผล่นำหน้าอยู่
           >⚡ Quick Action</div> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_V1 MARKER_VATWATCHLISTOPS_CONTEXT_MENU_REORDER_V1 -- ย้ายขึ้นอันดับ 1 เสมอ */}
           <div
-            onClick={() => {
+            onClick={async () => { // MARKER_VATWATCHLISTOPS_FIND_BY_CHECKNO_AUTOSELECT_V1 -- เปลี่ยนจากยัดค่าใส่ช่อง Search เป็น Query หา Invoice อื่นที่ Check No. ตรงกัน แล้ว Auto-tick เข้า Selection ตรงๆ
               const targets = (selectedNoteRows.size > 0 && selectedNoteRows.has(getNoteKey(rowContextMenu.row)))
                 ? Array.from(selectedNoteRows.values())
                 : [rowContextMenu.row];
               const uniqueCheckNos = [...new Set(targets.map((r) => String(r.check_no || '').trim()).filter(Boolean))];
-              setDetailSearch(uniqueCheckNos.join(','));
               closeRowContextMenu();
+              if (uniqueCheckNos.length === 0 || !bu?.bu) return;
+              try {
+                const found = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu.bu)}&eq_status=pending&in_check_no=${encodeURIComponent(uniqueCheckNos.join(','))}&limit=500`); // MARKER_VATWATCHLISTOPS_FINDBYCHECKNO_PENDING_ONLY_V1 -- เดิมไม่มี eq_status=pending ดึง Invoice Status อื่น (เช่น Done) ที่ใช้เช็คเดียวกันติดมาด้วย เกินจากที่เห็นในตาราง Incomplete
+                const foundRows = Array.isArray(found) ? found : [];
+                // MARKER_VATWATCHLISTOPS_FINDBYCHECKNO_REPLACE_SELECTION_V1 -- เดิม new Map(prev) รวมกับ Selection เก่า ทำให้ Full Page โผล่มากกว่าผลลัพธ์ Check No. ที่ Find จริง เปลี่ยนเป็น new Map() เปล่า = แทนที่ทั้งหมด (อยากเพิ่มแถวอื่นทีหลัง ยังกด Checkbox ติ๊กเพิ่มเองได้ตามปกติ)
+                const next = new Map();
+                foundRows.forEach((r) => next.set(getNoteKey(r), { invoice_ref: r.invoice_ref, supplier_code: r.supplier_code, branch: r.branch, vendor_name: r.vendor_name, check_no: r.check_no, exp_amount: r.exp_amount, exp_vat: r.exp_vat, receive_doc_no: r.receive_doc_no, payment_date: r.payment_date }));
+                setSelectedNoteRows(next);
+              } catch (err) {
+                console.error('find by check_no error:', err);
+              }
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f5f5'; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
             style={{ padding: '9px 14px', cursor: 'pointer', borderTop: '0.5px solid #eee' }}
-          >🔎 Find by Check No.</div> {/* MARKER_VATWATCHLISTOPS_CONTEXT_MENU_FIND_BY_PAYMENT_V1 -- ดึงค่า เลขที่เช็ค (check_no) จากแถวที่เลือก (ค่าเดียวหรือหลายค่าไม่ซ้ำกัน) ไปใส่ช่อง Search */}
+          >🔎 Find by Check No.</div> {/* MARKER_VATWATCHLISTOPS_CONTEXT_MENU_FIND_BY_PAYMENT_V1 -- ดึงค่า เลขที่เช็ค (check_no) จากแถวที่เลือก (ค่าเดียวหรือหลายค่าไม่ซ้ำกัน) ไปหา Invoice อื่นที่ตรงกัน แล้ว Auto-tick เข้า Selection */}
           {selectedNoteRows.size <= 1 && ( // MARKER_VATWATCHLISTOPS_CONTEXT_MENU_HIDE_SINGLE_NOTE_V1 -- เลือกมากกว่า 1 แถว ไม่ต้องขึ้นเมนูนี้ ให้ใช้ Group Note แทน
           <div
             onClick={() => { openNoteModal(rowContextMenu.row); closeRowContextMenu(); }}
@@ -6110,13 +8089,45 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
             </div>
             <div style={{ padding: '16px 20px 8px' }}> {/* MARKER_VATWATCHLISTOPS_EXPORT_TEMPLATES_V1 */}
               <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Template</label>
-              <select value={selectedExportTemplateId} onChange={(e) => setSelectedExportTemplateId(e.target.value)} style={{ width: '100%' }}>
+              <select value={selectedExportTemplateId} onChange={(e) => { setSelectedExportTemplateId(e.target.value); if (e.target.value !== '__check_return_report__') setExportScope('bu'); }} style={{ width: '100%' }}> {/* MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1 -- สลับออกจาก Template นี้ -> Reset Scope กลับเป็น BU เสมอ */}
                 <option value="__builtin__">Config - Incomplete VAT</option>
                 <option value="__expire_check_payment__">Config - Expire by Check Payment</option> {/* MARKER_VATWATCHLISTOPS_EXPIRE_CHECK_PAYMENT_TEMPLATE_V1 */}
+                <option value="__check_return_report__">Config - Report Check Return</option> {/* MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1 */}
                 {exportTemplates.map((t) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
+            </div>
+            <div style={{ padding: '0 20px 8px' }}> {/* MARKER_VATWATCHLISTOPS_CHECK_RETURN_REPORT_TEMPLATE_V1 -- All/BU Toggle เฉพาะ Template "Config - Report Check Return" -- Template อื่น: All เปลี่ยนเป็น View + กดไม่ได้ (Scope ล็อกที่ BU ปัจจุบัน) */}
+              <label style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>ขอบเขตข้อมูล</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  disabled={selectedExportTemplateId !== '__check_return_report__'}
+                  onClick={() => setExportScope('all')}
+                  style={{
+                    flex: 1, padding: '7px 10px', fontSize: '12px', borderRadius: '8px',
+                    border: exportScope === 'all' ? '1px solid #1a3a5c' : '0.5px solid #ccc',
+                    background: exportScope === 'all' ? '#1a3a5c' : 'white',
+                    color: exportScope === 'all' ? 'white' : '#333',
+                    cursor: selectedExportTemplateId === '__check_return_report__' ? 'pointer' : 'not-allowed',
+                    opacity: selectedExportTemplateId === '__check_return_report__' ? 1 : 0.55,
+                  }}
+                >{selectedExportTemplateId === '__check_return_report__' ? 'All' : 'View'}</button>
+                <button
+                  type="button"
+                  disabled={selectedExportTemplateId !== '__check_return_report__'}
+                  onClick={() => setExportScope('bu')}
+                  style={{
+                    flex: 1, padding: '7px 10px', fontSize: '12px', borderRadius: '8px',
+                    border: exportScope === 'bu' ? '1px solid #1a3a5c' : '0.5px solid #ccc',
+                    background: exportScope === 'bu' ? '#1a3a5c' : 'white',
+                    color: exportScope === 'bu' ? 'white' : '#333',
+                    cursor: selectedExportTemplateId === '__check_return_report__' ? 'pointer' : 'not-allowed',
+                    opacity: selectedExportTemplateId === '__check_return_report__' ? 1 : 0.55,
+                  }}
+                >BU{bu?.bu ? ` (${bu.bu})` : ''}</button>
+              </div>
             </div>
             <div style={{ padding: '8px 20px 16px' }}>
               <button type="button" onClick={openConfigNewTemplateModal} style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', border: 'none', background: 'transparent', color: '#1a3a5c', cursor: 'pointer', padding: 0 }}>+ Config New - Template</button>
@@ -6363,7 +8374,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
               {detailSearch && (
                 <button
                   type="button"
-                  onClick={() => setDetailSearch('')}
+                  onClick={() => { setDetailSearch(''); setSelectedNoteRows(new Map()); }} // MARKER_VATWATCHLISTOPS_CLEARSEARCH_ALSO_CLEAR_SELECTION_V1 -- เคลียร์ Search แล้วเคลียร์ Selection ไปด้วย
                   style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', width: '20px', height: '20px', padding: 0, border: 'none', borderRadius: '50%', background: '#e8e8e8', color: '#666', fontSize: '12px', lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                 >✕</button>
               )}
@@ -6659,16 +8670,21 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
               <div style={{ height: '22%', boxSizing: 'border-box', border: '0.5px solid #e0e0e0', borderRadius: '10px', boxShadow: '0 1px 3px rgba(16,24,40,0.08), 0 1px 2px rgba(16,24,40,0.04)', padding: '10px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}> {/* MARKER_VATWATCHLISTOPS_FULLPAGE_RIGHT_PANEL_SPLIT_V1 MARKER_VATWATCHLISTOPS_FULLPAGE_POLISH_RIGHT_V1 MARKER_VATWATCHLISTOPS_SUPPLIER_ACTION_PASTEL_COLORS_V1 MARKER_VATWATCHLISTOPS_ACTION_CALCULATE_REMOVE_TITLE_COMPACT_V1 -- เอา Title ออก ลด Padding */}
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}> {/* MARKER_VATWATCHLISTOPS_ACTION_CALCULATE_STATUS_V1 -- แสดงสถานะการคำนวณจริงแทน Empty State */}
                   {(() => {
-                    const qAction = detailSearch.trim().toLowerCase();
-                    const qTermsAction = qAction.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-                    const rowsAction = qTermsAction.length === 0 ? [] : fullPagePopvatRows.filter((r) =>
-                      qTermsAction.some((term) =>
-                        String(r.invoice_ref || '').toLowerCase().includes(term) ||
-                        String(r.receive_doc_no || '').toLowerCase().includes(term) ||
-                        String(r.vendor_name || '').toLowerCase().includes(term) ||
-                        String(r.check_no || '').toLowerCase().includes(term)
-                      )
-                    );
+                    let rowsAction; // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECTION_PRIORITY_REMAINING_V1 -- มี Selection ใช้ fullPagePopvatRows ตรงๆ เสมอ
+                    if (selectedNoteRows.size > 0) {
+                      rowsAction = fullPagePopvatRows;
+                    } else {
+                      const qAction = detailSearch.trim().toLowerCase();
+                      const qTermsAction = qAction.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+                      rowsAction = qTermsAction.length === 0 ? [] : fullPagePopvatRows.filter((r) =>
+                        qTermsAction.some((term) =>
+                          String(r.invoice_ref || '').toLowerCase().includes(term) ||
+                          String(r.receive_doc_no || '').toLowerCase().includes(term) ||
+                          String(r.vendor_name || '').toLowerCase().includes(term) ||
+                          String(r.check_no || '').toLowerCase().includes(term)
+                        )
+                      );
+                    }
                     const selectedRowsAction = rowsAction.filter((r) => selectedFullPageInvoices.has(getNoteKey(r)));
                     const rowsForSumAction = selectedRowsAction.length > 0 ? selectedRowsAction : rowsAction;
                     const listSumAmountAction = rowsForSumAction.reduce((sum, r) => sum + (Number(r.exp_amount) || 0), 0);
@@ -6777,11 +8793,11 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                         <td style={{ padding: '5px 8px', textAlign: 'center' }}> {/* MARKER_VATWATCHLISTOPS_ADDTAX_CHECKBOX_ALIGN_V1 */}
                           <input type="checkbox" checked={selectedFullPageInvoices.has(getNoteKey(row))} onChange={() => toggleSelectFullPageInvoice(row)} />
                         </td>
-                        <td style={{ padding: '7px 10px' }}>{row.branch || '—'}</td>
-                        <td style={{ padding: '7px 10px' }}>{row.invoice_ref || '—'}</td>
-                        <td style={{ padding: '7px 10px' }}>{row.vendor_name || '—'}</td>
-                        <td style={{ padding: '7px 10px' }}>{row.check_no || '—'}</td>
-                        <td style={{ padding: '7px 10px' }}>{row.receive_doc_no || '—'}</td>
+                        <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.branch || '—'}</td> {/* MARKER_VATWATCHLISTOPS_FULLPAGE_INVOICELIST_ELLIPSIS_V1 -- กันข้อความยาวไหลทะลุ Column ไปทับ Column ข้างๆ */}
+                        <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.invoice_ref || '—'}</td>
+                        <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.vendor_name || '—'}</td>
+                        <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.check_no || '—'}</td>
+                        <td style={{ padding: '7px 10px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.receive_doc_no || '—'}</td>
                         <td style={{ padding: '7px 10px', textAlign: 'right' }}>{row.exp_amount != null && row.exp_amount !== '' ? Number(row.exp_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                         <td style={{ padding: '7px 10px', textAlign: 'right' }}>{row.exp_vat != null && row.exp_vat !== '' ? Number(row.exp_vat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                       </tr>
@@ -6793,18 +8809,23 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
           </div>
           <div style={{ width: '100%', flex: '4 1 0%', minHeight: 0, boxSizing: 'border-box', borderTop: '0.5px solid #eef0f2', overflow: 'hidden', background: '#f6f8fa' }}> {/* MARKER_VATWATCHLISTOPS_FULLPAGE_LAYOUT_V2_ALIGN_FIX_V1 MARKER_VATWATCHLISTOPS_FULLPAGE_MERGE_CARDS_V1 -- ยอดรวมของ List (ใน Card1, มี Divider คั่น) */}
             {(() => {
-              const qList = detailSearch.trim().toLowerCase();
-              const qTermsList = qList.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-              const listRows = qTermsList.length === 0 ? [] : detailRows.filter((r) =>
-                qTermsList.some((term) =>
-                  String(r.invoice_ref || '').toLowerCase().includes(term) ||
-                  String(r.receive_doc_no || '').toLowerCase().includes(term) ||
-                  String(r.vendor_name || '').toLowerCase().includes(term) ||
-                  String(r.check_no || '').toLowerCase().includes(term)
-                )
-              );
-              const selectedListRows = listRows.filter((r) => selectedFullPageInvoices.has(getNoteKey(r))); // MARKER_VATWATCHLISTOPS_ADDTAX_LISTTOTAL_SELECTED_V1
-              const listRowsForSum = selectedListRows.length > 0 ? selectedListRows : listRows; // มีติ๊ก -> เฉพาะที่ติ๊ก / ไม่ติ๊กเลย -> ทั้งหมด
+              let listRowsForSum; // MARKER_VATWATCHLISTOPS_LISTSUM_USE_SELECTED_SOURCE_V1 -- มี Selection ให้ใช้ fullPagePopvatRows ตรงๆ (Sync กับยอดล่างสุดที่ถูกต้อง) แทนการ Search detailRows ใหม่
+              if (selectedNoteRows.size > 0) {
+                listRowsForSum = fullPagePopvatRows;
+              } else {
+                const qList = detailSearch.trim().toLowerCase();
+                const qTermsList = qList.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+                const listRows = qTermsList.length === 0 ? [] : detailRows.filter((r) =>
+                  qTermsList.some((term) =>
+                    String(r.invoice_ref || '').toLowerCase().includes(term) ||
+                    String(r.receive_doc_no || '').toLowerCase().includes(term) ||
+                    String(r.vendor_name || '').toLowerCase().includes(term) ||
+                    String(r.check_no || '').toLowerCase().includes(term)
+                  )
+                );
+                const selectedListRows = listRows.filter((r) => selectedFullPageInvoices.has(getNoteKey(r))); // MARKER_VATWATCHLISTOPS_ADDTAX_LISTTOTAL_SELECTED_V1
+                listRowsForSum = selectedListRows.length > 0 ? selectedListRows : listRows; // มีติ๊ก -> เฉพาะที่ติ๊ก / ไม่ติ๊กเลย -> ทั้งหมด
+              }
               const listSumAmount = listRowsForSum.reduce((sum, r) => sum + (Number(r.exp_amount) || 0), 0);
               const listSumVat = listRowsForSum.reduce((sum, r) => sum + (Number(r.exp_vat) || 0), 0);
               return (
@@ -6849,18 +8870,52 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                 {addTaxInvoiceList.length === 0 ? (
                   <tr><td colSpan={8} style={{ padding: '10px 8px', color: '#999' }}>ยังไม่มีข้อมูล</td></tr>
                 ) : (
-                  addTaxInvoiceList.map((row) => (
-                    <tr key={row.id} style={{ borderBottom: '0.5px solid #eee' }}>
-                      <td style={{ padding: '5px 8px', textAlign: 'center' }}><input type="checkbox" checked={selectedTaxInvoiceRows.has(row.id)} onChange={() => toggleSelectTaxInvoiceRow(row.id)} /></td> {/* MARKER_VATWATCHLISTOPS_ADDTAX_LIST_SCROLL_SELECT_V1 MARKER_VATWATCHLISTOPS_ADDTAX_CHECKBOX_TEXTALIGN_FIX_V1 */}
+                  addTaxInvoiceList.map((row) => { // MARKER_VATWATCHLISTOPS_ADDTAX_LIST_INLINE_EDIT_V1 -- เปลี่ยนจาก Arrow-return ตรง เป็น Block เพื่อคำนวณ isEditingRow ก่อน
+                    const isEditingRow = editingTaxRowId === row.id;
+                    const inputStyleTax = { padding: '3px 5px', border: '1px solid #1a3a5c', borderRadius: '4px', fontSize: '12px', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+                    return (
+                    <React.Fragment key={row.id}>
+                    <tr style={{ borderBottom: isEditingRow ? 'none' : '0.5px solid #eee' }}>
+                      <td style={{ padding: '5px 8px', textAlign: 'center' }}><input type="checkbox" checked={selectedTaxInvoiceRows.has(row.id)} onChange={() => toggleSelectTaxInvoiceRow(row.id)} /></td>
                       <td style={{ padding: '5px 8px' }}>{row.branch}</td>
-                      <td style={{ padding: '5px 8px' }}>{row.taxInvoiceNo}</td>
-                      <td style={{ padding: '5px 8px' }}>{formatQuickActionReceiveDateText(row.taxInvoiceDate)}</td> {/* MARKER_VATWATCHLISTOPS_ADDTAX_LIST_DATE_FORMAT_FIX_V1 */}
-                      <td style={{ padding: '5px 8px', fontFamily: 'monospace' }}>{row.grn}</td>
-                      <td style={{ padding: '5px 8px' }}>{formatQuickActionReceiveDateText(row.receiveDate)}</td> {/* MARKER_VATWATCHLISTOPS_ADDTAX_LIST_DATE_FORMAT_FIX_V1 */}
-                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>{Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>{Number(row.vat || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td> {/* MARKER_VATWATCHLISTOPS_ADDTAX_BULK_DELETE_V1 -- เอาปุ่มลบออก ใช้ Select+Delete บนหัวแทน */}
+                      <td style={{ padding: '5px 8px' }}>{isEditingRow ? (
+                        <input value={editingTaxRowDraft.taxInvoiceNo} onChange={(e) => setEditingTaxRowDraft((prev) => ({ ...prev, taxInvoiceNo: e.target.value }))} style={inputStyleTax} />
+                      ) : (
+                        <span onClick={() => startEditTaxRow(row)} style={{ cursor: 'text', padding: '2px 4px', borderRadius: '4px' }} onMouseEnter={(e) => e.currentTarget.style.background = '#F0F4F8'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>{row.taxInvoiceNo}</span>
+                      )}</td>
+                      <td style={{ padding: '5px 8px' }}>{isEditingRow ? (
+                        <input value={editingTaxRowDraft.taxInvoiceDate} onChange={(e) => setEditingTaxRowDraft((prev) => ({ ...prev, taxInvoiceDate: e.target.value }))} style={inputStyleTax} />
+                      ) : (
+                        <span onClick={() => startEditTaxRow(row)} style={{ cursor: 'text', padding: '2px 4px', borderRadius: '4px' }} onMouseEnter={(e) => e.currentTarget.style.background = '#F0F4F8'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>{formatQuickActionReceiveDateText(row.taxInvoiceDate)}</span>
+                      )}</td>
+                      <td style={{ padding: '5px 8px', fontFamily: isEditingRow ? 'inherit' : 'monospace' }}>{isEditingRow ? (
+                        <input value={editingTaxRowDraft.grn} onChange={(e) => setEditingTaxRowDraft((prev) => ({ ...prev, grn: e.target.value }))} style={inputStyleTax} />
+                      ) : (
+                        <span onClick={() => startEditTaxRow(row)} style={{ cursor: 'text', padding: '2px 4px', borderRadius: '4px' }} onMouseEnter={(e) => e.currentTarget.style.background = '#F0F4F8'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>{row.grn}</span>
+                      )}</td>
+                      <td style={{ padding: '5px 8px' }}>{formatQuickActionReceiveDateText(row.receiveDate)}</td>
+                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>{isEditingRow ? (
+                        <input value={editingTaxRowDraft.amount} onChange={(e) => setEditingTaxRowDraft((prev) => ({ ...prev, amount: e.target.value }))} style={{ ...inputStyleTax, textAlign: 'right' }} />
+                      ) : (
+                        <span onClick={() => startEditTaxRow(row)} style={{ cursor: 'text', padding: '2px 4px', borderRadius: '4px', display: 'inline-block' }} onMouseEnter={(e) => e.currentTarget.style.background = '#F0F4F8'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>{Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      )}</td>
+                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>{isEditingRow ? (
+                        <input value={editingTaxRowDraft.vat} onChange={(e) => setEditingTaxRowDraft((prev) => ({ ...prev, vat: e.target.value }))} style={{ ...inputStyleTax, textAlign: 'right' }} />
+                      ) : (
+                        <span onClick={() => startEditTaxRow(row)} style={{ cursor: 'text', padding: '2px 4px', borderRadius: '4px', display: 'inline-block' }} onMouseEnter={(e) => e.currentTarget.style.background = '#F0F4F8'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>{Number(row.vat || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      )}</td>
                     </tr>
-                  ))
+                    {isEditingRow && (
+                      <tr style={{ borderBottom: '0.5px solid #eee' }}>
+                        <td colSpan={8} style={{ padding: '4px 8px 8px', textAlign: 'right', background: '#FAFBFC' }}>
+                          <button onClick={cancelEditTaxRow} style={{ fontSize: '11px', padding: '4px 12px', border: '0.5px solid #ccc', borderRadius: '6px', background: 'white', color: '#666', cursor: 'pointer', marginRight: '6px' }}>Cancel</button>
+                          <button onClick={commitEditTaxRow} style={{ fontSize: '11px', padding: '4px 12px', border: 'none', borderRadius: '6px', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>Update</button>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -7035,16 +9090,21 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
           </div>
           <div ref={footerRowWrapperRef} style={{ width: '100%', flex: '0 0 auto', minHeight: 0, boxSizing: 'border-box', borderTop: '0.5px solid #eef0f2', overflow: 'hidden', position: 'relative' }}> {/* MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_COLLECT_DATA_V1 MARKER_VATWATCHLISTOPS_FULLPAGE_MERGE_CARDS_V1 MARKER_VATWATCHLISTOPS_SELECT_STYLE_CANCEL_POSITION_FIX_V1 MARKER_VATWATCHLISTOPS_FULLPAGE_FOOTER_FLEX_FIX_V1 -- สูงเท่าเนื้อหาจริง ไม่แบ่งสัดส่วน 5/75 เหมือนเดิม (กันที่ว่างเปล่าใต้ปุ่ม) */}
             {(() => {
-              const q2 = detailSearch.trim().toLowerCase();
-              const qTerms2 = q2.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean); // MARKER_VATWATCHLISTOPS_FULLPAGE_SEARCH_SYNC_V1
-              const rows2 = qTerms2.length === 0 ? [] : fullPagePopvatRows.filter((r) => // MARKER_VATWATCHLISTOPS_FIX_FOOTER_SUMMARY_SOURCE_V1 -- ใช้ข้อมูลของ Full Page List จริง แทน Incomplete Detail (detailRows)
-                qTerms2.some((term) =>
-                  String(r.invoice_ref || '').toLowerCase().includes(term) ||
-                  String(r.receive_doc_no || '').toLowerCase().includes(term) ||
-                  String(r.vendor_name || '').toLowerCase().includes(term) ||
-                  String(r.check_no || '').toLowerCase().includes(term)
-                )
-              );
+              let rows2; // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECTION_PRIORITY_REMAINING_V1 -- มี Selection ใช้ fullPagePopvatRows ตรงๆ เสมอ
+              if (selectedNoteRows.size > 0) {
+                rows2 = fullPagePopvatRows;
+              } else {
+                const q2 = detailSearch.trim().toLowerCase();
+                const qTerms2 = q2.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean); // MARKER_VATWATCHLISTOPS_FULLPAGE_SEARCH_SYNC_V1
+                rows2 = qTerms2.length === 0 ? [] : fullPagePopvatRows.filter((r) => // MARKER_VATWATCHLISTOPS_FIX_FOOTER_SUMMARY_SOURCE_V1 -- ใช้ข้อมูลของ Full Page List จริง แทน Incomplete Detail (detailRows)
+                  qTerms2.some((term) =>
+                    String(r.invoice_ref || '').toLowerCase().includes(term) ||
+                    String(r.receive_doc_no || '').toLowerCase().includes(term) ||
+                    String(r.vendor_name || '').toLowerCase().includes(term) ||
+                    String(r.check_no || '').toLowerCase().includes(term)
+                  )
+                );
+              }
               const selectedRows2 = rows2.filter((r) => selectedFullPageInvoices.has(getNoteKey(r))); // MARKER_VATWATCHLISTOPS_ADDTAX_SYNC_SELECTED_V1 -- ใช้คำนวณผลรวมด้วย (Sync กับยอดรวมของ List ด้านบน)
               const rowsForSumFinal = selectedRows2.length > 0 ? selectedRows2 : rows2; // มีติ๊ก -> เฉพาะที่ติ๊ก / ไม่ติ๊กเลย -> ทั้งหมด
               const listSumAmountFinal = rowsForSumFinal.reduce((sum, r) => sum + (Number(r.exp_amount) || 0), 0); // MARKER_VATWATCHLISTOPS_FULLPAGE_LAYOUT_V2 -- ยอดรวมของ List (ยอดล่างสุดของหน้า -- Sync กับการติ๊กแล้ว)
@@ -7096,41 +9156,66 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                           const ibOrAssetTriggeredFP = ibTriggeredFP || isAssetGroupFP; // MARKER_VATWATCHLISTOPS_ASSET_FORCE_NNN_ADI_V1 -- Asset (T/F) บังคับเข้าโหมด NNN/ADI เสมอ แม้ Branch จะตรงกันก็ตาม
                           setFullPagePopvatDataFetched(true);
                           try { // MARKER_VATWATCHLISTOPS_ADDDATA_REAL_SAVE_LOGIC_V1 -- บันทึกจริง (Pattern เดียวกับ Quick Action ที่แก้ถูกแล้ว)
+                            let __vatFpCount = 0; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2 -- นับจำนวนแถวที่ Insert จริงรวมทุกตาราง (Popvat/Simple/ADI)
+                            let __vatFpDraftId = null; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                             if (!ibOrAssetTriggeredFP && addTaxInvoiceList.length === 1) { // MARKER_VATWATCHLISTOPS_ADI_IB_TRIGGER_V1 -- เคส 1: Tax Invoice เดียว + Branch ตรงกัน = Popvat Transfer (Logic เดิม ไม่แก้) / IB Trigger หรือ Asset ให้ตกไปเคส 2 เสมอ -- MARKER_VATWATCHLISTOPS_ASSET_FORCE_NNN_ADI_V1
                             const taxInvoice = addTaxInvoiceList[0];
                             const draftId = generateQuickActionDraftId();
+                            __vatFpDraftId = draftId; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                             const periodStatusSingleFP = await apiFetch('/vat/period/status').catch(() => null); // MARKER_VATWATCHLISTOPS_POPVATDRAFT_PERIOD_MISSING_FIX_V1 -- เคส 1 ไม่เคยดึง Period มาก่อนเลย ทำให้ Column period เป็น NULL เสมอ (ต่างจากเคส 2 ที่มี Logic นี้อยู่แล้ว)
                             const periodTextSingleFP = formatQuickActionPeriodMMYYYY(periodStatusSingleFP ? periodStatusSingleFP.vat_period_current_month : null); // MARKER_VATWATCHLISTOPS_POPVATDRAFT_PERIOD_MISSING_FIX_V1
-                            for (const row of rowsForSumFinal) {
-                              await apiFetch('/vat_upload_popvatdraft', {
-                                method: 'POST',
-                                body: JSON.stringify({
-                                  bu: bu?.bu,
-                                  period: periodTextSingleFP, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_PERIOD_MISSING_FIX_V1 -- เพิ่ม Field ที่ขาดไป
-                                  book: bu?.BOOK || null,
-                                  draft_id: draftId,
-                                  branch: row.branch || null,
-                                  grt_number: row.receive_doc_no, // MARKER_VATWATCHLISTOPS_ADDDATA_FIX_GRT_PER_INVOICE_V1 -- ดึงจากเลขที่ GRT เดิมของแต่ละ Invoice (เหมือน Quick Action ที่แก้ถูกแล้ว) ไม่ใช่ taxInvoice.grn ที่ Auto-gen ใหม่
-                                  original_invoice_number: row.invoice_ref || null,
-                                  receipt_date: formatQuickActionReceiveDateText(taxInvoice.receiveDate),
-                                  tax_invoice_number: taxInvoice.grn, // MARKER_VATWATCHLISTOPS_ADDDATA_FIX_TAXINVOICENUM_USE_GRN_V1 -- ดึงจาก GRN Auto-gen ของ Tax Invoice (เหมือน Quick Action) ไม่ใช่ Tax Invoice No. ที่พิมพ์เอง
-                                  tax_invoice_date: formatQuickActionReceiveDateText(taxInvoice.taxInvoiceDate),
-                                  vendor_tax_invoice_number: taxInvoice.taxInvoiceNo, // MARKER_VATWATCHLISTOPS_VENDOR_TAXINVOICE_USE_TYPED_V1 -- เปลี่ยนจาก taxInvoice.grn เป็นค่าที่พิมพ์จริงในช่อง Tax Invoice Number
-                                  supplier_tax_id: null,
-                                  supplier_branch_number: null,
-                                  supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
-                                  check_no: row.check_no || null,
-                                  product_value: row.exp_amount || null,
-                                  vat_amount: row.exp_vat || null,
-                                  status: 'draft',
-                                  action: 'Popvat', // MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_ACTION_TRACKING_V1
-                                  menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_ADDDATA_ADD_MENU_SOURCE_V1 MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- แก้ค่าเป็น ap_vat ตามที่ยืนยัน
-                                }),
-                              });
-                              const reportRows = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
-                              const matchedReport = (Array.isArray(reportRows) ? reportRows : []).filter((r) => r.status === 'pending');
-                              for (const r of matchedReport) {
-                                await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+                            const remainingRowsFP1 = [...rowsForSumFinal]; // MARKER_VATCONTROLLER_FULLPAGE_PROGRESSIVE_RESUME_V1 -- Queue ที่ยังไม่สำเร็จ
+                            while (remainingRowsFP1.length > 0) {
+                              const row = remainingRowsFP1[0];
+                              try {
+                                await apiFetch('/vat_upload_popvatdraft', {
+                                  method: 'POST',
+                                  body: JSON.stringify({
+                                    bu: bu?.bu,
+                                    period: periodTextSingleFP, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_PERIOD_MISSING_FIX_V1 -- เพิ่ม Field ที่ขาดไป
+                                    book: bu?.BOOK || null,
+                                    draft_id: draftId,
+                                    branch: row.branch || null,
+                                    grt_number: row.receive_doc_no, // MARKER_VATWATCHLISTOPS_ADDDATA_FIX_GRT_PER_INVOICE_V1 -- ดึงจากเลขที่ GRT เดิมของแต่ละ Invoice (เหมือน Quick Action ที่แก้ถูกแล้ว) ไม่ใช่ taxInvoice.grn ที่ Auto-gen ใหม่
+                                    original_invoice_number: row.invoice_ref || null,
+                                    receipt_date: formatQuickActionReceiveDateText(taxInvoice.receiveDate),
+                                    tax_invoice_number: taxInvoice.grn, // MARKER_VATWATCHLISTOPS_ADDDATA_FIX_TAXINVOICENUM_USE_GRN_V1 -- ดึงจาก GRN Auto-gen ของ Tax Invoice (เหมือน Quick Action) ไม่ใช่ Tax Invoice No. ที่พิมพ์เอง
+                                    tax_invoice_date: formatQuickActionReceiveDateText(taxInvoice.taxInvoiceDate),
+                                    vendor_tax_invoice_number: taxInvoice.taxInvoiceNo, // MARKER_VATWATCHLISTOPS_VENDOR_TAXINVOICE_USE_TYPED_V1 -- เปลี่ยนจาก taxInvoice.grn เป็นค่าที่พิมพ์จริงในช่อง Tax Invoice Number
+                                    supplier_tax_id: null,
+                                    supplier_branch_number: null,
+                                    supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
+                                    check_no: row.check_no || null,
+                                    product_value: row.exp_amount || null,
+                                    vat_amount: row.exp_vat || null,
+                                    username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
+                                    status: 'draft',
+                                    action: 'Popvat', // MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_ACTION_TRACKING_V1
+                                    menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_ADDDATA_ADD_MENU_SOURCE_V1 MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- แก้ค่าเป็น ap_vat ตามที่ยืนยัน
+                                  }),
+                                });
+                                __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
+                                const reportRows = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
+                                const matchedReport = Array.isArray(reportRows) ? reportRows : []; // MARKER_VATWATCHLISTOPS_ADDDATA_STATUS_FILTER_FIX_V1 -- ตัด .filter(status==='pending') ออก Update ทุก Record ที่ Match invoice_ref (Selection ชนะเสมอ)
+                                for (const r of matchedReport) {
+                                  await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+                                }
+                                // MARKER_VATCONTROLLER_FULLPAGE_PROGRESSIVE_RESUME_V1 -- แถวนี้สำเร็จแล้ว: ลบออกจากจอทันที (Progressive)
+                                const doneKeyRowFP1 = getNoteKey(row);
+                                setFullPagePopvatRows((prev) => prev.filter((r) => getNoteKey(r) !== doneKeyRowFP1));
+                                setDetailRows((prev) => prev.filter((r) => getNoteKey(r) !== doneKeyRowFP1));
+                                broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: [row.invoice_ref] });
+                                remainingRowsFP1.shift();
+                              } catch (rowErrFP1) {
+                                // MARKER_VATCONTROLLER_FULLPAGE_PROGRESSIVE_RESUME_V1 -- เช็คว่าเน็ต/VPN หลุดจริงไหม (Ping /version แยกจาก Error อื่น)
+                                const stillOnlineFP1 = await pingIsOnline();
+                                if (stillOnlineFP1) throw rowErrFP1;
+                                setQuickActionConnLost(true);
+                                const reconnectedFP1 = await waitForReconnect(30000, 3000, setQuickActionReconnectSecondsLeft);
+                                setQuickActionConnLost(false);
+                                if (!reconnectedFP1) {
+                                  throw new Error(`ขาดการเชื่อมต่อเกิน 30 วินาที (เหลือ ${remainingRowsFP1.length} รายการที่ยังไม่สำเร็จ กรุณาตรวจสอบเน็ต/VPN แล้วลองใหม่)`);
+                                }
                               }
                             }
                             } else { // MARKER_VATWATCHLISTOPS_ADDDATA_ALLOW_MULTI_TAXINVOICE_V1 -- เคส 2: Tax Invoice หลายใบ = Popvat Cancel (ต่อ Invoice) + Simple Input Transfer (ต่อ Tax Invoice)
@@ -7139,6 +9224,12 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                               await confirmDialog.alert('เนื่องจากไม่มีข้อมูล Supplier ไม่สามารถดำเนินการต่อได้', { title: 'ไม่มีข้อมูล Supplier', variant: 'danger' });
                               return;
                             }
+                            let draftIdMultiFP = null; // MARKER_VATCONTROLLER_FULLPAGE_CASE2_ROLLBACK_RETRY_V1 -- ประกาศนอก Retry Loop เพื่อให้ catch เข้าถึงได้ตอน Rollback
+                            let __case2Attempts = 0; // MARKER_VATCONTROLLER_FULLPAGE_CASE2_ROLLBACK_RETRY_V1 -- กันวน Loop ไม่รู้จบ
+                            while (true) {
+                            __case2Attempts++;
+                            if (__case2Attempts > 5) { throw new Error('บันทึกไม่สำเร็จหลังพยายามหลายครั้ง (Retry เกิน 5 รอบ) กรุณาติดต่อ Admin'); }
+                            try {
                             const periodStatusFP = await apiFetch('/vat/period/status').catch(() => null);
                             const currentPeriodMonthFP = periodStatusFP ? periodStatusFP.vat_period_current_month : null;
                             const periodTextFP = formatQuickActionPeriodMMYYYY(currentPeriodMonthFP);
@@ -7153,7 +9244,9 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                               const lastDayFP = new Date(ymExpFP[0], ymExpFP[1], 0).getDate();
                               simpleReceiveDateFP = `${ymExpFP[0]}-${String(ymExpFP[1]).padStart(2, '0')}-${String(lastDayFP).padStart(2, '0')}`;
                             }
-                            const draftIdMultiFP = generateQuickActionDraftId();
+                            draftIdMultiFP = generateQuickActionDraftId(); // MARKER_VATCONTROLLER_FULLPAGE_CASE2_ROLLBACK_RETRY_V1 -- draft_id ใหม่ทุกรอบ Retry
+                            __vatFpDraftId = draftIdMultiFP; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
+                            __vatFpCount = 0; // MARKER_VATCONTROLLER_FULLPAGE_CASE2_ROLLBACK_RETRY_V1 -- Reset นับใหม่ทุกรอบ Retry ให้ตรงกับชุดที่สำเร็จจริง
                             // MARKER_VATWATCHLISTOPS_ADI_IB_INSERT_V1 -- ค่าคงที่ร่วมสำหรับ ADI Entry (เฉพาะตอน ibTriggeredFP)
                             const companyCodePartsFP = String(bu?.['COMPANY CODE'] || '').split('-').map((s) => s.trim()).filter(Boolean);
                             const busSegFP = companyCodePartsFP[0] || '';
@@ -7179,9 +9272,10 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                   category: adiCategoryFP, source: 'Excel-APN', acc_date: simpleReceiveDateFP,
                                   bus: busSegFP, grp: grpSegFP, com: comSegFP, cpc: '99999', sub_acc: '999999',
                                   batch_name: adiBatchNameFP, batch_description: null, journal_name: sharedJournalNameFP, journal_description: null,
-                                  line_description: lineDescDrMultiFP, line_dff: null, branch_indicator: null, username, menu_source: 'ap_vat',
+                                  line_description: lineDescDrMultiFP, line_dff: null, branch_indicator: null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat', // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   branch: String(t.branch || '').trim(), acc: debitAccMultiFP, debit: Math.abs(Number(t.vat) || 0), credit: null,
                                 }) });
+                                __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                               }
                             }
                             for (const row of rowsForSumFinal) { // Popvat Cancel -- 1 Record ต่อ 1 Invoice (Pattern เดียวกับ Quick Action Popvat Cancel)
@@ -7206,13 +9300,15 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                   check_no: row.check_no || null,
                                   product_value: row.exp_amount || null,
                                   vat_amount: row.exp_vat || null,
+                                  username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   status: 'draft',
                                   action: ibOrAssetTriggeredFP ? 'Simple_NNN' : 'Simple_YNY', // MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_ACTION_TRACKING_V1 -- MARKER_VATWATCHLISTOPS_POPVAT_ACTION_ASSET_NNN_FIX_V1 -- Asset (T/F) ต้องเป็น Simple_NNN เสมอ แม้ Branch จะตรงกันก็ตาม (สอดคล้องกับ type_sim ฝั่ง Simple Input)
                                   menu_source: 'ap_vat',
                                 }),
                               });
+                              __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                               const reportRowsFP = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
-                              const matchedReportFP = (Array.isArray(reportRowsFP) ? reportRowsFP : []).filter((r) => r.status === 'pending');
+                              const matchedReportFP = Array.isArray(reportRowsFP) ? reportRowsFP : []; // MARKER_VATWATCHLISTOPS_ADDDATA_STATUS_FILTER_FIX_V1 -- ตัด .filter(status==='pending') ออก Update ทุก Record ที่ Match invoice_ref (Selection ชนะเสมอ)
                               for (const r of matchedReportFP) {
                                 await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
                               }
@@ -7225,9 +9321,10 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                   category: adiCategoryFP, source: 'Excel-APN', acc_date: simpleReceiveDateFP,
                                   bus: busSegFP, grp: grpSegFP, com: comSegFP, cpc: '99999', sub_acc: '999999',
                                   batch_name: adiBatchNameFP, batch_description: null, journal_name: sharedJournalNameFP, journal_description: null,
-                                  line_description: lineDescCrMultiFP, line_dff: null, branch_indicator: null, username, menu_source: 'ap_vat',
+                                  line_description: lineDescCrMultiFP, line_dff: null, branch_indicator: null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat', // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   branch: String(row.branch || '').trim(), acc: creditAccMultiFP, debit: null, credit: Math.abs(Number(row.exp_vat) || 0), // MARKER_VATWATCHLISTOPS_ADI_CREDIT_USE_VAT_V1 -- ยืนยันแล้วว่าต้องเป็น Vat ไม่ใช่ Amount (Dr./Cr. ต้องเป็น Vat เหมือนกันทั้งคู่)
                                 }) });
+                                __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                               } else if (ibOrAssetTriggeredFP) { // MARKER_VATWATCHLISTOPS_ADI_IB_INSERT_V1 -- ทุก Invoice ออก ADI 2 บรรทัด (Debit/Credit) เมื่อ IB Trigger หรือ Asset (ยกเว้น Average-IB ออก 3 บรรทัด -- ดู MARKER_VATWATCHLISTOPS_ADI_AVERAGE_IB_SPLIT3_V1) -- MARKER_VATWATCHLISTOPS_ASSET_FORCE_NNN_ADI_V1
                                 const clsInfoAdiFP = classifyVatWatchlistTaxType(row.tax_type);
                                 const clsKeyAdiFP = (clsInfoAdiFP && clsInfoAdiFP.cls) || 'N';
@@ -7251,23 +9348,26 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                     category: adiCategoryFP, source: 'Excel-APN', acc_date: simpleReceiveDateFP,
                                     bus: busSegFP, grp: grpSegFP, com: comSegFP,
                                     batch_name: adiBatchNameFP, batch_description: null, journal_name: journalNameAvgAdiFP, journal_description: null,
-                                    line_description: lineDescAvgAdiFP, line_dff: null, branch_indicator: null, username, menu_source: 'ap_vat',
+                                    line_description: lineDescAvgAdiFP, line_dff: null, branch_indicator: null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat', // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   };
                                   // บรรทัด 1: 11610752 (ส่วนเครดิตได้) -- ปกติ Debit / ถ้ายอดติดลบ Credit
                                   await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({
                                     ...adiBaseFieldsAvgFP, branch: taxSideBranchAdiFP, acc: '11610752', cpc: '99999', sub_acc: '999999',
                                     debit: isNegAvgAdiFP ? null : recoverableAvgAdiFP, credit: isNegAvgAdiFP ? recoverableAvgAdiFP : null,
                                   }) });
+                                  __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                   // บรรทัด 2: 63050000 (ส่วนเครดิตไม่ได้, CPC 45700) -- ปกติ Debit / ถ้ายอดติดลบ Credit
                                   await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({
                                     ...adiBaseFieldsAvgFP, branch: taxSideBranchAdiFP, acc: '63050000', cpc: '45700', sub_acc: '999999',
                                     debit: isNegAvgAdiFP ? null : nonRecoverableAvgAdiFP, credit: isNegAvgAdiFP ? nonRecoverableAvgAdiFP : null,
                                   }) });
+                                  __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                   // บรรทัด 3: 11630052 (ฝั่ง Invoice เต็มยอดภาษี) -- ปกติ Credit / ถ้ายอดติดลบ Debit
                                   await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({
                                     ...adiBaseFieldsAvgFP, branch: invoiceSideBranchAdiFP, acc: '11630052', cpc: '99999', sub_acc: '999999',
                                     debit: isNegAvgAdiFP ? vatAbsAvgAdiFP : null, credit: isNegAvgAdiFP ? null : vatAbsAvgAdiFP,
                                   }) });
+                                  __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                 } else {
                                   const isAssetAverageAdiFP = (clsKeyAdiFP === 'T' || clsKeyAdiFP === 'F') && buRateForAdiFP !== 100; // MARKER_VATWATCHLISTOPS_ADI_ASSET_AVERAGE_AMOUNT_V1 -- Asset-IB (A): Asset(T/F) + BU Rate != 100%
                                   const amtRawAdiFP = isAssetAverageAdiFP
@@ -7287,10 +9387,11 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                     category: adiCategoryFP, source: 'Excel-APN', acc_date: simpleReceiveDateFP,
                                     bus: busSegFP, grp: grpSegFP, com: comSegFP, cpc: '99999', sub_acc: '999999',
                                     batch_name: adiBatchNameFP, batch_description: null, journal_name: journalNameAdiFP, journal_description: null,
-                                    line_description: lineDescAdiFP, line_dff: null, branch_indicator: null, username, menu_source: 'ap_vat',
+                                    line_description: lineDescAdiFP, line_dff: null, branch_indicator: null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat', // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   };
                                   await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({ ...adiBaseFieldsFP, branch: debitBranchAdiFP, acc: debitAccFinalAdiFP, debit: amtAdiFP, credit: null }) });
                                   await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({ ...adiBaseFieldsFP, branch: creditBranchAdiFP, acc: creditAccFinalAdiFP, debit: null, credit: amtAdiFP }) });
+                                  __vatFpCount += 2; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                 }
                               }
                             }
@@ -7308,6 +9409,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                   book: bu?.BOOK || null,
                                   period: periodTextFP,
                                   draft_id: draftIdMultiFP,
+                                  username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   menu_source: 'ap_vat',
                                   liability_cost_center_special: ibOrAssetTriggeredFP ? null : (addTaxInvoiceSupplierCpcCr || null), // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_NNN_NULL_CR_V1 -- ตอน NNN (IB Trigger หรือ Asset) ไม่ต้องใส่ Account ฝั่ง Cr. เลย -- MARKER_VATWATCHLISTOPS_ASSET_FORCE_NNN_ADI_V1
                                   liability_account_special: ibOrAssetTriggeredFP ? null : (addTaxInvoiceSupplierAccountCr || null), // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_NNN_NULL_CR_V1 -- MARKER_VATWATCHLISTOPS_ASSET_FORCE_NNN_ADI_V1
@@ -7339,16 +9441,44 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                                   invoice_ref: Number(t.amount) < 0 ? 'Credit' : 'Invoice',
                                 }),
                               });
+                              __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                             }
+                            break; // MARKER_VATCONTROLLER_FULLPAGE_CASE2_ROLLBACK_RETRY_V1 -- สำเร็จครบทุกจุด ออกจาก Retry Loop
+                            } catch (case2Err) {
+                              // MARKER_VATCONTROLLER_FULLPAGE_CASE2_ROLLBACK_RETRY_V1 -- เช็คว่าเน็ต/VPN หลุดจริงไหม (Ping /version แยกจาก Error อื่น เช่น Validation -- ไม่ Retry ถ้าไม่ใช่ปัญหาเน็ต)
+                              const stillOnlineC2 = await pingIsOnline();
+                              if (stillOnlineC2) throw case2Err;
+                              setQuickActionConnLost(true);
+                              await rollbackDraftId(draftIdMultiFP); // ลบทุกอย่างที่เขียนไปแล้วใน draft_id ชุดนี้ทิ้งก่อน (Retry-safe ในตัว)
+                              const reconnectedC2 = await waitForReconnect(30000, 3000, setQuickActionReconnectSecondsLeft);
+                              setQuickActionConnLost(false);
+                              if (!reconnectedC2) {
+                                throw new Error('ขาดการเชื่อมต่อเกิน 30 วินาที (ลบข้อมูลที่เขียนค้างไว้เรียบร้อยแล้ว กรุณาตรวจสอบเน็ต/VPN แล้วลองใหม่)');
+                              }
+                              // เชื่อมกลับมาได้ -- วนรอบใหม่ (while) Retry ทั้งชุดด้วย draft_id ใหม่
+                            }
+                            }
+                            }
+                            { // MARKER_VAT_FULLPAGE_TRANSACTION_COUNT_BY_QUERY_V4 -- นับ Transaction จริงจาก Database ด้วย draft_id (ทนทานกว่า Counter เดิม เพราะสะท้อนข้อมูลจริงเสมอ)
+                              const [__vatFpPopRows, __vatFpSimRows, __vatFpAdiRows] = await Promise.all([
+                                apiFetch(`/vat_upload_popvatdraft?eq_draft_id=${encodeURIComponent(__vatFpDraftId)}`).catch(() => []),
+                                apiFetch(`/vat_simpleinputdraft?eq_draft_id=${encodeURIComponent(__vatFpDraftId)}`).catch(() => []),
+                                apiFetch(`/vat_adi_transferdraft?eq_draft_id=${encodeURIComponent(__vatFpDraftId)}`).catch(() => []),
+                              ]);
+                              const __vatFpRealCount = (Array.isArray(__vatFpPopRows) ? __vatFpPopRows.length : 0) + (Array.isArray(__vatFpSimRows) ? __vatFpSimRows.length : 0) + (Array.isArray(__vatFpAdiRows) ? __vatFpAdiRows.length : 0);
+                              reportVatTransactionToDashboard(__vatFpDraftId, __vatFpRealCount, fullPageFillStartedAtRef.current); // MARKER_VAT_FULLPAGE_TRANSACTION_COUNT_BY_QUERY_V4
                             }
                             if (addTaxInvoiceGrtControl === 'Auto' && addTaxInvoiceLastUsedGrtRunningRef.current != null) { // MARKER_VATWATCHLISTOPS_ADDTAX_GRN_RUNNING_FIX_V1 -- เขียนกลับ DB + Broadcast (Pattern เดียวกับ Quick Action)
                               await apiFetch(`/company_list/${bu.id}`, { method: 'PUT', body: JSON.stringify({ vat_grn: addTaxInvoiceLastUsedGrtRunningRef.current }) }).catch((err) => console.error('Update vat_grn error (Full Page):', err));
                               broadcastWs('vat_grn_updated', { bu: bu?.bu, vat_grn: addTaxInvoiceLastUsedGrtRunningRef.current });
+                              broadcastWs('company_list_updated', { bu: bu?.bu }); // MARKER_VATWATCHLISTOPS_VAT_GRN_STALE_LIST_FIX_V1 -- แจ้ง List/Lobby ให้ Reload company_list สดใหม่ กัน bu prop ค้างเลข vat_grn เก่าหลัง Remount
                             }
                             const doneKeysFullPage = new Set(rowsForSumFinal.map((r) => getNoteKey(r)));
                             setFullPagePopvatRows((prev) => prev.filter((r) => !doneKeysFullPage.has(getNoteKey(r))));
+                            setDetailRows((prev) => prev.filter((r) => !doneKeysFullPage.has(getNoteKey(r)))); // MARKER_VATCONTROLLER_FULLPAGE_DETAILROWS_SYNC_V1 -- Sync ตารางฐาน (Incomplete Detail) ตรงๆ ในเซสชันตัวเอง ไม่พึ่ง WS Broadcast Loop-back
                             setAddTaxInvoiceList([]);
                             setSelectedFullPageInvoices(new Set());
+                            setSelectedNoteRows(new Map()); // MARKER_VATWATCHLISTOPS_ADDDATA_CLEAR_SELECTION_V1 -- เคลียร์ Selection พร้อม Search กัน Effect Re-fetch invoice_ref เดิมกลับมาทับ
                             setDetailSearch('');
                             setDetailSearchDebounced('');
                             broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: rowsForSumFinal.map((r) => r.invoice_ref) });
@@ -7376,16 +9506,21 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                 if (addTaxInvoiceDateTextRef.current) addTaxInvoiceDateTextRef.current.value = '';
               };
               // MARKER_VATWATCHLISTOPS_FULLPAGE_CANCEL_SCOPE_FIX_V1 -- คำนวณ rowsForSumFinal ใหม่ในจุดนี้ (Scope เดิมปิดไปแล้วก่อนถึงปุ่มนี้) สูตรเดียวกันเป๊ะกับต้นฉบับ
-              const q2CancelFP = detailSearch.trim().toLowerCase();
-              const qTerms2CancelFP = q2CancelFP.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-              const rows2CancelFP = qTerms2CancelFP.length === 0 ? [] : fullPagePopvatRows.filter((r) =>
-                qTerms2CancelFP.some((term) =>
-                  String(r.invoice_ref || '').toLowerCase().includes(term) ||
-                  String(r.receive_doc_no || '').toLowerCase().includes(term) ||
-                  String(r.vendor_name || '').toLowerCase().includes(term) ||
-                  String(r.check_no || '').toLowerCase().includes(term)
-                )
-              );
+              let rows2CancelFP; // MARKER_VATWATCHLISTOPS_FULLPAGE_SELECTION_PRIORITY_REMAINING_V1 -- มี Selection ใช้ fullPagePopvatRows ตรงๆ เสมอ
+              if (selectedNoteRows.size > 0) {
+                rows2CancelFP = fullPagePopvatRows;
+              } else {
+                const q2CancelFP = detailSearch.trim().toLowerCase();
+                const qTerms2CancelFP = q2CancelFP.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+                rows2CancelFP = qTerms2CancelFP.length === 0 ? [] : fullPagePopvatRows.filter((r) =>
+                  qTerms2CancelFP.some((term) =>
+                    String(r.invoice_ref || '').toLowerCase().includes(term) ||
+                    String(r.receive_doc_no || '').toLowerCase().includes(term) ||
+                    String(r.vendor_name || '').toLowerCase().includes(term) ||
+                    String(r.check_no || '').toLowerCase().includes(term)
+                  )
+                );
+              }
               const selectedRows2CancelFP = rows2CancelFP.filter((r) => selectedFullPageInvoices.has(getNoteKey(r)));
               const rowsForSumFinalCancelFP = selectedRows2CancelFP.length > 0 ? selectedRows2CancelFP : rows2CancelFP; // มีติ๊ก -> เฉพาะที่ติ๊ก / ไม่ติ๊กเลย -> ทั้งหมด
               if (rowsForSumFinalCancelFP.length === 0) { resetTaxInvoiceFormFP(); return; }
@@ -7397,50 +9532,74 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
                 const nowCancelFP = new Date();
                 const sentinelReceiveDateCancelFP = `1989-${String(nowCancelFP.getMonth() + 1).padStart(2, '0')}-01`;
                 const draftIdCancelFP = generateQuickActionDraftId();
-                for (const row of rowsForSumFinalCancelFP) { // Cancel -- 1 Record ต่อ 1 Invoice (Pattern เดียวกับ Quick Action Popvat Cancel)
+                const remainingRowsFPC = [...rowsForSumFinalCancelFP]; // MARKER_VATCONTROLLER_FULLPAGE_PROGRESSIVE_RESUME_V1 -- Queue ที่ยังไม่สำเร็จ
+                while (remainingRowsFPC.length > 0) { // Cancel -- 1 Record ต่อ 1 Invoice (Pattern เดียวกับ Quick Action Popvat Cancel)
+                  const row = remainingRowsFPC[0];
                   const cancelGrtCancelFP = row.receive_doc_no || null;
-                  await apiFetch('/vat_upload_popvatdraft', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      bu: bu?.bu,
-                      book: bu?.BOOK || null,
-                      period: periodTextCancelFP,
-                      draft_id: draftIdCancelFP,
-                      branch: row.branch || null,
-                      grt_number: cancelGrtCancelFP,
-                      original_invoice_number: row.invoice_ref || null,
-                      receipt_date: formatQuickActionReceiveDateText(sentinelReceiveDateCancelFP),
-                      tax_invoice_number: cancelGrtCancelFP,
-                      tax_invoice_date: formatQuickActionReceiveDateText(row.payment_date || null),
-                      vendor_tax_invoice_number: cancelGrtCancelFP,
-                      supplier_tax_id: null,
-                      supplier_branch_number: null,
-                      supplier_name: row.vendor_name || null,
-                      check_no: row.check_no || null,
-                      product_value: row.exp_amount || null,
-                      vat_amount: row.exp_vat || null,
-                      status: 'draft',
-                      action: 'Cancel', // MARKER_VATWATCHLISTOPS_FULLPAGE_CANCEL_BUTTON_ACTION_V1
-                      menu_source: 'ap_vat',
-                    }),
-                  });
-                  const reportRowsCancelFP = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
-                  const matchedReportCancelFP = (Array.isArray(reportRowsCancelFP) ? reportRowsCancelFP : []).filter((r) => r.status === 'pending');
-                  for (const r of matchedReportCancelFP) {
-                    await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+                  try {
+                    await apiFetch('/vat_upload_popvatdraft', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        bu: bu?.bu,
+                        book: bu?.BOOK || null,
+                        period: periodTextCancelFP,
+                        draft_id: draftIdCancelFP,
+                        branch: row.branch || null,
+                        grt_number: cancelGrtCancelFP,
+                        original_invoice_number: row.invoice_ref || null,
+                        receipt_date: formatQuickActionReceiveDateText(sentinelReceiveDateCancelFP),
+                        tax_invoice_number: cancelGrtCancelFP,
+                        tax_invoice_date: formatQuickActionReceiveDateText(row.payment_date || null),
+                        vendor_tax_invoice_number: cancelGrtCancelFP,
+                        supplier_tax_id: null,
+                        supplier_branch_number: null,
+                        supplier_name: row.vendor_name || null,
+                        check_no: row.check_no || null,
+                        product_value: row.exp_amount || null,
+                        vat_amount: row.exp_vat || null,
+                        username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
+                        status: 'draft',
+                        action: 'Cancel', // MARKER_VATWATCHLISTOPS_FULLPAGE_CANCEL_BUTTON_ACTION_V1
+                        menu_source: 'ap_vat',
+                      }),
+                    });
+                    const reportRowsCancelFP = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
+                    const matchedReportCancelFP = (Array.isArray(reportRowsCancelFP) ? reportRowsCancelFP : []).filter((r) => r.status === 'pending');
+                    for (const r of matchedReportCancelFP) {
+                      await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'draft' }) });
+                    }
+                    // MARKER_VATCONTROLLER_FULLPAGE_PROGRESSIVE_RESUME_V1 -- แถวนี้สำเร็จแล้ว: ลบออกจากจอทันที (Progressive)
+                    const doneKeyRowFPC = getNoteKey(row);
+                    setFullPagePopvatRows((prev) => prev.filter((r) => getNoteKey(r) !== doneKeyRowFPC));
+                    setDetailRows((prev) => prev.filter((r) => getNoteKey(r) !== doneKeyRowFPC));
+                    broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: [row.invoice_ref] });
+                    remainingRowsFPC.shift();
+                  } catch (rowErrFPC) {
+                    // MARKER_VATCONTROLLER_FULLPAGE_PROGRESSIVE_RESUME_V1 -- เช็คว่าเน็ต/VPN หลุดจริงไหม (Ping /version แยกจาก Error อื่น)
+                    const stillOnlineFPC = await pingIsOnline();
+                    if (stillOnlineFPC) throw rowErrFPC;
+                    setQuickActionConnLost(true);
+                    const reconnectedFPC = await waitForReconnect(30000, 3000, setQuickActionReconnectSecondsLeft);
+                    setQuickActionConnLost(false);
+                    if (!reconnectedFPC) {
+                      throw new Error(`ขาดการเชื่อมต่อเกิน 30 วินาที (เหลือ ${remainingRowsFPC.length} รายการที่ยังไม่สำเร็จ กรุณาตรวจสอบเน็ต/VPN แล้วลองใหม่)`);
+                    }
                   }
                 }
                 const doneKeysCancelFP = new Set(rowsForSumFinalCancelFP.map((r) => getNoteKey(r)));
                 setFullPagePopvatRows((prev) => prev.filter((r) => !doneKeysCancelFP.has(getNoteKey(r))));
+                setDetailRows((prev) => prev.filter((r) => !doneKeysCancelFP.has(getNoteKey(r)))); // MARKER_VATCONTROLLER_FULLPAGE_DETAILROWS_SYNC_V1 -- Sync ตารางฐาน (Incomplete Detail) ตรงๆ ในเซสชันตัวเอง ไม่พึ่ง WS Broadcast Loop-back
                 setSelectedFullPageInvoices((prev) => {
                   const next = new Set(prev);
                   doneKeysCancelFP.forEach((k) => next.delete(k));
                   return next;
                 });
                 resetTaxInvoiceFormFP();
+                setSelectedNoteRows(new Map()); // MARKER_VATWATCHLISTOPS_ADDDATA_CLEAR_SELECTION_V1 -- เคลียร์ Selection พร้อม Search (Bug เดียวกันกับ Add Data)
                 setDetailSearch('');
                 setDetailSearchDebounced('');
                 broadcastWs('vat_watchlist_draft_updated', { bu: bu?.bu, invoice_refs: rowsForSumFinalCancelFP.map((r) => r.invoice_ref) });
+                reportVatTransactionToDashboard(draftIdCancelFP, rowsForSumFinalCancelFP.length, fullPageFillStartedAtRef.current); // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                 await confirmDialog.alert(`Cancel สำเร็จ (${doneKeysCancelFP.size} รายการ)`, { title: 'สำเร็จ', variant: 'success' });
               } catch (err) {
                 console.error('Full Page Invoice Cancel error:', err);
@@ -7448,8 +9607,8 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
               } finally {
                 setFullPageCancelSaving(false);
               }
-            }} style={{ position: 'absolute', left: cancelButtonLeft != null ? `${cancelButtonLeft}px` : 'auto', top: cancelButtonTop != null ? `${cancelButtonTop}px` : '50%', transform: 'translateY(-50%)', width: cancelButtonWidth ? `${cancelButtonWidth}px` : 'auto', boxSizing: 'border-box', height: '30px', padding: '0 10px', fontSize: '12px', border: 'none', borderRadius: '8px', background: '#e8820c', color: 'white', cursor: fullPageCancelSaving ? 'default' : 'pointer', opacity: fullPageCancelSaving ? 0.6 : 1, whiteSpace: 'nowrap', boxShadow: '0 1px 3px rgba(16,24,40,0.12)' }}> {/* MARKER_VATWATCHLISTOPS_SELECT_STYLE_CANCEL_POSITION_FIX_V1 MARKER_VATWATCHLISTOPS_HYBRID_TAXINVOICEDATE_V1 -- Reset Text Ref ด้วย (Uncontrolled Input) */}
-              Cancel
+            }} style={{ position: 'absolute', left: cancelButtonLeft != null ? `${cancelButtonLeft}px` : 'auto', top: cancelButtonTop != null ? `${cancelButtonTop}px` : '50%', transform: 'translateY(-50%)', width: cancelButtonWidth ? `${cancelButtonWidth}px` : 'auto', boxSizing: 'border-box', height: '30px', padding: '0 10px', fontSize: '12px', border: 'none', borderRadius: '8px', background: quickActionConnLost ? '#c0392b' : '#e8820c', color: 'white', cursor: fullPageCancelSaving ? 'default' : 'pointer', opacity: fullPageCancelSaving ? 0.6 : 1, whiteSpace: 'nowrap', boxShadow: '0 1px 3px rgba(16,24,40,0.12)' }}> {/* MARKER_VATWATCHLISTOPS_SELECT_STYLE_CANCEL_POSITION_FIX_V1 MARKER_VATWATCHLISTOPS_HYBRID_TAXINVOICEDATE_V1 -- Reset Text Ref ด้วย (Uncontrolled Input) MARKER_VATCONTROLLER_CANCEL_CONN_UI_V1 */}
+              {quickActionConnLost ? `เชื่อมต่อใหม่... (${quickActionReconnectSecondsLeft}s)` : 'Cancel'}
             </button>
           </div>
           </div> {/* MARKER_VATWATCHLISTOPS_FULLPAGE_MERGE_CARDS_V1 -- ปิด Card 3 */}
@@ -7560,14 +9719,10 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile }) { // MARKER
               </div>
             </div>
             <div style={{ padding: '14px 20px', borderTop: '0.5px solid #e8e8e8', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '8px', flexShrink: 0 }}> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_FOOTER_REORDER_V1 -- ชิดซ้าย, เรียง Normal ก่อน Cancel */}
-              <button type="button" onClick={handleAddQuickActionData} disabled={quickActionSaving} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: quickActionSaving ? 'default' : 'pointer', opacity: quickActionSaving ? 0.6 : 1 }}>{quickActionSaving ? 'กำลังบันทึก...' : 'Popvat - Normal'}</button>
+              <button type="button" onClick={handleAddQuickActionData} disabled={quickActionSaving} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: quickActionConnLost ? '#c0392b' : '#1a3a5c', color: 'white', cursor: quickActionSaving ? 'default' : 'pointer', opacity: quickActionSaving ? 0.6 : 1 }}>{quickActionConnLost ? `กำลังเชื่อมต่อใหม่... (${quickActionReconnectSecondsLeft}s)` : (quickActionSaving ? 'กำลังบันทึก...' : 'Popvat - Normal')}</button> {/* MARKER_VATCONTROLLER_QUICKACTION_CONN_UI_V1 */}
               <div style={{ width: '0.5px', height: '24px', background: '#e8e8e8' }} /> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 */}
-              <select value={quickActionCancelReason} onChange={(e) => setQuickActionCancelReason(e.target.value)} disabled={quickActionSaving} style={{ padding: '6px 10px', fontSize: '12.5px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white' }}> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 -- เหตุผลที่ Cancel: Cancel เฉยๆ หรือจะไปทำ Simple ต่อ */}
-                <option value="Cancel">เหตุผล: Cancel</option>
-                <option value="Simple_NNN">เหตุผล: Simple_NNN</option>
-                <option value="Simple_YNY">เหตุผล: Simple_YNY</option>
-              </select>
-              <button type="button" onClick={handleCancelQuickActionData} disabled={quickActionSaving} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#EF9F27', color: 'white', cursor: quickActionSaving ? 'default' : 'pointer', opacity: quickActionSaving ? 0.6 : 1 }}>Popvat - Cancel</button> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_FALLBACK_V1 */}
+              {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_REMOVE_V1 -- ลบ Dropdown เหตุผล Cancel (Cancel/Simple_NNN/Simple_YNY) ออกจาก Quick Action -- Form นี้ไม่มีระบบออก Simple ต่อจาก Cancel เลย เหตุผลอื่นนอกจาก "Cancel" เฉยๆ ไม่มีความหมาย -- quickActionCancelReason ยังคงเป็น Default 'Cancel' เสมอ (ไม่มี UI ให้เปลี่ยนอีกต่อไป) ไม่กระทบ Full Page ที่ Auto-Tag ค่า Simple_NNN/YNY เองแยกต่างหากคนละจุด (ยืนยันจากผู้ใช้ให้แก้เฉพาะ Quick Action เท่านั้น) */}
+              <button type="button" onClick={handleCancelQuickActionData} disabled={quickActionSaving} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: quickActionConnLost ? '#c0392b' : '#EF9F27', color: 'white', cursor: quickActionSaving ? 'default' : 'pointer', opacity: quickActionSaving ? 0.6 : 1 }}>{quickActionConnLost ? `กำลังเชื่อมต่อใหม่... (${quickActionReconnectSecondsLeft}s)` : 'Popvat - Cancel'}</button> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_FALLBACK_V1 MARKER_VATCONTROLLER_CANCEL_CONN_UI_V1 */}
             </div>
           </div>
         </div>
@@ -7968,7 +10123,569 @@ function useVatSupportingData() {
     return unsubscribe;
   }, [fetchSmCodes]);
 
+  // MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- Refetch branch_list อัตโนมัติเมื่อ VatBranchSearchModal
+  // Add/Edit Branch ใหม่ (broadcastWs('branch_list_updated', ...)) เหมือน Pattern sm_code_list_updated ด้านบน
+  const fetchBranches = React.useCallback(() => {
+    apiFetch('/branch_list').then((br) => setBranches(Array.isArray(br) ? br : [])).catch((err) => console.error('refetch branches error:', err));
+  }, []);
+  React.useEffect(() => {
+    const unsubscribe = subscribeWs(['branch_list_updated'], () => {
+      fetchBranches();
+    });
+    return unsubscribe;
+  }, [fetchBranches]);
+
   return { smCodes, branches, vendorCategories, loading };
+}
+
+
+// MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_ZONE_V1
+// ── Zone Monitor (65% บน) — Donut แยกตาม Type (bus_type) + Top 10 BU แยกตาม Aging Bucket ──
+// MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_ZONE_V2 -- เปลี่ยนจาก Count เป็นมูลค่า VAT (exp_vat),
+// Donut เปลี่ยนจาก Aging เป็น Type (bus_type 5 ประเภท), เรียง Aging ซ้าย->ขวา 0,2-1,4-3,6-5,Expired,
+// เพิ่ม Hover Tooltip, ย่อตัวเลขเป็น k/m, สีชุดใหม่ (ของเดิม Gray/Olive แยกยากเวลาแท่งเล็ก)
+// ── ตั้งใจไม่รวม 'uncount' ในกราฟฝั่ง Aging (ตามที่ตกลงกัน) ──────────────────────────
+// MARKER_VATWATCHLISTOPS_AGING_3TIER_COLOR_V3 -- ยุบจาก 5 สีเดิม เหลือ 3 Tier สี (เขียว/ส้ม/เทา)
+// ── ตาม Feedback: ระบบ BI ต้นฉบับแยกแค่ 3 สีให้ดูง่าย ไม่ใช่ไล่เฉด 5 สี ──────
+// ── ข้อมูลดิบยังคงแยก 5 Bucket เหมือนเดิมทุกที่ (Tooltip/Backend) แค่สีที่ ──
+// ── มองเห็นถูกยุบรวมเป็น 3 กลุ่มเท่านั้น (0+2-1=เขียว, 4-3+6-5=ส้ม, Expired=เทา) ──
+// MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_CLICK_BU_LINE_V7 -- ปรับ Tier สีใหม่: เขียวกว้างขึ้น (0,2-1,4-3) / แดงเฉพาะ 6-5 / เทาคง Expired
+const VAT_AGING_TIER_COLORS = { // MARKER_VATWATCHLISTOPS_AGING_5TIER_ZERO_BLUE_V17 -- แยก 0 ออกจากเขียว เป็นฟ้าต่างหาก (5 Tier แยกกันชัดเจนทุกตัว)
+  zero: { solid: '#4A90D9', bg: '#E6F1FB' },
+  fresh: { solid: '#8FC97D', bg: '#EAF3E1' },
+  mid: { solid: '#F2C94C', bg: '#FBF3D9' },
+  warn: { solid: '#E2726E', bg: '#FBE4E2' },
+  expired: { solid: '#9E9E9E', bg: '#EFEFEF' },
+};
+const VAT_AGING_OVERVIEW_BUCKETS = [
+  { key: '0', label: '0', color: VAT_AGING_TIER_COLORS.zero.solid },
+  { key: '2-1', label: '2-1', color: VAT_AGING_TIER_COLORS.fresh.solid },
+  { key: '4-3', label: '4-3', color: VAT_AGING_TIER_COLORS.mid.solid },
+  { key: '6-5', label: '6-5', color: VAT_AGING_TIER_COLORS.warn.solid },
+  { key: 'expired', label: 'Expired', color: VAT_AGING_TIER_COLORS.expired.solid },
+];
+// MARKER_VATWATCHLISTOPS_AGING_4TIER_FINAL_V16 -- Legend สำหรับกราฟแท่ง: รวม 0+2-1 (สีเดียวกัน) เหลือ Label เดียว "2-0"
+const VAT_AGING_LEGEND_ITEMS = [ // MARKER_VATWATCHLISTOPS_AGING_5TIER_ZERO_BLUE_V17 -- 5 สีแยกกันหมดแล้ว ไม่ต้องรวม Legend อีกต่อไป (เท่ากับ VAT_AGING_OVERVIEW_BUCKETS พอดี)
+  { key: '0', label: '0', color: VAT_AGING_TIER_COLORS.zero.solid },
+  { key: '2-1', label: '2-1', color: VAT_AGING_TIER_COLORS.fresh.solid },
+  { key: '4-3', label: '4-3', color: VAT_AGING_TIER_COLORS.mid.solid },
+  { key: '6-5', label: '6-5', color: VAT_AGING_TIER_COLORS.warn.solid },
+  { key: 'expired', label: 'Expired', color: VAT_AGING_TIER_COLORS.expired.solid },
+];
+// MARKER_VATWATCHLISTOPS_AGING_CHART_HIDE_ZERO_V18
+// ── กราฟ Top 10 BU (Overview Chart) ไม่ต้องเอา Aging 0 ขึ้นมาแสดง เพราะยังไม่มีความเสี่ยง ──
+// ── (ตาราง Detail และกราฟเส้น/Modal รายละเอียด BU ยังคงแสดง 0 ตามปกติ ไม่กระทบ) ──────
+const VAT_AGING_CHART_BUCKETS = VAT_AGING_OVERVIEW_BUCKETS.filter((b) => b.key !== '0');
+const VAT_AGING_CHART_LEGEND_ITEMS = VAT_AGING_LEGEND_ITEMS.filter((b) => b.key !== '0');
+// MARKER_VATWATCHLISTOPS_AGING_LINE_CHART_DISTINCT_COLOR_V13
+// ── กราฟเส้น (โหมด BU เดียว) ใช้สีแยกกัน 5 เฉด ไม่ใช้ 3 Tier ร่วมกับกราฟแท่ง Top 10 ──
+// ── (ตามที่คุยกัน: 3 Tier ตั้งใจไว้ใช้กับกราฟแท่ง ไม่ใช่กราฟเส้น) ──────────────
+const VAT_AGING_LINE_POINT_COLORS = {
+  '0': '#0EA5E9', '2-1': '#22C55E', '4-3': '#F59E0B', '6-5': '#F97316', expired: '#DC2626',
+};
+const VAT_AGING_LINE_BUCKETS = VAT_AGING_OVERVIEW_BUCKETS.map((b) => ({ ...b, color: VAT_AGING_LINE_POINT_COLORS[b.key] || b.color }));
+// MARKER_VATWATCHLISTOPS_AGING_LINE_8POINT_MONTHLY_V25
+// ── กราฟเส้น (โหมด BU เดียว) เปลี่ยนจาก 5 Bucket ช่วง (0,2-1,4-3,6-5,Expired) เป็น 8 จุดรายเดือนจริง ──
+// ── (0,1,2,3,4,5,6,Expired) ไล่สีฟ้า->เขียว->เหลือง->ส้ม->แดง ตามความรุนแรง ──────────
+const VAT_AGING_LINE_MONTHLY_POINTS = [ // MARKER_VATWATCHLISTOPS_AGING_LINE_LABEL_0_POINT_1_V35 -- Label แสดงครบ 0-Expired (คง Layout ระยะห่างเดิม) แต่ Plot จุดข้อมูลจริงเริ่มที่ 1 (ดูจุดที่ Filter key !== '0' ด้านล่าง)
+  { key: '0', label: '0', color: '#0EA5E9' },
+  { key: '1', label: '1', color: '#22C55E' },
+  { key: '2', label: '2', color: '#65A30D' },
+  { key: '3', label: '3', color: '#EAB308' },
+  { key: '4', label: '4', color: '#F59E0B' },
+  { key: '5', label: '5', color: '#F97316' },
+  { key: '6', label: '6', color: '#EF4444' },
+  { key: 'expired', label: 'Expired', color: '#991B1B' },
+  { key: '__blank', label: '', color: 'transparent' }, // MARKER_VATWATCHLISTOPS_AGING_LINE_TRAILING_BLANK_V37 -- Slot ว่างท้ายกราฟ เว้นพื้นที่ให้จุด Expired ไม่ชิดขอบขวาสุด ไม่มี Label/จุด/ข้อมูลใดๆ
+];
+
+// ── Type (bus_type) 5 ประเภทหลักของระบบ (ITC/OTH/LAND/CPN/UTL) ──────────────
+const VAT_TYPE_OVERVIEW_COLORS = {
+  ITC: '#4F46E5',
+  CPN: '#DC2626',
+  LAND: '#D97706',
+  UTL: '#7C3AED',
+  OTH: '#059669',
+};
+const VAT_TYPE_OVERVIEW_FALLBACK_COLOR = '#9CA3AF';
+
+// ── ย่อตัวเลขมูลค่า VAT เป็น k/m/b เช่น 2,300,000 -> "2.3m" ──────────────────
+function formatVatCompact(value) {
+  const n = Number(value) || 0;
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(1)}b`;
+  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(1)}m`;
+  if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(1)}k`;
+  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function formatVatFull(value) {
+  return (Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFocusBu, setChartFocusBu } = {}) { // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_CLICK_BU_LINE_V7 -- เพิ่ม setSearch รับมาจาก Lobby ให้คลิก BU ตั้งค่า Search ได้เอง // MARKER_VATWATCHLISTOPS_CHART_FOCUS_DECOUPLE_V30
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5
+  // ── ผูกกราฟนี้กับ Base/Search ของตาราง Monitor ด้านล่าง (Lift State ขึ้นไปที่ Lobby แล้วส่งลงมาทั้ง 2 จุด) ──
+  const { rows: monitorRowsForScope } = useVatWatchlistMonitorRows(); // ใช้หา BU List ของ Base ที่เลือก + จับคู่ BU จาก Search
+  const [bucketRows, setBucketRows] = React.useState([]); // [{bu, '0','2-1','4-3','6-5',expired,uncount}] -- ค่าเป็น SUM(exp_vat)
+  const [typeRows, setTypeRows] = React.useState([]); // [{bus_type, sum}] -- SUM(exp_vat) ต่อ Type
+  const [monthBucketRows, setMonthBucketRows] = React.useState([]); // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_MONTH_HOVER_V11 -- [{bu, '1'..'6', expired}] -- SUM(exp_vat) ละเอียดรายเดือน สำหรับ Hover ที่ยอดเงิน
+  const [loading, setLoading] = React.useState(true);
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_TOOLTIP_V2 -- Tooltip ตอน Hover Donut/Bar
+  const [hoverInfo, setHoverInfo] = React.useState(null); // { x, y, label, value, colorHex }
+  // MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_V27 -- คลิกจุดบนกราฟเส้น -> Filter Donut ให้เหลือเฉพาะ Aging จุดนั้น (null = ไม่ Filter เพิ่ม)
+  const [selectedAgingPoint, setSelectedAgingPoint] = React.useState(null); // MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_HOTFIX_V28 -- ย้าย Effect เคลียร์ Selection ไปไว้หลัง matchedBu ประกาศเสร็จแล้วแทน (ดูด้านล่าง)
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21 -- คำนวณขนาด Donut และจำนวนแถว BU ที่แสดงได้จากพื้นที่จริง (ResizeObserver)
+  const donutPanelRef = React.useRef(null);
+  const [donutSizePx, setDonutSizePx] = React.useState(160);
+  React.useEffect(() => {
+    const el = donutPanelRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const LEGEND_RESERVE_PX = 40; // ประมาณความสูง Legend (แถวบน) + Gap
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = entry.contentRect.width;
+        const h = entry.contentRect.height;
+        const avail = Math.min(w, Math.max(80, h - LEGEND_RESERVE_PX));
+        setDonutSizePx(Math.max(120, Math.min(280, Math.floor(avail))));
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const barListRef = React.useRef(null);
+  const [maxVisibleBus, setMaxVisibleBus] = React.useState(10);
+  React.useEffect(() => { // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BU_COUNT_10OR15_V1 -- เดิมได้ค่าได้ทุกจำนวนเต็ม 5-15 ตามพื้นที่จริง (เช่น 12) เปลี่ยนเป็นเลือกได้แค่ 10 หรือ 15 เท่านั้น + เผื่อพื้นที่ด้านล่างไว้เสมอสำหรับปุ่ม/องค์ประกอบอื่น
+    const el = barListRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ROW_HEIGHT_PX = 20; // ความสูงต่อแถว (รวม Gap) โดยประมาณ
+    const BOTTOM_RESERVE_PX = 40; // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BU_COUNT_10OR15_V1 -- เผื่อพื้นที่ด้านล่างไว้เสมอ (เช่น สำหรับปุ่ม) ไม่ให้รายการ BU ยืดจนกินพื้นที่เต็ม
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const h = entry.contentRect.height;
+        const availRows = Math.floor((h - BOTTOM_RESERVE_PX) / ROW_HEIGHT_PX);
+        setMaxVisibleBus(availRows >= 15 ? 15 : 10); // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BU_COUNT_10OR15_V1 -- มีแค่ 2 ค่าให้เลือก: 15 (พื้นที่พอ) หรือ 10 (ไม่พอ) ไม่มีค่ากลางๆ อีก
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- Base ที่เลือก -> รายชื่อ BU ในกลุ่มนั้น (null = ไม่ Filter)
+  const buCodesForBase = React.useMemo(() => {
+    if (!baseFilter) return null;
+    return monitorRowsForScope.filter((c) => c.base === baseFilter).map((c) => c.bu).filter(Boolean);
+  }, [monitorRowsForScope, baseFilter]);
+
+  // ── Search ที่พิมพ์ตรงกับ BU Code เป๊ะๆ (ไม่สนตัวพิมพ์เล็ก-ใหญ่) -> สลับกราฟเป็นโหมด BU เดียว แยกตาม Aging ──
+  const matchedBu = React.useMemo(() => {
+    // MARKER_VATWATCHLISTOPS_CHART_FOCUS_DECOUPLE_V30 -- chartFocusBu (จากคลิกแท่ง/Double-click) มาก่อน Search พิมพ์ตรงเสมอ
+    if (chartFocusBu) {
+      const hitFocus = monitorRowsForScope.find((c) => c.bu === chartFocusBu);
+      return hitFocus ? hitFocus.bu : chartFocusBu;
+    }
+    const q = (search || '').trim().toLowerCase();
+    if (!q) return null;
+    const hit = monitorRowsForScope.find((c) => (c.bu || '').toLowerCase() === q);
+    return hit ? hit.bu : null;
+  }, [chartFocusBu, search, monitorRowsForScope]);
+
+  // MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_HOTFIX_V28 -- ย้ายมาจากด้านบน (เดิมอยู่ก่อน matchedBu ประกาศ ทำให้ Error "Cannot access matchedBu before initialization")
+  React.useEffect(() => { setSelectedAgingPoint(null); }, [matchedBu]); // เปลี่ยน BU -> เคลียร์ Selection เก่าทิ้งกันค้าง
+
+  // MARKER_VATWATCHLISTOPS_CHART_FOCUS_CLEAR_ON_EMPTY_SEARCH_V31
+  // ── ผู้ใช้ลบข้อความในช่อง Search จนว่างเปล่าเอง -> เคลียร์ chartFocusBu ตามไปด้วย (Sync กลับ Normal) ──
+  // ── (ไม่กระทบตอน Search ยังไม่ว่าง หรือตอน chartFocusBu เปลี่ยนโดยที่ Search ไม่ได้เปลี่ยน เช่น คลิกแท่ง/Double-click) ──
+  React.useEffect(() => {
+    if (!(search || '').trim()) {
+      setChartFocusBu && setChartFocusBu(null);
+    }
+  }, [search, setChartFocusBu]);
+
+  const scopeFilterQS = React.useMemo(() => {
+    if (matchedBu) return `&eq_bu=${encodeURIComponent(matchedBu)}`;
+    if (buCodesForBase !== null) return `&in_bu=${encodeURIComponent(buCodesForBase.join(','))}`;
+    return '';
+  }, [matchedBu, buCodesForBase]);
+
+  // MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_V27
+  // ── Donut (Type) ต้อง Sync กับฝั่งขวาเสมอ: ปกติไม่นับ Aging 0 (เหมือนกราฟแท่ง/เส้น v18)
+  // ── ถ้าคลิกเลือกจุด Aging เจาะจง (selectedAgingPoint) -> Filter Donut ให้เหลือแค่ Aging จุดนั้นแทน ──
+  const typeScopeExtra = React.useMemo(() => {
+    if (selectedAgingPoint === 'expired') return '&gt_aging_months=6';
+    if (selectedAgingPoint != null) return `&eq_aging_months=${encodeURIComponent(selectedAgingPoint)}`;
+    return '&neq_aging_months=0';
+  }, [selectedAgingPoint]);
+
+  const reload = React.useCallback(async () => {
+    // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- Base ที่เลือกไม่มี BU เลย -> ไม่ต้องยิง Request เปล่าๆ
+    if (buCodesForBase !== null && buCodesForBase.length === 0 && !matchedBu) {
+      setBucketRows([]);
+      setTypeRows([]);
+      setLoading(false);
+      return;
+    }
+    try {
+      const [bucketRes, typeRes, monthRes] = await Promise.all([
+        apiFetch(`/vat_watchlist_report?eq_status=pending&aging_bucket_counts=true&aging_bucket_group_by=bu&aging_bucket_sum_col=exp_vat${scopeFilterQS}`),
+        apiFetch(`/vat_watchlist_report?eq_status=pending&distinct_group=bus_type&sum_col=exp_vat${scopeFilterQS}${typeScopeExtra}`), // MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_V27 -- เพิ่ม typeScopeExtra ให้ Sync กับฝั่งขวา/จุดที่เลือก
+        apiFetch(`/vat_watchlist_report?eq_status=pending&aging_month_bucket_counts=true&aging_month_bucket_group_by=bu&aging_month_bucket_sum_col=exp_vat${scopeFilterQS}`), // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_MONTH_HOVER_V11
+      ]);
+      setBucketRows(Array.isArray(bucketRes?.rows) ? bucketRes.rows : []);
+      setTypeRows(Array.isArray(typeRes?.rows) ? typeRes.rows : []);
+      setMonthBucketRows(Array.isArray(monthRes?.rows) ? monthRes.rows : []); // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_MONTH_HOVER_V11
+    } catch (err) {
+      console.error('VatWatchlistAgingOverviewZone load error:', err);
+      setBucketRows([]);
+      setTypeRows([]);
+    }
+    setLoading(false);
+  }, [scopeFilterQS, buCodesForBase, matchedBu, typeScopeExtra]); // MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_V27 -- เพิ่ม typeScopeExtra เข้า Deps
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true); // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- โชว์ Loading ทุกครั้งที่ Scope เปลี่ยน (Base/Search)
+    (async () => { await reload(); if (cancelled) return; })();
+    return () => { cancelled = true; };
+  }, [reload]);
+
+  // ── Sync Real-time เมื่อมีการ Draft/Restore รายการ (กระทบยอด Pending) ──
+  React.useEffect(() => {
+    const unsubscribe = subscribeWs(['vat_watchlist_draft_updated', 'vat_watchlist_draft_restored'], () => { reload(); });
+    return unsubscribe;
+  }, [reload]);
+
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_ESC_BACK_V24 -- กด Esc ตอนอยู่โหมดกราฟเส้น (matchedBu) ให้กลับไปโหมดภาพรวม (กราฟแท่ง) เหมือนปุ่ม "← กลับภาพรวม"
+  React.useEffect(() => {
+    if (!matchedBu) return;
+    // MARKER_VATWATCHLISTOPS_CHART_FOCUS_DECOUPLE_V30 -- เคลียร์เฉพาะตัวที่กำลังขับ matchedBu อยู่จริง (chartFocusBu มาก่อน) -- ไม่ไปลบ Search ที่ผู้ใช้พิมพ์ไว้เองถ้าไม่ใช่ตัวขับ
+    const handleEscFP = (e) => {
+      if (e.key !== 'Escape') return;
+      if (chartFocusBu) setChartFocusBu && setChartFocusBu(null);
+      else setSearch && setSearch('');
+    };
+    window.addEventListener('keydown', handleEscFP);
+    return () => window.removeEventListener('keydown', handleEscFP);
+  }, [matchedBu, chartFocusBu, setSearch, setChartFocusBu]);
+
+  // ── Donut ข้อมูล: SUM(exp_vat) ต่อ Type ──────────────────────────────────
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_TYPE_5ONLY_V6 -- ตัด N-PAY/N-PO3/ค่าอื่นที่ไม่ใช่ 5 Type หลักออก
+  // ── (เหตุผลเดียวกับที่ไม่เอา Uncount ขึ้นแสดง -- ไม่ใช่ยอดที่นับ Type จริงแล้ว) ──
+  const typeSegments = React.useMemo(() => {
+    const list = typeRows
+      .filter((r) => Object.prototype.hasOwnProperty.call(VAT_TYPE_OVERVIEW_COLORS, r.bus_type))
+      .map((r) => ({
+        key: r.bus_type,
+        label: r.bus_type,
+        value: Number(r.sum || 0),
+        color: VAT_TYPE_OVERVIEW_COLORS[r.bus_type],
+      })).filter((s) => s.value > 0);
+    list.sort((a, b) => b.value - a.value);
+    return list;
+  }, [typeRows]);
+  const typeGrandTotal = React.useMemo(() => typeSegments.reduce((s, x) => s + x.value, 0), [typeSegments]);
+
+  // ── Bar ข้อมูล: SUM(exp_vat) ต่อ BU แยกตาม Aging Bucket (ไม่รวม Uncount) ──
+  const topBus = React.useMemo(() => {
+    return bucketRows
+      .map((r) => ({ ...r, __total: VAT_AGING_CHART_BUCKETS.reduce((sum, b) => sum + Number(r[b.key] || 0), 0) })) // MARKER_VATWATCHLISTOPS_AGING_CHART_HIDE_ZERO_V18 -- ไม่รวม Aging 0 ในยอดรวมของกราฟนี้
+      .filter((r) => r.__total > 0)
+      .sort((a, b) => b.__total - a.__total)
+      .slice(0, 15); // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21 -- เดิม Cap 10 ตายตัว ขยายเป็น 15 (Pool) แล้วค่อยตัดแสดงจริงตาม maxVisibleBus (พื้นที่จริง)
+  }, [bucketRows]);
+  const maxBuTotal = topBus.length ? topBus[0].__total : 0;
+  const visibleTopBus = topBus.slice(0, maxVisibleBus); // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21
+
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5
+  // ── โหมด BU เดียว (matchedBu ตั้งแล้ว) -- ดึงแถวเดียวจาก bucketRows (Filter eq_bu มาแล้ว ควรเหลือแถวเดียวพอดี) ──
+  // MARKER_VATWATCHLISTOPS_AGING_LINE_8POINT_MONTHLY_V25 -- เปลี่ยนแหล่งข้อมูลจาก bucketRows (5 Bucket ช่วง) เป็น monthBucketRows (รายเดือนจริง 0-6+Expired)
+  const singleBuRow = matchedBu ? (monthBucketRows.find((r) => r.bu === matchedBu) || null) : null;
+  const singleBuPoints = React.useMemo(() => {
+    if (!singleBuRow) return [];
+    // MARKER_VATWATCHLISTOPS_AGING_LINE_MONTH_LABEL_V26 -- คำนวณ เดือน/ปี ย้อนหลังจากวันนี้ต่อจุด (เช่น Aging 3 -> มิ.ย. 2026) ใช้แสดงตอน Hover
+    const todayFP = new Date();
+    return VAT_AGING_LINE_MONTHLY_POINTS.map((b) => {
+      let monthLabel;
+      if (b.key === 'expired') {
+        const dExp = new Date(todayFP.getFullYear(), todayFP.getMonth() - 6, 1);
+        monthLabel = `ก่อน ${dExp.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+      } else {
+        const dPt = new Date(todayFP.getFullYear(), todayFP.getMonth() - Number(b.key), 1);
+        monthLabel = dPt.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      }
+      return { ...b, value: Number(singleBuRow[b.key] || 0), monthLabel };
+    });
+  }, [singleBuRow]);
+  const singleBuTotal = singleBuPoints.reduce((s, p) => s + p.value, 0);
+
+  const RADIUS = 78; // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21 -- เดิม 62 (viewBox 160) ปรับเป็น viewBox 200 คงที่ (ขนาดจริงบนจอคุม CSS ผ่าน donutSizePx แทน)
+  const CIRC = 2 * Math.PI * RADIUS;
+  let typeOffsetAcc = 0;
+  const donutSegments = typeSegments.map((seg) => {
+    const frac = typeGrandTotal > 0 ? seg.value / typeGrandTotal : 0;
+    const out = { ...seg, dash: frac * CIRC, offset: typeOffsetAcc };
+    typeOffsetAcc += frac * CIRC;
+    return out;
+  });
+
+  const showTooltip = (e, label, value, colorHex) => {
+    setHoverInfo({ x: e.clientX, y: e.clientY, label, value, colorHex });
+  };
+  const moveTooltip = (e) => {
+    setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev));
+  };
+  const hideTooltip = () => setHoverInfo(null);
+
+  return (
+    <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', overflow: 'hidden', position: 'relative' }}> {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BUTTON_OVERLAP_FIX_V1 -- เปลี่ยนจาก Flex-Row เป็น Flex-Column กันปุ่ม กลับภาพรวม ทับ Donut Chart (ดู Wrapper ใหม่ด้านล่าง) */}
+      {/* MARKER_VATWATCHLISTOPS_AGING_BACK_BUTTON_TOPLEFT_V32 -- ปุ่มกลับไปโหมดภาพรวม ย้ายมาไว้มุมซ้ายบนสุดของ Zone ทั้งหมด (เดิมอยู่ข้างหัวข้อฝั่งขวา) */}
+      {matchedBu && (
+        <button
+          onClick={() => {
+            if (chartFocusBu) { setChartFocusBu && setChartFocusBu(null); }
+            else { setSearch && setSearch(''); }
+          }}
+          style={{ position: 'absolute', top: '10px', left: '10px', zIndex: 20, fontSize: '10px', padding: '2px 9px', border: '0.5px solid #ccc', borderRadius: '10px', background: 'white', cursor: 'pointer', color: '#555', boxShadow: '0 1px 3px rgba(0,0,0,0.12)' }}
+        >← กลับภาพรวม</button>
+      )}
+      {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_TOOLTIP_V2 */}
+      {hoverInfo && !hoverInfo.isSummary && (
+        <div style={{
+          position: 'fixed', left: hoverInfo.x + 14, top: hoverInfo.y + 14, zIndex: 50,
+          background: '#1a3a5c', color: 'white', fontSize: '11px', padding: '6px 10px',
+          borderRadius: '6px', pointerEvents: 'none', whiteSpace: 'nowrap', boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+        }}>
+          <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px', background: hoverInfo.colorHex, marginRight: '6px' }} />
+          {hoverInfo.label}: <b>{formatVatFull(hoverInfo.value)}</b>
+        </div>
+      )}
+      {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BAR_MINWIDTH_HOVER_SUMMARY_V8 -- Tooltip สรุปทุก Aging Bucket ตอน Hover ชื่อ BU */}
+      {hoverInfo && hoverInfo.isSummary && (
+        <div style={{
+          position: 'fixed', left: hoverInfo.x + 14, top: hoverInfo.y + 14, zIndex: 50,
+          background: '#1a3a5c', color: 'white', fontSize: '11px', padding: '8px 10px',
+          borderRadius: '6px', pointerEvents: 'none', whiteSpace: 'nowrap', boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+        }}>
+          <div style={{ fontWeight: '600', marginBottom: '4px' }}>{hoverInfo.buLabel}</div>
+          {hoverInfo.lines.map((l) => (
+            <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '7px', height: '7px', borderRadius: '2px', background: l.color, display: 'inline-block', flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>Aging {l.label}</span>
+              <span style={{ fontWeight: '600', marginLeft: '10px' }}>{formatVatFull(l.value)}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: '0.5px solid rgba(255,255,255,0.3)', marginTop: '4px', paddingTop: '4px', display: 'flex', justifyContent: 'space-between', gap: '14px' }}>
+            <span>รวม</span><b>{formatVatFull(hoverInfo.lines.reduce((s, l) => s + l.value, 0))}</b>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '16px', flex: '1 1 auto', minHeight: 0, paddingTop: matchedBu ? '30px' : 0 }}> {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BUTTON_OVERLAP_FIX_V1 -- Wrapper ใหม่: กันพื้นที่ด้านบนไว้ให้ปุ่ม กลับภาพรวม เสมอ (เฉพาะตอนปุ่มแสดง) ก่อนหน้านี้ Donut Panel + Bar List Panel เรียงอยู่ใน Container นอกสุดตรงๆ ทำให้ justifyContent: 'center' ดันขึ้นไปชนปุ่มได้เมื่อพื้นที่เตี้ย */}
+      <div ref={donutPanelRef} style={{ flex: '40 1 0%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', height: '100%', minHeight: 0, overflow: 'hidden' }}> {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21 -- Legend ย้ายขึ้นบน (แนวนอน) + Donut คำนวณขนาดจากพื้นที่จริงผ่าน ResizeObserver แทนขนาดคงที่เดิม */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', justifyContent: 'center', flexShrink: 0 }}>
+          {(typeSegments.length ? typeSegments : Object.keys(VAT_TYPE_OVERVIEW_COLORS).map((k) => ({ key: k, label: k, color: VAT_TYPE_OVERVIEW_COLORS[k] }))).map((b) => (
+            <div key={b.key} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#666' }}>
+              <span style={{ width: '9px', height: '9px', borderRadius: '2px', background: b.color, display: 'inline-block', flexShrink: 0 }} />
+              {b.label}
+            </div>
+          ))}
+        </div>
+        <div style={{ position: 'relative', width: `${donutSizePx}px`, height: `${donutSizePx}px`, flexShrink: 0 }}>
+          <svg viewBox="0 0 200 200" style={{ width: `${donutSizePx}px`, height: `${donutSizePx}px`, transform: 'rotate(-90deg)' }}>
+            <circle cx="100" cy="100" r={RADIUS} fill="none" stroke="#eee" strokeWidth="24" />
+            {donutSegments.map((seg) => seg.value > 0 && (
+              <circle
+                key={seg.key} cx="100" cy="100" r={RADIUS} fill="none" stroke={seg.color}
+                strokeWidth="24" strokeDasharray={`${seg.dash} ${CIRC - seg.dash}`} strokeDashoffset={-seg.offset}
+                style={{ cursor: 'pointer' }}
+                onMouseMove={(e) => moveTooltip(e)}
+                onMouseEnter={(e) => showTooltip(e, `Type ${seg.label}`, seg.value, seg.color)}
+                onMouseLeave={hideTooltip}
+              />
+            ))}
+          </svg>
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', pointerEvents: 'none' }}>
+            <div style={{ fontSize: `${Math.max(13, Math.round(donutSizePx * 0.105))}px`, fontWeight: '600', color: '#1a3a5c' }}>{formatVatCompact(typeGrandTotal)}</div>
+            <div style={{ fontSize: `${Math.max(9, Math.round(donutSizePx * 0.07))}px`, color: '#999' }}>{selectedAgingPoint != null ? `Aging ${selectedAgingPoint === 'expired' ? 'Expired' : selectedAgingPoint}` : 'VAT Pending'}</div> {/* MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_V27 -- บอกว่ากำลังดู Aging จุดไหนอยู่ */}
+          </div>
+        </div>
+      </div>
+
+      <div ref={barListRef} style={{ flex: '60 1 0%', display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden', minWidth: 0, justifyContent: 'center' }}> {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_WIDTH_V4 -- เดิมกินพื้นที่ที่เหลือทั้งหมด เปลี่ยนเป็นสัดส่วน 60 */} {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21 -- ผูก Ref วัดพื้นที่จริงสำหรับคำนวณจำนวนแถว BU ที่แสดงได้ */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
+          <div style={{ fontSize: '11px', color: '#888', display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- สลับ Header ตามโหมด */}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {matchedBu
+                ? `BU ${matchedBu} · แยกตาม Aging (รวม ${formatVatCompact(singleBuTotal)})`
+                : `Top ${visibleTopBus.length} BU ยอด VAT ค้างมากสุด (Pending, ไม่รวม Uncount)`}
+            </span>
+            {/* MARKER_VATWATCHLISTOPS_AGING_BACK_BUTTON_TOPLEFT_V32 -- ย้ายปุ่ม "กลับภาพรวม" ไปมุมซ้ายบนของ Zone ทั้งหมดแล้ว (ดูด้านล่างสุดของ Component) */}
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {/* MARKER_VATWATCHLISTOPS_AGING_LINE_CHART_DISTINCT_COLOR_V13 -- Legend สลับชุดสีตามโหมด: กราฟเส้น (matchedBu) ใช้ 5 สีแยก / กราฟแท่งใช้ 3 Tier เดิม */}
+            {(matchedBu ? VAT_AGING_LINE_BUCKETS : VAT_AGING_CHART_LEGEND_ITEMS).map((b) => ( // MARKER_VATWATCHLISTOPS_AGING_CHART_HIDE_ZERO_V18 -- Legend ไม่โชว์ Aging 0 แล้ว (โหมดกราฟแท่ง)
+              <div key={b.key} style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: '#666' }}>
+                <span style={{ width: '7px', height: '7px', borderRadius: '2px', background: b.color, display: 'inline-block' }} />
+                {b.label}
+              </div>
+            ))}
+          </div>
+        </div>
+        {loading && <div style={{ fontSize: '11px', color: '#aaa' }}>กำลังโหลด...</div>}
+        {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- โหมด BU เดียว: กราฟเส้นแยกตาม Aging */}
+        {!loading && matchedBu && !singleBuRow && <div style={{ fontSize: '11px', color: '#aaa' }}>ไม่มีข้อมูล Pending สำหรับ BU นี้</div>}
+        {!loading && matchedBu && singleBuRow && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', height: '80%', minHeight: 0, justifyContent: 'center' }}> {/* MARKER_VATWATCHLISTOPS_AGING_LINE_HEIGHT_80PCT_V33 -- เดิมเต็ม 100% (flex:1) จุดสูงสุดชิดขอบบนเกินไป ลดเหลือ 80% ของพื้นที่ */}
+            <svg viewBox="0 0 300 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
+              {(() => {
+                // MARKER_VATWATCHLISTOPS_AGING_LINE_LABEL_0_POINT_1_V35 -- maxV/เส้น/จุด คำนวณจากข้อมูลตั้งแต่ 1 เป็นต้นไปเท่านั้น (ไม่รวม 0) แต่ตำแหน่ง x ยังอิง Slot เดิมทั้ง 8 ช่อง ให้ Label เรียงตรงกัน
+                // MARKER_VATWATCHLISTOPS_AGING_LINE_DYNAMIC_CEILING_V38 -- Ceiling/Grid Step คำนวณจากยอดจริงของ BU เสมอ (ไม่ Fix 10M) ปัดเป็นเลขกลมแบบ 1-2-5 ต่อ Decade, Step ต่ำสุด 5 หมื่น, คุมไม่เกิน ~8-10 เส้น Grid ให้เห็น Movement ชัดเจนไม่ว่ายอดจะเล็กหรือใหญ่แค่ไหน
+                const rawMaxV = Math.max(...singleBuPoints.filter((p) => p.key !== '0' && p.key !== '__blank').map((p) => p.value), 1); // MARKER_VATWATCHLISTOPS_AGING_LINE_TRAILING_BLANK_V37 -- ตัด __blank ออกจากการคำนวณ Scale ด้วย
+                const niceStepFP = (rawMax) => {
+                  if (rawMax <= 0) return 50000; // เส้น Grid ห่างกันอย่างน้อย 5 หมื่น กัน Step ละเอียดเกินความจำเป็นเมื่อยอดน้อยมาก/เป็น 0
+                  const target = rawMax / 8; // เผื่อพื้นที่ไว้ ~8 ช่อง (รวมเส้น 0 แล้วไม่เกิน 10 เส้น)
+                  const mag = Math.pow(10, Math.floor(Math.log10(target)));
+                  const norm = target / mag;
+                  let step;
+                  if (norm <= 1) step = 1 * mag;
+                  else if (norm <= 2) step = 2 * mag;
+                  else if (norm <= 5) step = 5 * mag;
+                  else step = 10 * mag;
+                  return Math.max(step, 50000); // Step ต่ำสุด 5 หมื่น (เช่น ยอดไม่เกิน 1 ล้าน จะไล่เป็น 5 หมื่น/1 แสน/... ไปจนถึง 1 ล้าน)
+                };
+                const gridStepFP = niceStepFP(rawMaxV);
+                const maxV = Math.ceil(rawMaxV / gridStepFP) * gridStepFP; // MARKER_VATWATCHLISTOPS_AGING_LINE_DYNAMIC_CEILING_V38 -- Ceiling = ปัดยอดจริงขึ้นเป็น Step กลมที่ใกล้ที่สุด (แทนเดิมที่ Fix ขั้นต่ำ 10M ทำให้ BU ยอดน้อย เส้นแบนดูไม่เห็น Movement)
+                const stepX = 300 / (singleBuPoints.length - 1 || 1);
+                const coords = singleBuPoints.map((p, idx) => ({ ...p, x: idx * stepX, y: 90 - (p.value / maxV) * 80 }));
+                const plottedCoordsFP = coords.filter((c) => c.key !== '0' && c.key !== '__blank'); // เริ่ม Point จริงที่ 1, ไม่รวม Slot ว่างท้ายกราฟ (V37)
+                const pathD = plottedCoordsFP.map((c, idx) => `${idx === 0 ? 'M' : 'L'} ${c.x} ${c.y}`).join(' ');
+                // MARKER_VATWATCHLISTOPS_AGING_LINE_GRID_V34 -- เส้น Grid แนวนอน + Label แกน Y แบบ Nice Number (เช่น 500K, 1M, 2M...)
+                const gridLinesFP = [];
+                for (let gv = 0; gv <= maxV + gridStepFP * 0.5; gv += gridStepFP) gridLinesFP.push(gv);
+                // MARKER_VATWATCHLISTOPS_AGING_LINE_ZONE_FLAGS_V39 -- แบ่งพื้นหลังกราฟเป็น 3 โซน: Green Flag (1-4) / Red Flag (5-6) / Expired (เทา) แบ่งที่กึ่งกลางระหว่างจุด 4-5 และจุด 6-Expired
+                const zoneBoundary1FP = stepX * 4.5;
+                const zoneBoundary2FP = stepX * 6.5;
+                const zonesFP = [
+                  { x: 0, w: zoneBoundary1FP, fill: '#22C55E', opacity: 0.08, label: 'Green Flag', labelColor: '#16A34A' },
+                  { x: zoneBoundary1FP, w: zoneBoundary2FP - zoneBoundary1FP, fill: '#EF4444', opacity: 0.07, label: 'Red Flag', labelColor: '#DC2626' },
+                  { x: zoneBoundary2FP, w: 300 - zoneBoundary2FP, fill: '#9CA3AF', opacity: 0.12, label: 'Expired', labelColor: '#6B7280' },
+                ];
+                return (
+                  <>
+                    {zonesFP.map((z) => (
+                      <g key={`zone-${z.label}`}>
+                        <rect x={z.x} y="10" width={z.w} height="80" fill={z.fill} fillOpacity={z.opacity} />
+                        <text x={z.x + z.w / 2} y="16" fontSize="5" fontWeight="600" fill={z.labelColor} textAnchor="middle">{z.label}</text>
+                      </g>
+                    ))}
+                    <line x1={zoneBoundary1FP} y1="10" x2={zoneBoundary1FP} y2="90" stroke="#22C55E" strokeWidth="0.4" strokeDasharray="2,2" strokeOpacity="0.5" />
+                    <line x1={zoneBoundary2FP} y1="10" x2={zoneBoundary2FP} y2="90" stroke="#9CA3AF" strokeWidth="0.4" strokeDasharray="2,2" strokeOpacity="0.6" />
+                    {gridLinesFP.map((gv) => {
+                      const gy = 90 - (gv / maxV) * 80;
+                      return (
+                        <g key={`grid-${gv}`}>
+                          <line x1="0" y1={gy} x2="300" y2={gy} stroke="#eee" strokeWidth="0.5" />
+                          <text x="2" y={gy - 2} fontSize="6" fill="#aaa">{gv === 0 ? '0' : formatVatCompact(gv)}</text>
+                        </g>
+                      );
+                    })}
+                    <path d={pathD} fill="none" stroke="#1a3a5c" strokeWidth="1.5" />
+                    {plottedCoordsFP.map((c) => { // MARKER_VATWATCHLISTOPS_AGING_LINE_LABEL_0_POINT_1_V35 -- เดิม coords (มี 0 ด้วย) เปลี่ยนเป็น plottedCoordsFP (ไม่มีจุด 0)
+                      const isClearFP = c.value === 0; // MARKER_VATWATCHLISTOPS_AGING_LINE_ZONE_FLAGS_V39 -- ยอด 0 = เคลียร์แล้ว ไม่ควรใช้สีส้ม/แดงที่สื่อว่ายังเสี่ยงอยู่
+                      return (
+                        <g key={c.key}>
+                          <circle
+                            cx={c.x} cy={c.y} r={selectedAgingPoint === c.key ? '7' : '4'} fill={isClearFP ? '#CBD5E1' : c.color}
+                            stroke={selectedAgingPoint === c.key ? '#1a3a5c' : (isClearFP ? '#94A3B8' : 'none')} strokeWidth={selectedAgingPoint === c.key ? '2' : (isClearFP ? '1' : '0')}
+                            style={{ cursor: 'pointer' }}
+                            onMouseMove={(e) => moveTooltip(e)}
+                            onMouseEnter={(e) => showTooltip(e, `${matchedBu} · Aging ${c.label} (${c.monthLabel})`, c.value, c.color)} // MARKER_VATWATCHLISTOPS_AGING_LINE_MONTH_LABEL_V26 -- เพิ่ม เดือน/ปี ย้อนหลังในข้อความ Tooltip
+                            onMouseLeave={hideTooltip}
+                            onClick={() => setSelectedAgingPoint((prev) => (prev === c.key ? null : c.key))} // MARKER_VATWATCHLISTOPS_AGING_DONUT_POINT_SYNC_V27 -- คลิกจุด -> Filter Donut / คลิกซ้ำ -> ปลด
+                          />
+                          {isClearFP && ( // MARKER_VATWATCHLISTOPS_AGING_LINE_ZONE_FLAGS_V39
+                            <g style={{ pointerEvents: 'none' }}>
+                              <rect x={c.x - 11} y={c.y - 14} width="22" height="7" rx="3.5" fill="#DCFCE7" stroke="#16A34A" strokeWidth="0.5" />
+                              <text x={c.x} y={c.y - 9} fontSize="4.5" fontWeight="600" fill="#15803D" textAnchor="middle">Clear</text>
+                            </g>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </>
+                );
+              })()}
+            </svg>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#888', padding: '0 2px' }}>
+              {VAT_AGING_LINE_MONTHLY_POINTS.map((b) => <span key={b.key}>{b.label}</span>)} {/* MARKER_VATWATCHLISTOPS_AGING_LINE_8POINT_MONTHLY_V25 */}
+            </div>
+          </div>
+        )}
+        {!loading && !matchedBu && topBus.length === 0 && <div style={{ fontSize: '11px', color: '#aaa' }}>ไม่มีข้อมูล Pending</div>}
+        {!matchedBu && visibleTopBus.map((r) => ( // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21 -- เดิม topBus (Cap 10 ตายตัว) เปลี่ยนเป็น visibleTopBus (ตามพื้นที่จริง สูงสุด 15)
+          <div
+            key={r.bu} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: setChartFocusBu ? 'pointer' : 'default' }}
+            onClick={() => { // MARKER_VATWATCHLISTOPS_CHART_FOCUS_DECOUPLE_V30 -- เปลี่ยนจาก setSearch เป็น setChartFocusBu (คลิกแท่ง BU ไม่ไปแก้ช่อง Search จริงอีกต่อไป)
+              if (!setChartFocusBu) return;
+              setChartFocusBu((prev) => (prev === r.bu ? null : r.bu));
+            }}
+          >
+            <span
+              style={{ fontSize: '11px', width: '34px', flexShrink: 0, cursor: 'pointer' }}
+              onMouseMove={(e) => moveTooltip(e)}
+              onMouseEnter={(e) => { // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BAR_MINWIDTH_HOVER_SUMMARY_V8 -- Hover ชื่อ BU -> สรุปทุก Aging Bucket เป็นยอดเงิน
+                e.stopPropagation();
+                setHoverInfo({
+                  x: e.clientX, y: e.clientY, isSummary: true, buLabel: r.bu,
+                  lines: VAT_AGING_OVERVIEW_BUCKETS.map((b) => ({ label: b.label, value: Number(r[b.key] || 0), color: b.color })),
+                });
+              }}
+              onMouseLeave={hideTooltip}
+            >{r.bu}</span>
+            <div style={{ flex: '1 1 0%', height: '14px', borderRadius: '3px', overflow: 'hidden', display: 'flex', background: '#f2f2f2' }}>
+              {VAT_AGING_CHART_BUCKETS.map((b) => { // MARKER_VATWATCHLISTOPS_AGING_CHART_HIDE_ZERO_V18 -- ไม่แสดง Segment Aging 0 ในแท่งนี้
+                const v = Number(r[b.key] || 0);
+                if (!v) return null;
+                const pct = maxBuTotal > 0 ? (v / maxBuTotal) * 100 : 0;
+                return (
+                  <div
+                    key={b.key}
+                    // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BAR_MINWIDTH_HOVER_SUMMARY_V8 -- เดิมสัดส่วนน้อยมากๆ จะเล็กจนมองไม่เห็น/Hover ไม่ได้ ใส่ Min Width ไว้
+                    style={{ width: `${pct}%`, minWidth: '3px', flexShrink: 0, background: b.color, height: '100%', cursor: 'pointer' }}
+                    onMouseMove={(e) => moveTooltip(e)}
+                    onMouseEnter={(e) => showTooltip(e, `${r.bu} · Aging ${b.label}`, v, b.color)}
+                    onMouseLeave={hideTooltip}
+                  />
+                );
+              })}
+            </div>
+            <span
+              style={{ fontSize: '11px', width: '44px', textAlign: 'right', color: '#555', flexShrink: 0, cursor: 'pointer' }}
+              onMouseMove={(e) => moveTooltip(e)}
+              onMouseEnter={(e) => { // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_MONTH_HOVER_V11 -- Hover ยอดเงิน -> สรุปละเอียดรายเดือน 6,5,4,3,2,1,Expired
+                e.stopPropagation();
+                const mRow = monthBucketRows.find((mr) => mr.bu === r.bu);
+                // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_MONTH_HOVER_ADD_ZERO_V12 -- เพิ่ม Aging 0 เข้ามาด้วย (เดิมขาดไปทำให้ยอดรวมใน Tooltip นี้ไม่เท่ากับยอดในกราฟแท่ง)
+                const AGING_MONTH_HOVER_ORDER = [
+                  { key: '6', label: '6' }, { key: '5', label: '5' }, { key: '4', label: '4' },
+                  { key: '3', label: '3' }, { key: '2', label: '2' }, { key: '1', label: '1' },
+                  { key: '0', label: '0' }, { key: 'expired', label: 'Expired' },
+                ];
+                setHoverInfo({
+                  x: e.clientX, y: e.clientY, isSummary: true, buLabel: `${r.bu} · แยกรายเดือน`,
+                  lines: AGING_MONTH_HOVER_ORDER.map((m) => ({ label: m.label, value: mRow ? Number(mRow[m.key] || 0) : 0, color: '#8aa0b8' })),
+                });
+              }}
+              onMouseLeave={hideTooltip}
+            >{formatVatCompact(r.__total)}</span>
+          </div>
+        ))}
+      </div>
+      </div> {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BUTTON_OVERLAP_FIX_V1 -- ปิด Wrapper ใหม่ (Donut Panel + Bar List Panel) */}
+    </div>
+  );
 }
 
 function VatWatchlistOpsLobby({ onSubTabChange, pendingCrossBu, setPendingCrossBu } = {}) { // MARKER_VATWATCHLISTOPS_CROSS_PAGE_BU_NAVIGATION_V1
@@ -7983,6 +10700,13 @@ function VatWatchlistOpsLobby({ onSubTabChange, pendingCrossBu, setPendingCrossB
       setPendingCrossBu && setPendingCrossBu(null);
     }
   }, [pendingCrossBu, setPendingCrossBu]);
+
+  // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_HOOKS_ORDER_FIX_V10 -- ย้าย useState 2 ตัวนี้ขึ้นมาก่อน Early Return
+  // ── (บั๊กจาก Patch v5: เดิมวางไว้หลัง if(showTestOps) return... ทำให้ Hook ถูกเรียกไม่ครบทุก Render ผิด Rules of Hooks -- React Error จริง ไม่ใช่แค่ Warning) ──
+  const [monitorSearch, setMonitorSearch] = React.useState('');
+  const [monitorBaseFilter, setMonitorBaseFilter] = React.useState('');
+  // MARKER_VATWATCHLISTOPS_CHART_FOCUS_DECOUPLE_V30 -- แยกจาก monitorSearch: ใช้สำหรับ "แอบดู" กราฟ BU อื่นโดยไม่ไปแก้ช่อง Search จริงที่ผู้ใช้พิมพ์ไว้ (เช่น กำลัง Filter ตาราง "CRG" อยู่ แล้ว Double-click ดู BU อื่น ไม่ควรลบ "CRG" ทิ้ง)
+  const [chartFocusBu, setChartFocusBu] = React.useState(null);
 
   if (showTestOps) {
     return (
@@ -8000,11 +10724,16 @@ function VatWatchlistOpsLobby({ onSubTabChange, pendingCrossBu, setPendingCrossB
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', gap: '12px', flex: '35 1 0%' }}>
-        <div style={{ ...vatWatchlistZoneStyle, flex: '65 1 0%' }}>65%</div>
+        <div style={{ flex: '65 1 0%' }}><VatWatchlistAgingOverviewZone search={monitorSearch} baseFilter={monitorBaseFilter} setSearch={setMonitorSearch} chartFocusBu={chartFocusBu} setChartFocusBu={setChartFocusBu} /></div> {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_ZONE_V1 -- แทนที่ Placeholder 65% เดิม */}
         <div style={{ flex: '35 1 0%' }}><VatWatchlistUploadZone /></div>
       </div>
       <div style={{ flex: '65 1 0%', border: '0.5px solid #e8e8e8', borderRadius: '10px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        <VatWatchlistMonitorTable onGoto={(row) => { setTestOpsBu(row); setShowTestOps(true); }} />
+        <VatWatchlistMonitorTable
+          onGoto={(row) => { setTestOpsBu(row); setShowTestOps(true); }}
+          search={monitorSearch} setSearch={setMonitorSearch}
+          baseFilter={monitorBaseFilter} setBaseFilter={setMonitorBaseFilter}
+          setChartFocusBu={setChartFocusBu}
+        />
       </div>
     </div>
   );
@@ -8203,7 +10932,9 @@ function VatUploadFileLobby({ onSubTabChange, pendingCrossBu, setPendingCrossBu 
   }, []);
   React.useEffect(() => { fetchDraftCounts(); }, [fetchDraftCounts, historyRefreshKey]); // MARKER_VATWATCHLISTOPS_MONITOR_COUNT_EXCLUDE_EXPORTED_V1 -- Refresh Count ใหม่ทุกครั้งที่ Generate สำเร็จ (ของตัวเอง)
   React.useEffect(() => { // MARKER_VATWATCHLISTOPS_WS_SYNC_GAPS_V1 -- Sync ข้าม Session เมื่อมีคนอื่น Generate/Restore
-    const unsubscribe = subscribeWs(['vat_export_updated'], () => fetchDraftCounts());
+    // MARKER_VATCONTROLLER_ZONEPOPVAT_LIVE_REFRESH_V1 -- เพิ่ม 2 Event ที่ขาดไป: ตอนทำ Popvat/Add Data (draft_updated) และตอน Restore (draft_restored)
+    // เดิมฟังแค่ vat_export_updated ทำให้การ์ด Popvat/Simple/ADI ไม่ Refresh สดหลังทำ Popvat ต้องรอ Hard Refresh
+    const unsubscribe = subscribeWs(['vat_export_updated', 'vat_watchlist_draft_updated', 'vat_watchlist_draft_restored'], () => fetchDraftCounts());
     return unsubscribe;
   }, [fetchDraftCounts]);
 
@@ -8402,7 +11133,10 @@ function VatPopvatReportPanel({ bu }) {
             emptyText="ไม่มีข้อมูล"
             onCommitCell={(row, key, value) => {
               apiFetch(`/vat_upload_popvatdraft/${row.id}`, { method: 'PUT', body: JSON.stringify({ [key]: value }) })
-                .then(() => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [key]: value } : r))))
+                .then(() => {
+                  setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [key]: value } : r)));
+                  broadcastWs('vat_upload_popvatdraft_updated', { bu }); // MARKER_VATCONTROLLER_INLINE_EDIT_BROADCAST_CONSISTENCY_V1
+                })
                 .catch((err) => { console.error('Update Popvat field error:', err); alert('บันทึกไม่สำเร็จ กรุณาลองใหม่'); });
             }}
           />
@@ -9046,6 +11780,7 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
     }
     if (e.key.toLowerCase() === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); handleUndo(); return; } // MARKER_VATWATCHLISTOPS_EXCEL_GRID_UNDOREDO_V1
     if ((e.key.toLowerCase() === 'y' && (e.ctrlKey || e.metaKey)) || (e.key.toLowerCase() === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey)) { e.preventDefault(); handleRedo(); return; } // MARKER_VATWATCHLISTOPS_EXCEL_GRID_UNDOREDO_V1
+    if (e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleContextCopy(); return; } // MARKER_VATWATCHLIST_EXCELGRID_CTRLC_RELIABLE_V1 -- เดิมพึ่ง Native onCopy Event ซึ่งต้องมี Browser Selection จริงถึงจะ Fire แต่ Cell ทุกตัวตั้ง userSelect:'none' ไว้ (กัน Text Selection ตอนลาก Drag Select) ทำให้ไม่มี Selection ให้ Browser Copy จริง -- Ctrl+C จึงไม่ทำงานเลยในหลาย Browser -- แก้โดยเรียก navigator.clipboard.writeText() ตรงๆ (ผ่าน handleContextCopy) เหมือนปุ่ม Copy ในเมนูคลิกขวา แทนที่จะพึ่ง Native Copy Event
     if (!selection) return;
     if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); setSelection({ r1: 0, c1: 0, r2: rows.length - 1, c2: columns.length - 1 }); } // MARKER_VATWATCHLISTOPS_EXCEL_GRID_NAV_V1 -- Ctrl+A เลือกทั้งหมด
     else if (e.key === 'F2') { e.preventDefault(); const row = rows[selection.r2]; const col = columns[selection.c2]; if (row && col) startEdit(selection.r2, selection.c2, String(row[col.key] ?? '')); } // MARKER_VATWATCHLISTOPS_EXCEL_GRID_NAV_V1 -- F2 เข้า Edit Mode
@@ -9100,6 +11835,21 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
     setSelection({ r1: startR, c1: startC, r2: Math.min(rows.length - 1, startR + gridCells.length - 1), c2: Math.min(columns.length - 1, startC + ((gridCells[0] && gridCells[0].length) || 1) - 1) });
   };
 
+  // MARKER_VATWATCHLIST_EXCELGRID_RIGHTCLICK_COPY_V1 -- Copy จาก Custom Context Menu (คลิกขวา) แยกจาก handleCopy (Ctrl+C ผ่าน Native onCopy Event) -- ไม่มี ClipboardEvent ให้ใช้ตรงๆ เหมือน Ctrl+C จึงใช้ navigator.clipboard.writeText() แทน
+  const handleContextCopy = () => {
+    if (!selection) return;
+    const n = normRange(selection);
+    const lines = [];
+    for (let r = n.r1; r <= n.r2; r++) {
+      const cells = [];
+      for (let c = n.c1; c <= n.c2; c++) cells.push(String(rows[r]?.[columns[c].key] ?? ''));
+      lines.push(cells.join('\t'));
+    }
+    const text = lines.join('\n');
+    copyTextToClipboardFP(text); // MARKER_VATWATCHLISTOPS_CLIPBOARD_FALLBACK_V1
+    setCellCtxMenu(null);
+  };
+
   return ( // MARKER_VATWATCHLIST_EXPENSETYPE_FRAGMENT_FIX_V1
     <>
     <table
@@ -9151,10 +11901,9 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
                   onDoubleClick={() => startEdit(r, c, String(row[col.key] ?? ''))}
                   onContextMenu={(e) => { // MARKER_VATWATCHLIST_MULTI_CONTEXTMENU_V1
                     const menuCfg = (cellContextMenus && cellContextMenus[col.key]) || ((cellContextMenuKey && col.key === cellContextMenuKey) ? { label: cellContextMenuLabel, options: cellContextMenuOptions } : null);
-                    if (!menuCfg) return;
-                    e.preventDefault();
-                    setSelection({ r1: r, c1: c, r2: r, c2: c });
-                    setCellCtxMenu({ x: e.clientX, y: e.clientY, r, c, key: col.key, label: menuCfg.label, options: menuCfg.options, tableColumns: menuCfg.tableColumns, tableRows: menuCfg.tableRows, valueKey: menuCfg.valueKey }); // MARKER_VATWATCHLIST_BRANCHCODE_TABLE_UPGRADE_V1
+                    e.preventDefault(); // MARKER_VATWATCHLIST_EXCELGRID_RIGHTCLICK_COPY_V1 -- เดิม return ทิ้งถ้าไม่มี menuCfg (Column ไม่มี Dropdown พิเศษ) ปล่อยให้ Browser Context Menu เดิมโชว์ แต่ userSelect:'none' ทำให้ "Copy" ใน Menu เดิมกดไม่ได้ (ไม่มี Text Selection จริง) -- เปลี่ยนเป็น preventDefault เสมอ แล้วโชว์ Menu ของเราเองที่มีตัวเลือก "Copy" ให้เสมอ
+                    if (!inSelection(r, c)) setSelection({ r1: r, c1: c, r2: r, c2: c }); // MARKER_VATWATCHLIST_EXCELGRID_RIGHTCLICK_COPY_V1 -- คลิกขวาใน Cell ที่อยู่ใน Selection หลายแถว/หลาย Column ที่ลากไว้อยู่แล้ว (Drag Select) ห้ามยุบ Selection เหลือ Cell เดียว เพื่อให้ "Copy" คัดลอกได้ทั้ง Range ที่ลากไว้จริง
+                    setCellCtxMenu({ x: e.clientX, y: e.clientY, r, c, key: col.key, label: menuCfg ? menuCfg.label : null, options: menuCfg ? menuCfg.options : null, tableColumns: menuCfg ? menuCfg.tableColumns : null, tableRows: menuCfg ? menuCfg.tableRows : null, valueKey: menuCfg ? menuCfg.valueKey : null }); // MARKER_VATWATCHLIST_BRANCHCODE_TABLE_UPGRADE_V1
                   }}
                   style={{ // MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1
                     padding: '4px 6px',
@@ -9187,14 +11936,24 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
     </table>
     {cellCtxMenu && (
       <div onMouseDown={(e) => e.stopPropagation()} style={{ position: 'fixed', top: cellCtxMenu.y, left: cellCtxMenu.x, background: 'white', border: '0.5px solid #ccc', borderRadius: '8px', boxShadow: '0 6px 16px rgba(0,0,0,0.18)', zIndex: 2000, minWidth: '190px', overflow: 'hidden', fontSize: '13px' }}>
-        <div
-          onClick={() => { setCellCtxPopupOpen(true); setCellCtxPopupSearch(''); }}
-          style={{ padding: '9px 14px', cursor: 'pointer', color: '#1a3a5c' }}
+        <div // MARKER_VATWATCHLIST_EXCELGRID_RIGHTCLICK_COPY_V1 -- ตัวเลือก "Copy" เพิ่มใหม่ โชว์เสมอไม่ว่า Column จะมี Dropdown พิเศษหรือไม่ -- Copy ทั้ง Range ที่เลือกไว้ (รองรับ Drag Select หลาย Cell)
+          onClick={handleContextCopy}
+          style={{ padding: '9px 14px', cursor: 'pointer', color: '#1a3a5c', borderBottom: (cellCtxMenu.options || cellCtxMenu.tableColumns) ? '0.5px solid #eee' : 'none' }}
           onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f4fa'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
         >
-          {cellCtxMenu.label || 'Find'}
+          Copy
         </div>
+        {(cellCtxMenu.options || cellCtxMenu.tableColumns) && (
+          <div
+            onClick={() => { setCellCtxPopupOpen(true); setCellCtxPopupSearch(''); }}
+            style={{ padding: '9px 14px', cursor: 'pointer', color: '#1a3a5c' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f4fa'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+          >
+            {cellCtxMenu.label || 'Find'}
+          </div>
+        )}
       </div>
     )}
     {cellCtxMenu && !cellCtxPopupOpen && (
@@ -9710,7 +12469,10 @@ function VatAdiUploadReportPanel({ bu }) { // MARKER_VATWATCHLISTOPS_ADI_UPLOAD_
             }}
             onCommitCell={(row, key, value) => {
               apiFetch(`/vat_adi_transferdraft/${row.id}`, { method: 'PUT', body: JSON.stringify({ [key]: value }) })
-                .then(() => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [key]: value } : r))))
+                .then(() => {
+                  setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [key]: value } : r)));
+                  broadcastWs('vat_adi_transferdraft_updated', { bu }); // MARKER_VATCONTROLLER_INLINE_EDIT_BROADCAST_CONSISTENCY_V1
+                })
                 .catch((err) => { console.error('Update ADI field error:', err); alert('บันทึกไม่สำเร็จ กรุณาลองใหม่'); });
             }}
           />
@@ -9931,7 +12693,10 @@ function VatTaxInvoicePage() {
             rightAlignKeys={new Set(['gross_value', 'vat_value', 'total_value'])}
             onCommitCell={(row, key, value) => {
               apiFetch(`/vat_backup_tax_invoice/${row.id}`, { method: 'PUT', body: JSON.stringify({ [key]: value }) })
-                .then(() => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [key]: value } : r))))
+                .then(() => {
+                  setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [key]: value } : r)));
+                  broadcastWs('vat_backup_tax_invoice_updated', { id: row.id }); // MARKER_VATCONTROLLER_INLINE_EDIT_BROADCAST_CONSISTENCY_V1 -- ไม่มี bu prop ในสโคปนี้ ส่ง id แทน
+                })
                 .catch((err) => { console.error('Update Tax Invoice field error:', err); alert('บันทึกไม่สำเร็จ กรุณาลองใหม่'); });
             }}
           />
@@ -9939,6 +12704,2321 @@ function VatTaxInvoicePage() {
       </div>
       {showManualForm && <VatTaxInvoiceManualFormModal username={username} onClose={() => setShowManualForm(false)} onSaved={fetchRows} />}
       {showUpload && <VatTaxInvoiceUploadModal username={username} onClose={() => setShowUpload(false)} onSaved={fetchRows} />}
+    </div>
+  );
+}
+
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_SKELETON_V1 -- Lobby ของ "VAT Simple Input Ops." โครงสร้างเท่านั้น (Zone A ว่าง 30% / Zone B หัวตาราง 70% ยังไม่ต่อ API)
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_V1 -- Modal ค้นหา SM-Code ("Real Vendor") เปิดจากปุ่ม Search Icon ข้าง Code
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1 -- เพิ่ม New/Edit Form (Zone Layout) + Logic บันทึก/แก้ไข/ลบจริง
+// Port มาจาก APController.js "RealVendorPopup" (renderSmForm) แต่สลับ db.from() -> apiFetch() ให้ตรงกับ Convention ของไฟล์นี้
+// (เหมือนที่ทำไว้แล้วตอน Port หน้า BU Group Range -- ดู MARKER_VATWATCHLISTOPS_EMBED_BU_GROUP_RANGE_V1)
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_COLUMNS_V2 -- ตัด Favorite (ว่างไม่ได้ผูก)/Tax ID/Branch/Supplier Code ออก เปลี่ยนเป็น AT-Match + Account Code Dr/Cr ตามที่ปรับ
+const VAT_SMCODE_MODAL_COLUMNS = [
+  { key: 'sm_code', label: 'SM-CODE' },
+  { key: 'company_name', label: 'COMPANY NAME' },
+  { key: 'at_match', label: 'AT-MATCH' },
+  { key: 'account_dr', label: 'ACCOUNT CODE DR' },
+  { key: 'account_cr', label: 'ACCOUNT CODE CR' },
+];
+
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_ACCOUNTCODE_V1 -- "Account Code" = CPC - Account - Sub Acc ต่อกัน (ไม่ใช่แค่ Account เฉยๆ)
+function formatSmAccountCode(row, side) {
+  const cpc = String(row?.[`CPC_${side}`] || '').trim();
+  const acc = String(row?.[`Account_${side}`] || '').trim();
+  const sub = String(row?.[`Sub Acc_${side}`] || '').trim();
+  const parts = [cpc, acc, sub].filter(Boolean);
+  return parts.length ? parts.join('-') : '—';
+}
+
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1 -- ฟอร์มว่างของ SM-Code (Field Set เดียวกับ ADD_SUPPLIER_EMPTY_FORM / APController.js smEmptyForm())
+const SM_CODE_FORM_EMPTY = {
+  'SM-Code': '', 'Ofin Code': '', 'Supplier Code': '', '_type': '', '_sub_type': '',
+  'Company Name': '', 'Tax ID': '', 'Branch': '', 'Short Name': '',
+  'CPC_Dr': '', 'Account_Dr': '', 'Sub Acc_Dr': '', 'CPC_Cr': '', 'Account_Cr': '', 'Sub Acc_Cr': '',
+  'Expense Type': '', 'Special Rule1': '', 'Special Rule2': '', 'Simple Rule3': '', 'Special Rule4': '', 'Special Rule5': '',
+  'First Part': '', 'Mid Part': '', 'Last Part': '', 'Digit': '', 'Remark': '', 'BlankCell': '',
+  '_ofinSimpleName': '', 'Short Branch': '', 'BU': '', '_buCompanySimple': '', '_taxIdBu': '',
+  '_comPct': '', '_specPct': '', '_buBranch': '', '_branchCode': '', '_groupP': '', '_branchStatus': '',
+};
+
+function VatSmCodeSearchModal({ onClose, onSelect, smCodes = [], branches = [], vendorCategories = [], smLoading = false }) {
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_SPEED_V1 -- smCodes/branches/vendorCategories รับมาจาก Props (Fetch ครั้งเดียวที่ VatSimpleInputOpsLobby)
+  // เดิมเรียก useVatSupportingData() ตรงนี้เอง ทำให้ทุกครั้งที่เปิด Modal (กดปุ่ม Search ข้าง Code) ต้อง Fetch /sm_code_list + /branch_list + /vendor_category ใหม่หมด -- ช้ามาก โดยเฉพาะเปิดๆ ปิดๆ หลายรอบตอนกรอกหลายแถว
+  const { userName } = useAuth(); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1
+  const [smSearch, setSmSearch] = React.useState('');
+  const [smBuFilter, setSmBuFilter] = React.useState('');
+  const [smAtMatchFilter, setSmAtMatchFilter] = React.useState('');
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1 -- View 'search' | 'new' | 'edit'
+  const [view, setView] = React.useState('search');
+  const [editTarget, setEditTarget] = React.useState(null);
+  const [smForm, setSmForm] = React.useState(SM_CODE_FORM_EMPTY);
+  const [smFormError, setSmFormError] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  // MARKER_VATCONTROLLER_SMCODE_VIEWONLY_REMOVE_OLD_VIEWROW_V1 -- ถอด viewRow/setViewRow (Popup View แบบเดิม 6 คอลัมน์) ออกแล้ว เปลี่ยนเป็น view === 'viewonly' ใช้ renderSmForm() ร่วมกับ Edit Form (Disable ทุกช่อง) แทน
+
+  const smBuOptions = React.useMemo(() => Array.from(new Set(smCodes.map((r) => r['BU']).filter(Boolean))).sort(), [smCodes]);
+  const smAtMatchOptions = React.useMemo(() => Array.from(new Set(smCodes.map((r) => r['Short Name']).filter(Boolean))).sort(), [smCodes]);
+
+  const smFilteredRows = React.useMemo(() => {
+    const q = smSearch.trim().toLowerCase();
+    return smCodes.filter((r) => {
+      if (smBuFilter && r['BU'] !== smBuFilter) return false;
+      if (smAtMatchFilter && r['Short Name'] !== smAtMatchFilter) return false;
+      if (!q) return true;
+      return String(r['SM-Code'] || '').toLowerCase().includes(q)
+        || String(r['Company Name'] || '').toLowerCase().includes(q)
+        || String(r['Short Name'] || '').toLowerCase().includes(q);
+    });
+  }, [smCodes, smSearch, smBuFilter, smAtMatchFilter]);
+
+  // ── SM-Code Form helpers -- Port จาก APController.js RealVendorPopup ──────
+  const getSmOptions = (field) => [...new Set((smCodes || []).map((i) => String(i[field] ?? '').trim()).filter(Boolean))].sort();
+
+  const handleSmSupplierCodeChange = (val) => {
+    const found = (vendorCategories || []).find((i) => String(i['Code'] || '').trim() === val.trim());
+    if (found) {
+      setSmForm((prev) => ({
+        ...prev,
+        'Supplier Code': val,
+        'Company Name': found['Supplier Name'] || prev['Company Name'],
+        'Tax ID': found['TAX ID'] || prev['Tax ID'],
+        'Branch': found['No.'] || prev['Branch'],
+        '_type': found['TYPE'] || '',
+        '_sub_type': found['SUB TYPE'] || '',
+      }));
+    } else {
+      setSmForm((prev) => ({ ...prev, 'Supplier Code': val }));
+    }
+  };
+
+  const handleSmOfinCodeChange = (val) => setSmForm((prev) => ({ ...prev, 'Ofin Code': val }));
+
+  const lookupSmOfinCode = (val) => {
+    const raw = String(val || '').trim();
+    const normalized = /^\d+$/.test(raw) ? raw.padStart(6, '0') : raw;
+    const found = (branches || []).find((b) => String(b['Branch Code'] || '').trim() === normalized);
+    setSmForm((prev) => ({
+      ...prev,
+      'Ofin Code': normalized,
+      '_ofinSimpleName': found ? (found['Simple Brand Code'] || '') : '',
+      'Short Branch': found ? (found['BU-Branch'] || '') : '',
+      'BU': found ? (found['bu'] || '') : '',
+      '_buCompanySimple': found ? (found['Simple Company'] || '') : '',
+      '_taxIdBu': found ? (found['BU-TaxID'] || '') : '',
+      '_comPct': found ? (found['%'] || '') : '',
+      '_specPct': found ? (found['DB(%)'] || '') : '',
+      '_buBranch': found ? (found['BU-Branch'] || '') : '',
+      '_branchCode': found ? (found['Branch Code'] || '') : '',
+      '_groupP': found ? (found['Group-P'] || '') : '',
+      '_branchStatus': found ? (found['status'] || '') : '',
+    }));
+  };
+  const handleSmOfinCodeBlur = (val) => { if (val?.trim()) lookupSmOfinCode(val); };
+
+  const handleSmATMatchChange = (val) => {
+    const found = (smCodes || []).find((i) => String(i['Short Name'] || '').trim() === val.trim());
+    const isInput = val.trim().toUpperCase() === 'INPUT' || val.trim().toUpperCase() === 'IST36';
+    const isT36 = val.trim().toUpperCase() === 'T36';
+    const comPct = String(smForm['_comPct'] || '').trim();
+    const isNotFull = comPct !== '' && comPct !== '100';
+    const subDr = found ? (found['Sub Acc_Dr'] || '') : '';
+    const isNot999 = subDr !== '' && subDr !== '999999';
+    setSmForm((prev) => ({
+      ...prev,
+      'Short Name': val,
+      'Expense Type': isNotFull
+        ? (getSmOptions('Expense Type').find((o) => String(o).startsWith('63050000')) || '')
+        : (isInput || isT36)
+          ? (getSmOptions('Expense Type').find((o) => String(o).startsWith('63047000')) || '')
+          : isNot999
+            ? (getSmOptions('Expense Type').find((o) => String(o).startsWith('61200201')) || '')
+            : prev['Expense Type'],
+      'CPC_Dr': found ? (found['CPC_Dr'] || '') : prev['CPC_Dr'],
+      'Account_Dr': found ? (found['Account_Dr'] || '') : prev['Account_Dr'],
+      'Sub Acc_Dr': found ? (found['Sub Acc_Dr'] || '') : prev['Sub Acc_Dr'],
+      'CPC_Cr': found ? (found['CPC_Cr'] || '') : prev['CPC_Cr'],
+      'Account_Cr': found ? (found['Account_Cr'] || '') : prev['Account_Cr'],
+      'Sub Acc_Cr': found ? (found['Sub Acc_Cr'] || '') : prev['Sub Acc_Cr'],
+    }));
+  };
+
+  const openNewForm = () => { setView('new'); setEditTarget(null); setSmForm(SM_CODE_FORM_EMPTY); setSmFormError(''); };
+  const openEditForm = (item) => {
+    setView('edit'); setEditTarget(item);
+    const ofinRaw = String(item['Ofin Code'] || '').trim();
+    const ofinNorm = /^\d+$/.test(ofinRaw) ? ofinRaw.padStart(6, '0') : ofinRaw;
+    setSmForm({ ...SM_CODE_FORM_EMPTY, ...item, 'Ofin Code': ofinNorm });
+    setSmFormError('');
+    // MARKER_VATCONTROLLER_SMCODE_EDIT_AUTOLOOKUP_FIX_V1 -- Bug: Field ที่ Derive จาก Ofin Code Lookup (_buCompanySimple/_taxIdBu/_comPct/_specPct/_groupP/_ofinSimpleName/_branchCode/_branchStatus)
+    // ไม่เคยถูกบันทึกลง DB จริง (Whitelist ตอน Save ตัดออก) เลยว่างเปล่าทุกครั้งที่เปิด Edit เพราะ setSmForm ข้างบนแค่ Spread Column ดิบจาก Record เดิมมา ไม่เคยเรียก lookupSmOfinCode() ให้เอง
+    // (เดิมต้องกดเข้าไปที่ช่อง Ofin Code แล้ว Blur ออกเองก่อน ถึงจะ Trigger ให้ขึ้น) -- แก้โดยเรียก Lookup ทันทีตอนเปิด Edit ถ้ามี Ofin Code อยู่แล้ว
+    if (ofinNorm) lookupSmOfinCode(ofinNorm);
+  };
+  // MARKER_VATCONTROLLER_SMCODE_VIEWONLY_OPENVIEWFORM_V1 -- View Form ให้เหมือน Edit Form ทุกอย่าง (Field Set + Auto-lookup Zone 5) ต่างแค่ view เป็น 'viewonly' (Disable ทุกช่อง)
+  const openViewForm = (item) => {
+    setView('viewonly'); setEditTarget(item);
+    const ofinRaw = String(item['Ofin Code'] || '').trim();
+    const ofinNorm = /^\d+$/.test(ofinRaw) ? ofinRaw.padStart(6, '0') : ofinRaw;
+    setSmForm({ ...SM_CODE_FORM_EMPTY, ...item, 'Ofin Code': ofinNorm });
+    setSmFormError('');
+    if (ofinNorm) lookupSmOfinCode(ofinNorm);
+  };
+  const handleSmBack = () => { setView('search'); setEditTarget(null); setSmForm(SM_CODE_FORM_EMPTY); setSmFormError(''); };
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1 -- Save จริง (POST ตอน New / PUT ตอน Edit) เหมือน saveAddSupplier() ในหน้านี้ แต่รองรับ Edit ด้วย
+  const handleSmSave = async () => {
+    const f = smForm;
+    const missing = [];
+    if (!f['SM-Code']?.trim())      missing.push('Simple Code');
+    if (!f['Ofin Code']?.trim())    missing.push('OFIN CODE');
+    if (!f['Company Name']?.trim()) missing.push('Vendor Name');
+    if (!f['Tax ID']?.trim())       missing.push('Tax ID');
+    if (!f['Branch']?.trim())       missing.push('Branch No.');
+    if (!f['Short Name']?.trim())   missing.push('AT-Match');
+    // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_TYPE_REQUIRE_GATE_V1 -- Type/Sub Type บังคับกรอกเฉพาะตอนมี Supplier Code จริง (ไม่ใช่ค่าง่าง หรือ "-" ที่เป็นแค่ Placeholder ของข้อมูลเก่า)
+    const smSupplierCodeVal = (f['Supplier Code'] || '').trim();
+    const smHasRealSupplierCode = !!smSupplierCodeVal && smSupplierCodeVal !== '-';
+    if (smHasRealSupplierCode && !f['_type']?.trim())     missing.push('Type');
+    if (smHasRealSupplierCode && !f['_sub_type']?.trim()) missing.push('Sub Type');
+    if (!f['CPC_Dr']?.trim())       missing.push('CPC Dr');
+    if (!f['Account_Dr']?.trim())   missing.push('Account Dr');
+    if (!f['Sub Acc_Dr']?.trim())   missing.push('Sub Acc Dr');
+    if (!f['CPC_Cr']?.trim())       missing.push('CPC Cr');
+    if (!f['Account_Cr']?.trim())   missing.push('Account Cr');
+    if (!f['Sub Acc_Cr']?.trim())   missing.push('Sub Acc Cr');
+    if (missing.length) { setSmFormError('กรุณากรอกข้อมูลให้ครบถ้วน -- ยังขาด: ' + missing.join(', ')); return; }
+
+    if (!editTarget) {
+      const dup = (smCodes || []).find((i) => String(i['SM-Code'] || '').trim().toLowerCase() === f['SM-Code'].trim().toLowerCase());
+      if (dup) { setSmFormError(`❌ Simple Code "${f['SM-Code']}" มีอยู่แล้วใน SM-Code List`); return; }
+    }
+
+    setSaving(true);
+    try {
+      const nowIso = new Date().toISOString();
+      // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_PAYLOAD_WHITELIST_V1
+      // -- เดิมตอน Edit สร้าง cleanedF จาก f (smForm) ทั้งก้อน ซึ่งตอนเปิด Edit ทำ
+      // -- setSmForm({ ...SM_CODE_FORM_EMPTY, ...item }) เอา Raw Row จาก DB มา Spread ทับ
+      // -- ทั้งหมด -- ถ้า Row มี Column แปลกปลอม/เก่าที่ไม่ตรงกับ Field Set จริงติดมาด้วย
+      // -- จะโดนส่งกลับเข้า PUT ไปด้วย ทำให้ Backend Error (Internal server error) แบบ
+      // -- ไม่รู้สาเหตุ -- แก้ให้สร้าง Payload จาก "Field Set ที่รู้จักจริง" เดียวกับ
+      // -- saveAddSupplier() (Full Page Add Supplier) เป๊ะๆ แทน กัน Column แปลกปลอมหลุดไป
+      const EXCLUDE_FIELDS = ['BlankCell'];
+      const KNOWN_SM_CODE_FIELDS = Object.keys(SM_CODE_FORM_EMPTY).filter((k) => !k.startsWith('_') && !EXCLUDE_FIELDS.includes(k));
+      const cleanedF = Object.fromEntries(KNOWN_SM_CODE_FIELDS.map((k) => [k, f[k] ?? '']));
+      const payload = { ...cleanedF, username: userName, last_update: nowIso, source_mode: 'AP' };
+
+      if (editTarget?.id) {
+        await apiFetch(`/sm_code_list/${editTarget.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      } else {
+        await apiFetch('/sm_code_list', { method: 'POST', body: JSON.stringify(payload) });
+      }
+
+      // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1 -- Auto-create vendor_category ถ้ายังไม่มี (เหมือน saveAddSupplier())
+      const supplierCode = (f['Supplier Code'] || '').trim();
+      if (supplierCode) {
+        try {
+          const existingCat = await apiFetch(`/vendor_category?eq_Code=${encodeURIComponent(supplierCode)}`);
+          if (!Array.isArray(existingCat) || existingCat.length === 0) {
+            const catPayload = {
+              'Code': supplierCode,
+              'Supplier Name': f['Company Name'] || '',
+              'TAX ID': f['Tax ID'] || '',
+              'No.': f['Branch'] || '',
+              'TYPE': f['_type'] || '',
+              'SUB TYPE': f['_sub_type'] || '',
+              'BU': f['BU'] || '',
+              'username': userName,
+              'last_update': nowIso,
+            };
+            await apiFetch('/vendor_category', { method: 'POST', body: JSON.stringify(catPayload) });
+          }
+        } catch (err) { console.warn('MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1 auto-create vendor_category failed:', err.message); }
+      }
+
+      broadcastWs('sm_code_list_updated', { smCode: f['SM-Code'] });
+      const savedCode = f['SM-Code'];
+      handleSmBack();
+      confirmDialog.alert(editTarget?.id ? `แก้ไข Simple Code "${savedCode}" สำเร็จ` : `เพิ่ม Simple Code "${savedCode}" สำเร็จ`, { title: 'บันทึกสำเร็จ' });
+    } catch (err) {
+      console.error('handleSmSave error:', err);
+      setSmFormError('บันทึกไม่สำเร็จ: ' + (err?.message || ''));
+    }
+    setSaving(false);
+  };
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_NEWEDIT_V1 -- ลบจริง
+  const handleSmDelete = async (item) => {
+    if (!(await confirmDialog.confirm(`ต้องการลบ "${item['SM-Code']} — ${item['Company Name'] || ''}" ใช่หรือไม่?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
+    try {
+      await apiFetch(`/sm_code_list/${item.id}`, { method: 'DELETE' });
+      broadcastWs('sm_code_list_updated', {});
+    } catch (err) {
+      confirmDialog.alert('ลบไม่สำเร็จ: ' + (err?.message || ''), { variant: 'danger' });
+    }
+  };
+
+  // ── smGrid / smRowBlue: Header-over-input Grid Helper (Zone Layout) -- Port จาก APController.js ──
+  // MARKER_VATCONTROLLER_SMCODE_VIEWONLY_ISVIEWONLY_WIRE_V1 -- เดิม Hardcode false (New/Edit เท่านั้น) เปลี่ยนเป็นอ่านจาก view === 'viewonly' จริง เพื่อรองรับ View Form = Edit Form แต่ Disable
+  const isViewOnly = view === 'viewonly';
+  const inpBase = { height: '28px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box' };
+
+  const smGrid = (cols) => (
+    <div style={{ display: 'grid', gridTemplateColumns: cols.map((c) => c.w || '1fr').join(' '), border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'visible', marginBottom: '6px' }}>
+      {cols.map((c, i) => (
+        <div key={`h${i}`} style={{ padding: '3px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', fontWeight: '600', textAlign: 'center', borderRight: i < cols.length - 1 ? '0.5px solid #e8eaf0' : 'none', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{c.label}</div>
+      ))}
+      {cols.map((c, i) => {
+        const isLast = i === cols.length - 1;
+        return (
+          <div key={`c${i}`} style={{ padding: '3px 6px', display: 'flex', alignItems: 'center', justifyContent: c.center ? 'center' : 'flex-start', borderRight: isLast ? 'none' : '0.5px solid #e8eaf0', overflow: 'visible', background: c.bg || 'transparent' }}>
+            {c.combo
+              ? <SmComboBox value={smForm[c.key] || ''} onChange={(val) => (c.onChangeFn ? c.onChangeFn(val) : setSmForm((s) => ({ ...s, [c.key]: val })))} options={c.opts || []} center={c.center} disabled={isViewOnly} />
+              : <input value={smForm[c.key] || ''} onChange={(e) => (c.onChangeFn ? c.onChangeFn(e.target.value) : setSmForm((s) => ({ ...s, [c.key]: e.target.value })))} onBlur={(e) => c.onBlurFn && c.onBlurFn(e.target.value)} readOnly={isViewOnly} disabled={isViewOnly} style={{ ...inpBase, textAlign: c.center ? 'center' : 'left', color: isViewOnly ? '#999' : inpBase.color, cursor: isViewOnly ? 'not-allowed' : 'text' }} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const smRowBlue = (cols) => (
+    <div style={{ display: 'grid', gridTemplateColumns: cols.map((c) => c.w || '1fr').join(' '), border: '0.5px solid #e8eaf0', borderRadius: '4px', overflow: 'hidden', marginBottom: '6px' }}>
+      {cols.map((c, i) => (
+        <div key={`h${i}`} style={{ padding: '3px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', fontWeight: '600', textAlign: 'center', borderRight: i < cols.length - 1 ? '0.5px solid #e8eaf0' : 'none', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap' }}>{c.label}</div>
+      ))}
+      {cols.map((c, i) => {
+        const isLast = i === cols.length - 1;
+        if (c.check) {
+          const ofinCode = (smForm['Ofin Code'] || '').trim();
+          const foundBranch = ofinCode ? (branches || []).find((b) => String(b['Branch Code'] || '').trim() === ofinCode) : null;
+          return <div key={`c${i}`} style={{ borderRight: isLast ? 'none' : '0.5px solid #e8eaf0', background: ofinCode ? (foundBranch ? '#27AE60' : '#E74C3C') : '#E6F1FB', minHeight: '28px' }} />;
+        }
+        return (
+          <div key={`c${i}`} style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: isLast ? 'none' : '0.5px solid #e8eaf0', background: '#E6F1FB' }}>
+            <input value={smForm[c.key] || ''} readOnly style={{ ...inpBase, textAlign: 'center', color: '#0C447C', fontWeight: '500' }} />
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderSmForm = () => {
+    const isEdit = view === 'edit';
+    // MARKER_VATCONTROLLER_SMCODE_VIEWONLY_TITLEMAP_V1 -- เพิ่ม viewonly เข้า Title/Icon Map (View Form = Edit Form แต่ Disable)
+    const titleMap = { new: '+ New Simple Code', edit: `Edit Simple Code — ${editTarget?.['SM-Code'] || ''}`, viewonly: `View Simple Code — ${editTarget?.['SM-Code'] || ''}` };
+    const iconMap = { new: '➕', edit: '✏️', viewonly: '👁️' };
+    const iconBgMap = { new: '#27500A', edit: '#0C447C', viewonly: '#6b7280' };
+
+    return (
+      <>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px', flexShrink: 0 }}>
+          <button type="button" onClick={handleSmBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: iconBgMap[view], display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{iconMap[view]}</div>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{titleMap[view]}</div>
+        </div>
+
+        {smFormError && <div style={{ padding: '8px 12px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderRadius: '6px', marginBottom: '10px' }}>⚠️ {smFormError}</div>}
+
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {/* Zone 1: Identity & Matching */}
+          {smGrid([
+            { label: 'Simple Code', key: 'SM-Code', w: '1fr', bg: '#FFF9C4' },
+            { label: 'OFIN CODE', key: 'Ofin Code', w: '160px', bg: '#FFF9C4', center: true, onChangeFn: handleSmOfinCodeChange, onBlurFn: handleSmOfinCodeBlur },
+            { label: 'Supplier Code', key: 'Supplier Code', w: '180px', onChangeFn: handleSmSupplierCodeChange, center: true },
+            { label: 'Type', key: '_type', w: '170px', combo: true, opts: [...new Set((vendorCategories || []).map((i) => i['TYPE']).filter(Boolean))], center: true },
+            { label: 'Sub Type', key: '_sub_type', w: '180px', combo: true, opts: [...new Set((vendorCategories || []).filter((i) => !smForm['_type'] || i['TYPE'] === smForm['_type']).map((i) => i['SUB TYPE']).filter(Boolean))], center: true },
+          ])}
+          {(smForm['SM-Code']?.trim() || smForm['Supplier Code']?.trim()) && (
+            <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_DUPCHECK_EDITFIX_V1 -- Badge นี้คือเช็ค "ซ้ำกับแถวอื่น" ตอนสร้างใหม่ ไม่ใช่เช็คว่ามีข้อมูลจริงไหม
+                  ตอน Edit เราตัด Record ตัวเองออกจากการเทียบ (i.id !== editTarget?.id) เสมอ เลยจะขึ้น "Notfound" ตลอดทั้งที่ข้อมูลมีอยู่จริง -- จึงซ่อน Badge นี้ตอน Edit (ไม่มีอะไรให้เช็คแล้ว) */}
+              {view === 'new' && smForm['SM-Code']?.trim() && (
+                (smCodes || []).find((i) => String(i['SM-Code'] || '').trim().toLowerCase() === smForm['SM-Code'].trim().toLowerCase())
+                  ? <span style={{ fontSize: '11px', background: '#FCEBEB', color: '#791F1F', padding: '2px 10px', borderRadius: '20px', fontWeight: '500' }}>❌ Simple Code นี้มีอยู่แล้ว (ซ้ำ)</span>
+                  : <span style={{ fontSize: '11px', background: '#EAF3DE', color: '#27500A', padding: '2px 10px', borderRadius: '20px', fontWeight: '500' }}>✅ Simple Code ใหม่ ใช้ได้</span>
+              )}
+              {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_TYPE_REQUIRE_GATE_V1 -- "-" ถือเป็น "ไม่มี Supplier Code" เหมือนค่าว่าง ไม่ควรขึ้น Notfound */}
+              {smForm['Supplier Code']?.trim() && smForm['Supplier Code'].trim() !== '-' && (() => {
+                const found = (vendorCategories || []).find((i) => String(i['Code'] || '').trim() === smForm['Supplier Code'].trim());
+                return found
+                  ? <span style={{ fontSize: '11px', background: '#EAF3DE', color: '#27500A', padding: '2px 10px', borderRadius: '20px', fontWeight: '500' }}>✅ Suppliercode found!!! — {found['TYPE']} / {found['SUB TYPE']}</span>
+                  : <span style={{ fontSize: '11px', background: '#FCEBEB', color: '#791F1F', padding: '2px 10px', borderRadius: '20px', fontWeight: '500' }}>❌ Suppliercode Notfound!!!</span>;
+              })()}
+            </div>
+          )}
+
+          {/* Zone 1 (ต่อ): Vendor Name / Tax ID / Branch / AT-Match */}
+          {smGrid([
+            { label: 'Vendor Name', key: 'Company Name', w: '1fr', bg: '#FFF9C4' },
+            { label: 'Tax ID', key: 'Tax ID', w: '240px', bg: '#FFF9C4' },
+            { label: 'Branch No.', key: 'Branch', w: '180px', bg: '#FFF9C4' },
+            { label: 'AT-Match', key: 'Short Name', w: '110px', combo: true, bg: '#FFF9C4', opts: smAtMatchOptions, onChangeFn: handleSmATMatchChange },
+          ])}
+
+          {/* Zone 2: Accounting Mapping (Debit / Credit Account) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'visible', marginBottom: '6px' }}>
+            {[{ title: 'Debit Account', keys: [['CPC_Dr', 'CPC Dr'], ['Account_Dr', 'Account Dr'], ['Sub Acc_Dr', 'Sub Acc Dr']] }, { title: 'Credit Account', keys: [['CPC_Cr', 'CPC Cr'], ['Account_Cr', 'Account Cr'], ['Sub Acc_Cr', 'Sub Acc Cr']] }].map((block, bi) => (
+              <div key={block.title} style={{ borderRight: bi === 0 ? '0.5px solid #e8eaf0' : 'none' }}>
+                <div style={{ padding: '6px 10px', fontSize: '11px', color: 'white', background: '#1a3a5c', fontWeight: '600', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0' }}>{block.title}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }}>
+                  {block.keys.map(([key, lbl], fi) => (
+                    <div key={key}>
+                      <div style={{ padding: '4px 8px', fontSize: '10px', color: '#888', background: '#f8f9fa', borderBottom: '0.5px solid #e8eaf0', borderRight: fi < 2 ? '0.5px solid #e8eaf0' : 'none', textAlign: 'center', fontWeight: '500' }}>{lbl}</div>
+                      <div style={{ padding: '3px 6px', borderRight: fi < 2 ? '0.5px solid #e8eaf0' : 'none' }}>
+                        <input value={smForm[key] || ''} onChange={(e) => setSmForm((s) => ({ ...s, [key]: e.target.value }))} readOnly={isViewOnly} disabled={isViewOnly} style={{ ...inpBase, textAlign: 'center', color: isViewOnly ? '#999' : inpBase.color, cursor: isViewOnly ? 'not-allowed' : 'text' }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Zone 3: Special Rules + Zone 4: Numbering Format (สลับคู่ซ้าย/ขวาเหมือน AP) */}
+          {[
+            ['Expense Type', 'Expense Type', 'Special Rule1', 'Special Rule1'],
+            ['First Part', 'First Part', 'Special Rule2', 'Special Rule2'],
+            ['Mid Part', 'Mid Part', 'Simple Rule3', 'Simple Rule3'],
+            ['Last Part', 'Last Part', 'Special Rule4', 'Special Rule4'],
+            ['Digit', 'Digit', 'Special Rule5', 'Special Rule5'],
+          ].map(([lbl1, key1, lbl2, key2]) => (
+            <div key={key1} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'visible', marginBottom: '6px' }}>
+              <div style={{ padding: '5px 10px', fontSize: '11px', color: '#888', background: '#f8f9fa', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', borderRight: '0.5px solid #e8eaf0', fontWeight: '500' }}>{lbl1}</div>
+              <div style={{ padding: '3px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', overflow: 'visible' }}>
+                {['Expense Type', 'Digit', 'Simple Rule3'].includes(key1)
+                  ? <SmComboBox value={smForm[key1] || ''} onChange={(val) => setSmForm((s) => ({ ...s, [key1]: val }))} options={getSmOptions(key1)} disabled={isViewOnly} />
+                  : <input value={smForm[key1] || ''} onChange={(e) => setSmForm((s) => ({ ...s, [key1]: e.target.value }))} readOnly={isViewOnly} disabled={isViewOnly} style={{ ...inpBase, color: isViewOnly ? '#999' : inpBase.color, cursor: isViewOnly ? 'not-allowed' : 'text' }} />}
+              </div>
+              <div style={{ padding: '5px 10px', fontSize: '11px', color: '#888', background: '#f8f9fa', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', borderRight: '0.5px solid #e8eaf0', fontWeight: '500' }}>{lbl2}</div>
+              <div style={{ padding: '3px 6px', display: 'flex', alignItems: 'center', overflow: 'visible' }}>
+                {['Special Rule1', 'Special Rule2', 'Simple Rule3', 'Special Rule4', 'Special Rule5'].includes(key2)
+                  ? <SmComboBox value={smForm[key2] || ''} onChange={(val) => setSmForm((s) => ({ ...s, [key2]: val }))} options={getSmOptions(key2)} disabled={isViewOnly} />
+                  : <input value={smForm[key2] || ''} onChange={(e) => setSmForm((s) => ({ ...s, [key2]: e.target.value }))} readOnly={isViewOnly} disabled={isViewOnly} style={{ ...inpBase, color: isViewOnly ? '#999' : inpBase.color, cursor: isViewOnly ? 'not-allowed' : 'text' }} />}
+              </div>
+            </div>
+          ))}
+
+          {/* Remark */}
+          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 110px 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'visible', marginBottom: '6px' }}>
+            <div style={{ padding: '5px 10px', fontSize: '11px', color: '#888', background: '#f8f9fa', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', borderRight: '0.5px solid #e8eaf0', fontWeight: '500' }}>Remark</div>
+            <div style={{ padding: '3px 6px', display: 'flex', alignItems: 'center', borderRight: '0.5px solid #e8eaf0', overflow: 'visible' }}>
+              <input value={smForm['Remark'] || ''} onChange={(e) => setSmForm((s) => ({ ...s, 'Remark': e.target.value }))} readOnly={isViewOnly} disabled={isViewOnly} style={{ ...inpBase, color: isViewOnly ? '#999' : inpBase.color, cursor: isViewOnly ? 'not-allowed' : 'text' }} />
+            </div>
+            <div style={{ padding: '5px 10px', fontSize: '11px', color: '#888', background: '#f8f9fa' }} />
+            <div style={{ padding: '3px 6px' }} />
+          </div>
+
+          {/* Zone 5: Auto-derived (Read-only) จาก Ofin Code Lookup */}
+          {smRowBlue([
+            { label: 'BU Company Simple', key: '_buCompanySimple', w: '1fr' },
+            { label: 'Tax ID BU', key: '_taxIdBu', w: '180px' },
+            { label: 'BU Branch', key: 'Short Branch', w: '180px' },
+            { label: 'Com%', key: '_comPct', w: '90px' },
+            { label: 'Spec%', key: '_specPct', w: '80px' },
+          ])}
+          {smRowBlue([
+            { label: 'BU', key: 'BU', w: '100px' },
+            { label: 'Group-P', key: '_groupP', w: '100px' },
+            { label: 'OFIN SIMPLE NAME', key: '_ofinSimpleName', w: '1fr' },
+            { label: 'Branch Code', key: '_branchCode', w: '200px' },
+            { label: 'Status', key: '_branchStatus', w: '180px' },
+            { label: 'Check Data', check: true, w: '150px' },
+          ])}
+        </div>
+
+        {/* Footer */}
+        {/* MARKER_VATCONTROLLER_SMCODE_VIEWONLY_FOOTER_V1 -- โหมด View: ซ่อนปุ่ม Save เหลือแค่ปุ่มปิดปุ่มเดียว (ไม่มีอะไรให้บันทึก) */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px', flexShrink: 0 }}>
+          {isViewOnly ? (
+            <button type="button" onClick={handleSmBack} style={{ padding: '9px 20px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>ปิด</button>
+          ) : (
+            <>
+              <button type="button" onClick={handleSmBack} style={{ padding: '9px 20px', fontSize: '13px', border: '0.5px solid #d1d5db', borderRadius: '8px', background: 'white', color: '#374151', cursor: 'pointer' }}>Cancel</button>
+              <button type="button" onClick={handleSmSave} disabled={saving} style={{ padding: '9px 20px', fontSize: '13px', border: 'none', borderRadius: '8px', background: saving ? '#aaa' : '#1a3a5c', color: 'white', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'กำลังบันทึก...' : '💾 Save'}</button>
+            </>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  // MARKER_VATCONTROLLER_SMCODE_VIEWONLY_ISFORMVIEW_V1 -- เพิ่ม 'viewonly' เข้า Gate เดียวกับ New/Edit (ใช้ renderSmForm() ร่วมกัน)
+  const isFormView = view === 'new' || view === 'edit' || view === 'viewonly';
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+      {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_FIXEDHEIGHT_V1 -- height Fix ตายตัว ไม่ยุบ/ขยายตามจำนวนแถวผลลัพธ์ */}
+      <div style={{ background: 'white', borderRadius: '14px', width: isFormView ? '980px' : '1080px', maxWidth: '95vw', height: '88vh', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', padding: '20px 24px', boxShadow: '0 20px 50px rgba(0,0,0,0.25)' }}>
+        {isFormView ? renderSmForm() : (
+          <>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '34px', height: '34px', borderRadius: '9px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+                </div>
+                <div>
+                  <div style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>Simple Code</div>
+                  <div style={{ fontSize: '12px', color: '#9ca3af' }}>{smLoading ? 'กำลังโหลด...' : `${smFilteredRows.length.toLocaleString()} รายการ`}</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button type="button" onClick={openNewForm} style={{ padding: '8px 16px', fontSize: '13px', fontWeight: '500', border: 'none', borderRadius: '8px', background: '#16a34a', color: 'white', cursor: 'pointer' }}>+ Add</button>
+                <button type="button" onClick={onClose} style={{ width: '30px', height: '30px', padding: 0, border: 'none', borderRadius: '50%', background: '#f3f4f6', cursor: 'pointer', fontSize: '15px', color: '#666' }}>×</button>
+              </div>
+            </div>
+
+            {/* Search + Filter */}
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexShrink: 0 }}>
+              <div style={{ position: 'relative', width: '320px', flexShrink: 0 }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" value={smSearch} onChange={(e) => setSmSearch(e.target.value)} placeholder="AT-Match, Company Name, SM-Code..." style={{ width: '100%', boxSizing: 'border-box', height: '36px', fontSize: '13px', padding: '0 10px 0 32px', border: '1px solid #d1d5db', borderRadius: '8px', outline: 'none' }} />
+              </div>
+              {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_FILTER_HEIGHT_CAP_V1 -- เปลี่ยนจาก Native <select> (Dropdown สูงเกินตามจำนวน Option) เป็น SmComboBox เดิมของฟอร์มนี้ (MaxHeight 160px ~ 5 แถว แล้ว Scroll เอา) */}
+              <div style={{ height: '36px', width: '150px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px', padding: '0 4px 0 10px', border: '1px solid #d1d5db', borderRadius: '8px', background: 'white', boxSizing: 'border-box' }}>
+                <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600', flexShrink: 0 }}>BU</span>
+                <SmComboBox value={smBuFilter || 'ทั้งหมด'} onChange={(val) => setSmBuFilter(val === 'ทั้งหมด' ? '' : val)} options={['ทั้งหมด', ...smBuOptions]} />
+              </div>
+              <div style={{ height: '36px', width: '190px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px', padding: '0 4px 0 10px', border: '1px solid #d1d5db', borderRadius: '8px', background: 'white', boxSizing: 'border-box' }}>
+                <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600', flexShrink: 0 }}>AT-Match</span>
+                <SmComboBox value={smAtMatchFilter || 'ทั้งหมด'} onChange={(val) => setSmAtMatchFilter(val === 'ทั้งหมด' ? '' : val)} options={['ทั้งหมด', ...smAtMatchOptions]} />
+              </div>
+            </div>
+
+            {/* Table */}
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '0.5px solid #e5e7eb', borderRadius: '10px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr>
+                    {VAT_SMCODE_MODAL_COLUMNS.map((c) => (
+                      <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, padding: '9px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', whiteSpace: 'nowrap' }}>{c.label}</th>
+                    ))}
+                    <th style={{ position: 'sticky', top: 0, zIndex: 1, padding: '9px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'center' }}>ACTION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {smLoading ? (
+                    <tr><td colSpan={VAT_SMCODE_MODAL_COLUMNS.length + 1} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>
+                  ) : smFilteredRows.length === 0 ? (
+                    <tr><td colSpan={VAT_SMCODE_MODAL_COLUMNS.length + 1} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ไม่พบข้อมูล</td></tr>
+                  ) : (
+                    smFilteredRows.map((r, i) => (
+                      <tr key={r.id || r['SM-Code'] || i}
+                        onClick={() => { if (onSelect) onSelect(r); onClose(); }} // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_ROWCLICK_V1 -- คลิกทั้งแถวเพื่อเลือกได้เลย เหมือน RealVendorPopup ของ AP
+                        style={{ borderTop: '0.5px solid #eee', cursor: 'pointer' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#eef3fb'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                        <td style={{ padding: '8px 10px', fontWeight: '500', color: '#1a3a5c' }}>{r['SM-Code'] || '—'}</td>
+                        <td style={{ padding: '8px 10px' }}>{r['Company Name'] || '—'}</td>
+                        <td style={{ padding: '8px 10px' }}>{r['Short Name'] || '—'}</td>
+                        {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_ACCOUNTCODE_V1 -- "Account Code" ที่ถูกต้องคือ CPC-Account-Sub Acc ต่อกัน ไม่ใช่ Account เฉยๆ */}
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{formatSmAccountCode(r, 'Dr')}</td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{formatSmAccountCode(r, 'Cr')}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                            <button type="button" title="View" onClick={() => openViewForm(r)} style={{ width: '26px', height: '24px', borderRadius: '5px', border: '0.5px solid #cfe0f5', background: '#EEF4FC', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            </button>
+                            <button type="button" title="Edit" onClick={() => openEditForm(r)} style={{ width: '26px', height: '24px', borderRadius: '5px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            </button>
+                            <button type="button" title="Delete" onClick={() => handleSmDelete(r)} style={{ width: '26px', height: '24px', borderRadius: '5px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px', flexShrink: 0 }}>
+              <button type="button" onClick={onClose} style={{ padding: '9px 20px', fontSize: '13px', border: '0.5px solid #d1d5db', borderRadius: '8px', background: 'white', color: '#374151', cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- Field Set/Row Layout ของฟอร์ม Branch พอร์ตมาจาก BRANCH_EDIT/BRANCH_FORM_ROWS/BRANCH_FIELD_COLOR/BRANCH_REQUIRED_KEYS
+// ของ BranchSearchPopup ใน APController.js เป๊ะๆ (ตั้งชื่อ Prefix VAT_ กันชนกับตัวแปรชื่อเดียวกันถ้ามีวันหลัง) -- BRANCH_COMBO ของต้นฉบับเป็น [] (ไม่มี Field ไหนเป็น
+// Dropdown/Combobox จริง) เลยไม่ต้องพอร์ต Logic Dropdown มาด้วย -- ส่วน 'status' ใช้ SmComboBox (มีอยู่แล้วในไฟล์นี้) แทน StatusDropdown ของ AP (Options ชุดเดียวกัน)
+const VAT_BRANCH_EDIT = [
+  ['Branch Code',                        'Branch Code'],
+  ['BU Code',                            'BU Code'],
+  ['BU-Branch',                          'BU Branch'],
+  ['cpc',                                'CPC'],
+  ['Branch Direct',                      'Branch Direct'],
+  ['Branch Allocate',                    'Branch Allocate'],
+  ['Group-P',                            'Group-P'],
+  ['Company for Show in Report Display', 'Company for Report'],
+  ['Simple Company',                     'Simple Company'],
+  ['BU-TaxID',                           'BU Tax ID'],
+  ['Simple Brand Code',                  'Simple Brand Code'],
+  ['%',                                  '%'],
+  ['DB(%)',                              'DB(%)'],
+  ['bu',                                 'BU'],
+  ['status',                             'Status'],
+  ['Inactive Date',                      'Inactive Date'],
+  ['Branch Address',                     'Branch Address'],
+];
+const VAT_BRANCH_FORM_ROWS = [
+  ['Branch Code', 'status'],
+  ['Company for Show in Report Display'],
+  ['bu', 'Group-P'],
+  ['BU-TaxID', 'BU-Branch'],
+  ['%', 'DB(%)'],
+  ['Simple Company'],
+  ['Simple Brand Code'],
+  ['Branch Address'],
+  ['BU Code', 'Branch Allocate'],
+  ['cpc', 'Branch Direct'],
+  ['Inactive Date'],
+];
+const VAT_BRANCH_FIELD_COLOR = {
+  'Branch Code': '#FCF3D5',
+  'status': '#FCF3D5',
+  'Company for Show in Report Display': '#FCF3D5',
+  'bu': '#FCF3D5',
+  'Group-P': '#FCF3D5',
+  'BU-TaxID': '#FCF3D5',
+  'BU-Branch': '#FCF3D5',
+  '%': '#DCEAF1',
+  'Branch Direct': '#DCEAF1',
+};
+const VAT_BRANCH_REQUIRED_KEYS = ['Branch Code', 'status', 'Company for Show in Report Display', 'bu', 'Group-P', 'BU-TaxID', 'BU-Branch'];
+
+// MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_OFINCODE_BRANCHSEARCH_V1 -- Modal ค้นหา Branch Code (Ofin Code) ดู Column Set/Field ตาม BranchSearchPopup ใน APController.js (Branch Code/Branch Direct/Company for Show in Report Display/BU-Branch/status)
+// MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- อัปเกรดจาก Search+Select อย่างเดียว เพิ่ม Add/Edit/View เต็มรูปแบบ (พอร์ต Field Set + Auto-derive Logic จาก BranchSearchPopup ของ APController.js)
+// ตัด "Paste to Autofill Grid" (showPasteGrid/pasteQueue/...) ออกตามที่สั่ง -- ไม่ใช่ Scope ของงานนี้ -- View Mode ใช้ Pattern เดียวกับ MARKER_VATCONTROLLER_SMCODE_VIEWONLY (view === 'viewonly' ใช้ Form เดียวกับ Edit แต่ Disable ทุกช่อง)
+function VatBranchSearchModal({ onClose, onSelect, branches = [], buHint = '' }) {
+  const { userName } = useAuth(); // MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- ใช้เซ็น updated_by ตอน Save เหมือน handleSaveBranch ของ APController.js
+  const [query, setQuery] = React.useState('');
+  // MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- View 'search' | 'new' | 'edit' | 'viewonly'
+  const [view, setView] = React.useState('search');
+  const [editTarget, setEditTarget] = React.useState(null);
+  const [form, setForm] = React.useState({});
+  const [formError, setFormError] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  // MARKER_VATCONTROLLER_BRANCHSEARCH_BUHINT_FILTER_V1 -- ตามที่แจ้ง: ไม่ควรโชว์ Branch ทั้งหมดของทั้งระบบ ควร Filter เฉพาะ BU ที่เดาได้จาก Ofin Code ที่พิมพ์ไว้ก่อนเปิด Modal (buHint) -- มี Toggle "แสดงทั้งหมด" ไว้เผื่อเดา BU ผิด/อยากดูข้ามฝ่าย
+  const [showAllOverride, setShowAllOverride] = React.useState(false);
+  const effectiveBuHint = showAllOverride ? '' : buHint;
+
+  const filtered = React.useMemo(() => {
+    const buScoped = effectiveBuHint
+      ? (branches || []).filter((b) => String(b['bu'] || '').trim().toLowerCase() === effectiveBuHint.trim().toLowerCase())
+      : (branches || []);
+    const q = query.trim().toLowerCase();
+    const matched = !q ? buScoped : buScoped.filter((b) =>
+      String(b['Branch Code'] || '').toLowerCase().includes(q) ||
+      String(b['Branch Direct'] || '').toLowerCase().includes(q) ||
+      String(b['Company for Show in Report Display'] || '').toLowerCase().includes(q) ||
+      String(b['BU-Branch'] || '').toLowerCase().includes(q)
+    );
+    // MARKER_VATCONTROLLER_BRANCHSEARCH_SORT_BRANCHCODE_V1 -- Sort ผลลัพธ์ตาม Branch Code (numeric-aware)
+    return [...matched].sort((a, b) => String(a['Branch Code'] || '').localeCompare(String(b['Branch Code'] || ''), undefined, { numeric: true }));
+  }, [branches, query, effectiveBuHint]);
+
+  // ── Form Helpers -- Port จาก BranchSearchPopup (APController.js) เกือบทั้งหมด ตัด Paste-Autofill Queue Gate ออก (ไม่มี Queue ในนี้) ──
+  const setField = (key, val) => { setForm((f) => ({ ...f, [key]: val })); setFormError(''); };
+  const handleOpenNew  = () => { const f = {}; VAT_BRANCH_EDIT.forEach(([k]) => { f[k] = ''; }); setEditTarget(null); setForm(f); setFormError(''); setView('new'); };
+  const handleOpenEdit = (item) => { const f = {}; VAT_BRANCH_EDIT.forEach(([k]) => { f[k] = item[k] || ''; }); setEditTarget(item); setForm(f); setFormError(''); setView('edit'); };
+  // MARKER_VATCONTROLLER_SMCODE_VIEWONLY -- Pattern เดียวกับ VatSmCodeSearchModal.openViewForm() (View Form = Edit Form แต่ Disable ทุกช่อง)
+  const handleOpenView = (item) => { const f = {}; VAT_BRANCH_EDIT.forEach(([k]) => { f[k] = item[k] || ''; }); setEditTarget(item); setForm(f); setFormError(''); setView('viewonly'); };
+  const handleBack = () => { setView('search'); setEditTarget(null); setForm({}); setFormError(''); };
+
+  const validateForm = (f) => {
+    for (const key of VAT_BRANCH_REQUIRED_KEYS) {
+      if (!String(f[key] || '').trim()) {
+        const label = (VAT_BRANCH_EDIT.find(([k]) => k === key) || [null, key])[1];
+        return `กรุณากรอก ${label}`;
+      }
+    }
+    if (f['status'] === 'Closed' && !f['Inactive Date']) return 'กรุณากรอก Inactive Date เมื่อ Status เป็น Closed';
+    if (f['status'] === 'Relocate' && !f['Branch Allocate']) return 'กรุณากรอก Branch Allocate เมื่อ Status เป็น Relocate';
+    return '';
+  };
+
+  // MARKER_BUBRANCH_BLUR_PAD5_V1 -- Port จาก BranchSearchPopup ตรงๆ (Auto Pad BU-Branch เป็น 5 หลัก + Derive Branch Direct)
+  const handleBuBranchBlur = () => {
+    setForm((f) => {
+      const buVal = String(f['bu'] || '').trim();
+      const branchValRaw = String(f['BU-Branch'] || '').trim();
+      if (!branchValRaw) return f;
+      const padded = branchValRaw.padStart(5, '0');
+      return { ...f, 'BU-Branch': padded, 'Branch Direct': buVal ? `${buVal}-${padded}` : f['Branch Direct'] };
+    });
+  };
+  // MARKER_BRANCH_FORM_HEADOFFICE_LOOKUP_V11 -- Port จาก BranchSearchPopup ตรงๆ (เดา Branch Code ของ Head Office จาก Branch Code ปัจจุบัน แล้ว Autofill bu/Group-P/BU-TaxID/%/Simple Company)
+  const handleBranchCodeBlur = () => {
+    const code = String(form['Branch Code'] || '').trim();
+    if (code.length < 3) return;
+    const hoCode = code.slice(0, -2) + '01';
+    const match = (branches || []).find((b) => String(b['Branch Code'] || '').trim() === hoCode);
+    if (!match) return;
+    setForm((f) => ({
+      ...f,
+      'bu': String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || ''),
+      'Group-P': String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || ''),
+      'BU-TaxID': String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || ''),
+      '%': String(f['%'] || '').trim() ? f['%'] : (match['%'] || ''),
+      'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || ''),
+    }));
+  };
+  // MARKER_BRANCH_FORM_SIMPLEBRAND_AUTOFILL_V5 -- Port จาก BranchSearchPopup ตรงๆ (หา Branch อื่นที่ Company for Report ตรงกัน เอา bu/Group-P/BU-TaxID/%/Simple Company มาเติม + สร้าง Simple Brand Code เริ่มต้น)
+  const handleCompanyBlur = () => {
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const rawName = String(form['Company for Show in Report Display'] || '').trim();
+    const name = norm(rawName);
+    const branchCodeVal = String(form['Branch Code'] || '').trim();
+    const match = name ? (branches || []).find((b) => norm(b['Company for Show in Report Display']) === name) : null;
+    setForm((f) => {
+      const next = { ...f };
+      if (match) {
+        next['bu'] = String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || '');
+        next['Group-P'] = String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || '');
+        next['BU-TaxID'] = String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || '');
+        next['%'] = String(f['%'] || '').trim() ? f['%'] : (match['%'] || '');
+        next['Simple Company'] = String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || '');
+      }
+      if (!String(f['Simple Brand Code'] || '').trim() && branchCodeVal && rawName) {
+        next['Simple Brand Code'] = `${branchCodeVal}-${rawName}`;
+      }
+      return next;
+    });
+    handleBranchCodeBlur();
+  };
+
+  // MARKER_BRANCH_DUPLICATE_CHECK -- Port จาก BranchSearchPopup.handleSave() -- เปลี่ยนจาก db.from('branch_list').insert/update (Supabase, ใช้ใน APController.js)
+  // เป็น apiFetch('/branch_list', ...) POST/PUT ตาม Convention จริงของไฟล์นี้ (ดู VatSmCodeSearchModal.handleSmSave() ที่ทำกับ /sm_code_list เป๊ะๆ)
+  const handleSave = async () => {
+    const err = validateForm(form);
+    if (err) { setFormError(err); confirmDialog.alert(err, { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
+    if (view !== 'edit') {
+      const dupBranch = (branches || []).find((b) => String(b['Branch Code'] || '').trim() === String(form['Branch Code'] || '').trim());
+      if (dupBranch) { await confirmDialog.alert(`Branch Code "${form['Branch Code']}" มีอยู่แล้วในระบบ`, { variant: 'danger', title: 'ซ้ำในระบบ' }); return; }
+    }
+    setSaving(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const payload = { ...form, updated_by: userName, updated_at: nowIso };
+      if (view === 'edit' && editTarget?.id) {
+        await apiFetch(`/branch_list/${editTarget.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      } else {
+        await apiFetch('/branch_list', { method: 'POST', body: JSON.stringify(payload) });
+      }
+      // MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- แจ้ง Client อื่น (รวมถึง useVatSupportingData ของหน้านี้เอง) ให้ Refetch branch_list (Real-time เหมือน sm_code_list_updated)
+      broadcastWs('branch_list_updated', { bu: form['bu'] || '' });
+      const savedCode = form['Branch Code'];
+      const wasEdit = view === 'edit';
+      handleBack();
+      confirmDialog.alert(wasEdit ? `แก้ไข Branch "${savedCode}" สำเร็จ` : `เพิ่ม Branch "${savedCode}" สำเร็จ`, { title: 'บันทึกสำเร็จ' });
+    } catch (e) {
+      confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (e?.message || ''), { variant: 'danger' });
+    }
+    setSaving(false);
+  };
+
+  const isFormView = view === 'new' || view === 'edit' || view === 'viewonly';
+
+  const renderBranchForm = () => {
+    const isEdit = view === 'edit';
+    const isViewOnly = view === 'viewonly';
+    const titleMap = { new: 'New branch', edit: `Edit branch — ${editTarget?.['Branch Code'] || ''}`, viewonly: `View branch — ${editTarget?.['Branch Code'] || ''}` };
+    const iconMap = { new: '➕', edit: '✏️', viewonly: '👁️' };
+    const iconBgMap = { new: '#27500A', edit: '#0C447C', viewonly: '#6b7280' };
+    return (
+      <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px', flexShrink: 0 }}>
+          <button type="button" onClick={handleBack} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#f5f7fa', border: '0.5px solid #dde', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', color: '#555', fontSize: '12px', fontWeight: '500', flexShrink: 0 }}>← Back</button>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: iconBgMap[view], display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{iconMap[view]}</div>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{titleMap[view]}</div>
+        </div>
+        {formError && <div style={{ padding: '8px 12px', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', borderRadius: '6px', marginBottom: '10px', flexShrink: 0 }}>⚠️ {formError}</div>}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {VAT_BRANCH_FORM_ROWS.map((rowKeys, ri) => (
+            <div key={ri} style={{ display: 'flex', marginBottom: '8px', position: 'relative' }}>
+              {rowKeys.map((key, ki) => {
+                const label = (VAT_BRANCH_EDIT.find(([k]) => k === key) || [null, key])[1];
+                const isReadOnly = key === 'Branch Code' && isEdit;
+                const needInactive = key === 'Inactive Date';
+                const isDisabled = needInactive && form['status'] !== 'Closed';
+                const isRequired = VAT_BRANCH_REQUIRED_KEYS.includes(key) || (key === 'Inactive Date' && form['status'] === 'Closed') || (key === 'Branch Allocate' && form['status'] === 'Relocate');
+                const hasErr = !!formError && isRequired && !String(form[key] || '').trim();
+                const isFullRow = rowKeys.length === 1;
+                const bg = needInactive ? '#eef1f3' : (VAT_BRANCH_FIELD_COLOR[key] || '#fff');
+                const valueColor = VAT_BRANCH_FIELD_COLOR[key] ? '#5c5636' : '#333';
+                const labelCellStyle = { flex: isFullRow ? '0 0 160px' : (ki === 0 ? '0 0 160px' : '0 0 120px'), border: hasErr ? '1px dashed #e74c3c' : '1px dashed #2c5f7c', marginLeft: ki === 0 ? 0 : '-1px', padding: '8px 10px', display: 'flex', alignItems: key === 'Branch Address' ? 'flex-start' : 'center', paddingTop: key === 'Branch Address' ? '10px' : '8px', opacity: isDisabled ? 0.6 : 1, boxSizing: 'border-box', position: 'relative' };
+                const valueCellStyle = { flex: 1, background: bg, border: hasErr ? '1px dashed #e74c3c' : '1px dashed #2c5f7c', marginLeft: '-1px', padding: '8px 10px', display: 'flex', alignItems: 'center', minHeight: key === 'Branch Address' ? '56px' : undefined, opacity: (isDisabled || isViewOnly) ? 0.7 : 1, boxSizing: 'border-box', position: 'relative' };
+                const inputBare = { width: '100%', border: 'none', background: 'transparent', fontSize: '13px', color: (isReadOnly || isDisabled || isViewOnly) ? '#999' : valueColor, outline: 'none', padding: 0, fontFamily: 'inherit' };
+                return (
+                  <React.Fragment key={key}>
+                    <div style={labelCellStyle}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: hasErr ? '#e74c3c' : '#123c56' }}>
+                        {label}{isRequired && <span style={{ color: '#e24b4a' }}> *</span>}
+                        {needInactive && <span style={{ fontSize: '10px', color: '#bbb', fontWeight: 400 }}> (เฉพาะ Closed)</span>}
+                      </span>
+                    </div>
+                    <div style={valueCellStyle}>
+                      {key === 'Inactive Date' ? (
+                        <input type="date" disabled={isDisabled || isViewOnly} value={form[key] || ''} onChange={(e) => setField(key, e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={inputBare} />
+                      ) : key === 'Branch Address' ? (
+                        <textarea value={form[key] || ''} readOnly={isViewOnly} disabled={isViewOnly} onChange={(e) => setField(key, e.target.value)} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
+                      ) : key === 'status' ? (
+                        // MARKER_STATUS_FIXED_LIST_NOT_FROM_DATA_V1 -- ใช้ SmComboBox (มีอยู่แล้วในไฟล์นี้) แทน StatusDropdown ของ APController.js เพราะไฟล์นี้ไม่มี Component นั้น -- Options ชุดเดียวกัน
+                        <SmComboBox value={form[key] || ''} onChange={(val) => setField(key, val)} options={['Active', 'Closed', 'Relocate', 'Temporary']} disabled={isViewOnly} />
+                      ) : key === 'Branch Direct' ? (
+                        <input value={form[key] || ''} readOnly style={{ ...inputBare, color: '#999' }} />
+                      ) : (
+                        <input value={form[key] || ''} readOnly={isReadOnly || isViewOnly} disabled={isViewOnly} onChange={(e) => { if (!isReadOnly && !isViewOnly) setField(key, e.target.value); }} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : key === 'BU-Branch' ? handleBuBranchBlur : undefined} style={inputBare} />
+                      )}
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        {/* MARKER_VATCONTROLLER_SMCODE_VIEWONLY -- โหมด View: ซ่อนปุ่ม Save เหลือแค่ปุ่มปิดปุ่มเดียว (Pattern เดียวกับ VatSmCodeSearchModal) */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px', flexShrink: 0 }}>
+          {isViewOnly ? (
+            <button type="button" onClick={handleBack} style={{ padding: '9px 20px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>ปิด</button>
+          ) : (
+            <>
+              <button type="button" onClick={handleBack} style={{ padding: '9px 20px', fontSize: '13px', border: '0.5px solid #d1d5db', borderRadius: '8px', background: 'white', color: '#374151', cursor: 'pointer' }}>Cancel</button>
+              <button type="button" onClick={handleSave} disabled={saving} style={{ padding: '9px 20px', fontSize: '13px', border: 'none', borderRadius: '8px', background: saving ? '#aaa' : '#1a3a5c', color: 'white', cursor: saving ? 'default' : 'pointer' }}>{saving ? 'กำลังบันทึก...' : '💾 Save'}</button>
+            </>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400 }} onMouseDown={(e) => { if (e.target === e.currentTarget && view === 'search') onClose(); }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: isFormView ? '900px' : '860px', maxWidth: '96vw', height: '82vh', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', padding: isFormView ? '20px 24px' : '18px 20px', boxShadow: '0 20px 50px rgba(0,0,0,0.25)' }}>
+        {isFormView ? renderBranchForm() : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexShrink: 0 }}>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>ค้นหา Branch Code (Ofin Code)</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {/* MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- ปุ่ม + Add ตาม Pattern Header ของ BranchSearchPopup/VatSmCodeSearchModal */}
+                <button type="button" onClick={handleOpenNew} style={{ padding: '7px 14px', fontSize: '12px', fontWeight: '500', border: 'none', borderRadius: '8px', background: '#16a34a', color: 'white', cursor: 'pointer' }}>+ Add</button>
+                <button type="button" onClick={onClose} style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '50%', background: '#f3f4f6', cursor: 'pointer', fontSize: '15px', color: '#666' }}>×</button>
+              </div>
+            </div>
+            <div style={{ position: 'relative', marginBottom: '10px', flexShrink: 0 }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input autoFocus type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Branch Code, Direct, Company Name, BU Branch..." style={{ width: '100%', boxSizing: 'border-box', height: '36px', fontSize: '13px', padding: '0 10px 0 32px', border: '1px solid #d1d5db', borderRadius: '8px', outline: 'none' }} />
+            </div>
+            {/* MARKER_VATCONTROLLER_BRANCHSEARCH_BUHINT_FILTER_V1 -- แจ้งว่ากำลัง Filter เฉพาะ BU ไหน (เดาจาก Ofin Code ที่พิมพ์ไว้) + ทางออกให้ดูทั้งหมดถ้าเดาผิด */}
+            {effectiveBuHint && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', marginBottom: '10px', fontSize: '11.5px', color: '#0C447C', background: '#EAF3FB', border: '0.5px solid #cfe0f5', borderRadius: '8px', flexShrink: 0 }}>
+                <span>กำลังกรองเฉพาะ BU: <b>{effectiveBuHint}</b> (เดาจาก Ofin Code ที่กรอกไว้)</span>
+                <button type="button" onClick={() => setShowAllOverride(true)} style={{ background: 'none', border: 'none', color: '#0C447C', textDecoration: 'underline', cursor: 'pointer', fontSize: '11.5px', fontWeight: '600', padding: 0 }}>แสดงทั้งหมด</button>
+              </div>
+            )}
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '0.5px solid #e5e7eb', borderRadius: '10px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr>
+                    {[['Branch Code', '110px'], ['Direct', '110px'], ['Company Name', ''], ['BU Branch', '90px'], ['Status', '80px'], ['Action', '92px']].map(([h, w]) => (
+                      <th key={h} style={{ position: 'sticky', top: 0, zIndex: 1, padding: '9px 12px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: h === 'Action' ? 'center' : 'left', whiteSpace: 'nowrap', width: w || undefined }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr><td colSpan={6} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ไม่พบ Branch Code{query ? ` "${query}"` : ''}</td></tr>
+                  ) : (
+                    filtered.map((item, i) => {
+                      const isClosed = item['status'] === 'Closed';
+                      return (
+                        <tr key={item.id || i}
+                          onClick={() => { if (isClosed) return; onSelect(item); onClose(); }}
+                          style={{ borderTop: '0.5px solid #eee', cursor: isClosed ? 'not-allowed' : 'pointer', opacity: isClosed ? 0.5 : 1 }}
+                          onMouseEnter={(e) => { if (!isClosed) e.currentTarget.style.background = '#eef3fb'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                          <td style={{ padding: '8px 12px', fontWeight: '600', color: '#1a3a5c' }}>{item['Branch Code'] || '—'}</td>
+                          <td style={{ padding: '8px 12px' }}>{item['Branch Direct'] || '—'}</td>
+                          <td style={{ padding: '8px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>{item['Company for Show in Report Display'] || '—'}</td>
+                          <td style={{ padding: '8px 12px' }}>{item['BU-Branch'] || '—'}</td>
+                          <td style={{ padding: '8px 12px' }}><span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>{item['status'] || 'Active'}</span></td>
+                          {/* MARKER_VATCONTROLLER_BRANCHSEARCH_ADDEDIT_V1 -- View/Edit ต่อแถว (Pattern เดียวกับ VatSmCodeSearchModal Action Column) -- คลิกแถวเดิมยังเลือก+ปิด Modal ได้ปกติ (stopPropagation กันชนกับปุ่ม) */}
+                          <td style={{ padding: '6px 12px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                            <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                              <button type="button" title="View" onClick={() => handleOpenView(item)} style={{ width: '26px', height: '24px', borderRadius: '5px', border: '0.5px solid #cfe0f5', background: '#EEF4FC', color: '#1a3a5c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                              </button>
+                              <button type="button" title="Edit" onClick={() => handleOpenEdit(item)} style={{ width: '26px', height: '24px', borderRadius: '5px', border: '0.5px solid #ddd', background: '#f5f5f5', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px', flexShrink: 0 }}>
+              <button type="button" onClick={onClose} style={{ padding: '9px 20px', fontSize: '13px', border: '0.5px solid #d1d5db', borderRadius: '8px', background: 'white', color: '#374151', cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VatSimpleInputOpsLobby({ onSubTabChange } = {}) {
+  const [opsTab, setOpsTab] = React.useState('simple'); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_TABS_V1 -- 'simple' | 'adi'
+  const opsColumns = opsTab === 'simple' ? VAT_SIMPLE_INPUT_OPS_COLUMNS : VAT_ADI_TRANSFER_COLUMNS;
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_PREVIEW_TRIGGER_V1 -- State จริงของ Row 1 (Zone A-1) -- CODE คือตัว Trigger หลักของ Preview/Collect
+  const [adiRow1Code, setAdiRow1Code] = React.useState('');
+  const adiRow1CodeInputRef = React.useRef(null); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_ADD_RESET_FOCUS_CODE_V1 -- Ref สำหรับ Focus กลับที่ช่อง Code หลังกด + Add
+  const [adiRow1Adding, setAdiRow1Adding] = React.useState(false); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_INSERT_V1 -- กัน Double-click กด Add ซ้ำระหว่างรอ Insert เข้า DB
+  const [adiRow1TivDate, setAdiRow1TivDate] = React.useState('');
+  const adiRow1TivDateTextRef = React.useRef(null); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVDATE_HYBRID_V1 -- เหมือน Full Page (MARKER_VATWATCHLISTOPS_HYBRID_TAXINVOICEDATE_V1): พิมพ์ได้ + เลือก Calendar ได้
+  const [adiRow1TivNumber, setAdiRow1TivNumber] = React.useState('');
+  const [adiRow1TivNumberDigit, setAdiRow1TivNumberDigit] = React.useState(''); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVNUM_DIGIT_V1 -- Digit จาก SM_Code (รอ Match Logic จริง)
+  const [adiRow1Amount, setAdiRow1Amount] = React.useState('');
+  const [adiRow1AmountType, setAdiRow1AmountType] = React.useState('GRO+VT'); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_AMOUNT_TYPE_V1 -- GRO+VT | VAT-RV | TOT-RV | NET-VL
+  const [adiRow1PoNum, setAdiRow1PoNum] = React.useState('');
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW2_REORDER_REMOVE_V1 -- ลบ adiRow1PeriodNo / adiRow1ContractNo ออกแล้ว (เอาออกจาก Row 2 ตามที่ยืนยัน)
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_PREVIEW_TRIGGER_V1 -- ไม่มี Toggle ให้กด: มี CODE = Preview, ไม่มี CODE = Collect (ของเดิม)
+  const isAdiPreviewMode = adiRow1Code.trim().length > 0;
+  const [showSmCodeSearchModal, setShowSmCodeSearchModal] = React.useState(false); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_V1
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_SPEED_V1 -- ย้าย Fetch มา Mount ที่นี่ครั้งเดียวตอนเข้าหน้า Simple Input Ops (แทนที่จะ Fetch ใหม่ทุกครั้งที่เปิด Modal ค้นหา SM-Code)
+  const { smCodes: smCodeSupportData, branches: smSupportBranches, vendorCategories: smSupportVendorCategories, loading: smSupportLoading } = useVatSupportingData();
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SEGMENTALL_COMPANYCODE_V1 -- ต้องดึง company_list มาด้วย เพื่อเอา "COMPANY CODE" (Format bus-grp-com เช่น "1-32-3218") มาต่อหน้า Segment All (ADI) ตามที่แจ้ง -- Match ด้วย bu ของ Branch แต่ละฝั่ง (Debit/Credit อาจคนละ Company กันได้ เพราะเป็นเงื่อนไข Interbranch)
+  const [smSupportCompanies, setSmSupportCompanies] = React.useState([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    apiFetch('/company_list').then((list) => { if (!cancelled) setSmSupportCompanies(Array.isArray(list) ? list : []); }).catch((err) => console.error('fetch company_list error (Simple Input Ops):', err));
+    return () => { cancelled = true; };
+  }, []);
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_TABLES_FULLPAGE_RULES_V1 -- ตามที่แจ้ง: Logic เหมือน Full Page ทุกอย่าง ต่างแค่ไม่มี Popvat -- ต้อง Fetch Period Status มาด้วย เพื่อคำนวณ Receive Date (Asset=วันที่ 15, Expense=วันสุดท้ายของเดือน) เหมือน Full Page
+  const [smPeriodStatus, setSmPeriodStatus] = React.useState(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    apiFetch('/vat/period/status').then((res) => { if (!cancelled) setSmPeriodStatus(res); }).catch((err) => console.error('fetch period status error (Simple Input Ops):', err));
+    return () => { cancelled = true; };
+  }, []);
+  const { userName: smUserName, currentUser: smCurrentUser } = useAuth(); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_TABLES_FULLPAGE_RULES_V1
+  const smUsername = smUserName || smCurrentUser?.email || 'unknown';
+  const findCompanyByBu = (buCode) => (smSupportCompanies || []).find((c) => String(c.bu || '').trim() === String(buCode || '').trim()) || null;
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_MATCHEDSM_HOIST_V1 -- ยกการ Match SM-Code ด้วย adiRow1Code ขึ้นมาระดับบนสุด ใช้ร่วมกันทั้ง Zone A-1 (PO number gate) และ Zone B (Operation/Business Detail)
+  const matchedSmRow1 = React.useMemo(
+    () => (smCodeSupportData || []).find((i) => String(i['SM-Code'] || '').trim().toLowerCase() === adiRow1Code.trim().toLowerCase()),
+    [smCodeSupportData, adiRow1Code]
+  );
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_PONUM_ATMATCH_GATE_V1 -- PO number Trigger เฉพาะ AT-Match = ADJ3A เท่านั้น โหมดอื่นไม่ต้องกรอก
+  const poNumRequiredByAtMatch = (matchedSmRow1?.['Short Name'] || '') === 'ADJ3A';
+  React.useEffect(() => {
+    if (!poNumRequiredByAtMatch && adiRow1PoNum) setAdiRow1PoNum(''); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_PONUM_ATMATCH_GATE_V1 -- เคลียร์ค่าเก่าทิ้งถ้าเปลี่ยน Mode ออกจาก ADJ3A กัน Submit ค่าที่ไม่ควรมี
+  }, [poNumRequiredByAtMatch]);
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_DEFAULTS_V1 -- Debit/Credit Defaults (Option B Compact -- Confirm แล้ว) -- Ofin Code กรอกเอง แยกอิสระ 2 ฝั่ง + Auto-derive Branch Code/Brand Code/BU จาก branch_list (เหมือน lookupSmOfinCode ใน VatSmCodeSearchModal)
+  const [adiRow1DebitOfin, setAdiRow1DebitOfin] = React.useState('');
+  const [adiRow1CreditOfin, setAdiRow1CreditOfin] = React.useState('');
+  const normalizeOfinCode = (val) => {
+    const raw = String(val || '').trim();
+    return /^\d+$/.test(raw) ? raw.padStart(6, '0') : raw;
+  };
+  const findBranchByOfin = (val) => {
+    const normalized = normalizeOfinCode(val);
+    if (!normalized) return null;
+    return (smSupportBranches || []).find((b) => String(b['Branch Code'] || '').trim() === normalized) || null;
+  };
+  const debitBranchMatch = React.useMemo(() => findBranchByOfin(adiRow1DebitOfin), [smSupportBranches, adiRow1DebitOfin]);
+  const creditBranchMatch = React.useMemo(() => findBranchByOfin(adiRow1CreditOfin), [smSupportBranches, adiRow1CreditOfin]);
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_IB_OFIN_MISMATCH_V1 -- แปลง Logic "Interbranch" ของ Full Page (เทียบ Branch ของ Invoice List กับ Tax Invoice List) มาเป็นแบบ 1 ต่อ 1 ของ Simple Input Ops: เทียบ Ofin Dr กับ Ofin Cr แทน -- ถ้าทั้งคู่กรอกแล้วและไม่เท่ากัน = ข้าม Entity/Branch กัน = Interbranch
+  // -- ยกเว้น ADJ3A: ตาม VBA จริง ADJ3A มี Detail มากกว่านี้ (ผูกกับ Field "Adjustment Type" คนละชุดกับ Ofin) ยังไม่ได้ทำ -- คงพฤติกรรมเดิม (Simple Rule3 ตรงๆ, ADI Journal=Standby) ไปก่อน
+  const atMatchRow1 = String(matchedSmRow1?.['Short Name'] || '').trim().toUpperCase();
+  const ibOfinMismatch = atMatchRow1 !== 'ADJ3A'
+    && String(adiRow1DebitOfin || '').trim() !== ''
+    && String(adiRow1CreditOfin || '').trim() !== ''
+    && String(adiRow1DebitOfin || '').trim() !== String(adiRow1CreditOfin || '').trim();
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SIMPLERULE_YESNO_V1 -- ย้าย simpleRuleYesNo/simpleInputMainStatus/adiJournalMainStatus ลงไปประกาศหลัง classifyAdiAccount/isAssetAdiCase (ต้องใช้ adiRow1DebitAccount + Rate ที่ยังไม่ได้ประกาศ ณ จุดนี้) -- ดู MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ASSET_AVERAGE_FORCE_ADI_V1
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUINFO_V1 -- ตามที่แจ้ง: ปกติใช้ Branch ฝั่ง Debit มาโชว์ "ข้อมูลของ BU" (เหมือน Full Page) แต่ถ้าเป็นใบลดหนี้ (Amount ที่คีย์เป็นค่าลบ) บทบาท Dr/Cr จะสลับกัน เลยต้องใช้ Branch ฝั่ง Credit แทน
+  const adiRow1AmountIsNegative = (parseFloat(String(adiRow1Amount || '').replace(/,/g, '').trim()) || 0) < 0;
+  const buInfoBranchMatch = adiRow1AmountIsNegative ? creditBranchMatch : debitBranchMatch;
+  // MARKER_VATCONTROLLER_BRANCHSEARCH_BUHINT_FILTER_V1 -- ตามที่แจ้ง: ก่อนเปิด Modal ค้นหา Branch ให้เดา BU จาก Ofin Code ที่พิมพ์ไว้ก่อน (เช่น 056801 = MPS) แล้วส่งไป Filter ใน Modal แทนที่จะโชว์ Branch ทั้งระบบ -- เดาแบบ Exact Match ก่อน (ครบ 6 หลักแล้ว) ถ้ายังไม่ครบลอง Prefix Match (พิมพ์บางส่วน เอา BU ของ Branch แรกที่ขึ้นต้นตรงกัน)
+  const deriveBuHintFromOfin = (val) => {
+    const raw = String(val || '').trim();
+    if (!raw) return '';
+    const normalized = normalizeOfinCode(raw);
+    const exact = (smSupportBranches || []).find((b) => String(b['Branch Code'] || '').trim() === normalized);
+    if (exact) return exact['bu'] || '';
+    const prefixMatch = (smSupportBranches || []).find((b) => String(b['Branch Code'] || '').trim().startsWith(raw));
+    return prefixMatch ? (prefixMatch['bu'] || '') : '';
+  };
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_OFINCODE_BRANCHSEARCH_V1 -- คุม Modal ค้นหา Branch Code สำหรับ Ofin Code -- null | 'debit' | 'credit' (ฝั่งไหนกด Icon แว่นขยายจะเก็บไว้ตรงนี้ ใช้ Modal ตัวเดียวกันทั้ง 2 ฝั่ง)
+  const [showBranchSearchFor, setShowBranchSearchFor] = React.useState(null);
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_CPCACCOUNT_EDITABLE_V1 -- แก้ตามที่แจ้ง: CPC/Account/Sub Acc ต้องเป็น Field ที่แก้ได้ (ไม่ใช่ readOnly) -- ใช้ SM-Code ที่ Match เป็นค่า Default ตอนเปลี่ยน Code แต่ผู้ใช้ Override เองได้
+  const [adiRow1DebitCpc, setAdiRow1DebitCpc] = React.useState('');
+  const [adiRow1DebitAccount, setAdiRow1DebitAccount] = React.useState('');
+  const [adiRow1DebitSubAcc, setAdiRow1DebitSubAcc] = React.useState('');
+  const [adiRow1CreditCpc, setAdiRow1CreditCpc] = React.useState('');
+  const [adiRow1CreditAccount, setAdiRow1CreditAccount] = React.useState('');
+  const [adiRow1CreditSubAcc, setAdiRow1CreditSubAcc] = React.useState('');
+  React.useEffect(() => {
+    // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_OFIN_AUTOFILL_FROM_SMCODE_V1 -- ตามที่แจ้ง: SM-Code ที่ Match แต่ละตัวมี "Ofin Code" ของตัวเองอยู่แล้ว (ผูกไว้ตอนสร้าง/แก้ SM-Code) เลยต้อง Auto-fill ให้ทั้ง 2 ฝั่ง Debit/Credit ทันทีเหมือน CPC/Account/Sub Acc -- ผู้ใช้ Override เองได้เหมือนเดิม
+    const smOfin = normalizeOfinCode(matchedSmRow1?.['Ofin Code'] || '');
+    setAdiRow1DebitOfin(smOfin);
+    setAdiRow1CreditOfin(smOfin);
+    setAdiRow1DebitCpc(matchedSmRow1?.['CPC_Dr'] || '');
+    setAdiRow1DebitAccount(matchedSmRow1?.['Account_Dr'] || '');
+    setAdiRow1DebitSubAcc(matchedSmRow1?.['Sub Acc_Dr'] || '');
+    setAdiRow1CreditCpc(matchedSmRow1?.['CPC_Cr'] || '');
+    setAdiRow1CreditAccount(matchedSmRow1?.['Account_Cr'] || '');
+    setAdiRow1CreditSubAcc(matchedSmRow1?.['Sub Acc_Cr'] || '');
+  }, [matchedSmRow1]);
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_RESULTS_EDITABLE_V1 -- ตามที่แจ้ง: ช่อง Segment All/Line Value/Side/Rate (4 แถว) ต้องแก้ได้แบบธรรมชาติ (คลิกแล้วพิมพ์ได้เลย) ไม่ต้องมีขอบ Input และไม่เปลี่ยน Format/Pattern เดิม -- เก็บ State แยกไว้ที่ระดับบนสุดของ Component (Hook ต้องไม่อยู่ใน IIFE แบบมีเงื่อนไข isAdiPreviewMode)
+  const [adiResultsRows, setAdiResultsRows] = React.useState(() => Array.from({ length: 4 }, () => ({ segmentAll: '', lineValue: '', side: '', rate: '' })));
+  const updateAdiResultsCell = (idx, key, val) => {
+    setAdiResultsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, [key]: val } : r)));
+  };
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_PENDING_QUEUE_V1 -- คิว Pre-draft ที่เกิดจากการกด "+Add" (ยังไม่ผูก Save จริง/API รอ Confirm ปลายทางของข้อมูล)
+  const [pendingSimpleRows, setPendingSimpleRows] = React.useState([]);
+  const [pendingAdiRows, setPendingAdiRows] = React.useState([]);
+
+  // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_V1 -- ตามที่แจ้ง: ปุ่ม Draft Monitor ใน Zone A-2 -- ใช้ UI/Data เดียวกับ Draft Monitor ของ Full Page แต่โชว์แค่ 2 Tab (Simple/ADI ไม่มี Popvat) และกรองด้วย menu_source='sm-vat' (เฉพาะข้อมูลที่มาจาก Simple Input Ops เท่านั้น)
+  const [showSmDraftMonitor, setShowSmDraftMonitor] = React.useState(false);
+  const [smDraftMonitorTab, setSmDraftMonitorTab] = React.useState('simple');
+  const [smSimpleTypeFilter, setSmSimpleTypeFilter] = React.useState('all');
+  const [smDraftBuFilter, setSmDraftBuFilter] = React.useState(''); // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_V1 -- '' = ทั้งหมด (ไม่กรอง BU)
+  const [smDraftSimpleRows, setSmDraftSimpleRows] = React.useState([]);
+  const [smDraftSimpleLoading, setSmDraftSimpleLoading] = React.useState(false);
+  const [smDraftAdiRows, setSmDraftAdiRows] = React.useState([]);
+  const [smDraftAdiLoading, setSmDraftAdiLoading] = React.useState(false);
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_INSERT_V1 -- รวม status='pre-draft' (ยังไม่ Confirm) เข้ามาด้วย ไม่ใช่แค่ 'draft' (Confirm แล้ว) เดิม -- ให้ BU Dropdown/Preview/Draft Monitor เห็น Pre-draft ที่เพิ่ง +Add ทันที
+  const refetchSmDraftSimpleRows = React.useCallback(() => {
+    setSmDraftSimpleLoading(true);
+    return apiFetch(`/vat_simpleinputdraft?in_status=draft,pre-draft`)
+      .then((res) => { setSmDraftSimpleRows(Array.isArray(res) ? res : []); })
+      .catch(() => { setSmDraftSimpleRows([]); })
+      .finally(() => { setSmDraftSimpleLoading(false); });
+  }, []);
+  const refetchSmDraftAdiRows = React.useCallback(() => {
+    setSmDraftAdiLoading(true);
+    return apiFetch(`/vat_adi_transferdraft?in_status=draft,pre-draft`)
+      .then((res) => { setSmDraftAdiRows(Array.isArray(res) ? res : []); })
+      .catch(() => { setSmDraftAdiRows([]); })
+      .finally(() => { setSmDraftAdiLoading(false); });
+  }, []);
+  React.useEffect(() => { // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_V1 -- Fetch ทั้ง 2 ตารางตอน Mount หน้า (ไม่ต้องรอเปิด Modal) เพื่อเอาไปนับจำนวนต่อ BU โชว์ใน Dropdown ก่อนกด Draft Monitor
+    // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_NOSOURCEFILTER_V1 -- ตามที่แจ้ง: Draft Monitor ไม่ต้องสนใจ menu_source แล้ว อยากเห็นภาพรวมทั้งหมด (ตัด eq_menu_source=sm-vat ออก ดึง Draft ทุกแหล่งที่มา ทั้ง ap_vat/sm-vat)
+    refetchSmDraftSimpleRows();
+  }, [refetchSmDraftSimpleRows]);
+  React.useEffect(() => {
+    refetchSmDraftAdiRows();
+  }, [refetchSmDraftAdiRows]);
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_ROW_SELECT_DELETE_V1 -- เปิดใช้ Checkbox เลือกแถวใน Preview (Upload Simple/ADI) + ปุ่มลบ (ยกการคำนวณ Queue Row เดิมใน IIFE ขึ้นมาระดับบน ให้ Header Checkbox (Select All) ใช้ชุดข้อมูลเดียวกับ Body ได้)
+  const [selectedOpsRowKeys, setSelectedOpsRowKeys] = React.useState(() => new Set());
+  // MARKER_VATCONTROLLER_SIMPLEINPUT_OPSPREVIEW_SELECT_CROSSTAB_DRAFTID_V1 -- เก็บ draft_id ตรงๆ (ไม่ผูก Tab, ไม่ถูกเคลียร์ตอนสลับ Tab) เพื่อให้ติ๊กแถว Simple กับ ADI ที่ draft_id เดียวกัน Sync กันข้าม Tab ได้ (แถว Local ที่ยังไม่มี draft_id ยังใช้ selectedOpsRowKeys แยกอิสระตามเดิม)
+  const [selectedOpsDraftIds, setSelectedOpsDraftIds] = React.useState(() => new Set());
+  const opsQueueRows = React.useMemo(() => {
+    const realRows = smDraftBuFilter
+      ? (opsTab === 'simple' ? smDraftSimpleRows : smDraftAdiRows).filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.menu_source === 'sm-vat')
+      : [];
+    const localRows = opsTab === 'simple' ? pendingSimpleRows : pendingAdiRows;
+    return [
+      ...realRows.map((r) => ({ ...r, _rowKind: 'real', _rowKey: `real-${r.id}` })),
+      ...localRows.map((r, i) => ({ ...r, _rowKind: 'local', _rowKey: `local-${i}` })),
+    ];
+  }, [smDraftBuFilter, opsTab, smDraftSimpleRows, smDraftAdiRows, pendingSimpleRows, pendingAdiRows]);
+  React.useEffect(() => { setSelectedOpsRowKeys(new Set()); }, [opsTab]); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_ROW_SELECT_DELETE_V1 -- สลับ Tab แล้วเคลียร์ Selection เดิมทิ้ง กันติ๊กค้างข้าม Tab
+  const handleDeleteSelectedOpsRows = async () => {
+    // MARKER_VATCONTROLLER_SIMPLEINPUT_OPSPREVIEW_SELECT_CROSSTAB_DRAFTID_V1 -- นับรวมจาก Local rowKeys (แยกตาม Tab) + Draft groups (ข้าม Tab ได้แล้ว)
+    const totalSelectedCount = selectedOpsRowKeys.size + selectedOpsDraftIds.size;
+    if (totalSelectedCount === 0) return;
+    const ok = await confirmDialog.confirm(`ยืนยันลบ ${totalSelectedCount} รายการที่เลือก?`, { title: 'ลบรายการ', variant: 'danger' });
+    if (!ok) return;
+    // Local (ยังไม่ได้ Insert เข้า DB จริง) -- แค่ตัดออกจาก Array ฝั่ง Frontend พอ
+    const localIdxToRemove = new Set(
+      opsQueueRows.filter((r) => r._rowKind === 'local' && selectedOpsRowKeys.has(r._rowKey)).map((r) => Number(r._rowKey.slice('local-'.length)))
+    );
+    if (localIdxToRemove.size > 0) {
+      const setter = opsTab === 'simple' ? setPendingSimpleRows : setPendingAdiRows;
+      setter((prev) => prev.filter((_, idx) => !localIdxToRemove.has(idx)));
+    }
+    // Real (บันทึกลง DB แล้ว) -- ลบตาม draft_id ที่ติ๊กไว้โดยตรง (ข้าม Tab ได้แล้วเพราะ selectedOpsDraftIds ไม่ผูกกับ Tab)
+    const draftIdsToDelete = Array.from(selectedOpsDraftIds);
+    for (const did of draftIdsToDelete) {
+      await rollbackDraftId(did);
+    }
+    if (draftIdsToDelete.length > 0) {
+      setSmDraftSimpleRows((prev) => prev.filter((r) => !draftIdsToDelete.includes(r.draft_id)));
+      setSmDraftAdiRows((prev) => prev.filter((r) => !draftIdsToDelete.includes(r.draft_id)));
+    }
+    setSelectedOpsRowKeys(new Set());
+    setSelectedOpsDraftIds(new Set());
+  };
+  const smDraftBuCounts = React.useMemo(() => { // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_V1 -- นับจำนวน Draft ต่อ BU แยก Simple/ADI สำหรับโชว์ใน Dropdown เช่น "REV (1|2)"
+    const counts = {};
+    for (const r of smDraftSimpleRows) {
+      const buKey = String(r.bu || '').trim();
+      if (!buKey) continue;
+      if (!counts[buKey]) counts[buKey] = { simple: 0, adi: 0 };
+      counts[buKey].simple += 1;
+    }
+    for (const r of smDraftAdiRows) {
+      const buKey = String(r.bu || '').trim(); // ยืนยันจาก Full Page: vat_adi_transferdraft ก็มี Column 'bu' ตรงๆ เหมือนกัน (แยกจาก 'bus' ที่เป็น Segment1)
+      if (!buKey) continue;
+      if (!counts[buKey]) counts[buKey] = { simple: 0, adi: 0 };
+      counts[buKey].adi += 1;
+    }
+    return counts;
+  }, [smDraftSimpleRows, smDraftAdiRows]);
+  // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_AUTOBU_LIVE_V1 -- ตัดออกแล้วตามที่แจ้ง: "เลือก BU" ต้องไม่ดึง/Auto-Set อะไรเองทั้งสิ้น เป็น Dropdown ที่ผู้ใช้ต้องเลือกเองล้วนๆ เท่านั้น (ของเดิม Auto เปลี่ยนตาม Code/Branch ที่พิมพ์ ทำให้ Dropdown โชว์ค่าที่ผู้ใช้ไม่ได้เลือกเอง จนเป็นต้นเหตุ Bug ที่ Insert ผิด BU ไปก่อนหน้านี้ -- ตอนนี้ "+ Add" Resolve BU สดจาก Code/Branch เองแยกต่างหากแล้ว ไม่พึ่ง State ตัวนี้อีกต่อไป)
+  const smDraftBuOptions = React.useMemo(() => { // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUCOM_V1 -- ตามที่แจ้ง: Dropdown โชว์ "BU (COM)" เช่น "REV (0572)" แทนตัวเลขจำนวน Draft (1|2) ที่ตัดออกแล้ว
+    const keys = new Set(Object.keys(smDraftBuCounts));
+    if (smDraftBuFilter) keys.add(smDraftBuFilter); // กันกรณี Add แล้ว Default ไป BU ที่ยังไม่มี Pre-draft ค้างเลย (นับ 0) ก็ยังต้องเลือกได้
+    return Array.from(keys).sort().map((buKey) => {
+      const company = findCompanyByBu(buKey);
+      const comParts = String(company?.['COMPANY CODE'] || '').split('-').map((s) => s.trim()).filter(Boolean);
+      return { buKey, com: comParts[2] || '' };
+    });
+  }, [smDraftBuCounts, smDraftBuFilter, smSupportCompanies]);
+
+  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_HOIST_V1 -- ยก Const คำนวณ Preview Row (matchedSm..computedAdiPreviewRows) ออกจาก IIFE (isAdiPreviewMode) ขึ้นมาระดับบนสุด เพราะปุ่ม +Add และตาราง Upload Simple/ADI อยู่นอก IIFE นี้ ต้องใช้ค่าเดียวกัน
+          const matchedSm = matchedSmRow1; // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_MATCHEDSM_HOIST_V1 -- ใช้ตัวที่ยกขึ้นไประดับบนแล้ว ไม่ Match ซ้ำ
+          // MARKER_VATCONTROLLER_INVOICE_STRUCTURE_APPLY_V1 -- Apply Logic "Invoice Structure" (จาก AP) กับ SM-Code: Special Rule1 = Invoice Rule, Digit = Field "Digit" (Confirm แล้ว) -- คำนวณจาก TIV number + Tax invoice Date ที่กรอกจริงใน Zone A-1
+          const computedTaxInvoice = matchedSm ? vcBuildInvoiceNumber(adiRow1TivNumber, adiRow1TivDate, {
+            'First Part': matchedSm['First Part'] || '',
+            'Mid Part': matchedSm['Mid Part'] || '',
+            'Last Part': matchedSm['Last Part'] || '',
+            'Invoice No.': matchedSm['Special Rule1'] || '',
+            'Digit': matchedSm['Digit'] || '',
+          }) : '';
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_DESCRIPTION_ATMATCH_V2 -- Description Item ผูกกับ AT-Match (Short Name)
+          // -- Port มาจาก A_Create_Simple_Link3ase_OS.xlsm (VBA Sub TxtEnterTiv_AfterUpdate -- T15 Formula ต่อ AT-Match แต่ละค่า)
+          // -- ครอบคลุมทุกค่า AT-Match ที่ยืนยันว่ามีใช้จริงในระบบตอนนี้ (29 ค่า จาก SM-Code List)
+          // -- ตัด Suffix "|...|...|..." ท้ายสุดออกทุกกรณี เพราะเป็น Key ภายในของ Excel ไว้กันข้อมูลซ้ำ ไม่ใช่ส่วนคำอธิบายที่แสดงจริง
+          // -- Field "Period" (T11 ในไฟล์ Excel) และ Reference อื่น (T7 Flag, R10C24 ฯลฯ) ไม่มีอยู่ใน Simple Input Ops
+          // -- จึงใช้ Tax Invoice Date (adiRow1TivDate) เป็นตัวแทนแหล่งวันที่ทั้งหมด (ใกล้เคียงที่สุดที่มีอยู่จริงในหน้านี้)
+          // -- ADJ3A: ในไฟล์ Excel จริงๆ ไม่ได้ผูกกับ AT-Match แต่ผูกกับ Field "Adjustment Type" (CHECK_ADI_DESCRIPTION) คนละชุดกับ AT-Match/Remark เลย
+          // -- ซึ่ง Simple Input Ops ยังไม่มี Field นี้ -- จึง Fallback ไปแสดง Remark ตรงๆ เหมือนเดิมไปก่อน
+          const AT_MATCH_DESC_TEMPLATES = {
+            'SHOPEE FOOD':  { label: 'Commission Food ',               dateMode: 'dmy',       remark: true },
+            'SHOPEE DEALS': { label: 'Commission Deals ',              dateMode: 'dmy',       remark: true },
+            'SHOPEE MKP':   { label: 'Commission MKP ',                dateMode: 'dmy',       remark: true },
+            'SHOPEETHAI':   { label: 'Commission Food ',               dateMode: 'dmy',       remark: true },
+            'E-GET':        { label: 'License fee ',                   dateMode: 'dmy',       remark: true },
+            'AMAZE':        { label: 'Service fee ',                   dateMode: 'dmy',       remark: true },
+            '2C2P':         { label: 'Service Fee ',                   dateMode: 'dmy-1',     remark: true },
+            'ITC':          { label: 'Commission Fee ',                dateMode: 'dmy',       remark: true },
+            'S-COM':        { label: 'Service fee ',                   dateMode: 'dmy',       remark: true },
+            'LIMYSHOP':     { label: 'Line Marketplace Fee ',          dateMode: 'dmy',       remark: true },
+            'SHOPEE PAY':   { label: 'Commission Pay ',                dateMode: 'dmy',       remark: true },
+            'ROBINHOOD':    { label: 'ค่าบริการขนส่งอาหาร ',              dateMode: 'dmy',       remark: true },
+            'NOCNOC':       { label: 'Seller Payment Fee ',            dateMode: 'dmy',       remark: true },
+            'YINDII':       { label: 'Service Fee ',                   dateMode: 'dmy',       remark: true },
+            'GOKOO':        { label: 'Service Fee ',                   dateMode: 'dmy',       remark: true },
+            'LAZADA':       { label: 'Service Fee ',                   dateMode: 'range6',    remark: true },
+            'WECHAT':       { label: 'Monthly Service Fee ',           dateMode: 'dmy',       remark: true },
+            'TIKKOK':       { label: 'TikTok Shop commission fee ',    dateMode: 'dmy',       remark: true },
+            'GRAB':         { label: 'Service fee ',                   dateMode: 'dmy',       remark: true },
+            'LINEGIFT':     { label: 'LINE GIFT Service fee ',         dateMode: 'dmy',       remark: true },
+            'LINEMAN':      { label: 'GP Mart Partner ',               dateMode: 'dmy',       remark: true },
+            'PANDA':        { label: 'Commission Charge ',             dateMode: 'none',      remark: true },
+            'OHO':          { label: 'Commission Base ',               dateMode: 'none',      remark: false },
+            'GBP':          { label: 'ค่าธรรมเนียม',                    dateMode: 'my-prefix', remark: true },
+            'VD-PLUS':      { label: 'Transaction e-payment Fee ',     dateMode: 'dmy',       remark: true },
+            'WEBOS':        { label: 'Service Fee ',                   dateMode: 'dmy',       remark: true },
+            'W123':         { label: 'W123 Service Fee ',              dateMode: 'dmy',       remark: true },
+            'T36':          { label: 'ยื่นรายงานภาษีซื้อผ่าน ภ.พ.36',     dateMode: 'my-prefix', remark: false },
+            'INPUT':        { label: 'ยื่นรายงานภาษีซื้อผ่าน Excel',      dateMode: 'my-prefix', remark: true },
+          };
+          const computedDescriptionItem = (() => {
+            const atMatch = String(matchedSm?.['Short Name'] || '').trim().toUpperCase();
+            const remarkTxt = matchedSm?.['Remark'] || '';
+            const tpl = AT_MATCH_DESC_TEMPLATES[atMatch];
+            if (!tpl || !adiRow1TivDate) return remarkTxt || '';
+            const cnPrefix = adiRow1AmountIsNegative ? 'ใบลดหนี้-' : '';
+            const remarkPart = tpl.remark ? remarkTxt : '';
+            const fmtDMY = (offsetDays = 0) => {
+              const d = new Date(`${adiRow1TivDate}T00:00:00`);
+              if (offsetDays) d.setDate(d.getDate() + offsetDays);
+              const dd = String(d.getDate()).padStart(2, '0');
+              const mm = String(d.getMonth() + 1).padStart(2, '0');
+              return `${dd}-${mm}-${d.getFullYear()}`;
+            };
+            let base;
+            switch (tpl.dateMode) {
+              case 'dmy':       base = `${cnPrefix}${tpl.label}${remarkPart}${fmtDMY(0)}`; break;
+              case 'dmy-1':     base = `${cnPrefix}${tpl.label}${remarkPart}${fmtDMY(-1)}`; break;
+              case 'range6':    base = `${cnPrefix}${tpl.label}${remarkPart}${fmtDMY(-6)}-${fmtDMY(0)}`; break;
+              case 'none':      base = `${cnPrefix}${tpl.label}${remarkPart}`.trim(); break;
+              case 'my-prefix': {
+                // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_DESCRIPTION_MMYYYY_FIX_V1 -- ตามภาพจริง "08-2026" คือ MM-YYYY (ปี 4 หลัก) ไม่ใช่ MM-YY (ปี 2 หลัก) ตามที่เข้าใจผิดไปรอบก่อน
+                const [yyyy, mm] = adiRow1TivDate.split('-');
+                const mmYYYY = (mm && yyyy) ? `${mm}-${yyyy}` : '';
+                base = `${mmYYYY} ${cnPrefix}${tpl.label}${remarkPart}`.trim();
+                break;
+              }
+              default: base = remarkTxt || '';
+            }
+            // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_DESCRIPTION_PIPESUFFIX_V1 -- ตามภาพจริงที่ส่งมา: "...|PTT RETAIL MANAGEMENT CO.,LTD.|600001|MPS"
+            // -- คือ Suffix "|Company Name|TIV Number|BU" ต่อท้ายทุก Template จริง (ไม่ใช่ Key ภายในที่ซ่อนไว้อย่างที่เข้าใจผิดไปรอบก่อน) -- ตรงกับ Formula ต้นฉบับ "|"&R3C13(=Company Name)&"|"&R15C13(=TIV Number)&"|"&R7C13(=BU)
+            const companyNamePart = matchedSm?.['Company Name'] || '';
+            const tivNumberPart = computedTaxInvoice || ''; // MARKER_VATCONTROLLER_SIMPLEINPUT_DESCRIPTION_TAXINVOICE_FIX_V1 -- ตามที่แจ้ง: Suffix ตัวที่ 2 ต้องดึงเลข Tax Invoice ที่ Build แล้ว (computedTaxInvoice เช่น W-OR-1011-00010000) ไม่ใช่ TIV Number ดิบที่กรอก (เช่น 10000)
+            const buPart = matchedSm?.['BU'] || '';
+            return `${base}|${companyNamePart}|${tivNumberPart}|${buPart}`;
+          })();
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TOTALROW_CALC_V1 -- คำนวณ Gross/Vat/Amount จาก Amount + Amount Type ที่กรอกใน Zone A-1
+          // Confirm แล้ว 3 Type: GRO+VT (Amount ที่กรอก = Gross, Vat = Gross*7%, รวม = Gross+Vat), VAT-RV (Amount ที่กรอก = Vat, Gross = ROUND(Vat*100/7,2), รวม = Gross+Vat)
+          // TOT-RV (Amount ที่กรอก = รวม(Total), Gross = ROUND(Total*100/107,2), Vat = ROUND(Total*7/107,2))
+          // NET-VL ยังไม่ได้ Confirm Logic เลยยังไม่คำนวณ (โชว์ "—" เหมือนเดิม รอ Confirm เพิ่ม)
+          const adiRow1AmountNum = parseFloat(String(adiRow1Amount || '').replace(/,/g, '').trim());
+          const fmtTotalRow = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          let totalRowCalc = null;
+          if (!isNaN(adiRow1AmountNum)) {
+            if (adiRow1AmountType === 'GRO+VT') {
+              const gross = roundMoney2(adiRow1AmountNum);
+              const vat = roundMoney2(gross * 0.07);
+              const total = roundMoney2(gross + vat);
+              totalRowCalc = { gross: fmtTotalRow(gross), vat: fmtTotalRow(vat), total: fmtTotalRow(total), vatNum: vat, grossNum: gross, totalNum: total }; // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_AVERAGE_SPLIT_V1 -- เพิ่ม vatNum (ตัวเลขดิบ) ไว้ใช้คำนวณ Recoverable/Non-recoverable Split ต่อ -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_TOTALROW_RAWNUM_INSERT_FIX_V1 -- เพิ่ม grossNum/totalNum (ตัวเลขดิบ ไม่มี Comma) ไว้ให้ +Add ใช้ Insert DB โดยตรง (ของเดิม gross/vat/total เป็น String มี Comma จาก toLocaleString ทำให้ Insert เข้า Column Numeric ไม่ได้ -- "invalid input syntax for type numeric")
+            } else if (adiRow1AmountType === 'VAT-RV') {
+              const vat = roundMoney2(adiRow1AmountNum);
+              const gross = roundMoney2(vat * 100 / 7);
+              const total = roundMoney2(gross + vat);
+              totalRowCalc = { gross: fmtTotalRow(gross), vat: fmtTotalRow(vat), total: fmtTotalRow(total), vatNum: vat, grossNum: gross, totalNum: total };
+            } else if (adiRow1AmountType === 'TOT-RV') {
+              const total = roundMoney2(adiRow1AmountNum);
+              const gross = roundMoney2(total * 100 / 107);
+              const vat = roundMoney2(total * 7 / 107);
+              totalRowCalc = { gross: fmtTotalRow(gross), vat: fmtTotalRow(vat), total: fmtTotalRow(total), vatNum: vat, grossNum: gross, totalNum: total };
+            }
+          }
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SEGMENTALL_AUTOFILL_V1 -- เมื่อเข้าเงื่อนไข Interbranch (Ofin Dr != Cr) = มีการออก ADI จริง -> Auto-Fill ตาราง "Results - Segment All (ADI)" ตาม Logic ADI Form ของ Full Page
+          // -- Segment All = bus-grp-com (จาก company_list.COMPANY CODE ของ BU ฝั่งนั้นๆ) ต่อด้วย Ofin(Branch)-CPC-Account-SubAcc
+          // -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_AVERAGE_SPLIT_V1 -- ตามที่ Confirm: ไม่มี Tax Type Field เลยแยก Asset/Expense จาก Account ตรงๆ (11610755/11630055=Asset, 11610752/11630052=Expense) และแยก Average/Normal จาก Rate(%) ของ Branch (!=100=Average ต้อง 3 บรรทัด, =100=Normal 2 บรรทัด) -- Asset ยังไม่ทำ (คงเป็น Normal 2 บรรทัด Fallback ไปก่อน รอ Confirm Asset-IB เพิ่ม)
+          // MARKER_VATCONTROLLER_SIMPLEINPUT_SEGMENTALL_SINGLECOMPANY_FIX_V1 -- Bug: เดิมหา Company แยกทีละฝั่ง Debit/Credit ถ้าฝั่งไหน Ofin ไม่ Match ใน Branch List จะได้ Prefix ว่าง (Segment All ขาด bus-grp-com) -- แก้ให้ใช้ Company เดียวกันทั้ง Batch เหมือน Full Page (bus/grp/com มาจาก `bu` เดียวคงที่ทั้ง Batch) โดย Fallback ไปฝั่งที่ Match ได้ถ้าอีกฝั่ง Match ไม่ได้
+          const mainCompanyForAdi = (debitBranchMatch ? findCompanyByBu(debitBranchMatch['bu']) : null) || (creditBranchMatch ? findCompanyByBu(creditBranchMatch['bu']) : null);
+          const buildSegmentAllPrefix = () => {
+            return String(mainCompanyForAdi?.['COMPANY CODE'] || '').split('-').map((s) => s.trim()).filter(Boolean);
+          };
+          const classifyAdiAccount = (acc) => {
+            const a = String(acc || '').trim();
+            if (a === '11610755' || a === '11630055') return 'ASSET';
+            if (a === '11610752' || a === '11630052') return 'EXPENSE';
+            return 'OTHER';
+          };
+          const debitRatePct = debitBranchMatch ? parseFloat(debitBranchMatch['%']) : NaN;
+          const creditRatePct = creditBranchMatch ? parseFloat(creditBranchMatch['%']) : NaN;
+          const adiAverageRatePct = [debitRatePct, creditRatePct].find((r) => !isNaN(r) && r !== 100);
+          const isAdiAverageCase = ibOfinMismatch && classifyAdiAccount(adiRow1DebitAccount) === 'EXPENSE' && adiAverageRatePct !== undefined;
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ASSET_AVERAGE_FORCE_ADI_V1 -- ตามที่แจ้ง: Asset (11610755/11630055) ที่เป็นเฉลี่ย (Rate != 100) ต้องออก ADI เสมอ แม้ไม่ใช่ Interbranch (Ofin Dr=Cr) เพราะต้องคำนวณ VAT ที่เคลมได้ (Logic เดียวกับ Full Page: Asset(T/F) Trigger ADI ไม่ผูกกับ IB) -- ADI เป็น 2 บรรทัด Debit/Credit ปกติ แต่ Amount = ROUND(VAT * Rate/100) แทนที่จะเป็น VAT เต็มจำนวน
+          // MARKER_VATCONTROLLER_SIMPLEINPUT_ASSET_IB_NORMAL_RATE100_V1 -- Asset (11610755/11630055) Trigger ADI เสมอไม่ว่า Rate จะเท่าไหร่ (เดิมต้อง Rate!=100 เท่านั้น ทำให้ Rate=100% ไม่ Trigger เลย)
+          const isAssetAdiCase = classifyAdiAccount(adiRow1DebitAccount) === 'ASSET';
+          const isAssetAverageCase = isAssetAdiCase && adiAverageRatePct !== undefined; // Rate!=100 จริง -> Asset-IB (A), นอกนั้น (Rate=100 หรือไม่มี Rate) -> Asset-IB (N)
+          const adiTriggered = ibOfinMismatch || isAssetAdiCase; // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ASSET_AVERAGE_FORCE_ADI_V1 -- รวมเงื่อนไข Trigger ADI ทั้งหมด (Interbranch เดิม + Asset เฉลี่ยใหม่)
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SIMPLERULE_YESNO_V1 -- ย้ายมาจากด้านบน (ต้องรอ adiTriggered ซึ่งต้องใช้ classifyAdiAccount/Rate ที่เพิ่งประกาศ) -- ตามที่แจ้ง: sim_type (Create Journal/Interbranch/Book VAT Only) เชื่อจาก Simple Rule (Simple Rule3) ของ SM-Code ตรงๆ -- Override เป็น No/No/No เมื่อ Interbranch หรือ Asset เฉลี่ย Trigger ADI
+          const simpleRuleYesNo = adiTriggered ? { createJournal: 'No', interbranch: 'No', bookVatOnly: 'No' } : (() => {
+            const rule = String(matchedSmRow1?.['Simple Rule3'] || '').trim().toUpperCase();
+            const toYN = (ch) => (ch === 'Y' ? 'Yes' : (ch === 'N' ? 'No' : null));
+            return {
+              createJournal: rule.length >= 1 ? toYN(rule[0]) : null,
+              interbranch: rule.length >= 2 ? toYN(rule[1]) : null,
+              bookVatOnly: rule.length >= 3 ? toYN(rule[2]) : null,
+            };
+          })();
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_MAINBADGE_STATUS_V1 -- Main Badge "Simple Input"/"ADI Journal": ปกติ Standby -- ถ้า adiTriggered (Interbranch หรือ Asset เฉลี่ย) -> Simple Input=Transfer, ADI Journal=Normal-IB
+          const simpleInputMainStatus = adiTriggered ? 'Transfer' : 'Standby';
+          // MARKER_VATCONTROLLER_SIMPLEINPUT_ADIBADGE_PERIOD_CATEGORY_SOURCE_V1 -- เดิม Hardcode 'Normal-IB' เสมอเมื่อ adiTriggered ไม่เช็ค Asset/Average เลย -- แก้ให้แยกตามเงื่อนไขจริง (เหมือน Full Page)
+          // isAssetAdiCase ต้องการ Rate!=100 เสมอตามนิยามของมันเอง จึงเป็น 'Asset-IB (A)' เสมอ 'Asset-IB (N)' (Rate=100) ยังไม่มีเคสใน Simple Input Ops ตอนนี้
+          const adiJournalMainStatus = !adiTriggered ? 'Standby' : (isAssetAdiCase ? (isAssetAverageCase ? 'Asset-IB (A)' : 'Asset-IB (N)') : (isAdiAverageCase ? 'Average-IB' : 'Normal-IB'));
+          let adiSegmentAutoRows = null;
+          if (isAdiAverageCase) {
+            // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_AVERAGE_SPLIT_V1 -- 3 บรรทัด: Recoverable(11610752)/Non-recoverable(63050000,CPC 45700)/VAT เต็ม(11630052) -- Branch/ทิศทาง Dr-Cr สลับกันถ้ายอดติดลบ (ใบลดหนี้) ตาม Logic Full Page
+            const vatAbs = totalRowCalc ? Math.abs(totalRowCalc.vatNum) : 0;
+            const isNegVat = totalRowCalc ? totalRowCalc.vatNum < 0 : false;
+            const recoverable = truncateMoney2(vatAbs * (adiAverageRatePct || 0) / 100);
+            const nonRecoverable = roundMoney2(vatAbs - recoverable);
+            const taxSideBranchMatch = isNegVat ? creditBranchMatch : debitBranchMatch; // ฝั่ง Recoverable+Non-recoverable
+            const invoiceSideBranchMatch = isNegVat ? debitBranchMatch : creditBranchMatch; // ฝั่ง VAT เต็มจำนวน
+            const taxSideOfin = isNegVat ? adiRow1CreditOfin : adiRow1DebitOfin;
+            const invoiceSideOfin = isNegVat ? adiRow1DebitOfin : adiRow1CreditOfin;
+            const sideRecov = isNegVat ? 'Cr' : 'Dr';
+            const sideInvoice = isNegVat ? 'Dr' : 'Cr';
+            const rateStr = String(adiAverageRatePct);
+            adiSegmentAutoRows = [
+              {
+                segmentAll: [...buildSegmentAllPrefix(), taxSideOfin, adiRow1DebitCpc, '11610752', adiRow1DebitSubAcc].filter((v) => String(v || '').trim()).join('-'),
+                lineValue: fmtTotalRow(recoverable),
+                side: sideRecov,
+                rate: rateStr,
+              },
+              {
+                segmentAll: [...buildSegmentAllPrefix(), taxSideOfin, '45700', '63050000', adiRow1DebitSubAcc].filter((v) => String(v || '').trim()).join('-'),
+                lineValue: fmtTotalRow(nonRecoverable),
+                side: sideRecov,
+                rate: rateStr,
+              },
+              {
+                segmentAll: [...buildSegmentAllPrefix(), invoiceSideOfin, adiRow1CreditCpc, '11630052', adiRow1CreditSubAcc].filter((v) => String(v || '').trim()).join('-'),
+                lineValue: fmtTotalRow(vatAbs),
+                side: sideInvoice,
+                rate: rateStr,
+              },
+            ];
+          } else if (isAssetAdiCase) {
+            // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ASSET_AVERAGE_FORCE_ADI_V1 -- Asset-IB (เฉลี่ย): 2 บรรทัด Debit/Credit ปกติเหมือน Normal-IB แต่ Amount = ROUND(VAT * Rate/100) (เฉพาะส่วนที่เคลมได้) ตาม Logic Full Page (isAssetAverageAdiFP)
+            const vatAbsAssetFP = totalRowCalc ? Math.abs(totalRowCalc.vatNum) : 0;
+            // MARKER_VATCONTROLLER_SIMPLEINPUT_ASSET_IB_NORMAL_RATE100_V1 -- Rate!=100 (Asset-IB (A)) ใช้ VAT*Rate/100 เหมือนเดิม / Rate=100 (Asset-IB (N)) ใช้ VAT เต็มจำนวน (เหมือน Normal-IB ตาม Logic Full Page)
+            const claimableAssetFP = isAssetAverageCase ? fmtTotalRow(roundMoney2(vatAbsAssetFP * (adiAverageRatePct || 0) / 100)) : fmtTotalRow(vatAbsAssetFP);
+            const rateStrAsset = isAssetAverageCase ? String(adiAverageRatePct) : '100';
+            adiSegmentAutoRows = [
+              {
+                segmentAll: [...buildSegmentAllPrefix(), adiRow1DebitOfin, adiRow1DebitCpc, adiRow1DebitAccount, adiRow1DebitSubAcc].filter((v) => String(v || '').trim()).join('-'),
+                lineValue: claimableAssetFP,
+                side: 'Dr',
+                rate: rateStrAsset,
+              },
+              {
+                segmentAll: [...buildSegmentAllPrefix(), adiRow1CreditOfin, adiRow1CreditCpc, adiRow1CreditAccount, adiRow1CreditSubAcc].filter((v) => String(v || '').trim()).join('-'),
+                lineValue: claimableAssetFP,
+                side: 'Cr',
+                rate: rateStrAsset,
+              },
+            ];
+          } else if (adiTriggered) {
+            adiSegmentAutoRows = [
+              {
+                segmentAll: [...buildSegmentAllPrefix(), adiRow1DebitOfin, adiRow1DebitCpc, adiRow1DebitAccount, adiRow1DebitSubAcc].filter((v) => String(v || '').trim()).join('-'),
+                lineValue: totalRowCalc ? totalRowCalc.vat : '',
+                side: 'Dr',
+                rate: debitBranchMatch ? String(debitBranchMatch['%'] || '') : '',
+              },
+              {
+                segmentAll: [...buildSegmentAllPrefix(), adiRow1CreditOfin, adiRow1CreditCpc, adiRow1CreditAccount, adiRow1CreditSubAcc].filter((v) => String(v || '').trim()).join('-'),
+                lineValue: totalRowCalc ? totalRowCalc.vat : '',
+                side: 'Cr',
+                rate: creditBranchMatch ? String(creditBranchMatch['%'] || '') : '',
+              },
+            ];
+          }
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_TABLES_FULLPAGE_RULES_V1 -- ตามที่แจ้ง: "ต่างแค่ Popvat ที่เหลือ Logic เหมือนกันเลย" -- Apply กฏจาก Full Page's "Simple Input Transfer"/"ADI Insert" มาคำนวณ Preview จริงในตาราง Upload Simple/Upload ADI (เดิมเป็น Static Placeholder "โครงสร้างเท่านั้น")
+          // -- หมายเหตุช่องว่างที่ยัง Port ไม่ได้ (ไม่มี Field/Data ต้นทางใน Simple Input Ops): (1) Tax Invoice Number (GRN) รอระบบ Auto-Running Number แบบ Full Page (2) Liability Cost Center/Account/Sub Account (Special) ตอน YNY (ไม่ Trigger ADI) รอ Vendor Master Credit-side Default (3) "Payment Doc Ref." ใน Description รอ Field Check No ที่ยังไม่มีในหน้านี้
+          const isAssetClassOnly = classifyAdiAccount(adiRow1DebitAccount) === 'ASSET'; // ไม่ผูก Rate (ใช้ตัดสิน Receive Date วันที่ 15 เหมือน Full Page เสมอ ไม่ว่า Rate จะ 100 หรือไม่)
+          const isExpenseAverageSpecial = !isAssetClassOnly && adiAverageRatePct !== undefined; // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_EXPENSE_AVERAGE_SPECIAL_V1 -- Expense (ไม่ใช่ Asset) + Rate != 100 -> Override CPC/Sub Account (Special) + Expense Type เสมอ ไม่ผูกกับ adiTriggered
+          const currentPeriodMonth = smPeriodStatus?.vat_period_current_month || null; // 'YYYY-MM'
+          const periodTextDisplay = (() => {
+            if (!currentPeriodMonth) return '';
+            const [yyyy, mm] = String(currentPeriodMonth).split('-');
+            return (mm && yyyy) ? `${mm}-${yyyy}` : '';
+          })();
+          const simpleReceiveDate = (() => { // MARKER_VATWATCHLISTOPS_POPVATDRAFT_PERIOD_MISSING_FIX_V1 -- Asset=วันที่ 15 / Expense=วันสุดท้ายของเดือน (Logic เดียวกับ Full Page)
+            if (!currentPeriodMonth) return '';
+            const [yyyyStr, mmStr] = String(currentPeriodMonth).split('-');
+            const yyyy = Number(yyyyStr); const mm = Number(mmStr);
+            if (!yyyy || !mm) return '';
+            if (isAssetClassOnly) return `${yyyyStr}-${mmStr.padStart(2, '0')}-15`;
+            const lastDay = new Date(yyyy, mm, 0).getDate();
+            return `${yyyyStr}-${mmStr.padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+          })();
+          const ADI_MONTH_ABBR_SM = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+          const adiPeriodDisplay = (() => {
+            if (!currentPeriodMonth) return '';
+            const [yyyyStr, mmStr] = String(currentPeriodMonth).split('-');
+            const mmNum = Number(mmStr);
+            return mmNum ? `${ADI_MONTH_ABBR_SM[mmNum - 1]}-${yyyyStr.slice(-2)}` : '';
+          })();
+          const getSmExpenseOptions = (field) => [...new Set((smCodeSupportData || []).map((i) => String(i[field] ?? '').trim()).filter(Boolean))].sort(); // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_EXPENSE_AVERAGE_SPECIAL_V1 -- Port getAddSupplierOptions ของ Full Page มาใช้กับ smCodeSupportData ที่มีอยู่แล้ว
+          const computedExpenseType = isExpenseAverageSpecial
+            ? (getSmExpenseOptions('Expense Type').find((o) => String(o).startsWith('63050000')) || matchedSm?.['Expense Type'] || '')
+            : (matchedSm?.['Expense Type'] || '');
+          const rateForVatAvg = debitBranchMatch ? String(debitBranchMatch['%'] || '').trim() : '';
+          const descPeriodDisplay = periodTextDisplay ? periodTextDisplay.split('-').reverse().join('/') : '';
+          const computedSimpleDescription = (matchedSm && adiRow1TivNumber)
+            ? `${descPeriodDisplay} ยื่นรายงาน Excel|${matchedSm['Company Name'] || ''}|${adiRow1TivNumber}` // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_TABLES_FULLPAGE_RULES_V1 -- ตัด "Payment Doc Ref. {checkNo}" ท้ายสุดออก เพราะไม่มี Field Check No ในหน้านี้ (Gap)
+            : '';
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_BOOK_PERIOD_FIX_V1 -- Bug Fix: ตามที่แจ้ง ข้อมูลที่เข้า DB ขาด Column "book"/"period" -- Full Page (Simple Input Transfer / ADI) ใส่ทั้งคู่เสมอ (bu?.BOOK, periodTextFP) แต่ Simple Input Ops ไม่เคยใส่มาก่อนเลย -- Lookup Company ด้วยสูตรเดียวกับ resolvedInsertBu (matchedSm.BU ก่อน แล้วค่อย Debit/Credit Branch) เพื่อให้ book ตรงกับ BU ที่ Insert จริงเสมอ
+          const bookLookupBu = String(matchedSm?.['BU'] || debitBranchMatch?.['bu'] || creditBranchMatch?.['bu'] || '').trim();
+          const companyForBook = bookLookupBu ? findCompanyByBu(bookLookupBu) : null;
+          const computedSimpleRow = matchedSm ? {
+            book: companyForBook?.BOOK || null, // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_BOOK_PERIOD_FIX_V1
+            period: periodTextDisplay || null, // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_BOOK_PERIOD_FIX_V1
+            liability_cost_center_special: null, // Gap: ไม่มี Vendor Master Credit-side Default ใน Simple Input Ops (ตอน Trigger ADI ก็เป็น null อยู่แล้วเหมือน Full Page)
+            liability_account_special: null,
+            liability_sub_account_special: null,
+            supplier_code: null, // Confirm แล้วจาก Full Page: ไม่ต้อง Match Supplier Code เลย เป็น null เสมอ
+            supplier_name: matchedSm['Company Name'] || '',
+            receive_date: simpleReceiveDate,
+            tax_invoice_number: '', // Gap: รอระบบ Auto-Running Number (GRN) แบบ Full Page
+            tax_invoice_date: adiRow1TivDate || '',
+            vendor_tax_invoice_number: adiRow1TivNumber || '',
+            tax_id: matchedSm['Tax ID'] || '',
+            branch_no: matchedSm['Branch'] || '',
+            line_number: null,
+            expense_type: computedExpenseType,
+            description: computedSimpleDescription,
+            amount_ex_vat: totalRowCalc ? totalRowCalc.grossNum : null, // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_TOTALROW_RAWNUM_INSERT_FIX_V1 -- Bug Fix: เดิมใช้ totalRowCalc.gross (String มี Comma "10,000.00") ยัดเข้า Column Numeric ตรงๆ ทำให้ Insert Error 500 "invalid input syntax for type numeric" -- เปลี่ยนมาใช้ grossNum (ตัวเลขดิบ) แทน
+            vat_amount: totalRowCalc ? totalRowCalc.vatNum : null,
+            branch_code: debitBranchMatch ? (debitBranchMatch['Simple Brand Code'] || '') : '',
+            cpc_special: isExpenseAverageSpecial ? '45700' : null,
+            sub_account_special: isExpenseAverageSpecial ? '999999' : null,
+            cpc_tax_special: null,
+            vat_average_percent: (rateForVatAvg && rateForVatAvg !== '100') ? rateForVatAvg : null,
+            invoice_ref: (adiRow1AmountIsNegative || matchedSm['Special Rule5'] === 'CN') ? 'Credit' : 'Invoice', // MARKER_VATCONTROLLER_SIMPLEINPUT_INVOICEREF_V1 -- Port จาก Full Page (invoice_ref: Number(t.amount) < 0 ? 'Credit' : 'Invoice') + ตามที่แจ้ง: SM-Code ที่ Special Rule5 = 'CN' ก็ถือเป็น Credit ด้วย แม้ Amount จะเป็นบวก
+          } : null;
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_TABLES_FULLPAGE_RULES_V1 -- ตาราง Upload ADI: Reshape adiSegmentAutoRows (Debit/Credit) ให้ครบ Column ตาม Schema vat_adi_transferdraft จริง
+          const computedAdiJournalName = debitBranchMatch ? `APN-SH15-${adiRow1DebitOfin}-IB-001` : '';
+          const computedAdiLineDescription = (matchedSm && adiRow1TivDate) ? (() => {
+            const [yyyy, mm] = adiRow1TivDate.split('-');
+            const buPart = debitBranchMatch?.['bu'] || '';
+            return `${mm}-${yyyy} ยื่นภาษีซื้อ ${isAssetClassOnly ? 'Asset' : 'Expense'} ผ่าน Excel|${buPart}-${matchedSm['Company Name'] || ''}|${adiRow1TivNumber || ''}|${buPart}`;
+          })() : '';
+          const computedAdiPreviewRows = (adiSegmentAutoRows || []).map((r) => {
+            const isDebitSide = r.side === 'Dr';
+            const branchMatchSide = isDebitSide ? debitBranchMatch : creditBranchMatch;
+            const company = branchMatchSide ? findCompanyByBu(branchMatchSide['bu']) : null;
+            const codeParts = String(company?.['COMPANY CODE'] || '').split('-').map((s) => s.trim()).filter(Boolean);
+            const ofinSide = isDebitSide ? adiRow1DebitOfin : adiRow1CreditOfin;
+            const cpcSide = isDebitSide ? adiRow1DebitCpc : adiRow1CreditCpc;
+            const accSide = isDebitSide ? adiRow1DebitAccount : adiRow1CreditAccount;
+            const subAccSide = isDebitSide ? adiRow1DebitSubAcc : adiRow1CreditSubAcc;
+            const mmyy = currentPeriodMonth ? currentPeriodMonth.split('-').reverse().map((s, i) => (i === 1 ? s.slice(-2) : s)).join('') : ''; // 'YYYY-MM' -> 'MMYY'
+            return {
+              book: companyForBook?.BOOK || null, // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_BOOK_PERIOD_FIX_V1
+              period: periodTextDisplay || null, // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_BOOK_PERIOD_FIX_V1
+              category: `${company?.['SEGMENT3'] || ''}-IB-ALL`,
+              source: 'Excel-APN', // MARKER_VATCONTROLLER_SIMPLEINPUT_UPLOADADI_SOURCE_EXCELAPN_V1 -- ยืนยันแล้วว่าต้องเป็น 'Excel-APN' เหมือน Full Page (เดิม Hardcode 'SM-APN' รอ Confirm ชื่อจริง)
+              acc_date: simpleReceiveDate,
+              bus: codeParts[0] || '',
+              grp: codeParts[1] || '',
+              com: codeParts[2] || '',
+              branch: ofinSide,
+              cpc: cpcSide,
+              acc: accSide,
+              sub_acc: subAccSide,
+              // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_TOTALROW_RAWNUM_INSERT_FIX_V1 -- Bug Fix: r.lineValue เดิมเป็น String มี Comma (เช่น "10,000.00" จาก fmtTotalRow) ยัดเข้า Column Numeric ตรงๆ ทำให้ Insert Error 500 -- แปลงเป็นตัวเลขดิบก่อน Insert เสมอ (ตาราง "Results - Segment All (ADI)" ที่แสดงผลยังใช้ r.lineValue ตัวเดิม ไม่กระทบ)
+              debit: r.side === 'Dr' ? (parseFloat(String(r.lineValue ?? '').replace(/,/g, '')) || null) : null,
+              credit: r.side === 'Cr' ? (parseFloat(String(r.lineValue ?? '').replace(/,/g, '')) || null) : null,
+              adi_period: adiPeriodDisplay,
+              batch_name: `APN-INPUT-${mmyy}-${codeParts[2] || ''}-IB-001`,
+              batch_description: null,
+              journal_name: computedAdiJournalName,
+              journal_description: null,
+              line_description: computedAdiLineDescription,
+              line_dff: null,
+            };
+          });
+  return (
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', boxSizing: 'border-box' }}>
+      {/* Zone A -- 30% บน -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA_SPLIT_80_20_V1 แบ่งซ้าย 80% / ขวา 20% ยังว่างไว้ก่อน รอ Confirm Content */}
+      <div style={{ flex: '30 1 0%', display: 'flex', flexDirection: 'row', gap: '12px' }}>
+        <div style={{ flex: '80 1 0%', minWidth: 0, display: 'flex', flexDirection: 'column', textAlign: 'left', padding: '16px', background: '#ffffff', border: '0.5px solid #e5e7eb', borderRadius: '10px' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_REDESIGN_V1 -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_MINWIDTH_FIX_V1 -- minWidth: 0 กัน Zone A-1 กินพื้นที่ Zone A-2 -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_OPERATIONINPUT_BORDER_V1 -- ตาม Mockup ที่ Confirm: กรอบ "Operation Input" ล้อมข้อมูล + ปุ่ม + Add/Clear ย้ายลงมาด้านล่างนอกกรอบ -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_OUTERBG_RESTORE_V1 -- คืนพื้นหลังขาว/ขอบเทา/Padding ของ Panel นอกที่หายไปตอนแยกกรอบ Operation Input ออกมา */}
+          <div style={{ position: 'relative', padding: '16px', background: '#fafcff', border: '1.5px solid #93c5fd', borderRadius: '10px' }}>
+            <span style={{ position: 'absolute', top: '-10px', left: '12px', background: '#fff', padding: '0 8px', fontSize: '11px', fontWeight: '600', letterSpacing: '0.3px', color: '#2563eb' }}>Operation Input</span>
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'nowrap' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_MERGE_SINGLE_ROW_V1 -- แถวเดียว 5 ช่อง: Code(1) -> TIV date(2) -> TIV number(3) -> Amount(4) -> PO number(5) -- ตัด Form type ออกแล้ว */}
+            <div style={{ flex: '16 1 0%', minWidth: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW_ADJUST_CODE_TIVNUM_V1 -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_CODE_SEARCH_ICON_V1 -- Code + ปุ่มค้นหา SM-Code */}
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#6b7280', marginBottom: '5px' }}>Code</label>
+              <div style={{ display: 'flex', gap: '0' }}>
+                <input ref={adiRow1CodeInputRef} type="text" value={adiRow1Code} onChange={(e) => setAdiRow1Code(e.target.value)} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', height: '34px', fontSize: '13px', padding: '0 10px', border: '1px solid #fde68a', background: '#fffbeb', borderRight: 'none', borderRadius: '8px 0 0 8px', outline: 'none' }} />
+                <button
+                  type="button"
+                  title="ค้นหา SM-Code"
+                  onClick={() => setShowSmCodeSearchModal(true)} // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_V1
+                  tabIndex={-1} // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_CODE_SEARCH_BTN_SKIP_TAB_V1 -- ไม่ให้ Tab แวะจุดนี้ -- กด Tab จาก Code แล้วให้ข้ามไปที่ Tax Invoice Date Input เลย
+                  style={{ width: '34px', flexShrink: 0, boxSizing: 'border-box', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #d1d5db', borderRadius: '0 8px 8px 0', background: '#f9fafb', cursor: 'pointer', padding: 0 }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </button>
+              </div>
+            </div>
+            <div style={{ flex: '13 1 0%', minWidth: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVDATE_HYBRID_V1 -- เปลี่ยนชื่อจาก "TIV date" เป็น "Tax invoice Date" เต็มๆ + ทำ Format วันที่ + Calendar เหมือน Full Page (formatDateDisplayMDY/parseFlexibleDate) */}
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#6b7280', marginBottom: '5px' }}>Tax invoice Date</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  ref={adiRow1TivDateTextRef}
+                  type="text"
+                  defaultValue={formatDateDisplayMDY(adiRow1TivDate)}
+                  placeholder="MM/DD/YYYY"
+                  onBlur={(e) => {
+                    const parsed = parseFlexibleDate(e.target.value);
+                    if (parsed) { e.target.value = formatDateDisplayMDY(parsed); setAdiRow1TivDate(parsed); }
+                    else if (!e.target.value.trim()) { setAdiRow1TivDate(''); }
+                    else { e.target.value = formatDateDisplayMDY(adiRow1TivDate); }
+                  }}
+                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVDATE_CALENDAR_LEFT_V2 -- ย้าย Icon+จุดกดไปซ้ายด้วยกัน (Confirm แล้วว่ายอมรับ Icon ไปซ้าย แลกกับให้ Calendar เปิดไปทางซ้ายแทน)
+                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVDATE_TEXT_NUDGE_RIGHT_V1 -- เลื่อนตัวอักษร (MM/DD/YYYY) ให้ห่างจาก Icon 📅 เพิ่มอีก 2 เคาะ (26px -> 38px)
+                  style={{ width: '100%', boxSizing: 'border-box', height: '34px', fontSize: '13px', padding: '0 10px 0 38px', border: '1px solid #fde68a', background: '#fffbeb', borderRadius: '8px', outline: 'none' }}
+                />
+                <span style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '13px', color: '#888' }}>📅</span>
+                <input
+                  type="date"
+                  tabIndex={-1}
+                  value={adiRow1TivDate || ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (adiRow1TivDateTextRef.current) adiRow1TivDateTextRef.current.value = formatDateDisplayMDY(v);
+                    setAdiRow1TivDate(v);
+                  }}
+                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVDATE_CALENDAR_LEFT_V2 -- ย้าย Anchor ไปซ้าย (left:0) ให้ตรงกับ Icon ที่ย้ายไป -- Browser จะ Anchor Popup จากตำแหน่งนี้ ทำให้เปิดไปทางซ้ายแทนขวา
+                  style={{ position: 'absolute', left: 0, top: 0, width: '22px', height: '100%', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }}
+                />
+              </div>
+            </div>
+            <div style={{ flex: '15 1 0%', minWidth: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVNUM_DIGIT_V1 -- TIV Number + Digit Badge -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW_ADJUST_CODE_TIVNUM_V1 */}
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#6b7280', marginBottom: '5px' }}>TIV number</label>
+              <div style={{ display: 'flex', gap: '0' }}>
+                <input type="text" value={adiRow1TivNumber} onChange={(e) => setAdiRow1TivNumber(e.target.value)} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', height: '34px', fontSize: '13px', padding: '0 10px', border: '1px solid #fde68a', borderRight: 'none', background: '#fffbeb', borderRadius: '8px 0 0 8px', outline: 'none' }} />
+                <div title="Digit (จาก SM_Code)" style={{ width: '54px', flexShrink: 0, boxSizing: 'border-box', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #1a3a5c', borderRadius: '0 8px 8px 0', background: '#1a3a5c', color: 'white', fontSize: '13px', fontWeight: '500' }}>{(matchedSmRow1?.['Digit'] || adiRow1TivNumberDigit) || '--'}</div> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_TIVNUM_DIGIT_WIRE_V1 -- Bug: adiRow1TivNumberDigit ไม่เคยถูก setState ที่ไหนเลย (ค้าง "" ตลอด) แก้เป็นดึงจาก matchedSmRow1['Digit'] ที่ Match SM-Code ไว้แล้วโดยตรง */}
+              </div>
+            </div>
+            <div style={{ flex: '22 1 0%', minWidth: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_AMOUNT_TYPE_V1 -- Amount + ตัวปรับประเภท */}
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#6b7280', marginBottom: '5px' }}>Amount</label>
+              <div style={{ display: 'flex', gap: '0' }}>
+                <input
+                  type="text"
+                  value={adiRow1Amount}
+                  onChange={(e) => setAdiRow1Amount(e.target.value)}
+                  onBlur={(e) => { // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_AMOUNT_COMMA_RIGHTALIGN_V1 -- Format Comma เหมือน Full Page (Add Tax Invoice Amount/Vat) -- ตัด Comma เดิมออกก่อน Parse กัน NaN ซ้ำ
+                    const raw = String(e.target.value || '').replace(/,/g, '').trim();
+                    const num = parseFloat(raw);
+                    if (!isNaN(num)) setAdiRow1Amount(num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+                  }}
+                  style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', height: '34px', fontSize: '13px', padding: '0 10px', border: '1px solid #fde68a', borderRight: 'none', background: '#fffbeb', borderRadius: '8px 0 0 8px', outline: 'none', textAlign: 'right' }}
+                />
+                <select value={adiRow1AmountType} onChange={(e) => setAdiRow1AmountType(e.target.value)} style={{ width: '92px', flexShrink: 0, boxSizing: 'border-box', height: '34px', fontSize: '12px', fontWeight: '500', padding: '0 6px', border: '1px solid #d1d5db', borderRadius: '0 8px 8px 0', outline: 'none', background: '#f9fafb', color: '#1a3a5c' }}>
+                  <option value="GRO+VT">GRO+VT</option>
+                  <option value="VAT-RV">VAT-RV</option>
+                  <option value="TOT-RV">TOT-RV</option>
+                  <option value="NET-VL">NET-VL</option>
+                </select>
+              </div>
+            </div>
+            {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_REMOVE_FORMTYPE_V1 -- ตัด Form type ออก (ไม่จำเป็นตามที่ยืนยัน) */}
+            <div style={{ flex: '16 1 0%', minWidth: 0 }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#6b7280', marginBottom: '5px' }}>PO number{poNumRequiredByAtMatch ? '' : <span style={{ color: '#bbb', fontWeight: '400' }}> (ไม่จำเป็น)</span>}</label>
+              <input
+                type="text"
+                value={adiRow1PoNum}
+                onChange={(e) => setAdiRow1PoNum(e.target.value)}
+                disabled={!poNumRequiredByAtMatch}
+                placeholder={poNumRequiredByAtMatch ? '' : 'ไม่จำเป็น'}
+                title={poNumRequiredByAtMatch ? '' : 'PO number จำเป็นเฉพาะ AT-Match = ADJ3A เท่านั้น'}
+                style={{ width: '100%', boxSizing: 'border-box', height: '34px', fontSize: '13px', padding: '0 10px', borderRadius: '8px', outline: 'none', ...(poNumRequiredByAtMatch ? { border: '1px solid #fde68a', background: '#fffbeb', color: '#1a3a5c' } : { border: '1px solid #e5e7eb', background: '#f3f4f6', color: '#aaa', cursor: 'not-allowed' }) }}
+              />
+            </div>
+          </div>
+
+          {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_DEFAULTS_V5_ALLEDITABLE_BLUE_V1 -- แก้ตามที่แจ้งล่าสุด: ทั้ง 4 ช่อง (Ofin Code + CPC + Account + Sub Acc) ต้องแก้ได้หมด (CPC/Account/Sub Acc มีค่า Default จาก SM-Code ที่ Match แต่ Override เองได้) และทั้ง 4 ช่องเป็นสีฟ้าเหมือนกันหมด (Ofin Code เปลี่ยนจากเหลือง -> ฟ้า ให้เข้าชุดเดียวกัน) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: '0.5px solid #e8eaf0', borderRadius: '6px', overflow: 'hidden', marginTop: '10px' }}>
+            {[
+              {
+                key: 'debit', label: 'Debit', headerBg: '#eef2f6', headerColor: '#3d5872',
+                ofin: adiRow1DebitOfin, setOfin: setAdiRow1DebitOfin,
+                cpc: adiRow1DebitCpc, setCpc: setAdiRow1DebitCpc,
+                account: adiRow1DebitAccount, setAccount: setAdiRow1DebitAccount,
+                subAcc: adiRow1DebitSubAcc, setSubAcc: setAdiRow1DebitSubAcc,
+              },
+              {
+                key: 'credit', label: 'Credit', headerBg: '#f5eee7', headerColor: '#7a5a3d',
+                ofin: adiRow1CreditOfin, setOfin: setAdiRow1CreditOfin,
+                cpc: adiRow1CreditCpc, setCpc: setAdiRow1CreditCpc,
+                account: adiRow1CreditAccount, setAccount: setAdiRow1CreditAccount,
+                subAcc: adiRow1CreditSubAcc, setSubAcc: setAdiRow1CreditSubAcc,
+              },
+            ].map((side, si) => {
+              const blueInputStyle = { width: '100%', boxSizing: 'border-box', height: '26px', fontSize: '11.5px', padding: '0 6px', border: '1px solid #b8d4ec', background: '#E6F1FB', borderRadius: '4px', outline: 'none', color: '#0C447C' };
+              return (
+              <div key={side.key} style={{ borderRight: si === 0 ? '0.5px solid #e8eaf0' : 'none' }}>
+                <div style={{ padding: '4px 10px', fontSize: '10.5px', color: side.headerColor, background: side.headerBg, fontWeight: '600', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0' }}>{side.label}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+                  {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_OFINCODE_BRANCHSEARCH_V1 -- ลดความกว้าง Ofin Code ลง เพิ่ม Icon ค้นหา (แว่นขยาย) ต่อท้าย เหมือน Pattern ของช่อง Code ด้านบน (Input+ปุ่มติดกัน) กดแล้วเปิด VatBranchSearchModal เลือก Branch Code มาใส่ Ofin Code ได้เลย ไม่ต้องจำ/พิมพ์เอง */}
+                  <div style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', gap: '0' }}>
+                    <input
+                      value={side.ofin}
+                      onChange={(e) => side.setOfin(e.target.value)}
+                      onBlur={(e) => side.setOfin(normalizeOfinCode(e.target.value))}
+                      placeholder="Ofin Code"
+                      style={{ ...blueInputStyle, textAlign: 'center', borderRadius: '4px 0 0 4px', borderRight: 'none' }} // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_OFIN_CENTER_ALIGN_V1 -- จัดกึ่งกลางให้เข้าชุดกับ CPC/Account/Sub Acc
+                    />
+                    <button
+                      type="button"
+                      title="ค้นหา Branch Code"
+                      onClick={() => setShowBranchSearchFor(side.key)} // MARKER_VATCONTROLLER_BRANCHSEARCH_BUHINT_FILTER_V1 -- แก้กลับ: เดิม Disable ตอน Ofin Code ว่าง แต่นั่นดันเป็นจังหวะที่ต้องกด Search มากที่สุด (เพื่อไปหา Ofin Code มาใส่) เลยเปิดให้กดได้เสมอเหมือนเดิม -- Filter BU ยังทำงานอยู่ (ถ้ามีเลขอยู่ก่อนแล้วจะ Filter ให้ ถ้าว่างก็โชว์ทั้งหมด)
+                      tabIndex={-1}
+                      style={{ width: '22px', flexShrink: 0, boxSizing: 'border-box', height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #b8d4ec', borderLeft: '0.5px solid #b8d4ec', borderRadius: '0 4px 4px 0', background: '#dcebf9', cursor: 'pointer', padding: 0 }}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#0C447C" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    </button>
+                  </div>
+                  {[
+                    { lbl: 'CPC', val: side.cpc, setVal: side.setCpc },
+                    { lbl: 'Account', val: side.account, setVal: side.setAccount },
+                    { lbl: 'Sub Acc', val: side.subAcc, setVal: side.setSubAcc },
+                  ].map((c, ci) => (
+                    <div key={c.lbl} style={{ padding: '4px 6px', borderRight: ci < 2 ? '0.5px solid #e8eaf0' : 'none', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        value={c.val}
+                        onChange={(e) => c.setVal(e.target.value)}
+                        placeholder={c.lbl}
+                        style={{ ...blueInputStyle, textAlign: 'center' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              );
+            })}
+          </div>
+          </div>
+          <div style={{ position: 'relative', padding: '16px', border: '1.5px solid transparent', borderRadius: '10px', marginTop: '28px' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_BUTTONAREA_ADD_CLEAR_V1 -- ปุ่ม + Add / Clear ตาม Mockup ที่ Confirm: ย้ายลงมาด้านล่างนอกกรอบ "Operation Input" (ไม่มีขอบ) -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_ADDCLEAR_ALIGN_OFINCPC_V1 -- ครอบด้วย padding/border(transparent) เท่ากรอบ Operation Input + แบ่ง Grid ให้ Add=กว้างเท่า Ofin Code, Clear=กว้างเท่า CPC และเริ่มตำแหน่งซ้ายตรงกัน */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+                <div style={{ padding: '4px 6px 4px 0' }}>
+            <button
+              type="button"
+              disabled={adiRow1Adding}
+              onClick={async () => {
+                // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_INSERT_V1 -- ตามที่แจ้ง: กด "+ Add" ต้อง Insert เข้า DB จริงทันที (status='pre-draft') พร้อม draft_id ร่วมกันระหว่าง Simple/ADI ถ้าเป็นข้อมูลชุดเดียวกัน -- ยังไม่รัน GRN ที่จุดนี้ (รอ Confirm)
+                // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_BU_FRESH_RESOLVE_V1 -- Bug Fix: ห้ามใช้ smDraftBuFilter (State ของ Dropdown ที่อาจค้างจากรอบก่อนหน้า) มาเป็น bu ตอน Insert -- ต้อง Resolve ใหม่จาก Code/Branch ที่กรอกอยู่ตอนนี้จริงๆ (สูตรเดียวกับ Effect AUTOBU_LIVE) กันเคส Insert ผิด BU (เช่น ควรเป็น CFW แต่ดันเป็น REV ค้างจากรอบก่อน)
+                const resolvedInsertBu = String(matchedSm?.['BU'] || debitBranchMatch?.['bu'] || creditBranchMatch?.['bu'] || '').trim();
+                if (!adiRow1Code?.trim()) { alert('กรุณากรอก Code ก่อนกด Add'); return; }
+                if (!resolvedInsertBu) { alert('ไม่พบ BU จาก Code/Branch ที่กรอก กรุณาตรวจสอบ Code อีกครั้งก่อนกด Add'); return; }
+                if (!computedSimpleRow && (!computedAdiPreviewRows || computedAdiPreviewRows.length === 0)) { alert('ไม่พบข้อมูลที่จะ Add (เช็ค Code/ข้อมูลที่กรอกอีกครั้ง)'); return; }
+                setAdiRow1Adding(true);
+                try {
+                  const draftId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_INSERT_V1 -- Draft ID เดียวกันทั้ง Simple+ADI ของการ Add รอบนี้ (Cascade ลบ/Confirm พร้อมกันได้) -- Format เดียวกับ generateQuickActionDraftId ของ Full Page แต่ Component นี้คนละ Scope กัน เลย Inline สูตรเดียวกันแทน (ไม่แตะ Full Page)
+                  const nowIso = new Date().toISOString();
+                  const smUsername = smUserName || smCurrentUser?.email || 'unknown';
+                  if (computedSimpleRow) {
+                    await apiFetch('/vat_simpleinputdraft', {
+                      method: 'POST',
+                      body: JSON.stringify({ ...computedSimpleRow, bu: resolvedInsertBu, draft_id: draftId, status: 'pre-draft', menu_source: 'sm-vat', username: smUsername, created_at: nowIso }),
+                    });
+                  }
+                  if (computedAdiPreviewRows && computedAdiPreviewRows.length > 0) {
+                    for (const r of computedAdiPreviewRows) {
+                      await apiFetch('/vat_adi_transferdraft', {
+                        method: 'POST',
+                        body: JSON.stringify({ ...r, bu: resolvedInsertBu, draft_id: draftId, status: 'pre-draft', menu_source: 'sm-vat', username: smUsername, created_at: nowIso }),
+                      });
+                    }
+                  }
+                  await Promise.all([refetchSmDraftSimpleRows(), refetchSmDraftAdiRows()]); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_INSERT_V1 -- Refresh ข้อมูลจริงจาก DB ไว้ก่อน
+                  // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_AUTOBU_ON_ADD_V1 -- ตามที่แจ้ง: แยกเป็น 2 Trigger อิสระกัน -- (1) กด "+ Add" สำเร็จ -> Auto-Select BU ให้ตรงกับ BU ที่ Insert ไปจริง (2) ผู้ใช้เลือกเองจาก Dropdown -> Manual ตามปกติ (onChange ของ <select> ด้านล่าง ไม่ถูกแตะ) -- ปลอดภัยกว่ารอบก่อนที่ตัด Auto-Set ออกไปทั้งหมด เพราะตอนนี้ resolvedInsertBu Resolve สดจาก Code/Branch เสมอ (บั๊ก Insert ผิด BU ที่เจอก่อนหน้าเกิดจากตัว Insert ไปใช้ smDraftBuFilter ค้าง ไม่ใช่จากการ Sync Dropdown หลัง Insert สำเร็จ)
+                  setSmDraftBuFilter(resolvedInsertBu);
+                } catch (err) {
+                  console.error('Simple Input Ops +Add save error:', err);
+                  await confirmDialog.alert('บันทึกไม่สำเร็จ กรุณาลองใหม่: ' + (err?.message || ''), { title: 'เกิดข้อผิดพลาด', variant: 'danger' });
+                  setAdiRow1Adding(false);
+                  return; // อย่าเพิ่ง Reset ฟอร์มถ้า Insert ไม่สำเร็จ กันข้อมูลที่กรอกไว้หาย
+                }
+                setAdiRow1Adding(false);
+                // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_ADD_RESET_FOCUS_CODE_V1 -- ตามที่แจ้ง: กด Add แล้ว Reset ฟอร์มกลับไปเป็นค่าว่าง (กลับไปโชว์ตาราง Preview เพราะ isAdiPreviewMode จะเป็น false ทันทีที่ Code ว่าง) แต่ไม่ Reset BU (Zone A-2) เพราะมักจะ Add ต่อ BU เดิม แล้ว Focus Cursor กลับไปที่ช่อง Code ให้พิมพ์ต่อได้เลย
+                setAdiRow1Code('');
+                setAdiRow1TivDate('');
+                if (adiRow1TivDateTextRef.current) adiRow1TivDateTextRef.current.value = '';
+                setAdiRow1TivNumber('');
+                setAdiRow1Amount('');
+                setAdiRow1AmountType('GRO+VT');
+                setAdiRow1PoNum('');
+                setAdiRow1DebitOfin('');
+                setAdiRow1DebitCpc('');
+                setAdiRow1DebitAccount('');
+                setAdiRow1DebitSubAcc('');
+                setAdiRow1CreditOfin('');
+                setAdiRow1CreditCpc('');
+                setAdiRow1CreditAccount('');
+                setAdiRow1CreditSubAcc('');
+                requestAnimationFrame(() => { adiRow1CodeInputRef.current?.focus(); });
+              }}
+              style={{ width: '100%', height: '32px', padding: '0 16px', borderRadius: '8px', border: 'none', background: adiRow1Adding ? '#93a5b8' : '#1a3a5c', color: '#fff', fontSize: '12.5px', fontWeight: '600', cursor: adiRow1Adding ? 'default' : 'pointer' }}
+            >{adiRow1Adding ? 'กำลัง Add...' : '+ Add'}</button>
+                </div>
+                <div style={{ padding: '4px 6px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ZONEA1_BUTTON_CLEAR_V1 -- ล้างค่าทุก Field ใน Zone A-1 กลับไปเป็นค่าเริ่มต้น
+                setAdiRow1Code('');
+                setAdiRow1TivDate('');
+                if (adiRow1TivDateTextRef.current) adiRow1TivDateTextRef.current.value = '';
+                setAdiRow1TivNumber('');
+                setAdiRow1Amount('');
+                setAdiRow1AmountType('GRO+VT');
+                setAdiRow1PoNum('');
+                setAdiRow1DebitOfin('');
+                setAdiRow1DebitCpc('');
+                setAdiRow1DebitAccount('');
+                setAdiRow1DebitSubAcc('');
+                setAdiRow1CreditOfin('');
+                setAdiRow1CreditCpc('');
+                setAdiRow1CreditAccount('');
+                setAdiRow1CreditSubAcc('');
+                // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_CLEAR_KEEP_LASTBU_V1 -- ตามที่แจ้ง: กด Clear แล้วไม่ต้อง Reset BU ที่ Dropdown อีกต่อไป -- ให้คงค่า BU ของ Transaction ล่าสุดไว้ (เพราะมักจะ Add ต่อ BU เดิม) เดิมมี setSmDraftBuFilter('') อยู่ที่นี่ ตัดออกแล้ว
+              }}
+              style={{ width: '100%', height: '32px', padding: '0 16px', borderRadius: '8px', border: '1px solid #d1d5db', background: '#f9fafb', color: '#4b5563', fontSize: '12.5px', fontWeight: '500', cursor: 'pointer' }}
+            >Clear</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style={{ ...vatWatchlistZoneStyle, flex: '20 1 0%', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '20px', background: '#ffffff' }}> {/* MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_V1 -- ตามที่แจ้ง: ใส่ปุ่ม Draft Monitor ตรง Zone A-2 (20%) -- MARKER_VATCONTROLLER_SIMPLEINPUT_ZONEA2_WHITEBG_V1 -- ทำพื้นหลังเป็นสีขาวตามที่แจ้ง */}
+          <div style={{ position: 'relative', width: '250px' }}> {/* MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUTTON_V2_V1 -- ตามที่แจ้ง: เปลี่ยนเป็นปุ่มเดียว (Navy) BU Chip ("BU (COM)") ย้ายมาไว้หน้าสุด + ขยายกว้างขึ้น ไม่มีเลขจำนวน Draft (1|2) แล้ว -- MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUTTON_WIDTHTRIM_V1 -- ตามที่แจ้ง: กว้างพอแล้ว ไม่ต้องสุดขอบ Zone A-2 ลดจาก 300px เหลือ 250px */}
+            <button
+              type="button"
+              onClick={() => setShowSmDraftMonitor(true)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '10px', padding: '9px 14px', fontSize: '13.5px', borderRadius: '22px', border: 'none', background: '#1a3a5c', color: '#fff', cursor: 'pointer', fontWeight: '500' }}
+            >
+              <span style={{ background: '#2e5a86', borderRadius: '12px', padding: '4px 12px', fontSize: '12.5px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px', minWidth: '90px', justifyContent: 'center' }}>
+                {smDraftBuFilter ? `${smDraftBuFilter}${(smDraftBuOptions.find((o) => o.buKey === smDraftBuFilter)?.com) ? ` (${smDraftBuOptions.find((o) => o.buKey === smDraftBuFilter).com})` : ''}` : 'เลือก BU'}
+                <span style={{ opacity: 0.8, fontSize: '9px' }}>▾</span>
+              </span>
+              <span style={{ flex: 1 }}>Draft Monitor</span>
+            </button>
+            <select
+              value={smDraftBuFilter}
+              onChange={(e) => setSmDraftBuFilter(e.target.value)}
+              style={{ position: 'absolute', left: '8px', top: 0, bottom: 0, width: '110px', opacity: 0, cursor: 'pointer', border: 'none' }}
+            >
+              {/* MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BU_SELECT_PLACEHOLDER_FIX_V1 -- Bug Fix: เดิม Option value="" โผล่เฉพาะตอน List ว่าง -- พอมี BU จริง (เช่น REV) Browser จะถือว่า Option เดียวที่มีถูกเลือกอยู่แล้ว (เพราะไม่มี Option ไหน Match value="" ของ State) กด Option เดิมซ้ำเลย onChange ไม่ Fire (ไม่มีการเปลี่ยนค่าในมุมมอง Browser) ปุ่มเลย "เลือก BU" ค้าง -- ต้องมี Option value="" ติดอยู่เสมอไม่ว่า List จะว่างหรือไม่ */}
+              <option value="">เลือก BU</option>
+              {smDraftBuOptions.map(({ buKey, com }) => (
+                <option key={buKey} value={buKey}>{buKey}{com ? ` (${com})` : ''}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Zone B -- 70% ล่าง -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_PREVIEW_TRIGGER_V1 Auto Preview/Collect ไม่มี Toggle ให้กด ตัดสินเองจาก adiRow1Code */}
+      <div style={{ flex: '70 1 0%', display: 'flex', flexDirection: 'column', border: '0.5px solid #e8e8e8', borderRadius: '10px', overflow: 'hidden' }}>
+        {isAdiPreviewMode ? (() => {
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_LAYOUT6040_V1 -- Layout 60:40 (ซ้าย=Operation/Vendor Info, ขวา=Business Detail/Journal Preview) ตีกรอบ + พื้นหลังขาว -- ยัง Confirm แค่ Layout ไม่มี Logic การคำนวณจริง (รอ Confirm เพิ่ม)
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_OPERATION_STYLE_B_V1 -- "Option B" ตาม Mockup: ตัวใหญ่ขึ้น + Label อยู่บน/Value อยู่ล่าง (เดิม Key-ซ้าย/Value-ขวา ตัวเล็ก)
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_OPERATION_WARMNEUTRAL_V1 -- Font/Color 3 "Warm Neutral" ที่เลือก -- ใช้เฉพาะ Panel Operation เท่านั้น (Business Detail ยังใช้ panelHeaderStyle/panelHeaderTextStyle เดิม)
+          const kStyle = { fontSize: '11px', color: '#b3a998' };
+          const vStyle = (hasVal) => ({ fontSize: '14.5px', fontWeight: '500', color: hasVal ? '#4a3a24' : '#ddd', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+          const cellStyle = { display: 'flex', flexDirection: 'column', gap: '3px', padding: '10px 14px', borderRight: '0.5px solid #f0f0f0' };
+          const rowStyle = { display: 'grid', borderBottom: '0.5px solid #f0f0f0' };
+          const panelHeaderStyle = { background: '#f8f9fa', borderBottom: '0.5px solid #f0f0f0', padding: '4px 8px' };
+          const panelHeaderTextStyle = { fontSize: '10px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' };
+          const operationHeaderStyle = { background: '#faf6ef', borderBottom: '0.5px solid #f0f0f0', padding: '4px 8px' };
+          const operationHeaderTextStyle = { fontSize: '10px', fontWeight: '600', color: '#a8875a', textTransform: 'uppercase', letterSpacing: '0.05em' };
+          const opBadgeStyle = { fontSize: '10.5px', padding: '3px 10px', borderRadius: '20px', background: '#eef2f7', color: '#6b7280', display: 'flex', alignItems: 'center', gap: '5px' };
+          const opSubValStyle = { fontSize: '11px', padding: '2px 12px', border: '0.5px solid #e5e7eb', borderRadius: '6px', background: '#fafafa', color: '#9ca3af', display: 'inline-block' };
+          // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_MAINBADGE_STATUS_V1 -- Standby=เทาเดิม / Transfer,Normal-IB(และ Asset-IB, Average-IB ในอนาคต)=เขียว
+          const mainBadgeIsActive = (status) => status !== 'Standby';
+          const mainBadgeStyle = (status) => mainBadgeIsActive(status) ? { ...opBadgeStyle, background: '#eaf3e8', color: '#2e7d32' } : opBadgeStyle;
+          const mainBadgeDot = (status) => mainBadgeIsActive(status) ? '#2e7d32' : '#9ca3af';
+          return (
+            <div style={{ display: 'flex', gap: '12px', padding: '16px', flex: 1, overflow: 'auto', background: '#ffffff' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_NOSTRETCH_V1_REVERTED -- Revert กลับไปยืดเต็ม Zone เหมือนเดิม ตามที่ยืนยัน (ไม่ได้ขอให้แก้ความสูงตรงนี้) */}
+              {/* ฝั่งซ้าย 60% -- Operation (= Vendor Info) */}
+              <div style={{ flex: '60 1 0%', display: 'flex', flexDirection: 'column', border: '0.5px solid #e5e7eb', borderRadius: '8px', padding: '10px', background: '#ffffff' }}>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_OPERATION_ABC_STRETCH_V1 -- ต้องเป็น flex column ตัวนี้ Zone A/B/C ด้านล่างถึงจะขยายเต็มความสูงที่เหลือได้ (ไม่งั้น flex:1 ของ abc-wrap ไม่มีผล) */}
+                  <div style={operationHeaderStyle}><span style={operationHeaderTextStyle}>Operation</span></div>
+                  {!matchedSm ? (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ไม่พบ SM-Code "{adiRow1Code}" ใน Simple Code List</div>
+                  ) : (
+                    <>
+                      <div style={{ ...rowStyle, gridTemplateColumns: '2fr 1fr 1fr 1fr' }}>
+                        <div style={cellStyle}><span style={kStyle}>Vendor Name</span><span style={vStyle(!!matchedSm['Company Name'])}>{matchedSm['Company Name'] || '—'}</span></div>
+                        <div style={cellStyle}><span style={kStyle}>Tax ID</span><span style={{ ...vStyle(!!matchedSm['Tax ID']), fontFamily: 'monospace' }}>{matchedSm['Tax ID'] || '—'}</span></div>
+                        <div style={{ ...cellStyle, borderRight: 'none' }}><span style={kStyle}>Branch No.</span><span style={vStyle(!!matchedSm['Branch'])}>{matchedSm['Branch'] || '—'}</span></div>
+                        <div style={{ ...cellStyle, borderRight: 'none' }}><span style={kStyle}>AT-Match</span><span style={vStyle(!!matchedSm['Short Name'])}>{matchedSm['Short Name'] || '—'}</span></div>
+                      </div>
+                      {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_FIRSTMIDLASTPART_V4 -- Style เดียวกับแถว Vendor Info ด้านบนเป๊ะๆ (Key ซ้ายเทา/Value ขวา) เพราะเป็น Vendor Info กลุ่มเดียวกัน ไม่ใช่คนละหมวด */}
+                      <div style={{ ...rowStyle, gridTemplateColumns: '1fr 1fr 1fr 2fr 1fr', borderBottom: 'none' }}>
+                        <div style={cellStyle}><span style={kStyle}>First Part</span><span style={vStyle(!!matchedSm['First Part'])}>{matchedSm['First Part'] || '—'}</span></div>
+                        <div style={cellStyle}><span style={kStyle}>Mid Part</span><span style={vStyle(!!matchedSm['Mid Part'])}>{matchedSm['Mid Part'] || '—'}</span></div>
+                        <div style={cellStyle}><span style={kStyle}>Last Part</span><span style={vStyle(!!matchedSm['Last Part'])}>{matchedSm['Last Part'] || '—'}</span></div>
+                        <div style={cellStyle}><span style={kStyle}>Expense Type</span><span style={vStyle(!!matchedSm['Expense Type'])}>{matchedSm['Expense Type'] || '—'}</span></div>
+                        <div style={{ ...cellStyle, borderRight: 'none' }}><span style={kStyle}>Simple Rule</span><span style={vStyle(!!matchedSm['Simple Rule3'])}>{matchedSm['Simple Rule3'] || '—'}</span></div>
+                      </div>
+                      {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_OPERATION_ABC_MOCKUP_V1 -- ตาม Mockup ที่ Confirm: กรอบนอกเส้นเดียว ไม่มีเส้นแบ่งด้านใน แถวบน=Zone A (Tax Invoice Detail เต็มความกว้าง 2 บรรทัด), แถวล่าง=Zone B:Zone C สัดส่วน 70:30 -- ยังเป็น Static Placeholder รอ Confirm เนื้อหา Zone B/Zone C */}
+                      {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_ABC_MINHEIGHT0_FIX_V1 -- minHeight:0 ทั้ง Chain (ตัวนี้ + bc-row ด้านล่าง) ไม่งั้น Flex Item จะยึด Content เป็น Min-Height เสมอ ทำให้ Result 4 โดน Ancestor ที่ overflow:hidden ตัดขาดหายไปเงียบๆ แทนที่จะ Scroll */}
+                      <div style={{ margin: '0 14px 14px 14px', border: '0.5px solid #e8eaf0', borderRadius: '8px', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_FLUSHTOP_V1 -- ตัด Margin บนออก ให้ Zone A ชิดกับแถว First/Mid/Last Part ด้านบนพอดี */}
+                        <div style={{ padding: '20px 16px' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_ZONEA_TALLER_V1 -- เพิ่ม Padding บน/ล่างให้ Zone A สูงขึ้น */}
+                          <div style={{ display: 'flex', marginTop: '0px', marginBottom: '10px' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_5FIELD_EVENWIDTH_V1 -- แบ่ง 5 Field ให้กว้างเท่ากันเต็มความกว้าง (flex:1 แทน gap คงที่ที่ทำให้กระจุกซ้าย) -- ลด marginBottom ลงอีก (MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TABLE_MOVEUP_V1) เพื่อดันตารางขึ้น */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1.4 }}><span style={kStyle}>Tax Invoice</span><span style={vStyle(!!computedTaxInvoice)}>{computedTaxInvoice || '—'}</span></div> {/* MARKER_VATCONTROLLER_SIMPLEINPUT_ADIZONEB_TAXINVOICE_WIDER_V2 -- ตามที่แจ้ง: ขยับกรอบไปทางขวานิดเดียว ให้ Tax Invoice กว้างขึ้น (ไม่มี Logic ใหม่ ปรับแค่ Width) */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 0.9 }}><span style={kStyle}>Tax Invoice Date</span><span style={vStyle(!!adiRow1TivDate)}>{adiRow1TivDate ? formatDateDDMMMYY(adiRow1TivDate) : '—'}</span></div> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TAXINVOICEDATE_SYNC_V1 -- ตามที่แจ้ง: ดึงค่าจาก Tax invoice Date ที่กรอกด้านบน (adiRow1TivDate) มาโชว์ตรงนี้ Format DD-MMM-YY (ใช้ formatDateDDMMMYY ตัวเดียวกับที่ใช้ทั่วทั้งไฟล์) */}
+                            {/* MARKER_VATCONTROLLER_SIMPLEINPUT_ADIBADGE_PERIOD_CATEGORY_SOURCE_V1 -- Period=เดือน-ปีปัจจุบัน Format "Mon-YY", Category/Source=Static ตามที่ยืนยัน */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 0.9 }}><span style={kStyle}>Period</span><span style={vStyle(true)}>{(() => { const _n = new Date(); const _ma = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${_ma[_n.getMonth()]}-${String(_n.getFullYear()).slice(-2)}`; })()}</span></div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 0.9 }}><span style={kStyle}>Category</span><span style={vStyle(true)}>com-IB-ALL</span></div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 0.9 }}><span style={kStyle}>Source</span><span style={vStyle(true)}>Excel-APN</span></div>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}><span style={kStyle}>Description Item</span><span style={vStyle(!!computedDescriptionItem)}>{computedDescriptionItem || '—'}</span></div>
+                        </div>
+                        <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+                          {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_RESULTS1TO4_V1 -- ตามภาพอ้างอิงที่ Confirm: 4 Block เรียงแนวตั้ง Results 1-4 — Segment All (แถวหัว 4 คอลัมน์ + แถวข้อมูล 1 แถว) ใช้ Theme Warm Neutral เดิม ไม่ได้เอา Style จากภาพต้นฉบับ -- ยังเป็น Static Placeholder */}
+                          {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_NOZONEC_V1 -- ตัด Zone C (30%) ออก ขยาย Zone B เต็มความกว้างแทน */}
+                          <div style={{ flex: 1, padding: '2px 16px 10px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: '10px', overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_NOHSCROLL_FIX_V1 -- overflow แยก X/Y แทน overflow:'auto' รวม กัน Scrollbar แนวนอนที่ไม่จำเป็นขึ้นมาซ้อนกับแนวตั้ง -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TABLE_MOVEUP_V1 -- ลด Padding บนจาก 8px เหลือ 2px ดันตารางขึ้นให้ชิดขึ้นอีก -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TABLE_MOVEDOWN_V1 -- justifyContent:flex-end ดันตาราง (Header+Rows) ลงไปชิดขอบล่างแทนที่จะลอยชิดบน */}
+                            {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_RESULTS_FIT_NOSCROLL_V1 -- ลด Padding/Gap ลงให้ทั้ง 4 Row พอดีพื้นที่ที่เหลือ ไม่ต้อง Scroll */}
+                            {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_HASHCOL_V1 -- เพิ่มคอลัมน์ "#" ซ้ายสุด แสดงเลขแถว 1-4 ธรรมดา (ไม่มีคำว่า Results ในช่องข้อมูลแล้ว) หัวคอลัมน์ที่เหลือเปลี่ยนเป็น "RESULTS - SEGMENT ALL" */}
+                            <div style={{ boxSizing: 'border-box', border: '0.5px solid #eceff3', borderRadius: '8px', overflow: 'hidden', width: '100%', minHeight: 0, flexShrink: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_DESIGND_MINHEIGHT0_FIX_V1 -- minHeight:0 กันปัญหา Row 4 โดนตัดขาดหายไปเงียบๆ เหมือนที่เจอรอบก่อน */}
+                              {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_RESULTS_EDITABLE_V1 -- ตั้งสี Placeholder "—" ให้เป็น #ddd เท่าของเดิม (Inline Style ตั้งสี ::placeholder เองไม่ได้ ต้องใช้ <style> Scoped เหมือน Pattern .vat-docno-row ที่มีอยู่แล้วในไฟล์นี้) */}
+                              <style>{`.vat-adi-results-input::placeholder { color: #ddd; opacity: 1; }`}</style>
+
+                              {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TOTALROW_OPTIONC_V1 -- Total Row (Gross/Vat/Amount) แบบ Inline ชิดขวา ตาม Option C ที่เลือก -- ยังเป็น Static Placeholder */}
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '22px', padding: '6px 12px', background: '#fbf9f5', borderBottom: '0.5px solid #f0f0f0' }}>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}><span style={operationHeaderTextStyle}>Gross</span><span style={{ fontSize: '13px', fontWeight: '700', color: totalRowCalc ? '#4a3a24' : '#ddd' }}>{totalRowCalc ? totalRowCalc.gross : '—'}</span></div>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}><span style={operationHeaderTextStyle}>Vat</span><span style={{ fontSize: '13px', fontWeight: '700', color: totalRowCalc ? '#4a3a24' : '#ddd' }}>{totalRowCalc ? totalRowCalc.vat : '—'}</span></div>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}><span style={operationHeaderTextStyle}>Amount</span><span style={{ fontSize: '13px', fontWeight: '700', color: totalRowCalc ? '#4a3a24' : '#ddd' }}>{totalRowCalc ? totalRowCalc.total : '—'}</span></div>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '50px 4fr 1fr 0.6fr 0.6fr', background: '#faf6ef', borderBottom: '0.5px solid #f0f0f0' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TABLE_MOVEUP_V1 -- ลด Padding หัวตาราง 6px -> 5px -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SEGMENTALL_WIDTH_REBALANCE_V1 -- ลดความกว้าง Side/Rate เอาไปให้ Segment All แทน */}
+                                <div style={{ ...operationHeaderTextStyle, padding: '5px 12px', borderRight: '0.5px solid #f0f0f0' }}>#</div>
+                                <div style={{ ...operationHeaderTextStyle, padding: '5px 12px', borderRight: '0.5px solid #f0f0f0' }}>Results - Segment All (ADI)</div> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_HEADER_ADI_SUFFIX_V1 -- เพิ่ม "(ADI)" ต่อท้ายตามที่แจ้ง */}
+                                <div style={{ ...operationHeaderTextStyle, padding: '5px 12px', borderRight: '0.5px solid #f0f0f0' }}>Line Value</div>
+                                <div style={{ ...operationHeaderTextStyle, padding: '5px 12px', borderRight: '0.5px solid #f0f0f0', textAlign: 'center' }}>Side</div>
+                                <div style={{ ...operationHeaderTextStyle, padding: '5px 12px', textAlign: 'center' }}>Rate</div>
+                              </div>
+                              {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_DESIGN_D_CARDROWS_V1 -- Design D ที่เลือก: แต่ละแถวเป็น Card มุมโค้งของตัวเอง เว้นช่องไฟ (ไม่ใช่ Grid ตารางมีเส้นเต็ม) + เลขแถวเป็นกล่องเหลี่ยมมุมโค้งเล็ก */}
+                              <div style={{ padding: '4px', display: 'flex', flexDirection: 'column', gap: '3px' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TABLE_MOVEUP_V1 -- ลด Padding/Gap รอบ Card อีกรอบ -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_TOTALROW_OPTIONC_V1 -- ลด gap อีกนิดชดเชยความสูงที่เพิ่มจาก Total Row */}
+                                {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_RESULTS_EDITABLE_V1 -- เดิม 4 ช่องเป็น <div>— Static เฉยๆ แก้ไม่ได้ -- เปลี่ยนเป็น <input> ที่ไม่มีขอบ/พื้นหลัง (ยืม Style เดิมจาก vStyle() มาทั้งชุด) หน้าตาเหมือนเดิมทุกอย่าง แค่คลิกแล้วพิมพ์แก้ได้ */}
+                                {[1, 2, 3, 4].map((n) => {
+                                  const autoRow = adiSegmentAutoRows ? adiSegmentAutoRows[n - 1] : null; // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SEGMENTALL_AUTOFILL_V1 -- แถว 1-2 มาจาก Auto-Fill ตอน Interbranch Trigger (แก้ไขเองทับได้ทุกช่อง ไม่ Read-Only แล้ว)
+                                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SEGMENTALL_ALLFIELDS_EDITABLE_V1 -- ทุกช่อง (Segment All/Line Value/Side/Rate) แก้ไขเองได้เสมอ แม้แถวจะเป็น Auto-Fill ก็ตาม (ใช้ค่าที่กรอกเอง Override ถ้ามี ไม่งั้น Fallback ไปใช้ค่า Auto)
+                                  const manualRow = adiResultsRows[n - 1] || {};
+                                  const row = autoRow ? {
+                                    segmentAll: manualRow.segmentAll || autoRow.segmentAll,
+                                    lineValue: manualRow.lineValue || autoRow.lineValue,
+                                    side: manualRow.side || autoRow.side,
+                                    rate: manualRow.rate || autoRow.rate,
+                                  } : manualRow;
+                                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SIDE_COLOR_V1 -- Dr = สีน้ำเงิน Navy, Cr = สีแดงเลือดหมู (Maroon) -- ทั้งบรรทัด (ทุกคอลัมน์) ตามที่แจ้ง ไม่ใช่แค่ช่อง Side
+                                  const sideColor = (val) => { const v = String(val || '').trim().toUpperCase(); return v === 'DR' ? '#1a3a5c' : (v === 'CR' ? '#7a1020' : undefined); };
+                                  const rowSideColor = sideColor(row.side);
+                                  const cellInputStyle = (key) => ({ ...vStyle(!!row[key]), border: 'none', outline: 'none', background: 'transparent', width: '100%', padding: 0, margin: 0, fontFamily: 'inherit', ...(key === 'lineValue' ? { textAlign: 'right' } : {}), ...((key === 'side' || key === 'rate') ? { textAlign: 'center' } : {}), ...(rowSideColor ? { color: rowSideColor, fontWeight: '700' } : {}) }); // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SEGMENTALL_WIDTH_REBALANCE_V1 -- ขยายความกว้างคอลัมน์ Segment All แทนแล้ว เลยคืน Font กลับเป็นขนาดปกติเท่าคอลัมน์อื่น -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SIDE_RATE_CENTER_V1 -- จัดกึ่งกลาง Side/Rate ตามที่แจ้ง -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_LINEVALUE_RIGHT_V1 -- จัดชิดขวา Line Value ตามที่แจ้ง
+                                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_COLALIGN_FIX_V1 -- แก้ Column ของแถวข้อมูลให้ตรงกับหัวตารางเป๊ะ (เดิม Grid Template + Padding ไม่ตรงกับหัว ทำให้เส้นแบ่ง/ตำแหน่งเพี้ยน) -- ใช้ Grid Template เดียวกับหัว (50px 4fr 1fr 0.6fr 0.6fr) และให้แต่ละ Cell มี Padding + borderRight แบบเดียวกับหัวตารางทุกประการ
+                                  const cellWrapStyle = (withBorder) => ({ padding: '5px 12px', display: 'flex', alignItems: 'center', ...(withBorder ? { borderRight: '0.5px solid #f0f0f0' } : {}) });
+                                  return (
+                                  <div key={n} style={{ display: 'grid', gridTemplateColumns: '50px 4fr 1fr 0.6fr 0.6fr', alignItems: 'stretch', background: '#fbf9f5', borderRadius: '8px' }}>
+                                    <div style={cellWrapStyle(false)}><span style={{ width: '24px', height: '24px', borderRadius: '6px', background: '#faf6ef', color: '#a8875a', fontSize: '11px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span></div>
+                                    <div style={cellWrapStyle(true)}><input className="vat-adi-results-input" value={row.segmentAll} onChange={(e) => updateAdiResultsCell(n - 1, 'segmentAll', e.target.value)} placeholder="—" style={cellInputStyle('segmentAll')} /></div>
+                                    <div style={cellWrapStyle(true)}><input className="vat-adi-results-input" value={row.lineValue} onChange={(e) => updateAdiResultsCell(n - 1, 'lineValue', e.target.value)} placeholder="—" style={cellInputStyle('lineValue')} /></div>
+                                    <div style={{ ...cellWrapStyle(true), justifyContent: 'center' }}><input className="vat-adi-results-input" value={row.side} onChange={(e) => updateAdiResultsCell(n - 1, 'side', e.target.value)} placeholder="—" style={cellInputStyle('side')} /></div>
+                                    <div style={{ ...cellWrapStyle(false), justifyContent: 'center' }}><input className="vat-adi-results-input" value={row.rate} onChange={(e) => updateAdiResultsCell(n - 1, 'rate', e.target.value)} placeholder="—" style={cellInputStyle('rate')} /></div>
+                                  </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+              {/* ฝั่งขวา 40% -- Business Detail (Journal Preview -- ยังไม่มี Logic คำนวณจริง) */}
+              {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUSINESSDETAIL_BUINFO_REVERT_V1 -- เอาบล็อก BU Info (BU Company Simple/Tax ID BU/BU Branch/Com%/Spec%/BU/Group-P/OFIN SIMPLE NAME/Branch Code/Status) ที่เพิ่งเพิ่มออกทั้งหมดตามที่แจ้ง -- คืนกลับ Panel Business Detail ให้เหมือนก่อนหน้า (มีแค่ Header + Simple Input/ADI Journal) */}
+              <div style={{ flex: '40 1 0%', display: 'flex', flexDirection: 'column', border: '0.5px solid #e5e7eb', borderRadius: '8px', padding: '10px', background: '#ffffff' }}>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
+                  <div style={{ ...operationHeaderStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_OPERATION_WARMNEUTRAL_V2 -- ใส่ Warm Neutral ให้ Header Business Detail เหมือน Operation ด้วย -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUINFO_STATUS_TO_HEADER_V1 -- ตามที่แจ้ง: ย้าย Status Badge (Active/Closed) มาไว้บรรทัดเดียวกับหัวข้อ "Business Detail" */}
+                    <span style={operationHeaderTextStyle}>Business Detail</span>
+                    {(() => {
+                      const branchStatus = buInfoBranchMatch ? (buInfoBranchMatch.status || '') : '';
+                      return (
+                        <div style={{ background: branchStatus.toLowerCase() === 'closed' ? '#fce8e8' : '#eaf3e8', borderRadius: '20px', padding: '4px 12px', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: branchStatus.toLowerCase() === 'closed' ? '#e5484d' : '#2e7d32', display: 'inline-block' }} />
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: branchStatus.toLowerCase() === 'closed' ? '#e5484d' : '#2e7d32' }}>{branchStatus || '—'}</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUSINESSDETAIL_BOTTOM_V1 -- เลื่อน Simple Input/ADI Journal ไปอยู่ส่วนท้ายของ Panel (justifyContent:flex-end) แทนที่จะติดบนสุด */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                    {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUINFO_V1 -- ตามที่แจ้ง: Port "ข้อมูลของ BU" มาจาก Full Page เป๊ะๆ (ดู Branch List Match) -- Branch ที่ใช้: ปกติ Debit, สลับเป็น Credit เมื่อ Amount ติดลบ (ใบลดหนี้) */}
+                    <div style={{ padding: '14px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', marginBottom: '14px', flexShrink: 0 }}>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>Company (Report Display)</div>
+                          <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{buInfoBranchMatch ? (buInfoBranchMatch['Company for Show in Report Display'] || '—') : '—'}</div>
+                        </div>
+                        {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUINFO_ROW1_MOVE_PCT_V1 -- ตามที่แจ้ง: ย้าย %/DB(%) ขึ้นมาแถวบน (คู่กับ Company) แล้วเอา Simple Company มาแทนที่แถวล่าง -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUINFO_STATUS_TO_HEADER_V1 -- Status Badge ย้ายขึ้นไปแถวหัวข้อ "Business Detail" แล้ว เหลือแค่ %/DB(%) ในแถวนี้ จึงชิดขวาสุดโดยอัตโนมัติจาก space-between -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ZONEB_BUINFO_PCT_WIDTH_V1 -- เพิ่มความกว้าง +3px ให้แต่ละช่อง (paddingRight) */}
+                        <div style={{ display: 'flex', gap: '16px', flexShrink: 0 }}>
+                          <div style={{ paddingRight: '3px' }}>
+                            <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>%</div>
+                            <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{buInfoBranchMatch ? (buInfoBranchMatch['%'] || '—') : '—'}</div>
+                          </div>
+                          <div style={{ paddingRight: '3px' }}>
+                            <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>DB (%)</div>
+                            <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{buInfoBranchMatch ? (buInfoBranchMatch['DB(%)'] || '—') : '—'}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ height: '1px', background: '#eef0f2', marginBottom: '14px', flexShrink: 0 }} />
+                      <div style={{ display: 'flex', gap: '16px', marginBottom: '14px', flexShrink: 0, flexWrap: 'wrap' }}>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>BU-Tax ID</div>
+                          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{buInfoBranchMatch ? (buInfoBranchMatch['BU-TaxID'] || '—') : '—'}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>BU-Branch</div>
+                          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{buInfoBranchMatch ? (buInfoBranchMatch['BU-Branch'] || '—') : '—'}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#999', marginBottom: '2px' }}>Simple Company</div>
+                          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{buInfoBranchMatch ? (buInfoBranchMatch['Simple Company'] || '—') : '—'}</div>
+                        </div>
+                      </div>
+                      <div style={{ background: '#f8f9fb', borderRadius: '8px', padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 0 }}>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <div style={{ fontSize: '15px', marginTop: '1px', color: '#7b8794' }}>📍</div>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#999', marginBottom: '4px' }}>Branch Address</div>
+                            <div style={{ fontSize: '13.5px', fontWeight: '500', color: '#1a3a5c', lineHeight: '1.65' }}>{buInfoBranchMatch ? (buInfoBranchMatch['Branch Address'] || '—') : '—'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ borderBottom: '0.5px solid #f0f0f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#1a3a5c', fontWeight: '500' }}>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+                          Simple Input
+                        </div>
+                        <span style={mainBadgeStyle(simpleInputMainStatus)}><span style={{ width: '6px', height: '6px', borderRadius: '50%', background: mainBadgeDot(simpleInputMainStatus) }} /> {simpleInputMainStatus}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-around', padding: '0 14px 12px 38px' }}>
+                        {[
+                          { lbl: 'Create Journal', val: simpleRuleYesNo.createJournal },
+                          { lbl: 'Interbranch', val: simpleRuleYesNo.interbranch },
+                          { lbl: 'Book VAT Only', val: simpleRuleYesNo.bookVatOnly },
+                        ].map(({ lbl, val }) => (
+                          <div key={lbl} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ fontSize: '10.5px', color: '#b08900', whiteSpace: 'nowrap' }}>{lbl}</div>
+                            <div style={{ ...opSubValStyle, ...(val === 'Yes' ? { background: '#eaf3e8', borderColor: '#cfe6cc', color: '#2e7d32' } : val === 'No' ? { background: '#fce8e8', borderColor: '#f5cccc', color: '#e5484d' } : {}) }}>{val ?? 'Null'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#1a3a5c', fontWeight: '500' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7"/><path d="M9 22V12h6v10"/><path d="M4 22h16"/></svg>
+                        ADI Journal
+                      </div>
+                      <span style={mainBadgeStyle(adiJournalMainStatus)}><span style={{ width: '6px', height: '6px', borderRadius: '50%', background: mainBadgeDot(adiJournalMainStatus) }} /> {adiJournalMainStatus}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })() : (
+        <>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', padding: '10px 16px 0', borderBottom: '0.5px solid #e8e8e8', flexShrink: 0 }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_CONFIRM_BUTTON_V1 -- เพิ่มปุ่ม Confirm ตรงขอบขวาของแถบ Tab (Preview) ตามที่แจ้ง -- ยังไม่ผูก Logic Save จริง รอ Confirm เพิ่มเติมด้วยภาพ */}
+          <div style={{ display: 'flex', gap: '4px' }}>
+            {[{ key: 'simple', label: 'Upload Simple' }, { key: 'adi', label: 'Upload ADI' }].map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setOpsTab(t.key)}
+                style={{ padding: '9px 16px', fontSize: '13px', border: 'none', borderBottom: opsTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', background: 'transparent', cursor: 'pointer', color: opsTab === t.key ? '#1a3a5c' : '#888', fontWeight: opsTab === t.key ? '500' : '400' }}
+              >{t.label}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}> {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_ROW_SELECT_DELETE_V1 -- เพิ่มปุ่มลบข้าง Confirm ใช้ได้เมื่อติ๊กเลือกอย่างน้อย 1 แถว */}
+            {/* MARKER_VATCONTROLLER_SIMPLEINPUT_OPSPREVIEW_SELECT_CROSSTAB_DRAFTID_V1 -- นับรวม Local rowKeys + Draft groups */}
+            {(selectedOpsRowKeys.size + selectedOpsDraftIds.size) > 0 && (
+              <button
+                type="button"
+                onClick={handleDeleteSelectedOpsRows}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 14px', fontSize: '13px', border: '0.5px solid #f5b5ac', borderRadius: '8px', background: '#fdecea', color: '#c0392b', cursor: 'pointer' }}
+              >ลบ ({selectedOpsRowKeys.size + selectedOpsDraftIds.size})</button>
+            )}
+            <button
+              type="button"
+              onClick={() => {}}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 14px', fontSize: '13px', border: '0.5px solid #a5d6a7', borderRadius: '8px', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer' }}
+            >Confirm</button>
+          </div>
+        </div>
+        {/* MARKER_VATCONTROLLER_UPLOADSIMPLE_TABLEWRAP_WHITEBG_V1 -- เดิมไม่มี background เลยโปร่งใส เห็นพื้นหลังหน้าเว็บเป็นสีเทาทะลุ -- ใส่ขาวให้ชัด */}
+        <div style={{ overflow: 'auto', flex: 1, background: '#ffffff' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '12px', minWidth: '2100px' }}>
+            <thead>
+              <tr>
+                <th style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 6px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'center', width: '34px' }}>
+                  <input
+                    type="checkbox"
+                    // MARKER_VATCONTROLLER_SIMPLEINPUT_OPSPREVIEW_SELECT_CROSSTAB_DRAFTID_V1 -- เช็ค/ติ๊กแยกตาม _rowKind: real -> selectedOpsDraftIds (ข้าม Tab ได้), local -> selectedOpsRowKeys (แยกตาม Tab เหมือนเดิม)
+                    checked={opsQueueRows.length > 0 && opsQueueRows.every((r) => (r._rowKind === 'real' ? (r.draft_id ? selectedOpsDraftIds.has(r.draft_id) : selectedOpsRowKeys.has(r._rowKey)) : selectedOpsRowKeys.has(r._rowKey)))}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setSelectedOpsRowKeys((prev) => {
+                        const next = new Set(prev);
+                        opsQueueRows.forEach((r) => { if (r._rowKind === 'local') { if (checked) next.add(r._rowKey); else next.delete(r._rowKey); } });
+                        return next;
+                      });
+                      setSelectedOpsDraftIds((prev) => {
+                        const next = new Set(prev);
+                        opsQueueRows.forEach((r) => { if (r._rowKind === 'real' && r.draft_id) { if (checked) next.add(r.draft_id); else next.delete(r.draft_id); } });
+                        return next;
+                      });
+                    }}
+                  />
+                </th>
+                {opsColumns.map((c) => (
+                  <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', whiteSpace: 'nowrap' }}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(() => { // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_PENDING_QUEUE_V1 -- แสดงคิว Pre-draft จริง (pendingSimpleRows/pendingAdiRows) แทน Static Placeholder เดิม -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_ROW_SELECT_DELETE_V1 -- ใช้ opsQueueRows ที่ยกขึ้นไประดับบนแล้ว (เดิมคำนวณซ้ำในนี้)
+                const queueRows = opsQueueRows;
+                if (!queueRows || queueRows.length === 0) {
+                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_EMPTY_TEXT_ACCURATE_V1 -- เดิมข้อความ Empty เป็น "โครงสร้างเท่านั้น -- ยังไม่ต่อ API" ค้างจากตอนยัง Static Placeholder ทำให้สับสนว่ายังไม่ถูกแก้ทั้งที่ API ต่อแล้ว -- แยกข้อความให้ตรงสาเหตุจริง: ยังไม่ได้เลือก BU (ต้องเลือกก่อนเพราะเป็น Manual ล้วน) vs เลือก BU แล้วแต่ไม่มี Pre-draft ค้างจริงๆ
+                  const opsEmptyText = !smDraftBuFilter
+                    ? 'กรุณาเลือก BU ที่มุมขวาบน ("เลือก BU") ก่อน เพื่อแสดงรายการ Pre-draft ที่มีอยู่ (ระบบไม่ Auto-เลือก BU ให้)'
+                    : `ยังไม่มีรายการ Pre-draft ค้างสำหรับ BU "${smDraftBuFilter}" ในแท็บนี้`;
+                  return (
+                    <tr>
+                      <td colSpan={opsColumns.length + 1} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>
+                        {opsEmptyText}
+                      </td>
+                    </tr>
+                  );
+                }
+                return queueRows.map((row) => {
+                  // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_ROWBG_V1 -- ตามที่แจ้ง: Highlight สีแถวเหมือน Draft Monitor -- Invoice=เขียว, Credit=แดง/ชมพู (สีเดียวกับ Draft Monitor Popup เดิมเป๊ะ)
+                  const rowBg = row.invoice_ref === 'Invoice' ? '#e8f5e9' : row.invoice_ref === 'Credit' ? '#fdecea' : undefined;
+                  return (
+                  <tr key={row._rowKey} style={{ borderBottom: '0.5px solid #f0f0f0', background: rowBg }}>
+                    <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={row.draft_id ? selectedOpsDraftIds.has(row.draft_id) : selectedOpsRowKeys.has(row._rowKey)}
+                        onChange={() => {
+                          // MARKER_VATCONTROLLER_SIMPLEINPUT_OPSPREVIEW_SELECT_CROSSTAB_DRAFTID_V1 -- ติ๊กตาม draft_id ตรงๆ (ไม่ใช้ rowKey) ทำให้ติ๊กแล้ว Sync ข้าม Tab (Simple<->ADI) ได้เลย เพราะแถวที่ Gen มาพร้อมกัน (Debit/Credit คู่ ADI หรือ Simple+ADI คู่กัน) ใช้ draft_id เดียวกันเสมอ ตรงกับที่ Backend Cascade ลบทั้ง draft_id อยู่แล้ว (rollbackDraftId) -- แถว Local (ยังไม่มี draft_id) ยังติ๊กแยกอิสระด้วย rowKey ตามเดิม
+                          if (row.draft_id) {
+                            setSelectedOpsDraftIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(row.draft_id)) next.delete(row.draft_id); else next.add(row.draft_id);
+                              return next;
+                            });
+                          } else {
+                            setSelectedOpsRowKeys((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(row._rowKey)) next.delete(row._rowKey); else next.add(row._rowKey);
+                              return next;
+                            });
+                          }
+                        }}
+                      />
+                    </td>
+                    {opsColumns.map((c) => {
+                      const val = row[c.key];
+                      const isEmpty = val === null || val === undefined || val === '';
+                      // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_DATE_FORMAT_V1 -- ตามที่แจ้ง: Column วันที่ต้องโชว์แบบ dd-mmm-yy เหมือน Draft Monitor Popup เดิม (ใช้ formatDateDDMMMYY ตัวเดียวกันทั่วไฟล์) แทนการโชว์ YYYY-MM-DD ดิบจาก DB ตรงๆ
+                      const isDateCol = c.key === 'receive_date' || c.key === 'tax_invoice_date' || c.key === 'acc_date';
+                      // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_NUMERIC_FORMAT_V1 -- ตามที่แจ้ง: DB เก็บเป็น Numeric ถูกแล้ว แต่ตอนแสดงผลต้อง Format มี Comma/ทศนิยม 2 ตำแหน่งเหมือน Draft Monitor Popup (isNumericCol เดิม) -- ตารางนี้ (opsQueueRows) ไม่เคย Format เลยตั้งแต่แรก โชว์ตัวเลขดิบจาก DB ตรงๆ
+                      const isNumericCol = c.key === 'amount_ex_vat' || c.key === 'vat_amount' || c.key === 'debit' || c.key === 'credit';
+                      const numVal = isNumericCol ? Math.abs(Number(val)) : null;
+                      const displayVal = isEmpty
+                        ? '—'
+                        : isDateCol
+                          ? (formatDateDDMMMYY(val) || String(val))
+                          : isNumericCol
+                            ? (!Number.isNaN(numVal) ? numVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(val))
+                            : String(val);
+                      return (
+                        <td key={c.key} style={{ padding: '8px 10px', whiteSpace: 'nowrap', textAlign: isNumericCol ? 'right' : 'left', color: isEmpty ? '#ccc' : '#333' }}>
+                          {displayVal}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
+        </div>
+        </>
+        )}
+      </div>
+      {showSmCodeSearchModal && (
+        <VatSmCodeSearchModal
+          onClose={() => setShowSmCodeSearchModal(false)}
+          onSelect={(r) => setAdiRow1Code(r['SM-Code'] || '')}
+          smCodes={smCodeSupportData}
+          branches={smSupportBranches}
+          vendorCategories={smSupportVendorCategories}
+          smLoading={smSupportLoading}
+        />
+      )} {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_V1 -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_REALDATA_V1 -- MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_SPEED_V1 */}
+      {showBranchSearchFor && ( // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_DEBITCREDIT_OFINCODE_BRANCHSEARCH_V1 -- Modal เดียวใช้ร่วมกันทั้ง Debit/Credit -- showBranchSearchFor บอกว่ากำลังเลือกให้ฝั่งไหน แล้ว onSelect เขียนกลับไปที่ setOfin ของฝั่งนั้น
+        <VatBranchSearchModal
+          onClose={() => setShowBranchSearchFor(null)}
+          onSelect={(b) => {
+            const code = normalizeOfinCode(b['Branch Code'] || '');
+            if (showBranchSearchFor === 'debit') setAdiRow1DebitOfin(code);
+            else if (showBranchSearchFor === 'credit') setAdiRow1CreditOfin(code);
+          }}
+          branches={smSupportBranches}
+          buHint={deriveBuHintFromOfin(showBranchSearchFor === 'debit' ? adiRow1DebitOfin : adiRow1CreditOfin)} // MARKER_VATCONTROLLER_BRANCHSEARCH_BUHINT_FILTER_V1
+        />
+      )}
+      {/* MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_V1 -- Popup Draft Monitor เฉพาะ Simple Input Ops -- ตามที่แจ้ง: ดึงมาแบบเดียวกับ Draft Monitor ของ Full Page แต่โชว์แค่ Tab Simple/ADI (ไม่มี Popvat) -- ตอนนี้เป็น View-only ยังไม่มี Checkbox/Restore (ข้อมูลจะว่างจนกว่าจะมีการ Insert จริงผ่านปุ่ม Confirm) */}
+      {showSmDraftMonitor && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '1400px', maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '0.5px solid #e8e8e8' }}>
+              <div style={{ fontSize: '15px', fontWeight: '500' }}>Draft Monitor</div>
+              <button onClick={() => setShowSmDraftMonitor(false)} style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '50%', background: '#f0f0f0', cursor: 'pointer', fontSize: '14px', color: '#666' }}>×</button>
+            </div>
+            <div style={{ display: 'flex', gap: '4px', padding: '10px 20px 0', borderBottom: '0.5px solid #e8e8e8' }}>
+              {[{ key: 'simple', label: 'Upload Simple' }, { key: 'adi', label: 'Upload ADI' }].map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setSmDraftMonitorTab(t.key)}
+                  style={{ padding: '9px 16px', fontSize: '13px', border: 'none', borderBottom: smDraftMonitorTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', background: 'transparent', cursor: 'pointer', color: smDraftMonitorTab === t.key ? '#1a3a5c' : '#888', fontWeight: smDraftMonitorTab === t.key ? '500' : '400' }}
+                >{t.label}</button>
+              ))}
+              {smDraftMonitorTab === 'simple' && (
+                <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto', paddingBottom: '6px' }}>
+                  {[
+                    { key: 'all', label: 'ทั้งหมด', bg: '#f0f0f0', fg: '#555', activeBg: '#1a3a5c', activeFg: 'white' },
+                    { key: 'Invoice', label: 'Invoice', bg: '#e8f5e9', fg: '#1e7e34', activeBg: '#2e7d32', activeFg: 'white' },
+                    { key: 'Credit', label: 'Credit', bg: '#fdecea', fg: '#c0392b', activeBg: '#c0392b', activeFg: 'white' },
+                  ].map((st) => (
+                    <button
+                      key={st.key}
+                      type="button"
+                      onClick={() => setSmSimpleTypeFilter(st.key)}
+                      style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderRadius: '14px', cursor: 'pointer', fontWeight: 500, background: smSimpleTypeFilter === st.key ? st.activeBg : st.bg, color: smSimpleTypeFilter === st.key ? st.activeFg : st.fg }}
+                    >{st.label}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {smDraftMonitorTab === 'simple' ? (
+              <div style={{ flex: 1, minHeight: '360px', overflow: 'auto', padding: '0 20px 20px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                  <thead>
+                    <tr>
+                      {VAT_SIMPLE_INPUT_OPS_COLUMNS.map((c) => (
+                        <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left' }}>{c.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_REQUIRE_BU_V1 -- Bug Fix: ตามที่ยืนยัน -- ต้องเลือก BU ก่อนทุกจุดเหมือนตาราง Preview (เดิม Popup นี้ Fallback โชว์ "ทุก BU รวมกัน" เมื่อไม่ได้เลือก ทำให้ Logic ไม่ตรงกับตาราง Preview ที่บังคับเลือก BU ก่อนเสมอ)
+                      const buFilteredRows = smDraftBuFilter ? smDraftSimpleRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter) : [];
+                      const filteredRows = smSimpleTypeFilter === 'all' ? buFilteredRows : buFilteredRows.filter((r) => r.invoice_ref === smSimpleTypeFilter);
+                      if (smDraftSimpleLoading) {
+                        return <tr><td colSpan={VAT_SIMPLE_INPUT_OPS_COLUMNS.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>;
+                      }
+                      if (!smDraftBuFilter) {
+                        return <tr><td colSpan={VAT_SIMPLE_INPUT_OPS_COLUMNS.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กรุณาเลือก BU ก่อน เพื่อแสดงข้อมูล Draft</td></tr>;
+                      }
+                      if (filteredRows.length === 0) {
+                        return <tr><td colSpan={VAT_SIMPLE_INPUT_OPS_COLUMNS.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ยังไม่มีข้อมูล Draft</td></tr>;
+                      }
+                      return filteredRows.map((row) => {
+                        const rowBg = row.invoice_ref === 'Invoice' ? '#e8f5e9' : row.invoice_ref === 'Credit' ? '#fdecea' : 'white';
+                        return (
+                          <tr key={row.id} style={{ borderTop: '0.5px solid #e8e8e8', background: rowBg }}>
+                            {VAT_SIMPLE_INPUT_OPS_COLUMNS.map((c) => {
+                              const isNumericCol = c.key === 'amount_ex_vat' || c.key === 'vat_amount';
+                              const isDateCol = c.key === 'receive_date' || c.key === 'tax_invoice_date';
+                              const numVal = isNumericCol ? Math.abs(Number(row[c.key])) : null;
+                              const displayVal = isNumericCol
+                                ? (row[c.key] != null && !Number.isNaN(numVal) ? numVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '')
+                                : isDateCol
+                                  ? (formatDateDDMMMYY(row[c.key]) || '')
+                                  : (row[c.key] ?? '');
+                              return (
+                                <td key={c.key} style={{ padding: '7px 10px', textAlign: isNumericCol ? 'right' : 'left' }}>{displayVal}</td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ flex: 1, minHeight: '360px', overflow: 'auto', padding: '0 20px 20px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                  <thead>
+                    <tr>
+                      {VAT_ADI_TRANSFER_COLUMNS.map((c) => (
+                        <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left' }}>{c.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_REQUIRE_BU_V1 -- Bug Fix: ตามที่ยืนยัน -- ต้องเลือก BU ก่อนทุกจุดเหมือนตาราง Preview (ไม่เลือก BU = มั่ว/ปนกันหลาย BU ไม่ควรโชว์)
+                      const buFilteredAdiRows = smDraftBuFilter ? smDraftAdiRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter) : [];
+                      if (smDraftAdiLoading) {
+                        return <tr><td colSpan={VAT_ADI_TRANSFER_COLUMNS.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>;
+                      }
+                      if (!smDraftBuFilter) {
+                        return <tr><td colSpan={VAT_ADI_TRANSFER_COLUMNS.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กรุณาเลือก BU ก่อน เพื่อแสดงข้อมูล Draft</td></tr>;
+                      }
+                      if (buFilteredAdiRows.length === 0) {
+                        return <tr><td colSpan={VAT_ADI_TRANSFER_COLUMNS.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ยังไม่มีข้อมูล Draft</td></tr>;
+                      }
+                      let groupIdx = -1;
+                      let lastDraftId = null;
+                      return buFilteredAdiRows.map((row) => {
+                        if (row.draft_id !== lastDraftId) { groupIdx += 1; lastDraftId = row.draft_id; }
+                        const bg = groupIdx % 2 === 0 ? 'white' : '#e3f2fd';
+                        return (
+                          <tr key={row.id} style={{ borderTop: '0.5px solid #e8e8e8', background: bg }}>
+                            {VAT_ADI_TRANSFER_COLUMNS.map((c) => (
+                              <td key={c.key} style={{ padding: '7px 10px' }}>{row[c.key] ?? ''}</td>
+                            ))}
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// MARKER_VATCONTROLLER_BACKUP_TRANSACTION_SKELETON_V1 -- ตามที่แจ้ง: หน้า "Transaction" (Sidebar > VAT Controller > Backup > Transaction, เดิมเป็น PlaceholderPage "อยู่ระหว่างการพัฒนา") ต้องแยกเป็น 4 Tab: Backup_Popvat | Backup_SimpleInput | Backup_Adi | Backup_Report Input Tax-Waiting for Claim
+// -- Tab 1-3 มี Reference ชัดแล้วจาก status='exported' ใน vat_upload_popvatdraft/vat_simpleinputdraft/vat_adi_transferdraft, Tab 4 ("Waiting for Claim") ยังไม่มี Concept นี้ในระบบมาก่อน รอ Design เพิ่มทีหลังตามที่แจ้ง
+// MARKER_VATCONTROLLER_BACKUP_TRANSACTION_STRUCTURE_V1 -- ตามที่แจ้ง ("ลองทำเป็นโครงสร้างขึ้นไปก่อน" หลังดู Mockup) -- ยกระดับจาก Tab เปล่าเป็นโครงสร้าง Table จริงตาม Mockup ที่ Confirm แล้ว (Column ตรงกับ Schema จริงของ 3 Table + book/period ที่เพิ่งเพิ่ม) แต่ยังไม่ต่อ API ดึงข้อมูลจริง (Filter Toolbar เป็น Static ก่อน)
+const VAT_BACKUP_TRANSACTION_TABS = [
+  { key: 'popvat', label: 'Backup_Popvat' },
+  { key: 'simple', label: 'Backup_SimpleInput' },
+  { key: 'adi', label: 'Backup_Adi' },
+  { key: 'waiting_claim', label: 'Backup_Report Input Tax-Waiting for Claim' },
+];
+// MARKER_VATCONTROLLER_BACKUP_TRANSACTION_POPVAT_BATCHSUMMARY_V1 -- ตามที่แจ้ง: เปลี่ยนจากตารางแบบ Line-Detail เป็น "สรุปตาม Batch" (1 แถว = 1 ครั้งที่ Export) -- เฉพาะ Tab Popvat ก่อน (Simple/Adi ยังคงเดิม)
+const VAT_BACKUP_POPVAT_COLUMNS = [
+  { key: 'bu', label: 'BU' },
+  { key: 'period', label: 'Period' },
+  { key: 'batch_id', label: 'Batch ID' },
+  { key: 'receive_from', label: 'Receive From' },
+  { key: 'receive_to', label: 'Receive To' },
+  { key: 'count_inv', label: 'Count Inv.' },
+  { key: 'upload_at', label: 'Upload At' },
+  { key: 'expire_date', label: 'Expire Date' },
+  { key: 'action', label: 'Action' },
+];
+const VAT_BACKUP_SIMPLE_COLUMNS = [ // MARKER_VATCONTROLLER_BACKUP_TRANSACTION_STRUCTURE_V1 -- ต่อจาก VAT_SIMPLE_INPUT_OPS_COLUMNS เดิม เพิ่ม book/period/batch_id/draft_id ด้านหน้า (Backup ต้องเห็น Batch/Draft ที่ Export ไปแล้ว)
+  { key: 'bu', label: 'BU' }, { key: 'book', label: 'Book' }, { key: 'period', label: 'Period' },
+  { key: 'batch_id', label: 'Batch ID' }, { key: 'draft_id', label: 'Draft ID' },
+  ...VAT_SIMPLE_INPUT_OPS_COLUMNS,
+];
+const VAT_BACKUP_ADI_COLUMNS = [ // MARKER_VATCONTROLLER_BACKUP_TRANSACTION_STRUCTURE_V1 -- ต่อจาก VAT_ADI_TRANSFER_COLUMNS เดิม เพิ่ม book/period(เดียวกับด้านบน)/batch_id/draft_id ด้านหน้า
+  { key: 'bu', label: 'BU' }, { key: 'book', label: 'Book' }, { key: 'period', label: 'Period' },
+  { key: 'batch_id', label: 'Batch ID' }, { key: 'draft_id', label: 'Draft ID' },
+  ...VAT_ADI_TRANSFER_COLUMNS,
+];
+// MARKER_VATCONTROLLER_BACKUP_TRANSACTION_WAITING_CLAIM_COLUMNS_V1 -- Column ตาม Schema จริง vat_waiting_for_claim (ตาราง Preview หลัก -- select/note นำหน้า, ปิดท้าย Action เปิด Detail Popup)
+const VAT_BACKUP_WAITING_CLAIM_COLUMNS = [
+  { key: 'select', label: '' },        // Checkbox เลือกแถว (สำหรับ Bulk Action เช่น Export/Claim หลายแถวพร้อมกัน)
+  { key: 'note', label: '📝' },         // Icon เปิด Note ของแถวนั้น (ยังไม่ผูกกับ Table/Concept ใดๆ -- Static Icon ไปก่อน)
+  { key: 'bu', label: 'BU' },
+  { key: 'book', label: 'Book' },
+  { key: 'period', label: 'Period' },
+  { key: 'batch_id', label: 'Batch ID' },
+  { key: 'draft_id', label: 'Draft ID' },
+  { key: 'export_status', label: 'Export Status' },
+  { key: 'invoice_ref', label: 'Invoice Ref.' },
+  { key: 'supplier_name', label: 'SellerName' },
+  { key: 'supplier_tax_id', label: 'SellerTaxID' },
+  { key: 'supplier_branch', label: 'SellerBrh' },
+  { key: 'gross_amount', label: 'Gross' },
+  { key: 'vat_amount', label: 'Vat' },
+  { key: 'net_amount', label: 'Net' },
+  { key: 'rate_percent', label: 'Rate (%)' },
+  { key: 'branch', label: 'Branch' },
+  { key: 'adj_v', label: 'ADJ. V' },
+  { key: 'adj_vat', label: 'ADJ Vat' },
+  { key: 'payment_date', label: 'Payment Date' },
+  { key: 'tax_invoice_date', label: 'TIV Date' },
+  { key: 'tax_invoice_number', label: 'Tax Invoice No.' },
+  { key: 'status', label: 'Status' },
+  { key: 'action', label: 'Action' },
+];
+// MARKER_VATCONTROLLER_BACKUP_TRANSACTION_WAITING_CLAIM_DETAIL_COLUMNS_V1 -- Column ที่เหลือจาก Book1/Book2 -- แสดงใน Popup Detail (เปิดจากปุ่ม Action ของแต่ละแถว) ไม่ได้ตัดทิ้ง แค่ไม่ขึ้นในตาราง Preview หลัก
+const VAT_BACKUP_WAITING_CLAIM_DETAIL_COLUMNS = [
+  { key: 'purchase_order', label: 'Purchase Order' },
+  { key: 'description_item', label: 'Description Item' },
+  { key: 'account_dr', label: 'ACCOUNT DR' },
+  { key: 'account_asset', label: 'ACCOUNT ASSET' },
+  { key: 'adj_period', label: 'ADJ. Period' },
+  { key: 'asset_diff', label: 'Asset Diff' },
+  { key: 'submit_date', label: 'Submit Date' },
+];
+const VAT_BACKUP_COLUMNS_BY_TAB = { popvat: VAT_BACKUP_POPVAT_COLUMNS, simple: VAT_BACKUP_SIMPLE_COLUMNS, adi: VAT_BACKUP_ADI_COLUMNS, waiting_claim: VAT_BACKUP_WAITING_CLAIM_COLUMNS };
+function VatBackupTransactionLobby() {
+  const [tab, setTab] = React.useState('popvat');
+  const columns = VAT_BACKUP_COLUMNS_BY_TAB[tab] || [];
+  return (
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '10px', borderBottom: '0.5px solid #e8e8e8' }}>
+        <div style={{ fontSize: '15px', fontWeight: '500' }}>Transaction Backup</div>
+      </div>
+      <div style={{ background: '#fff', border: '0.5px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <div style={{ display: 'flex', gap: '2px', borderBottom: '1px solid #e5e7eb', padding: '0 8px', overflowX: 'auto' }}>
+          {VAT_BACKUP_TRANSACTION_TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              style={{ padding: '10px 16px', fontSize: '13px', border: 'none', borderBottom: tab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', background: 'transparent', cursor: 'pointer', color: tab === t.key ? '#1a3a5c' : '#888', fontWeight: tab === t.key ? '600' : '500', whiteSpace: 'nowrap' }}
+            >{t.label}</button>
+          ))}
+        </div>
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', flexWrap: 'wrap', borderBottom: '1px solid #e5e7eb' }}>
+            <select disabled style={{ fontSize: '12.5px', color: '#333', background: '#f4f6f9', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '7px 10px' }}><option>BU: ทั้งหมด</option></select>
+            <select disabled style={{ fontSize: '12.5px', color: '#333', background: '#f4f6f9', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '7px 10px' }}><option>Period: ทั้งหมด</option></select>
+            <div style={{ flex: 1 }} />
+            <input disabled type="search" placeholder="ค้นหา Supplier / Tax Invoice / Draft ID" style={{ flex: 1, minWidth: '180px', fontSize: '12.5px', color: '#333', background: '#f4f6f9', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '7px 10px' }} />
+          </div>
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px', whiteSpace: 'nowrap' }}>
+              <thead>
+                <tr>
+                  {columns.map((c) => (
+                    <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', padding: '9px 12px', fontSize: '12px' }}>{c.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colSpan={columns.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>
+                    {tab === 'waiting_claim'
+                      ? 'โครงสร้างเท่านั้น -- ยังไม่ต่อ API (ที่มาข้อมูล: จะดึงจาก Simple -- รอ Design เกณฑ์ "รอ Claim" เพิ่มเติม)'
+                      : "โครงสร้างเท่านั้น -- ยังไม่ต่อ API (จะดึงจาก Status = 'exported')"}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+        {/* MARKER_VATCONTROLLER_BACKUP_TRANSACTION_WAITING_CLAIM_SOURCE_NOTE_V1 -- ตามที่แจ้ง: ข้อมูล Tab นี้ต้องรับมาจาก Simple (vat_simpleinputdraft) แต่เกณฑ์/Mapping ยังไม่ Fix -- รอ Design รอบถัดไป ยังไม่ต่อ Query จริง */}
+      </div>
     </div>
   );
 }
@@ -9956,6 +15036,12 @@ export default function VatController({ activeSubTab = 'vat-watchlist-ops', onSu
   }
   if (activeSubTab === 'vat-backup-tax-invoice') { // MARKER_VATWATCHLISTOPS_TAX_INVOICE_PAGE_V1
     return <VatTaxInvoicePage />;
+  }
+  if (activeSubTab === 'vat-simple-input-ops') { // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_SKELETON_V1
+    return <VatSimpleInputOpsLobby onSubTabChange={onSubTabChange} />;
+  }
+  if (activeSubTab === 'vat-backup-transaction') { // MARKER_VATCONTROLLER_BACKUP_TRANSACTION_SKELETON_V1
+    return <VatBackupTransactionLobby />;
   }
   const title = VAT_MENU_LABEL_MAP[activeSubTab] || 'VAT Controller';
   return <PlaceholderPage title={title} />;

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Preview: Badge พ.ศ. ที่แก้จริง</title>
+<style>
+  body{font-family:Segoe UI, Tahoma, sans-serif; background:#eef0f3; margin:0; padding:24px; color:#222;}
+  h1{font-size:16px; margin:0 0 4px;}
+  p.sub{color:#666; font-size:12.5px; margin:0 0 22px;}
+  .pair{display:flex; gap:18px; margin-bottom:22px; flex-wrap:wrap;}
+  .box{background:#fff; border:1px solid #e2e4e8; border-radius:10px; padding:14px 16px; width:240px; box-shadow:0 1px 3px rgba(16,24,40,.06);}
+  .box h3{font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#aaa; margin:0 0 10px;}
+  label.f{font-size:11px; color:#888; display:block; margin-bottom:4px;}
+  .badge{font-weight:400; color:#b45309;}
+  input.d{width:100%; box-sizing:border-box; padding:6px 8px; font-size:12px; border:0.5px solid #d8dbe0; border-radius:8px; background:#f4f5f7;}
+  .field-name{font-size:11.5px; color:#1a3a5c; font-weight:600; margin-bottom:6px;}
+</style>
+</head>
+<body>
+<h1>Preview — Badge พ.ศ. ที่แก้จริงในไฟล์ (หลังรัน Patch)</h1>
+<p class="sub">แสดง Label จริงของทั้ง 5 จุดตามที่ Patch แก้ (ก่อน / หลัง) — เป็นแค่ข้อความต่อท้าย Label ไม่มีอะไรอย่างอื่นเปลี่ยน</p>
+
+<div id="fields"></div>
+
+<script>
+const fields = [
+  {name: "Full Page — Tax Invoice Date", value: "2026-09-24"},
+  {name: "Full Page — Receive Date", value: "2026-09-20"},
+  {name: "Quick Action — Receive Date", value: "2026-09-24"},
+  {name: "Quick Action — Tax Invoice Date", value: "2026-09-24"},
+  {name: "Simple Input (ADI) — Tax invoice Date", value: "2026-09-24"},
+];
+
+function toBE(iso){
+  const y = iso.match(/^(\d{4})/);
+  return y ? `พ.ศ. ${+y[1]+543}` : '';
+}
+function mdy(iso){
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : iso;
+}
+
+const root = document.getElementById('fields');
+fields.forEach(f => {
+  const row = document.createElement('div');
+  row.className = 'pair';
+  row.innerHTML = `
+    <div class="box">
+      <h3>ก่อนแก้</h3>
+      <div class="field-name">${f.name}</div>
+      <label class="f">${f.name.split('—')[1].trim()}</label>
+      <input class="d" value="${mdy(f.value)}" readonly>
+    </div>
+    <div class="box">
+      <h3>หลังแก้ (Patch นี้)</h3>
+      <div class="field-name">${f.name}</div>
+      <label class="f">${f.name.split('—')[1].trim()}<span class="badge"> (${toBE(f.value)})</span></label>
+      <input class="d" value="${mdy(f.value)}" readonly>
+    </div>
+  `;
+  root.appendChild(row);
+});
+</script>
+</body>
+</html>

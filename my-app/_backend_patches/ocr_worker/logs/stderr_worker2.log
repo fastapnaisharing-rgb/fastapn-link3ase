@@ -1,0 +1,737 @@
+INFO: Could not find files for the given pattern(s).
+C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-LCNet_x1_0_doc_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_doc_ori`.[0m
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0726 08:56:21.921646 10876 onednn_context.cc:81] oneDNN v3.6.2
+[32mCreating model: ('UVDoc', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\UVDoc`.[0m
+[32mCreating model: ('PP-LCNet_x1_0_textline_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_textline_ori`.[0m
+[32mCreating model: ('PP-OCRv5_server_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-OCRv5_server_det`.[0m
+[32mCreating model: ('th_PP-OCRv5_mobile_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\th_PP-OCRv5_mobile_rec`.[0m
+INFO: Could not find files for the given pattern(s).
+C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-LCNet_x1_0_doc_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_doc_ori`.[0m
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0726 10:47:34.628621  1408 onednn_context.cc:81] oneDNN v3.6.2
+[32mCreating model: ('UVDoc', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\UVDoc`.[0m
+[32mCreating model: ('PP-LCNet_x1_0_textline_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_textline_ori`.[0m
+[32mCreating model: ('PP-OCRv5_server_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-OCRv5_server_det`.[0m
+[32mCreating model: ('th_PP-OCRv5_mobile_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\th_PP-OCRv5_mobile_rec`.[0m
+INFO: Could not find files for the given pattern(s).
+C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-LCNet_x1_0_doc_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_doc_ori`.[0m
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0726 14:39:43.544513 19428 onednn_context.cc:81] oneDNN v3.6.2
+[32mCreating model: ('UVDoc', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\UVDoc`.[0m
+[32mCreating model: ('PP-LCNet_x1_0_textline_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_textline_ori`.[0m
+[32mCreating model: ('PP-OCRv5_server_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-OCRv5_server_det`.[0m
+[32mCreating model: ('th_PP-OCRv5_mobile_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\th_PP-OCRv5_mobile_rec`.[0m
+INFO: Could not find files for the given pattern(s).
+C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-LCNet_x1_0_doc_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_doc_ori`.[0m
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0726 16:46:17.198066 11752 onednn_context.cc:81] oneDNN v3.6.2
+[32mCreating model: ('UVDoc', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\UVDoc`.[0m
+[32mCreating model: ('PP-LCNet_x1_0_textline_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_textline_ori`.[0m
+[32mCreating model: ('PP-OCRv5_server_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-OCRv5_server_det`.[0m
+[32mCreating model: ('th_PP-OCRv5_mobile_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\th_PP-OCRv5_mobile_rec`.[0m
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1696, in main
+    batch_needing_grouping = fetch_batch_needing_local_grouping(conn)
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 304, in fetch_batch_needing_local_grouping
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<17 lines>...
+        """
+        ^^^
+    )
+    ^
+psycopg2.OperationalError: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1913, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1699, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 281, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1913, in <module>
+    main()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1660, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 281, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+INFO: Could not find files for the given pattern(s).
+C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-LCNet_x1_0_doc_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_doc_ori`.[0m
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0727 07:53:27.515204 22268 onednn_context.cc:81] oneDNN v3.6.2
+[32mCreating model: ('UVDoc', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\UVDoc`.[0m
+[32mCreating model: ('PP-LCNet_x1_0_textline_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_textline_ori`.[0m
+[32mCreating model: ('PP-OCRv5_server_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-OCRv5_server_det`.[0m
+[32mCreating model: ('th_PP-OCRv5_mobile_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\th_PP-OCRv5_mobile_rec`.[0m
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1987, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1792, in main
+    job = fetch_next_page(conn)
+          ^^^^^^^^^^^^^^^
+NameError: name 'fetch_next_page' is not defined
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1775, in main
+    batch_needing_grouping = fetch_batch_needing_local_grouping(conn)
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 373, in fetch_batch_needing_local_grouping
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<17 lines>...
+        """
+        ^^^
+    )
+    ^
+psycopg2.OperationalError: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1997, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1778, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 281, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1997, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1739, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 281, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1997, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1739, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 281, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1997, in <module>
+    main()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1739, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 281, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1894, in main
+    batch_needing_grouping = fetch_batch_needing_local_grouping(conn)
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 422, in fetch_batch_needing_local_grouping
+    with conn.cursor() as cur:
+         ~~~~~~~~~~~^^
+psycopg2.InterfaceError: connection already closed
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1844, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 331, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1894, in main
+    batch_needing_grouping = fetch_batch_needing_local_grouping(conn)
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 422, in fetch_batch_needing_local_grouping
+    with conn.cursor() as cur:
+         ~~~~~~~~~~~^^
+psycopg2.InterfaceError: connection already closed
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1844, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 331, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1894, in main
+    batch_needing_grouping = fetch_batch_needing_local_grouping(conn)
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 423, in fetch_batch_needing_local_grouping
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<17 lines>...
+        """
+        ^^^
+    )
+    ^
+psycopg2.OperationalError: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1897, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 331, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: FATAL:  the database system is shutting down
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1894, in main
+    batch_needing_grouping = fetch_batch_needing_local_grouping(conn)
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 422, in fetch_batch_needing_local_grouping
+    with conn.cursor() as cur:
+         ~~~~~~~~~~~^^
+psycopg2.InterfaceError: connection already closed
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1844, in main
+    conn = get_connection()
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 331, in get_connection
+    return psycopg2.connect(**DB_CONFIG)
+  File "C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+INFO: Could not find files for the given pattern(s).
+C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-LCNet_x1_0_doc_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_doc_ori`.[0m
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0907 18:31:28.433429 69560 onednn_context.cc:81] oneDNN v3.6.2
+[32mCreating model: ('UVDoc', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\UVDoc`.[0m
+[32mCreating model: ('PP-LCNet_x1_0_textline_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_textline_ori`.[0m
+[32mCreating model: ('PP-OCRv5_server_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-OCRv5_server_det`.[0m
+[32mCreating model: ('th_PP-OCRv5_mobile_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\th_PP-OCRv5_mobile_rec`.[0m
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1914, in main
+    local_group_and_release_batch(conn, ocr, batch_needing_grouping)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1750, in local_group_and_release_batch
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<4 lines>...
+        (batch_id, uploaded_by, len(page_ids)),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "idx_one_active_set_per_batch"
+DETAIL:  Key (batch_id)=(c0381a25-f5ea-47ed-9ab2-81d255a7ddf7) already exists.
+
+Traceback (most recent call last):
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 2143, in <module>
+    main()
+    ~~~~^^
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 1894, in main
+    batch_needing_grouping = fetch_batch_needing_local_grouping(conn)
+  File "C:\apps\fastapn-backend\ocr_worker\ocr_worker_v2.py", line 423, in fetch_batch_needing_local_grouping
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<17 lines>...
+        """
+        ^^^
+    )
+    ^
+psycopg2.errors.InFailedSqlTransaction: current transaction is aborted, commands ignored until end of transaction block
+
+INFO: Could not find files for the given pattern(s).
+C:\apps\python-ocr-runtime\python-3.13.12-embed-amd64\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-LCNet_x1_0_doc_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_doc_ori`.[0m
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0907 18:37:27.674525 87896 onednn_context.cc:81] oneDNN v3.6.2
+[32mCreating model: ('UVDoc', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\UVDoc`.[0m
+[32mCreating model: ('PP-LCNet_x1_0_textline_ori', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-LCNet_x1_0_textline_ori`.[0m
+[32mCreating model: ('PP-OCRv5_server_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\PP-OCRv5_server_det`.[0m
+[32mCreating model: ('th_PP-OCRv5_mobile_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Windows\system32\config\systemprofile\.paddlex\official_models\th_PP-OCRv5_mobile_rec`.[0m

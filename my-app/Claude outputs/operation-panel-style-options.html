@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Operation Panel — Style Options</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:6px; }
+  .option-label { font-size:12px; font-weight:700; color:#1a3a5c; margin:22px 0 8px; }
+  .panel { border:0.5px solid #e8eaf0; border-radius:8px; overflow:hidden; background:#fff; max-width:1000px; }
+  .header { background:#f8f9fa; border-bottom:0.5px solid #f0f0f0; padding:5px 10px; }
+  .header span { font-size:10px; font-weight:600; color:#999; text-transform:uppercase; letter-spacing:0.05em; }
+
+  /* current (baseline) */
+  .grid-a { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; border-bottom:0.5px solid #f0f0f0; }
+  .grid-a2 { display:grid; grid-template-columns: 1fr 1fr 1fr 2fr 1fr; }
+  .cell-a { display:flex; align-items:center; padding:6px 10px; border-right:0.5px solid #f0f0f0; }
+  .cell-a:last-child { border-right:none; }
+  .k-a { font-size:11px; color:#999; flex-shrink:0; width:80px; }
+  .v-a { font-size:13px; color:#1a3a5c; }
+
+  /* option 1: bigger font, more breathing room, 2 rows for structure fields */
+  .grid-b1 { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; border-bottom:0.5px solid #f0f0f0; }
+  .grid-b2 { display:grid; grid-template-columns: 1fr 1fr 1fr; border-bottom:0.5px solid #f0f0f0; }
+  .grid-b3 { display:grid; grid-template-columns: 1fr 1fr; }
+  .cell-b { display:flex; flex-direction:column; gap:3px; padding:10px 14px; border-right:0.5px solid #f0f0f0; }
+  .cell-b:last-child { border-right:none; }
+  .k-b { font-size:11px; color:#9aa0a6; }
+  .v-b { font-size:14.5px; font-weight:500; color:#1a3a5c; }
+
+  /* option 2: chip/tag style */
+  .chiprow { display:flex; flex-wrap:wrap; gap:8px; padding:12px 14px; }
+  .chip { display:flex; align-items:center; gap:6px; background:#f4f7fb; border:0.5px solid #e1e8f0; border-radius:20px; padding:5px 12px 5px 10px; }
+  .chip .k-c { font-size:11px; color:#8b93a1; }
+  .chip .v-c { font-size:13px; font-weight:600; color:#1a3a5c; }
+
+  /* option 3: label-above two-tier card grid, larger, grouped visually */
+  .card-wrap { padding:12px 14px; display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; }
+  .card { background:#fafbfc; border:0.5px solid #eceff3; border-radius:8px; padding:9px 10px; }
+  .card .k-d { font-size:10.5px; color:#9aa0a6; margin-bottom:3px; }
+  .card .v-d { font-size:14px; font-weight:600; color:#1a3a5c; }
+</style>
+</head>
+<body>
+  <div class="caption">3 ทางเลือก Style สำหรับแถว First Part / Mid Part / Last Part / Expense Type / Simple Rule (ตัวอักษรใหญ่ขึ้นกว่าเดิม) — Vendor Info แถวบนสุดคงรูปแบบเดิมไว้ทุก Option</div>
+
+  <div class="option-label">Option A — เดิม (Baseline อ้างอิง) : ตัวเล็ก</div>
+  <div class="panel">
+    <div class="header"><span>Operation</span></div>
+    <div class="grid-a">
+      <div class="cell-a"><span class="k-a">Vendor Name</span><span class="v-a">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell-a"><span class="k-a">Tax ID</span><span class="v-a">0105546131747</span></div>
+      <div class="cell-a"><span class="k-a">Branch No.</span><span class="v-a">00000</span></div>
+      <div class="cell-a"><span class="k-a">AT-Match</span><span class="v-a">ADJ3A</span></div>
+    </div>
+    <div class="grid-a2">
+      <div class="cell-a"><span class="k-a">First Part</span><span class="v-a">TKT</span></div>
+      <div class="cell-a"><span class="k-a">Mid Part</span><span class="v-a" style="color:#ccc">—</span></div>
+      <div class="cell-a"><span class="k-a">Last Part</span><span class="v-a" style="color:#ccc">—</span></div>
+      <div class="cell-a"><span class="k-a">Expense Type</span><span class="v-a">63047000-ค่าบริการอื่นๆ</span></div>
+      <div class="cell-a"><span class="k-a">Simple Rule</span><span class="v-a">NNN+SP</span></div>
+    </div>
+  </div>
+
+  <div class="option-label">Option B — ตัวใหญ่ขึ้น + แยก 2 บรรทัด (Label อยู่บน, Value อยู่ล่าง) หายใจสะดวกขึ้น</div>
+  <div class="panel">
+    <div class="header"><span>Operation</span></div>
+    <div class="grid-b1">
+      <div class="cell-b"><span class="k-b">Vendor Name</span><span class="v-b">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell-b"><span class="k-b">Tax ID</span><span class="v-b">0105546131747</span></div>
+      <div class="cell-b"><span class="k-b">Branch No.</span><span class="v-b">00000</span></div>
+      <div class="cell-b"><span class="k-b">AT-Match</span><span class="v-b">ADJ3A</span></div>
+    </div>
+    <div class="grid-b2">
+      <div class="cell-b"><span class="k-b">First Part</span><span class="v-b">TKT</span></div>
+      <div class="cell-b"><span class="k-b">Mid Part</span><span class="v-b" style="color:#ccc">—</span></div>
+      <div class="cell-b"><span class="k-b">Last Part</span><span class="v-b" style="color:#ccc">—</span></div>
+    </div>
+    <div class="grid-b3">
+      <div class="cell-b"><span class="k-b">Expense Type</span><span class="v-b">63047000-ค่าบริการอื่นๆ</span></div>
+      <div class="cell-b"><span class="k-b">Simple Rule</span><span class="v-b">NNN+SP</span></div>
+    </div>
+  </div>
+
+  <div class="option-label">Option C — แบบ Chip/Tag (โค้งมน อ่านง่าย เด่นเป็นก้อนๆ)</div>
+  <div class="panel">
+    <div class="header"><span>Operation</span></div>
+    <div class="grid-a">
+      <div class="cell-a"><span class="k-a">Vendor Name</span><span class="v-a">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell-a"><span class="k-a">Tax ID</span><span class="v-a">0105546131747</span></div>
+      <div class="cell-a"><span class="k-a">Branch No.</span><span class="v-a">00000</span></div>
+      <div class="cell-a"><span class="k-a">AT-Match</span><span class="v-a">ADJ3A</span></div>
+    </div>
+    <div class="chiprow">
+      <div class="chip"><span class="k-c">First Part</span><span class="v-c">TKT</span></div>
+      <div class="chip"><span class="k-c">Mid Part</span><span class="v-c" style="color:#bbb">—</span></div>
+      <div class="chip"><span class="k-c">Last Part</span><span class="v-c" style="color:#bbb">—</span></div>
+      <div class="chip"><span class="k-c">Expense Type</span><span class="v-c">63047000-ค่าบริการอื่นๆ</span></div>
+      <div class="chip"><span class="k-c">Simple Rule</span><span class="v-c">NNN+SP</span></div>
+    </div>
+  </div>
+
+  <div class="option-label">Option D — Card แยกกล่อง (เด่นเป็นรายการย่อยชัดเจนที่สุด)</div>
+  <div class="panel">
+    <div class="header"><span>Operation</span></div>
+    <div class="grid-a">
+      <div class="cell-a"><span class="k-a">Vendor Name</span><span class="v-a">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell-a"><span class="k-a">Tax ID</span><span class="v-a">0105546131747</span></div>
+      <div class="cell-a"><span class="k-a">Branch No.</span><span class="v-a">00000</span></div>
+      <div class="cell-a"><span class="k-a">AT-Match</span><span class="v-a">ADJ3A</span></div>
+    </div>
+    <div class="card-wrap">
+      <div class="card"><div class="k-d">First Part</div><div class="v-d">TKT</div></div>
+      <div class="card"><div class="k-d">Mid Part</div><div class="v-d" style="color:#ccc">—</div></div>
+      <div class="card"><div class="k-d">Last Part</div><div class="v-d" style="color:#ccc">—</div></div>
+      <div class="card"><div class="k-d">Expense Type</div><div class="v-d">63047000-ค่าบริการอื่นๆ</div></div>
+      <div class="card"><div class="k-d">Simple Rule</div><div class="v-d">NNN+SP</div></div>
+    </div>
+  </div>
+</body>
+</html>

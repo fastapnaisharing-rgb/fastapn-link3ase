@@ -174,6 +174,12 @@ const login = async (email, password) => {
   if (!data.must_change_password) {
     setUserState(data.user);
     resetIdleTimer();
+    // -- MARKER_AUTHCONTEXT_RELOAD_ON_LOGIN_V1 -----------------------------------------
+    // -- Reload ทันทีหลัง Login สำเร็จ 1 ครั้ง -- บังคับโหลด Build ล่าสุด --
+    // -- (ทำงานคู่กับ web.config ที่กัน index.html Cache ค้างไว้แล้ว) --------
+    // -- ปลอดภัย: Token เก็บใน sessionStorage ไปแล้วด้านบน -- init() Effect --
+    // -- จะอ่านกลับมา Restore Session อัตโนมัติ ไม่หลุดไปหน้า Login ซ้ำ ------
+    window.location.reload();
   }
 
   return data;

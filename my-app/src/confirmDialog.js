@@ -1,4 +1,4 @@
-// confirmDialog.js
+﻿// confirmDialog.js
 // ── Drop-in replacement สำหรับ window.confirm() / alert() ของ Browser ──────
 // ── ที่แก้ Style ตาม Theme ไม่ได้เลย (เป็น Native OS Dialog ไม่ใช่ HTML) ────
 //
@@ -14,9 +14,11 @@
 // window.confirm() เดิมอยู่ใน Handler ธรรมดา ไม่ใช่ใน Component Render โดยตรง
 
 let host = null; // ตั้งค่าโดย <ConfirmDialogHost /> ตอน Mount (วางไว้ที่ App.js ระดับบนสุด)
+let hostDismiss = null; // MARKER_CONFIRMDIALOG_DISMISS_V1 -- Function ปิด Dialog ที่เปิดค้างอยู่จากภายนอก
 
-export function registerConfirmDialogHost(showFn) {
+export function registerConfirmDialogHost(showFn, dismissFn) {
   host = showFn;
+  hostDismiss = dismissFn; // MARKER_CONFIRMDIALOG_DISMISS_V1
 }
 
 function show(config) {
@@ -43,4 +45,13 @@ export const confirmDialog = {
    * @returns {Promise<void>} resolve เมื่อกด OK
    */
   alert: (message, opts = {}) => show({ mode: 'alert', message, ...opts }),
+
+  /**
+   * MARKER_CONFIRMDIALOG_DISMISS_V1
+   * ปิด Dialog ที่เปิดค้างอยู่จากภายนอก (ถ้ามี) -- Resolve Promise เดิมด้วย
+   * false เหมือนกด Cancel/หมดเวลา -- ใช้ตอนต้องบังคับปิดจาก Flow อื่น เช่น
+   * Auto-Logout Timeout เอง หรือโดน Force Logout จาก Path อื่นที่ไม่รู้จัก
+   * Dialog นี้มาก่อน -- ถ้าไม่มี Dialog เปิดอยู่ เรียกแล้วไม่มีผลอะไร (No-op)
+   */
+  dismiss: () => { if (hostDismiss) hostDismiss(); },
 };

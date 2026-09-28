@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Mockup: Badge ปี พ.ศ. ใน Calendar</title>
+<style>
+  :root{
+    --line:#d8dbe0; --muted:#888; --accent:#1a3a5c; --accent2:#1565c0;
+    --bg:#f4f5f7; --be:#c0392b; --beSoft:#fdecea;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:Segoe UI, Tahoma, sans-serif; background:#eef0f3; margin:0; padding:24px; color:#222;}
+  h1{font-size:18px; margin:0 0 4px;}
+  p.sub{color:#666; font-size:13px; margin:0 0 24px;}
+  .row{display:flex; gap:22px; flex-wrap:wrap; align-items:flex-start;}
+  .card{background:#fff; border:1px solid #e2e4e8; border-radius:12px; box-shadow:0 1px 3px rgba(16,24,40,.08); padding:16px; width:300px;}
+  .card h2{font-size:13px; margin:0 0 4px; color:var(--accent);}
+  .card p.desc{font-size:11.5px; color:#666; margin:0 0 12px; line-height:1.5;}
+  .cal-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+  .cal-head .title{font-weight:600; font-size:13px;}
+  .toggle{display:flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; font-size:10.5px;}
+  .toggle button{border:none; background:#fff; padding:3px 8px; cursor:pointer; color:#555;}
+  .toggle button.active{background:var(--accent); color:#fff;}
+  .years{display:grid; grid-template-columns:repeat(3,1fr); gap:6px;}
+  .yr{position:relative; border:1px solid var(--line); border-radius:8px; padding:8px 4px 6px; text-align:center; cursor:pointer; background:#fafbfc; transition:.15s;}
+  .yr:hover{background:#eef3fb; border-color:var(--accent2);}
+  .yr.sel{background:var(--accent2); border-color:var(--accent2); color:#fff;}
+  .yr .ce{font-size:13px; font-weight:600;}
+  .yr .be-badge{display:block; font-size:9.5px; margin-top:2px; color:var(--be); font-weight:600;}
+  .yr.sel .be-badge{color:#ffe0dc;}
+  .yr .be-corner{position:absolute; top:2px; right:3px; font-size:8.5px; background:var(--beSoft); color:var(--be); border-radius:5px; padding:0 3px; font-weight:700;}
+  .yr.sel .be-corner{background:rgba(255,255,255,.25); color:#fff;}
+  .note{font-size:10.5px; color:#2e7d32; margin-top:10px; background:#eef7ee; border-radius:6px; padding:6px 8px; line-height:1.5;}
+  .badge-mode-label{font-size:11px; margin-bottom:8px; display:flex; align-items:center; gap:6px;}
+  .big-be{font-size:13px; font-weight:700;}
+</style>
+</head>
+<body>
+  <h1>Mockup — Badge ปี พ.ศ. บน Year Grid ของปฏิทิน</h1>
+  <p class="sub">3 แบบให้เลือก/เทียบ ก่อนลงมือแก้ของจริงใน VatController.js (ปฏิทินจริงตอนนี้เป็น Native <code>&lt;input type="date"&gt;</code> ของ Browser เอง — แก้ Badge เข้าไปตรงๆ ไม่ได้ ต้องสร้าง Calendar เองแทนก่อน ถึงจะใส่ Badge ได้)</p>
+
+  <div class="row">
+    <div class="card">
+      <h2>แบบ A — Badge มุมปุ่ม (Passive แต่ยังกดปีได้เหมือนเดิม)</h2>
+      <p class="desc">ทุกปุ่มปียังเป็น ค.ศ. เป็นหลัก มี พ.ศ. เป็น Badge เล็กมุมขวาบนของปุ่มเดียวกัน คลิกตรงไหนของปุ่มก็เลือกปีนั้นได้เหมือนเดิมทั้งปุ่ม (Badge ไม่ใช่แค่ Label ลอยๆ แต่เป็นส่วนหนึ่งของปุ่มที่กดได้)</p>
+      <div class="cal-head"><span class="title">September 2026</span></div>
+      <div class="years" id="gridA"></div>
+    </div>
+
+    <div class="card">
+      <h2>แบบ B — Toggle สลับทั้งกริดเป็น พ.ศ.</h2>
+      <p class="desc">มีปุ่ม Toggle ค.ศ./พ.ศ. ที่ Header กดแล้วเลขในกริดทั้งหมดเปลี่ยนเป็น พ.ศ. จริง (เลือกปีด้วยเลข พ.ศ. ได้ตรงๆ เลย ไม่ต้องบวกเลขเอง)</p>
+      <div class="cal-head">
+        <span class="title">September <span id="hdrYear">2026</span></span>
+        <div class="toggle">
+          <button id="btnCE" class="active">ค.ศ.</button><button id="btnBE">พ.ศ.</button>
+        </div>
+      </div>
+      <div class="years" id="gridB"></div>
+    </div>
+
+    <div class="card">
+      <h2>แบบ C — โชว์คู่กันเสมอ ไม่ต้อง Toggle</h2>
+      <p class="desc">ปุ่มปีโชว์ทั้งสองระบบพร้อมกันตลอดเวลา (ค.ศ. ตัวใหญ่ / พ.ศ. ตัวเล็กด้านล่าง) ไม่มี Mode ให้สลับ เรียบง่ายสุด แต่ Badge ยังกดเลือกปีได้เหมือน A</p>
+      <div class="cal-head"><span class="title">September 2026</span></div>
+      <div class="years" id="gridC"></div>
+      <div class="note">✅ เลือกปีจาก Badge พ.ศ. ได้เลยเหมือนกัน (ทั้งปุ่มคือพื้นที่กดได้)</div>
+    </div>
+  </div>
+
+<script>
+const startYear = 2026;
+function toBE(y){ return y + 543; }
+
+// Grid A & C: static both-shown, clickable whole button
+function buildStaticGrid(elId, selYear, withCorner){
+  const el = document.getElementById(elId);
+  el.innerHTML = '';
+  for(let i=0;i<9;i++){
+    const y = startYear + i - 1;
+    const div = document.createElement('div');
+    div.className = 'yr' + (y===selYear ? ' sel':'');
+    div.innerHTML = withCorner
+      ? `<span class="ce">${y}</span><span class="be-corner">${toBE(y)}</span>`
+      : `<span class="ce">${y}</span><span class="be-badge">พ.ศ. ${toBE(y)}</span>`;
+    div.onclick = () => { selYear = y; buildStaticGrid(elId, selYear, withCorner); };
+    el.appendChild(div);
+  }
+}
+buildStaticGrid('gridA', 2026, true);
+buildStaticGrid('gridC', 2026, false);
+
+// Grid B: togglable
+let modeBE = false;
+let selB = 2026;
+function buildGridB(){
+  const el = document.getElementById('gridB');
+  el.innerHTML = '';
+  document.getElementById('hdrYear').textContent = modeBE ? toBE(selB) : selB;
+  for(let i=0;i<9;i++){
+    const y = startYear + i - 1;
+    const label = modeBE ? toBE(y) : y;
+    const div = document.createElement('div');
+    div.className = 'yr' + (y===selB ? ' sel':'');
+    div.innerHTML = `<span class="ce big-be">${label}</span>`;
+    div.onclick = () => { selB = y; buildGridB(); };
+    el.appendChild(div);
+  }
+}
+document.getElementById('btnCE').onclick = () => { modeBE=false; document.getElementById('btnCE').classList.add('active'); document.getElementById('btnBE').classList.remove('active'); buildGridB(); };
+document.getElementById('btnBE').onclick = () => { modeBE=true; document.getElementById('btnBE').classList.add('active'); document.getElementById('btnCE').classList.remove('active'); buildGridB(); };
+buildGridB();
+</script>
+</body>
+</html>

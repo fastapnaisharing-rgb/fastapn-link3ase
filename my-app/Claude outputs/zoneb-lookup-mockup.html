@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Zone B Lookup Mockup</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:14px; }
+  .panel { border:0.5px solid #e8eaf0; border-radius:8px; overflow:hidden; background:#fff; max-width:1000px; }
+  .header { background:#f8f9fa; border-bottom:0.5px solid #f0f0f0; padding:4px 8px; }
+  .header span { font-size:10px; font-weight:600; color:#999; text-transform:uppercase; letter-spacing:0.05em; }
+  .grid { display:grid; border-bottom:0.5px solid #f0f0f0; }
+  .grid.r1 { grid-template-columns: 2fr 1fr 1fr 1fr; }
+  .grid.r3 { grid-template-columns: 1fr; border-bottom:none; }
+  .cell { display:flex; align-items:center; padding:4px 8px; border-right:0.5px solid #f0f0f0; }
+  .cell:last-child { border-right:none; }
+  .k { font-size:10px; color:#999; flex-shrink:0; width:78px; }
+  .v { font-size:11px; color:#1a3a5c; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .v.empty { color:#ccc; }
+  .v.mono { font-family: monospace; }
+</style>
+</head>
+<body>
+  <div class="caption">Mockup ตาม Style "Vendor Info" ที่มีอยู่แล้วใน APController.js — พอเจอ SM-Code จะโชว์แบบ Label/Value Grid บางๆ นี้แทน Journal Table เดิม</div>
+
+  <div class="panel">
+    <div class="header"><span>SIMPLE CODE INFO</span></div>
+    <div class="grid r1">
+      <div class="cell"><span class="k">Vendor Name</span><span class="v">บริษัท ริชแอสเสท จำกัด</span></div>
+      <div class="cell"><span class="k">Tax ID</span><span class="v mono">0105548012345</span></div>
+      <div class="cell"><span class="k">Branch No.</span><span class="v">00001</span></div>
+      <div class="cell"><span class="k">AT-Match</span><span class="v">T36</span></div>
+    </div>
+    <div class="grid r3">
+      <div class="cell"><span class="k">Expense Type</span><span class="v">63047000-ค่าบริการอื่นๆ</span></div>
+    </div>
+  </div>
+</body>
+</html>

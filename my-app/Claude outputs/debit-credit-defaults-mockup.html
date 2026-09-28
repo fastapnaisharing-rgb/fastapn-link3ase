@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Debit/Credit Defaults — Mockup</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:14px; max-width:920px; line-height:1.6; }
+  .card { background:#fff; border:0.5px solid #e5e7eb; border-radius:10px; padding:16px; max-width:920px; }
+  .row1 { display:flex; gap:14px; margin-bottom:14px; }
+  .row1 .f { flex:1; min-width:0; }
+  .row1 label { display:block; font-size:12px; font-weight:500; color:#6b7280; margin-bottom:5px; }
+  .row1 input { width:100%; box-sizing:border-box; height:34px; font-size:13px; padding:0 10px; border:1px solid #fde68a; background:#fffbeb; border-radius:8px; }
+
+  .split { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+  .side { border:0.5px solid #e8eaf0; border-radius:8px; overflow:hidden; }
+  .side-header { padding:6px 12px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:white; }
+  .side.debit .side-header { background:#1a3a5c; }
+  .side.credit .side-header { background:#7a3b1a; }
+  .side-body { padding:12px; display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .field label { display:block; font-size:10.5px; color:#888; font-weight:600; margin-bottom:3px; }
+  .field input.ofin { width:100%; box-sizing:border-box; height:30px; font-size:12.5px; padding:0 8px; border:1px solid #fde68a; background:#fffbeb; border-radius:6px; color:#1a3a5c; }
+  .field .ro { width:100%; box-sizing:border-box; height:30px; font-size:12.5px; padding:0 8px; border:1px solid #e8eaf0; background:#E6F1FB; border-radius:6px; color:#0C447C; font-weight:500; display:flex; align-items:center; }
+  .field .tag { font-size:9px; color:#aaa; font-weight:400; margin-left:4px; }
+</style>
+</head>
+<body>
+  <div class="caption">
+    Mockup: ช่องว่างใต้แถว Code/Tax invoice Date/TIV number/Amount/PO number (ที่ล้อมกรอบเขียวไว้) แบ่งเป็น 2 ฝั่ง <b>Debit</b> / <b>Credit</b> อย่างละ 4 ช่อง — ช่องแรกเป็น <b>Ofin Code</b> (กรอกเองได้ ตามที่ยืนยันว่าต้องใส่ Ofin Code ก่อนทั้ง 2 ด้าน)
+    แล้วให้ระบบ Auto-derive จาก branch_list เหมือน Zone 5 "Auto-derived" ของ Edit Simple Code Modal ออกมาอีก 3 ช่อง (Branch Code / Brand Code ตามที่ยืนยัน + อีก 1 ช่องที่ยังไม่ Confirm — ใส่ "BU" เป็น Placeholder ไปก่อน รอยืนยัน)
+  </div>
+
+  <div class="card">
+    <div class="row1">
+      <div class="f"><label>Code</label><input value="LKS-J6775" /></div>
+      <div class="f"><label>Tax invoice Date</label><input value="MM/DD/YYYY" /></div>
+      <div class="f"><label>TIV number</label><input value="" /></div>
+      <div class="f"><label>Amount</label><input value="" /></div>
+      <div class="f"><label>PO number</label><input value="ไม่จำเป็น" /></div>
+    </div>
+
+    <div class="split">
+      <div class="side debit">
+        <div class="side-header">Debit</div>
+        <div class="side-body">
+          <div class="field"><label>Ofin Code</label><input class="ofin" placeholder="กรอก Ofin Code" /></div>
+          <div class="field"><label>Branch Code</label><div class="ro">—</div></div>
+          <div class="field"><label>Brand Code</label><div class="ro">—</div></div>
+          <div class="field"><label>BU <span class="tag">(รอ Confirm)</span></label><div class="ro">—</div></div>
+        </div>
+      </div>
+      <div class="side credit">
+        <div class="side-header">Credit</div>
+        <div class="side-body">
+          <div class="field"><label>Ofin Code</label><input class="ofin" placeholder="กรอก Ofin Code" /></div>
+          <div class="field"><label>Branch Code</label><div class="ro">—</div></div>
+          <div class="field"><label>Brand Code</label><div class="ro">—</div></div>
+          <div class="field"><label>BU <span class="tag">(รอ Confirm)</span></label><div class="ro">—</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

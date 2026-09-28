@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Draft Monitor Button Preview</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", sans-serif; background: #f5f6f8; padding: 40px; }
+  .zone {
+    width: 260px;
+    min-height: 220px;
+    border: 1.5px dashed #ccc;
+    border-radius: 10px;
+    background: #ffffff;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 20px;
+    box-sizing: border-box;
+  }
+  .caption { margin-top: 16px; font-size: 13px; color: #666; }
+</style>
+</head>
+<body>
+
+  <div class="zone">
+    <div style="display:flex; align-items:stretch; width:220px; border:0.5px solid #a5d6a7; border-radius:8px; background:#e8f5e9; overflow:hidden;">
+      <select style="flex:1; min-width:0; border:none; border-right:0.5px solid #a5d6a7; background:transparent; color:#2e7d32; font-size:12.5px; padding:7px 6px; cursor:pointer; outline:none;">
+        <option>ทั้งหมด</option>
+        <option>REV (1|2)</option>
+        <option>MPS (0|3)</option>
+      </select>
+      <button type="button" style="display:flex; align-items:center; justify-content:center; gap:6px; padding:7px 14px; font-size:13px; border:none; background:transparent; color:#2e7d32; cursor:pointer; white-space:nowrap;">Draft Monitor</button>
+    </div>
+  </div>
+
+  <div class="caption">Zone A-2 (20%) — ตัวอย่าง Dropdown เลือก BU (ซ้าย) + ปุ่ม Draft Monitor (ขวา) ในกรอบเขียวเดียวกัน</div>
+
+</body>
+</html>

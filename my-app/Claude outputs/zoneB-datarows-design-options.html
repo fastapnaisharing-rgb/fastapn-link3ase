@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Zone B — Data Rows Design Options</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:6px; }
+  .option-label { font-size:12px; font-weight:700; color:#1a3a5c; margin:22px 0 8px; }
+  .wrap { border:0.5px solid #eceff3; border-radius:8px; overflow:hidden; background:#fff; max-width:900px; }
+  .header-row { display:grid; grid-template-columns: 50px 2fr 1fr 1fr 1fr; background:#faf6ef; border-bottom:0.5px solid #f0f0f0; }
+  .header-row > div { padding:6px 12px; font-size:10px; font-weight:600; color:#a8875a; text-transform:uppercase; letter-spacing:0.03em; border-right:0.5px solid #f0f0f0; }
+  .header-row > div:last-child { border-right:none; }
+
+  /* Option A: เดิม (Grid ตาราง มีเส้นครบ) */
+  .a-row { display:grid; grid-template-columns: 50px 2fr 1fr 1fr 1fr; border-bottom:0.5px solid #f0f0f0; }
+  .a-row:last-child { border-bottom:none; }
+  .a-row > div { padding:17px 12px; font-size:14.5px; font-weight:500; color:#ddd; border-right:0.5px solid #f0f0f0; }
+  .a-row > div:last-child { border-right:none; }
+  .a-row > div:first-child { color:#4a3a24; }
+
+  /* Option B: Zebra Stripe -- ไม่มีเส้น Column แบ่ง เว้นแต่ Row สลับสีอ่อน */
+  .b-row { display:grid; grid-template-columns: 50px 2fr 1fr 1fr 1fr; }
+  .b-row:nth-child(even) { background:#fbf9f5; }
+  .b-row > div { padding:16px 12px; font-size:14.5px; font-weight:500; color:#ddd; }
+  .b-row > div:first-child { color:#4a3a24; font-weight:600; }
+
+  /* Option C: Number Badge + ไม่มีเส้น Column เลย เว้นระยะด้วย Padding/แบ่งด้วยเส้นบางแนวนอน */
+  .c-row { display:grid; grid-template-columns: 50px 2fr 1fr 1fr 1fr; align-items:center; border-bottom:0.5px solid #f5f2ec; }
+  .c-row:last-child { border-bottom:none; }
+  .c-row > div { padding:14px 12px; font-size:14px; font-weight:500; color:#ccc; }
+  .c-badge { width:22px; height:22px; border-radius:50%; background:#faf6ef; color:#a8875a; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+
+  /* Option D: Card แยกรายบรรทัด มีมุมโค้ง เว้นช่องไฟระหว่าง Row */
+  .d-wrap { padding:10px; display:flex; flex-direction:column; gap:8px; }
+  .d-row { display:grid; grid-template-columns: 40px 2fr 1fr 1fr 1fr; align-items:center; background:#fbf9f5; border-radius:8px; padding:10px 12px; }
+  .d-row > div { font-size:13.5px; font-weight:500; color:#ccc; }
+  .d-num { width:24px; height:24px; border-radius:6px; background:#faf6ef; color:#a8875a; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+</style>
+</head>
+<body>
+  <div class="caption">Header แถวเดียวคงเดิม (# | Results - Segment All | Line Value | Side | Rate) — เปลี่ยนแค่ Style ของ 4 แถวข้อมูลด้านใน ให้ไม่ดูเป็นตารางเคร่งขรึมเกินไป</div>
+
+  <div class="option-label">Option A — เดิม (Grid ตาราง มีเส้นครบ ใช้เป็น Baseline เทียบ)</div>
+  <div class="wrap">
+    <div class="header-row"><div>#</div><div>Results - Segment All</div><div>Line Value</div><div>Side</div><div>Rate</div></div>
+    <div class="a-row"><div>1</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="a-row"><div>2</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="a-row"><div>3</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="a-row"><div>4</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+  </div>
+
+  <div class="option-label">Option B — Zebra Stripe (ไม่มีเส้นแบ่ง Column เลย ใช้สีพื้นสลับแทน)</div>
+  <div class="wrap">
+    <div class="header-row"><div>#</div><div>Results - Segment All</div><div>Line Value</div><div>Side</div><div>Rate</div></div>
+    <div class="b-row"><div>1</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="b-row"><div>2</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="b-row"><div>3</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="b-row"><div>4</div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+  </div>
+
+  <div class="option-label">Option C — Number Badge (เลขแถวเป็นวงกลม เส้นแบ่งบางมาก)</div>
+  <div class="wrap">
+    <div class="header-row"><div>#</div><div>Results - Segment All</div><div>Line Value</div><div>Side</div><div>Rate</div></div>
+    <div class="c-row"><div><span class="c-badge">1</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="c-row"><div><span class="c-badge">2</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="c-row"><div><span class="c-badge">3</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    <div class="c-row"><div><span class="c-badge">4</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+  </div>
+
+  <div class="option-label">Option D — Card แยกรายบรรทัด (แต่ละแถวเป็นกล่องมุมโค้งของตัวเอง เว้นช่องไฟ)</div>
+  <div class="wrap">
+    <div class="header-row"><div>#</div><div>Results - Segment All</div><div>Line Value</div><div>Side</div><div>Rate</div></div>
+    <div class="d-wrap">
+      <div class="d-row"><div><span class="d-num">1</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+      <div class="d-row"><div><span class="d-num">2</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+      <div class="d-row"><div><span class="d-num">3</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+      <div class="d-row"><div><span class="d-num">4</span></div><div>—</div><div>—</div><div>—</div><div>—</div></div>
+    </div>
+  </div>
+</body>
+</html>

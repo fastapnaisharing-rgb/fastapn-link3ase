@@ -1,4 +1,4 @@
-const fs = require('fs');
+﻿const fs = require('fs');
 const path = require('path');
 
 const envPath = path.join(__dirname, '.env');
@@ -19,3 +19,16 @@ try {
 
 fs.writeFileSync(envPath, content);
 console.log('Build time set:', buildTime);
+
+// MARKER_PREBUILD_VERSION_JSON_V1
+// -- สร้าง public/version.json ให้ buildTime ตรงกับ REACT_APP_BUILD_TIME ที่ฝัง Bundle เป๊ะๆ --
+// -- CRA จะ Copy ทุกอย่างใน public/ (ยกเว้น index.html) เข้า build/ ให้อัตโนมัติตอน Build --
+// -- ผลคือ version.json จะถูกเสิร์ฟที่ /version.json บน Server พร้อมกับ build/ --------------
+const publicDir = path.join(__dirname, 'public');
+try {
+  if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
+  fs.writeFileSync(path.join(publicDir, 'version.json'), JSON.stringify({ buildTime: Number(buildTime) }));
+  console.log('version.json written:', buildTime);
+} catch (e) {
+  console.error('เขียน version.json ไม่สำเร็จ:', e.message);
+}

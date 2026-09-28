@@ -12,6 +12,7 @@
   // ── ApproveBatch: สิทธิ์แยกต่างหากจาก Owner/Admin (คุมระบบ vs คุมการดำเนินงาน) ──
   // ── Default false ทุก Role — Owner ต้องมาเปิดให้ทีละคนเอง ไม่ผูกกับ Role อัตโนมัติ ──
   const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual', 'ApproveBatch'];
+  const DASHBOARD_MODULES = ['Manual', 'IE']; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1 -- Module ที่มี Transaction Dashboard จริงตอนนี้
 
   const DEFAULT_PERMISSIONS = {
     Owner:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true, ApproveBatch: false },
@@ -111,6 +112,8 @@
     const [maintenanceMenus, setMaintenanceMenus] = useState([]);
     const [confirmFull, setConfirmFull] = useState(false);
     const [savingMsg, setSavingMsg] = useState(false);
+    const [scheduledAt, setScheduledAt] = useState(''); // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- ISO Timestamp ที่จะปิดจริง ('' = ไม่มี Countdown ค้างอยู่)
+    const [closeDelayMin, setCloseDelayMin] = useState(30); // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- Default 30 นาทีตามที่ตกลงกัน -- Owner แก้ได้ก่อนกด Confirm
 
     const fetchSettings = async () => {
       const { data } = await db.from('system_settings').select('*');
@@ -118,16 +121,25 @@
         const full = data.find(d => d.key === 'maintenance_mode');
         const msg = data.find(d => d.key === 'maintenance_message');
         const menus = data.find(d => d.key === 'maintenance_menus');
+        const scheduled = data.find(d => d.key === 'maintenance_scheduled_at'); // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1
         if (full) setFullMaintenance(full.value === 'true');
         if (msg) setMaintenanceMsg(msg.value || '');
         if (menus) {
           try { setMaintenanceMenus(JSON.parse(menus.value || '[]')); }
           catch { setMaintenanceMenus([]); }
         }
+        setScheduledAt(scheduled?.value || ''); // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1
       }
     };
 
     useEffect(() => { fetchSettings(); }, []);
+
+    // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- ระหว่างมี Countdown ค้างอยู่ Poll ถี่ขึ้น กัน Panel ไม่ Sync หลัง Client อื่น Flip ให้ตอนหมดเวลา
+    useEffect(() => {
+      if (!scheduledAt) return;
+      const interval = setInterval(fetchSettings, 20000);
+      return () => clearInterval(interval);
+    }, [scheduledAt]);
 
     // ── Active-user count: ดึงจาก menu_active_sessions (heartbeat จาก App.js) ──
     const [activeCounts, setActiveCounts] = useState({});
@@ -157,14 +169,23 @@
       // ── แจ้ง App.js แบบ Real-time ตอน Maintenance Mode/Menus เปลี่ยน ──────────
       // ── ให้ Session อื่นที่ Login ค้างอยู่โดน Force Logout ทันที ไม่ต้องรอ ──
       // ── Poll Fallback รอบ 5 นาที (ฝั่งรับอยู่ที่ App.js — MARKER_APP_MAINTENANCE_EVENT_V1) ──
-      if (key === 'maintenance_mode' || key === 'maintenance_menus') {
+      if (key === 'maintenance_mode' || key === 'maintenance_menus' || key === 'maintenance_scheduled_at') { // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- เพิ่ม maintenance_scheduled_at เข้า Broadcast ให้ App.js เช็คทันที
         broadcastWs('maintenance_mode_changed', { key, value: String(value) });
       }
     };
 
     const handleFullToggle = () => {
       if (!fullMaintenance) setConfirmFull(true);
-      else { saveSetting('maintenance_mode', 'false'); setFullMaintenance(false); }
+      else {
+        saveSetting('maintenance_mode', 'false');
+        setFullMaintenance(false);
+        if (scheduledAt) { saveSetting('maintenance_scheduled_at', ''); setScheduledAt(''); } // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- เคลียร์ Countdown เก่าทิ้งด้วย เผื่อค้างอยู่ตอนกดปิด
+      }
+    };
+
+    const handleCancelScheduled = async () => { // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- ยกเลิก Countdown ก่อนหมดเวลา (ระบบยังไม่ปิดจริง จึงยกเลิกได้เฉยๆ)
+      await saveSetting('maintenance_scheduled_at', '');
+      setScheduledAt('');
     };
 
     const handleItemToggle = async (itemId) => {
@@ -185,9 +206,12 @@
       await saveSetting('maintenance_menus', JSON.stringify(newMenus));
     };
 
-    const handleConfirmFull = async () => {
-      await saveSetting('maintenance_mode', 'true');
-      setFullMaintenance(true); setConfirmFull(false);
+    const handleConfirmFull = async () => { // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- เปลี่ยนจาก Flip maintenance_mode เป็น true ทันที เป็นตั้ง Countdown แทน -- ระบบยังใช้งานได้ปกติจนกว่าจะหมดเวลา (App.js เป็นคนเช็คแล้ว Flip เองตอนหมดเวลาจริง)
+      const delayMinFP = Math.max(1, Number(closeDelayMin) || 30);
+      const scheduledAtFP = new Date(Date.now() + delayMinFP * 60000).toISOString();
+      await saveSetting('maintenance_scheduled_at', scheduledAtFP);
+      setScheduledAt(scheduledAtFP);
+      setConfirmFull(false);
     };
 
     const ToggleSwitch = ({ value, onChange, color }) => (
@@ -200,16 +224,23 @@
     return (
       <div style={{ marginBottom: '16px' }}>
         <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', marginBottom: '8px' }}>🔧 System Maintenance</div>
-        <div style={{ background: fullMaintenance ? '#FCEBEB' : 'white', border: `0.5px solid ${fullMaintenance ? '#f7c1c1' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
+        <div style={{ background: fullMaintenance ? '#FCEBEB' : scheduledAt ? '#FFF8E1' : 'white', border: `0.5px solid ${fullMaintenance ? '#f7c1c1' : scheduledAt ? '#ffc107' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}> {/* MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- เพิ่มสถานะที่ 3 "scheduled" (สีเหลือง) ระหว่าง off/closed */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: '13px', fontWeight: '500', color: fullMaintenance ? '#791F1F' : '#1a3a5c', marginBottom: '2px' }}>🔒 Full Maintenance</div>
-              <div style={{ fontSize: '11px', color: fullMaintenance ? '#e74c3c' : '#888' }}>
-                {fullMaintenance ? '⚠️ ระบบปิดอยู่ — เฉพาะ Owner เข้าได้' : 'ปิดทั้งระบบ — ทุกคนถูก Logout ยกเว้น Owner'}
+              <div style={{ fontSize: '13px', fontWeight: '500', color: fullMaintenance ? '#791F1F' : scheduledAt ? '#856404' : '#1a3a5c', marginBottom: '2px' }}>
+                {fullMaintenance ? '🔒 Full Maintenance' : scheduledAt ? '🕐 Full Maintenance — กำลังนับถอยหลัง' : '🔒 Full Maintenance'}
+              </div>
+              <div style={{ fontSize: '11px', color: fullMaintenance ? '#e74c3c' : scheduledAt ? '#a67c00' : '#888' }}>
+                {fullMaintenance ? '⚠️ ระบบปิดอยู่ — เฉพาะ Owner เข้าได้' : scheduledAt ? `ตั้งเวลาปิดไว้แล้ว — ยังใช้งานได้ปกติจนกว่าจะหมดเวลา (${new Date(scheduledAt).toLocaleString('th-TH')})` : 'ปิดทั้งระบบ — ทุกคนถูก Logout ยกเว้น Owner'}
               </div>
             </div>
-            <ToggleSwitch value={fullMaintenance} onChange={handleFullToggle} color="#e74c3c" />
+            <ToggleSwitch value={fullMaintenance || !!scheduledAt} onChange={handleFullToggle} color={scheduledAt && !fullMaintenance ? '#e0a800' : '#e74c3c'} />
           </div>
+          {scheduledAt && !fullMaintenance && ( // MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- ปุ่มยกเลิก Countdown ก่อนหมดเวลา
+            <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '0.5px solid #ffe4a1', display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={handleCancelScheduled} style={{ fontSize: '11px', padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #e0a800', background: 'white', color: '#856404', cursor: 'pointer' }}>✕ ยกเลิกการปิด</button>
+            </div>
+          )}
           {fullMaintenance && (
             <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '0.5px solid #f7c1c1', display: 'flex', gap: '8px', alignItems: 'center' }}>
               <input value={maintenanceMsg} onChange={e => setMaintenanceMsg(e.target.value)}
@@ -278,13 +309,18 @@
           <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
             <div style={{ background:'white', borderRadius:'10px', padding:'24px', width:'380px' }}>
               <h3 style={{ fontSize:'15px', marginBottom:'12px', color:'#791F1F' }}>⚠️ เปิด Full Maintenance</h3>
-              <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>ระบบจะ <strong>ปิดการเข้าถึง</strong> ทุกคน ยกเว้น Owner — ผู้ใช้ที่ login อยู่จะถูก Logout อัตโนมัติภายใน 30 วินาที</p>
+              <p style={{ fontSize:'13px', color:'#555', marginBottom:'16px' }}>ระบบจะ <strong>ปิดการเข้าถึง</strong> ทุกคน ยกเว้น Owner หลังจากนับถอยหลังครบเวลา — ทุกคนจะเห็นข้อความแจ้งเตือนทันทีที่กด Confirm {/* MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- เปลี่ยนจาก "Logout ภายใน 30 วินาที" เป็นนับถอยหลังตามที่ตั้ง */}</p>
+              <div style={{ display:'flex', alignItems:'center', gap:'10px', background:'#f8f9fa', borderRadius:'6px', padding:'10px 12px', marginBottom:'14px' }}> {/* MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- ช่องตั้งนาที Default 30 */}
+                <label style={{ fontSize:'12px', color:'#555', flex:1 }}>⏱ ปิดระบบภายในอีก (นาที)</label>
+                <input type="number" min="1" value={closeDelayMin} onChange={e => setCloseDelayMin(e.target.value)}
+                  style={{ width:'60px', padding:'5px 8px', borderRadius:'6px', border:'1px solid #ddd', fontSize:'13px', textAlign:'center' }} />
+              </div>
               <div style={{ background:'#FFF3CD', border:'0.5px solid #ffc107', borderRadius:'6px', padding:'10px 12px', marginBottom:'16px', fontSize:'12px', color:'#856404' }}>
-                💡 ตรวจสอบให้แน่ใจว่าไม่มีใครกำลังทำงานสำคัญอยู่ก่อน
+                💡 ตรวจสอบให้แน่ใจว่าตั้งเวลาให้พอสำหรับ User บันทึกงานที่ทำค้างอยู่ก่อน
               </div>
               <div style={{ display:'flex', justifyContent:'flex-end', gap:'8px' }}>
                 <button onClick={() => setConfirmFull(false)} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>ยกเลิก</button>
-                <button onClick={handleConfirmFull} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>🔒 เปิด Full Maintenance</button>
+                <button onClick={handleConfirmFull} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#c0392b', color:'white', fontSize:'13px', fontWeight:'500' }}>🔒 เริ่มนับถอยหลัง</button>
               </div>
             </div>
           </div>
@@ -2638,14 +2674,24 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [error, setError] = useState('');
     const [savedId, setSavedId] = useState(null);
     const [backendOpsSubTab, setBackendOpsSubTab] = useState('deploy');
+    const [dashboardUser, setDashboardUser] = useState(null); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1
+    const [onlineUsernames, setOnlineUsernames] = useState(() => new Set()); // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1
     const { currentUser, userName, userPermissions } = useAuth();
     const { isOwner } = useUserRole();
     const { userRole } = useAuth();
 
+    // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1 -- Sort: Owner อยู่อันดับ 1 เสมอ, ถัดไป Online ก่อน Offline, เท่ากันเรียงชื่อ (ไม่ Sort ตาม Role แล้ว)
     const filteredUsers = users.filter(u => {
       const matchSearch = !userSearch || (u.username?.toLowerCase().includes(userSearch.toLowerCase()) || u.email?.toLowerCase().includes(userSearch.toLowerCase()));
       const matchRole = !filterRole || u.role === filterRole;
       return matchSearch && matchRole;
+    }).slice().sort((a, b) => {
+      if (a.role === 'Owner' && b.role !== 'Owner') return -1;
+      if (b.role === 'Owner' && a.role !== 'Owner') return 1;
+      const aOn = onlineUsernames.has(a.username) ? 0 : 1;
+      const bOn = onlineUsernames.has(b.username) ? 0 : 1;
+      if (aOn !== bOn) return aOn - bOn;
+      return (a.username || '').localeCompare(b.username || '');
     });
 
     const fetchUsers = async () => {
@@ -2661,6 +2707,25 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     };
 
     useEffect(() => { fetchUsers(); fetchBinCount(); }, []);
+
+    // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1 -- Online Status: Pattern เดียวกับ TeamOnlinePopup ใน App.js (menu_active_sessions.last_seen, Cutoff 5 นาที)
+    const fetchOnlineUsers = async () => {
+      try {
+        const { data: sessions } = await db.from('menu_active_sessions').select('*');
+        const cutoff = Date.now() - 5 * 60 * 1000;
+        const online = new Set();
+        (sessions || []).forEach(s => {
+          const lastSeen = s?.last_seen ? new Date(s.last_seen).getTime() : 0;
+          if (lastSeen >= cutoff && s.user_name) online.add(s.user_name);
+        });
+        setOnlineUsernames(online);
+      } catch (e) { console.error('fetch online users:', e); }
+    };
+    useEffect(() => {
+      fetchOnlineUsers();
+      const onlineIv = setInterval(fetchOnlineUsers, 30000);
+      return () => clearInterval(onlineIv);
+    }, []);
 
     // MARKER_USERMANAGEMENT_SIGNUP_LISTENER_V1
     // ── Real-time: ฟัง 'signup_approved' — Owner/Admin คนอื่น Approve Signup ──
@@ -2840,6 +2905,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                   style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>✕ ล้าง</button>
               )}
               <span style={{ fontSize: '12px', color: '#888' }}>{filteredUsers.length} / {users.length} คน</span>
+              <span style={{ fontSize: '11px', color: '#aaa' }}>📈 = มี Transaction Dashboard (Permission Manual หรือ IE)</span> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1 */}
             </div>
             <div style={{ background: 'white', borderRadius: '0 0 8px 8px', overflow: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '900px' }}>
@@ -2859,11 +2925,25 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                     const isTargetOwner = u.role === 'Owner';
                     const canChangeRole = !isMe && !isTargetOwner;
                     const canDelete = !isMe && !isTargetOwner;
+                    const hasDashboardAccess = DASHBOARD_MODULES.some(m => u.permissions?.[m]); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1
                     return (
                       <tr key={u.id} style={{ background: isMe ? '#f8fbff' : 'white' }}>
                         <td style={S.tdLeft}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            {u.username || '-'}
+                            {/* MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1 */}
+                            {hasDashboardAccess ? (
+                              <span onClick={() => setDashboardUser(u)} title="ดู Transaction Dashboard"
+                                style={{ cursor: 'pointer', color: '#1a3a5c', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                📈 {u.username || '-'}
+                              </span>
+                            ) : (
+                              <span>{u.username || '-'}</span>
+                            )}
+                            {onlineUsernames.has(u.username) && (
+                              <span style={{ fontSize: '9.5px', background: '#EAF3DE', color: '#27500A', padding: '1px 7px', borderRadius: '20px', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#639922', display: 'inline-block' }}></span>Online
+                              </span>
+                            )}
                             {isMe && <span style={{ fontSize: '10px', background: '#e8f0fb', color: '#1a3a5c', padding: '1px 6px', borderRadius: '20px' }}>คุณ</span>}
                           </div>
                         </td>
@@ -2971,8 +3051,370 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
             </div>
           </div>
         )}
+
+        {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_RELATEPERSON_V1 */}
+        {dashboardUser && (
+          <TransactionDashboardModal user={dashboardUser} onClose={() => setDashboardUser(null)} S={S} users={users} onSwitchUser={setDashboardUser} />
+        )}
       </div>
     );
+  }
+
+  // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1
+  // -- Popup Transaction Dashboard: Daily = Timeline+Gap เต็ม, Weekly/Monthly = สรุปรายวันไม่มี Gap --
+  // -- ดึงข้อมูลสดจาก /api/user_transactions/dashboard ทุกครั้งที่เปลี่ยนวันที่/Granularity --
+  // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REDESIGN_V6 -- ตรงกับ Mockup V9 (Artifact): Calendar Grid จริง, กว้าง 940px, Avatar สี
+  const DASHBOARD_PALETTE = ['#1a3a5c', '#5DCAA5', '#e0a95b', '#c76b6b', '#7a6bc7', '#4a9dbd', '#b45f8f', '#6ba85a', '#c78f3f', '#8a7ac7', '#5c8ac7', '#c75c8a', '#5cc7a0'];
+  function dashboardUserColor(name) {
+    let h = 7;
+    for (let i = 0; i < (name || '').length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return DASHBOARD_PALETTE[h % DASHBOARD_PALETTE.length];
+  }
+  function dashboardModuleStyle(mod) {
+    const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' } };
+    return MAP[mod] || { bg: '#f0f3f7', color: '#667085' };
+  }
+
+  function TransactionDashboardModal({ user, onClose, S, users, onSwitchUser }) { // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_RELATEPERSON_V1
+    const [granularity, setGranularity] = useState('daily');
+    const [selectedDate, setSelectedDate] = useState(() => toLocalISODate(new Date()));
+    const [calMonthDate, setCalMonthDate] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d; });
+    const [loading, setLoading] = useState(false);
+    const [data, setData] = useState(null);
+    const [err, setErr] = useState('');
+
+    const todayStr = useMemo(() => toLocalISODate(new Date()), []);
+
+    const range = useMemo(() => {
+      const d = new Date(selectedDate + 'T00:00:00');
+      if (granularity === 'daily') {
+        return { from: selectedDate, to: selectedDate };
+      }
+      if (granularity === 'weekly') {
+        const day = d.getDay();
+        const start = new Date(d); start.setDate(d.getDate() - day);
+        const end = new Date(start); end.setDate(start.getDate() + 6);
+        const to = toLocalISODate(end) > todayStr ? todayStr : toLocalISODate(end);
+        return { from: toLocalISODate(start), to };
+      }
+      const start = new Date(calMonthDate.getFullYear(), calMonthDate.getMonth(), 1);
+      const end = new Date(calMonthDate.getFullYear(), calMonthDate.getMonth() + 1, 0);
+      const to = toLocalISODate(end) > todayStr ? todayStr : toLocalISODate(end);
+      return { from: toLocalISODate(start), to };
+    }, [selectedDate, granularity, calMonthDate, todayStr]);
+
+    useEffect(() => {
+      let cancelled = false;
+      setLoading(true); setErr('');
+      apiFetch(`/user_transactions/dashboard?username=${encodeURIComponent(user.username)}&from=${range.from}&to=${range.to}&granularity=${granularity}`)
+        .then(res => { if (!cancelled) setData(res); })
+        .catch(e => { if (!cancelled) setErr(e.message || 'โหลดข้อมูลไม่สำเร็จ'); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+      return () => { cancelled = true; };
+    }, [user.username, range.from, range.to, granularity]);
+
+    const avatarColor = dashboardUserColor(user.username || '');
+    const initial = (user.username || '?').charAt(0).toUpperCase();
+    // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_RELATEPERSON_V1 -- User อื่นที่มี Permission (Manual/VAT/IE/GL) ตัวใดตัวหนึ่งตรงกับ User นี้
+    const relatedUsers = useMemo(() => {
+      if (!Array.isArray(users)) return [];
+      const RELATE_PERM_KEYS = ['Manual', 'VAT', 'IE', 'GL'];
+      const myKeys = RELATE_PERM_KEYS.filter(k => !!user.permissions?.[k]);
+      if (myKeys.length === 0) return [];
+      return users.filter(u => u.id !== user.id && u.role !== 'Owner' && myKeys.some(k => !!u.permissions?.[k]));
+    }, [users, user]);
+
+    const monthsTh = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+    const weekdayLabels = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+    const calYear = calMonthDate.getFullYear(), calMonth = calMonthDate.getMonth();
+    const calLabel = `${monthsTh[calMonth]} ${calYear + 543}`;
+    const firstDow = new Date(calYear, calMonth, 1).getDay();
+    const gridStart = new Date(calYear, calMonth, 1 - firstDow);
+    const selDate = new Date(selectedDate + 'T00:00:00');
+    const selWeekStartDate = new Date(selDate); selWeekStartDate.setDate(selDate.getDate() - selDate.getDay());
+    const selWeekStart = toLocalISODate(selWeekStartDate);
+    const now = new Date();
+
+    const calWeeks = [];
+    for (let w = 0; w < 6; w++) {
+      const days = [];
+      for (let i = 0; i < 7; i++) {
+        const cd = new Date(gridStart); cd.setDate(gridStart.getDate() + w * 7 + i);
+        const cdStr = toLocalISODate(cd);
+        const inMonth = cd.getMonth() === calMonth;
+        const isToday = cdStr === todayStr;
+        const isSelectedDay = granularity !== 'weekly' && cdStr === selectedDate;
+        const wkStartDate = new Date(cd); wkStartDate.setDate(cd.getDate() - cd.getDay());
+        const isInSelectedWeek = granularity === 'weekly' && toLocalISODate(wkStartDate) === selWeekStart;
+        const future = cdStr > todayStr;
+        const dow = cd.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        days.push({ dateStr: cdStr, num: cd.getDate(), inMonth, isToday, isSelectedDay, isInSelectedWeek, future, dow, isWeekend });
+      }
+      calWeeks.push(days);
+    }
+
+    const canGoNextMonth = !(calYear > now.getFullYear() || (calYear === now.getFullYear() && calMonth >= now.getMonth()));
+    const dailyRows = data?.transactions || [];
+    const summaryRows = data?.days || [];
+
+    return (
+      <div style={S.overlay} onClick={onClose}>
+        <div style={{ width: 'min(1700px, 96vw)', height: 'min(950px, 95vh)', background: '#ffffff', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,0.28)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} onClick={e => e.stopPropagation()}> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_EXPAND_POPUP_V1 */}
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: '1px solid #e8e8e8', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>{initial}</div>
+              <div>
+                <div style={{ fontSize: '14.5px', fontWeight: 700, color: '#16232f' }}>{user.username} <span style={{ fontWeight: 400, color: '#8a96a3', fontSize: '12px' }}>· {user.email}</span></div>
+                <div style={{ fontSize: '12px', color: '#8a96a3' }}>{user.role || ''} · Transaction Dashboard</div>
+              </div>
+            </div>
+            <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '8px', border: 'none', background: '#f0f3f7', color: '#667085', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}>✕</button>
+          </div>
+
+          <div style={{ flexGrow: 1, display: 'flex', minHeight: 0 }}>
+
+            <div style={{ width: '210px', flexShrink: 0, borderRight: '1px solid #eef1f5', padding: '16px 14px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', background: '#eef2f6', borderRadius: '9px', padding: '3px', gap: '2px', marginBottom: '14px' }}>
+                {[['daily', 'รายวัน'], ['weekly', 'รายสัปดาห์'], ['monthly', 'รายเดือน']].map(([g, label]) => (
+                  <button key={g} onClick={() => setGranularity(g)}
+                    style={{ padding: '5px 0', flex: 1, borderRadius: '7px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600,
+                      background: granularity === g ? '#1a3a5c' : 'transparent', color: granularity === g ? '#ffffff' : '#667085' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                <button onClick={() => setCalMonthDate(d => { const n = new Date(d); n.setMonth(n.getMonth() - 1); return n; })}
+                  style={{ width: '21px', height: '21px', borderRadius: '6px', border: '1px solid #dbe2ea', background: '#ffffff', cursor: 'pointer', color: '#16232f', fontSize: '11px' }}>‹</button>
+                <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#16232f' }}>{calLabel}</div>
+                <button disabled={!canGoNextMonth} onClick={() => setCalMonthDate(d => { const n = new Date(d); n.setMonth(n.getMonth() + 1); return n; })}
+                  style={{ width: '21px', height: '21px', borderRadius: '6px', border: '1px solid #dbe2ea', background: '#ffffff', cursor: canGoNextMonth ? 'pointer' : 'default', color: canGoNextMonth ? '#16232f' : '#c9d1da', fontSize: '11px' }}>›</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '3px', marginBottom: '4px' }}>
+                {weekdayLabels.map(wd => <div key={wd} style={{ textAlign: 'center', fontSize: '9.5px', fontWeight: 700, color: '#a3adb8' }}>{wd}</div>)}
+              </div>
+              {calWeeks.map((week, wi) => (
+                <div key={wi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '3px', marginBottom: '3px' }}>
+                  {week.map(day => (
+                    <div key={day.dateStr}
+                      title={day.isWeekend ? 'เสาร์-อาทิตย์ นับรวมกับวันจันทร์ถัดไป' : undefined}
+                      onClick={() => {
+                        if (day.future) return;
+                        if (day.isWeekend) { const n = new Date(day.dateStr + 'T00:00:00'); n.setDate(n.getDate() + (day.dow === 6 ? 2 : 1)); setSelectedDate(toLocalISODate(n)); }
+                        else setSelectedDate(day.dateStr);
+                      }} /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_BUSINESS_DAY_AFTERHOURS_V10 */
+                      style={{
+                        textAlign: 'center', padding: '4px 0', borderRadius: '6px', fontSize: '11px',
+                        fontWeight: (day.isSelectedDay || day.isInSelectedWeek) ? 700 : 500,
+                        fontStyle: day.isWeekend ? 'italic' : 'normal',
+                        cursor: day.future ? 'default' : 'pointer',
+                        color: day.future ? '#c9d1da' : (!day.inMonth ? '#c2cbd5' : day.isSelectedDay ? '#ffffff' : day.isWeekend ? '#a3adb8' : '#16232f'),
+                        background: day.isSelectedDay ? avatarColor : (day.isInSelectedWeek ? '#eaf6f0' : 'transparent'),
+                        border: (day.isToday && !day.isSelectedDay) ? `1.5px solid ${avatarColor}` : '1.5px solid transparent',
+                      }}>
+                      {day.num}
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div style={{ fontSize: '10px', color: '#8a96a3', marginTop: '8px' }}>ช่วง: {range.from} – {range.to}</div>
+              {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_RELATEPERSON_V1 */}
+              {relatedUsers.length > 0 && (
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #eef1f5' }}>
+                  <div style={{ fontSize: '10.5px', fontWeight: 700, color: '#8a96a3', marginBottom: '6px' }}>Relate Person</div>
+                  {relatedUsers.map(u => (
+                    <div key={u.id} onClick={() => onSwitchUser && onSwitchUser(u)} title="ดู Transaction Dashboard ของ User นี้"
+                      style={{ fontSize: '11.5px', color: '#16232f', padding: '5px 6px', borderRadius: '6px', cursor: 'pointer' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#f0f3f7'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                      {u.username || u.email || '-'}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ flexGrow: 1, padding: '18px 22px', minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_PIN_TOP_SCROLL_DETAIL_V1 -- เอา overflowY:'auto' ออกจาก Panel ใหญ่ ตรึงส่วนหัว (Title/Summary/Timeline) ไว้คงที่ Scroll ได้แค่โซน Detail ด้านล่างเท่านั้น */}
+              <div style={{ flexShrink: 0 }}>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#16232f', marginBottom: '2px' }}>
+                  {granularity === 'daily' ? selectedDate : `${range.from} – ${range.to}`}
+                </div>
+                <div style={{ fontSize: '11.5px', color: '#8a96a3', marginBottom: '16px' }}>
+                  {granularity === 'daily' ? 'รายละเอียด Transaction ทีละรายการ พร้อม Gap เวลาระหว่างรายการ' : 'สรุปยอด Transaction รายวัน (ไม่แสดง Gap)'}
+                </div>
+
+                {loading && <div style={{ fontSize: '12px', color: '#8a96a3' }}>กำลังโหลด...</div>}
+                {err && <div style={{ fontSize: '12px', color: '#c0392b' }}>{err}</div>}
+
+                {!loading && !err && data && (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: granularity === 'daily' ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', gap: '1px', background: '#e8e8e8', borderRadius: '10px', overflow: 'hidden', marginBottom: '18px', border: '0.5px solid #e8e8e8' }}>
+                      {granularity === 'daily' ? (
+                        <>
+                          <DashboardSummaryCell label="เริ่มงาน" value={fmtTime(data.summary?.start_time)} />
+                          <DashboardSummaryCell label="เลิกงาน" value={fmtTime(data.summary?.end_time)} />
+                          <DashboardSummaryCell label="จำนวน Transaction" value={data.summary?.count} />
+                          <DashboardSummaryCell label="Avg ต่อ Trans" value={data.summary?.avg_gap_minutes != null ? `${data.summary.avg_gap_minutes} นาที` : '—'} />
+                        </>
+                      ) : (
+                        <>
+                          <DashboardSummaryCell label="จำนวน Transaction" value={data.summary?.total_count} />
+                          <DashboardSummaryCell label="วันที่ทำงาน" value={data.summary?.active_days} />
+                          <DashboardSummaryCell label="เฉลี่ย/วัน" value={data.summary?.avg_per_day} />
+                        </>
+                      )}
+                    </div>
+
+                    {granularity === 'daily' && (
+                      <div style={{ background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#16232f', marginBottom: '12px' }}>Timeline ทั้งวัน (00:00–24:00)</div>
+                        <div style={{ position: 'relative', height: '28px', background: '#f4f6f9', borderRadius: '8px' }}>
+                          {dailyRows.map((t, i) => {
+                            const dt = new Date(t.ts);
+                            const minOfDay = isNaN(dt.getTime()) ? 0 : dt.getHours() * 60 + dt.getMinutes();
+                            const st = dashboardModuleStyle(t.module);
+                            const tip = t.is_weekend_source ? `${fmtTime(t.ts)} (ทำวันเสาร์-อาทิตย์ นับรวมวันจันทร์) · ${t.invoice_no || ''}` : `${fmtTime(t.ts)} · ${t.invoice_no || ''}`; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
+                            return (
+                              <div key={i} title={tip}
+                                style={{ position: 'absolute', top: '6px', left: `calc(${(minOfDay / 1440 * 100).toFixed(2)}% - 5px)`,
+                                  width: '10px', height: '10px', borderRadius: '50%', background: st.color,
+                                  border: t.is_weekend_source ? '2px dashed #6b7fd7' : '2px solid #ffffff', cursor: 'pointer' }} />
+                            );
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '10px', color: '#a3adb8' }}>
+                          <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_PIN_TOP_SCROLL_DETAIL_V1 -- Zone Detail: มีแค่โซนนี้ที่ Scroll ได้ (flexGrow:1 + overflowY:'auto')
+                  Div นี้เป็นทั้งกล่องขาว/เส้นขอบ/มุมโค้งเอง และเป็น Scroll Container จริงในตัวเดียวกัน จึงไม่มี Ancestor overflow:hidden
+                  มาแทรกก่อนถึง Div นี้ -- Sticky Header (position:sticky, top:0) จึงยึดกับ Div นี้ตรงๆ ถูกต้อง ไม่หลุดไปยึด Panel ใหญ่เหมือนก่อนหน้า
+                  และเพราะ overflowY:'auto' ทำให้เนื้อหาถูก Clip ตามขอบมุมโค้งของ Div นี้เองด้วย (แก้ปัญหาหัว Column ไม่สุดขอบ) */}
+              {!loading && !err && data && (
+                <div style={{ flexGrow: 1, overflowY: 'auto', minHeight: 0, background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '8px' }}>
+                  {granularity === 'daily' ? (
+                    dailyRows.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '50px 20px', color: '#a3adb8' }}>
+                        <div style={{ fontSize: '30px', marginBottom: '10px' }}>📭</div>
+                        <div style={{ fontSize: '13px' }}>ไม่มี Transaction ในวันนี้</div>
+                      </div>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_TABLE_DENSITY_V9 */}
+                        <thead>
+                          <tr>
+                            <th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เริ่ม</th><th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เสร็จ</th><th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>ระยะเวลา</th><th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Sub-item</th><th style={{ ...S.th, width: '12%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Per Trans</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 */}<th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>BU</th><th style={{ ...S.th, width: '13%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Invoice No.</th><th style={{ ...S.th, width: '8%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Module</th><th style={{ ...S.th, width: '20%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Batch/Draft</th><th style={{ ...S.th, width: '15%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Gap</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_FREEZE_HEADER_V2 -- Freeze หัว Column ตอน Scroll (รายวัน) + เพิ่ม Padding แนวตั้งให้หัวสูงเต็มขอบกล่อง */}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dailyRows.map((t, i) => {
+                            const st = dashboardModuleStyle(t.module);
+                            const gap = t.gap_minutes != null ? Math.round(t.gap_minutes) : null;
+                            const cellSm = { ...S.td, padding: '6px 10px', fontSize: '11px' };
+                            const cellEllipsis = { ...cellSm, overflow: 'visible', textOverflow: 'clip', whiteSpace: 'normal', wordBreak: 'break-word' }; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_NO_TRUNCATE_COLUMNS_V1 -- เลิก Truncate ด้วย ... ให้ขึ้นเต็มข้อความ (Wrap แทน) */
+                            const rowBg = t.is_weekend_source ? { background: '#eef0fb' } : {}; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
+                            return (
+                              <tr key={i} style={rowBg}>
+                                <td style={cellSm}>
+                                  {fmtTime(t.start_ts)}
+                                  {t.is_weekend_source && (
+                                    <span title="ทำรายการวันเสาร์-อาทิตย์ นับรวมกับวันจันทร์"
+                                      style={{ marginLeft: '4px', fontSize: '10px', color: '#6b7fd7', cursor: 'help' }}>📅</span>
+                                  )}
+                                </td>
+                                <td style={cellSm}>{fmtTime(t.end_ts)}</td>
+                                <td style={cellSm}>{(() => { /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_DURATION_COLUMN_V17 -- ระยะเวลาจริง (เสร็จ - เริ่ม) */
+                                  if (t.has_fill_start === false) return '-'; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_HASFILLSTART_DISPLAY_V19 -- ไม่มีข้อมูล fill_started_at จริง ไม่ใช่ 0 วิ */
+                                  if (!t.start_ts || !t.end_ts) return '-';
+                                  const ms = new Date(t.end_ts) - new Date(t.start_ts);
+                                  if (!isFinite(ms) || ms < 0) return '-';
+                                  const totalSec = Math.round(ms / 1000);
+                                  const mm = Math.floor(totalSec / 60);
+                                  const ss = totalSec % 60;
+                                  return mm > 0 ? `${mm} นาที ${ss} วิ` : `${ss} วิ`;
+                                })()}</td>
+                                <td style={cellSm}>{t.sub_items}</td> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 -- ย้ายมาไว้ถัดจากระยะเวลา */}
+                                <td style={cellSm}>{(() => { /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 -- Per Trans = ระยะเวลา(เสร็จ-เริ่ม) หาร Sub-item ตรงๆ ใช้ ms เดียวกับคอลัมน์ระยะเวลา */
+                                  if (t.has_fill_start === false) return '-'; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_HASFILLSTART_DISPLAY_V19 -- ไม่มีข้อมูล fill_started_at จริง ไม่ใช่ 0.0 นาที */
+                                  if (!t.start_ts || !t.end_ts || !t.sub_items) return '—';
+                                  const ms = new Date(t.end_ts) - new Date(t.start_ts);
+                                  if (!isFinite(ms) || ms < 0) return '—';
+                                  const perMin = ms / 1000 / 60 / t.sub_items;
+                                  return perMin.toFixed(1) + ' นาที';
+                                })()}</td>
+                                <td style={cellSm}>{t.bu || '-'}</td>
+                                <td style={cellEllipsis} title={t.invoice_no || ''}>{t.invoice_no || '-'}</td>
+                                <td style={cellSm}><span style={{ fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '5px', background: st.bg, color: st.color }}>{t.module}</span></td>
+                                <td style={cellEllipsis} title={t.batch_id || 'Draft'}>{t.batch_id || 'Draft'}</td>
+                                <td style={{ ...cellSm, color: gap != null && gap > 15 ? '#c0392b' : '#667085', fontWeight: 600 }}>{gap == null ? '—' : gap + ' นาที'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr><th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c', padding: '16px 10px' }}>วันที่</th><th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c', padding: '16px 10px' }}>Module ที่ทำ</th><th style={{ ...S.th, textAlign: 'right', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c', padding: '16px 10px' }}>จำนวน Transaction</th></tr>
+                      </thead>
+                      <tbody>
+                        {summaryRows.length === 0 && (
+                          <tr><td colSpan={3} style={{ ...S.td, color: '#aaa' }}>ไม่มี Transaction ในช่วงนี้</td></tr>
+                        )}
+                        {summaryRows.map((d, i) => (
+                          <tr key={i}>
+                            <td style={S.td}>{d.date}</td>
+                            <td style={S.td}>
+                              {Object.keys(d.modules || {}).map(m => {
+                                const st = dashboardModuleStyle(m);
+                                return <span key={m} style={{ fontSize: '10px', fontWeight: 600, padding: '2px 7px', borderRadius: '5px', background: st.bg, color: st.color, marginRight: '4px' }}>{m}: {d.modules[m]}</span>;
+                              })}
+                            </td>
+                            <td style={{ ...S.td, textAlign: 'right', fontWeight: 700 }}>{d.count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function DashboardSummaryCell({ label, value }) {
+    return (
+      <div style={{ background: '#ffffff', padding: '12px 14px' }}>
+        <div style={{ fontSize: '10px', color: '#8a96a3', textTransform: 'uppercase', marginBottom: '4px' }}>{label}</div>
+        <div style={{ fontSize: '15px', fontWeight: 700, color: '#16232f' }}>{value ?? '—'}</div>
+      </div>
+    );
+  }
+
+  function fmtTime(v) {
+    if (!v) return '-';
+    try {
+      const d = new Date(v);
+      if (isNaN(d.getTime())) return String(v).slice(11, 16) || String(v);
+      return d.toTimeString().slice(0, 8); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_TIME_SECONDS_V1 -- โชว์วินาทีด้วย (HH:MM:SS)
+    } catch (e) { return String(v); }
+  }
+
+  function toLocalISODate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
   export default UserManagement;

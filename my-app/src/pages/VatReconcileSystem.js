@@ -8,14 +8,12 @@
 //   import VatReconcileSystem from './VatReconcileSystem';
 //   <VatReconcileSystem bu={currentBu} onCommitSuccess={() => {...}} />
 //
-// รองรับ 2 ชนิดไฟล์: TB (Trial Balance) และ Input Summary
-// ตรวจชนิดไฟล์อัตโนมัติจากเนื้อหา (Client-side) ก่อนเลือกว่าจะยิงไป Endpoint ไหน
-// ยังไม่รองรับ Simple 100 / Simple AVG (รอคิวถัดไป)
+// รองรับ 3 ชนิดไฟล์: TB (Trial Balance), Input Summary และ Simple Report
+// TB/Input Summary ตรวจชนิดจากเนื้อหาไฟล์ (Client-side) ส่วน Simple ตรวจจากชื่อไฟล์
+// (เพราะเป็น .xlsx Binary อ่านเป็น Text ตรงๆ ไม่ได้)
 //
 // ⚠️ TODO ที่ยังไม่ Complete ในเวอร์ชันนี้:
-//   - ยังไม่ทดสอบ Detect Type กับไฟล์ Simple 100/AVG จริง (เพราะยังไม่ได้ทำ Endpoint ฝั่งนั้น)
-//   - ไฟล์ .xlsx (Excel) ยังตรวจชนิดไม่ได้ (Detect ตอนนี้ทำงานกับ Text/.out เท่านั้น
-//     เพราะอ่านเนื้อหาไฟล์ตรงๆ ด้วย FileReader.readAsText -- ไฟล์ Excel เป็น Binary อ่านแบบนี้ไม่ได้)
+//   - ยังไม่มีหน้า "จัดการไฟล์ Simple" (ลบ/แก้ Tax Type/Exclude Row) -- Commit ได้แค่ Upload ใหม่ทับเท่านั้น
 // ============================================================================
 
 import React, { useRef, useState, useCallback } from 'react';
@@ -25,9 +23,9 @@ import React, { useRef, useState, useCallback } from 'react';
 const VAT_RECONCILE_API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
 
 // ── ใช้ fetch ตรงๆ เอง (ไม่ใช้ apiFetch) เพราะต้องส่ง multipart/form-data ไม่ใช่ JSON ──
-async function callReconcileApi(path, formData) {
+async function callReconcileApi(path, formData, apiModule = 'vat-reconcile') { // MARKER_VATRECONCILESYSTEM_APIMODULE_PROP_V1
   const token = sessionStorage.getItem('fastapn_token');
-  const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile${path}`, {
+  const res = await fetch(`${VAT_RECONCILE_API_BASE}/${apiModule}${path}`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
@@ -63,7 +61,18 @@ function detectFileType(headText) {
   if (headText.includes('End Receive Date') || headText.includes('Merchandise')) {
     return 'input_summary';
   }
+  if (headText.includes('Accounts Payable Trial Balance Summary')) { // MARKER_VATRECONCILESYSTEM_AP_CUTTING_DETECT_V1
+    return 'ap_cutting';
+  }
   return 'unknown';
+}
+
+// ── ไฟล์ Simple เป็น .xlsx (Binary) อ่านเป็น Text ตรงๆ ไม่ได้ -- ตรวจจาก "ชื่อไฟล์" แทน ──
+// (Pattern เดียวกับที่ Backend ใช้ตัดสิน Simple Type + Tax Type Code)
+// SIMPLE_FILENAME_FLEXIBLE_SEP_PATCH_APPLIED — รองรับทั้ง Space และ Underscore คั่นคำในชื่อไฟล์
+const SIMPLE_FILENAME_PATTERN = /Simple[ _]+Report[ _]+Vat[ _]+(100|AVG)[ _]+([NAFT])/i;
+function isSimpleFile(filename) {
+  return SIMPLE_FILENAME_PATTERN.test(filename);
 }
 
 function readFileHead(file, maxChars = 4000) {
@@ -79,16 +88,18 @@ function readFileHead(file, maxChars = 4000) {
 const ENDPOINTS = {
   tb: { preview: '/tb/preview', commit: '/tb/commit' },
   input_summary: { preview: '/input-summary/preview', commit: '/input-summary/commit' },
+  simple: { preview: '/simple/preview', commit: '/simple/commit' },
+  ap_cutting: { preview: '/ap-cutting/preview', commit: '/ap-cutting/commit' }, // MARKER_VATRECONCILESYSTEM_AP_CUTTING_DETECT_V1
 };
 
-export default function VatReconcileSystem({ bu, onCommitSuccess }) {
+export default function VatReconcileSystem({ bu, onCommitSuccess, apiModule = 'vat-reconcile' }) { // MARKER_VATRECONCILESYSTEM_APIMODULE_PROP_V1
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
   const pendingFileRef = useRef(null); // เก็บ File Object ที่ใช้ตอน Preview ไว้ใช้ซ้ำตอน Commit
 
   const [stage, setStage] = useState('idle'); // idle | scanning | preview | committing | done | error
   const [sourceLabel, setSourceLabel] = useState('');
-  const [fileType, setFileType] = useState(null); // 'tb' | 'input_summary'
+  const [fileType, setFileType] = useState(null); // 'tb' | 'input_summary' | 'simple' | 'ap_cutting'
   const [previewData, setPreviewData] = useState(null); // { summary, records, unmatchedLines }
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -108,19 +119,28 @@ export default function VatReconcileSystem({ bu, onCommitSuccess }) {
     setErrorMessage('');
     pendingFileRef.current = file; // เก็บไว้ใช้ตอนกดยืนยัน Commit
     try {
-      const headText = await readFileHead(file);
-      const type = detectFileType(headText);
+      // เช็คไฟล์ Simple (.xlsx) จากชื่อไฟล์ก่อน -- อ่านเป็น Text ไม่ได้เพราะเป็น Binary
+      let type;
+      if (isSimpleFile(file.name)) {
+        type = 'simple';
+      } else {
+        const headText = await readFileHead(file);
+        type = detectFileType(headText);
+      }
+
       if (type === 'unknown') {
         throw new Error(
-          'ไม่รู้จักชนิดไฟล์นี้ — รองรับเฉพาะ TB (.out จาก GLCRC064) และ Input Summary (.out จาก APCRC201) เท่านั้น ' +
-          '(Simple 100/AVG ยังไม่รองรับในเวอร์ชันนี้)'
+          apiModule === 'ap-reconcile'
+            ? 'ไม่รู้จักชนิดไฟล์นี้ — รองรับเฉพาะ TB (.out จาก GLCRC064) และ Account Payable (.out จาก Accounts Payable Trial Balance Summary) เท่านั้น'
+            : 'ไม่รู้จักชนิดไฟล์นี้ — รองรับ TB (.out จาก GLCRC064), Input Summary (.out จาก APCRC201) ' +
+              'และ Simple Report (.xlsx ชื่อไฟล์มี Simple_Report_Vat_100/AVG)'
         );
       }
       setFileType(type);
 
       const formData = new FormData();
       formData.append('file', file);
-      const data = await callReconcileApi(ENDPOINTS[type].preview, formData);
+      const data = await callReconcileApi(ENDPOINTS[type].preview, formData, apiModule); // MARKER_VATRECONCILESYSTEM_APIMODULE_PROP_V1
       setPreviewData(data);
       setStage('preview');
     } catch (err) {
@@ -128,7 +148,7 @@ export default function VatReconcileSystem({ bu, onCommitSuccess }) {
       setErrorMessage(err?.message || 'เกิดข้อผิดพลาดระหว่างตรวจสอบไฟล์');
       setStage('error');
     }
-  }, []);
+  }, [apiModule]);
 
   const handleFileSelect = useCallback((files) => {
     if (!files || files.length === 0) return;
@@ -183,7 +203,7 @@ export default function VatReconcileSystem({ bu, onCommitSuccess }) {
     try {
       const formData = new FormData();
       formData.append('file', pendingFileRef.current);
-      const data = await callReconcileApi(ENDPOINTS[fileType].commit, formData);
+      const data = await callReconcileApi(ENDPOINTS[fileType].commit, formData, apiModule); // MARKER_VATRECONCILESYSTEM_APIMODULE_PROP_V1
       setStage('done');
       if (typeof onCommitSuccess === 'function') onCommitSuccess(data);
     } catch (err) {
@@ -191,10 +211,15 @@ export default function VatReconcileSystem({ bu, onCommitSuccess }) {
       setErrorMessage(err?.message || 'เกิดข้อผิดพลาดระหว่างบันทึกข้อมูล');
       setStage('error');
     }
-  }, [onCommitSuccess, fileType]);
+  }, [onCommitSuccess, fileType, apiModule]);
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    // MARKER_VATRECONCILESYSTEM_FILL_ZONE_HEIGHT_V2 — Container + Dropzone ขยายเต็มทั้งความสูง
+    // และความกว้างของ Zone ที่ครอบอยู่ (ตัด maxWidth: 720 เดิมที่ทำให้ค้างแคบไม่ขยายตาม % จอออก
+    // เหลือพื้นที่ขาวว่างรอบๆ) ใช้ Flex แทน Fix ขนาด — มีผลกับทุก Module ที่ใช้ Component นี้
+    // ร่วมกัน (VAT/AP/IE) เหมือนกันหมด — Popup Preview (Modal) ยังคง width: 720 เดิมไว้
+    // เพราะเป็นกล่อง Dialog ลอย ไม่ใช่ตัว Container หลักที่ต้องเต็ม Zone
+    <div style={{ width: '100%', height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
       {stage === 'idle' && (
         <div
           ref={dropZoneRef}
@@ -211,21 +236,30 @@ export default function VatReconcileSystem({ bu, onCommitSuccess }) {
             textAlign: 'center',
             cursor: 'pointer',
             outline: 'none',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
           }}
         >
           <input
             ref={fileInputRef}
             type="file"
-            accept=".out,.txt"
+            accept=".out,.txt,.xlsx"
             style={{ display: 'none' }}
             onChange={(e) => handleFileSelect(e.target.files)}
           />
           <p style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>
             ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์
           </p>
+          {/* MARKER_VATRECONCILESYSTEM_UPLOAD_HINT_WORDING_V1 — แยก Wording ตาม apiModule เพราะ
+              ap-reconcile รับแค่ TB กับ Account Payable (ap_cutting) เท่านั้น ไม่มี Input Summary/
+              Simple เลย — พูดถึงชนิดไฟล์ที่ไม่รองรับจะทำให้เข้าใจผิดว่าจะรองรับในอนาคต */}
           <p style={{ fontSize: '13px', color: '#666', margin: '0 0 10px' }}>
-            รองรับ TB (.out) และ Input Summary (.out) — ระบบตรวจชนิดไฟล์ให้อัตโนมัติ
-            (Simple 100/AVG ยังไม่รองรับ)
+            {apiModule === 'ap-reconcile'
+              ? 'รองรับ TB (.out) และ Account Payable (.out) — ระบบตรวจชนิดไฟล์ให้อัตโนมัติ'
+              : 'รองรับ TB (.out), Input Summary (.out) และ Simple Report (.xlsx) — ระบบตรวจชนิดไฟล์ให้อัตโนมัติ'}
           </p>
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '12px',
@@ -430,6 +464,116 @@ export default function VatReconcileSystem({ bu, onCommitSuccess }) {
                 </div>
               </div>
             )}
+
+            {fileType === 'simple' && (
+              <div>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+                  background: '#e6f4ea', borderRadius: '8px', marginBottom: '16px',
+                }}>
+                  <span style={{ fontSize: '13px', color: '#1a7f37' }}>
+                    ตรวจพบ Simple Report ({previewData.simple_type}%) · BU {previewData.bu} ·
+                    Period {previewData.period}
+                  </span>
+                </div>
+
+                <div style={{ maxHeight: '40vh', overflowY: 'auto', marginBottom: '16px' }}>
+                  <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '0.5px solid #ddd' }}>
+                        <th style={{ position: 'sticky', top: 0, background: '#fff', textAlign: 'left', padding: '6px 8px', color: '#666', fontWeight: 500 }}>สาขา</th>
+                        <th style={{ position: 'sticky', top: 0, background: '#fff', textAlign: 'right', padding: '6px 8px', color: '#666', fontWeight: 500 }}>จำนวน Invoice</th>
+                        <th style={{ position: 'sticky', top: 0, background: '#fff', textAlign: 'left', padding: '6px 8px', color: '#666', fontWeight: 500 }}>Tax Type (ชื่อไฟล์ / กลุ่มจากวันที่)</th>
+                        <th style={{ position: 'sticky', top: 0, background: '#fff', textAlign: 'left', padding: '6px 8px', color: '#666', fontWeight: 500 }}>Account</th>
+                        <th style={{ position: 'sticky', top: 0, background: '#fff', textAlign: 'right', padding: '6px 8px', color: '#666', fontWeight: 500 }}>รวมมูลค่าที่ใช้สิทธิ์</th>
+                        <th style={{ position: 'sticky', top: 0, background: '#fff', textAlign: 'right', padding: '6px 8px', color: '#666', fontWeight: 500 }}>รวมภาษี</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewData.branches.map((b, i) => (
+                        <tr key={i} style={{ borderBottom: '0.5px solid #eee' }}>
+                          <td style={{ padding: '6px 8px' }}>{b.branch}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>{b.row_count}</td>
+                          <td style={{ padding: '6px 8px' }}>
+                            {b.tax_type_from_name || '—'} / {b.tax_type_group_from_date || '—'}
+                            {b.tax_type_date_mismatch && (
+                              <span style={{ color: '#9a6700' }}> ⚠️ ไม่ตรงกัน</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '6px 8px' }}>{b.reconcile_account} ({b.tax_type_group})</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatNumber(b.total_claimed_amount)}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatNumber(b.total_claimed_vat)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p style={{ fontSize: '12px', color: '#a30d16', marginBottom: '16px' }}>
+                  ⚠️ การ Commit จะ<strong>ลบข้อมูลเดิมทั้งหมด</strong>ของ BU/สาขา/เดือน/ประเภทภาษี/Simple Type นี้ก่อน
+                  แล้วบันทึกชุดใหม่แทนที่ (Replace ทั้งก้อน ไม่ใช่ Merge)
+                </p>
+
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={resetAll} style={{ fontSize: '13px' }}>ยกเลิก</button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmCommit}
+                    style={{ fontSize: '13px', borderColor: '#0969da', color: '#0969da' }}
+                  >
+                    ยืนยันบันทึกลง DB
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {fileType === 'ap_cutting' && (
+              <div>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+                  background: '#e6f4ea', borderRadius: '8px', marginBottom: '16px',
+                }}>
+                  <span style={{ fontSize: '13px', color: '#1a7f37' }}>
+                    ตรวจพบ Account Payable (AP Cutting) · BU {previewData.summary?.bu || previewData.bu || '—'} ·
+                    Period {previewData.summary?.period || previewData.period || '—'}
+                  </span>
+                </div>
+
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 12, marginBottom: '20px',
+                }}>
+                  {[
+                    { label: 'Record ที่ Parse ได้', value: previewData.summary?.parsed_count ?? previewData.summary?.total_count },
+                    { label: 'Match BU สำเร็จ', value: previewData.summary?.matched_count },
+                    { label: 'ข้อมูลเดิมที่จะถูกแทนที่', value: previewData.summary?.existing_rows_to_replace, warn: true },
+                    { label: 'สาขาที่ Match ไม่ได้', value: previewData.summary?.unmatched_branch_count, warn: true },
+                  ].map((item, i) => (
+                    <div key={i} style={{ background: '#f7f7f7', borderRadius: '8px', padding: '1rem' }}>
+                      <p style={{ fontSize: '13px', color: '#666', margin: '0 0 4px' }}>{item.label}</p>
+                      <p style={{ fontSize: '24px', fontWeight: 500, margin: 0, color: item.warn && item.value > 0 ? '#9a6700' : undefined }}>
+                        {item.value ?? '—'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <p style={{ fontSize: '12px', color: '#a30d16', marginBottom: '16px' }}>
+                  ⚠️ การ Commit จะ<strong>ลบข้อมูลเดิมทั้งหมด</strong>ของ BU/เดือนนี้ก่อน แล้วบันทึกชุดใหม่แทนที่
+                  (Replace ทั้งก้อน ไม่ใช่ Merge)
+                </p>
+
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={resetAll} style={{ fontSize: '13px' }}>ยกเลิก</button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmCommit}
+                    style={{ fontSize: '13px', borderColor: '#0969da', color: '#0969da' }}
+                  >
+                    ยืนยันบันทึกลง DB
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -443,7 +587,7 @@ export default function VatReconcileSystem({ bu, onCommitSuccess }) {
       {stage === 'done' && (
         <div style={{ textAlign: 'center', padding: '24px' }}>
           <p style={{ fontSize: '14px', margin: '10px 0 0', color: '#1a7f37' }}>
-            บันทึก{fileType === 'tb' ? ' vat_reconcile_tb ' : ' vat_reconcile_input_summary '}เรียบร้อย
+            บันทึก{fileType === 'tb' ? ' vat_reconcile_tb ' : fileType === 'simple' ? ' vat_reconcile_simple ' : fileType === 'ap_cutting' ? ' ap_cutting_staging ' : ' vat_reconcile_input_summary '}เรียบร้อย
           </p>
           <button type="button" onClick={resetAll} style={{ marginTop: '12px', fontSize: '13px' }}>
             อัปโหลดไฟล์อื่นต่อ

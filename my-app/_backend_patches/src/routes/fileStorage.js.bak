@@ -1,0 +1,984 @@
+﻿import { Router } from "express";
+import { pool, getUsernameByEmail } from "../db.js";
+import zlib from "zlib";
+import fs from "fs";
+import path from "path";
+import { createRequire } from "module";
+import sharp from "sharp";
+
+// ── ใช้ไฟล์ Vendor แทน npm install (Server เข้า registry.npmjs.org ไม่ได้) ──
+// ── โหลดมาจาก https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js ──
+const require = createRequire(import.meta.url);
+const XLSX = require("../../vendor/xlsx.full.min.cjs");
+const JSZip = require('jszip');
+
+const router = Router();
+
+// ── Root โฟลเดอร์เก็บไฟล์ทั้งหมด — Module ใหม่ในอนาคตแค่เพิ่ม Folder ข้างๆ ──
+const STORAGE_ROOT = "C:\\apps\\fastapn-backend\\storage";
+
+// ── สร้าง Path เต็ม storage/{BU}/{YYYY-MM}/{batchId}.xls.gz ──
+// ── Sanitize batchId ก่อนใช้เป็นชื่อไฟล์เสมอ — กันกรณี batchId มี "/" หรืออักขระต้องห้ามอื่นๆ ──
+// ── ของ Windows (\ / : * ? " < > |) ซึ่งจะโดน path.join() ตีความเป็นตัวแบ่งโฟลเดอร์/พังไปเลย ──
+// ── (เกิดจริงตอน Batch Name มี "/" เช่น "CDS-NMR-20260710-OTH/KARN-001") ──
+function sanitizeForFilename(str) {
+  return String(str).replace(/[\\/:*?"<>|]/g, "_");
+}
+
+function buildFilePath(bu, batchId) {
+  const now = new Date();
+  const yyyyMm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const dir = path.join(STORAGE_ROOT, bu, yyyyMm);
+  const safeBatchId = sanitizeForFilename(batchId);
+  const filePath = path.join(dir, `${safeBatchId}.xls.gz`);
+  return { dir, filePath };
+}
+
+// MARKER_SUPPORT_FEEDBACK_IMAGE_UPLOAD_V1
+// ── สร้าง Path เก็บรูป Support & Feedback: storage/SUPPORT/{YYYY-MM}/{refId}_{timestamp}.webp ──
+// ── ใช้ "SUPPORT" แทน bu เพราะ Module นี้ไม่มี BU จริง (กันชนกับ Path ของ ap-export) ──
+function buildImagePath(refId) {
+  const now = new Date();
+  const yyyyMm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const dir = path.join(STORAGE_ROOT, "SUPPORT", yyyyMm);
+  const safeRefId = sanitizeForFilename(refId);
+  const filePath = path.join(dir, `${safeRefId}_${Date.now()}.webp`);
+  return { dir, filePath };
+}
+
+// ── คำนวณชื่อไฟล์ตอน Download: {Initial แรก}{Initial ท้าย}{YYYYMMDD}_{HHMM}{BU}.xls ──
+function buildDownloadFilename(ownerUsername, createdAt, bu) {
+  const clean = String(ownerUsername || "U").trim();
+  const first = clean.charAt(0).toUpperCase();
+  const last = clean.charAt(clean.length - 1).toUpperCase();
+  const d = new Date(createdAt);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${first}${last}${yyyy}${mm}${dd}_${hh}${min}${bu}.xls`;
+}
+
+// ── Cron: ย้าย active -> recycled -> ลบถาวร (เรียกจาก app.js ทุก 5 นาที) ──
+// ── ข้าม Record ที่ retention_days IS NULL (ถาวร ไม่มีวันลบ เช่น Invoice Scan ในอนาคต) ──
+// ── นับเวลาจาก batch_list.approved_at (วันที่ Approve) ไม่ใช่ file_storage.created_at ──
+// ── batch ที่ยังไม่ Approve (status != 'approved' หรือ approved_at ยัง NULL) จะไม่ถูกแตะเลย ──
+// ── ผูกกับ module='ap-export' เท่านั้น (module อื่นในอนาคตที่ไม่มี batch_list ให้ join ──
+// ── จะ fallback ไปใช้ created_at เดิม กันไฟล์ค้างเป็น active ตลอดกาลโดยไม่ตั้งใจ) ──
+export async function checkAndCleanupFileStorage() {
+  // MARKER_APEXPORT_RETENTION_SYNC_BATCH_V1 -- active -> recycled: 15 วันคงที่ นับจาก approved_at
+  // ตรงกับ invoice-register เป๊ะ (ไม่ใช้สูตร retention_days*3/7 อีกแล้ว กัน Recycle เร็วกว่า Batch แม่)
+  await pool.query(
+    `UPDATE file_storage fs
+     SET status = 'recycled', recycled_at = NOW()
+     FROM batch_list bl
+     WHERE fs.status = 'active'
+       AND fs.retention_days IS NOT NULL
+       AND fs.module = 'ap-export'
+       AND (bl.id::text = fs.ref_id OR bl.batch_id = fs.ref_id)
+       AND bl.status = 'approved'
+       AND bl.approved_at IS NOT NULL
+       AND bl.approved_at < NOW() - INTERVAL '15 days'`
+  );
+
+  // ── invoice-register: นับอายุจาก batch_list.approved_at เหมือน ap-export (ไม่ใช่ created_at เดิม) ──
+  // MARKER_FILESTORAGE_INVOICEREGISTER_RETENTION_15DAYS_V2
+  await pool.query(
+    `UPDATE file_storage fs
+     SET status = 'recycled', recycled_at = NOW()
+     FROM batch_list bl
+     WHERE fs.status = 'active'
+       AND fs.retention_days IS NOT NULL
+       AND fs.module = 'invoice-register'
+       AND (bl.id::text = fs.ref_id OR bl.batch_id = fs.ref_id)
+       AND bl.status = 'approved'
+       AND bl.approved_at IS NOT NULL
+       AND bl.approved_at < NOW() - INTERVAL '15 days'`
+  );
+
+  // MARKER_IESIMPLE_RETENTION_15DAYS_V1 -- ie-simple: active -> recycled หลัง 15 วัน นับจาก
+  // batch_list.approved_at (Pattern เดียวกับ ap-export/invoice-register เป๊ะ) -- ไม่เช็ค
+  // fs.retention_days IS NOT NULL เพราะ ie-simple Insert ด้วย retention_days = null เสมอ
+  // (ตั้งใจให้กฎ 15 วันนี้ใช้ได้โดยไม่ต้องแก้ไฟล์ ieExport.js)
+  await pool.query(
+    `UPDATE file_storage fs
+     SET status = 'recycled', recycled_at = NOW()
+     FROM batch_list bl
+     WHERE fs.status = 'active'
+       AND fs.module = 'ie-simple'
+       AND (bl.id::text = fs.ref_id OR bl.batch_id = fs.ref_id)
+       AND bl.status = 'approved'
+       AND bl.approved_at IS NOT NULL
+       AND bl.approved_at < NOW() - INTERVAL '15 days'`
+  );
+
+  // ── module อื่นๆ นอกจาก invoice-register ยังใช้สูตรเดิม (retention_days*3/7) ──
+  // MARKER_FILESTORAGE_IEMACROLOGIC_EXCLUDE_V1 -- ie-macrologic ไม่มี Recycle Bin (ลบตรงหลัง 48 ชม.
+  // ที่ Block ด้านล่าง) กันไว้ไม่ให้สูตรนี้จับไปเข้า Recycled ก่อนโดยไม่ตั้งใจ
+  await pool.query(
+    `UPDATE file_storage
+     SET status = 'recycled', recycled_at = NOW()
+     WHERE status = 'active'
+       AND retention_days IS NOT NULL
+       AND module != 'ap-export'
+       AND module != 'invoice-register'
+       AND module != 'ie-macrologic'
+       AND created_at < NOW() - (retention_days * 3.0 / 7.0) * INTERVAL '1 day'`
+  );
+
+  // MARKER_APEXPORT_RETENTION_SYNC_BATCH_V1 -- recycled -> ลบถาวร: 15 วันคงที่ นับจาก approved_at
+  // ตรงกับ invoice-register เป๊ะ (ไม่ใช้ fs.retention_days ตรงๆ อีกแล้ว)
+  const { rows: toDeleteApproved } = await pool.query(
+    `SELECT fs.id, fs.file_path FROM file_storage fs
+     JOIN batch_list bl ON (bl.id::text = fs.ref_id OR bl.batch_id = fs.ref_id)
+     WHERE fs.status = 'recycled'
+       AND fs.retention_days IS NOT NULL
+       AND fs.module = 'ap-export'
+       AND bl.approved_at IS NOT NULL
+       AND bl.approved_at < NOW() - INTERVAL '15 days'`
+  );
+
+  // MARKER_FILESTORAGE_INVOICEREGISTER_15DAYS_TOTAL_V2
+  // ── invoice-register: รวม Active+Recycled ไม่เกิน 15 วัน (Total) นับจาก batch_list.approved_at ──
+  // ── (Pattern เดียวกับ ap-export) เปลี่ยนจาก created_at -> approved_at เท่านั้น กรอบเวลา 15 วัน เท่าเดิม ──
+  const { rows: toDeleteInvoiceRegister } = await pool.query(
+    `SELECT fs.id, fs.file_path, fs.ref_id FROM file_storage fs
+     JOIN batch_list bl ON (bl.id::text = fs.ref_id OR bl.batch_id = fs.ref_id)
+     WHERE fs.status = 'recycled'
+       AND fs.module = 'invoice-register'
+       AND bl.approved_at IS NOT NULL
+       AND bl.approved_at < NOW() - INTERVAL '15 days'`
+  );
+
+  // MARKER_FILESTORAGE_CASCADE_DELETE_APEXPORT_IMAGE_V1
+  // ── Cascade: Invoice Register ถูกลบถาวรตอนไหน รูปประกอบ (ap-export) ของ batch เดียวกัน ──
+  // ── ต้องถูกลบไปด้วยทันที ไม่สนใจ retention_days/status ของรูปเองเลย ("อยู่คู่ ลบคู่") ──
+  let toDeleteApExportImages = [];
+  if (toDeleteInvoiceRegister.length > 0) {
+    const cascadeRefIds = [...new Set(toDeleteInvoiceRegister.map((r) => r.ref_id))];
+    const { rows: cascadeImages } = await pool.query(
+      `SELECT id, file_path FROM file_storage WHERE module = 'ap-export' AND ref_id = ANY($1::text[])`,
+      [cascadeRefIds]
+    );
+    toDeleteApExportImages = cascadeImages;
+  }
+
+  // ── module อื่นๆ (ไม่ใช่ ap-export, ไม่ใช่ invoice-register) ยังนับจาก created_at เดิม ──
+  const { rows: toDeleteOther } = await pool.query(
+    `SELECT id, file_path FROM file_storage
+     WHERE status = 'recycled'
+       AND retention_days IS NOT NULL
+       AND module != 'ap-export'
+       AND module != 'invoice-register'
+       AND module != 'ie-macrologic'
+       AND created_at < NOW() - retention_days * INTERVAL '1 day'`
+  );
+
+  // MARKER_FILESTORAGE_IEMACROLOGIC_RETENTION_48H_V1
+  // ── ie-macrologic: ไม่มี Recycle Bin ลบทิ้งตรงๆ หลัง 48 ชม. จาก created_at เท่านั้น ──
+  // ── (ตามที่ Confirm ไว้ -- งานนี้ไม่มี Concept "กู้คืนจาก Recycle Bin" เหมือน Batch อื่น) ──
+  const { rows: toDeleteIeMacroLogic } = await pool.query(
+    `SELECT id, file_path FROM file_storage
+     WHERE module = 'ie-macrologic'
+       AND status = 'active'
+       AND created_at < NOW() - INTERVAL '48 hours'`
+  );
+
+  const toDelete = [...toDeleteApproved, ...toDeleteInvoiceRegister, ...toDeleteOther, ...toDeleteApExportImages, ...toDeleteIeMacroLogic];
+
+  for (const row of toDelete) {
+    try {
+      if (fs.existsSync(row.file_path)) fs.unlinkSync(row.file_path);
+    } catch (err) {
+      console.error(`ลบไฟล์ ${row.file_path} ไม่สำเร็จ:`, err.message);
+    }
+  }
+
+  if (toDelete.length > 0) {
+    const ids = toDelete.map((r) => r.id);
+    await pool.query(`DELETE FROM file_storage WHERE id = ANY($1::uuid[])`, [ids]);
+  }
+
+  // MARKER_IESIMPLE_RETENTION_15DAYS_V1 -- ie-simple: recycled -> ลบไฟล์จริงเท่านั้น (ไม่ลบ Row)
+  // หลัง 15 วัน นับจาก batch_list.approved_at เหมือนกัน -- ต่างจาก ap-export ตรงที่ไม่ DELETE
+  // Row ใน file_storage ทิ้ง เก็บไว้เป็น Record ว่า Batch นี้เคยมีไฟล์ Simple มาก่อน
+  const { rows: toPurgeIeSimpleFileOnly } = await pool.query(
+    `SELECT fs.id, fs.file_path FROM file_storage fs
+     JOIN batch_list bl ON (bl.id::text = fs.ref_id OR bl.batch_id = fs.ref_id)
+     WHERE fs.status = 'recycled'
+       AND fs.module = 'ie-simple'
+       AND fs.file_removed_at IS NULL
+       AND bl.approved_at IS NOT NULL
+       AND bl.approved_at < NOW() - INTERVAL '15 days'`
+  );
+  for (const row of toPurgeIeSimpleFileOnly) {
+    try {
+      if (fs.existsSync(row.file_path)) fs.unlinkSync(row.file_path);
+    } catch (err) {
+      console.error(`ลบไฟล์ Simple ${row.file_path} ไม่สำเร็จ:`, err.message);
+    }
+  }
+  if (toPurgeIeSimpleFileOnly.length > 0) {
+    const purgedIds = toPurgeIeSimpleFileOnly.map((r) => r.id);
+    await pool.query(`UPDATE file_storage SET file_removed_at = NOW() WHERE id = ANY($1::uuid[])`, [purgedIds]);
+  }
+}
+
+// ── POST /api/file-storage/generate — สร้างไฟล์ Excel จาก Batch Preview + Insert Record ──
+// Body: { module, bu, refId, fileName, rows: [[...แถวที่ 1...], ...] }   -- โหมดเดิม (1 Sheet ชื่อ "Sheet1")
+// หรือ: { module, bu, refId, fileName, sheets: [{ name: 'Invoice', rows: [[...]] }, { name: 'Credit', rows: [[...]] }] } -- MARKER_FILESTORAGE_MULTISHEET_V1 หลาย Sheet ในไฟล์เดียว
+router.post("/generate", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+
+  try {
+    const { module = "ap-export", bu, refId, fileName, rows, sheets, retentionDays = 7 } = req.body;
+
+    // MARKER_FILESTORAGE_MULTISHEET_V1 -- รองรับ sheets Array (หลาย Sheet) ควบคู่กับ rows เดิม (Sheet เดียว) เพื่อ Backward Compatible
+    const sheetList = Array.isArray(sheets) && sheets.length > 0
+      ? sheets.filter(s => Array.isArray(s?.rows) && s.rows.length > 0)
+      : (Array.isArray(rows) && rows.length > 0 ? [{ name: "Sheet1", rows }] : []);
+
+    if (!bu || !refId || sheetList.length === 0) {
+      return res.status(400).json({ error: "ข้อมูลไม่ครบ (ต้องมี bu, refId, และ rows หรือ sheets)" });
+    }
+
+    // ── สร้าง Workbook Excel 97-2003 (.xls) จาก Rows/Sheets ──
+    const workbook = XLSX.utils.book_new();
+    sheetList.forEach((s, i) => {
+      const worksheet = XLSX.utils.aoa_to_sheet(s.rows);
+      // Excel จำกัดชื่อ Sheet ไม่เกิน 31 ตัวอักษร และห้ามมีอักขระพิเศษบางตัว
+      const safeName = String(s.name || `Sheet${i + 1}`).replace(/[\\/?*[\]:]/g, "").slice(0, 31) || `Sheet${i + 1}`;
+      XLSX.utils.book_append_sheet(workbook, worksheet, safeName);
+    });
+    const xlsBuffer = XLSX.write(workbook, { bookType: "xls", type: "buffer" });
+
+    // ── Gzip บีบอัดก่อนเก็บลง Disk ──
+    const gzBuffer = zlib.gzipSync(xlsBuffer);
+
+    // ── สร้าง Path ตาม BU/เดือน แล้วสร้างโฟลเดอร์ถ้ายังไม่มี ──
+    const { dir, filePath } = buildFilePath(bu, refId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, gzBuffer);
+
+    // ── คำนวณชื่อไฟล์จริง ณ ตอนนี้ (Generate = Export) ด้วย Format เดียวกับตอน Download ──
+    // ── เก็บไว้เลย ไม่ต้องรอคำนวณสดตอน Download อีกที เพราะ Username/BU/เวลาที่ใช้คำนวณ ──
+    // ── คือค่าเดียวกันกับตอนนี้อยู่แล้ว (Generate กับ Insert record เกิดขึ้นพร้อมกัน) ──
+    const generatedAt = new Date();
+    const computedFileName = fileName || buildDownloadFilename(username, generatedAt, bu);
+
+    // ── Insert Record ผูกกับ Batch ──
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO file_storage (module, bu, ref_id, file_path, file_name, owner_username, status, retention_days)
+       VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
+       RETURNING id, created_at`,
+      [module, bu, refId, filePath, computedFileName, username, retentionDays]
+    );
+
+    // ── เชื่อม batch_list.file_url + file_name ให้ตาราง My Jobs/All Jobs เห็นว่ามีไฟล์แล้ว ──
+    // ── (ไม่รู้ว่า Column จริงในระบบเดิมชื่อ id หรือ batch_id เลยเช็คทั้งคู่) ──
+    try {
+      await pool.query(
+        `UPDATE batch_list SET file_url = $1, file_name = $2 WHERE id::text = $3 OR batch_id = $3`,
+        [inserted[0].id, computedFileName, refId]
+      );
+    } catch (linkErr) {
+      console.error("เชื่อม batch_list.file_url ไม่สำเร็จ (ไม่กระทบไฟล์ที่สร้างแล้ว):", linkErr.message);
+    }
+
+    res.json({ ok: true, fileId: inserted[0].id, createdAt: inserted[0].created_at, fileName: computedFileName });
+  } catch (err) {
+    console.error("POST /file-storage/generate error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_GENERATE_RAW_ENDPOINT_V1
+// ── POST /api/file-storage/generate-raw — เก็บไฟล์ต้นฉบับตรงๆ (ไม่ Parse/Rebuild) ──
+// Body: { module, bu, refId, fileName, fileBase64, retentionDays }
+// ── ใช้กับโหมด "แนบไฟล์ Excel" — เปลี่ยนแค่ชื่อไฟล์ ไม่แตะเนื้อหา/Format เดิมเลย ──
+router.post("/generate-raw", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+
+  try {
+    const { module = "ap-export", bu, refId, fileName, fileBase64, retentionDays = 7 } = req.body;
+
+    if (!bu || !refId || !fileBase64) {
+      return res.status(400).json({ error: "ข้อมูลไม่ครบ (ต้องมี bu, refId, fileBase64)" });
+    }
+
+    // ── Decode Base64 กลับเป็นไฟล์ต้นฉบับตรงๆ (Byte ต่อ Byte ไม่มีการแปลงใดๆ) ──
+    const xlsBuffer = Buffer.from(fileBase64, "base64");
+
+    // ── Gzip บีบอัดก่อนเก็บลง Disk (Logic เดียวกับ /generate เดิม) ──
+    const gzBuffer = zlib.gzipSync(xlsBuffer);
+
+    // ── สร้าง Path ตาม BU/เดือน แล้วสร้างโฟลเดอร์ถ้ายังไม่มี ──
+    const { dir, filePath } = buildFilePath(bu, refId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, gzBuffer);
+
+    const generatedAt = new Date();
+    const computedFileName = fileName || buildDownloadFilename(username, generatedAt, bu);
+
+    // ── Insert Record ผูกกับ Batch (Logic เดียวกับ /generate เดิม) ──
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO file_storage (module, bu, ref_id, file_path, file_name, owner_username, status, retention_days)
+       VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
+       RETURNING id, created_at`,
+      [module, bu, refId, filePath, computedFileName, username, retentionDays]
+    );
+
+    try {
+      await pool.query(
+        `UPDATE batch_list SET file_url = $1, file_name = $2 WHERE id::text = $3 OR batch_id = $3`,
+        [inserted[0].id, computedFileName, refId]
+      );
+    } catch (linkErr) {
+      console.error("เชื่อม batch_list.file_url ไม่สำเร็จ (ไม่กระทบไฟล์ที่สร้างแล้ว):", linkErr.message);
+    }
+
+    res.json({ ok: true, fileId: inserted[0].id, createdAt: inserted[0].created_at, fileName: computedFileName });
+  } catch (err) {
+    console.error("POST /file-storage/generate-raw error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/file-storage/:id/report-to — Report to ผู้ตรวจ (หลังมีไฟล์แล้วเท่านั้น) ──
+// ── ต่อยอดระบบ "Send to" เดิม — App.js Poll ทุก 30 วิ จับได้เอง เด้ง IncomingToast ให้ ──
+router.post("/:id/report-to", async (req, res) => {
+  const { id } = req.params;
+  const { reportTo } = req.body;
+
+  if (!reportTo) {
+    return res.status(400).json({ error: "กรุณาระบุผู้ตรวจ (reportTo)" });
+  }
+
+  try {
+    const { rows } = await pool.query(`SELECT * FROM file_storage WHERE id = $1`, [id]);
+    const record = rows[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+
+    await pool.query(
+      `UPDATE bucket_list
+       SET status = 'sent', sent_to_username = $1, sent_at = NOW(),
+           sent_note = $2
+       WHERE batch_id = $3`,
+      [reportTo, `ส่งตรวจจาก Batch (${record.ref_id})`, record.ref_id]
+    );
+
+    // ── บันทึกผู้ตรวจไว้ที่ file_storage Record ด้วย -> ให้ /download อนุญาตผู้ตรวจได้ ──
+    await pool.query(
+      `UPDATE file_storage SET reported_to_username = $1 WHERE id = $2`,
+      [reportTo, id]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /file-storage/:id/report-to error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /api/file-storage/:id/download — คลาย Gzip แล้วส่งไฟล์ .xls กลับ ──
+router.get("/:id/download", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const { id } = req.params;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM file_storage WHERE id = $1`,
+      [id]
+    );
+    const record = rows[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+
+    // ── เช็ค Permission ──
+    // ── เจ้าของไฟล์, ผู้ตรวจที่ถูก Report to, Owner หรือ Admin โหลดได้ทั้งหมด ──
+    const isOwnerOfFile = record.owner_username === username;
+    const isAssignedReviewer = record.reported_to_username && record.reported_to_username === username;
+    const appRole = req.user.appRole || '';
+    const isPrivileged = appRole === 'Owner' || appRole === 'Admin';
+    if (!isOwnerOfFile && !isAssignedReviewer && !isPrivileged) {
+      return res.status(403).json({ error: "ไม่มีสิทธิ์ดาวน์โหลดไฟล์นี้" });
+    }
+
+    // ── Recycled: Owner/Admin โหลดได้ แต่ User ทั่วไปไม่ได้ ──
+    if (record.status === "recycled" && !isPrivileged) {
+      return res.status(410).json({ error: "ไฟล์นี้ถูกย้ายเข้า Recycle Bin แล้ว กรุณาติดต่อ Admin เพื่อกู้คืน" });
+    }
+
+    if (!fs.existsSync(record.file_path)) {
+      return res.status(404).json({ error: "ไม่พบไฟล์จริงบน Server (อาจถูกลบไปแล้ว)" });
+    }
+
+    // ── คลาย Gzip ในหน่วยความจำ ไม่เขียนไฟล์ชั่วคราวลง Disk ──
+    const gzBuffer = fs.readFileSync(record.file_path);
+    const xlsBuffer = zlib.gunzipSync(gzBuffer);
+
+    const downloadFilename = buildDownloadFilename(record.owner_username, record.created_at, record.bu);
+
+    res.setHeader("Content-Type", "application/vnd.ms-excel");
+    res.setHeader("Content-Disposition", `attachment; filename="${downloadFilename}"`);
+    res.send(xlsBuffer);
+  } catch (err) {
+    console.error("GET /file-storage/:id/download error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/file-storage/:id/update — บันทึกทับไฟล์เดิม (แก้ไขจาก View Preview) ──
+// Body: { rows: [[...แถวที่ 1...], [...แถวที่ 2...], ...] }
+router.post("/:id/update", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const { id } = req.params;
+  const { rows } = req.body;
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "ข้อมูลไม่ครบ (ต้องมี rows)" });
+  }
+
+  try {
+    const { rows: found } = await pool.query(`SELECT * FROM file_storage WHERE id = $1`, [id]);
+    const record = found[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+
+    // ── เช็ค Permission — Batch ใครคือของคนนั้น เท่านั้นที่แก้ได้ (เหมือนตอน Download) ──
+    if (record.owner_username !== username) {
+      return res.status(403).json({ error: "ไม่มีสิทธิ์แก้ไขไฟล์นี้" });
+    }
+
+    if (record.status === "recycled") {
+      return res.status(410).json({ error: "ไฟล์นี้ถูกย้ายเข้า Recycle Bin แล้ว แก้ไขไม่ได้" });
+    }
+
+    // ── สร้าง Workbook ใหม่จาก rows ที่แก้แล้ว แล้ว Gzip ทับไฟล์เดิมตาม Path เดิม ──
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+    const xlsBuffer = XLSX.write(workbook, { bookType: "xls", type: "buffer" });
+    const gzBuffer = zlib.gzipSync(xlsBuffer);
+    fs.writeFileSync(record.file_path, gzBuffer);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /file-storage/:id/update error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_UPDATE_RAW_ENDPOINT_V1
+// ── POST /api/file-storage/:id/update-raw — บันทึกทับไฟล์เดิม (แทนที่ทั้งไฟล์ ไม่ Parse/Rebuild) ──
+// Body: { fileBase64, fileName? } — ใช้กับปุ่ม "Update File" ตอนไฟล์เดิมผิด/ไม่ตรง Original
+router.post("/:id/update-raw", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const { id } = req.params;
+  const { fileBase64, fileName } = req.body;
+
+  if (!fileBase64) {
+    return res.status(400).json({ error: "ข้อมูลไม่ครบ (ต้องมี fileBase64)" });
+  }
+
+  try {
+    const { rows: found } = await pool.query(`SELECT * FROM file_storage WHERE id = $1`, [id]);
+    const record = found[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+
+    // MARKER_UPDATE_RAW_PERMISSION_V2 — เช็ค Permission เหมือน /:id/download (เจ้าของไฟล์, ผู้ตรวจ
+    // ที่ถูก Report to, หรือ Owner/Admin) เพราะคนที่เห็นไฟล์นี้ใน Inbox ต้องแทนที่ไฟล์ผิดได้ด้วย
+    // ไม่ใช่แค่คน Submit Batch ตั้งแต่แรกเท่านั้น (ต่างจาก /:id/update เดิมที่จำกัดแค่เจ้าของ)
+    const isOwnerOfFile = record.owner_username === username;
+    const isAssignedReviewer = record.reported_to_username && record.reported_to_username === username;
+    const appRole = req.user.appRole || '';
+    const isPrivileged = appRole === 'Owner' || appRole === 'Admin';
+    if (!isOwnerOfFile && !isAssignedReviewer && !isPrivileged) {
+      return res.status(403).json({ error: "ไม่มีสิทธิ์แก้ไขไฟล์นี้" });
+    }
+
+    if (record.status === "recycled") {
+      return res.status(410).json({ error: "ไฟล์นี้ถูกย้ายเข้า Recycle Bin แล้ว แก้ไขไม่ได้" });
+    }
+
+    // ── Decode Base64 กลับเป็นไฟล์ต้นฉบับตรงๆ (Byte ต่อ Byte ไม่มีการแปลงใดๆ) แล้ว Gzip ทับไฟล์เดิม ──
+    const xlsBuffer = Buffer.from(fileBase64, "base64");
+    const gzBuffer = zlib.gzipSync(xlsBuffer);
+    fs.writeFileSync(record.file_path, gzBuffer);
+
+    if (fileName) {
+      await pool.query(`UPDATE file_storage SET file_name = $1 WHERE id = $2`, [fileName, id]);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /file-storage/:id/update-raw error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/file-storage/:id/restore — กู้คืนไฟล์จาก Recycle Bin (Owner/Admin เท่านั้น) ──
+router.post("/:id/restore", async (req, res) => {
+  const role = req.user.appRole;
+  if (role !== "Owner" && role !== "Admin") {
+    return res.status(403).json({ error: "Owner/Admin เท่านั้นที่กู้คืนไฟล์ได้" });
+  }
+
+  const { id } = req.params;
+  try {
+    const { rows } = await pool.query(`SELECT * FROM file_storage WHERE id = $1`, [id]);
+    const record = rows[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+
+    if (record.status !== "recycled") {
+      return res.status(400).json({ error: "ไฟล์นี้ไม่ได้อยู่ใน Recycle Bin" });
+    }
+
+    if (!fs.existsSync(record.file_path)) {
+      return res.status(404).json({ error: "ไม่พบไฟล์จริงบน Server (อาจถูกลบถาวรไปแล้ว)" });
+    }
+
+    await pool.query(
+      `UPDATE file_storage SET status = 'active', recycled_at = NULL WHERE id = $1`,
+      [id]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /file-storage/:id/restore error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/file-storage/recycle-by-ref — ย้ายเข้า Recycle Bin ทันที ──────
+// ── ใช้ตอน Batch ถูก "อนุมัติ/ตรวจแล้ว" (Approve) เท่านั้น ไม่ใช่ตอน Delete ──
+// ── Update เฉพาะ Record ที่ยัง status='active' อยู่ (กันทับ Record ที่ Recycled/ลบไปแล้ว) ──
+router.post("/recycle-by-ref", async (req, res) => {
+  try {
+    const { refIds } = req.body;
+    if (!Array.isArray(refIds) || refIds.length === 0) {
+      return res.status(400).json({ error: "ต้องระบุ refIds เป็น Array" });
+    }
+    // MARKER_FILESTORAGE_ACTIVITY_LOG_V1 -- บันทึกก่อน Update เผื่อสืบเหตุย้อนหลัง (ใครกด/refIds อะไร)
+    const username = await getUsernameByEmail(req.user.email);
+    try {
+      await pool.query(
+        `INSERT INTO activity_log (user_email, username, action, target, detail, module)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [req.user.email, username, "recycle_by_ref", refIds.join(","), JSON.stringify({ refIds }), "file_storage"]
+      );
+    } catch (logErr) {
+      console.error("[activity_log] recycle_by_ref log error:", logErr.message);
+    }
+    const { rowCount } = await pool.query(
+      `UPDATE file_storage SET status = 'recycled', recycled_at = NOW()
+       WHERE ref_id = ANY($1::text[]) AND status = 'active'`,
+      [refIds]
+    );
+    res.json({ ok: true, recycledCount: rowCount });
+  } catch (err) {
+    console.error("POST /file-storage/recycle-by-ref error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/file-storage/delete-by-ref — ลบถาวรทันที ทั้งไฟล์บน Disk และ Record ──
+// ── ใช้ตอนกด "ลบ Batch" จาก Batch History เท่านั้น — ตั้งใจลบทั้งหมดจริงๆ ────────
+// ── ไม่ใช่ Recycle (ต่างจาก recycle-by-ref ข้างบน) ──────────────────────────────
+router.post("/delete-by-ref", async (req, res) => {
+  try {
+    const { refIds } = req.body;
+    if (!Array.isArray(refIds) || refIds.length === 0) {
+      return res.status(400).json({ error: "ต้องระบุ refIds เป็น Array" });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, file_path, module, ref_id FROM file_storage WHERE ref_id = ANY($1::text[])`,
+      [refIds]
+    );
+    // MARKER_FILESTORAGE_ACTIVITY_LOG_V1 -- บันทึกก่อนลบถาวรจริง เผื่อสืบเหตุย้อนหลัง
+    // (ใครกด/refIds อะไร/ลบไฟล์ไหนบ้าง) -- Endpoint นี้ลบถาวรไม่มีทางกู้คืน สำคัญที่สุด
+    const username = await getUsernameByEmail(req.user.email);
+    try {
+      await pool.query(
+        `INSERT INTO activity_log (user_email, username, action, target, detail, module)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          req.user.email,
+          username,
+          "delete_by_ref",
+          refIds.join(","),
+          JSON.stringify({ refIds, deletedFiles: rows.map((r) => ({ id: r.id, file_path: r.file_path, module: r.module, ref_id: r.ref_id })) }),
+          "file_storage",
+        ]
+      );
+    } catch (logErr) {
+      console.error("[activity_log] delete_by_ref log error:", logErr.message);
+    }
+    for (const row of rows) {
+      try {
+        if (fs.existsSync(row.file_path)) fs.unlinkSync(row.file_path);
+      } catch (err) {
+        console.error(`ลบไฟล์ ${row.file_path} ไม่สำเร็จ:`, err.message);
+      }
+    }
+    if (rows.length > 0) {
+      const ids = rows.map((r) => r.id);
+      await pool.query(`DELETE FROM file_storage WHERE id = ANY($1::uuid[])`, [ids]);
+    }
+    res.json({ ok: true, deletedCount: rows.length });
+  } catch (err) {
+    console.error("POST /file-storage/delete-by-ref error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_FILESTORAGE_DELETE_SINGLE_V1
+// ── DELETE /api/file-storage/:id -- ลบรูปเดี่ยว (ต่างจาก delete-by-ref ที่ลบทั้งชุด) ──
+// ── ใช้ตอนแก้ไขกระทู้ Support & Feedback -- ให้ลบรูปที่เคยแนบไว้ทีละรูปได้ ──────────
+router.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(`SELECT file_path FROM file_storage WHERE id = $1`, [id]);
+    if (rows.length === 0) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+    try {
+      if (fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
+    } catch (err) {
+      console.error(`ลบไฟล์ ${rows[0].file_path} ไม่สำเร็จ:`, err.message);
+    }
+    await pool.query(`DELETE FROM file_storage WHERE id = $1`, [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /file-storage/:id error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// -- GET /api/file-storage/outlook-handler --
+router.get("/outlook-handler", async (req, res) => {
+  try {
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>' \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display()}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;
+    const reg = `Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn]\r\n@="FastAPN Outlook Handler"\r\n"URL Protocol"=""\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\DefaultIcon]\r\n@="powershell.exe,0"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\shell\\open\\command]\r\n@="powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \\"D:\\\\apps\\\\fastapn-outlook.ps1\\" \\"%1\\""`;
+    const setupPs1 = `\uFEFF# FastAPN Outlook Handler - Setup ทั้งหมดในตัวเดียว\r\n# วิธีใช้: คลิกขวาไฟล์นี้ -> Run with PowerShell (ไม่ต้อง Admin)\r\n$ErrorActionPreference = "Stop"\r\n$sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path\r\nWrite-Host "=== FastAPN Outlook Handler Setup ===" -ForegroundColor Cyan\r\ntry {\r\n    if (-not (Test-Path "D:\\apps")) {\r\n        New-Item -ItemType Directory -Path "D:\\apps" -Force | Out-Null\r\n        Write-Host "[1/3] สร้างโฟลเดอร์ D:\\apps เรียบร้อย" -ForegroundColor Green\r\n    } else {\r\n        Write-Host "[1/3] โฟลเดอร์ D:\\apps มีอยู่แล้ว" -ForegroundColor Yellow\r\n    }\r\n    $ps1Source = Join-Path $sourceDir "fastapn-outlook.ps1"\r\n    if (-not (Test-Path $ps1Source)) { throw "ไม่พบไฟล์ fastapn-outlook.ps1 ที่ $ps1Source" }\r\n    Copy-Item $ps1Source -Destination "D:\\apps\\fastapn-outlook.ps1" -Force\r\n    Write-Host "[2/3] ก๊อป fastapn-outlook.ps1 ไปที่ D:\\apps\\ เรียบร้อย" -ForegroundColor Green\r\n    $regSource = Join-Path $sourceDir "install-fastapn-handler.reg"\r\n    if (-not (Test-Path $regSource)) { throw "ไม่พบไฟล์ install-fastapn-handler.reg ที่ $regSource" }\r\n    reg import "$regSource" *>$null; if ($LASTEXITCODE -ne 0) { throw "reg import failed (exit code $LASTEXITCODE)" }\r\n    Write-Host "[3/3] Import Registry เรียบร้อย" -ForegroundColor Green\r\n    Write-Host ""\r\n    Write-Host "=== ติดตั้งสำเร็จ! กลับไปกดปุ่ม เปิด Outlook Draft ได้เลย ===" -ForegroundColor Cyan\r\n} catch {\r\n    Write-Host ""\r\n    Write-Host "=== เกิดข้อผิดพลาด ===" -ForegroundColor Red\r\n    Write-Host $_.Exception.Message -ForegroundColor Red\r\n}\r\nWrite-Host ""\r\nRead-Host "กด Enter เพื่อปิดหน้าต่างนี้"`;
+    const readme = `FastAPN Outlook Handler\r\n=======================\r\nวิธีติดตั้ง (แนะนำ - ขั้นตอนเดียว):\r\n1. ดับเบิลคลิกไฟล์ setup-fastapn-outlook.bat\r\n2. รอจนขึ้น "ติดตั้งสำเร็จ!" แล้วกด Enter ปิดหน้าต่าง\r\n3. กลับมากดปุ่ม เปิด Outlook Draft ได้เลย`;
+    const zip = new JSZip();
+    zip.file('fastapn-outlook.ps1', ps1);
+    zip.file('install-fastapn-handler.reg', reg);
+    const setupBat = `@echo off\r\ncd /d "%~dp0"\r\npowershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup-fastapn-outlook.ps1"\r\npause`;
+    zip.file('setup-fastapn-outlook.ps1', setupPs1);
+    zip.file('setup-fastapn-outlook.bat', setupBat);
+    zip.file('README.txt', readme);
+    const buf = await zip.generateAsync({ type: 'nodebuffer' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="fastapn-outlook-handler.zip"');
+    res.send(buf);
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// -- GET /api/file-storage/outlook-handler/ps1-only --
+router.get("/outlook-handler/ps1-only", async (req, res) => {
+  try {
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>' \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display()}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="fastapn-outlook.ps1"');
+    res.send(Buffer.from(ps1, 'utf8'));
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /api/file-storage/upload-image — อัปโหลดรูป Support & Feedback ──
+// ── Resize (max-width 1280px) + แปลงเป็น WebP (quality ~78%) ก่อนเก็บ — ไม่ Gzip ──
+// ── Limit 5 รูปต่อกระทู้ (นับจาก ref_id) — เกินแล้วลบรูปเก่าสุดทิ้งก่อน (FIFO) ──
+// Body: { module, refId, fileBase64 }
+router.post("/upload-image", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+
+  try {
+    // MARKER_FILESTORAGE_SUB_REF_ID_V1
+    // ── subRefId = comment_id (ถ้ารูปมาจาก Comment) / undefined = รูปของโพสต์แรก ──
+    // MARKER_FILESTORAGE_UPLOADIMAGE_RETENTIONDAYS_V1 -- Optional retentionDays (default null = ถาวร เหมือนเดิม)
+    // MARKER_FILESTORAGE_PDF_SUPPORT_V1 -- รับ fileType จาก Frontend (file.type) เพื่อแยกว่าเป็น PDF หรือรูปภาพ
+    const { module = "support-feedback", refId, subRefId, fileBase64, retentionDays = null, fileType = "" } = req.body;
+    const isPdf = String(fileType).toLowerCase() === "application/pdf";
+
+    if (!refId || !fileBase64) {
+      return res.status(400).json({ error: "ข้อมูลไม่ครบ (ต้องมี refId, fileBase64)" });
+    }
+
+    // MARKER_FILESTORAGE_GALLERY_CAP_V1
+    // ── เช็คจำนวนรูปเดิม: module 'ap-export' (Invoice Register Gallery) ใช้ Cap 200 รูป
+    // ── (ตอบ Error กลับไปให้ผู้ใช้ลบเองถ้าเกิน ไม่ลบอัตโนมัติ) -- module อื่น (Support &
+    // ── Feedback) ยังคง FIFO 5 รูปเดิม (ลบรูปเก่าสุดทิ้งอัตโนมัติ) ──────────────────────
+    const { rows: existing } = await pool.query(
+      `SELECT id, file_path FROM file_storage
+       WHERE module = $1 AND ref_id = $2
+       ORDER BY created_at ASC`,
+      [module, refId]
+    );
+    if (module === "ap-export") {
+      if (existing.length >= 200) {
+        return res.status(400).json({ error: "รูปประกอบครบ 200 รูปแล้ว (สูงสุดต่อ Batch) กรุณาลบบางรูปก่อนเพิ่มใหม่" });
+      }
+    } else if (existing.length >= 5) {
+      const oldest = existing[0];
+      try {
+        if (fs.existsSync(oldest.file_path)) fs.unlinkSync(oldest.file_path);
+      } catch (err) {
+        console.error(`ลบรูปเก่า ${oldest.file_path} ไม่สำเร็จ:`, err.message);
+      }
+      await pool.query(`DELETE FROM file_storage WHERE id = $1`, [oldest.id]);
+    }
+
+    // MARKER_FILESTORAGE_PDF_SUPPORT_V1 -- PDF: เก็บ Buffer ดิบตรงๆ ไม่ผ่าน sharp() (sharp แปลง PDF ไม่ได้)
+    // ── รูปภาพ: Resize + แปลงเป็น WebP เหมือนเดิมทุกอย่าง ──────────────────────────────
+    const inputBuffer = Buffer.from(fileBase64, "base64");
+    const { dir, filePath: basePath } = buildImagePath(refId);
+    fs.mkdirSync(dir, { recursive: true });
+
+    let filePath, fileNameOut;
+    if (isPdf) {
+      filePath = basePath.replace(/\.webp$/, ".pdf");
+      fs.writeFileSync(filePath, inputBuffer);
+      fileNameOut = `${refId}.pdf`;
+    } else {
+      const webpBuffer = await sharp(inputBuffer)
+        .resize({ width: 1280, withoutEnlargement: true })
+        .webp({ quality: 78 })
+        .toBuffer();
+      filePath = basePath;
+      fs.writeFileSync(filePath, webpBuffer);
+      fileNameOut = `${refId}.webp`;
+    }
+
+    // ── retention_days: ถ้า Caller ส่งมา (เช่น 15 สำหรับ ap-export) ใช้ค่านั้น, ไม่งั้น NULL (ถาวร) เหมือนเดิม ──
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO file_storage (module, bu, ref_id, sub_ref_id, file_path, file_name, owner_username, status, retention_days)
+       VALUES ($1, 'SUPPORT', $2, $3, $4, $5, $6, 'active', $7)
+       RETURNING id, created_at`,
+      [module, refId, subRefId || null, filePath, fileNameOut, username, retentionDays]
+    );
+
+    res.json({ ok: true, fileId: inserted[0].id, createdAt: inserted[0].created_at });
+  } catch (err) {
+    console.error("POST /file-storage/upload-image error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /api/file-storage/:id/view-image — ส่งรูปกลับตรงๆ (ไม่ผ่าน Gunzip) ──
+// ── Permission เช็คจากเจ้าของกระทู้ (support_threads.created_by) ไม่ใช่เจ้าของไฟล์รูป ──
+// ── Owner (Role) เห็นทุกรูปเสมอ / คนอื่นเห็นเฉพาะกระทู้ตัวเอง หรือกระทู้ที่ Resolve แล้ว ──
+router.get("/:id/view-image", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const { id } = req.params;
+
+  try {
+    const { rows } = await pool.query(`SELECT * FROM file_storage WHERE id = $1`, [id]);
+    const record = rows[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบรูปนี้" });
+
+    const appRole = req.user.appRole || "";
+    const isOwnerRole = appRole === "Owner";
+
+    // MARKER_FILESTORAGE_VIEWIMAGE_APEXPORT_PERMISSION_V1
+    // ── module 'ap-export' (รูปประกอบ Invoice Register) ไม่ใช้ Logic support_threads เลย ──
+    // ── (Auth ระดับ Login ธรรมดาพอ เหมือนตาราง batch_list เองที่เปิด publicRead) ──
+    if (!isOwnerRole && record.module !== "ap-export") {
+      const { rows: threadRows } = await pool.query(
+        `SELECT created_by, status FROM support_threads WHERE id = $1`,
+        [record.ref_id]
+      );
+      const thread = threadRows[0];
+      if (thread) {
+        const isThreadOwner = thread.created_by === username;
+        const isResolved = thread.status === "resolved";
+        if (!isThreadOwner && !isResolved) {
+          return res.status(403).json({ error: "ไม่มีสิทธิ์ดูรูปนี้" });
+        }
+      }
+    }
+
+    if (!fs.existsSync(record.file_path)) {
+      return res.status(404).json({ error: "ไม่พบไฟล์จริงบน Server (อาจถูกลบไปแล้ว)" });
+    }
+
+    // MARKER_FILESTORAGE_PDF_SUPPORT_V1 -- Content-Type ตามนามสกุลไฟล์จริง แทน Hardcode image/webp เสมอ
+    const buffer = fs.readFileSync(record.file_path);
+    const contentType = record.file_path.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/webp";
+    res.setHeader("Content-Type", contentType);
+    res.send(buffer);
+  } catch (err) {
+    console.error("GET /file-storage/:id/view-image error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_FILESTORAGE_CLEAR_ALL_IMAGES_V1
+// ── DELETE /api/file-storage/clear-images?module=ap-export&refId={batchId} ──
+// ── ลบรูปทั้งหมดของ module+refId คู่นั้นทีเดียว (ปุ่ม "Clear All" ใน Gallery) ──
+router.delete("/clear-images", async (req, res) => {
+  try {
+    const { module, refId } = req.query;
+    if (!module || !refId) {
+      return res.status(400).json({ error: "ต้องระบุ module และ refId" });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, file_path FROM file_storage WHERE module = $1 AND ref_id = $2`,
+      [module, refId]
+    );
+    for (const row of rows) {
+      try {
+        if (fs.existsSync(row.file_path)) fs.unlinkSync(row.file_path);
+      } catch (err) {
+        console.error(`ลบไฟล์ ${row.file_path} ไม่สำเร็จ:`, err.message);
+      }
+    }
+    await pool.query(`DELETE FROM file_storage WHERE module = $1 AND ref_id = $2`, [module, refId]);
+    res.json({ deleted: rows.length });
+  } catch (err) {
+    console.error("DELETE /file-storage/clear-images error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_FILESTORAGE_LIST_IMAGES_V1
+// ── GET /api/file-storage/list-images?module=ap-export&refId={batchId} ──
+// ── คืนรายชื่อรูปทั้งหมด (ไม่ใช่แค่ตัวล่าสุด) เรียงจากเก่า -> ใหม่ สำหรับ Gallery ──
+// ── Next/Previous -- ไม่ส่งข้อมูลรูปจริงมาด้วย (โหลดทีหลังทีละรูปผ่าน /view-image) ──
+router.get("/list-images", async (req, res) => {
+  try {
+    const { module, refId } = req.query;
+    if (!module || !refId) {
+      return res.status(400).json({ error: "ต้องระบุ module และ refId" });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, created_at FROM file_storage
+       WHERE module = $1 AND ref_id = $2 AND status != 'recycled'
+       ORDER BY created_at ASC`,
+      [module, refId]
+    );
+    res.json(rows.map((r) => ({ fileId: r.id, createdAt: r.created_at })));
+  } catch (err) {
+    console.error("GET /file-storage/list-images error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_FILESTORAGE_FIND_IMAGE_V1
+// ── GET /api/file-storage/find-image?module=ap-export&refId={batchId} ──
+// ── คืนรูปล่าสุด (ถ้ามี) ของ module+refId คู่นั้น สำหรับให้ Frontend โหลดรูปเดิม ──
+// ── กลับมาโชว์ตอนเปิด Invoice Register ใหม่ (Persist รูปประกอบข้าม Session) ──
+router.get("/find-image", async (req, res) => {
+  try {
+    const { module, refId } = req.query;
+    if (!module || !refId) {
+      return res.status(400).json({ error: "ต้องระบุ module และ refId" });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, created_at FROM file_storage
+       WHERE module = $1 AND ref_id = $2 AND status != 'recycled'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [module, refId]
+    );
+    if (!rows[0]) return res.json(null);
+    res.json({ fileId: rows[0].id, createdAt: rows[0].created_at });
+  } catch (err) {
+    console.error("GET /file-storage/find-image error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_FILESTORAGE_IEMACROLOGIC_LIST_V1
+// ── GET /api/file-storage/ie-macrologic-jobs?scope=mine|all ──────────────────────
+// ── scope=all ใช้ได้เฉพาะ Owner/Admin เท่านั้น (คนอื่นขอมาก็ Fallback เป็น mine ให้เงียบๆ) ──
+router.get("/ie-macrologic-jobs", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const appRole = req.user.appRole || "";
+  const isPrivileged = appRole === "Owner" || appRole === "Admin";
+  const scope = req.query.scope === "all" && isPrivileged ? "all" : "mine";
+
+  try {
+    const { rows } = scope === "all"
+      ? await pool.query(
+          `SELECT id, bu, file_name, sub_ref_id, owner_username, created_at
+           FROM file_storage WHERE module = 'ie-macrologic' ORDER BY created_at DESC`
+        )
+      : await pool.query(
+          `SELECT id, bu, file_name, sub_ref_id, owner_username, created_at
+           FROM file_storage WHERE module = 'ie-macrologic' AND owner_username = $1 ORDER BY created_at DESC`,
+          [username]
+        );
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /file-storage/ie-macrologic-jobs error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_FILESTORAGE_IEMACROLOGIC_DOWNLOAD_V1
+// ── GET /api/file-storage/:id/download-ie-macrologic ──────────────────────────────
+// ── แยกจาก /:id/download เดิม เพราะ Endpoint เดิม Rename ชื่อไฟล์เป็น Format อื่น
+// ── (Initial+วันที่) ไม่ตรงกับ BU_Prepayment_DD_MM_YYYY ที่ Design ไว้สำหรับงานนี้ ──
+router.get("/:id/download-ie-macrologic", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const { id } = req.params;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM file_storage WHERE id = $1 AND module = 'ie-macrologic'`,
+      [id]
+    );
+    const record = rows[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+
+    const appRole = req.user.appRole || "";
+    const isPrivileged = appRole === "Owner" || appRole === "Admin";
+    if (record.owner_username !== username && !isPrivileged) {
+      return res.status(403).json({ error: "ไม่มีสิทธิ์ดาวน์โหลดไฟล์นี้" });
+    }
+
+    if (!fs.existsSync(record.file_path)) {
+      return res.status(404).json({ error: "ไม่พบไฟล์จริงบน Server (อาจถูกลบไปแล้ว)" });
+    }
+
+    const gzBuffer = fs.readFileSync(record.file_path);
+    const xlsxBuffer = zlib.gunzipSync(gzBuffer);
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${record.file_name}"`);
+    res.send(xlsxBuffer);
+  } catch (err) {
+    console.error("GET /file-storage/:id/download-ie-macrologic error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_FILESTORAGE_APRECONCILE_LIST_V1
+// ── GET /api/file-storage/ap-reconcile-jobs?scope=mine|all ──────────────────────
+// ── แยกเป็น Route ของตัวเอง ไม่ผูก/ไม่เรียกใช้ Endpoint ของ ie-macrologic-jobs เลย
+// ── (แค่ Pattern เดียวกัน — scope=all ใช้ได้เฉพาะ Owner/Admin เท่านั้น คนอื่นขอมาก็
+// ── Fallback เป็น mine ให้เงียบๆ) — module = 'ap-reconcile' (แยกขาดจาก 'ap-export' เดิม
+// ── ที่ใช้กับ Batch อื่น และแยกขาดจาก 'ie-macrologic' ของ IE) ──
+router.get("/ap-reconcile-jobs", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const appRole = req.user.appRole || "";
+  const isPrivileged = appRole === "Owner" || appRole === "Admin";
+  const scope = req.query.scope === "all" && isPrivileged ? "all" : "mine";
+
+  try {
+    const { rows } = scope === "all"
+      ? await pool.query(
+          `SELECT id, bu, file_name, ref_id, owner_username, created_at
+           FROM file_storage WHERE module = 'ap-reconcile' ORDER BY created_at DESC`
+        )
+      : await pool.query(
+          `SELECT id, bu, file_name, ref_id, owner_username, created_at
+           FROM file_storage WHERE module = 'ap-reconcile' AND owner_username = $1 ORDER BY created_at DESC`,
+          [username]
+        );
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /file-storage/ap-reconcile-jobs error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+export default router;

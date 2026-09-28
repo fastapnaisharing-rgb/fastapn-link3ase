@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Draft Monitor Button - Design Options</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", sans-serif; background: #f5f6f8; padding: 40px; }
+  .row { display: flex; gap: 40px; flex-wrap: wrap; margin-bottom: 36px; }
+  .card { width: 300px; }
+  .zone {
+    width: 260px;
+    min-height: 90px;
+    border: 1.5px dashed #ccc;
+    border-radius: 10px;
+    background: #ffffff;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 20px;
+    box-sizing: border-box;
+  }
+  .label { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 6px; }
+  .caption { margin-top: 10px; font-size: 12.5px; color: #777; line-height: 1.5; }
+  h2 { font-size: 16px; color: #222; border-bottom: 2px solid #ddd; padding-bottom: 6px; }
+</style>
+</head>
+<body>
+
+  <h2>กลุ่ม A — แบบเดิม (แยกกล่อง Dropdown | ปุ่ม) แค่เปลี่ยนสี</h2>
+  <div class="row">
+
+    <div class="card">
+      <div class="label">A1: เขียว (ของเดิม, เอา "ทั้งหมด" ออกแล้ว)</div>
+      <div class="zone">
+        <div style="display:flex; align-items:stretch; width:220px; border:0.5px solid #a5d6a7; border-radius:8px; background:#e8f5e9; overflow:hidden;">
+          <select style="flex:1; min-width:0; border:none; border-right:0.5px solid #a5d6a7; background:transparent; color:#2e7d32; font-size:12.5px; padding:7px 6px; cursor:pointer; outline:none;">
+            <option>REV (1|2)</option>
+            <option>MPS (0|3)</option>
+          </select>
+          <button type="button" style="display:flex; align-items:center; justify-content:center; gap:6px; padding:7px 14px; font-size:13px; border:none; background:transparent; color:#2e7d32; cursor:pointer; white-space:nowrap;">Draft Monitor</button>
+        </div>
+      </div>
+      <div class="caption">สไตล์เดิม ไม่มี "ทั้งหมด" แล้ว</div>
+    </div>
+
+    <div class="card">
+      <div class="label">A2: Navy</div>
+      <div class="zone">
+        <div style="display:flex; align-items:stretch; width:220px; border:0.5px solid #34506e; border-radius:8px; background:#e8edf3; overflow:hidden;">
+          <select style="flex:1; min-width:0; border:none; border-right:0.5px solid #34506e; background:transparent; color:#1a3a5c; font-size:12.5px; padding:7px 6px; cursor:pointer; outline:none;">
+            <option>REV (1|2)</option>
+            <option>MPS (0|3)</option>
+          </select>
+          <button type="button" style="display:flex; align-items:center; justify-content:center; gap:6px; padding:7px 14px; font-size:13px; border:none; background:transparent; color:#1a3a5c; cursor:pointer; white-space:nowrap;">Draft Monitor</button>
+        </div>
+      </div>
+      <div class="caption">โครงเดิม เปลี่ยนโทนเป็น Navy</div>
+    </div>
+
+    <div class="card">
+      <div class="label">A3: Navy เข้ม (Solid Fill)</div>
+      <div class="zone">
+        <div style="display:flex; align-items:stretch; width:220px; border:0.5px solid #1a3a5c; border-radius:8px; background:#1a3a5c; overflow:hidden;">
+          <select style="flex:1; min-width:0; border:none; border-right:1px solid rgba(255,255,255,0.25); background:transparent; color:#ffffff; font-size:12.5px; padding:7px 6px; cursor:pointer; outline:none;">
+            <option style="color:#000;">REV (1|2)</option>
+            <option style="color:#000;">MPS (0|3)</option>
+          </select>
+          <button type="button" style="display:flex; align-items:center; justify-content:center; gap:6px; padding:7px 14px; font-size:13px; border:none; background:transparent; color:#ffffff; cursor:pointer; white-space:nowrap; font-weight:500;">Draft Monitor</button>
+        </div>
+      </div>
+      <div class="caption">พื้นหลัง Navy เต็ม ตัวหนังสือขาว เด่นสุด</div>
+    </div>
+
+  </div>
+
+  <h2>กลุ่ม B — ปุ่มเดียวจริงๆ (Dropdown ฝังอยู่ข้างในปุ่ม ไม่มีเส้นแบ่งเห็นชัด)</h2>
+  <div class="row">
+
+    <div class="card">
+      <div class="label">B1: Navy — ชื่อ BU + Badge ตัวเลข ฝังในปุ่มเดียว</div>
+      <div class="zone">
+        <div style="position:relative; width:190px;">
+          <button type="button" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; font-size:13px; border-radius:8px; border:none; background:#1a3a5c; color:#fff; cursor:pointer; font-weight:500;">
+            <span style="display:flex; align-items:center; gap:6px;">
+              Draft Monitor
+              <span style="background:rgba(255,255,255,0.18); border-radius:5px; padding:2px 6px; font-size:11px; font-weight:600;">REV 1|2</span>
+            </span>
+            <span style="font-size:10px; opacity:0.85;">▾</span>
+          </button>
+          <select style="position:absolute; inset:0; opacity:0; cursor:pointer;">
+            <option>REV (1|2)</option>
+            <option>MPS (0|3)</option>
+          </select>
+        </div>
+      </div>
+      <div class="caption">มองเห็นเป็นปุ่มเดียว กดตรงไหนก็เปิด Dropdown ได้ทั้งปุ่ม (Select โปร่งใสซ้อนทับอยู่ด้านบน) ตัวเลข BU ปัจจุบันโชว์เป็น Badge เล็กๆ ในปุ่ม</div>
+    </div>
+
+    <div class="card">
+      <div class="label">B2: Navy — ลูกศรจิ๋วมุมขวา (กระชับสุด)</div>
+      <div class="zone">
+        <div style="position:relative; width:170px;">
+          <button type="button" style="width:100%; display:flex; align-items:center; justify-content:center; gap:6px; padding:8px 14px 8px 10px; font-size:13px; border-radius:20px; border:none; background:#1a3a5c; color:#fff; cursor:pointer; font-weight:500;">
+            <span>Draft Monitor</span>
+            <span style="background:#2e5a86; border-radius:10px; padding:2px 7px; font-size:11px; font-weight:600; display:flex; align-items:center; gap:3px;">REV<span style="opacity:0.8; font-size:9px;">▾</span></span>
+          </button>
+          <select style="position:absolute; right:8px; top:0; bottom:0; width:55px; opacity:0; cursor:pointer;">
+            <option>REV (1|2)</option>
+            <option>MPS (0|3)</option>
+          </select>
+        </div>
+      </div>
+      <div class="caption">ปุ่มทรงเม็ดยา (Pill) BU ปัจจุบันเป็น Chip เล็กในตัวปุ่ม ลูกศรจิ๋วบอกว่ากดเปลี่ยน BU ได้ตรง Chip นั้น</div>
+    </div>
+
+    <div class="card">
+      <div class="label">B3: เขียว (โทนเดิม) — สไตล์เดียวกับ B1</div>
+      <div class="zone">
+        <div style="position:relative; width:190px;">
+          <button type="button" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; font-size:13px; border-radius:8px; border:none; background:#2e7d32; color:#fff; cursor:pointer; font-weight:500;">
+            <span style="display:flex; align-items:center; gap:6px;">
+              Draft Monitor
+              <span style="background:rgba(255,255,255,0.2); border-radius:5px; padding:2px 6px; font-size:11px; font-weight:600;">REV 1|2</span>
+            </span>
+            <span style="font-size:10px; opacity:0.85;">▾</span>
+          </button>
+          <select style="position:absolute; inset:0; opacity:0; cursor:pointer;">
+            <option>REV (1|2)</option>
+            <option>MPS (0|3)</option>
+          </select>
+        </div>
+      </div>
+      <div class="caption">เทียบกับ B1 แต่คงโทนเขียวเดิมไว้</div>
+    </div>
+
+  </div>
+
+  <div style="font-size:13px; color:#555; max-width:700px; line-height:1.7;">
+    <b>สรุป:</b> กลุ่ม A คือปรับแค่สี โครงยังเป็น 2 ส่วนแบ่งด้วยเส้นเหมือนเดิม (Dropdown ซ้าย ปุ่มขวา)<br/>
+    กลุ่ม B คือทำเป็น "ปุ่มเดียว" จริงๆ ตามที่พี่บอก — ข้างในปุ่มมี Dropdown (โปร่งใส) ซ้อนทับอยู่ทั้งปุ่มหรือเฉพาะโซน Badge เวลากดจะเปิดตัวเลือก BU ให้เลย ไม่มีเส้นแบ่งให้เห็นว่าเป็นคนละกล่องกัน
+  </div>
+
+</body>
+</html>

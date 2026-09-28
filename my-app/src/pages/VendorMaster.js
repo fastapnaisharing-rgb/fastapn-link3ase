@@ -7,6 +7,8 @@
   import { useUserRole } from '../contexts/useUserRole';
   import { useDataCache } from '../contexts/DataCacheContext';
   import { confirmDialog } from '../confirmDialog';
+  import { broadcastWs } from '../wsManager'; // MARKER_VENDORRULE_REALTIME_SYNC_V1 -- Vendor Rule (รวม Notice) ไม่เคยต่อเข้า Realtime Broadcast มาก่อน
+  import { useRealtimeRefresh } from '../useRealtimeRefresh';
 
 
   function useWindowWidth() {
@@ -502,6 +504,77 @@ const computeNextSyRunning = async () => {
   const SMCODE_IE_IMPORT_KEY_FIELDS = ['Tax ID', 'Branch', 'Short Name'];
   const buildSmCodeIeCompositeKey = (r) => SMCODE_IE_IMPORT_KEY_FIELDS.map(f => String(r?.[f] ?? '').trim().toUpperCase()).join('|');
 
+  // MARKER_VENDORMASTER_INVOICE_STRUCTURE_PREVIEW_HELPERS_V1 -- คัดลอกมาจาก APController.js (invFmt* / INVOICE_PATTERN_BUILDERS / buildInvoiceNumber)
+  // เพื่อให้ Preview เลข Invoice ใน Master Data คำนวณด้วย Logic เดียวกันกับที่ Invoice Detail ใช้จริง
+  // หมายเหตุ: ถ้าแก้ Pattern ใน APController.js (INVOICE_PATTERN_BUILDERS) ต้องมาแก้ชุดนี้ให้ตรงกันด้วย
+  const ismPad2 = (n) => String(n).padStart(2, '0');
+  const ismFmtYY       = (d) => ismPad2(d.getFullYear() % 100);
+  const ismFmtYYYY     = (d) => String(d.getFullYear());
+  const ismFmtMM       = (d) => ismPad2(d.getMonth() + 1);
+  const ismFmtDD       = (d) => ismPad2(d.getDate());
+  const ismFmtYYMM     = (d) => ismFmtYY(d) + ismFmtMM(d);
+  const ismFmtYYYYMM   = (d) => ismFmtYYYY(d) + ismFmtMM(d);
+  const ismFmtDDMMYYYY = (d) => ismFmtDD(d) + ismFmtMM(d) + ismFmtYYYY(d);
+  const ismFmtYYMMDD   = (d) => ismFmtYY(d) + ismFmtMM(d) + ismFmtDD(d);
+  const ISM_INVOICE_PATTERN_BUILDERS = {
+    'AF-2Y2M':     (Fp, Mp, Lp, d, r) => `${Fp}${ismFmtYYMM(d)}${Mp}${r}`,
+    '2Y2M':        (Fp, Mp, Lp, d, r) => `${ismFmtYYMM(d)}${Mp}${r}`, // MARKER_INVOICERULE_2Y2M_NOAF_V1 -- YYMM + Mid Part + เลขรัน (ไม่ใช้ First Part)
+    'AF-T2Y2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(ismFmtYY(d), 10) + 43}${ismFmtMM(d)}${Mp}${r}`,
+    'AF-TFY2M':    (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(ismFmtYYYY(d), 10) + 543}${ismFmtMM(d)}${Mp}${r}`,
+    'FY2M':        (Fp, Mp, Lp, d, r) => `${ismFmtYYYYMM(d)}${Mp}${r}`,
+    '2D2MFY':      (Fp, Mp, Lp, d, r) => `${ismFmtDDMMYYYY(d)}${Mp}${r}`,
+    'FY':          (Fp, Mp, Lp, d, r) => `${ismFmtYYYY(d)}${Mp}${r}`,
+    'T2Y':         (Fp, Mp, Lp, d, r) => `${parseInt(ismFmtYY(d), 10) + 43}${Mp}${r}`,
+    'AF-2M':       (Fp, Mp, Lp, d, r) => `${Fp}${ismFmtMM(d)}${Mp}${r}`, // MARKER_INVOICERULE_AF2M_USE_FIRSTPART_FIX_V1
+    'AF-T2Y':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(ismFmtYY(d), 10) + 43}${Mp}${r}`,
+    'AF-TFY':      (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(ismFmtYYYY(d), 10) + 543}${Mp}${r}`,
+    'TFY':         (Fp, Mp, Lp, d, r) => `${parseInt(ismFmtYYYY(d), 10) + 543}${Mp}${r}`,
+    'AF-FY2M':     (Fp, Mp, Lp, d, r) => `${Fp}${ismFmtYYYYMM(d)}${Mp}${r}`,
+    'AF-2Y':       (Fp, Mp, Lp, d, r) => `${Fp}${ismFmtYY(d)}${Mp}${r}`,
+    'AF-TFY|2M':   (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(ismFmtYYYY(d), 10) + 543}${Mp}${ismFmtMM(d)}${Lp}${r}`,
+    'AF-FY|2M':    (Fp, Mp, Lp, d, r) => `${Fp}${ismFmtYYYY(d)}${Mp}${ismFmtMM(d)}${Lp}${r}`,
+    'AF-2Y|2M':    (Fp, Mp, Lp, d, r) => `${Fp}${ismFmtYY(d)}${Mp}${ismFmtMM(d)}${Lp}${r}`,
+    'AF-T2Y|2M':   (Fp, Mp, Lp, d, r) => `${Fp}${parseInt(ismFmtYY(d), 10) + 43}${Mp}${ismFmtMM(d)}${Lp}${r}`,
+    'AF-YYMMDD-1': (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setDate(d2.getDate() - 1); return `${Fp}${ismFmtYYMMDD(d2)}${Lp}${r}`; },
+    'AF-2YMM-1':   (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setMonth(d2.getMonth() - 1); return `${Fp}${ismFmtYYMM(d2)}${Lp}${r}`; },
+  };
+  // ตัวอย่างเลข Invoice สดๆ จากค่าที่กรอกอยู่ในฟอร์ม (Fp/Mp/Lp/Digit/Invoice Rule) -- ใช้เลขรันจำลอง 'X' ตามจำนวนหลัก แทนเลขรันจริง (ยังไม่มีตอนกรอกจริง)
+  const buildInvoiceStructurePreview = (Fp, Mp, Lp, digitRuleRaw, ruleCode) => {
+    const digitRule = String(digitRuleRaw || '').trim().toUpperCase();
+    const ruleCodeNorm = String(ruleCode || '').trim().toUpperCase();
+    const digitEmpty = !digitRule || digitRule === '-';
+    const ruleEmpty = !ruleCodeNorm || ruleCodeNorm === 'N';
+    if (digitEmpty && ruleEmpty) return null;
+    if (digitRule === 'FULL') return 'Digit = FULL → ใช้เลขที่พิมพ์ในช่อง Invoice num ตรงๆ ทั้งหมด (ไม่ใช้ First/Mid/Last Part หรือ Pattern)';
+    const dm = digitRule.match(/^(\d{1,2})DB$/);
+    const n = dm ? parseInt(dm[1], 10) : 0;
+    const r = n > 0 ? '1'.padStart(n, '0') : '0001';
+    const d = new Date();
+    const builder = ISM_INVOICE_PATTERN_BUILDERS[String(ruleCode || '').trim()];
+    if (!builder) return `${Fp || ''}${r}`;
+    return builder(Fp || '', Mp || '', Lp || '', d, r);
+  };
+  // MARKER_VENDORMASTER_INVOICE_PART_USAGE_V1 -- เช็คว่า First/Mid/Last Part "มีผลจริง" กับ Invoice Rule + Digit ที่เลือกอยู่หรือไม่ (Logic เดียวกับ APController.js SupplierSearchPopup)
+  const getUsedInvoiceParts = (ruleCode, digitRule) => {
+    const digitNorm = String(digitRule || '').trim().toUpperCase();
+    if (digitNorm === 'FULL') return { fp: false, mp: false, lp: false };
+    const ruleNorm = String(ruleCode || '').trim().toUpperCase();
+    const builder = ISM_INVOICE_PATTERN_BUILDERS[String(ruleCode || '').trim()];
+    if (!builder) return { fp: false, mp: false, lp: false };
+    const SENTINEL_FP = '__FPSENTINEL__', SENTINEL_MP = '__MPSENTINEL__', SENTINEL_LP = '__LPSENTINEL__';
+    let out = '';
+    try { out = builder(SENTINEL_FP, SENTINEL_MP, SENTINEL_LP, new Date(), '0001') || ''; } catch (e) { out = ''; }
+    const sentinelFp = out.includes(SENTINEL_FP), sentinelMp = out.includes(SENTINEL_MP), sentinelLp = out.includes(SENTINEL_LP);
+    if (ruleNorm.startsWith('AF')) {
+      const hasPipe = ruleNorm.includes('|');
+      return { fp: true, mp: hasPipe ? sentinelMp : false, lp: sentinelLp };
+    }
+    return { fp: sentinelFp, mp: sentinelMp, lp: sentinelLp };
+  };
+  // MARKER_VENDORMASTER_OPTS_DEFAULT_V1 -- Default Option List เต็มให้ Invoice No./Digit (เดิมดึงจากข้อมูลที่มีอยู่จริงในระบบเท่านั้น)
+  const DIGIT_OPTS_DEFAULT_VM = ['4DB','5DB','6DB','7DB','8DB'];
+  const INVOICE_NO_OPTS_DEFAULT_VM = Object.keys(ISM_INVOICE_PATTERN_BUILDERS);
+
   function VendorMaster({ activeSubTab, onSubTabChange, flyoutOpen = false }) {
     const [tab, setTab] = useState(activeSubTab || 'apcode');
     const { currentUser, userName, userPermissions } = useAuth();
@@ -647,6 +720,9 @@ const computeNextSyRunning = async () => {
       fetchVendorRules();
     }, []);
 
+    // MARKER_VENDORRULE_REALTIME_SYNC_V1 -- Tab/User อื่นแก้ Vendor Rule (รวม Notice) แล้ว Sync กลับมาที่ Tab นี้ด้วย
+    useRealtimeRefresh(['vendor_rule_updated'], fetchVendorRules);
+
     useEffect(() => { if (activeSubTab && activeSubTab !== tab) setTab(activeSubTab); }, [activeSubTab]);
     useEffect(() => { if (cfg) setPageMap(prev => ({ ...prev, [tab]: 1 })); }, [tab, search]);
     useEffect(() => { if (tab === 'iecode') refreshNextSyRunning(); }, [tab]);
@@ -720,6 +796,12 @@ const computeNextSyRunning = async () => {
         const matchedType = (dataMap[tab] || []).filter(i => String(i['TYPE']||'').trim() === String(formData['TYPE']).trim());
         const subTypeOpts = [...new Set(matchedType.map(i => i['SUB TYPE'] || '').filter(v => v))];
         if (subTypeOpts.length) return subTypeOpts;
+      }
+      // MARKER_VENDORMASTER_OPTS_DEFAULT_V1_GETOPTS -- merge Default List เต็มเข้ากับค่าที่มีอยู่จริง
+      if (field === 'Invoice No.' || field === 'Digit') {
+        const fromData = [...new Set((dataMap[tab] || []).map(i => i[field] || '').filter(v => v))];
+        const defaults = field === 'Invoice No.' ? INVOICE_NO_OPTS_DEFAULT_VM : DIGIT_OPTS_DEFAULT_VM;
+        return [...new Set([...fromData, ...defaults])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
       }
       return [...new Set((dataMap[tab] || []).map(i => i[field] || '').filter(v => v))];
     };
@@ -1370,6 +1452,8 @@ const computeNextSyRunning = async () => {
         setVendorRules(prev => prev.map(r => (r.id === tempId ? created : r)).sort((a, b) => a.id - b.id));
       }
       invalidate('VendorRule');
+      // MARKER_VENDORRULE_REALTIME_SYNC_V1 -- แจ้ง Tab/User อื่น (รวมหน้า APController/IEController ที่ cache VendorRule ไว้ครั้งเดียวตอน mount) ให้ Refetch
+      try { broadcastWs('vendor_rule_updated', { id: editRuleId || null, item: payload['Item'] || payload['item'] || '' }); } catch (e) { console.error('[broadcast vendor_rule_updated]', e); }
     } catch (err) {
       // ❌ ย้อนกลับ
       setVendorRules(prev => wasEdit
@@ -1392,6 +1476,8 @@ const computeNextSyRunning = async () => {
     try {
       await apiFetch(`/Vendor_rule/${id}`, { method: 'DELETE' });
       invalidate('VendorRule');
+      // MARKER_VENDORRULE_REALTIME_SYNC_V1
+      try { broadcastWs('vendor_rule_updated', { id }); } catch (e) { console.error('[broadcast vendor_rule_updated]', e); }
     } catch (err) {
       // ❌ ใส่กลับเข้าหน้าจอเหมือนเดิม
       if (prevRule) setVendorRules(prev => [...prev, prevRule].sort((a, b) => a.id - b.id));
@@ -1866,7 +1952,10 @@ if (tab === 'apcode' || tab === 'iecode') {
             </div>
 
             {/* Row 4: Invoice Rule section */}
-            <div style={{ border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'visible', marginBottom:'6px' }}>
+            {/* MARKER_VENDORMASTER_INVOICE_STRUCTURE_LABEL_V1 -- กรอบชัดขึ้น + ป้ายชื่อ "Invoice Structure" มุมซ้ายบนของ Zone นี้ */}
+            <div style={{ position:'relative', border:'1px solid #b9c4d6', borderRadius:'6px', marginTop:'14px', marginBottom:'6px' }}>
+              <span style={{ position:'absolute', top:'-9px', left:'10px', padding:'0 6px', background:'white', fontSize:'10px', fontWeight:'600', color:'#1a3a5c', textTransform:'uppercase', letterSpacing:'0.04em' }}>Invoice Structure</span>
+            <div style={{ border:'0.5px solid #e8eaf0', borderRadius:'6px', overflow:'visible' }}>
               <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', borderBottom:'0.5px solid #e8eaf0' }}>
                 {['Invoice Rule','First Part','Mid Part','Last Part'].map((h,i) => (
                   <div key={h} style={{ padding:'6px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa', borderRight:'0.5px solid #e8eaf0', whiteSpace:'nowrap' }}>{h}</div>
@@ -1877,9 +1966,13 @@ if (tab === 'apcode' || tab === 'iecode') {
                 </div>
                 <div style={{ padding:'6px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa' }}>Notice</div>
               </div>
+              {/* MARKER_VENDORMASTER_INVOICE_PART_USAGE_V1_RENDER -- Highlight สีเหลือง First/Mid/Last Part ตาม Pattern+Digit ปัจจุบันใช้จริง */}
               <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)' }}>
-                {['Invoice No.','First Part','Mid Part','Last Part'].map((key,i) => (
-                  <div key={key} style={{ padding:'4px 6px', borderRight:'0.5px solid #e8eaf0' }}>
+                {(() => {
+                  const _usedPartsVM = getUsedInvoiceParts(formData['Invoice No.'], formData['Digit']);
+                  const _partKeyMapVM = { 'First Part': 'fp', 'Mid Part': 'mp', 'Last Part': 'lp' };
+                  return ['Invoice No.','First Part','Mid Part','Last Part'].map((key,i) => (
+                  <div key={key} style={{ padding:'4px 6px', borderRight:'0.5px solid #e8eaf0', background: (_partKeyMapVM[key] && _usedPartsVM[_partKeyMapVM[key]]) ? '#FFF3CD' : 'transparent' }}>
                     {editMode
                       ? cfg.combo.includes(key)
                         ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key, formData)} placeholder='-' />
@@ -1887,7 +1980,8 @@ if (tab === 'apcode' || tab === 'iecode') {
                       : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
                     }
                   </div>
-                ))}
+                  ));
+                })()}
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderRight:'0.5px solid #e8eaf0' }}>
                   {['Digit','Due'].map((key,i) => (
                     <div key={key} style={{ padding:'4px 6px', borderRight: i===0 ? '0.5px solid #e8eaf0' : 'none' }}>
@@ -1907,6 +2001,28 @@ if (tab === 'apcode' || tab === 'iecode') {
                   }
                 </div>
               </div>
+                {/* MARKER_VENDORMASTER_INVOICE_STRUCTURE_PREVIEW_V1 -- ตัวอย่างเลข Invoice สดๆ จาก First/Mid/Last Part + Digit ที่กรอกอยู่ -- ใช้ Logic เดียวกับที่ Invoice Detail ใช้จริง (buildInvoiceStructurePreview ด้านบน) -- โชว์เฉพาะตอนมีอะไรให้ Build จริง */}
+                {(() => {
+                  const _ismPreview = buildInvoiceStructurePreview(formData['First Part'], formData['Mid Part'], formData['Last Part'], formData['Digit'], formData['Invoice No.']);
+                  if (_ismPreview === null) return null;
+                  return (
+                    <div style={{ padding:'7px 10px', borderTop:'0.5px solid #e8eaf0', background:'#f8f9fa', fontSize:'11px', color:'#888', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' }}>
+                      <span>ตัวอย่างเลข Invoice (อิงวันที่วันนี้ เพื่อดูตัวอย่าง):</span>
+                      <span style={{ fontFamily:'monospace', fontWeight:'700', color:'#1a3a5c', background:'#eef3fb', border:'1px solid #d8e3f4', borderRadius:'5px', padding:'2px 8px' }}>{_ismPreview}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+              {/* MARKER_VENDORMASTER_RESET_BTN_V1 -- ปุ่ม Reset มุมขวาล่างกล่อง Invoice Structure: ล้าง Invoice Rule/First/Mid/Last Part + ตั้ง Digit = FULL (ไม่แตะ Due/Notice) */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!editMode) return;
+                  setFormData({ ...formData, 'Invoice No.': '', 'First Part': '', 'Mid Part': '', 'Last Part': '', 'Digit': 'FULL' });
+                }}
+                style={{ position:'absolute', bottom:'6px', right:'10px', padding:'2px 8px', fontSize:'10px', fontWeight:'600', color:'#888', background:'white', border:'1px solid #d8dee8', borderRadius:'10px', cursor:'pointer', letterSpacing:'0.02em' }}
+                title="Reset Invoice Rule / First-Mid-Last Part / ตั้ง Digit = FULL"
+              >Reset</button>
             </div>
 
             {/* Row 5: Contact + Email */}

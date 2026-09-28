@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Operation Panel — Font/Color Options</title>
+<style>
+  body { margin:0; padding:24px; background:#f4f4f5; font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+  .caption { font-size:13px; color:#666; margin-bottom:6px; }
+  .option-label { font-size:12px; font-weight:700; color:#1a3a5c; margin:22px 0 8px; }
+  .panel { border:0.5px solid #e8eaf0; border-radius:8px; overflow:hidden; background:#fff; max-width:960px; }
+  .header { border-bottom:0.5px solid #f0f0f0; padding:6px 14px; }
+  .header span { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; }
+  .row1 { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; border-bottom:0.5px solid #f0f0f0; }
+  .row2 { display:grid; grid-template-columns: 1fr 1fr 1fr 2fr 1fr; }
+  .cell { display:flex; flex-direction:column; gap:3px; padding:10px 14px; border-right:0.5px solid #f0f0f0; }
+  .cell:last-child { border-right:none; }
+  .k { font-size:11px; }
+  .v { font-size:14.5px; font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="caption">Layout เดิม (Option B, 2 แถว) — ปรับแค่ Font + สี ตามที่ขอ ไม่เพิ่มแถว/ไม่เปลี่ยนโครงสร้าง</div>
+
+  <div class="option-label">Font/Color 1 — Navy + Slate (เข้ม สุภาพ อ่านง่าย)</div>
+  <div class="panel" style="font-family: -apple-system, 'Segoe UI', Tahoma, Arial, sans-serif;">
+    <div class="header" style="background:#eef2f8;"><span style="color:#5b6b82;">Operation</span></div>
+    <div class="row1">
+      <div class="cell"><span class="k" style="color:#8a94a6;">Vendor Name</span><span class="v" style="color:#16324f;">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell"><span class="k" style="color:#8a94a6;">Tax ID</span><span class="v" style="color:#16324f;">0105546131747</span></div>
+      <div class="cell"><span class="k" style="color:#8a94a6;">Branch No.</span><span class="v" style="color:#16324f;">00000</span></div>
+      <div class="cell"><span class="k" style="color:#8a94a6;">AT-Match</span><span class="v" style="color:#16324f;">ADJ3A</span></div>
+    </div>
+    <div class="row2">
+      <div class="cell"><span class="k" style="color:#8a94a6;">First Part</span><span class="v" style="color:#16324f;">TKT</span></div>
+      <div class="cell"><span class="k" style="color:#8a94a6;">Mid Part</span><span class="v" style="color:#ccc;">—</span></div>
+      <div class="cell"><span class="k" style="color:#8a94a6;">Last Part</span><span class="v" style="color:#ccc;">—</span></div>
+      <div class="cell"><span class="k" style="color:#8a94a6;">Expense Type</span><span class="v" style="color:#16324f;">63047000-ค่าบริการอื่นๆ</span></div>
+      <div class="cell"><span class="k" style="color:#8a94a6;">Simple Rule</span><span class="v" style="color:#16324f;">NNN+SP</span></div>
+    </div>
+  </div>
+
+  <div class="option-label">Font/Color 2 — Teal Accent (Header เขียวอมฟ้า, Value เข้ม สดใสขึ้น)</div>
+  <div class="panel">
+    <div class="header" style="background:#e7f5f3;"><span style="color:#0f766e;">Operation</span></div>
+    <div class="row1">
+      <div class="cell"><span class="k" style="color:#94a3ac;">Vendor Name</span><span class="v" style="color:#0f2e2b;">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell"><span class="k" style="color:#94a3ac;">Tax ID</span><span class="v" style="color:#0f2e2b;">0105546131747</span></div>
+      <div class="cell"><span class="k" style="color:#94a3ac;">Branch No.</span><span class="v" style="color:#0f2e2b;">00000</span></div>
+      <div class="cell"><span class="k" style="color:#94a3ac;">AT-Match</span><span class="v" style="color:#0f766e; font-weight:700;">ADJ3A</span></div>
+    </div>
+    <div class="row2">
+      <div class="cell"><span class="k" style="color:#94a3ac;">First Part</span><span class="v" style="color:#0f2e2b;">TKT</span></div>
+      <div class="cell"><span class="k" style="color:#94a3ac;">Mid Part</span><span class="v" style="color:#ccc;">—</span></div>
+      <div class="cell"><span class="k" style="color:#94a3ac;">Last Part</span><span class="v" style="color:#ccc;">—</span></div>
+      <div class="cell"><span class="k" style="color:#94a3ac;">Expense Type</span><span class="v" style="color:#0f2e2b;">63047000-ค่าบริการอื่นๆ</span></div>
+      <div class="cell"><span class="k" style="color:#94a3ac;">Simple Rule</span><span class="v" style="color:#0f766e; font-weight:700;">NNN+SP</span></div>
+    </div>
+  </div>
+
+  <div class="option-label">Font/Color 3 — Warm Neutral (Header ครีม, Value น้ำตาลเข้ม อบอุ่นขึ้น)</div>
+  <div class="panel">
+    <div class="header" style="background:#faf6ef;"><span style="color:#a8875a;">Operation</span></div>
+    <div class="row1">
+      <div class="cell"><span class="k" style="color:#b3a998;">Vendor Name</span><span class="v" style="color:#4a3a24;">บริษัท ทีฆทัศน์ จำกัด</span></div>
+      <div class="cell"><span class="k" style="color:#b3a998;">Tax ID</span><span class="v" style="color:#4a3a24;">0105546131747</span></div>
+      <div class="cell"><span class="k" style="color:#b3a998;">Branch No.</span><span class="v" style="color:#4a3a24;">00000</span></div>
+      <div class="cell"><span class="k" style="color:#b3a998;">AT-Match</span><span class="v" style="color:#4a3a24;">ADJ3A</span></div>
+    </div>
+    <div class="row2">
+      <div class="cell"><span class="k" style="color:#b3a998;">First Part</span><span class="v" style="color:#4a3a24;">TKT</span></div>
+      <div class="cell"><span class="k" style="color:#b3a998;">Mid Part</span><span class="v" style="color:#ddd;">—</span></div>
+      <div class="cell"><span class="k" style="color:#b3a998;">Last Part</span><span class="v" style="color:#ddd;">—</span></div>
+      <div class="cell"><span class="k" style="color:#b3a998;">Expense Type</span><span class="v" style="color:#4a3a24;">63047000-ค่าบริการอื่นๆ</span></div>
+      <div class="cell"><span class="k" style="color:#b3a998;">Simple Rule</span><span class="v" style="color:#4a3a24;">NNN+SP</span></div>
+    </div>
+  </div>
+</body>
+</html>
