@@ -239,8 +239,11 @@ function FileStorageZone({ jobs = [], scope = 'mine', onScopeChange, loading = f
   const visibleJobs = jobs.map(deriveJobDisplay);
 
   return (
-    <div style={{ marginTop: 16, border: '0.5px solid #ddd', borderRadius: 12, background: '#fff', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderBottom: '0.5px solid #ddd', background: '#f7f7f7' }}>
+    // MARKER_ZONE_LAYOUT_FILL_TO_BOTTOM_GAP20_V1 — Root ของ Zone นี้เป็น flex:1 (ยืดเต็มพื้นที่
+    // ที่เหลือของหน้าจนสุดขอบล่าง เว้น Gap 20px ตาม Parent) + flexDirection column เพื่อให้ Toolbar
+    // (My Job/All Job) อยู่คงที่ด้านบน แล้วให้ "พื้นที่ Table" ด้านล่าง Scroll ภายในตัวเองถ้าเนื้อหาเกิน
+    <div style={{ marginTop: 16, border: '0.5px solid #ddd', borderRadius: 12, background: '#fff', overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderBottom: '0.5px solid #ddd', background: '#f7f7f7', flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: 6 }}>
           {['mine', 'all'].map(s => (
             <button key={s} type="button" onClick={() => onScopeChange && onScopeChange(s)} style={{
@@ -261,8 +264,9 @@ function FileStorageZone({ jobs = [], scope = 'mine', onScopeChange, loading = f
 
       {/* MARKER_FILESTORAGEZONE_FIXED_HEIGHT_HEADER_V1 — Header ของตาราง (BU/Filename/...)
           ต้องค้างอยู่เสมอไม่ว่าจะมีไฟล์หรือไม่ (ไม่ใช่หายไปทั้ง Table ตอน Rows ว่างแบบก่อนหน้า)
-          และ Zone ต้องมีความสูง Default ที่คงที่ (minHeight) ไม่ยุบตามเนื้อหา ตาม Reference */}
-      <div style={{ padding: 0, overflowX: 'auto', minHeight: 420 }}>
+          MARKER_ZONE_LAYOUT_FILL_TO_BOTTOM_GAP20_V1 — เปลี่ยนจาก minHeight คงที่ 420 เป็น flex:1
+          ให้ Table Area ยืดเต็มพื้นที่ที่เหลือของ Zone จริง (Zone เองก็ flex:1 เต็มจออีกที) แทน */}
+      <div style={{ padding: 0, overflowX: 'auto', overflowY: 'auto', flex: 1, minHeight: 0 }}>
         <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'separate', borderSpacing: 0, minWidth: 720 }}>
           <thead>
             <tr style={{ background: FIELD_GRAD }}>
@@ -364,8 +368,12 @@ export default function ReconcileZoneLayout({
   const handleExport = () => { /* Placeholder — รอ Macro "A_Reconcile" + Template Master Reconcile ของจริง */ };
 
   return (
-    <div style={{ padding: '24px', boxSizing: 'border-box', minHeight: '100vh' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '2.3fr 1fr', gap: 16, height: '35vh' }}>
+    // MARKER_ZONE_LAYOUT_FILL_TO_BOTTOM_GAP20_V1 — เปลี่ยนเป็น Flex Column เต็มจอ (height: 100vh
+    // ไม่ใช่ minHeight) แล้วให้ File Storage Zone เป็น flex:1 ยืดเต็มพื้นที่ที่เหลือลงไปจนสุดขอบล่าง
+    // เว้น Gap 20px เสมอ (ก่อนหน้านี้ใช้ minHeight คงที่ 420 ทำให้เหลือพื้นที่ขาวไม่เท่ากันตามความสูง
+    // จอ/หน้าต่าง Browser)
+    <div style={{ padding: '24px 24px 20px', boxSizing: 'border-box', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2.3fr 1fr', gap: 16, height: '35vh', flexShrink: 0 }}>
 
         {/* โซนซ้าย: 2 Tab -- Dashboard / Upload File */}
         <div style={{ background: '#f7f7f7', border: '0.5px solid #ddd', borderRadius: 12, overflow: 'hidden', height: '100%', display: 'flex', flexDirection: 'column' }}>

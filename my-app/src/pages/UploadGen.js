@@ -3909,9 +3909,21 @@ function mapRowsForExcel(rawRows, docType) {
       const numParts = bracketParts.filter(p=>/^\d+$/.test(p));
       const _yesIdx = bracketParts.findIndex(p=>p.toLowerCase()==='yes');
       const _invNo = _yesIdx>=0 ? (bracketParts[_yesIdx+4]||'') : (r['Invoice Num']||'');
-      const _grtNo = _yesIdx>=0 ? (bracketParts[_yesIdx+2]||'') : (numParts[0]||'');
+      // MARKER_APN01_BRANCH_BUCODE_LOCATE_V1 -- หา Branch ด้วย BU Code (Segment 3 ของ Liability Account เช่น 1-32-3218-321801-… → BU=3218)
+      // ค่าตัวเลขใน [ ] ที่ขึ้นต้นด้วย BU Code (เช่น 321801) = Branch ไม่ต้องพึ่งตำแหน่ง ถ้าไม่เจอค่อย Fallback ตำแหน่งเดิม → Liability Account Segment 4
+      const _liabSeg = String(r['Liability Account']||'').split('-').map(x=>x.trim());
+      const _buCode = _liabSeg[2]||'';
+      const _liabBranch = _liabSeg[3]||'';
+      let _brIdx = -1;
+      if (_yesIdx<0 && _buCode) {
+        if (numParts[1] && numParts[1].startsWith(_buCode) && numParts[1].length>_buCode.length) _brIdx = 1;
+        else _brIdx = numParts.findIndex(x=>x.startsWith(_buCode) && x.length>_buCode.length);
+      }
+      if (_brIdx<0 && _yesIdx<0) _brIdx = numParts.length===1 ? 0 : (numParts.length>=2 ? 1 : -1); // MARKER_APN01_BRANCH_SINGLE_NUMPART_V1 -- Fallback ตำแหน่งเดิม
+      const _grtNo = _yesIdx>=0 ? (bracketParts[_yesIdx+2]||'') : (numParts.find((x,i)=>i!==_brIdx)||'');
+      const _branchVal = _yesIdx>=0 ? (numParts[1]||_liabBranch) : ((_brIdx>=0 ? numParts[_brIdx] : '')||_liabBranch);
       return {
-        'Branch':             numParts[1] || '',
+        'Branch':             _branchVal,
         'Vendor Name':        r['Supplier']||'',
         'GR Transaction No.': _grtNo,
         'Invoice Number':     _invNo,
@@ -3981,16 +3993,20 @@ function DocDetailModal({ file, onClose, searchQuery='', userName, currentUser, 
   // MARKER_DOCCOLLECTION_CROSSCHECK_DASHBOARD_REPORT_V1 -- จับเวลาตอนเปิด View Form (Local เท่านั้น, Reset ทุกครั้งที่เปิด Modal ใหม่เพราะ Unmount/Remount)
   const viewFormOpenedAtRef = React.useRef(null);
   React.useEffect(() => { viewFormOpenedAtRef.current = new Date(); }, []);
+  // MARKER_DOCCOLLECTION_CROSSCHECK_KEEP_CONFIRMED_AT_V1 -- เก็บ confirmed_at/by/confirmed ใน Ref กัน Toggle Checkbox หลัง Confirm เขียนทับเป็น null (file Prop ค้างค่าเก่า)
+  const confirmedMetaRef = React.useRef({ confirmed: !!file.cross_check?.confirmed, confirmed_at: file.cross_check?.confirmed_at || null, confirmed_by: file.cross_check?.confirmed_by || null });
   const persistCrossCheck = (patch) => {
     const payload = {
       checked: Array.from(checkedRows),
       started_at: viewFormOpenedAtRef.current ? viewFormOpenedAtRef.current.toISOString() : null, // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1
-      confirmed,
-      confirmed_at: file.cross_check?.confirmed_at || null,
-      confirmed_by: file.cross_check?.confirmed_by || null,
+      confirmed: confirmedMetaRef.current.confirmed,
+      confirmed_at: confirmedMetaRef.current.confirmed_at,
+      confirmed_by: confirmedMetaRef.current.confirmed_by,
       completed_at: checkCompletedAt,
       ...patch,
     };
+    if (patch.confirmed) confirmedMetaRef.current = { confirmed: true, confirmed_at: payload.confirmed_at || new Date().toISOString(), confirmed_by: payload.confirmed_by || '' };
+    else if (payload.confirmed && !payload.confirmed_at) payload.confirmed_at = payload.completed_at || new Date().toISOString();
     (async () => {
       try { await db.from('doc_collection').update({ cross_check: payload }).eq('id', file.id); }
       catch (err) { console.error('[' + 'MARKER_DOCCOLLECTION_CROSSCHECK_HOTFIX_V1' + ']', err); }
@@ -4007,9 +4023,9 @@ function DocDetailModal({ file, onClose, searchQuery='', userName, currentUser, 
           await db.from('doc_collection').update({ cross_check: {
             checked: Array.from(next),
             started_at: viewFormOpenedAtRef.current ? viewFormOpenedAtRef.current.toISOString() : null, // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1
-            confirmed,
-            confirmed_at: file.cross_check?.confirmed_at || null,
-            confirmed_by: file.cross_check?.confirmed_by || null,
+            confirmed: confirmedMetaRef.current.confirmed,
+            confirmed_at: confirmedMetaRef.current.confirmed_at,
+            confirmed_by: confirmedMetaRef.current.confirmed_by,
             completed_at: checkCompletedAt,
           } }).eq('id', file.id);
         } catch (err) { console.error('[' + 'MARKER_DOCCOLLECTION_CROSSCHECK_HOTFIX_V1' + ']', err); }
@@ -4027,9 +4043,9 @@ function DocDetailModal({ file, onClose, searchQuery='', userName, currentUser, 
           await db.from('doc_collection').update({ cross_check: {
             checked: Array.from(next),
             started_at: viewFormOpenedAtRef.current ? viewFormOpenedAtRef.current.toISOString() : null, // MARKER_DOCCOLLECTION_CROSSCHECK_STARTEDAT_VIEWFORM_V1
-            confirmed,
-            confirmed_at: file.cross_check?.confirmed_at || null,
-            confirmed_by: file.cross_check?.confirmed_by || null,
+            confirmed: confirmedMetaRef.current.confirmed,
+            confirmed_at: confirmedMetaRef.current.confirmed_at,
+            confirmed_by: confirmedMetaRef.current.confirmed_by,
             completed_at: checkCompletedAt,
           } }).eq('id', file.id);
         } catch (err) { console.error('[' + 'MARKER_DOCCOLLECTION_CROSSCHECK_HOTFIX_V1' + ']', err); }
@@ -4308,19 +4324,60 @@ function loadPdfJs() {
   return _pdfJsLoadPromise;
 }
 
-// MARKER_UPLOADGEN_ATTACH_PDF_FIRSTPAGE_V1
-// ── แปลง PDF หน้าแรกเป็นรูป JPG (ก่อนส่งเข้า compressImage บีบอัดต่ออีกที) ──
-async function renderPdfFirstPageToDataUrl(file) {
+// MARKER_UPLOADGEN_LIGHTBOX_DOWNLOAD_PDF_V1
+// ── โหลด jsPDF จาก CDN แบบ Lazy (ใช้ตอนกด Download ใน Lightbox -- ต้องออกเป็น PDF ไม่ใช่ JPG) ──
+let _jsPdfLoadPromise = null;
+function loadJsPdf() {
+  if (window.jspdf?.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+  if (_jsPdfLoadPromise) return _jsPdfLoadPromise;
+  _jsPdfLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    script.onload = () => resolve(window.jspdf.jsPDF);
+    script.onerror = () => reject(new Error('โหลด PDF Engine ไม่สำเร็จ (ตรวจ Internet/Firewall)'));
+    document.head.appendChild(script);
+  });
+  return _jsPdfLoadPromise;
+}
+// ── แปลง Data URL รูปภาพ เป็น PDF 1 หน้า (ขนาดเท่ารูปจริง Pixel ต่อ Pixel) ──
+async function imageDataUrlToPdf(dataUrl) {
+  const jsPDF = await loadJsPdf();
+  const dims = await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 1600, height: 2000 });
+    img.src = dataUrl;
+  });
+  const doc = new jsPDF({
+    orientation: dims.width > dims.height ? 'landscape' : 'portrait',
+    unit: 'px',
+    format: [dims.width, dims.height],
+  });
+  doc.addImage(dataUrl, 'JPEG', 0, 0, dims.width, dims.height);
+  return doc.output('datauristring');
+}
+
+// MARKER_UPLOADGEN_ATTACH_PDF_MULTIPAGE_V1 -- Bug Fix: เดิมอ่านแค่ pdf.getPage(1) เท่านั้น
+// ไฟล์ PDF ที่มีหลายหน้า (เช่น 3 หน้า) เลยเข้ามาเป็น Attachment แค่ 1 รูป (หน้าแรก) เสมอ ไม่ว่าไฟล์จะมีกี่หน้า
+// -- แก้ให้ Render ทุกหน้า (จำกัดไม่เกิน maxPages ตาม Slot ที่เหลือ) คืนเป็น Array ของรูป + totalPages จริง
+// ของ PDF ไว้เช็คว่าถูกตัดหน้าทิ้งไปหรือไม่ (Slot ไม่พอ)
+async function renderPdfPagesToDataUrls(file, maxPages) {
   const pdfjsLib = await loadPdfJs();
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  const page = await pdf.getPage(1);
-  const viewport = page.getViewport({ scale: 2 });
-  const canvas = document.createElement('canvas');
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-  return canvas.toDataURL('image/jpeg', 0.92);
+  const totalPages = pdf.numPages;
+  const pageCount = Math.max(0, Math.min(totalPages, maxPages));
+  const pages = [];
+  for (let i = 1; i <= pageCount; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    pages.push(canvas.toDataURL('image/jpeg', 0.92));
+  }
+  return { pages, totalPages };
 }
 
 // MARKER_UPLOADGEN_ATTACH_UPSCALE_DOWNLOAD_V1
@@ -4359,35 +4416,49 @@ function AttachmentModal({ file, onClose, onSave, db, logActivity }) {
 
   // MARKER_UPLOADGEN_ATTACH_ACCEPT_PDF_DRAGDROP_V1
   // ── รับ PDF/JPG/PNG ทั้งจาก Drag&Drop และปุ่มเลือกไฟล์ -- ใช้ Handler เดียวกัน ──
-  // ── PDF: แปลงหน้าแรกเป็น JPG ก่อน แล้วเข้า Flow บีบอัดเดียวกับรูปภาพปกติ ──
+  // MARKER_UPLOADGEN_ATTACH_PDF_MULTIPAGE_V1 -- Bug Fix: PDF 1 ไฟล์ที่มีหลายหน้า (เช่น 3 หน้า) เดิมเข้ามา
+  // เป็น Attachment แค่ 1 รูป (หน้าแรกเท่านั้น) -- แก้ให้แยกทุกหน้าเป็น Attachment ของตัวเอง (1 หน้า = 1 รูป)
+  // นับ Slot แบบ Dynamic ทีละหน้า/ไฟล์ (ไม่เช็ค files.length ตรงๆ แบบเดิม เพราะ 1 ไฟล์ PDF อาจกินหลาย Slot)
   const processFiles = (fileList) => {
     const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
     if (!files.length) return;
-    if (attachments.length + files.length > 3) { alert('แนบได้สูงสุด 3 ไฟล์ครับ'); return; }
-    const slot = 3 - attachments.length;
     setImporting(true);
     (async () => {
-      for (const f of files.slice(0, slot)) {
+      let currentCount = attachments.length; // Local Counter กันหลุดจาก setState แบบ Async ระหว่าง Loop
+      let truncated = false;
+      for (const f of files) {
+        if (currentCount >= 3) { truncated = true; break; }
         try {
-          let rawDataUrl;
           if (f.type === 'application/pdf') {
-            rawDataUrl = await renderPdfFirstPageToDataUrl(f);
+            const remaining = 3 - currentCount;
+            const { pages, totalPages } = await renderPdfPagesToDataUrls(f, remaining);
+            if (totalPages > pages.length) truncated = true;
+            const multi = totalPages > 1;
+            const baseName = f.name.replace(/\.pdf$/i, '');
+            for (let p = 0; p < pages.length; p++) {
+              const compressed = await compressImage(pages[p]);
+              const kb = Math.round(compressed.length * 0.75 / 1024);
+              const displayName = multi ? `${baseName}_p${p + 1}.jpg` : `${baseName}.jpg`;
+              setAttachments(prev => [...prev, { name: displayName, data: compressed, mime: 'image/jpeg', size_kb: kb }]);
+              currentCount++;
+            }
           } else {
-            rawDataUrl = await new Promise((resolve, reject) => {
+            const rawDataUrl = await new Promise((resolve, reject) => {
               const reader = new FileReader();
               reader.onload = ev => resolve(ev.target.result);
               reader.onerror = reject;
               reader.readAsDataURL(f);
             });
+            const compressed = await compressImage(rawDataUrl);
+            const kb = Math.round(compressed.length * 0.75 / 1024);
+            setAttachments(prev => [...prev, { name: f.name, data: compressed, mime: 'image/jpeg', size_kb: kb }]);
+            currentCount++;
           }
-          const compressed = await compressImage(rawDataUrl);
-          const kb = Math.round(compressed.length * 0.75 / 1024);
-          const displayName = f.type === 'application/pdf' ? f.name.replace(/\.pdf$/i, '.jpg') : f.name;
-          setAttachments(prev => [...prev, { name: displayName, data: compressed, mime: 'image/jpeg', size_kb: kb }]);
         } catch (e) {
           alert('แปลงไฟล์ "' + f.name + '" ไม่สำเร็จ: ' + e.message);
         }
       }
+      if (truncated) alert('แนบได้สูงสุด 3 รูป/หน้าเท่านั้น -- บางไฟล์/หน้าถูกตัดออกเพราะเกินจำนวนที่กำหนด');
       setImporting(false);
     })();
   };
@@ -4973,20 +5044,24 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     return () => { if (lightboxHideTimerRef.current) clearTimeout(lightboxHideTimerRef.current); };
   }, [lightbox?.fileId, lightbox?.index]);
   // ── กดลูกศร ← → บนคีย์บอร์ดเพื่อสลับรูป, Esc เพื่อปิด Lightbox ──
+  // MARKER_FOLDERDETAIL_LIGHTBOX_AUTOSAVE_ROTATION_V1 -- เปลี่ยนเป็น gotoLightboxIndex/closeLightboxWithSave
+  // (Auto Save มุมที่หมุนค้างไว้ก่อนสลับรูป/ปิด) + เพิ่ม lightboxRotation ใน Dependency กัน Stale Closure
+  // (Effect นี้ผูก [lightbox] เฉยๆ เดิม -- ถ้าหมุนแล้วไม่เปลี่ยนรูป lightbox Object ไม่เปลี่ยน Effect ไม่ผูกใหม่
+  // Handler จะถือค่า lightboxRotation ค้างจากรอบก่อน กด Esc/ลูกศรแล้ว Save มุมผิดหรือไม่ Save เลย)
   useEffect(() => {
     if (!lightbox) return;
     const onKeyDown = (e) => {
       if (e.key === 'ArrowLeft' && lightbox.index > 0) {
-        setLightbox(p => p ? { ...p, index: p.index - 1 } : p);
+        gotoLightboxIndex(lightbox.index - 1);
       } else if (e.key === 'ArrowRight' && lightbox.index < lightbox.attachments.length - 1) {
-        setLightbox(p => p ? { ...p, index: p.index + 1 } : p);
+        gotoLightboxIndex(lightbox.index + 1);
       } else if (e.key === 'Escape') {
-        setLightbox(null);
+        closeLightboxWithSave();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [lightbox]);
+  }, [lightbox, lightboxRotation]);
   // MARKER_FOLDERDETAIL_LIGHTBOX_DRAG_PAN_V1
   // ── คลิกเมาส์ค้างแล้วลากเพื่อเลื่อนดูรูปตอน Zoom > 100% (Pan) ──
   const [lightboxPan, setLightboxPan] = useState({ x: 0, y: 0 });
@@ -5044,9 +5119,13 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     img.src = dataUrl;
     if (img.complete && img.naturalWidth > 0) doRotate();
   });
-  // บันทึกรูปที่หมุนแล้วกลับเข้า doc_collection.attachments (ทับของเดิม)
-  const handleLightboxSaveRotation = async () => {
-    if (!lightbox || !lightboxRotation) return;
+  // MARKER_FOLDERDETAIL_LIGHTBOX_AUTOSAVE_ROTATION_V1 -- UX: เอาปุ่ม "บันทึกการหมุน" ที่ต้องกดเองออก
+  // หมุนกี่ครั้งก็ได้ (Local State เฉยๆ ไม่เขียน DB ระหว่างหมุน) แล้ว Auto Save มุมสุดท้ายให้อัตโนมัติตอน
+  // "ปิด Popup" หรือ "เปลี่ยนรูป" (Next/Prev/Thumbnail/ลูกศรคีย์บอร์ด) -- Save ครั้งเดียวจริงตามมุมสุดท้าย
+  // ที่เห็นบนจอ ไม่มีการ Save ซ้ำระหว่างหมุน -- คืนค่า Data URL ที่หมุนแล้ว (ถ้ามีการหมุนค้างอยู่และ Save
+  // สำเร็จ) ไว้ให้ handleLightboxDownload เอาไปใช้ต่อได้ทันที โดยไม่ต้องอ่าน State lightbox ที่อาจยังไม่อัปเดต
+  const commitLightboxRotation = async () => {
+    if (!lightbox || !lightboxRotation) return null;
     setLightboxSaving(true);
     try {
       const idx = lightbox.index;
@@ -5062,10 +5141,64 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
       setBrowseFiles(prev => prev.map(f => f.id === lightbox.fileId ? { ...f, attachments: newAttachments } : f));
       setLightbox(p => p ? { ...p, attachments: newAttachments } : p);
       setLightboxRotation(0);
+      // MARKER_FOLDERDETAIL_LIGHTBOX_HIRES_STALE_AFTER_ROTATE_FIX_V1 -- Bug Fix: lightboxHiRes Cache
+      // Key ผูกกับแค่ fileId/index เท่านั้น ไม่รวม data -- พอ Save การหมุนแล้ว data เปลี่ยน แต่ Key ไม่เปลี่ยน
+      // (fileId/index เดิม) เลยยังโชว์รูป Hi-Res "รูปเก่าก่อนหมุน" ค้างอยู่ ต้องปิด-เปิด Lightbox ใหม่
+      // (Mount ใหม่ทำให้ useEffect คำนวณ Hi-Res รอบใหม่) ถึงจะเห็นถูก -- แก้โดย Clear Cache ทันทีหลัง Save
+      // (Fallback ไปโชว์ attachments[idx].data ที่หมุนแล้วก่อน) แล้วค่อย Re-generate Hi-Res ของรูปใหม่ต่อ
+      const hiResKey = `${lightbox.fileId}_${idx}`;
+      setLightboxHiRes(null);
+      upscaleForDownload(rotatedData, 2, 3000).then(hiRes => {
+        setLightboxHiRes({ key: hiResKey, src: hiRes });
+      }).catch(()=>{});
+      setLightboxSaving(false);
+      return rotatedData;
     } catch (e) {
       alert('บันทึกการหมุนไม่สำเร็จ: ' + e.message);
+      setLightboxSaving(false);
+      return null;
     }
-    setLightboxSaving(false);
+  };
+  // MARKER_FOLDERDETAIL_LIGHTBOX_AUTOSAVE_ROTATION_V1 -- ปิด Popup: Save มุมที่หมุนค้างไว้ก่อนปิดเสมอ
+  const closeLightboxWithSave = async () => {
+    await commitLightboxRotation();
+    setLightbox(null);
+  };
+  // MARKER_FOLDERDETAIL_LIGHTBOX_AUTOSAVE_ROTATION_V1 -- เปลี่ยนรูป (Next/Prev/Thumbnail/ลูกศรคีย์บอร์ด):
+  // Save มุมที่หมุนค้างไว้ของรูปเดิมก่อนสลับไปรูปอื่นเสมอ ไม่งั้น Effect ที่ Reset lightboxRotation=0
+  // ตอนเปลี่ยนรูป (ดู MARKER_FOLDERDETAIL_LIGHTBOX_ROTATE_SAVE_V1 ด้านบน) จะทำมุมที่หมุนไว้หายไปเงียบๆ
+  const gotoLightboxIndex = async (newIndex) => {
+    await commitLightboxRotation();
+    setLightbox(p => p ? { ...p, index: newIndex } : p);
+  };
+  // MARKER_UPLOADGEN_LIGHTBOX_DOWNLOAD_PDF_V1 -- ปุ่ม Download ใน Lightbox: Save มุมที่หมุนค้างไว้ก่อนเสมอ
+  // (ให้ไฟล์ที่ Download ตรงกับที่ปรับไว้บนจอจริงๆ) แล้วปรับความคมชัด (upscaleForDownload) ก่อนแปลงเป็น PDF
+  const [lightboxDownloading, setLightboxDownloading] = useState(false);
+  const handleLightboxDownload = async () => {
+    if (!lightbox || lightboxDownloading) return;
+    setLightboxDownloading(true);
+    try {
+      const idx = lightbox.index;
+      const rotatedJustNow = lightboxRotation ? await commitLightboxRotation() : null;
+      const current = rotatedJustNow
+        ? { data: rotatedJustNow, name: lightbox.attachments[idx].name }
+        : lightbox.attachments[idx];
+      const key = `${lightbox.fileId}_${idx}`;
+      // ถ้าเพิ่ง Save มุมใหม่ไป ต้องคำนวณ Hi-Res ใหม่เสมอ (ของแคชเดิมเป็นรูปก่อนหมุน ใช้ไม่ได้แล้ว)
+      const upscaled = (!rotatedJustNow && lightboxHiRes && lightboxHiRes.key === key) ? lightboxHiRes.src : await upscaleForDownload(current.data);
+      const pdfDataUri = await imageDataUrlToPdf(upscaled);
+      const baseName = (current.name || 'attachment').replace(/\.(jpe?g|png|webp)$/i, '');
+      const a = document.createElement('a');
+      a.href = pdfDataUri;
+      a.download = `${baseName}.pdf`;
+      a.click();
+      // MARKER_DOCCOLLECTION_DOWNLOADED_AT_TRIGGER_V1 -- ดาวน์โหลดรูปแนบไม่ผ่าน Cross Check Gate
+      // เช่นกัน จึงบันทึก downloaded_at ไว้เป็น Trigger ให้ Cron Auto-Confirm (ดู marker เดียวกันจุดอื่น)
+      if (lightbox.fileId) db.from('doc_collection').update({ downloaded_at: new Date().toISOString() }).eq('id', lightbox.fileId).catch(()=>{});
+    } catch (e) {
+      alert('ดาวน์โหลดไม่สำเร็จ: ' + e.message);
+    }
+    setLightboxDownloading(false);
   };
   const [attachModal, setAttachModal] = useState(null); // file object ที่กำลังแก้ไข attachment
   // MARKER_FOLDERDETAIL_ROW_CONTEXT_MENU_V1 -- คลิกขวาที่แถว เพื่อ Recheck/Rematch ข้อมูลที่ขาดไป
@@ -6018,7 +6151,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
         />
       )}
       {lightbox && (
-        <div onClick={()=>setLightbox(null)} onMouseMove={showLightboxControlsTemporarily}
+        <div onClick={closeLightboxWithSave} onMouseMove={showLightboxControlsTemporarily}
           style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.82)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000,flexDirection:'column',gap:'12px'}}>
           {/* MARKER_FOLDERDETAIL_LIGHTBOX_ZOOM_EXPAND_FIX_V1 -- Zoom แบบขยายขนาดจริง (width เป็น vw) แทน transform:scale (Paint-only) */}
           <div ref={lightboxImgWrapRef} onClick={e=>e.stopPropagation()}
@@ -6030,42 +6163,48 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                ให้ width ขยายตามค่า Zoom จริง (90vw*zoom) เต็มที่ ไม่มี maxWidth/maxHeight ซ้อนตรึงไว้อีกชั้น */
                width:lightboxZoom>1?`${90*lightboxZoom}vw`:'auto',maxWidth:lightboxZoom>1?'none':'90vw',maxHeight:lightboxZoom>1?'none':'80vh',borderRadius:'8px',objectFit:'contain',boxShadow:'0 8px 32px rgba(0,0,0,0.5)',cursor:lightboxZoom>1?(lightboxDragging?'grabbing':'grab'):'default',userSelect:'none',transform:`translate(${lightboxPan.x}px, ${lightboxPan.y}px) rotate(${lightboxRotation}deg)`,transition:lightboxDragging?'width .2s ease, max-height .2s ease':'transform .2s ease, width .2s ease, max-height .2s ease'}}/>
             {/* MARKER_FOLDERDETAIL_LIGHTBOX_ZOOM_BOUNDED_V1 -- ปุ่มปิด Fixed ติดขอบจอเสมอ */}
-            <button onClick={()=>setLightbox(null)}
+            <button onClick={closeLightboxWithSave}
               style={{position:'fixed',top:'16px',right:'16px',width:'36px',height:'36px',borderRadius:'50%',border:'none',background:'white',cursor:'pointer',fontSize:'16px',fontWeight:'bold',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 2px 8px rgba(0,0,0,0.3)',zIndex:2001,opacity:lightboxHover?1:0,pointerEvents:lightboxHover?'auto':'none',transition:'opacity .25s'}}>×</button>
             {lightbox.attachments.length>1&&lightbox.index>0&&(
-              <button onClick={()=>setLightbox(p=>({...p,index:p.index-1}))}
+              <button onClick={()=>gotoLightboxIndex(lightbox.index-1)}
                 style={{position:'absolute',left:'-40px',top:'50%',transform:'translateY(-50%)',width:'32px',height:'32px',borderRadius:'50%',border:'none',background:'white',cursor:'pointer',fontSize:'16px',boxShadow:'0 2px 8px rgba(0,0,0,0.3)',opacity:lightboxHover?1:0,pointerEvents:lightboxHover?'auto':'none',transition:'opacity .25s'}}>‹</button>
             )}
             {lightbox.attachments.length>1&&lightbox.index<lightbox.attachments.length-1&&(
-              <button onClick={()=>setLightbox(p=>({...p,index:p.index+1}))}
+              <button onClick={()=>gotoLightboxIndex(lightbox.index+1)}
                 style={{position:'absolute',right:'-40px',top:'50%',transform:'translateY(-50%)',width:'32px',height:'32px',borderRadius:'50%',border:'none',background:'white',cursor:'pointer',fontSize:'16px',boxShadow:'0 2px 8px rgba(0,0,0,0.3)',opacity:lightboxHover?1:0,pointerEvents:lightboxHover?'auto':'none',transition:'opacity .25s'}}>›</button>
             )}
           </div>
-          {/* MARKER_FOLDERDETAIL_LIGHTBOX_ROTATE_SAVE_V1 -- แถบปุ่มหมุน + บันทึก */}
+          {/* MARKER_FOLDERDETAIL_LIGHTBOX_ROTATE_SAVE_V1 -- แถบปุ่มหมุน (Auto Save ตอนปิด/เปลี่ยนรูป ไม่มีปุ่ม Save เอง) + Download -- Icon-Only ไม่มี Label ข้อความ (ใช้ title Tooltip แทน) */}
           <div onClick={e=>e.stopPropagation()}
             style={{display:'flex',gap:'8px',alignItems:'center',position:'fixed',bottom:'24px',left:'50%',transform:'translateX(-50%)',background:'rgba(20,20,20,0.9)',padding:'8px 14px',borderRadius:'999px',boxShadow:'0 4px 16px rgba(0,0,0,0.4)',zIndex:2001,opacity:lightboxHover?1:0,pointerEvents:lightboxHover?'auto':'none',transition:'opacity .25s'}}>
             <button onClick={handleLightboxZoomOut} disabled={lightboxZoom<=1} title="ย่อ"
-              style={{padding:'6px 10px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:lightboxZoom<=1?'default':'pointer',fontSize:'13px',opacity:lightboxZoom<=1?0.4:1}}>🔍－</button>
-            <div title="Ctrl + Scroll เพื่อ Zoom" style={{fontSize:'12px',color:'rgba(255,255,255,0.8)',minWidth:'40px',textAlign:'center',cursor:'help'}}>{Math.round(lightboxZoom*100)}%</div>
+              style={{width:'30px',height:'30px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:lightboxZoom<=1?'default':'pointer',fontSize:'13px',opacity:lightboxZoom<=1?0.4:1}}>🔍－</button>
+            {/* MARKER_FOLDERDETAIL_LIGHTBOX_ZOOM_RESET_CLICK_V1 -- เดิมมีแต่ปุ่ม +/- ขยับทีละ 5% ไม่มีทางตั้งค่ากลับ 100%
+            เป๊ะๆ ได้เลย ต้องกด 🔍－ ไล่เองจนครบ -- คลิกที่ตัวเลข % เพื่อ Reset กลับ 100% ทันที */}
+            <div title="Ctrl + Scroll เพื่อ Zoom / คลิกเพื่อ Reset เป็น 100%" onClick={()=>setLightboxZoom(1)}
+              style={{fontSize:'12px',color:'rgba(255,255,255,0.8)',minWidth:'40px',textAlign:'center',cursor:'pointer'}}>{Math.round(lightboxZoom*100)}%</div>
             <button onClick={handleLightboxZoomIn} disabled={lightboxZoom>=4} title="ขยาย"
-              style={{padding:'6px 10px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:lightboxZoom>=4?'default':'pointer',fontSize:'13px',opacity:lightboxZoom>=4?0.4:1}}>🔍＋</button>
+              style={{width:'30px',height:'30px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:lightboxZoom>=4?'default':'pointer',fontSize:'13px',opacity:lightboxZoom>=4?0.4:1}}>🔍＋</button>
             <div style={{width:'1px',height:'20px',background:'rgba(255,255,255,0.3)',margin:'0 4px'}}/>
             <button onClick={()=>setLightboxRotation(r=>(r+270)%360)} title="หมุนซ้าย 90°"
-              style={{padding:'6px 10px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:'pointer',fontSize:'13px'}}>⟲ หมุนซ้าย</button>
+              style={{width:'30px',height:'30px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:'pointer',fontSize:'14px'}}>⟲</button>
             <button onClick={()=>setLightboxRotation(r=>(r+90)%360)} title="หมุนขวา 90°"
-              style={{padding:'6px 10px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:'pointer',fontSize:'13px'}}>⟳ หมุนขวา</button>
-            {lightboxRotation !== 0 && (
-              <button onClick={handleLightboxSaveRotation} disabled={lightboxSaving}
-                style={{padding:'6px 14px',borderRadius:'6px',border:'none',background:lightboxSaving?'#93c5fd':'#2563eb',color:'white',cursor:lightboxSaving?'default':'pointer',fontSize:'13px',fontWeight:'600'}}>
-                {lightboxSaving ? 'กำลังบันทึก...' : '💾 บันทึกการหมุน'}
-              </button>
+              style={{width:'30px',height:'30px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.1)',color:'white',cursor:'pointer',fontSize:'14px'}}>⟳</button>
+            {lightboxSaving && (
+              <span title="กำลังบันทึกการหมุน..." style={{fontSize:'13px'}}>⏳</span>
             )}
+            <div style={{width:'1px',height:'20px',background:'rgba(255,255,255,0.3)',margin:'0 4px'}}/>
+            {/* MARKER_UPLOADGEN_LIGHTBOX_DOWNLOAD_PDF_V1 -- ปุ่ม Download รูปปัจจุบัน เป็น PDF (ปรับความคมชัด + ใช้มุมหมุนล่าสุดเสมอ) */}
+            <button onClick={handleLightboxDownload} disabled={lightboxDownloading} title="ดาวน์โหลดเป็น PDF (ปรับความคมชัด)"
+              style={{width:'30px',height:'30px',borderRadius:'6px',border:'1px solid rgba(255,255,255,0.3)',background:lightboxDownloading?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.1)',color:'white',cursor:lightboxDownloading?'default':'pointer',fontSize:'14px'}}>
+              {lightboxDownloading ? '⏳' : '⬇'}
+            </button>
           </div>
           {/* MARKER_FOLDERDETAIL_LIGHTBOX_HIDE_THUMBSTRIP_SINGLE_V1 -- มีรูปเดียวไม่ต้องโชว์ Thumbnail Strip/ชื่อไฟล์ (รูปหลักจะได้ Center จริง) */}
           {lightbox.attachments.length > 1 && (
             <div style={{display:'flex',gap:'8px'}}>
               {lightbox.attachments.map((a,i)=>(
-                <img key={i} src={a.data} alt={a.name} onClick={e=>{e.stopPropagation();setLightbox(p=>({...p,index:i}));}}
+                <img key={i} src={a.data} alt={a.name} onClick={e=>{e.stopPropagation();gotoLightboxIndex(i);}}
                   style={{width:'48px',height:'48px',borderRadius:'4px',objectFit:'cover',cursor:'pointer',border:i===lightbox.index?'2px solid white':'2px solid rgba(255,255,255,0.3)',opacity:i===lightbox.index?1:0.6,transition:'all .15s'}}/>
               ))}
             </div>

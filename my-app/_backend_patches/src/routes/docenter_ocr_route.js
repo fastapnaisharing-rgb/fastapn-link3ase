@@ -1075,6 +1075,129 @@ async function processOneJob(queueId, retryCount = 0) {
     }
 }
 
+// MARKER_DOCENTER_VAT_JOB_QUEUE_V1
+// ── คิวงาน VAT Controller (เริ่มที่ AR_Collection Import) เข้า Central Queue ──
+// ── ตัวงานจริงประมวลผลในเบราว์เซอร์ผู้ใช้ (ใช้ Logic Match เดิม) -- ตารางนี้เก็บสถานะ/ความคืบหน้า ให้ Home + Central Queue Monitor เห็นว่ามีคิวงานหรือไม่ ──
+pool.query(`
+  CREATE TABLE IF NOT EXISTS vat_job_queue (
+    id          SERIAL PRIMARY KEY,
+    job_type    TEXT NOT NULL DEFAULT 'ar_collection',
+    file_name   TEXT,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    uploaded_by TEXT,
+    progress    TEXT,
+    error_msg   TEXT,
+    detail      JSONB,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`).catch((e) => console.error('[vat_job_queue] create table:', e.message));
+
+// MARKER_DOCENTER_VAT_BACKUP_EXTRA_COLUMNS_V1
+// -- เพิ่ม Column ให้ vat_backup_tax_invoice (Additive + IF NOT EXISTS ปลอดภัย รันซ้ำได้): group_invoice (Group Matching), supplier_code (Vendor Code), ofin (Yes/No จาก Amagno), ref_name (ข้อความ Ref. ดิบจากไฟล์ต้นทาง)
+pool.query(`
+  ALTER TABLE IF EXISTS vat_backup_tax_invoice
+    ADD COLUMN IF NOT EXISTS group_invoice TEXT,
+    ADD COLUMN IF NOT EXISTS supplier_code TEXT,
+    ADD COLUMN IF NOT EXISTS ofin TEXT,
+    ADD COLUMN IF NOT EXISTS ref_name TEXT,
+    ADD COLUMN IF NOT EXISTS origin_file TEXT,
+    ADD COLUMN IF NOT EXISTS batch_no TEXT,
+    ADD COLUMN IF NOT EXISTS bu_branch_code TEXT
+`).catch((e) => console.error('[vat_backup_tax_invoice] add columns:', e.message));
+
+// MARKER_VATBACKUP_TAXINVOICE_PURGE_UNMATCHED_V1 -- Tax Invoice ที่ Match ไม่ได้ภายใน 1 เดือน (status ยัง 'pending') ลบทิ้งแบบ Hard Delete
+// created_at: ถ้ายังไม่มีคอลัมน์ จะเพิ่มโดย DEFAULT NOW() (แถวเดิมจะนับอายุจากวันที่รัน Patch นี้ ไม่ลบย้อนหลังทันที)
+pool.query(`ALTER TABLE IF EXISTS vat_backup_tax_invoice ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`)
+  .catch((e) => console.error('[vat_backup_tax_invoice] add created_at:', e.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_vat_backup_tax_invoice_status_created ON vat_backup_tax_invoice (status, created_at)`)
+  .catch((e) => console.error('[vat_backup_tax_invoice] idx status_created:', e.message));
+async function purgeUnmatchedTaxInvoice() {
+  try {
+    const r = await pool.query(`DELETE FROM vat_backup_tax_invoice WHERE status = 'pending' AND created_at < NOW() - INTERVAL '1 month'`);
+    if (r.rowCount > 0) console.log(`[purgeUnmatchedTaxInvoice] hard deleted ${r.rowCount} rows`);
+    // MARKER_VATBACKUP_TAXINVOICE_PURGE_USED_V1 -- ตาข่ายนิรภัย: ลบ Tax Invoice ที่ถูกใช้ใน Popvat ที่ Generate แล้ว (exported/pv-backup) ถ้าตอน Generate พลาดไป
+    const u = await pool.query(
+      `DELETE FROM vat_backup_tax_invoice t
+       USING vat_upload_popvatdraft p
+       WHERE p.status IN ('exported', 'pv-backup')
+         AND t.bu = p.bu
+         AND NULLIF(UPPER(TRIM(p.tax_invoice_number)), '') = UPPER(TRIM(t.tax_invoice_number))
+         AND UPPER(TRIM(COALESCE(t.ofin, ''))) <> 'YES'`
+    );
+    if (u.rowCount > 0) console.log(`[purgeUnmatchedTaxInvoice] hard deleted ${u.rowCount} used rows`);
+    // MARKER_VATBACKUP_TAXINVOICE_PURGE_USED_SIMPLE_V1 -- OFIN = Yes ใช้ใน Simple
+    const us = await pool.query(
+      `DELETE FROM vat_backup_tax_invoice t
+       USING vat_simpleinputdraft p
+       WHERE p.status IN ('exported', 'sm-backup', 'pv-backup')
+         AND t.bu = p.bu
+         AND UPPER(TRIM(COALESCE(t.ofin, ''))) = 'YES'
+         AND UPPER(TRIM(COALESCE(t.tax_invoice_number, ''))) <> ''
+         AND UPPER(TRIM(t.tax_invoice_number)) IN (
+           NULLIF(UPPER(TRIM(p.tax_invoice_number)), ''),
+           NULLIF(UPPER(TRIM(p.vendor_tax_invoice_number)), '')
+         )`
+    );
+    if (us.rowCount > 0) console.log(`[purgeUnmatchedTaxInvoice] hard deleted ${us.rowCount} OFIN rows used by Simple`);
+  } catch (e) {
+    console.error('[purgeUnmatchedTaxInvoice] error:', e.message);
+  }
+}
+setTimeout(() => { purgeUnmatchedTaxInvoice(); setInterval(purgeUnmatchedTaxInvoice, 24 * 60 * 60 * 1000); }, 3 * 60 * 1000);
+
+function broadcastVatJobChange() {
+    try { broadcastQueueUpdate('queue_update', { vat_job: true }); } catch (_) {}
+}
+
+// POST /api/docenter/vat-jobs  body: { job_type, file_names: [] }  -> สร้างงาน 1 แถวต่อ 1 ไฟล์ สถานะ pending
+router.post('/vat-jobs', async (req, res) => {
+    try {
+        const username = req.user?.username || req.user?.email || req.headers['x-username'] || 'unknown';
+        const jobType = String(req.body?.job_type || 'ar_collection');
+        const names = Array.isArray(req.body?.file_names) && req.body.file_names.length ? req.body.file_names : ['(ไม่ระบุชื่อไฟล์)'];
+        const ids = [];
+        for (const n of names.slice(0, 50)) {
+            const { rows } = await pool.query(
+                `INSERT INTO vat_job_queue (job_type, file_name, status, uploaded_by) VALUES ($1,$2,'pending',$3) RETURNING id`,
+                [jobType, String(n).slice(0, 300), username]
+            );
+            ids.push(rows[0].id);
+        }
+        broadcastVatJobChange();
+        return res.json({ success: true, ids });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// PATCH /api/docenter/vat-jobs/:id  body: { status?, progress?, error_msg?, detail? }
+router.patch('/vat-jobs/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        if (!Number.isInteger(id)) return res.status(400).json({ error: 'id ไม่ถูกต้อง' });
+        const { status, progress, error_msg, detail } = req.body || {};
+        const allowed = ['pending', 'processing', 'done', 'error'];
+        if (status && !allowed.includes(status)) return res.status(400).json({ error: 'status ไม่ถูกต้อง' });
+        await pool.query(
+            `UPDATE vat_job_queue SET
+                status    = COALESCE($2, status),
+                progress  = COALESCE($3, progress),
+                error_msg = COALESCE($4, error_msg),
+                detail    = COALESCE($5::jsonb, detail),
+                updated_at = NOW()
+             WHERE id = $1`,
+            [id, status || null, progress != null ? String(progress).slice(0, 500) : null, error_msg != null ? String(error_msg).slice(0, 500) : null, detail ? JSON.stringify(detail) : null]
+        );
+        if (status === 'done') broadcastQueueUpdate('queue_done', { vat_job: true, id });
+        else if (status === 'error') broadcastQueueUpdate('queue_error', { vat_job: true, id });
+        else broadcastVatJobChange();
+        return res.json({ success: true });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ── GET /api/docenter/central-queue — ดึง Central Queue รวมทั้งระบบ ─────────
 // ใช้โดย Home widget และ User Management Queue Monitor
 router.get('/central-queue', async (req, res) => {
@@ -1131,6 +1254,26 @@ router.get('/central-queue', async (req, res) => {
             WHERE ($1 OR b.uploaded_by::text = $2)
               AND p.status IN ('pending','processing','done','failed')
               AND p.created_at > NOW() - INTERVAL '24 hours'
+
+            -- MARKER_DOCENTER_CENTRALQUEUE_VAT_JOB_V1
+            -- -- งานฝั่ง VAT Controller (AR_Collection Import) เข้า Central Queue ด้วย -- ตาราง vat_job_queue (สร้างอัตโนมัติด้านล่าง) --
+            UNION ALL
+
+            SELECT
+                'vat_controller'  AS source,
+                v.id              AS source_id,
+                v.file_name,
+                v.status,
+                v.uploaded_by::text AS uploaded_by,
+                v.created_at,
+                v.updated_at,
+                1                 AS priority_class,
+                'VAT AR_Collection' AS queue_type,
+                COALESCE(v.error_msg, v.progress) AS error_msg
+            FROM vat_job_queue v
+            WHERE ($1 OR v.uploaded_by = $2)
+              AND v.status IN ('pending','processing','done','error')
+              AND v.created_at > NOW() - INTERVAL '24 hours'
           ) AS combined
 
             -- MARKER_DOCENTER_CENTRALQUEUE_ORDER_FIX_V1

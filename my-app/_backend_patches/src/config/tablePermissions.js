@@ -82,6 +82,45 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_TAX_CLOSE_V1 -- Timeline ปิดภาษี
+  tax_close_period: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "owner"] }, // ตารางวงจรรอบ/Purge: Backend จัดการเอง จำกัด Owner กันแก้ purge_after/status
+  },
+  tax_close_bu_master: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_period_bu: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_task: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_task_log: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_task_item: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_bu_config: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_TIMELINE_WATCH_V1 -- Timeline ปิดภาษี > Config BU > ดู Progress
+  timeline_watch: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_TIMELINE_PROGRESS_V1 -- Timeline ปิดภาษี: ความคืบหน้าต่อ Period + BU
+  timeline_progress: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   system_settings: {
     read: { publicRead: true },
     write: { roles: ["Owner", "owner"] },
@@ -187,6 +226,21 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_VAT_WATCHLIST_RELATED_PERSON_V1
+  vat_watchlist_related_person: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_MAIL_CONFIG_V1
+  vat_mail_config: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_MAIL_DRAFT_V1
+  vat_mail_draft: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   // MARKER_TABLEPERMISSIONS_VAT_WATCHLIST_NOTES_V1
   vat_watchlist_notes: {
     read: { publicRead: true },
@@ -231,9 +285,31 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_VAT_RECONCILE_INPUT_SUMMARY_V1 -- VAT Input Rec. Dashboard > Quick Preview Popup > Inline Edit (Excel Grid)
+  vat_reconcile_input_summary: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   // MARKER_TABLEPERMISSIONS_VAT_WAITING_FOR_CLAIM_V1 -- VAT Controller > Backup > Transaction, Tab 4 (Backup_Report Input Tax-Waiting for Claim)
   vat_waiting_for_claim: {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_SUMMARY_DASHBOARD_V1 -- VAT Watchlist Dashboard (vat_summary_schema.sql)
+  vat_summary_live: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  vat_summary_live_dashboard: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] }, // VIEW — ไม่มีใคร Write ตรงๆ ใส่ไว้กัน Error เฉยๆ
+  },
+  vat_summary_frozen: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  vat_summary_frozen_dashboard: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] }, // VIEW — ไม่มีใคร Write ตรงๆ ใส่ไว้กัน Error เฉยๆ
   },
 };

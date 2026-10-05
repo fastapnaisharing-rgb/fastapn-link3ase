@@ -185,7 +185,16 @@ export async function checkAndCleanupFileStorage() {
        AND created_at < NOW() - INTERVAL '48 hours'`
   );
 
-  const toDelete = [...toDeleteApproved, ...toDeleteInvoiceRegister, ...toDeleteOther, ...toDeleteApExportImages, ...toDeleteIeMacroLogic];
+  // MARKER_FILESTORAGE_VATMAIL_RETENTION_3DAYS_V1
+  // ── vat-mail (ไฟล์แนบ Auto Mail / Config Email): ปกติลบทันทีหลังผู้ใช้ยืนยันหลังเปิด Draft ──
+  // ── ถ้าไม่มีใครลบ (ปิดหน้าเว็บก่อนกดยืนยัน ฯลฯ) ให้ลบทิ้งเองหลัง 3 วัน นับจาก created_at ──
+  const { rows: toDeleteVatMail } = await pool.query(
+    `SELECT id, file_path FROM file_storage
+     WHERE module = 'vat-mail'
+       AND created_at < NOW() - INTERVAL '3 days'`
+  );
+
+  const toDelete = [...toDeleteApproved, ...toDeleteInvoiceRegister, ...toDeleteOther, ...toDeleteApExportImages, ...toDeleteIeMacroLogic, ...toDeleteVatMail];
 
   for (const row of toDelete) {
     try {
@@ -655,7 +664,7 @@ router.delete("/:id", async (req, res) => {
 // -- GET /api/file-storage/outlook-handler --
 router.get("/outlook-handler", async (req, res) => {
   try {
-    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>' \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display()}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display()}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;
     const reg = `Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn]\r\n@="FastAPN Outlook Handler"\r\n"URL Protocol"=""\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\DefaultIcon]\r\n@="powershell.exe,0"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\shell\\open\\command]\r\n@="powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \\"D:\\\\apps\\\\fastapn-outlook.ps1\\" \\"%1\\""`;
     const setupPs1 = `\uFEFF# FastAPN Outlook Handler - Setup ทั้งหมดในตัวเดียว\r\n# วิธีใช้: คลิกขวาไฟล์นี้ -> Run with PowerShell (ไม่ต้อง Admin)\r\n$ErrorActionPreference = "Stop"\r\n$sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path\r\nWrite-Host "=== FastAPN Outlook Handler Setup ===" -ForegroundColor Cyan\r\ntry {\r\n    if (-not (Test-Path "D:\\apps")) {\r\n        New-Item -ItemType Directory -Path "D:\\apps" -Force | Out-Null\r\n        Write-Host "[1/3] สร้างโฟลเดอร์ D:\\apps เรียบร้อย" -ForegroundColor Green\r\n    } else {\r\n        Write-Host "[1/3] โฟลเดอร์ D:\\apps มีอยู่แล้ว" -ForegroundColor Yellow\r\n    }\r\n    $ps1Source = Join-Path $sourceDir "fastapn-outlook.ps1"\r\n    if (-not (Test-Path $ps1Source)) { throw "ไม่พบไฟล์ fastapn-outlook.ps1 ที่ $ps1Source" }\r\n    Copy-Item $ps1Source -Destination "D:\\apps\\fastapn-outlook.ps1" -Force\r\n    Write-Host "[2/3] ก๊อป fastapn-outlook.ps1 ไปที่ D:\\apps\\ เรียบร้อย" -ForegroundColor Green\r\n    $regSource = Join-Path $sourceDir "install-fastapn-handler.reg"\r\n    if (-not (Test-Path $regSource)) { throw "ไม่พบไฟล์ install-fastapn-handler.reg ที่ $regSource" }\r\n    reg import "$regSource" *>$null; if ($LASTEXITCODE -ne 0) { throw "reg import failed (exit code $LASTEXITCODE)" }\r\n    Write-Host "[3/3] Import Registry เรียบร้อย" -ForegroundColor Green\r\n    Write-Host ""\r\n    Write-Host "=== ติดตั้งสำเร็จ! กลับไปกดปุ่ม เปิด Outlook Draft ได้เลย ===" -ForegroundColor Cyan\r\n} catch {\r\n    Write-Host ""\r\n    Write-Host "=== เกิดข้อผิดพลาด ===" -ForegroundColor Red\r\n    Write-Host $_.Exception.Message -ForegroundColor Red\r\n}\r\nWrite-Host ""\r\nRead-Host "กด Enter เพื่อปิดหน้าต่างนี้"`;
     const readme = `FastAPN Outlook Handler\r\n=======================\r\nวิธีติดตั้ง (แนะนำ - ขั้นตอนเดียว):\r\n1. ดับเบิลคลิกไฟล์ setup-fastapn-outlook.bat\r\n2. รอจนขึ้น "ติดตั้งสำเร็จ!" แล้วกด Enter ปิดหน้าต่าง\r\n3. กลับมากดปุ่ม เปิด Outlook Draft ได้เลย`;
@@ -676,7 +685,7 @@ router.get("/outlook-handler", async (req, res) => {
 // -- GET /api/file-storage/outlook-handler/ps1-only --
 router.get("/outlook-handler/ps1-only", async (req, res) => {
   try {
-    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>' \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display()}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;;
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display()}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="fastapn-outlook.ps1"');
     res.send(Buffer.from(ps1, 'utf8'));
@@ -1005,6 +1014,51 @@ router.get("/ap-reconcile-jobs", async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error("GET /file-storage/ap-reconcile-jobs error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /api/file-storage/vat-reconcile-jobs?scope=mine|all ──────────────────────
+// MARKER_FILESTORAGE_VAT_RECONCILE_JOBS_V1 -- ก้อปรูปแบบจาก ap-reconcile-jobs มาตรงๆ
+// เปลี่ยนแค่ module เป็น 'vat-reconcile' และ Permission ที่ใช้เช็คตอน Admin ขอ scope=all
+// เป็น 'VAT' (แทน 'Manual' ของ AP) ให้ตรงกับ Permission Key จริงที่ใช้ทั้งระบบ (ดู App.js
+// userPermissions?.['VAT']) -- กฎเหมือนกันทุกอย่าง:
+//   - Owner: เห็น All Job ได้ทั้งหมดไม่มีข้อจำกัด
+//   - Admin (ที่ไม่ใช่ Owner): เห็น All Job ได้ แต่จำกัดเฉพาะไฟล์ของ User ที่มี Permission "VAT"
+//   - Editor/Viewer หรือขอ scope=all มาแต่ไม่เข้าเงื่อนไขข้างต้น: Fallback เป็น mine เงียบๆ
+router.get("/vat-reconcile-jobs", async (req, res) => {
+  const username = await getUsernameByEmail(req.user.email);
+  const appRole = req.user.appRole || "";
+  const isOwner = appRole === "Owner";
+  const isAdmin = appRole === "Admin";
+  const wantsAll = req.query.scope === "all";
+
+  try {
+    let rows;
+    if (wantsAll && isOwner) {
+      ({ rows } = await pool.query(
+        `SELECT id, bu, file_name, ref_id, owner_username, created_at
+         FROM file_storage WHERE module = 'vat-reconcile' ORDER BY created_at DESC`
+      ));
+    } else if (wantsAll && isAdmin) {
+      // Admin เห็นเฉพาะไฟล์ของ User ที่มี Permission "VAT" เหมือนกัน (ไม่ใช่ทุกคนในระบบ)
+      ({ rows } = await pool.query(
+        `SELECT fs.id, fs.bu, fs.file_name, fs.ref_id, fs.owner_username, fs.created_at
+         FROM file_storage fs
+         JOIN user_roles ur ON ur.username = fs.owner_username
+         WHERE fs.module = 'vat-reconcile' AND (ur.permissions->>'VAT')::boolean IS TRUE
+         ORDER BY fs.created_at DESC`
+      ));
+    } else {
+      ({ rows } = await pool.query(
+        `SELECT id, bu, file_name, ref_id, owner_username, created_at
+         FROM file_storage WHERE module = 'vat-reconcile' AND owner_username = $1 ORDER BY created_at DESC`,
+        [username]
+      ));
+    }
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /file-storage/vat-reconcile-jobs error:", err.message);
     res.status(500).json({ error: "Internal server error" });
   }
 });

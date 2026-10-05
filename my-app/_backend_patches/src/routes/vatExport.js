@@ -29,6 +29,115 @@ import {
   convertXlsxBufferToXls,
 } from "./vatExportGenerators.js";
 
+// MARKER_VATEXPORT_FINISH_PVBACKUP_V1 -- Finish Batch: status 'exported' -> 'pv-backup' ทั้ง batch_id + บันทึกวันหมดอายุ (กด Finish + 6 เดือน) | ยังไม่ลบอะไร
+for (const tbl of ["vat_upload_popvatdraft", "vat_simpleinputdraft", "vat_adi_transferdraft"]) {
+  pool.query(`ALTER TABLE IF EXISTS ${tbl} ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS expire_at TIMESTAMPTZ`)
+    .catch((e) => console.error(`[${tbl}] add finished_at/expire_at:`, e.message));
+}
+
+// MARKER_VATEXPORT_HISTORY_INDEX_SPEED_V1 -- History/Finish/Backup ค้นตาม batch_id+status ทุกครั้ง: ไม่มี Index = Scan ทั้งตาราง Draft (ช้ามากเมื่อข้อมูลโต)
+for (const tbl of ["vat_upload_popvatdraft", "vat_simpleinputdraft", "vat_adi_transferdraft"]) {
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_${tbl}_batch_status ON ${tbl} (batch_id, status)`)
+    .catch((e) => console.error(`[${tbl}] idx batch_status:`, e.message));
+}
+pool.query(`CREATE INDEX IF NOT EXISTS idx_file_storage_module_created ON file_storage (module, created_at DESC)`)
+  .catch((e) => console.error("[file_storage] idx module_created:", e.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_file_storage_ref_id ON file_storage (ref_id)`)
+  .catch((e) => console.error("[file_storage] idx ref_id:", e.message));
+
+// MARKER_VATEXPORT_ARCHIVE_PURGE_V1 -- ตารางเก็บยอดรวม Transaction ของ Draft ที่ถูกลบหลังครบกำหนด (User Transaction Dashboard นับรวมตารางนี้ด้วย)
+pool.query(`
+  CREATE TABLE IF NOT EXISTS vat_transaction_archive (
+    id SERIAL PRIMARY KEY,
+    draft_id TEXT NOT NULL,
+    username TEXT,
+    bu TEXT,
+    fill_started_at TIMESTAMP,
+    created_at TIMESTAMP,
+    batch_id TEXT,
+    line_count INTEGER NOT NULL DEFAULT 1,
+    module_type TEXT,
+    archived_at TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch((e) => console.error("[vat_transaction_archive] create:", e.message));
+
+// MARKER_VATEXPORT_RETENTION_V1 -- อายุเก็บหลัง Finish/ปิด Period: ADI 1 เดือน, Simple 6 เดือน, Popvat 6 เดือน
+const PV_RETENTION = { popvat: "6 months", simple: "6 months", adi: "1 month" };
+
+// MARKER_VATEXPORT_SEPARATE_BACKUP_STATUS_V1 -- สถานะ Backup แยกตามประเภท: Popvat=pv-backup, Simple=sm-backup, ADI=adi-backup
+const BACKUP_STATUS = { popvat: "pv-backup", simple: "sm-backup", adi: "adi-backup" };
+// ย้ายข้อมูลเก่าที่ Finish ไปแล้วด้วยสถานะ pv-backup ใน Simple/ADI ให้เป็นสถานะใหม่
+pool.query(`UPDATE vat_simpleinputdraft SET status = 'sm-backup' WHERE status = 'pv-backup'`).catch((e) => console.error("[migrate sm-backup]:", e.message));
+pool.query(`UPDATE vat_adi_transferdraft SET status = 'adi-backup' WHERE status = 'pv-backup'`).catch((e) => console.error("[migrate adi-backup]:", e.message));
+
+const PURGE_TABLES = [
+  { table: "vat_upload_popvatdraft", type: "popvat" },
+  { table: "vat_simpleinputdraft", type: "simple" },
+  { table: "vat_adi_transferdraft", type: "adi" },
+];
+
+// ลบ Batch ที่หมดอายุ (status='pv-backup' และ expire_at <= NOW()): เก็บยอดรวมต่อ draft_id ลง vat_transaction_archive ก่อน แล้วค่อยลบแถว Draft + ไฟล์
+async function purgeExpiredPvBackup() {
+  try {
+    const { rows: batches } = await pool.query(
+      `SELECT DISTINCT batch_id FROM (
+         SELECT batch_id FROM vat_upload_popvatdraft WHERE status = 'pv-backup' AND expire_at <= NOW() AND batch_id IS NOT NULL
+         UNION SELECT batch_id FROM vat_simpleinputdraft WHERE status = 'sm-backup' AND expire_at <= NOW() AND batch_id IS NOT NULL
+         UNION SELECT batch_id FROM vat_adi_transferdraft WHERE status = 'adi-backup' AND expire_at <= NOW() AND batch_id IS NOT NULL
+       ) t`
+    );
+    for (const { batch_id: batchId } of batches) {
+      const client = await pool.connect();
+      let filesToDelete = [];
+      try {
+        await client.query("BEGIN");
+        for (const { table, type } of PURGE_TABLES) {
+          await client.query(
+            `INSERT INTO vat_transaction_archive (draft_id, username, bu, fill_started_at, created_at, batch_id, line_count, module_type)
+             SELECT DISTINCT ON (draft_id, username) draft_id::text, username, bu, fill_started_at, created_at, batch_id::text, cnt::int, $2
+             FROM (
+               SELECT draft_id, username, bu, fill_started_at, created_at, batch_id,
+                      COUNT(*) OVER (PARTITION BY draft_id, username) AS cnt
+               FROM ${table}
+               WHERE batch_id = $1 AND status = '${BACKUP_STATUS[type]}' AND expire_at <= NOW()
+                 AND draft_id IS NOT NULL AND draft_id::text <> ''
+             ) s
+             ORDER BY draft_id, username, created_at`,
+            [batchId, type]
+          );
+          await client.query(`DELETE FROM ${table} WHERE batch_id = $1 AND status = '${BACKUP_STATUS[type]}' AND expire_at <= NOW()`, [batchId]);
+        }
+        // ไฟล์ลบเมื่อ Draft ที่ไฟล์นั้นพึ่งพาไม่เหลือใน Batch แล้ว (vat-simple-adi พึ่งทั้ง Simple และ ADI -> ลบตอนที่ทั้งสองหมด)
+        const remain = {};
+        for (const { table, type } of PURGE_TABLES) {
+          const r = await client.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE batch_id = $1 AND status = '${BACKUP_STATUS[type]}'`, [batchId]);
+          remain[type] = r.rows[0].n;
+        }
+        const deps = { [MODULE_POPVAT]: ["popvat"], [MODULE_SIMPLE]: ["simple"], [MODULE_ADI]: ["adi"], [MODULE_SIMPLE_ADI]: ["simple", "adi"] };
+        const { rows: files } = await client.query(`SELECT id, module, file_path FROM file_storage WHERE ref_id = $1`, [batchId]);
+        filesToDelete = files.filter((f) => (deps[f.module] || []).every((t) => remain[t] === 0));
+        for (const f of filesToDelete) await client.query(`DELETE FROM file_storage WHERE id = $1`, [f.id]);
+        await client.query("COMMIT");
+      } catch (err) {
+        try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
+        console.error(`[purgeExpiredPvBackup] batch ${batchId} error:`, err.message);
+        continue;
+      } finally {
+        client.release();
+      }
+      for (const f of filesToDelete) {
+        try { if (f.file_path && fs.existsSync(f.file_path)) fs.unlinkSync(f.file_path); } catch (e) { /* ไฟล์หายไปแล้วก็ไม่เป็นไร */ }
+      }
+      console.log(`[purgeExpiredPvBackup] archived+deleted batch ${batchId} (${filesToDelete.length} files)`);
+      broadcastVatExportUpdate("vat_export_updated", { batchId });
+    }
+  } catch (err) {
+    console.error("[purgeExpiredPvBackup] error:", err.message);
+  }
+}
+setTimeout(purgeExpiredPvBackup, 2 * 60 * 1000);
+setInterval(purgeExpiredPvBackup, 24 * 60 * 60 * 1000);
+
 const router = Router();
 
 // -- Path ไฟล์ Master Template ทั้ง 3 ตัว (Static บน Backend) -- MARKER_VATEXPORT_TEMPLATE_PATH_FIX_V1 -- แก้ชื่อไฟล์ให้ตรงกับที่มีจริงบน Server (Simple/ADI ใช้ช่องว่างคั่น ไม่ใช่ _)
@@ -122,7 +231,7 @@ router.post("/generate", async (req, res) => {
 
     if (wantPopvat) {
       const params = [batchId, popvatAdiBuList];
-      let sql = `UPDATE vat_upload_popvatdraft SET batch_id = $1, status = 'exported' WHERE bu = ANY($2) AND batch_id IS NULL`; // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
+      let sql = `UPDATE vat_upload_popvatdraft SET batch_id = $1, status = 'exported' WHERE bu = ANY($2) AND batch_id IS NULL AND status = 'draft'`; // MARKER_VATEXPORT_ONLY_CONFIRMED_DRAFT_V1 -- Export เฉพาะ status='draft' (Confirm แล้ว) ห้ามหยิบ pre-draft ไปด้วย // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
       if (menuSource) { params.push(menuSource); sql += ` AND menu_source = $${params.length}`; }
       sql += ` RETURNING id`;
       console.log("DEBUG POPVAT UPDATE SQL:", sql); // MARKER_VATWATCHLISTOPS_DEBUG_TEMP_V1 -- ลบออกทีหลัง
@@ -133,7 +242,7 @@ router.post("/generate", async (req, res) => {
 
     if (wantSimple) {
       const params = [batchId, bu];
-      let sql = `UPDATE vat_simpleinputdraft SET batch_id = $1, status = 'exported' WHERE bu = $2 AND batch_id IS NULL`; // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
+      let sql = `UPDATE vat_simpleinputdraft SET batch_id = $1, status = 'exported' WHERE bu = $2 AND batch_id IS NULL AND status = 'draft'`; // MARKER_VATEXPORT_ONLY_CONFIRMED_DRAFT_V1 -- Export เฉพาะ status='draft' (Confirm แล้ว) ห้ามหยิบ pre-draft ไปด้วย // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
       if (menuSource) { params.push(menuSource); sql += ` AND menu_source = $${params.length}`; }
       if (Array.isArray(simpleGroupKeys) && simpleGroupKeys.length > 0) { // MARKER_VATEXPORT_SIMPLE_GROUPKEYS_FILTER_V1 -- เลือกเฉพาะ Sheet ที่ติ๊กไว้ (ไม่ติ๊ก = ไม่แตะแถวนั้น ยังคง Pending ต่อ)
         params.push(simpleGroupKeys);
@@ -145,7 +254,7 @@ router.post("/generate", async (req, res) => {
 
     if (wantAdi) {
       const params = [batchId, popvatAdiBuList];
-      let sql = `UPDATE vat_adi_transferdraft SET batch_id = $1, status = 'exported' WHERE bu = ANY($2) AND batch_id IS NULL`; // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
+      let sql = `UPDATE vat_adi_transferdraft SET batch_id = $1, status = 'exported' WHERE bu = ANY($2) AND batch_id IS NULL AND status = 'draft'`; // MARKER_VATEXPORT_ONLY_CONFIRMED_DRAFT_V1 -- Export เฉพาะ status='draft' (Confirm แล้ว) ห้ามหยิบ pre-draft ไปด้วย // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
       if (menuSource) { params.push(menuSource); sql += ` AND menu_source = $${params.length}`; }
       sql += ` RETURNING id`;
       adiUpdated = await client.query(sql, params);
@@ -191,7 +300,7 @@ router.post("/generate", async (req, res) => {
     // MARKER_VATEXPORT_FOLDERPATH_SEGMENT3_CURRENTPERIOD_V1 -- Folder Path ใช้ SEGMENT3 (คนละ Field กับ com) + Current Period ของระบบ (ไม่ใช่ Period ของ Draft)
     const segment3 = companyRow["SEGMENT3"] || "";
 
-    const meta = { bu, com, company, periodMmmYy, folderPath: buildFolderPath(segment3, currentPeriodMonthYear) };
+    const meta = { bu, com, company, book: String(companyRow.BOOK ?? companyRow.Book ?? companyRow.book ?? "").trim() || bu, /* MARKER_VATEXPORT_BOOK_UPPERCASE_COLUMN_V1 -- column ใน company_list ชื่อ BOOK (ตัวพิมพ์ใหญ่) เดิมอ่าน .book จึงได้ undefined แล้ว Fallback เป็น bu */ periodMmmYy, folderPath: buildFolderPath(segment3, periodMonthYear) }; // MARKER_VATEXPORT_FOLDERPATH_FOLLOW_PERIOD_V1 -- Folder Path (M3) ต้องตาม Period เดียวกับช่อง Period (M8) เช่น SEP-26 -> 0402\\2026.09 (เดิมใช้เดือนจากนาฬิกาเครื่อง ทำให้ได้ 2026.10 แล้ว Time/Save หาโฟลเดอร์ไม่เจอ)
 
     // MARKER_VATEXPORT_POPVAT_FILENAME_DDMM_TODAY_FIX_V1 -- ddmm ของ Popvat ต้องเป็นวันที่ Export "วันนี้" (Today)
     // ไม่ใช่ Parse จาก receipt_date (เดิม Regex คาดหวัง ISO YYYY-MM-DD แต่
@@ -270,6 +379,36 @@ router.post("/generate", async (req, res) => {
       return res.status(404).json({ error: "ไม่มีข้อมูลให้ Generate ไฟล์เลย" });
     }
 
+    // MARKER_VATEXPORT_DELETE_USED_TAXINVOICE_V1 -- Tax Invoice (vat_backup_tax_invoice) ที่ถูกดึงไปใช้ใน Popvat ของ Batch นี้แล้ว (Generate File แล้ว) ลบทิ้ง Hard Delete (ทำหลังสร้างไฟล์สำเร็จแล้วเท่านั้น) | จับคู่ด้วย BU + เลข Tax Invoice
+    try {
+      const del = await pool.query(
+        `DELETE FROM vat_backup_tax_invoice t
+         USING vat_upload_popvatdraft p
+         WHERE p.batch_id = $1
+           AND t.bu = p.bu
+           AND NULLIF(UPPER(TRIM(p.tax_invoice_number)), '') = UPPER(TRIM(t.tax_invoice_number))
+           AND UPPER(TRIM(COALESCE(t.ofin, ''))) <> 'YES'`,
+        [batchId]
+      );
+      if (del.rowCount > 0) console.log(`[vat-export] batch ${batchId}: hard deleted ${del.rowCount} used tax invoice rows`);
+      // MARKER_VATEXPORT_DELETE_USED_TAXINVOICE_SIMPLE_V1 -- แถว OFIN = Yes ไปเข้า Simple: ลบหลัง Generate Simple สำเร็จ (จับคู่ BU + เลข Tax Invoice)
+      const delSm = await pool.query(
+        `DELETE FROM vat_backup_tax_invoice t
+         USING vat_simpleinputdraft p
+         WHERE p.batch_id = $1
+           AND t.bu = p.bu
+           AND UPPER(TRIM(COALESCE(t.ofin, ''))) = 'YES'
+           AND UPPER(TRIM(COALESCE(t.tax_invoice_number, ''))) <> ''
+           AND UPPER(TRIM(t.tax_invoice_number)) IN (
+             NULLIF(UPPER(TRIM(p.tax_invoice_number)), ''),
+             NULLIF(UPPER(TRIM(p.vendor_tax_invoice_number)), '')
+           )`,
+        [batchId]
+      );
+      if (delSm.rowCount > 0) console.log(`[vat-export] batch ${batchId}: hard deleted ${delSm.rowCount} OFIN tax invoice rows used by Simple`);
+    } catch (e) {
+      console.error("[vat-export] delete used tax invoice error:", e.message);
+    }
     res.json({ ok: true, batchId, bu, files: generatedFiles });
   } catch (err) {
     try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
@@ -365,6 +504,21 @@ router.get("/history", async (req, res) => {
       if (new Date(r.created_at) < new Date(batch.exportedAt)) batch.exportedAt = r.created_at;
     });
 
+    const batchIds = Array.from(batchMap.keys()).filter(Boolean);
+    if (batchIds.length > 0) { // MARKER_VATEXPORT_FINISH_PVBACKUP_V1
+      const { rows: fin } = await pool.query(
+        `SELECT batch_id, MIN(finished_at) AS finished_at, MIN(expire_at) AS expire_at FROM (
+           SELECT batch_id, finished_at, expire_at FROM vat_upload_popvatdraft WHERE status = 'pv-backup' AND batch_id = ANY($1)
+           UNION ALL SELECT batch_id, finished_at, expire_at FROM vat_simpleinputdraft WHERE status = 'sm-backup' AND batch_id = ANY($1)
+           UNION ALL SELECT batch_id, finished_at, expire_at FROM vat_adi_transferdraft WHERE status = 'adi-backup' AND batch_id = ANY($1)
+         ) t GROUP BY batch_id`,
+        [batchIds]
+      );
+      fin.forEach((f) => {
+        const bt = batchMap.get(f.batch_id);
+        if (bt) { bt.status = 'pv-backup'; /* รวมทุกประเภท Backup: UI ใช้ซ่อนจากประวัติ Export */ bt.finishedAt = f.finished_at; bt.expireAt = f.expire_at; }
+      });
+    }
     res.json({ ok: true, batches: Array.from(batchMap.values()) });
   } catch (err) {
     console.error("GET /vat-export/history error:", err.message);
@@ -400,6 +554,79 @@ router.get("/file/:id/download", async (req, res) => {
   }
 });
 
+// MARKER_VATEXPORT_BACKUP_LIST_V1
+// ── GET /api/vat-export/backup?type=popvat|simple|adi — สรุปตาม Batch ของรายการ status='pv-backup' (หน้า Transaction Backup)
+router.get("/backup", async (req, res) => {
+  try {
+    const type = String(req.query.type || "popvat");
+    const tbl = { popvat: "vat_upload_popvatdraft", simple: "vat_simpleinputdraft", adi: "vat_adi_transferdraft" }[type];
+    if (!tbl) return res.status(400).json({ error: "type ไม่ถูกต้อง" });
+    const { rows } = await pool.query(
+      `SELECT bu, batch_id,
+              MIN(NULLIF(period, '')) AS period,
+              MIN(NULLIF(to_jsonb(t)->>'receive_date', '')) AS receive_from,
+              MAX(NULLIF(to_jsonb(t)->>'receive_date', '')) AS receive_to,
+              COUNT(DISTINCT COALESCE(NULLIF(to_jsonb(t)->>'invoice_ref', ''), id::text))::int AS count_inv,
+              MIN(created_at) AS upload_at,
+              MIN(finished_at) AS finished_at,
+              MIN(expire_at) AS expire_at
+       FROM ${tbl} t
+       WHERE status = '${BACKUP_STATUS[type]}' AND batch_id IS NOT NULL
+       GROUP BY bu, batch_id
+       ORDER BY MIN(finished_at) DESC NULLS LAST, batch_id DESC
+       LIMIT 500`
+    );
+    const batchIds = rows.map((r) => r.batch_id);
+    let filesByBatch = {};
+    if (batchIds.length > 0) {
+      const { rows: files } = await pool.query(
+        `SELECT id, module, ref_id AS batch_id, file_name, downloaded_at FROM file_storage WHERE ref_id = ANY($1) ORDER BY id`,
+        [batchIds]
+      );
+      files.forEach((f) => {
+        (filesByBatch[f.batch_id] = filesByBatch[f.batch_id] || []).push({ id: f.id, module: f.module, fileName: f.file_name, downloadedAt: f.downloaded_at });
+      });
+    }
+    res.json({ ok: true, type, batches: rows.map((r) => ({ ...r, files: filesByBatch[r.batch_id] || [] })) });
+  } catch (err) {
+    console.error("GET /vat-export/backup error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_VATEXPORT_FINISH_PVBACKUP_V1
+// ── POST /api/vat-export/batch/:batchId/finish — เปลี่ยนทั้ง Batch จาก 'exported' เป็น 'pv-backup' + กำหนดวันหมดอายุ = วันนี้ + 6 เดือน
+router.post("/batch/:batchId/finish", async (req, res) => {
+  const { batchId } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: files } = await client.query(`SELECT COUNT(*)::int AS total, COUNT(downloaded_at)::int AS downloaded FROM file_storage WHERE ref_id = $1`, [batchId]);
+    // อายุเก็บ: Popvat 6 เดือน / Simple 6 เดือน / ADI 1 เดือน (นับจากวันกด Finish)
+    const setsFor = (interval, st) => `status = '${st}', finished_at = NOW(), expire_at = NOW() + INTERVAL '${interval}'`;
+    const results = await Promise.all([
+      client.query(`UPDATE vat_upload_popvatdraft SET ${setsFor(PV_RETENTION.popvat, BACKUP_STATUS.popvat)} WHERE batch_id = $1 AND status = 'exported' RETURNING expire_at`, [batchId]),
+      client.query(`UPDATE vat_simpleinputdraft SET ${setsFor(PV_RETENTION.simple, BACKUP_STATUS.simple)} WHERE batch_id = $1 AND status = 'exported' RETURNING expire_at`, [batchId]),
+      client.query(`UPDATE vat_adi_transferdraft SET ${setsFor(PV_RETENTION.adi, BACKUP_STATUS.adi)} WHERE batch_id = $1 AND status = 'exported' RETURNING expire_at`, [batchId]),
+    ]);
+    const updated = results.reduce((n, r) => n + r.rowCount, 0);
+    if (updated === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "ไม่พบรายการสถานะ exported ใน Batch นี้ (อาจ Finish ไปแล้ว)" });
+    }
+    const expireAt = results.map((r) => r.rows[0] && r.rows[0].expire_at).find(Boolean) || null;
+    await client.query("COMMIT");
+    broadcastVatExportUpdate("vat_export_updated", { batchId });
+    res.json({ ok: true, updated, expireAt, files: files[0] });
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
+    console.error("POST /vat-export/batch/:batchId/finish error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
+  }
+});
+
 // MARKER_VATEXPORT_RESTORE_BATCH_ENDPOINT_V1
 // ── DELETE /api/vat-export/batch/:batchId — Restore: ลบไฟล์ + file_storage Record ของ Batch นี้ + Set batch_id กลับเป็น NULL ในตาราง Draft ทั้ง 3 (กลับไปเป็น "รอ Export" เหมือนเดิม) ──
 router.delete("/batch/:batchId", async (req, res) => {
@@ -415,9 +642,9 @@ router.delete("/batch/:batchId", async (req, res) => {
     await client.query(`DELETE FROM file_storage WHERE ref_id = $1`, [batchId]);
 
     await Promise.all([
-      client.query(`UPDATE vat_upload_popvatdraft SET batch_id = NULL, status = 'draft' WHERE batch_id = $1`, [batchId]), // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
-      client.query(`UPDATE vat_simpleinputdraft SET batch_id = NULL, status = 'draft' WHERE batch_id = $1`, [batchId]), // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
-      client.query(`UPDATE vat_adi_transferdraft SET batch_id = NULL, status = 'draft' WHERE batch_id = $1`, [batchId]), // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
+      client.query(`UPDATE vat_upload_popvatdraft SET batch_id = NULL, status = 'draft', finished_at = NULL, expire_at = NULL WHERE batch_id = $1`, [batchId]), // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
+      client.query(`UPDATE vat_simpleinputdraft SET batch_id = NULL, status = 'draft', finished_at = NULL, expire_at = NULL WHERE batch_id = $1`, [batchId]), // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
+      client.query(`UPDATE vat_adi_transferdraft SET batch_id = NULL, status = 'draft', finished_at = NULL, expire_at = NULL WHERE batch_id = $1`, [batchId]), // MARKER_VATWATCHLISTOPS_EXPORT_STATUS_SYNC_V1
     ]);
 
     await client.query("COMMIT");

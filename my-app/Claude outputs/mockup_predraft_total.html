@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup ยอดรวม Pre-draft (All / Invoice / Credit)</title>
+<style>
+  body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#f4f4f4;margin:0;padding:24px;color:#333}
+  h3{margin:0 0 6px;font-size:14px;color:#555;font-weight:600}
+  .wrap{display:flex;gap:24px;flex-wrap:wrap}
+  .zone{width:340px;box-sizing:border-box;background:#fff;border:1px dashed #cfcfcf;border-radius:14px;padding:20px 10px;display:flex;flex-direction:column;align-items:center;gap:14px;min-height:300px}
+  .btn{width:100%;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:22px;background:#1a3a5c;color:#fff;font-size:13.5px}
+  .bu{background:#2e5a86;border-radius:12px;padding:4px 12px;font-size:12.5px;font-weight:600;min-width:90px;text-align:center}
+  .ph{width:100%;box-sizing:border-box;padding:9px 14px;border-radius:22px;border:1.5px dashed #9db3c9;color:#6b86a3;font-size:13px;text-align:center;background:#f5f9fd}
+  .card{margin-top:auto;width:100%;box-sizing:border-box;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;background:#fafafa;display:flex;flex-direction:column;gap:6px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .lbl{font-size:11px;color:#6b7280}
+  .neg{color:#e5484d}.pos{color:#1a3a5c}
+  .tot{border-top:1px solid #e5e7eb;padding-top:6px}
+  .seg{display:flex;gap:4px;background:#eceff3;border-radius:8px;padding:3px}
+  .seg span{flex:1;text-align:center;font-size:11.5px;padding:4px 0;border-radius:6px;color:#6b7280}
+  .seg .on{background:#fff;color:#1a3a5c;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .seg .cr.on{color:#e5484d}
+  .note{font-size:12px;color:#777;margin-top:8px;max-width:340px;line-height:1.5}
+</style></head><body>
+<div class="wrap">
+ <div><h3>กด All (รวมสุทธิ)</h3><div class="zone">
+  <div class="btn"><span class="bu">OMT (0560) ▾</span><span>Draft Monitor</span></div>
+  <div class="ph">ปุ่มที่ 2 (เผื่อไว้)</div><div class="ph">ปุ่มที่ 3 (เผื่อไว้)</div>
+  <div class="card">
+   <div class="row"><span style="font-size:12px;font-weight:600;color:#1a3a5c">ยอดรวม Pre-draft</span><span class="lbl">3 รายการ</span></div>
+   <div class="seg"><span class="on">All</span><span>Invoice</span><span>Credit</span></div>
+   <div class="row"><span class="lbl">Amount Ex VAT</span><span class="pos" style="font-size:13px">12,000.00</span></div>
+   <div class="row"><span class="lbl">VAT</span><span class="pos" style="font-size:13px">840.00</span></div>
+   <div class="row tot"><span class="lbl" style="font-weight:600">รวม</span><span class="pos" style="font-size:14px;font-weight:600">12,840.00</span></div>
+  </div></div><div class="note">All = Invoice − Credit</div></div>
+ <div><h3>กด Invoice (เฉพาะ Invoice, เป็น +)</h3><div class="zone">
+  <div class="btn"><span class="bu">OMT (0560) ▾</span><span>Draft Monitor</span></div>
+  <div class="ph">ปุ่มที่ 2 (เผื่อไว้)</div><div class="ph">ปุ่มที่ 3 (เผื่อไว้)</div>
+  <div class="card">
+   <div class="row"><span style="font-size:12px;font-weight:600;color:#1a3a5c">ยอดรวม Pre-draft</span><span class="lbl">2 รายการ</span></div>
+   <div class="seg"><span>All</span><span class="on">Invoice</span><span>Credit</span></div>
+   <div class="row"><span class="lbl">Amount Ex VAT</span><span class="pos" style="font-size:13px">15,000.00</span></div>
+   <div class="row"><span class="lbl">VAT</span><span class="pos" style="font-size:13px">1,050.00</span></div>
+   <div class="row tot"><span class="lbl" style="font-weight:600">รวม</span><span class="pos" style="font-size:14px;font-weight:600">16,050.00</span></div>
+  </div></div></div>
+ <div><h3>กด Credit (เฉพาะใบลดหนี้, เป็น −)</h3><div class="zone">
+  <div class="btn"><span class="bu">OMT (0560) ▾</span><span>Draft Monitor</span></div>
+  <div class="ph">ปุ่มที่ 2 (เผื่อไว้)</div><div class="ph">ปุ่มที่ 3 (เผื่อไว้)</div>
+  <div class="card">
+   <div class="row"><span style="font-size:12px;font-weight:600;color:#1a3a5c">ยอดรวม Pre-draft</span><span class="lbl">1 รายการ</span></div>
+   <div class="seg"><span>All</span><span>Invoice</span><span class="on cr">Credit</span></div>
+   <div class="row"><span class="lbl">Amount Ex VAT</span><span class="neg" style="font-size:13px">-3,000.00</span></div>
+   <div class="row"><span class="lbl">VAT</span><span class="neg" style="font-size:13px">-210.00</span></div>
+   <div class="row tot"><span class="lbl" style="font-weight:600">รวม</span><span class="neg" style="font-size:14px;font-weight:600">-3,210.00</span></div>
+  </div></div></div>
+</div></body></html>

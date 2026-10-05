@@ -1,0 +1,38 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><title>Mockup Draft List</title>
+<style>
+body{font-family:Segoe UI,Tahoma,sans-serif;background:#eef0f3;margin:0;padding:24px;color:#222}
+.cap{font-size:13px;font-weight:600;color:#1a3a5c;margin:0 0 8px}
+.m{background:#fff;border-radius:12px;width:900px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.hd{padding:14px 20px;border-bottom:.5px solid #e8e8e8;font-size:16px}
+.tabs{display:flex;gap:4px;padding:6px 20px 0;border-bottom:.5px solid #e8e8e8}.tabs span{padding:8px 16px;font-size:13px;color:#888}.tabs .on{color:#1a3a5c;font-weight:600;border-bottom:2px solid #1a3a5c}
+.bd{display:flex;height:430px}
+.lf{width:250px;border-right:.5px solid #e8e8e8;padding:12px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.lf h4{margin:0;font-size:12px;color:#666;font-weight:600}
+.it{padding:8px 10px;border:.5px solid #e0e0e0;border-radius:8px;font-size:12px;cursor:pointer}
+.it.on{background:#e3f2fd;border-color:#90caf9;color:#1565c0}.it small{display:block;color:#999;margin-top:2px;font-size:11px}
+.add{margin-top:auto;padding:7px;text-align:center;font-size:12px;border:.5px dashed #a5d6a7;border-radius:8px;color:#2e7d32;background:#f4fbf5}
+.rt{flex:1;padding:14px 18px;overflow:hidden}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.l{font-size:12px;color:#666;margin-bottom:4px}.i{border:.5px solid #ccc;border-radius:8px;padding:7px 10px;font-size:13px;box-sizing:border-box;background:#fff;min-height:33px}
+.ph{color:#bbb}.body{line-height:1.55;height:200px;font-size:12.5px}
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin:4px 0 6px}.chip{font-size:11px;padding:2px 8px;border-radius:12px;background:#e3f2fd;color:#1565c0;border:.5px solid #90caf9}
+.ft{display:flex;justify-content:space-between;padding:12px 20px;border-top:.5px solid #e8e8e8}.back{padding:5px 12px;font-size:12px;border:.5px solid #ccc;border-radius:8px}.save{padding:7px 22px;font-size:13px;background:#1a3a5c;color:#fff;border-radius:8px}
+.tip{font-size:11px;color:#888;margin-top:6px}
+</style></head><body>
+<p class="cap">แท็บ "ผู้รับ / เนื้อหา" — Draft List ด้านซ้าย กดเลือกแล้วแสดง Subject / เนื้อหาด้านขวา (To / CC เว้นว่าง ให้กรอกเองต่อ Config)</p>
+<div class="m"><div class="hd">แก้ไข Config</div><div class="tabs"><span>เงื่อนไข</span><span>Include / Ignore</span><span class="on">ผู้รับ / เนื้อหา</span></div>
+<div class="bd">
+<div class="lf"><h4>DRAFT LIST</h4>
+<div class="it on">ติดตามใบกำกับ - Aging<small>To BU · ใช้ตาม Aging ที่เลือก</small></div>
+<div class="it">ติดตามใบกำกับ - To Supplier<small>To Supplier · รายการสั้น</small></div>
+<div class="it">Draft ว่าง (พิมพ์เอง)<small>ไม่มีข้อความ</small></div>
+<div class="add">+ Draft ใหม่ / บันทึกข้อความนี้เป็น Draft</div></div>
+<div class="rt">
+<div class="g2"><div><div class="l">To (คั่นด้วย ;)</div><div class="i ph">กรอกผู้รับของ BU นี้</div></div><div><div class="l">CC (คั่นด้วย ;)</div><div class="i ph">กรอก CC</div></div></div>
+<div style="margin-bottom:8px"><div class="l">Subject</div><div class="i">{BU} - ขอติดตามใบกำกับภาษี ของรายการที่ตัดชำระตั้งแต่เดือน {เดือนเริ่ม} ถึง {เดือนสุดท้าย}</div></div>
+<div class="l">เนื้อหา</div><div class="chips"><span class="chip">{BU}</span><span class="chip">{ชื่อผู้รับ}</span><span class="chip">{เดือนเริ่ม}</span><span class="chip">{เดือนสุดท้าย}</span><span class="chip">{AGING_LIST}</span></div>
+<div class="i body">เรียน {ชื่อผู้รับ}<br><br>&nbsp;&nbsp;&nbsp;&nbsp;ข้อความนี้ถูกสร้างโดยระบบอัตโนมัติเพื่อ ติดตามใบกำกับภาษี โดยสรุปรายละเอียดเป็นราย Supplier และแบ่งข้อมูลตามความเสี่ยง ดังนี้<br><br>{AGING_LIST}</div>
+<div class="tip">แก้ข้อความที่นี่แล้วกด "บันทึก Draft" จะมีผลกับทุก Config ที่ใช้ Draft นี้ · {AGING_LIST} ระบบสร้างให้ตาม Aging ที่เลือกในแท็บเงื่อนไข</div>
+</div></div>
+<div class="ft"><span class="back">← กลับ Mail List</span><span class="save">บันทึก</span></div></div>
+</body></html>

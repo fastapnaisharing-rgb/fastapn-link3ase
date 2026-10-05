@@ -1,0 +1,205 @@
+// vatMailExport.js -- MARKER_VATMAILEXPORT_ROUTER_V1
+// POST /api/vat-mail-export/build  { config_id }  -> สร้าง Excel + เนื้อหาเมล (ยังไม่ส่งเมลจริง)
+import { Router } from "express";
+import { pool, getUsernameByEmail } from "../db.js";
+import zlib from "zlib";
+import fs from "fs";
+import path from "path";
+import {
+  buildBuWorkbook, buildSupplierWorkbook, buildAgingLines, applyVars,
+  matchRelatedPerson, taxGroupOf, fmtMoney, monthLabel, num,
+} from "./vatMailExportGenerator.js";
+
+const router = Router();
+const RED = "#C00000"; const GREEN = "#1E8E3E"; // Aging 5-6 = แดง, 0-4 = เขียว (ตามตัวอย่างเมล)
+const escHtml = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// เนื้อหาเมลแบบ HTML: ตัวแปรปกติแทนค่าแล้ว escape, {AGING_LIST} ใส่สีแดง/เขียวรายบรรทัด
+function buildBodyHtml(template, vars, lines) {
+  const agingHtml = lines.map((l) => `<span style="color:${l.aging >= 5 ? RED : GREEN}">${escHtml(l.text)}</span>`).join("<br>");
+  const parts = String(template || "").split("{AGING_LIST}").map((seg) => escHtml(applyVars(seg, vars)).replace(/\r?\n/g, "<br>"));
+  return `<div style="font-family:Tahoma,'Segoe UI',sans-serif;font-size:11pt">${parts.join(agingHtml)}</div>`;
+}
+const STORAGE_ROOT = "C:\\apps\\fastapn-backend\\storage";
+const safe = (s) => String(s).replace(/[\\/:*?"<>|\s]+/g, "_");
+const parseJson = (v, d) => { if (v == null) return d; if (typeof v === "object") return v; try { return JSON.parse(v); } catch { return d; } };
+
+async function storeFile(module, bu, refId, fileName, buffer, username) {
+  const now = new Date();
+  const yyyyMm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const dir = path.join(STORAGE_ROOT, safe(bu), yyyyMm);
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${safe(refId)}_${module}.xlsx.gz`);
+  fs.writeFileSync(filePath, zlib.gzipSync(buffer));
+  const { rows } = await pool.query(
+    `INSERT INTO file_storage (module, bu, ref_id, file_path, file_name, owner_username, status, retention_days)
+     VALUES ($1, $2, $3, $4, $5, $6, 'active', $7) RETURNING id`,
+    [module, bu, refId, filePath, fileName, username, null]
+  );
+  return rows[0].id;
+}
+
+// ── ดึงรายการตามเงื่อนไขของ Config ──
+async function fetchRows(cfg) {
+  const rules = parseJson(cfg.rules, {});
+  const vendors = parseJson(cfg.vendors, []);
+  const bus = String(cfg.bu || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (bus.length === 0) throw new Error("Config ไม่มี BU");
+
+  const params = [bus];
+  const where = [`status = 'pending'`, `bu = ANY($1)`, `aging_months IS NOT NULL`, `aging_months BETWEEN 0 AND 6`];
+  const add = (v) => { params.push(v); return `$${params.length}`; };
+
+  const aging = (rules.aging || []).map(String).filter((a) => /^[0-6]$/.test(a)).map(Number);
+  if (aging.length) where.push(`aging_months = ANY(${add(aging)})`);
+
+  const pay = rules.pay || [];
+  if (pay.length) where.push(`(${pay.map((p) => `UPPER(COALESCE(check_no,'')) LIKE ${add("%" + String(p).toUpperCase())}`).join(" OR ")})`);
+
+  const types = rules.types || [];
+  if (types.length) where.push(`bus_type = ANY(${add(types)})`);
+
+  const ignore = (rules.ignore || []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean);
+  if (ignore.length) where.push(`NOT (supplier_code = ANY(${add(ignore)}))`);
+
+  let cond = `(${where.join(" AND ")})`;
+  if (cfg.scope_mode === "BY_VENDOR") {
+    const vc = (Array.isArray(vendors) ? vendors : []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean);
+    cond += ` AND supplier_code = ANY(${add(vc)})`;
+  }
+
+  // Include = ดึงเพิ่มนอกเงื่อนไข (ยังจำกัด pending + BU + Aging 0-6 + ไม่อยู่ใน Ignore)
+  const include = (rules.include || []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean);
+  let sql;
+  if (include.length && cfg.scope_mode !== "BY_VENDOR") {
+    const inc = `(status='pending' AND bu = ANY($1) AND aging_months BETWEEN 0 AND 6 AND supplier_code = ANY(${add(include)})${ignore.length ? ` AND NOT (supplier_code = ANY($${params.indexOf(ignore) + 1}))` : ""})`;
+    sql = `SELECT * FROM vat_watchlist_report WHERE ${cond} OR ${inc}`;
+  } else {
+    sql = `SELECT * FROM vat_watchlist_report WHERE ${cond}`;
+  }
+  const { rows } = await pool.query(sql, params);
+  return { rows, rules, bus };
+}
+
+async function loadRelatedRules(bus) {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM vat_watchlist_related_person WHERE bu = ANY($1)`, [bus]);
+    const byBu = {}; rows.forEach((r) => { (byBu[r.bu] = byBu[r.bu] || []).push(r); });
+    return { byBu, all: rows };
+  } catch { return { byBu: {}, all: [] }; }
+}
+
+router.post("/build", async (req, res) => {
+  try {
+    const username = await getUsernameByEmail(req.user.email);
+    const { config_id } = req.body || {};
+    const { rows: cr } = await pool.query(`SELECT * FROM vat_mail_config WHERE id = $1`, [config_id]);
+    const cfg = cr[0];
+    if (!cfg) return res.status(404).json({ error: "ไม่พบ Config" });
+
+    const { rows, rules, bus } = await fetchRows(cfg);
+    if (rows.length === 0) return res.json({ mails: [], note: "ไม่มีรายการตามเงื่อนไขของ Config นี้" });
+
+    const period = rows.reduce((m, r) => (String(r.period || "") > m ? String(r.period) : m), "") || null;
+    const rel = await loadRelatedRules(bus);
+    rows.forEach((r) => {
+      r._taxGroup = taxGroupOf(r.branch);
+      const rl = rel.byBu[r.bu] && rel.byBu[r.bu].length ? rel.byBu[r.bu] : rel.all;
+      r._person = matchRelatedPerson(r, rl);
+    });
+
+    const todayStr = new Date().toLocaleDateString("en-GB");
+    const baseVars = { BU: bus.join(", "), DATE: todayStr, "ชื่อผู้รับ": rules.recipient_name || "" };
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+    const mails = [];
+
+    const makeVars = (subset, extra = {}) => {
+      const lines = buildAgingLines(subset, rules.aging, period);
+      const withData = lines.filter((l) => l.total !== 0);
+      return {
+        lines,
+        vars: {
+          ...baseVars, ...extra,
+          AGING_LIST: lines.map((l) => l.text).join("\n"),
+          "เดือนเริ่ม": lines.length ? lines[0].month : "",
+          "เดือนสุดท้าย": lines.length ? lines[lines.length - 1].month : "",
+          TOTAL: fmtMoney(subset.reduce((s, r) => s + num(r.exp_vat), 0)),
+          _hasData: withData.length,
+        },
+      };
+    };
+
+    if (cfg.send_type === "SUPPLIER") {
+      const groups = new Map();
+      rows.forEach((r) => { const k = r.supplier_code || "-"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+      const codes = [...groups.keys()];
+
+      // BU info + Branch + Supplier Email (SELECT * กันชื่อคอลัมน์ต่างกัน)
+      const buInfoByBu = {};
+      try {
+        const { rows: cl } = await pool.query(`SELECT * FROM company_list WHERE bu = ANY($1)`, [bus]);
+        cl.forEach((c) => { buInfoByBu[c.bu] = { name: c["Business Name"] || c["BUSINESS NAME"] || c.business_name || c.name || "", taxId: c["TAX ID"] || c["Tax ID"] || c.tax_id || "", branch: c["Branch"] || c.branch || "" }; });
+      } catch (e) { console.error("company_list:", e.message); }
+      const branchInfoByCode = {};
+      try {
+        const { rows: bl } = await pool.query(`SELECT * FROM branch_list WHERE bu = ANY($1)`, [bus]);
+        bl.forEach((b) => { branchInfoByCode[String(b["Branch Code"] || "").trim()] = { branch: b["Branch"] || b["Branch No"] || b["Branch Name"] || "" }; });
+      } catch (e) { console.error("branch_list:", e.message); }
+      const emailBySup = {};
+      try {
+        const { rows: sl } = await pool.query(`SELECT * FROM supplier_list WHERE "Code" = ANY($1)`, [codes]);
+        sl.forEach((s) => { if (s.Email && !emailBySup[s.Code]) emailBySup[s.Code] = s.Email; });
+      } catch (e) { console.error("supplier_list:", e.message); }
+
+      for (const code of codes) {
+        const sub = groups.get(code);
+        const name = sub[0].vendor_name || code;
+        const { buffer } = await buildSupplierWorkbook({ rows: sub, buInfoByBu, branchInfoByCode, supplierLabel: `${name} (${code})` });
+        const fileName = `${safe(code)}_Outstanding_${stamp}.xlsx`;
+        const fileId = await storeFile("vat-mail", bus[0], `mail${cfg.id}_${code}_${stamp}`, fileName, buffer, username);
+        const { vars, lines } = makeVars(sub, { SUPPLIER: name });
+        mails.push({
+          supplier_code: code, supplier_name: name,
+          to: emailBySup[code] || "", to_missing: !emailBySup[code],
+          cc: cfg.mail_cc || "",
+          subject: applyVars(cfg.subject_template, vars), bodyText: applyVars(cfg.body_template, vars),
+          bodyHtml: buildBodyHtml(cfg.body_template, vars, lines),
+          file_id: fileId, file_name: fileName, count: sub.length, total_vat: sub.reduce((s, r) => s + num(r.exp_vat), 0),
+        });
+      }
+    } else {
+      const { buffer } = await buildBuWorkbook({ rows, period, buLabel: bus.join(", "), generatedBy: username });
+      const fileName = `${bus.length === 1 ? bus[0] : "Multi-BU"}_Incomplete_${stamp}.xlsx`;
+      const fileId = await storeFile("vat-mail", bus[0], `mail${cfg.id}_${stamp}`, fileName, buffer, username);
+      const { vars, lines } = makeVars(rows);
+      mails.push({
+        to: cfg.mail_to || "", cc: cfg.mail_cc || "",
+        subject: applyVars(cfg.subject_template, vars), bodyText: applyVars(cfg.body_template, vars),
+        bodyHtml: buildBodyHtml(cfg.body_template, vars, lines),
+        file_id: fileId, file_name: fileName, count: rows.length, total_vat: rows.reduce((s, r) => s + num(r.exp_vat), 0),
+        aging_lines: lines,
+      });
+    }
+    res.json({ mails, period });
+  } catch (err) {
+    console.error("POST /vat-mail-export/build error:", err);
+    res.status(500).json({ error: err.message || "Internal server error" });
+  }
+});
+
+// ── POST /api/vat-mail-export/files/delete { ids: [file_id,...] } -- ลบไฟล์แนบชั่วคราว (module 'vat-mail' ของตัวเองเท่านั้น) หลังผู้ใช้ยืนยันว่าส่งเมลแล้ว/ยกเลิก
+router.post("/files/delete", async (req, res) => {
+  try {
+    const username = await getUsernameByEmail(req.user.email);
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).map(Number).filter((x) => Number.isInteger(x));
+    if (ids.length === 0) return res.json({ deleted: 0 });
+    const { rows } = await pool.query(`SELECT id, file_path FROM file_storage WHERE id = ANY($1) AND module = 'vat-mail' AND owner_username = $2`, [ids, username]);
+    for (const r of rows) { try { if (r.file_path && fs.existsSync(r.file_path)) fs.unlinkSync(r.file_path); } catch (e) { console.error("unlink vat-mail file:", e.message); } }
+    if (rows.length) await pool.query(`DELETE FROM file_storage WHERE id = ANY($1)`, [rows.map((r) => r.id)]);
+    res.json({ deleted: rows.length });
+  } catch (err) {
+    console.error("POST /vat-mail-export/files/delete error:", err);
+    res.status(500).json({ error: err.message || "Internal server error" });
+  }
+});
+
+export default router;

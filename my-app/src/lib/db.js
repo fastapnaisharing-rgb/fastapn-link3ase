@@ -110,6 +110,9 @@ class QueryBuilder {
   delete() { this._method = 'DELETE'; return this; }
 
   then(resolve, reject) { return this._execute().then(resolve, reject); }
+  // MARKER_DB_THENABLE_CATCH_FINALLY_V1 -- ให้ Builder ใช้ .catch()/.finally() ได้เหมือน Promise/Supabase (เดิมมีแค่ then ทำให้ .update().eq().catch() พังด้วย "catch is not a function")
+  catch(reject) { return this._execute().catch(reject); }
+  finally(fn) { return this._execute().finally(fn); }
 
   async _execute() {
     try {

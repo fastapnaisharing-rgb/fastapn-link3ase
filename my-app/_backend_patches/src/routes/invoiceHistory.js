@@ -191,6 +191,11 @@ router.get("/invoice-duplicate-check", async (req, res, next) => {
     if (!vendor_no || !invoice_no) {
       return res.status(400).json({ error: "ต้องระบุ vendor_no และ invoice_no" });
     }
+    // MARKER_INVOICE_DUP_NO_STRIP_FLAG_V1 -- Client ใหม่ส่ง no_strip=1 (invoice_no เป็น Base แล้ว) -> ตัดเฉพาะ Suffix Split 1-2 หลัก (/1../99, _NV)
+    // ไม่ตัด /ตัวเลขยาว ที่เป็นส่วนของเลข Invoice จริง (เช่น SV0005/69060052) -- Client เก่า (ไม่ส่ง flag) ใช้ Regex เดิมทุกอย่าง
+    // (regex ใส่เป็น Literal ที่เลือกจาก Server เอง ไม่ได้เอาค่าจาก User ไปต่อ SQL)
+    const strictNoStrip = String(req.query.no_strip || "") === "1";
+    const SPLIT_SFX_SQL = strictNoStrip ? "(/\\d{1,2}|_NV)$" : "(/\\d+|_NV)$";
 
     // ── RED: Exact Match -- Vendor + Invoice No. ตรงเป๊ะ (+ BU ตรงด้วยถ้าส่งมา) = Duplicate 100% ──
     // ── คนละ BU ไม่นับว่าซ้ำ (ตกลงกับ User แล้ว) -- legacy_poc_history ไม่มี ──────
@@ -244,7 +249,7 @@ router.get("/invoice-duplicate-check", async (req, res, next) => {
                vendor_name, amount, exported_at, inv_date, bu, NULL AS po_num
         FROM (
           SELECT
-            regexp_replace(invoice_no, '(/\d+|_NV)$', '') AS base_invoice_no,
+            regexp_replace(invoice_no, '${SPLIT_SFX_SQL}', '') AS base_invoice_no,
             vendor_no, bu,
             MAX(batch_id) AS ref,
             MAX(vendor_name) AS vendor_name,
@@ -259,7 +264,7 @@ router.get("/invoice-duplicate-check", async (req, res, next) => {
           -- Invoice Pending จะหลุดจาก Candidate ไปเลยทั้งหมด --
           WHERE vendor_no = $1
             AND inv_date >= (CURRENT_DATE - INTERVAL '6 months')
-          GROUP BY regexp_replace(invoice_no, '(/\d+|_NV)$', ''), vendor_no, bu
+          GROUP BY regexp_replace(invoice_no, '${SPLIT_SFX_SQL}', ''), vendor_no, bu
         ) grouped
         WHERE base_invoice_no != $2
           AND ($3::text IS NULL OR bu = $3)
@@ -339,8 +344,9 @@ router.get("/invoice-duplicate-check", async (req, res, next) => {
 // ค่าเฉลี่ยย้อนหลังของ Supplier นี้ไหม (ข้อมูลจริงที่เคย Submit ผ่านแล้วใน History
 // ต้องครบทุกหลักอยู่แล้ว เอามาเป็นฐานเทียบแทนการเดา) -- Idea จาก User: "Data ที่
 // ออกไปมันต้องเต็ม ไปดักจาก History ได้ไหม"
-function stripInvoiceSuffix(s) {
-  return String(s || "").replace(/(\/\d+|_NV)$/, "");
+function stripInvoiceSuffix(s, strict = false) {
+  // MARKER_INVOICE_DUP_NO_STRIP_FLAG_V1 -- strict = Client ใหม่ (no_strip=1) ตัดเฉพาะ /1-2 หลัก + _NV
+  return String(s || "").replace(strict ? /(\/\d{1,2}|_NV)$/ : /(\/\d+|_NV)$/, "");
 }
 
 // GET /api/invoice-digit-check?vendor_no=&invoice_no=
@@ -351,7 +357,8 @@ router.get("/invoice-digit-check", async (req, res, next) => {
       return res.status(400).json({ error: "ต้องระบุ vendor_no และ invoice_no" });
     }
 
-    const currentLen = stripInvoiceSuffix(invoice_no).length;
+    const strictNoStrip = String(req.query.no_strip || "") === "1"; // MARKER_INVOICE_DUP_NO_STRIP_FLAG_V1
+    const currentLen = strictNoStrip ? String(invoice_no).length : stripInvoiceSuffix(invoice_no).length; // no_strip=1: invoice_no เป็น Base แล้ว
 
     const { rows } = await pool.query(
       `
@@ -365,7 +372,7 @@ router.get("/invoice-digit-check", async (req, res, next) => {
     );
 
     const lengths = rows
-      .map((r) => stripInvoiceSuffix(r.num).length)
+      .map((r) => stripInvoiceSuffix(r.num, strictNoStrip).length)
       .filter((len) => len > 0);
 
     // ตัวอย่างน้อยกว่า 5 ใบ -- ข้อมูลย้อนหลังยังน้อยเกินไป ไม่มั่นใจพอจะเตือน

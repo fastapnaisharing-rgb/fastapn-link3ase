@@ -932,8 +932,10 @@ router.get("/dashboard/report", async (req, res) => {
 
       if (view === "detail") {
         // โชว์ครบ 16 Column ตรงกับ Format "Detail Sheet" ต้นฉบับเป๊ะ (ตามไฟล์อ้างอิงที่ยืนยันในแชท)
+        // MARKER_VATRECONCILE_INPUTSUMMARY_DETAIL_RETURN_ID_V1 -- เพิ่ม id เข้ามา (เดิมไม่มี) เพื่อให้ Frontend
+        // แก้ไข Field แล้ว PUT กลับ /vat_reconcile_input_summary/:id ได้ (Inline Edit แบบ Excel Grid ในหน้า Dashboard)
         const { rows } = await pool.query(
-          `SELECT branch, operator_name, receive_date, grt_no, tax_invoice_date, tax_invoice_no,
+          `SELECT id, branch, operator_name, receive_date, grt_no, tax_invoice_date, tax_invoice_no,
                   vendor_name, tax_id, ho, branch_field, item_detail,
                   paid_amount::float8 AS paid_amount,
                   paid_vat::float8 AS paid_vat,

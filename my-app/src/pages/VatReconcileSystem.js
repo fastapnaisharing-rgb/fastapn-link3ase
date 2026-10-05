@@ -16,7 +16,7 @@
 //   - ยังไม่มีหน้า "จัดการไฟล์ Simple" (ลบ/แก้ Tax Type/Exclude Row) -- Commit ได้แค่ Upload ใหม่ทับเท่านั้น
 // ============================================================================
 
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 
 // ── Base URL Pattern เดียวกับ api.js — REACT_APP_API_URL มี /api ต่อท้ายอยู่แล้ว ──
 // ── (เช่น http://10.101.87.126:4000/api) ไม่ต้องเติม /api ซ้ำตอนต่อ Path ──
@@ -191,6 +191,16 @@ export default function VatReconcileSystem({ bu, onCommitSuccess, apiModule = 'v
       runPreview(file, 'ข้อมูลจากคลิปบอร์ด');
     }
   }, [handleFileSelect, runPreview]);
+
+  // MARKER_VATRECONCILESYSTEM_WINDOW_PASTE_V1 -- ดักจับ Ctrl+V ที่ระดับหน้าทั้งหมด (window) ไม่ต้องคลิก Focus กรอบ Dropzone ก่อน
+  // (เดิม onPaste ผูกกับกรอบ Dropzone อย่างเดียว แต่กรอบนั้น onClick เปิด File Dialog ทันที ทำให้ไม่มีทางคลิกเพื่อ Focus เฉยๆ ได้เลย)
+  // ทำงานเฉพาะตอน stage === 'idle' (ยังไม่ได้เลือกไฟล์) และ Component นี้ Mount อยู่ (คือ Tab "Upload File" เปิดอยู่เท่านั้น -- Unmount ตอนสลับ Tab จึงไม่กระทบ Tab อื่น)
+  useEffect(() => {
+    if (stage !== 'idle') return undefined;
+    const onWindowPaste = (e) => handlePaste(e);
+    window.addEventListener('paste', onWindowPaste);
+    return () => window.removeEventListener('paste', onWindowPaste);
+  }, [stage, handlePaste]);
 
   const handleConfirmCommit = useCallback(async () => {
     if (!pendingFileRef.current || !fileType) {

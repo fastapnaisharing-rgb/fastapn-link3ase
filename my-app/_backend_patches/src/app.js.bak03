@@ -1,9 +1,9 @@
-﻿import express from "express";
+import express from "express";
 import { WebSocketServer } from "ws";
 import cors from "cors";
 import dotenv from "dotenv";
 import os from "os";
-import { execSync, exec } from "child_process"; // MARKER_FIX_GETCURRENTCPU_ASYNC_APP
+import { execSync } from "child_process"; // MARKER_SYNC_GETCURRENTCPU_APP_V1 -- exec() ไม่ใช้แล้ว getCurrentCpu() ย้ายไป System.js
 
 import { verifyAuthLocal } from "./middleware/authLocal.js";
 import authRouter from "./routes/auth.js";
@@ -13,8 +13,9 @@ import { createTableRouter } from "./routes/genericTable.js";
 import { pool } from "./db.js";
 import apPeriodRouter, { checkAutoCloseRequest, checkAndSyncPeriodStatus } from "./routes/apPeriod.js";
 import vatPeriodRouter from "./routes/vatPeriodRoute.js";
+import { purgeExpiredTaxClosePeriods } from "./routes/taxClosePeriod.js"; // MARKER_TAXCLOSE_LIFECYCLE_V1
 import iePeriodRouter, { checkAutoCloseIERequest, checkAndSyncIEPeriodStatus } from "./routes/iePeriod.js";
-import systemRouter, { takeRamSnapshot, takeCpuSnapshot, autoCleanJunk } from "./routes/system.js";
+import systemRouter, { takeRamSnapshot, takeCpuSnapshot, autoCleanJunk, getCurrentCpu } from "./routes/system.js"; // MARKER_SYNC_GETCURRENTCPU_APP_V1
 import fileStorageRouter, { checkAndCleanupFileStorage } from "./routes/fileStorage.js";
 import vatExportRouter from "./routes/vatExport.js"; // MARKER_APP_VAT_EXPORT_ROUTER_V1 -- Export Popvat/Simple/ADI จาก Draft เป็นไฟล์ Excel
 import ieExportRouter from "./routes/ieExport.js"; // MARKER_APP_IE_EXPORT_ROUTER_V1 -- Export Simple ของ IE จาก ie_simplevatdraft เป็นไฟล์ Excel
@@ -38,6 +39,7 @@ import excelReportRouter from "./routes/excelReport.js";
 import docenterOcrRouter from "./routes/docenter_ocr_route.js";
 import batchControlRouter from "./routes/batchControl.js"; // MARKER_APP_BATCH_CONTROL_ROUTER
 import vatReconcileRouter from "./routes/vatReconcile.js"; // MARKER_APP_VAT_RECONCILE_ROUTER_V1
+import apReconcileRouter from "./routes/apReconcile.js"; // MARKER_APP_MOUNT_AP_RECONCILE_ROUTER_V1
 // MARKER_MOUNT_SUPPORT_ROUTER_V1
 // MARKER_MOUNT_SUPPORT_RECYCLE_CRON_V1
 // MARKER_APP_SUPPORT_REMINDER_CRON_V1
@@ -46,7 +48,12 @@ import vatReconcileRouter from "./routes/vatReconcile.js"; // MARKER_APP_VAT_REC
 // MARKER_APP_SUPPORT_TESTING_RECALL_CRON_V1
 // MARKER_APP_SUPPORT_RESTORE_NOTIF_CRON_V1
 import supportRouter, { checkAndCleanupSupportThreads, checkSupportThreadReminders, checkAutoAgreeThreads, checkAndCleanupExpiredAcceptNotifications, checkTestingRecall, checkAndRestoreNewThreadNotifications } from "./routes/support.js";
-import { checkBucketListDataIntegrity } from "./routes/dataIntegrityCheck.js"; // MARKER_APP_DATA_INTEGRITY_CRON_V1
+import vatMailExportRouter from "./routes/vatMailExport.js"; // MARKER_APP_IMPORT_VAT_MAIL_EXPORT_V1
+// MARKER_APP_DATAINTEGRITY_REMOVED_V1 -- ถอด Cron แจ้งเตือน data-integrity ออก (2026-09-28)
+// เหตุผล: กด "อ่านแล้ว" ไม่เคยหายจริง (Bug filter) + Insert ซ้ำทุก 24 ชม.ไม่มี Dedup + Link ไปยัง Batch
+// ไม่ได้จริง (batch_id ว่างเสมอเพราะ Query กรองเฉพาะใบที่ยังไม่เข้า Batch) -- เปลี่ยนไปบล็อกตั้งแต่จุด
+// Submit/Save เข้า bucket_list ฝั่ง Frontend แทน (MARKER_BUCKETLIST_BRANCH_REQUIRED_*_V1 ใน APController.js)
+// ไฟล์ ./routes/dataIntegrityCheck.js ยังอยู่ในระบบไฟล์ แต่ไม่มีจุดไหน import ใช้งานแล้ว
 
 dotenv.config();
 
@@ -70,36 +77,10 @@ app.use(express.json({ limit: '150mb' })); // MARKER_EXPRESS_JSON_LIMIT_150MB_V1
 
 const SERVER_START = Date.now();
 
-// ── คำนวณ CPU % ปัจจุบันของทั้งเครื่อง ผ่าน Windows Performance Counter ──
-// MARKER_APP_CPU_SNAPSHOT
-// MARKER_FIX_GETCURRENTCPU_SINGLEFLIGHT_APP
-let _cpuInFlight = null;
-let _cpuLastValue = 0;
-let _cpuLastAt = 0;
-const CPU_CACHE_TTL_MS = 5000; // ไม่ Spawn ใหม่ถ้าเพิ่งวัดไปไม่เกิน 5 วิ
-
-async function getCurrentCpu() {
-  if (Date.now() - _cpuLastAt < CPU_CACHE_TTL_MS) return _cpuLastValue;
-  if (_cpuInFlight) return _cpuInFlight;
-
-  _cpuInFlight = new Promise((resolve) => {
-    const cmd = `powershell -Command "(Get-Counter '\\Processor(_Total)\\% Processor Time' -SampleInterval 1 -MaxSamples 3 | Select-Object -ExpandProperty CounterSamples | Measure-Object -Property CookedValue -Average).Average"`;
-    exec(cmd, { encoding: "utf8", timeout: 8000 }, (err, stdout) => {
-      let pct = 0;
-      if (err) {
-        console.error("getCurrentCpu error:", err.message);
-      } else {
-        const parsed = Math.round(parseFloat(String(stdout).trim()));
-        pct = Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : 0;
-      }
-      _cpuLastValue = pct;
-      _cpuLastAt = Date.now();
-      _cpuInFlight = null;
-      resolve(pct);
-    });
-  });
-  return _cpuInFlight;
-}
+// ── คำนวณ CPU % ปัจจุบันของทั้งเครื่อง ── MARKER_SYNC_GETCURRENTCPU_APP_V1 ──
+// getCurrentCpu() ย้ายไปอยู่ที่ System.js เพียงจุดเดียว (import ด้านบน)
+// เดิมมีฟังก์ชันนี้ซ้ำกัน 2 ชุด (คนละ Cache) ทำให้ /health (Deploy Monitor)
+// กับ /api/system/cpu-current (CPU Dashboard) รายงานค่า CPU ไม่ตรงกัน
 
 // ── cache git info ตอน startup ครั้งเดียว ────────────────────────────────
 let gitInfo = { commit: null, branch: null, author: null, message: null };
@@ -203,6 +184,7 @@ app.use("/api/excel", excelReportRouter);
 app.use("/api/docenter", docenterOcrRouter);
 app.use("/api/batch-control", batchControlRouter);
 app.use("/api/vat-reconcile", vatReconcileRouter); // MARKER_APP_MOUNT_VAT_RECONCILE_ROUTER_V1
+app.use("/api/ap-reconcile", apReconcileRouter); // MARKER_APP_MOUNT_AP_RECONCILE_ROUTER_V1
 app.use("/api/support", supportRouter); // MARKER_MOUNT_SUPPORT_ROUTER_V1
 
 // -- POST /api/ws-notify � Frontend ????????? action ????? ? broadcast ????? client --
@@ -305,6 +287,7 @@ async function checkAndCleanupUnmatchedNotes() { // MARKER_APP_NOTES_CLEANUP_UNM
     WHERE unmatched_since IS NOT NULL
     AND unmatched_since < NOW() - INTERVAL '29 days'
     AND unmatched_since >= NOW() - INTERVAL '30 days'
+    AND remark = 'Check Return' -- MARKER_APP_NOTES_CLEANUP_CHECKRETURN_ONLY_V1
   `);
   if (expiringNotes.length > 0) {
     await pool.query(`DELETE FROM notifications WHERE category = 'VAT_NOTE_UNMATCH_WARNING'`);
@@ -322,6 +305,7 @@ async function checkAndCleanupUnmatchedNotes() { // MARKER_APP_NOTES_CLEANUP_UNM
     DELETE FROM vat_watchlist_notes
     WHERE unmatched_since IS NOT NULL
     AND unmatched_since < NOW() - INTERVAL '30 days'
+    AND remark = 'Check Return' -- MARKER_APP_NOTES_CLEANUP_CHECKRETURN_ONLY_V1
     RETURNING id
   `);
   if (result.rowCount > 0) {
@@ -380,17 +364,33 @@ async function applyOldIncompleteRefJoin(client, busFilter) {
   );
 }
 
+// MARKER_APP_VAT_WATCHLIST_REPORT_JUNK_ROW_GUARD_V2 — ตามที่ขอ "ไม่ว่าจะทำ Watchlist หรือว่าอะไรก็ตาม"
+// -- แก้จาก V1: V1 เข้าใจผิดว่า "Total Group Branch" เป็นแถว Junk แยกต่างหาก เลยกรองทั้ง Row ทิ้ง
+// ไปเลย แต่จากไฟล์ตัวอย่างจริงที่ส่งมา (a25471a1 / acc870aa) พบว่า Row เหล่านี้คือ Invoice จริงปกติ
+// (มี id/invoice_ref/exp_amount จริง) แค่ vendor_name มีหางของ Footer รายงานเก่า (เส้นประ, "Total
+// Group Branch", "รวมทั้งสิ้น", "====", วันที่, เลขหน้า) ติดมาด้วย -- ถ้ากรองทั้ง Row ทิ้งจะเสีย
+// Invoice จริงไปเกือบทั้งตาราง เปลี่ยนมาเป็น "ตัดหาง" ออกจาก vendor_name แค่ Field เดียว เก็บ Row ไว้
+// ครบ ไม่ว่าจะมาจาก Excel/Report ของ BU ไหนก็ตามที่ยิงเข้า replace_bu (ประตูทางเข้าหลักของ Watchlist)
 app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_report", "write"), async (req, res) => {
-  const { bus, rows } = req.body || {};
+  const { bus, rows: rawRows } = req.body || {};
   if (!Array.isArray(bus) || bus.length === 0) {
     return res.status(400).json({ error: "bus (array) is required" });
   }
-  if (!Array.isArray(rows)) {
+  if (!Array.isArray(rawRows)) {
     return res.status(400).json({ error: "rows (array) is required" });
   }
+  // ทำความสะอาด vendor_name ก่อน Insert -- เก็บ Row ไว้ครบทุก Row แค่ตัดหาง Junk ออกจาก vendor_name
+  const rows = rawRows.map((r) => {
+    if (r && typeof r.vendor_name === "string") {
+      return { ...r, vendor_name: cleanJunkVendorNameJs(r.vendor_name) };
+    }
+    return r;
+  });
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // MARKER_APP_REPLACE_BU_KEEP_SEND_FP_V1 -- เก็บรายการที่ส่งไป Bucket ของ Full Page (status 'send_fp') ไว้ก่อนลบ แล้วคืนสถานะให้แถวที่ Match ใน Incomplete ใหม่ (bu+invoice_ref+supplier_code)
+    const keepSendFp = await client.query("SELECT bu, invoice_ref, supplier_code FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND status = 'send_fp'", [bus]);
     await client.query("DELETE FROM vat_watchlist_report WHERE bu = ANY($1::text[])", [bus]);
     const REPLACE_BU_CHUNK_SIZE = 1000; // 1000 แถว x 30 คอลัมน์ = 30,000 Param (ไม่ชน Limit 65,535)
     for (let i = 0; i < rows.length; i += REPLACE_BU_CHUNK_SIZE) {
@@ -400,6 +400,15 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
       await client.query(sql, values);
     }
     await applyOldIncompleteRefJoin(client, bus); // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_REF_JOIN_CALL_V1
+    if (keepSendFp.rowCount > 0) {
+      await client.query(
+        `UPDATE vat_watchlist_report r SET status = 'send_fp'
+         FROM UNNEST($1::text[], $2::text[], $3::text[]) AS k(bu, invoice_ref, supplier_code)
+         WHERE r.bu = k.bu AND r.invoice_ref = k.invoice_ref AND r.supplier_code IS NOT DISTINCT FROM k.supplier_code
+           AND r.status = 'pending'`,
+        [keepSendFp.rows.map((x) => x.bu), keepSendFp.rows.map((x) => x.invoice_ref), keepSendFp.rows.map((x) => x.supplier_code)]
+      );
+    }
     await client.query("COMMIT");
     res.json({ success: true, deleted_bu: bus, inserted: rows.length });
   } catch (err) {
@@ -631,6 +640,71 @@ app.post("/api/vat_watchlist_old_incomplete_ref/lookup_by_checks", checkPermissi
     res.status(500).json({ error: "Internal server error", detail: err.message });
   }
 });
+// MARKER_APP_VAT_BACKUP_TAX_INVOICE_PURGE_V1
+// -- POST /api/vat_backup_tax_invoice/purge -- ล้างข้อมูลหน้า Tax Invoice (เฉพาะ Owner) -- ต้องอยู่ก่อน Generic Mount --
+// -- action: 'options' (นับแยก Source/Status/BU ทั้งตาราง) | 'preview' (นับตามเงื่อนไข) | 'delete' (ลบจริง ต้องส่ง expected_count ตรงกับที่นับสดตอนลบ) --
+// -- เงื่อนไข (AND กัน): source_type, status, bu, date_from/date_to (doc_date), older_than_months (doc_date < วันนี้ - N เดือน), all=true (ไม่กรอง ต้องส่งชัดเจน) --
+app.post("/api/vat_backup_tax_invoice/purge", async (req, res) => {
+  if (req.user?.appRole !== "Owner") {
+    return res.status(403).json({ error: "เฉพาะ Owner เท่านั้น" });
+  }
+  const body = req.body || {};
+  const action = body.action || "preview";
+  const docDateExpr = "NULLIF(doc_date::text, '')::date";
+  try {
+    if (action === "options") {
+      const [bySource, byStatus, byBu, range] = await Promise.all([
+        pool.query("SELECT COALESCE(source_type, '') AS k, COUNT(*)::int AS n FROM vat_backup_tax_invoice GROUP BY 1 ORDER BY n DESC"),
+        pool.query("SELECT COALESCE(status, '') AS k, COUNT(*)::int AS n FROM vat_backup_tax_invoice GROUP BY 1 ORDER BY n DESC"),
+        pool.query("SELECT COALESCE(bu, '') AS k, COUNT(*)::int AS n FROM vat_backup_tax_invoice GROUP BY 1 ORDER BY k"),
+        pool.query("SELECT MIN(" + docDateExpr + ") AS min_date, MAX(" + docDateExpr + ") AS max_date, COUNT(*)::int AS total FROM vat_backup_tax_invoice"),
+      ]);
+      return res.json({ by_source: bySource.rows, by_status: byStatus.rows, by_bu: byBu.rows, min_date: range.rows[0].min_date, max_date: range.rows[0].max_date, total: range.rows[0].total });
+    }
+
+    const conds = [];
+    const vals = [];
+    const add = (sql, v) => { vals.push(v); conds.push(sql.replace("?", "$" + vals.length)); };
+    if (body.source_type) add("COALESCE(source_type, '') = ?", String(body.source_type) === "__blank__" ? "" : String(body.source_type));
+    if (body.status) add("COALESCE(status, '') = ?", String(body.status) === "__blank__" ? "" : String(body.status));
+    if (body.bu) add("bu = ?", String(body.bu));
+    if (body.date_from) add(docDateExpr + " >= ?::date", String(body.date_from));
+    if (body.date_to) add(docDateExpr + " <= ?::date", String(body.date_to));
+    if (body.older_than_months !== undefined && body.older_than_months !== null && body.older_than_months !== "") {
+      const months = Number(body.older_than_months);
+      if (!Number.isInteger(months) || months < 1 || months > 120) {
+        return res.status(400).json({ error: "older_than_months ต้องเป็นจำนวนเต็ม 1-120" });
+      }
+      conds.push(docDateExpr + " < (CURRENT_DATE - (" + months + " * INTERVAL '1 month'))::date");
+    }
+    if (conds.length === 0 && body.all !== true) {
+      return res.status(400).json({ error: "ไม่ได้ระบุเงื่อนไข -- ถ้าต้องการล้างทั้งหมดต้องส่ง all=true" });
+    }
+    const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+
+    const cnt = await pool.query("SELECT COUNT(*)::int AS n FROM vat_backup_tax_invoice " + where, vals);
+    const count = cnt.rows[0].n;
+    if (action === "preview") {
+      return res.json({ count });
+    }
+    if (action !== "delete") {
+      return res.status(400).json({ error: "action ไม่ถูกต้อง" });
+    }
+    if (Number(body.expected_count) !== count) {
+      return res.status(409).json({ error: "จำนวนที่จะลบไม่ตรงกับที่ Preview ไว้ (ข้อมูลมีการเปลี่ยนแปลง) กรุณา Preview ใหม่", count });
+    }
+    const del = await pool.query("DELETE FROM vat_backup_tax_invoice " + where, vals);
+    const filterDesc = JSON.stringify({ source_type: body.source_type || null, status: body.status || null, bu: body.bu || null, date_from: body.date_from || null, date_to: body.date_to || null, older_than_months: body.older_than_months || null, all: body.all === true });
+    pool.query(
+      "INSERT INTO activity_log (username, user_email, action, module, created_at) VALUES ($1, $2, $3, 'VAT_TAX_INVOICE', NOW())",
+      [req.user?.username || null, req.user?.email || null, "PURGE_TAX_INVOICE deleted=" + del.rowCount + " filter=" + filterDesc]
+    ).catch((e) => console.error("[purge tax invoice] activity_log error:", e.message));
+    return res.json({ deleted: del.rowCount });
+  } catch (err) {
+    console.error("vat_backup_tax_invoice purge error:", err);
+    res.status(500).json({ error: "Internal server error", detail: err.message });
+  }
+});
 // MARKER_APP_VAT_WATCHLIST_SYNC_DRAFT_STATUS_V1
 // -- POST /api/vat_watchlist_report/sync_draft_status -- Sync สถานะ Report <-> Popvat Draft (Bidirectional) --
 // -- ต้องอยู่ก่อน Generic Mount เหมือน replace_bu ด้านบน --
@@ -647,6 +721,7 @@ app.post("/api/vat_watchlist_report/sync_draft_status", checkPermission("vat_wat
        WHERE r.bu = p.bu
          AND r.invoice_ref = p.original_invoice_number
          AND p.status = 'draft'
+         AND (p.supplier_name IS NULL OR btrim(p.supplier_name) = '' OR left(btrim(COALESCE(r.vendor_name, '')), length(btrim(p.supplier_name))) = btrim(p.supplier_name) OR left(btrim(p.supplier_name), length(btrim(COALESCE(r.vendor_name, '')))) = btrim(COALESCE(r.vendor_name, ''))) -- MARKER_APP_SYNC_DRAFT_MATCH_SUPPLIER_V1 -- ต้อง Match BU + Invoice Ref + Supplier (ชื่อผู้ค้า ขึ้นต้นตรงกันได้ รองรับชื่อที่เคยมีข้อความ Total ต่อท้าย) ไม่ใช่แค่ Invoice Ref (Draft เก่าที่ supplier_name ว่างยังใช้ Invoice Ref อย่างเดียวเหมือนเดิม)
          AND r.status != 'draft'
          AND r.bu = $1
        RETURNING r.id`,
@@ -659,7 +734,9 @@ app.post("/api/vat_watchlist_report/sync_draft_status", checkPermission("vat_wat
          AND r.bu = $1
          AND NOT EXISTS (
            SELECT 1 FROM vat_upload_popvatdraft p
-           WHERE p.bu = r.bu AND p.original_invoice_number = r.invoice_ref AND p.status = 'draft'
+           WHERE p.bu = r.bu AND p.original_invoice_number = r.invoice_ref
+             AND (p.supplier_name IS NULL OR btrim(p.supplier_name) = '' OR left(btrim(COALESCE(r.vendor_name, '')), length(btrim(p.supplier_name))) = btrim(p.supplier_name) OR left(btrim(p.supplier_name), length(btrim(COALESCE(r.vendor_name, '')))) = btrim(COALESCE(r.vendor_name, ''))) -- MARKER_APP_SYNC_DRAFT_MATCH_SUPPLIER_V1
+             AND p.status IN ('draft', 'exported', 'pv-backup') -- MARKER_APP_SYNC_DRAFT_KEEP_EXPORTED_V1 -- Generate File แล้ว (exported/pv-backup) ห้ามย้อนกลับเป็น pending
          )
        RETURNING r.id`,
       [bu]
@@ -688,6 +765,10 @@ app.post("/api/vat_watchlist_report/sync_draft_status", checkPermission("vat_wat
 app.use("/api/vat_watchlist_report", createTableRouter("vat_watchlist_report")); // MARKER_APP_MOUNT_VAT_WATCHLIST_REPORT_V1
 app.use("/api/vat_incomplete_column_config", createTableRouter("vat_incomplete_column_config")); // MARKER_APP_MOUNT_VAT_INCOMPLETE_COLUMN_CONFIG_V1
 app.use("/api/vat_watchlist_bu_group_range", createTableRouter("vat_watchlist_bu_group_range")); // MARKER_APP_MOUNT_VAT_WATCHLIST_BU_GROUP_RANGE_V1
+app.use("/api/vat_watchlist_related_person", createTableRouter("vat_watchlist_related_person")); // MARKER_APP_MOUNT_VAT_WATCHLIST_RELATED_PERSON_V1
+app.use("/api/vat_mail_config", createTableRouter("vat_mail_config")); // MARKER_APP_MOUNT_VAT_MAIL_CONFIG_V1
+app.use("/api/vat_mail_draft", createTableRouter("vat_mail_draft")); // MARKER_APP_MOUNT_VAT_MAIL_DRAFT_V1
+app.use("/api/vat-mail-export", vatMailExportRouter); // MARKER_APP_MOUNT_VAT_MAIL_EXPORT_V1
 app.use("/api/vat_watchlist_notes", createTableRouter("vat_watchlist_notes")); // MARKER_APP_MOUNT_VAT_WATCHLIST_NOTES_V1
 app.use("/api/vat_incomplete_export_templates", createTableRouter("vat_incomplete_export_templates")); // MARKER_APP_MOUNT_VAT_INCOMPLETE_EXPORT_TEMPLATES_V1
 app.use("/api/vat_upload_popvatdraft", createTableRouter("vat_upload_popvatdraft")); // MARKER_APP_MOUNT_VAT_UPLOAD_POPVATDRAFT_V1
@@ -696,14 +777,92 @@ app.use("/api/vat_simpleinputdraft", createTableRouter("vat_simpleinputdraft"));
 app.use("/api/ie_simplevatdraft", createTableRouter("ie_simplevatdraft")); // MARKER_APP_MOUNT_IE_SIMPLEVATDRAFT_V1 -- IE Invoice Detail > Tab "Simple" (Sub-row Real Vendor Add -> Simple)
 app.use("/api/vat_adi_transferdraft", createTableRouter("vat_adi_transferdraft")); // MARKER_APP_MOUNT_VAT_SIMPLEINPUT_ADI_DRAFT_V1
 app.use("/api/vat_watchlist_round_state", createTableRouter("vat_watchlist_round_state")); // MARKER_APP_MOUNT_VAT_WATCHLIST_ROUND_STATE_V1 -- Round-based Active BU Update Tracking (Donut + Confirm ปิดรอบ)
+app.use("/api/vat_waiting_for_claim", createTableRouter("vat_waiting_for_claim")); // MARKER_APP_MOUNT_VAT_WAITING_FOR_CLAIM_V1 -- VAT Controller > Backup > Transaction, Tab 4 (Backup_Report Input Tax-Waiting for Claim)
+app.use("/api/vat_reconcile_input_summary", createTableRouter("vat_reconcile_input_summary")); // MARKER_APP_MOUNT_VAT_RECONCILE_INPUT_SUMMARY_V1 -- VAT Input Rec. Dashboard > Quick Preview Popup > Inline Edit (Excel Grid)
 app.use("/api/email_templates",     createTableRouter("email_templates"));
+// MARKER_APP_MOUNT_VAT_SUMMARY_DASHBOARD_V1 -- VAT Watchlist Dashboard (vat_summary_schema.sql)
+app.use("/api/vat_summary_live",            createTableRouter("vat_summary_live"));
+app.use("/api/vat_summary_live_dashboard",  createTableRouter("vat_summary_live_dashboard"));
+app.use("/api/vat_summary_frozen",          createTableRouter("vat_summary_frozen"));
+app.use("/api/vat_summary_frozen_dashboard", createTableRouter("vat_summary_frozen_dashboard"));
+
+// MARKER_APP_VAT_WATCHLIST_VENDOR_NAME_JUNK_CLEAN_V1 — ตามไฟล์ตัวอย่างที่พี่ส่งมา (a25471a1 /
+// acc870aa) พบว่าเข้าใจผิดมาตลอด: ปัญหาไม่ใช่ "มีบาง Row เป็น Row สรุปยอด/Row คั่นปนมาทั้ง Row"
+// (ที่ Filter เดิมตัดทิ้งทั้ง Row) แต่คือ vendor_name ของแทบทุก Row จริง (Invoice จริง มี invoice_ref/
+// exp_amount ปกติ) มี "หาง" เป็น Footer ของรายงานเก่า (เส้นประ, "Total Group Branch", "รวมทั้งสิ้น",
+// "====", "ตั้งแต่วันที่...", "หน้า: x/y") ต่อท้ายชื่อ Vendor จริงมาด้วย เช่น
+// "บางนาคอมเพล็กซ์ บจก. (สาขาที่00001) -------------------- ... Total Group Branch : ..."
+// ชื่อ Vendor จริงคือแค่ "บางนาคอมเพล็กซ์ บจก. (สาขาที่00001)" ส่วนที่เหลือเป็นขยะที่หลุดติดมาตอน
+// Parse จาก PDF/Report ต้นทาง -- Filter แบบเดิม (ตัดทั้ง Row ถ้า vendor_name มีคำว่า "Total Group
+// Branch" หรือมีเส้นประ) จะตัด Invoice จริงทิ้งเกือบหมดทั้งตาราง ผิดทางแต่แรก -- แก้ใหม่ให้ "ตัดหาง"
+// ออกจาก vendor_name แทนการตัดทั้ง Row ทิ้ง (เก็บ Invoice ไว้ แค่ทำความสะอาด Field)
+function cleanJunkVendorNameSql(alias = "w") {
+  // ตัดตั้งแต่เส้นประยาว (4 ตัวขึ้นไป) แรกที่เจอไปจนจบ String แล้ว Trim ช่องว่างท้ายที่เหลือ
+  return `(CASE WHEN ${alias}.vendor_name ~ '-{4,}'
+    THEN TRIM(regexp_replace(${alias}.vendor_name, '-{4,}.*$', ''))
+    ELSE ${alias}.vendor_name END)`;
+}
+// ใช้ฝั่ง JS (ตอน Insert ข้อมูลใหม่เข้า vat_watchlist_report) -- Logic เดียวกับ SQL ด้านบนเป๊ะๆ
+function cleanJunkVendorNameJs(vendorName) {
+  if (typeof vendorName !== "string") return vendorName;
+  const m = vendorName.match(/^(.*?)-{4,}/);
+  if (!m) return vendorName;
+  return m[1].trim();
+}
+
+// ── GET /api/vat_watchlist_detail?bu=XXX&bucket=realized|unrealized&bus_type=YYY ──
+// MARKER_APP_MOUNT_VAT_WATCHLIST_DETAIL_V1 — ดึงรายการ Invoice ระดับละเอียดจาก vat_watchlist_report
+// สำหรับ Popup "Expired Detail" ของ VatDashboard.js (เดิมเขียนไว้ใน routes/vatSummaryRoutes.js
+// แต่ไฟล์นั้นไม่เคย import เข้า app.js จริง — ย้ายมา Mount ตรงนี้ให้ตรงกับ Pattern /api/... ของไฟล์นี้)
+//   bu          → optional, ไม่ใส่ = เอาทุก BU (ใช้สำหรับสรุปยอดตาม Reason ข้ามทุก BU)
+//   bucket=realized   → Expired แบบปกติ ไม่มี Reason แนบ (remark ว่าง)
+//   bucket=unrealized → Expired ที่มี Reason แนบมาด้วย (remark ไม่ว่าง) ไม่ Hardcode เจาะจงแค่
+//     'Check Return' แล้ว เพราะ "ไม่ว่าจะเป็นด้วยเหตุผลอะไรมันก็ต้องแสดงให้ได้"
+//   ไม่ส่ง bucket → เอาทั้งหมดที่ Expired (ทั้ง Realized + Unrealized)
+app.get("/api/vat_watchlist_detail", async (req, res) => {
+  try {
+    const { bu, bucket, bus_type } = req.query;
+    const conditions = [`w.status = 'pending'`];
+    const params = [];
+    if (bu) {
+      params.push(bu);
+      conditions.push(`w.bu = $${params.length}`);
+    }
+    conditions.push(
+      `(w.aging_label ILIKE '%expired%' OR (w.aging_label = 'Accept' AND COALESCE(w.remark, '') <> '') OR w.aging_months > 6)`
+    );
+    if (bucket === "realized") {
+      conditions.push(`COALESCE(w.remark, '') = ''`);
+    } else if (bucket === "unrealized") {
+      conditions.push(`COALESCE(w.remark, '') <> ''`);
+    }
+    if (bus_type) {
+      params.push(bus_type);
+      conditions.push(`COALESCE(NULLIF(w.bus_type, ''), 'OTH') = $${params.length}`);
+    }
+    // MARKER_APP_VAT_WATCHLIST_DETAIL_VENDOR_NAME_CLEAN_SAFETY_NET_V1 — Safety Net เผื่อมี Row เก่าที่
+    // ยังไม่ผ่านการ Clean DB (ตาม SQL ที่ให้ไป Run ใน pgAdmin) หลุดมา -- Override vendor_name ด้วย
+    // Version ที่ตัดหาง Junk แล้วตอน Query (SELECT w.*, cleaned AS vendor_name -- node-postgres สร้าง
+    // Object จาก Column ตามลำดับ ชื่อซ้ำกัน Column หลังสุดจะทับ Column ก่อนหน้าเสมอ จึงใช้ Pattern นี้
+    // Override Field ซ้ำชื่อกันได้โดยไม่ต้อง List Column ทั้งหมดทีละตัว)
+    const { rows } = await pool.query(
+      `SELECT w.*, ${cleanJunkVendorNameSql("w")} AS vendor_name
+       FROM vat_watchlist_report w WHERE ${conditions.join(" AND ")} ORDER BY w.exp_vat DESC NULLS LAST LIMIT 1000`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /api/vat_watchlist_detail error:", err);
+    res.status(500).json({ error: "Failed to fetch vat_watchlist_detail" });
+  }
+});
 
 // ── Reserve unique GRT/GRN number (ป้องกัน race condition + กันเลขซ้ำจริง) ──
 // ── ล็อก row ด้วย transaction, บวกเลข, เช็คซ้ำกับข้อมูลจริงใน bucket_list, ────
 // ── วนจนไม่ซ้ำ แล้วค่อย commit — ปลอดภัย 100% ไม่มีเลขถูกข้ามทิ้งแบบ block ──
 app.post("/api/company_list/:id/reserve-unique-number", async (req, res) => {
   const { id } = req.params;
-  const { field, prefix = '', bu = '', padLength = 4, semiUser = '', bootstrapField = '' } = req.body;
+  const { field, prefix = '', bu = '', padLength = 4, semiUser = '', bootstrapField = '', checkPrefix = '' } = req.body;
   // MARKER_APP_ALLOW_OV_FIELDS_V1
   // MARKER_APP_ALLOW_SEMIUSER_FIELD_V1
   const allowedFields = ['ap_grt', 'ap_grn', 'ap_grt_ov', 'ap_grn_ov', 'batch_running', 'ap_grt_semiuser', 'ie_grt', 'ie_grn', 'ie_grt_ov', 'ie_grn_ov', 'ie_grt_prev', 'ie_grn_prev']; // MARKER_APP_RESERVE_UNIQUE_NUMBER_ALLOW_IE_FIELDS_V1 -- เพิ่ม field ของ IE (Column ยืนยันจาก pgAdmin แล้ว)
@@ -718,20 +877,34 @@ app.post("/api/company_list/:id/reserve-unique-number", async (req, res) => {
     try {
       await client.query('BEGIN');
       const { rows: lockedRows } = await client.query(
-        `SELECT batch_running, batch_running_date FROM company_list WHERE id = $1 FOR UPDATE`,
+        `SELECT batch_running, batch_running_date::text AS batch_running_date_txt,
+                (NOW() AT TIME ZONE 'Asia/Bangkok')::date::text AS today_bkk
+           FROM company_list WHERE id = $1 FOR UPDATE`,
         [id]
       );
       if (!lockedRows[0]) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: "Not found" });
       }
-      const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-      const lastDateStr = lockedRows[0].batch_running_date
-        ? new Date(lockedRows[0].batch_running_date).toISOString().slice(0, 10)
+      // MARKER_APP_BATCHRUNNING_BKK_UNIQUE_V1
+      // -- แก้บั๊ก Batch Name ซ้ำ: เดิมตัดวันด้วย UTC (Reset ตอน 07:00 น. ไทย) แต่ชื่อ Batch ใช้วันที่เวลาไทย --
+      // -- ตอนนี้ตัดวันด้วย Asia/Bangkok ให้ตรงกับชื่อ Batch + เช็คซ้ำกับ batch_list จริงก่อนคืนเลข --
+      const todayStr = lockedRows[0].today_bkk; // YYYY-MM-DD (เวลาไทย)
+      const lastDateStr = lockedRows[0].batch_running_date_txt
+        ? String(lockedRows[0].batch_running_date_txt).slice(0, 10)
         : null;
       // ????????????????????????? ? Reset ???????? 0 ???? ???????? +1
       let running = (lastDateStr === todayStr) ? (parseInt(lockedRows[0].batch_running, 10) || 0) : 0;
       running += 1;
+      // -- ข้ามเลขที่มีอยู่แล้วใน batch_list (Frontend ส่ง checkPrefix = "{Base}/{SystemPrefix}-" มาให้) --
+      if (checkPrefix) {
+        for (let guard = 0; guard < 1000; guard++) {
+          const cand = `${checkPrefix}${prefix}${String(running).padStart(padLength, '0')}`;
+          const { rows: dup } = await client.query(`SELECT 1 FROM batch_list WHERE batch_id = $1 LIMIT 1`, [cand]);
+          if (!dup.length) break;
+          running += 1;
+        }
+      }
       const formatted = `${prefix}${String(running).padStart(padLength, '0')}`;
       await client.query(
         `UPDATE company_list SET batch_running = $1, batch_running_date = $2 WHERE id = $3`,
@@ -968,7 +1141,8 @@ const UTD_FILL_CORRECTED_COL = `
 const UTD_TS_COL     = UTD_FILL_CORRECTED_COL;
 const UTD_MODULE_COL = "module";
 const UTD_GROUP_COL  = "regexp_replace(regexp_replace(COALESCE(NULLIF(invoice_no, ''), local_id), '_NV$', '', 'i'), '/[0-9]+$', '')";
-const UTD_MODULES    = ["AP", "IE"];
+const UTD_MODULES    = ["AP", "IE", "COL-AP", "VAT"]; // MARKER_APP_USER_TRANSACTIONS_DASHBOARD_DOCCOLLECTION_COLAP_UNION_V2 (COALESCE confirmed_at/completed_at) -- เพิ่ม COL-AP (Query ตรงจาก doc_collection, ไม่ Shadow-Insert)
+                                                       // MARKER_APP_USER_TRANSACTIONS_DASHBOARD_VAT_DRAFTID_UNION_V2 -- เพิ่ม VAT (Popvat/Simple/ADI, Group ตาม draft_id)
 const UTD_AFTERHOURS_HOUR    = 18; // MARKER_APP_USER_TRANSACTIONS_DASHBOARD_WORKING_HOURS_GAP_V13 -- ส่งมาเฉยๆ เผื่อใช้งานอื่น ไม่มีผลกับ Gap อีกต่อไป (Frontend เลิก Highlight ด้วย Flag นี้แล้ว)
 const UTD_WORKDAY_START_HOUR = 8;  // MARKER_APP_USER_TRANSACTIONS_DASHBOARD_WORKING_HOURS_GAP_V13 -- ช่วงเวลาทำงานที่ใช้คิด Gap: 08:00-19:00 (ยืนยันจาก User: "เริ่มนับ Gap ตั้งแต่ 8 โมง ถึง 1 ทุ่ม")
 const UTD_WORKDAY_END_HOUR   = 19;
@@ -1001,6 +1175,70 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
           AND ${UTD_MODULE_COL} = ANY($4::text[])
           AND ${UTD_TS_COL} >= ($2::date - INTERVAL '2 days')
           AND ${UTD_TS_COL} <= $3::timestamp
+
+        UNION ALL
+
+        -- MARKER_APP_USER_TRANSACTIONS_DASHBOARD_DOCCOLLECTION_COLAP_UNION_V1 -- COL-AP: Query ตรงจาก doc_collection (Cross Check Confirm แล้วเท่านั้น) ไม่ Shadow-Insert ซ้ำเข้า bucket_list
+        SELECT
+          serial_code AS grp_key,
+          'COL-AP' AS module,
+          ((COALESCE(NULLIF(cross_check->>'confirmed_at',''), cross_check->>'completed_at'))::timestamptz AT TIME ZONE 'Asia/Bangkok') AS ts_real,
+          (fill_started_at AT TIME ZONE 'Asia/Bangkok') AS fill_bkk,
+          ((COALESCE(NULLIF(cross_check->>'confirmed_at',''), cross_check->>'completed_at'))::timestamptz AT TIME ZONE 'Asia/Bangkok') AS created_bkk,
+          (CASE WHEN jsonb_typeof(rows) = 'array' THEN jsonb_array_length(rows) ELSE 1 END) AS line_count,
+          (fill_started_at IS NOT NULL) AS has_fill_flag,
+          bu_code AS bu, /* MARKER_APP_USER_TRANSACTIONS_DASHBOARD_COLAP_BU_INVOICE_FIX_V1 -- เดิมใช้ bu_code_name (Label "รหัส - ชื่อบริษัท" เช่น "5898 - Miracle Planet Co., Ltd.") ผิด ไม่ใช่ BU Code จริง -- เปลี่ยนเป็น bu_code ตรงๆ */
+          (CASE WHEN jsonb_typeof(rows) = 'array' THEN (
+             SELECT NULLIF(string_agg(DISTINCT v.val, ', '), '')
+             FROM jsonb_array_elements(rows) elem
+             CROSS JOIN LATERAL (
+               SELECT COALESCE(
+                 NULLIF(elem->>'Invoice Number', ''),
+                 NULLIF(elem->>'Invoice Num', ''),
+                 NULLIF(elem->>'Tax Invoice No.', '')
+               ) AS val
+             ) v
+             WHERE v.val IS NOT NULL
+           ) ELSE NULL END) AS invoice_no, /* MARKER_APP_USER_TRANSACTIONS_DASHBOARD_COLAP_INVOICE_FROM_ROWS_V1 -- ดึงเลข Invoice จริงจากระดับบรรทัดใน rows (Invoice Number/Invoice Num สำหรับ APN01, Tax Invoice No. สำหรับ AP09) รวมเป็น List คั่น ", " ถ้ามีหลายเลขใน Batch เดียวกัน (ไม่ Duplicate ค่าเดิมซ้ำ) */
+          serial_code AS batch_id, /* MARKER_APP_USER_TRANSACTIONS_DASHBOARD_COLAP_BU_INVOICE_FIX_V1 */
+          NULL::text AS vendor_name
+        FROM doc_collection
+        WHERE uploaded_by = $1
+          AND doc_type IN ('APN01', 'AP09', 'AP07')
+          AND (cross_check->>'confirmed')::boolean IS TRUE
+          AND 'COL-AP' = ANY($4::text[])
+          AND ((COALESCE(NULLIF(cross_check->>'confirmed_at',''), cross_check->>'completed_at'))::timestamptz AT TIME ZONE 'Asia/Bangkok') >= ($2::date - INTERVAL '2 days')
+          AND ((COALESCE(NULLIF(cross_check->>'confirmed_at',''), cross_check->>'completed_at'))::timestamptz AT TIME ZONE 'Asia/Bangkok') <= $3::timestamp
+
+        UNION ALL
+
+        -- MARKER_APP_USER_TRANSACTIONS_DASHBOARD_VAT_DRAFTID_UNION_V2 -- VAT (Popvat/Simple/ADI): Group ตาม Draft_id เดียวกัน (ไม่ใช่ Invoice เพราะ 1 Draft มีได้หลาย Invoice/หลายบรรทัด) -- รวม 3 Table เป็น Transaction เดียวถ้า Draft_id ตรงกัน
+        SELECT
+          draft_id::text AS grp_key,
+          'VAT' AS module,
+          ${UTD_FILL_CORRECTED_COL} AS ts_real,
+          ${UTD_FILL_CORRECTED_COL} AS fill_bkk,
+          created_at AT TIME ZONE 'Asia/Bangkok' AS created_bkk,
+          line_count, /* MARKER_APP_USER_TRANSACTIONS_VAT_ARCHIVE_UNION_V1 -- ปกติ 1 ต่อแถว แต่แถว Archive (Draft ที่ลบหลังครบ 6 เดือน) เก็บยอดรวมไว้ในนี้ */
+          fill_started_at IS NOT NULL AS has_fill_flag,
+          bu::text AS bu,
+          draft_id::text AS invoice_no,
+          batch_id::text AS batch_id,
+          NULL::text AS vendor_name
+        FROM (
+          SELECT draft_id, username, bu, fill_started_at, created_at, batch_id, 1 AS line_count FROM vat_upload_popvatdraft
+          UNION ALL
+          SELECT draft_id, username, bu, fill_started_at, created_at, batch_id, 1 AS line_count FROM vat_simpleinputdraft
+          UNION ALL
+          SELECT draft_id, username, bu, fill_started_at, created_at, batch_id, 1 AS line_count FROM vat_adi_transferdraft
+          UNION ALL
+          SELECT draft_id, username, bu, fill_started_at, created_at, batch_id, line_count FROM vat_transaction_archive
+        ) vat_all
+        WHERE username = $1
+          AND draft_id IS NOT NULL AND draft_id <> ''
+          AND 'VAT' = ANY($4::text[])
+          AND ${UTD_FILL_CORRECTED_COL} >= ($2::date - INTERVAL '2 days')
+          AND ${UTD_FILL_CORRECTED_COL} <= $3::timestamp
       ),
       per_invoice AS (
         SELECT
@@ -1229,6 +1467,35 @@ async function checkAndRemapIeSimpleDraftId() {
   }
 }
 
+// MARKER_APP_MAINTENANCE_COUNTDOWN_CRON_V1 -- Cron ฝั่ง Server เป็นคนจริงที่ Flip maintenance_mode ตอนหมดเวลา
+// (ไม่ต้องพึ่ง Client/Owner เปิดหน้าเว็บอยู่ตอนนั้น -- แก้ช่องโหว่ของวิธี
+// Client-only เดิม ที่ถ้าไม่มี Owner Online ตอนหมดเวลา จะไม่มีใคร Flip Flag)
+async function checkAndEnforceMaintenanceSchedule() {
+  const { rows } = await pool.query(
+    `SELECT key, value FROM system_settings WHERE key IN ('maintenance_mode', 'maintenance_scheduled_at')`
+  );
+  const settings = {};
+  rows.forEach(r => { settings[r.key] = r.value; });
+  const scheduledAt = settings.maintenance_scheduled_at || '';
+  const isClosedNow = settings.maintenance_mode === 'true';
+  if (!scheduledAt || isClosedNow) return; // ไม่มี Countdown ค้างอยู่ หรือปิดไปแล้วอยู่แล้ว -- ไม่ต้องทำอะไร
+  const remainingMs = new Date(scheduledAt).getTime() - Date.now();
+  if (remainingMs > 0) return; // ยังไม่ถึงเวลา
+  const nowIso = new Date().toISOString();
+  await pool.query(
+    `INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_by = $3, updated_at = $4`,
+    ['maintenance_mode', 'true', 'system-cron', nowIso]
+  );
+  await pool.query(
+    `INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_by = $3, updated_at = $4`,
+    ['maintenance_scheduled_at', '', 'system-cron', nowIso]
+  );
+  wsBroadcast('maintenance_mode_changed', { key: 'maintenance_mode', value: 'true' });
+  console.log('[Maintenance Cron] Countdown หมดเวลา -- ปิด Full Maintenance โดยอัตโนมัติ (Server-side)');
+}
+
 const port = process.env.PORT || 4000;
 
 // -- WebSocket Server � Real-time push ????? Client --------------------------
@@ -1253,6 +1520,44 @@ const server = app.listen(port, "0.0.0.0", () => {
   // -- ???????? ????????????? -> terminate() ???? (??? memory leak client ????) --
   // -- Browser ??? pong ??????????????? WebSocket protocol ?????????????? Frontend --
   function markAlive() { this.isAlive = true; }
+  // MARKER_APP_WS_PRESENCE_V2 -- Presence (เข้า/ออกระบบของทีม) ให้ Backend เป็นผู้ตัดสินทั้งหมด
+  // -- ส่ง 'team_presence' เฉพาะ Client ที่ "ควรเห็น" (Owner เห็นทุกคน / คนอื่นต้องมี Permission ซ้อนกัน)
+  // -- Frontend แค่แสดง Toast ตามที่ได้รับ ไม่ต้อง Query/Dedupe/เดาเอง
+  const TEAM_PERMISSION_KEYS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual', 'ApproveBatch'];
+  const PRESENCE_GRACE_MS = 8000; // Refresh/Reconnect กลับมาทันภายในเวลานี้ = ไม่ถือว่าออกจากระบบ
+  const presenceGrace = new Map(); // username -> Timeout (รอ Offline)
+  const hasOtherConn = (self) => [...wss.clients].some(c => c !== self && c.readyState === 1 && c.username === self.username);
+
+  async function announcePresence(subject, kind) {
+    try {
+      const recipients = [...wss.clients].filter(c => c.readyState === 1 && c.username && c.username !== subject);
+      if (recipients.length === 0) return;
+      const names = [...new Set([subject, ...recipients.map(c => c.username)])];
+      const { rows } = await pool.query(
+        `SELECT username, role, permissions FROM user_roles WHERE username = ANY($1)`,
+        [names]
+      );
+      const byName = new Map(rows.map(r => [r.username, r]));
+      const subj = byName.get(subject);
+      const msg = JSON.stringify({ event: 'team_presence', id: `${subject}|${kind}|${Date.now()}`, username: subject, kind });
+      for (const c of recipients) {
+        const me = byName.get(c.username);
+        if (!me) continue;
+        const isOwner = me.role === 'Owner';
+        const overlap = TEAM_PERMISSION_KEYS.some(k => me.permissions?.[k] && subj?.permissions?.[k]);
+        if (isOwner || overlap) { try { c.send(msg); } catch (e) {} }
+      }
+    } catch (e) { console.error('[WS presence] announce error:', e.message); }
+  }
+
+  async function goOffline(u) {
+    try {
+      await pool.query(`DELETE FROM menu_active_sessions WHERE session_id = $1`, [u]);
+    } catch (e) { console.error('[WS presence] cleanup menu_active_sessions error:', e.message); }
+    wsBroadcast('team_status_updated', { username: u, online: false }); // ให้ Home/Sidebar Refresh รายชื่อทีม
+    announcePresence(u, 'logout');
+  }
+
   wss.on('connection', (ws, req) => {
     ws.isAlive = true;
     // MARKER_APP_WS_DISCONNECT_OFFLINE_V1
@@ -1262,18 +1567,41 @@ const server = app.listen(port, "0.0.0.0", () => {
       const url = new URL(req.url, `http://${req.headers.host}`);
       ws.username = url.searchParams.get('user') || null;
     } catch (e) { ws.username = null; }
+    // MARKER_APP_WS_PRESENCE_V2 -- Backend คุม Login/Logout Presence เอง (Source of Truth) ไม่พึ่ง Frontend ยิง Event
+    // -- ถ้า User นี้เพิ่งหลุดและกำลังรอ Grace (Refresh/เน็ตสะดุด) แล้วกลับเข้ามาทัน = ยังไม่ใช่ Login ใหม่ ไม่ประกาศอะไร
+    if (ws.username) {
+      const pendingOffline = presenceGrace.get(ws.username);
+      if (pendingOffline) {
+        clearTimeout(pendingOffline);
+        presenceGrace.delete(ws.username);
+      } else if (!hasOtherConn(ws)) {
+        wsBroadcast('team_status_updated', { username: ws.username }); // ให้ Home/Sidebar Refresh รายชื่อทีม
+        announcePresence(ws.username, 'login');
+      }
+    }
     ws.on('pong', markAlive);
     ws.on('error', (err) => console.error('[WS] client error:', err.message));
     // ── Connection ขาด (ปิด Tab/เน็ตหลุด/Heartbeat Terminate ก็เข้าทางนี้ ──
     // ── เหมือนกัน เพราะ ws.terminate() ก็ Trigger 'close' Event ปกติ) ──────
     // ── ลบ Session ทันที + Broadcast ให้คนอื่นเห็น Offline แบบ Real-time ────
     // ── ไม่ต้องรอ Cutoff 5 นาทีจาก last_seen อีกต่อไป ──────────────────────
-    ws.on('close', async () => {
+    ws.on('close', (code) => {
       if (!ws.username) return;
-      try {
-        await pool.query(`DELETE FROM menu_active_sessions WHERE session_id = $1`, [ws.username]);
-        wsBroadcast('team_status_updated', { username: ws.username, online: false });
-      } catch (e) { console.error('[WS close] cleanup menu_active_sessions error:', e.message); }
+      const u = ws.username;
+      if (hasOtherConn(ws)) return; // MARKER_APP_WS_CLOSE_LAST_CONN_ONLY_V1 -- ยังมี Connection อื่นของ User เดียวกันเปิดอยู่ = ยังไม่ Offline จริง
+      // MARKER_APP_WS_PRESENCE_V2 -- code 4000 = Frontend Logout/Force Logout ตั้งใจปิด -> Offline ทันที
+      // -- code อื่น (ปิดแท็บ/Refresh/เน็ตหลุด/Heartbeat Terminate) -> รอ Grace กัน Refresh แล้วขึ้น Logout ปลอม
+      if (code === 4000) {
+        const pending = presenceGrace.get(u);
+        if (pending) { clearTimeout(pending); presenceGrace.delete(u); }
+        goOffline(u);
+        return;
+      }
+      if (presenceGrace.has(u)) return;
+      presenceGrace.set(u, setTimeout(() => {
+        presenceGrace.delete(u);
+        if (![...wss.clients].some(c => c.readyState === 1 && c.username === u)) goOffline(u);
+      }, PRESENCE_GRACE_MS));
     });
   });
   const wsHeartbeatInterval = setInterval(() => {
@@ -1289,8 +1617,7 @@ const server = app.listen(port, "0.0.0.0", () => {
 
   // ── Cron Job: เก็บ RAM Snapshot + เช็ค Auto-Close AP Period ทุก 5 นาที ──
   const RAM_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
-  // MARKER_APP_DATA_INTEGRITY_CRON_V1 -- Audit รายวัน ไม่ใช้ Interval 5 นาทีร่วมกับตัวอื่น เพราะ Scan ทั้งตาราง bucket_list
-  const DATA_INTEGRITY_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  // MARKER_APP_DATAINTEGRITY_REMOVED_V1 -- ถอด DATA_INTEGRITY_CHECK_INTERVAL_MS ออกแล้ว (ไม่ใช้แล้ว)
   setInterval(async () => {
     try {
       await takeRamSnapshot();
@@ -1386,6 +1713,11 @@ const server = app.listen(port, "0.0.0.0", () => {
       console.error("activity_log OCR retention cron error:", err.message);
     }
     try {
+      await purgeExpiredTaxClosePeriods(); // MARKER_TAXCLOSE_LIFECYCLE_V1 -- ล้างข้อมูล Timeline ปิดภาษีหลังปิด Period ครบ N วัน
+    } catch (err) {
+      console.error("tax close timeline purge cron error:", err.message);
+    }
+    try {
       await checkAndRemapIeSimpleDraftId();
     } catch (err) {
       console.error("IE Simple draft_id remap cron error:", err.message); // MARKER_APP_IE_SIMPLE_DRAFTID_REMAP_CRON_V1
@@ -1402,14 +1734,58 @@ const server = app.listen(port, "0.0.0.0", () => {
     }
   }, RAM_SNAPSHOT_INTERVAL_MS);
 
-  // MARKER_APP_DATA_INTEGRITY_CRON_V1 -- Cron ตรวจ bucket_list หา Branch Label ที่ว่างผิดปกติ วันละครั้ง
+  // MARKER_APP_DATAINTEGRITY_REMOVED_V1 -- ถอด Cron ตรวจ bucket_list Branch Label ว่างออกแล้ว (2026-09-28)
+  // เดิมเรียก checkBucketListDataIntegrity() ทุก DATA_INTEGRITY_CHECK_INTERVAL_MS -- ดูเหตุผลที่ import ด้านบนไฟล์
+
+  // MARKER_DOCCOLLECTION_AUTOCONFIRM_CRON_V1 -- Cron Auto-Confirm Cross Check (doc_collection) (2026-09-28)
+  // เหตุผล: Cross Check ยังคงบังคับทำตามปกติ (ไม่เปลี่ยน Gate การ Download ใดๆ) แต่ถ้าเอกสารถูกโหลดออก
+  // ไปแล้ว (ผ่านช่องทางที่ไม่ผ่าน Gate เช่นปุ่ม "PDF"/รูปแนบ หรือโหลดผ่าน Gate ตามปกติ) และผ่านมาแล้ว
+  // 6 ชม.นับจาก downloaded_at โดยยังไม่มีใครกด Confirm เอง ให้ระบบ Confirm ให้อัตโนมัติ (นับว่า "ถือว่า
+  // ตรวจแล้ว" เพราะไฟล์ถูกใช้งานออกไปจริง) เงื่อนไขครบ 3 อย่าง: fill_started_at, created_at, downloaded_at
+  // ต้องไม่ว่างทั้งหมด และ downloaded_at ต้องผ่านมาแล้ว >= 6 ชม. -- ใช้ downloaded_at เป็นฐานเวลาเพราะเป็น
+  // Trigger ตัวสุดท้ายที่เกิดขึ้นจริง (ถ้ายังไม่เคยโหลดเลย จะไม่มีวัน Auto-Confirm — ยังคงบังคับต้องทำ
+  // Cross Check ปกติอยู่ดี) ยกเว้นเคส AP09/Inputsummary ที่ Auto-Confirm ตั้งแต่ตอน Save อยู่แล้ว (ไม่เข้าเงื่อนไขนี้
+  // เพราะ cross_check.confirmed เป็น true อยู่ก่อนแล้ว) -- ต้อง ALTER TABLE doc_collection ADD COLUMN
+  // downloaded_at TIMESTAMP ก่อน Deploy ไฟล์นี้ (ดู schema/doc_collection_downloaded_at_v1.sql)
+  const DOCCOLLECTION_AUTOCONFIRM_INTERVAL_MS = 30 * 60 * 1000; // เช็คทุก 30 นาที
+  const DOCCOLLECTION_AUTOCONFIRM_HOURS = 6;
   setInterval(async () => {
     try {
-      await checkBucketListDataIntegrity();
+      const { rows } = await pool.query(
+        `UPDATE doc_collection
+         SET cross_check = COALESCE(cross_check, '{}'::jsonb)
+                            || jsonb_build_object(
+                                 'confirmed', true,
+                                 'confirmed_at', to_jsonb(NOW()),
+                                 'confirmed_by', 'system-auto-6h',
+                                 'completed_at', to_jsonb(NOW())
+                               )
+         WHERE status <> 'draft'
+           AND fill_started_at IS NOT NULL
+           AND created_at IS NOT NULL
+           AND downloaded_at IS NOT NULL
+           AND downloaded_at <= NOW() - INTERVAL '${DOCCOLLECTION_AUTOCONFIRM_HOURS} hours'
+           AND COALESCE((cross_check->>'confirmed')::boolean, false) = false
+         RETURNING id, serial_code`
+      );
+      if (rows.length > 0) {
+        console.log(`[MARKER_DOCCOLLECTION_AUTOCONFIRM_CRON_V1] Auto-confirmed ${rows.length} doc_collection row(s):`, rows.map(r => r.serial_code || r.id).join(', '));
+      }
     } catch (err) {
-      console.error("bucket_list data integrity cron error:", err.message);
+      console.error('[MARKER_DOCCOLLECTION_AUTOCONFIRM_CRON_V1] error:', err.message);
     }
-  }, DATA_INTEGRITY_CHECK_INTERVAL_MS);
+  }, DOCCOLLECTION_AUTOCONFIRM_INTERVAL_MS);
+
+  // MARKER_APP_MAINTENANCE_COUNTDOWN_CRON_V1 -- เช็คถี่กว่า Cron อื่น (15 วิ) เพราะ Query เดียวเบามาก
+  // และ User ต้องการให้ปิดตรงเวลาที่ตั้ง Countdown ไว้ ไม่ใช่รอ 5 นาที
+  const MAINTENANCE_CHECK_INTERVAL_MS = 15 * 1000;
+  setInterval(async () => {
+    try {
+      await checkAndEnforceMaintenanceSchedule();
+    } catch (err) {
+      console.error("Maintenance countdown cron error:", err.message);
+    }
+  }, MAINTENANCE_CHECK_INTERVAL_MS);
 
   // ── เก็บ Snapshot แรกทันทีตอน Server เริ่มทำงาน ไม่ต้องรอ 5 นาทีแรก ──
   takeRamSnapshot().catch(err => console.error("Initial RAM snapshot error:", err.message));

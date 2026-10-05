@@ -2134,6 +2134,31 @@ const buildWhtCodeVal = (whtChar, branchDirectCode) => {
   return `${branchDirectCode}-WHT${w}`;
 };
 
+// MARKER_BRANCH_TAXWHT_CONSISTENCY_GUARD_V1 -- ด่านตรวจว่า Tax Code / WHT Code ของทุกบรรทัดขึ้นต้นด้วย Branch Direct ปัจจุบัน
+// (Tax Code = "{BranchDirect}-N VAT7"/"-N SVAT7", WHT Code = "{BranchDirect}-WHT{x}", Tax Code อาจมี Prefix ตัวอักษร T/A/F นำหน้า)
+// คืน Array ของบรรทัดที่ไม่สอดคล้อง (ว่าง = ผ่าน) -- เช็คเฉพาะรูปแบบ Code ที่ระบบสร้างเองเท่านั้น Code ที่พิมพ์เองรูปแบบอื่นไม่ยุ่ง
+const findBranchTaxWhtMismatch = (lines, branchDirectLabel) => {
+  const prefix = String(branchDirectLabel ?? '').split('-')[0].trim().toUpperCase();
+  if (!prefix) return [];
+  const bad = [];
+  (lines || []).forEach((l, i) => {
+    if (!(String(l?.itemCode || '').trim() || String(l?.amount || '').trim())) return;
+    const tax = String(l?.taxCode || '').trim().toUpperCase();
+    const wht = String(l?.whtCode || '').trim().toUpperCase();
+    const taxIsAuto = /-N S?VAT7$/.test(tax);
+    const whtIsAuto = /-WHT[A-Z0-9]+$/.test(wht);
+    const taxOk = !taxIsAuto || tax.startsWith(prefix + '-') || (/^[A-Z]/.test(tax) && tax.slice(1).startsWith(prefix + '-'));
+    const whtOk = !whtIsAuto || wht.startsWith(prefix + '-');
+    if (!taxOk || !whtOk) bad.push({ no: i + 1, taxCode: l.taxCode || '', whtCode: l.whtCode || '', taxOk, whtOk });
+  });
+  return bad;
+};
+const alertBranchTaxWhtMismatch = (confirmDialog, bad, branchDirectLabel) => {
+  const prefix = String(branchDirectLabel ?? '').split('-')[0].trim();
+  const detail = bad.slice(0, 5).map(b => `บรรทัด ${b.no}${b.taxOk ? '' : ' Tax Code: ' + b.taxCode}${b.whtOk ? '' : ' WHT Code: ' + b.whtCode}`).join('\n');
+  confirmDialog.alert(`Tax Code / WHT Code ไม่ตรงกับ Branch ปัจจุบัน (${prefix})\n\n${detail}${bad.length > 5 ? '\n...' : ''}\n\nกรุณาเปิด Invoice Detail ให้ระบบคำนวณใหม่ หรือตรวจ Branch อีกครั้งก่อนบันทึก`, { variant: 'danger', title: 'Branch ไม่สัมพันธ์กับ Tax/WHT Code' });
+};
+
 // MARKER_EDITGROUP_RESPLIT_V1 -- Logic แบ่งกลุ่ม (เหมือน handleSubmitInvoice เป๊ะ)
 // ดึงออกมาเป็นฟังก์ชันกลาง ใช้ร่วมกันทั้งตอน Submit ใหม่ และตอน Save "แก้ไขทั้งกลุ่ม"
 // -- กฎ1 Real Vendor แยกเป็น Invoice ของตัวเองเสมอ / กฎ2 ไม่มี Real Vendor จับ Tax Code ข้าม H-Block ได้ --
@@ -2301,7 +2326,22 @@ const lookupAccountCpcPriorityGlobal = (rules, itemCode, supplierCode, defaultAc
   return { account, cpc, subAcc };
 };
 
-const recalcLines = (lines, itemcodeItems, vendorInfo, form, accountCpcRules = []) => {
+// MARKER_AVERAGE_BU_TAXCODE_A_PREFIX_V1 -- BU เฉลี่ย (ไม่ใช่ 100%) เช่น TOP, CFW: Tax Code ต้องนำหน้าด้วย A (AXXXXXX-N VAT7)
+// ตัดสินจากคอลัมน์ '%' ของ branch_list (ตัวเลข != 100 = เฉลี่ย) ของ Branch ที่เลือก หรือ Branch Direct ตัวใดตัวหนึ่ง
+const isAverageBuBranch = (branchItems, branchNo, branchDirectLabel) => {
+  if (!Array.isArray(branchItems) || !branchItems.length) return false;
+  const codes = [String(branchNo || '').trim(), String(branchDirectLabel || '').split('-')[0].trim()].filter(Boolean);
+  return codes.some(c => {
+    const row = branchItems.find(b => String(b['Branch Code'] || '').trim() === c);
+    if (!row) return false;
+    const raw = String(row['%'] ?? '').replace('%', '').trim();
+    if (raw === '') return false;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) && n !== 100;
+  });
+};
+
+const recalcLines = (lines, itemcodeItems, vendorInfo, form, accountCpcRules = [], branchItems = []) => {
   const calculated = lines.map(l => {
     const base = calcInvoiceLine(l, itemcodeItems, vendorInfo, form);
     if (!accountCpcRules.length || !base.itemCode?.trim()) return base;
@@ -2315,7 +2355,9 @@ const recalcLines = (lines, itemcodeItems, vendorInfo, form, accountCpcRules = [
     return { ...base, account: [finalCpc, finalAccount, finalSubAcc].filter(Boolean).join('-') };
   });
   const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
-  return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode }));
+  const isAvg = isAverageBuBranch(branchItems, form?.branchNo, form?.branchDirectLabel);
+  const _pfx = hasT ? 'T' : (isAvg ? 'A' : ''); // T (Account 116301) ชนะ A
+  return calculated.map(l => ({ ...l, taxCode: l._taxCodeRaw ? (_pfx + l._taxCodeRaw) : l.taxCode }));
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2358,6 +2400,70 @@ const INVOICE_PATTERN_BUILDERS = {
   'AF-2YMM-1':   (Fp, Mp, Lp, d, r) => { const d2 = new Date(d); d2.setMonth(d2.getMonth() - 1); return `${Fp}${invFmtYYMM(d2)}${Lp}${r}`; },
 };
 
+// MARKER_INVOICE_RULE_GENERIC_PARSER_V1 -- Logic กลาง "รองรับทุก Config": ชื่อ Rule = [ตำแหน่ง]-[รูปแบบวันที่]-[Offset]
+//   ตำแหน่ง: BF/AF/BM/AM/BL/AL (A=After, B=Before, F=First, M=Mid, L=Last Part) ; ไม่ใส่ตำแหน่ง = ไม่ใช้ First Part (วันที่นำหน้า)
+//   วันที่: ต่อหน่วยได้อิสระ 2Y,FY,T2Y(พ.ศ.2หลัก=YY+43),TFY(พ.ศ.),2M,2D (รับ YY/YYYY/MM/DD แบบเดิมด้วย) เช่น 2Y2M2D, 2D2MFY, T2Y2M
+//   "|" แยกวันที่ 2 ท่อน (ท่อนที่ 2 ไปต่อท้ายส่วนถัดไป) เช่น AF-TFY|2M ; ท้าย "-N" = เลื่อนวัน (ถ้ามี 2D/DD) หรือเดือน (ถ้าไม่มี) ลบ N
+//   ลำดับ: First, Mid, Last (วันที่แทรกตามตำแหน่ง) แล้วจบด้วยเลขรันเสมอ ; Table Builder เดิมยังมีผลก่อน (ผลเลขเดิมไม่เปลี่ยน) Rule ที่ไม่อยู่ใน Table ใช้ตัว Parse นี้
+const INV_RULE_ALIASES = {};
+const INV_DATE_TOKEN_FN = {
+  'T2Y':  (d) => String((d.getFullYear() % 100) + 43),
+  'TFY':  (d) => String(d.getFullYear() + 543),
+  'YYYY': (d) => String(d.getFullYear()),
+  'FY':   (d) => String(d.getFullYear()),
+  'YY':   (d) => String(d.getFullYear() % 100).padStart(2, '0'),
+  '2Y':   (d) => String(d.getFullYear() % 100).padStart(2, '0'),
+  'MM':   (d) => String(d.getMonth() + 1).padStart(2, '0'),
+  '2M':   (d) => String(d.getMonth() + 1).padStart(2, '0'),
+  'DD':   (d) => String(d.getDate()).padStart(2, '0'),
+  '2D':   (d) => String(d.getDate()).padStart(2, '0'),
+};
+const INV_POS_INDEX = { BF: 0, AF: 1, BM: 1, AM: 2, BL: 2, AL: 3 };
+const INV_parseDateSeg = (s) => {
+  const toks = s.match(/T2Y|TFY|YYYY|YY|2Y|FY|MM|2M|DD|2D/g) || [];
+  return toks.join('') === s && toks.length > 0 ? toks : null;
+};
+const INV_parseInvoiceRule = (ruleRaw) => {
+  let s = String(ruleRaw || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (INV_RULE_ALIASES[s]) s = INV_RULE_ALIASES[s];
+  if (!s) return null;
+  let pos = null;
+  const pm = s.match(/^(BF|AF|BM|AM|BL|AL)-(.+)$/);
+  if (pm) { pos = pm[1]; s = pm[2]; }
+  let offset = 0;
+  const om = s.match(/^(.+)-(\d{1,2})$/);
+  if (om) { s = om[1]; offset = parseInt(om[2], 10); }
+  const segs = s.split('|').map(INV_parseDateSeg);
+  if (segs.length > 2 || segs.some((x) => !x)) return null;
+  return { pos, segs, offset };
+};
+const INV_genericCache = {};
+const INV_makeGenericBuilder = (ruleRaw) => {
+  const key = String(ruleRaw || '').trim().toUpperCase();
+  if (key in INV_genericCache) return INV_genericCache[key];
+  const spec = INV_parseInvoiceRule(key);
+  let fn = null;
+  if (spec) {
+    const hasDay = spec.segs.some((sg) => sg.includes('DD') || sg.includes('2D'));
+    fn = (Fp, Mp, Lp, d0, r) => {
+      const d = new Date(d0);
+      if (spec.offset) { if (hasDay) d.setDate(d.getDate() - spec.offset); else d.setMonth(d.getMonth() - spec.offset); }
+      const segText = spec.segs.map((sg) => sg.map((t) => INV_DATE_TOKEN_FN[t](d)).join(''));
+      const items = spec.pos ? [Fp, Mp, Lp] : [Mp, Lp]; // ไม่ระบุตำแหน่ง = ไม่ใช้ First Part
+      const idx = spec.pos ? INV_POS_INDEX[spec.pos] : 0;
+      if (segText.length === 2) items.splice(Math.min(idx + 1, items.length), 0, segText[1]);
+      items.splice(Math.min(idx, items.length), 0, segText[0]);
+      return items.join('') + r;
+    };
+  }
+  INV_genericCache[key] = fn;
+  return fn;
+};
+const INV_resolveInvoiceBuilder = (ruleRaw) => {
+  const k = String(ruleRaw || '').trim();
+  return INVOICE_PATTERN_BUILDERS[k] || INVOICE_PATTERN_BUILDERS[k.toUpperCase()] || INV_makeGenericBuilder(k);
+};
+
 // typedNum   = เลขรันที่ user กรอกในช่อง Invoice num (กรอบแดง)
 // invDateStr = ค่าจาก input[type=date] ("YYYY-MM-DD")
 // vendorInfo = record จาก supplier_list (มี 'Invoice No.', 'First Part', 'Mid Part', 'Last Part', 'Digit')
@@ -2385,7 +2491,7 @@ const buildInvoiceNumber = (typedNum, invDateStr, vendorInfo) => {
   const result = (n > 0 && /^\d+$/.test(raw)) ? raw.padStart(n, '0') : raw;
 
   const d = invDateStr ? new Date(`${invDateStr}T00:00:00`) : null;
-  const builder = INVOICE_PATTERN_BUILDERS[ruleCode];
+  const builder = INV_resolveInvoiceBuilder(ruleCode);
   if (!builder || !d || isNaN(d.getTime())) return `${Fp}${result}`;
   return builder(Fp, Mp, Lp, d, result);
 };
@@ -2397,14 +2503,14 @@ const getUsedInvoiceParts = (ruleCode, digitRule) => {
   const digitNorm = String(digitRule || '').trim().toUpperCase();
   if (digitNorm === 'FULL') return { fp: false, mp: false, lp: false };
   const ruleNorm = String(ruleCode || '').trim().toUpperCase();
-  const builder = INVOICE_PATTERN_BUILDERS[String(ruleCode || '').trim()];
+  const builder = INV_resolveInvoiceBuilder(ruleCode);
   if (!builder) return { fp: false, mp: false, lp: false };
   const SENTINEL_FP = '__FPSENTINEL__', SENTINEL_MP = '__MPSENTINEL__', SENTINEL_LP = '__LPSENTINEL__';
   let out = '';
   try { out = builder(SENTINEL_FP, SENTINEL_MP, SENTINEL_LP, new Date(), '0001') || ''; } catch (e) { out = ''; }
   const sentinelFp = out.includes(SENTINEL_FP), sentinelMp = out.includes(SENTINEL_MP), sentinelLp = out.includes(SENTINEL_LP);
   // MARKER_SUPPLIER_INVOICE_PART_USAGE_AF_PIPE_V1 -- AF: First Part บังคับเสมอ, Mid Part บังคับเฉพาะ Pattern แบบผสม (มี "|" เช่น AF-FY|2M), Last Part ตามจริง (ครอบคลุม AF-YYMMDD-1/AF-2YMM-1 ที่ใช้ Last Part แทน Mid Part)
-  if (ruleNorm.startsWith('AF')) {
+  if (ruleNorm.startsWith('AF') && INVOICE_PATTERN_BUILDERS[String(ruleCode || '').trim()]) { // MARKER_INVOICE_RULE_GENERIC_PARSER_V1 -- เฉพาะ Rule เดิมใน Table ; Rule ที่ Parse ใหม่ใช้ผล Sentinel จริง
     const hasPipe = ruleNorm.includes('|');
     return { fp: true, mp: hasPipe ? sentinelMp : false, lp: sentinelLp };
   }
@@ -2420,7 +2526,7 @@ const VRV_MAPPING = {
 
 const SUPPLIER_SITE_OPTS_DEFAULT = ['สำนักงานใหญ่','HQ','MAIN'];
 const DIGIT_OPTS_DEFAULT = ['4DB','5DB','6DB','7DB','8DB'];
-const INVOICE_NO_OPTS_DEFAULT = Object.keys(INVOICE_PATTERN_BUILDERS);
+const INVOICE_NO_OPTS_DEFAULT = [...Object.keys(INVOICE_PATTERN_BUILDERS), 'AF-2Y2M2D', 'AM-2Y2M2D']; // MARKER_INVOICE_RULE_GENERIC_PARSER_V1
 
 
 function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu = '', bookFilter = '', fetchCollection, userName = '', quickVendors = [], initialViewCode = '' }) {
@@ -2654,10 +2760,10 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     ['Code',            'Code',          '110px'],
     ['BU Code',         'BU',            '55px'],
     ['Supplier Name',   'Supplier Name', ''],
-    ['Supplier Number', 'Supplier No.',  '110px'],
-    ['Supplier Site',   'Site',          '100px'],
-    ['Tax-Type',        'Tax-Type',      '75px'],
-    ['Notice',          'Notice',        '75px'],
+    ['Supplier Number', 'Supplier No.',  '100px'],
+    ['Supplier Site',   'Site',          '90px'],
+    ['Tax-Type',        'Tax-Type',      '70px'],
+    ['Notice',          'Notice',        '90px'],
   ];
 
   const baseInput = { height: '30px', padding: '0 8px', fontSize: '12px', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', width: '100%', border: '0.5px solid #ddd', background: 'white', color: '#1a3a5c' };
@@ -2847,7 +2953,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                   <div style={{ padding: '6px 8px', fontSize: '11px', color: '#888', background: '#f8f9fa', whiteSpace: 'nowrap' }}>Notice</div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
-                  {(() => { const opts = getOpts('Invoice No.'); return <div key="invno" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => setField('Invoice No.', v)} options={opts} /></div>; })()}
+                  {(() => { const opts = getOpts('Invoice No.'); return <div key="invno" style={{ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0' }}><ComboInput value={form['Invoice No.'] || ''} onChange={v => { /* MARKER_SUPPLIER_RULE_CHANGE_CLEAR_FULL_V1 -- เลือก Invoice Rule ตอน Digit=FULL -> เคลียร์ Digit เป็นค่าว่าง (FULL ข้าม Pattern ทั้งหมด) / ลบ Rule จนไม่เหลือ Rule+First+Mid+Last -> Digit กลับเป็น FULL / ปุ่ม Reset ตั้ง FULL ตามเดิม */ setField('Invoice No.', v); if (v && String(form['Digit'] || '').trim().toUpperCase() === 'FULL') setField('Digit', ''); else if (!v && !String(form['First Part'] || '').trim() && !String(form['Mid Part'] || '').trim() && !String(form['Last Part'] || '').trim()) setField('Digit', 'FULL'); }} options={opts} /></div>; })()}
                   {(() => { // MARKER_SUPPLIER_INVOICE_PART_USAGE_V1 -- Highlight สีเหลืองเฉพาะ Field ที่ Pattern+Digit ปัจจุบันใช้จริง
                     const _usedParts = getUsedInvoiceParts(form['Invoice No.'], form['Digit']);
                     const _partCellStyle = (used) => ({ padding: '4px 6px', borderRight: '0.5px solid #e8eaf0', background: used ? '#FFF3CD' : 'transparent' });
@@ -2883,7 +2989,8 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                   } else {
                     const dmForPreview = digitRuleForPreview.match(/^(\d{1,2})DB$/);
                     const nForPreview = dmForPreview ? parseInt(dmForPreview[1], 10) : 0;
-                    const placeholderRunForPreview = nForPreview > 0 ? '1'.padStart(nForPreview, '0') : '0001';
+                    // MARKER_SUPPLIER_PREVIEW_NO_DEFAULT_DIGIT_V1 -- Digit ว่าง = ไม่กำหนดหลัก: อย่าสมมติ 4 หลัก แสดงเป็น [เลขรัน] แทน
+                    const placeholderRunForPreview = nForPreview > 0 ? '1'.padStart(nForPreview, '0') : '[เลขรัน]';
                     const todayForPreview = new Date().toISOString().slice(0, 10);
                     const builtForPreview = buildInvoiceNumber(placeholderRunForPreview, todayForPreview, {
                       'First Part': form['First Part'] || '',
@@ -3068,8 +3175,9 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                       {/* MARKER_SUPPLIERSEARCHPOPUP_BUCOLUMN_REALFIELD_V1 -- เดิมตัดจาก Code prefix (ผิดถ้า Code ไม่มีขีด) เปลี่ยนเป็นอ่าน 'BU Code' จริง */}
                       <span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '4px', padding: '1px 6px', fontSize: '10px', fontWeight: '500' }}>{item['BU Code'] || '-'}</span>
                     </td>
-                    <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      <div style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item['Supplier Name'] || '-'}</div>
+                    <td style={{ padding: '9px 12px', overflow: 'hidden' }}>
+                      {/* MARKER_SUPPLIERSEARCHPOPUP_NAME_WRAP_TOOLTIP_V1 -- ชื่อยาวขึ้นได้ 2 บรรทัด + Tooltip แสดงชื่อเต็มเมื่อยังไม่พอ */}
+                      <div title={item['Supplier Name'] || ''} style={{ fontWeight: '500', color: '#1a3a5c', fontSize: '12px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', lineHeight: 1.35 }}>{item['Supplier Name'] || '-'}</div>
                     </td>
                     <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{item['Supplier Number'] || '-'}</td>
                     <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px', whiteSpace: 'nowrap' }}>{item['Supplier Site'] || '-'}</td>
@@ -6154,9 +6262,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       setLines(prev => {
         const calculated = prev.map(line => calcLine(line, itemcodeItems, vendorInfo, form, allAccountCpcRules));
         const hasT = calculated.some(l => String(l._accountRaw || '').startsWith('116301'));
+        const _pfx = hasT ? 'T' : (isAverageBuBranch(branchItems, form?.branchNo, form?.branchDirectLabel) ? 'A' : ''); // MARKER_AVERAGE_BU_TAXCODE_A_PREFIX_V1
         return calculated.map(l => ({
           ...l,
-          taxCode: l._taxCodeRaw ? (hasT ? 'T' + l._taxCodeRaw : l._taxCodeRaw) : l.taxCode,
+          taxCode: l._taxCodeRaw ? (_pfx + l._taxCodeRaw) : l.taxCode,
         }));
       });
     }, 150);
@@ -6173,7 +6282,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     form?.customizePeriod, form?.customizePercent, // MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_SYNC_FIX_V1
     form?.dueDate, // MARKER_WHT_QUICKCALC_CALCLINE_DESC_SUFFIX_V1 -- Sync Desc ถ้าแก้ Due Date
     allAccountCpcRules, // MARKER_ACCOUNT_CPC_PRIORITY_LOOKUP_PHASE5_V1
-    vendorInfo, itemcodeItems?.length,
+    vendorInfo, itemcodeItems?.length, branchItems?.length,
   ]);
 
   const [showPeriodConfirm, setShowPeriodConfirm] = useState(false);
@@ -6377,7 +6486,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         const params = new URLSearchParams({
           vendor_no: vendorNo, invoice_no: invNo, amount: String(netTotal),
           bu: bu || '', inv_date: form?.invDate || '',
+          no_strip: '1', // MARKER_DUPCHECK_SEND_EXACT_FLAGS_V1
         });
+        if (String(vendorInfo?.['Digit'] ?? '').trim().toUpperCase() === 'FULL') params.set('digit_full', '1');
         const data = await apiFetch(`/invoice-duplicate-check?${params.toString()}`);
         // MARKER_INVOICEDETAIL_LIVE_DUP_SEQ_GUARD_V1 -- มี Request ใหม่กว่าแซงไปแล้ว ทิ้งผลลัพธ์นี้
         if (mySeq !== liveDupCheckSeqRef.current) return;
@@ -8562,8 +8673,9 @@ function BucketItemPopup({ show, onClose, invoice, mode = 'view', itemcodeItems 
   // recalc ทุกครั้งที่ itemCode/amount/tax/header เปลี่ยน (เฉพาะตอน edit)
   useEffect(() => {
     if (isView) return;
-    setLines(prev => recalcLines(prev, itemcodeItems, vendorInfo, form, allAccountCpcRules));
+    setLines(prev => recalcLines(prev, itemcodeItems, vendorInfo, form, allAccountCpcRules, branchItems));
   }, [
+    branchItems?.length,
     lines.map(l => l.itemCode).join(','),
     lines.map(l => l.amount).join(','),
     allAccountCpcRules,
@@ -11829,7 +11941,9 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
                     <div style={{ flex: 1 }} />
                   </div>
                   {/* MARKER_PVREG_ADD_SCROLL_BACK_V1 -- เอา Scroll กลับมาใส่ เพราะตอนนี้แสดงทุกแถวในหน้าเดียว ไม่มี Pagination จำกัดความสูงแล้ว */}
-                  <div style={{ maxHeight: '340px', overflowY: 'auto', flexShrink: 0 }}>
+                  {/* MARKER_PVREG_LIMIT_5ROWS_SCROLL_V1 -- จำกัดให้เห็นแค่ ~5 แถว (Header + 5 Row) แล้ว Scroll ต่อ
+                  ไม่ให้ตารางสูงเกินไปจนไปแย่งพื้นที่ส่วน Detail/Invoice Monitor ด้านล่าง (เดิม 340px เห็นได้ ~10-11 แถว) */}
+                  <div style={{ maxHeight: '170px', overflowY: 'auto', flexShrink: 0 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
                     <colgroup>
                       <col style={{ width: '5%' }} /><col style={{ width: '19%' }} /><col style={{ width: '13%' }} /><col style={{ width: '15%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} /><col style={{ width: '23%' }} />
@@ -12207,6 +12321,72 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
   );
 }
 
+// MARKER_REGINBOX_SUPPORTING_IMAGE_PDF_V1
+// ── โหลด pdf.js จาก CDN แบบ Lazy (เดิม Zone นี้ยังไม่รองรับ PDF เลย -- accept="image/*" เท่านั้น) ──
+let _apPdfJsLoadPromise = null;
+function loadPdfJsAP() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_apPdfJsLoadPromise) return _apPdfJsLoadPromise;
+  _apPdfJsLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(window.pdfjsLib);
+    };
+    script.onerror = () => reject(new Error('โหลด PDF Engine ไม่สำเร็จ (ตรวจ Internet/Firewall)'));
+    document.head.appendChild(script);
+  });
+  return _apPdfJsLoadPromise;
+}
+// ── แปลง PDF หน้าแรกเป็นรูป JPG (Zone นี้มี Slot รูปประกอบแค่ 1 รูป เลยใช้แค่หน้าแรกของ PDF) ──
+async function renderPdfFirstPageToImageAP(file) {
+  const pdfjsLib = await loadPdfJsAP();
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
+// MARKER_REGINBOX_SUPPORTING_IMAGE_COMPRESS_V1
+// ── บีบอัดรูปประกอบก่อนเก็บ (เดิม Zone นี้เก็บ Base64 ดิบจาก FileReader ตรงๆ ไม่มีการย่อ/ปรับความคมชัดเลย) ──
+// ── ใช้ Logic เดียวกับ compressImage ใน UploadGen.js (ย่อ MAX_DIM 1600 + ไล่ Quality จากสูงลงต่ำ หยุดที่ Diminishing Return) ──
+function compressSupportingImage(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX_DIM = 1600;
+      let { width, height } = img;
+      if (width > MAX_DIM || height > MAX_DIM) {
+        const ratio = Math.min(MAX_DIM / width, MAX_DIM / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+
+      const qualities = [0.92, 0.86, 0.8, 0.74, 0.68, 0.62, 0.56, 0.5, 0.44, 0.38];
+      let best = canvas.toDataURL('image/jpeg', qualities[0]);
+      for (let i = 1; i < qualities.length; i++) {
+        const candidate = canvas.toDataURL('image/jpeg', qualities[i]);
+        const reduction = (best.length - candidate.length) / best.length;
+        if (reduction < 0.04) break;
+        best = candidate;
+      }
+      resolve(best);
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 // ── Popup ส่งตรวจ พร้อมแนบไฟล์ Invoice Register (Paste จาก Excel/Sheet หรือ Upload ไฟล์ Excel) ──
 // MARKER_INVOICE_REGISTER_REUSE_EXISTING_V1
 function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], onDone, canApproveBatch = false, currentUsername = '' }) {
@@ -12271,13 +12451,42 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
   useEffect(() => { setRegPage(0); }, [regSearchQuery]);
   const [supportingImagePreview, setSupportingImagePreview] = useState(null);
   const [regImageZoom, setRegImageZoom] = useState(1);
+  const [regImageCompressing, setRegImageCompressing] = useState(false); // MARKER_REGINBOX_SUPPORTING_IMAGE_COMPRESS_V1
+  const [regImageDragOver, setRegImageDragOver] = useState(false); // MARKER_REGINBOX_SUPPORTING_IMAGE_DRAGDROP_V1
   const supportingImageInputRef = useRef(null);
+  // MARKER_REGINBOX_SUPPORTING_IMAGE_COMPRESS_V1 -- Bug Fix: เดิมเก็บ Base64 ดิบจาก FileReader ตรงๆ
+  // ไม่มีการย่อขนาด/ปรับความคมชัดเลย (ไฟล์ใหญ่ไม่จำเป็น) -- แก้ให้บีบอัดผ่าน compressSupportingImage ก่อนเก็บเสมอ
+  // MARKER_REGINBOX_SUPPORTING_IMAGE_PDF_V1 -- Bug Fix: เดิมรับแต่ accept="image/*" ไฟล์ PDF แนบไม่ได้เลย
+  // -- แก้ให้รับ PDF ด้วย (แปลงหน้าแรกเป็นรูปก่อนเข้า Flow บีบอัดเดียวกับรูปภาพปกติ -- Zone นี้มี Slot เดียว)
+  const processSupportingImageFile = async (file) => {
+    if (!file) return;
+    const isPdf = file.type === 'application/pdf';
+    if (!isPdf && !file.type.startsWith('image/')) return;
+    setRegImageCompressing(true);
+    try {
+      let raw;
+      if (isPdf) {
+        raw = await renderPdfFirstPageToImageAP(file);
+      } else {
+        raw = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+      const compressed = await compressSupportingImage(raw);
+      setSupportingImagePreview(compressed);
+    } catch (e) {
+      console.error('แปลงรูปประกอบไม่สำเร็จ:', e.message);
+      confirmDialog.alert('แปลงไฟล์ไม่สำเร็จ: ' + e.message, { variant: 'danger' });
+    }
+    setRegImageCompressing(false);
+  };
   const handleSupportingImageSelect = (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setSupportingImagePreview(String(reader.result || ''));
-    reader.readAsDataURL(file);
+    processSupportingImageFile(file);
+    e.target.value = '';
   };
 
   // MARKER_REGINBOX_3ZONE_PARSE_V1
@@ -12608,10 +12817,26 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
                     style={{ width: '100%', height: registerRows ? '100px' : '360px', padding: '8px', fontSize: '11px', fontFamily: 'monospace', border: '1px dashed #ccc', borderRadius: '7px', background: '#fafbfc', color: '#1a3a5c', outline: 'none', resize: 'none', boxSizing: 'border-box', overflowX: 'auto', whiteSpace: 'pre' }} />
                   {registerRows && (
                     <div style={{ marginTop: '8px', border: '0.5px solid #e8eaf0', borderRadius: '8px', overflow: 'hidden', display: 'grid', gridTemplateColumns: '40% 60%' }}>
-                      <div style={{ borderRight: '0.5px solid #e8eaf0', padding: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px', minHeight: '140px', cursor: 'pointer', position: 'relative', overflow: 'auto' }}
-                        onClick={() => supportingImageInputRef.current?.click()}>
-                        <input type="file" accept="image/*" ref={supportingImageInputRef} onChange={handleSupportingImageSelect} style={{ display: 'none' }} />
-                        {supportingImagePreview ? (
+                      <div style={{ borderRight: '0.5px solid #e8eaf0', padding: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px', minHeight: '140px', cursor: 'pointer', position: 'relative', overflow: 'auto', background: regImageDragOver ? '#eef4fb' : 'transparent', outline: regImageDragOver ? '1.5px dashed #1a3a5c' : 'none', outlineOffset: '-4px', transition: 'background .15s, outline .15s' }}
+                        onClick={() => supportingImageInputRef.current?.click()}
+                        /* MARKER_REGINBOX_SUPPORTING_IMAGE_DRAGDROP_V1 -- Bug Fix: เดิม Zone นี้ไม่มี onDrop/onDragOver เลย
+                        ทั้งที่ข้อความบอกว่า "วางรูปประกอบ" -- ลากไฟล์มาวางแล้วไม่มีอะไรเกิดขึ้น (คลิกเลือกไฟล์ได้ทางเดียว) */
+                        onDragOver={(e) => { e.preventDefault(); setRegImageDragOver(true); }}
+                        onDragLeave={(e) => { e.preventDefault(); setRegImageDragOver(false); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setRegImageDragOver(false);
+                          const file = Array.from(e.dataTransfer.files || []).find(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+                          if (file) processSupportingImageFile(file);
+                        }}>
+                        {/* MARKER_REGINBOX_SUPPORTING_IMAGE_PDF_V1 -- เพิ่ม accept PDF (เดิมรับแต่ image/*) */}
+                        <input type="file" accept="image/*,application/pdf" ref={supportingImageInputRef} onChange={handleSupportingImageSelect} style={{ display: 'none' }} />
+                        {regImageCompressing ? (
+                          <>
+                            <span style={{ fontSize: '20px', color: '#bbb' }}>⏳</span>
+                            <span style={{ fontSize: '10px', color: '#aaa', textAlign: 'center' }}>กำลังแปลงรูป...</span>
+                          </>
+                        ) : supportingImagePreview ? (
                           <>
                             <img src={supportingImagePreview} alt="รูปประกอบ" style={{ maxWidth: '100%', maxHeight: '120px', borderRadius: '4px', transform: `scale(${regImageZoom})`, transition: 'transform 0.15s' }} />
                             <div style={{ position: 'absolute', bottom: '5px', right: '5px', display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
@@ -12621,8 +12846,8 @@ function ReportToInvoiceRegisterPopup({ show, onClose, batch, reviewers = [], on
                           </>
                         ) : (
                           <>
-                            <span style={{ fontSize: '20px', color: '#bbb' }}>🖼️</span>
-                            <span style={{ fontSize: '10px', color: '#aaa', textAlign: 'center' }}>วางรูปประกอบ<br/>หรือคลิกเพื่ออัปโหลด</span>
+                            <span style={{ fontSize: '20px', color: regImageDragOver ? '#1a3a5c' : '#bbb' }}>🖼️</span>
+                            <span style={{ fontSize: '10px', color: regImageDragOver ? '#1a3a5c' : '#aaa', textAlign: 'center' }}>ลากไฟล์รูป/PDF มาวาง<br/>หรือคลิกเพื่ออัปโหลด</span>
                           </>
                         )}
                       </div>
@@ -13786,6 +14011,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       confirmDialog.alert('โหมดดูอย่างเดียว (View Only) — ไม่สามารถแก้ไข Invoice ได้', { variant: 'warning' });
       return;
     }
+    // MARKER_BRANCH_TAXWHT_CONSISTENCY_GUARD_V1 -- Edit Form: Tax Code/WHT Code ต้องสอดคล้องกับ Branch Direct ที่จะบันทึก
+    { const _badE = findBranchTaxWhtMismatch(lines, form_data?.branchDirectLabel); if (_badE.length > 0) { alertBranchTaxWhtMismatch(confirmDialog, _badE, form_data?.branchDirectLabel); return false; } }
     // MARKER_UNIVERSAL_RESPLIT_V1 -- ทุกครั้งที่ Save ให้วิเคราะห์กลุ่มใหม่เสมอ (ไม่ว่าจะ Edit ใบเดียวหรือหลายใบ)
     // ถือว่า Edit ใบเดียวเป็น "กลุ่มขนาด 1" แล้วรัน Logic เดียวกับตอน Submit ครั้งแรกทุกครั้ง
     const effectiveGroupIds = (bucketPopupGroupIds && bucketPopupGroupIds.length > 0)
@@ -13825,7 +14052,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       // MARKER_BASEINVOICENO_INCLUDE_NV_SUFFIX_V1 -- เดิมจับแค่ /N (เช่น /1, /2) ไม่เคยจับ _NV เลย
         // ทำให้กลุ่มที่ไม่มี Tax Code (ได้ Suffix _NV แทน /N) ไม่ถูกรวมกลุ่มกับ Invoice หลัก
         // (Bug เดียวกันซ้ำ 6 จุดทั่วไฟล์ -- แก้พร้อมกันหมดในรอบนี้)
-        const baseInvNoFixed = String(form_data.invoiceNum || firstOrigInv?.invoice_no || '').replace(/(\/\d+|_NV)$/, '');
+        const baseInvNoFixed = apStripGroupSuffix(form_data.invoiceNum || firstOrigInv?.invoice_no || '', form_data.invoiceNum ? form_data : firstOrigInv?.form_data);
       // MARKER_SMART_MATCH_GAP_FIX_V1 -- เลข invoice_no อิงตาม "ตำแหน่ง (index)" ของกลุ่มที่คำนวณได้เสมอ
       // (gi=0 = เลขฐาน ไม่มี suffix, gi=1,2,3... = /1 /2 /3) ทำให้ปิด Gap อัตโนมัติเสมอไม่ว่าจะมาจากไหน
       // ส่วนการจับคู่ว่ากลุ่มไหนอัปเดต DB record ไหน ยังใช้เนื้อหาจริง (Real Vendor/Tax Code) เหมือนเดิม
@@ -14021,7 +14248,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       confirmDialog.alert('โหมดดูอย่างเดียว (View Only) — ไม่สามารถลบ Invoice ได้', { variant: 'warning' });
       return;
     }
-    const toDelete = invoices.filter(inv => String(inv.invoice_no || '-').replace(/(\/\d+|_NV)$/, '') === baseNo);
+    const toDelete = invoices.filter(inv => apStripGroupSuffix(inv.invoice_no || '-', inv.form_data) === baseNo);
     if (!toDelete.length) return;
     if (!(await confirmDialog.confirm(`ต้องการลบ Invoice ${baseNo} ทั้งหมด ${toDelete.length} บรรทัด?`, { variant: 'danger', confirmText: 'ลบ' }))) return;
     const syncedIds = toDelete.filter(inv => inv._synced && inv.id).map(inv => inv.id);
@@ -14031,7 +14258,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       try { broadcastWs('bucket_item_deleted', { ids: syncedIds }); } catch (e) { console.error('[broadcast bucket_item_deleted]', e); }
     }
     setInvoices(list => {
-      const next = list.filter(inv => String(inv.invoice_no || '-').replace(/(\/\d+|_NV)$/, '') !== baseNo);
+      const next = list.filter(inv => apStripGroupSuffix(inv.invoice_no || '-', inv.form_data) !== baseNo);
       saveLocalBucket(next);
       return next;
     });
@@ -14162,6 +14389,8 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
       confirmDialog.alert('กรุณาเลือก Branch ให้ครบก่อน Submit Invoice (Branch No / Branch Label ห้ามว่าง)', { variant: 'danger' });
       return false;
     }
+    // MARKER_BRANCH_TAXWHT_CONSISTENCY_GUARD_V1 -- Tax Code/WHT Code ต้องสอดคล้องกับ Branch Direct ปัจจุบัน
+    { const _bad = findBranchTaxWhtMismatch(lines, form.branchDirectLabel); if (_bad.length > 0) { alertBranchTaxWhtMismatch(confirmDialog, _bad, form.branchDirectLabel); return false; } }
     // MARKER_GRT_MANUAL_CONFIRM_V1
     const sumField = (ls, key) => ls.reduce((s, l) => s + (parseFloat(String(l[key] ?? '').replace(/,/g, '')) || 0), 0);
     // MARKER_APCONTROLLER_ROUND2_ON_SUBMIT_V1
@@ -14359,7 +14588,13 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     // ── Group Item ตาม Invoice หลัก (ตัด /N ท้ายออก) เช็คแค่ 1 ครั้งต่อกลุ่ม ──
     // ── ไม่แยกเช็ค/แยกถาม Popup ทีละใบย่อย (Base/1/2 ที่จริงเป็น Invoice ──────
     // ── เดียวกัน) — และยิง Request ของทุกกลุ่มพร้อมกัน (Parallel) ด้วย ────────
-    const baseInvoiceNoOf = (item) => String(item.invoice_no || '').replace(/(\/\d+|_NV)$/, '');
+    // MARKER_APCONTROLLER_DUPCHECK_BASE_KNOWN_SUFFIX_V1 -- ตัดเฉพาะ Suffix Split ที่ระบบต่อเองจริง (form_data.invoiceSuffix) แทนการเดาด้วย Regex /\d+ ท้ายเลข
+    // เดิม Invoice จริงที่มี /ตัวเลข ท้ายเลข (เช่น SV0005/69060052) ถูกตัดเหลือ SV0005 ไปเช็คซ้ำกับ Invoice อื่นที่เลข SV0005 -> ขึ้น DUPLICATE ผิด
+    const baseInvoiceNoOf = (item) => {
+      const no = String(item.invoice_no || '');
+      const sfx = String(item.form_data?.invoiceSuffix || '');
+      return (sfx && no.endsWith(sfx)) ? no.slice(0, no.length - sfx.length) : no;
+    };
     const baseGroups = new Map();
     for (const item of newItems) {
       const key = baseInvoiceNoOf(item);
@@ -14387,8 +14622,14 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
           inv_date: rep.inv_date || '',
         });
         if (rep.form_data?.poNum) params.set('po_num', rep.form_data.poNum);
+        // MARKER_DUPCHECK_SEND_EXACT_FLAGS_V1 -- บอก Backend ตรงๆ ว่าเลขนี้เป็น Base แล้ว (ห้ามตัด /ตัวเลข ซ้ำ) และ Vendor ตั้ง Digit = FULL หรือไม่
+        params.set('no_strip', '1');
+        const dupVendorRow = supplierItems.find(si => String(si['Supplier Number'] ?? '').trim() === String(rep.vendor_no || '').trim());
+        const dupDigitFull = String(dupVendorRow?.['Digit'] ?? '').trim().toUpperCase() === 'FULL';
+        if (dupDigitFull) params.set('digit_full', '1');
         // MARKER_INVOICE_DIGIT_CHECK_FRONTEND_V1 -- ยิงคู่กัน (Parallel) กับ Duplicate Check
         const digitParams = new URLSearchParams({ vendor_no: rep.vendor_no || '', invoice_no: baseNo });
+        digitParams.set('no_strip', '1'); if (dupDigitFull) digitParams.set('digit_full', '1'); // MARKER_DUPCHECK_SEND_EXACT_FLAGS_V1
         const [dupRes, digitRes] = await Promise.all([
           fetch(`${dupApiBase}/api/invoice-duplicate-check?${params.toString()}`, {
             headers: { Authorization: `Bearer ${dupToken}` },
@@ -14767,7 +15008,7 @@ const handleSelectBranch = (item, meta = {}) => {
                 const mergedLines = groupInvoices.flatMap((inv, gi) =>
                   (Array.isArray(inv.lines) ? inv.lines : []).map(l => ({ ...l, _origRowId: effectiveGroupIds[gi] }))
                 );
-                const baseNo = String(first.invoice_no || '').replace(/(\/\d+|_NV)$/, '');
+                const baseNo = apStripGroupSuffix(first.invoice_no || '', first.form_data);
                 return {
                   ...first,
                   lines: mergedLines,
@@ -15135,7 +15376,7 @@ const handleSelectBranch = (item, meta = {}) => {
                 const groups = {};
                 const order = [];
                 invoices.forEach((inv, i) => {
-                  const baseNo = String(inv.invoice_no || '-').replace(/(\/\d+|_NV)$/, '');
+                  const baseNo = apStripGroupSuffix(inv.invoice_no || '-', inv.form_data);
                   if (!groups[baseNo]) {
                     const vf = resolveVendorFallback(inv);
                     groups[baseNo] = {
@@ -15407,22 +15648,25 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
     // MARKER_CHANNEL_FEATURE_PHASE4_V1
     if (!previewFilteredInvoices.length) { confirmDialog.alert('No invoices in batch'); return; }
     if (batchName.trim()) { setShowExportModal(true); return; } // เคยตั้ง/แก้เองแล้ว ไม่ขอเลขใหม่ซ้ำ
+    // MARKER_BATCHNAME_NO_SILENT_FALLBACK_V1
+    // -- เดิม: ถ้าขอเลขไม่ได้ จะ Fallback เป็น "-001" เงียบๆ → ชื่อซ้ำกับ Batch เดิม --
+    // -- ใหม่: ขอเลขไม่ได้ = แจ้งเตือนและไม่ให้ Export (ไม่เดาเลขเอง) + ส่ง checkPrefix ให้ Backend เช็คซ้ำ --
     const buId = batchConfig?.buInfo?.id;
     const prefixPart = systemPrefix || 'XXX';
+    if (!buId) { confirmDialog.alert('ไม่พบ BU ID สำหรับขอเลข Batch Running — กรุณาลองเลือก BU ใหม่', { variant: 'danger' }); return; }
     setReservingRunning(true);
     try {
-      if (buId) {
-        const result = await apiFetch(`/company_list/${buId}/reserve-unique-number`, {
-          method: 'POST',
-          body: JSON.stringify({ field: 'batch_running', padLength: 3 }),
-        });
-        setBatchName(`${baseBatchName}/${prefixPart}-${result.formatted}`);
-      } else {
-        setBatchName(`${baseBatchName}/${prefixPart}-001`);
-      }
+      const result = await apiFetch(`/company_list/${buId}/reserve-unique-number`, {
+        method: 'POST',
+        body: JSON.stringify({ field: 'batch_running', padLength: 3, checkPrefix: `${baseBatchName}/${prefixPart}-` }),
+      });
+      if (!result || result.error || !result.formatted) throw new Error(result?.error || 'ไม่ได้รับเลข Running จาก Server');
+      setBatchName(`${baseBatchName}/${prefixPart}-${result.formatted}`);
     } catch (e) {
       console.error('[batch_running reserve]', e);
-      setBatchName(`${baseBatchName}/${prefixPart}-001`);
+      setReservingRunning(false);
+      confirmDialog.alert('ขอเลข Batch Running ไม่สำเร็จ: ' + (e?.message || e) + ' — กรุณาลองใหม่อีกครั้ง', { variant: 'danger' });
+      return;
     }
     setReservingRunning(false);
     setShowExportModal(true);
@@ -15797,7 +16041,7 @@ function GenerateExport({ invoices, onNewBatch, onBack, batchConfig = {}, suppli
         // -- เตรียมรองรับ IE-Project ใช้ batch_list Table เดียวกันในอนาคต --
         module: 'AP',
       }]).select().single();
-      if (insErr) throw new Error('ตั้งชื่อ Batch ไม่สำเร็จ (อาจซ้ำกับ Batch ที่มีอยู่แล้ว): ' + insErr.message);
+      if (insErr) throw new Error('ตั้งชื่อ Batch ไม่สำเร็จ (อาจซ้ำกับ Batch ที่มีอยู่แล้ว — ปิดหน้าต่างแล้วกด Generate & Export ใหม่เพื่อขอเลขใหม่): ' + insErr.message);
       const batchListId = insData?.id;
 
       // ── Rename Invoice ทุกใบจาก Draft ID (ตอน Start) → Batch Name จริง + Mark done ──
@@ -18066,6 +18310,15 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 // MARKER_INITIAL_HISTORY_TAB_V1
+// MARKER_APCONTROLLER_STRIP_GROUP_SUFFIX_KNOWN_SFX_V1 -- ตัดเฉพาะ Suffix Split ที่ระบบต่อเอง (form_data.invoiceSuffix) ไม่ตัด /ตัวเลข ที่เป็นส่วนของเลข Invoice จริง (เช่น SV0005/69060052)
+const apStripGroupSuffix = (no, fd) => {
+  const n = String(no || '');
+  if (fd && typeof fd.invoiceSuffix === 'string') { // Record ใหม่: invoiceSuffix = Suffix Split ที่ระบบต่อเอง ('' = ไม่มี) -> ตัดเฉพาะตัวนี้
+    const sfx = fd.invoiceSuffix;
+    return (sfx && n.endsWith(sfx)) ? n.slice(0, n.length - sfx.length) : n;
+  }
+  return n.replace(/(\/\d+|_NV)$/, ''); // Record เก่าไม่มี invoiceSuffix -> Fallback เดิม
+};
 export default function APController({ activeSubTab, onSubTabChange, flyoutOpen, initialHistoryTab, initialViewBatchId, onNavigateToRecycleBin }) {  // MARKER_BELL_VIEW_SYNC_V1, MARKER_APCONTROLLER_RECYCLEBIN_BUTTON_V1
   const { fetchCollection, getCached, invalidate } = useDataCache();
 

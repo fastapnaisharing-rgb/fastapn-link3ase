@@ -20,8 +20,77 @@ const PERIOD_PANEL_FIELD_PERM = {
   ie_grt: 'IE', ie_grn: 'IE', ie_period_mode: 'IE',
 };
 
+// MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
+// -- bus_type/sub_type ใน vat_watchlist_report ถูกบันทึกตอน Upload (ไม่ได้คำนวณสด) -- เมื่อ vendor_category
+// -- ถูก POST/PUT/Upsert ต้อง Sync Type/Sub Type ของรายการ pending ที่ supplier_code ตรงกันตามกติกาเดียวกับตอน Upload:
+// --   จ่ายแล้ว (payment_date มีค่า) -> ใช้ TYPE / SUB TYPE (ว่าง = OTH) ; ยังไม่จ่าย -> เปลี่ยนเฉพาะ TYPE เป็น CPN/ITC (ใช้ตรงๆ)
+// -- ไม่แตะ receive_doc_no (GRT) / status อื่น -- Best-effort: Error ไม่ทำให้การบันทึก vendor_category ล้มเหลว
+async function syncVatReportTypeFromVendorCategory(codes) {
+  try {
+    const list = [...new Set((codes || []).map((c) => String(c ?? "").trim()).filter(Boolean))];
+    if (list.length === 0) return 0;
+    const { rowCount } = await pool.query(
+      `UPDATE vat_watchlist_report r
+          SET bus_type = TRIM(v."TYPE"),
+              sub_type = CASE WHEN COALESCE(TRIM(r.payment_date::text), '') = '' THEN TRIM(v."TYPE")
+                              ELSE COALESCE(NULLIF(TRIM(v."SUB TYPE"), ''), 'OTH') END
+         FROM vendor_category v
+        WHERE TRIM(v."Code") = TRIM(r.supplier_code)
+          AND TRIM(v."Code") = ANY($1)
+          AND r.status = 'pending'
+          AND COALESCE(TRIM(v."TYPE"), '') <> ''
+          AND (
+            (COALESCE(TRIM(r.payment_date::text), '') <> ''
+              AND (r.bus_type IS DISTINCT FROM TRIM(v."TYPE")
+                   OR r.sub_type IS DISTINCT FROM COALESCE(NULLIF(TRIM(v."SUB TYPE"), ''), 'OTH')))
+            OR (COALESCE(TRIM(r.payment_date::text), '') = '' AND TRIM(v."TYPE") IN ('CPN', 'ITC')
+                AND (r.bus_type IS DISTINCT FROM TRIM(v."TYPE") OR r.sub_type IS DISTINCT FROM TRIM(v."TYPE")))
+          )`,
+      [list]
+    );
+    return rowCount || 0;
+  } catch (e) {
+    console.error("[genericTable] syncVatReportTypeFromVendorCategory failed:", e.message);
+    return 0;
+  }
+}
+
 function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+// MARKER_GENERICTABLE_VENDORCAT_REQUIRE_CODE_TYPE_V1
+// ── ผู้ใช้ Confirm แล้ว (2026-10-03): vendor_category ต้องมี Code, TYPE, SUB TYPE ครบ
+// ── เสมอก่อนบันทึก ไม่ว่าจะมาจาก Form ไหน (VendorMaster.js SM-Code Auto-create /
+// ── APController.js / IEController.js / VatController.js saveAddSupplier /
+// ── VatController.js saveVendorDetailEdit(adding) ฯลฯ -- ที่ผ่านมาแต่ละจุด Validate
+// ── ไม่เหมือนกัน บางจุดไม่เช็ค TYPE/SUB TYPE บางจุดไม่เช็ค Code เลย (จุดอ่อนที่ทำให้
+// ── เจอแถว Code ว่างจริงใน Production) ย้าย Guard มารวมที่ Backend จุดเดียวที่นี่
+// ── แทน กันทุก Caller ปัจจุบันและอนาคต ไม่ต้องไปตาม Patch Frontend ทีละไฟล์
+function findMissingVendorCategoryFields(row) {
+  const required = [
+    { col: "Code", label: "Supplier Code" },
+    { col: "TYPE", label: "TYPE" },
+    { col: "SUB TYPE", label: "SUB TYPE" },
+  ];
+  return required
+    .filter(({ col }) => String(row?.[col] ?? "").trim() === "")
+    .map(({ label }) => label);
+}
+
+// MARKER_GENERICTABLE_VENDORCAT_REJECT_DUPLICATE_CODE_V1
+// ── ผู้ใช้ Confirm แล้ว: POST เดี่ยว (ไม่ใช่ /upsert) ถ้า Code ซ้ำกับแถวที่มีอยู่แล้ว
+// ── (และยังไม่ถูก Soft-delete) ต้อง Reject ทันที -- คนละ Supplier Code ไม่ถือว่าซ้ำ
+async function findExistingVendorCategoryByCode(code) {
+  const trimmed = String(code ?? "").trim();
+  if (!trimmed) return null;
+  const { rows } = await pool.query(
+    `SELECT id, "Code" FROM vendor_category
+      WHERE TRIM("Code") = $1 AND ("deleted" IS NULL OR "deleted" = false)
+      LIMIT 1`,
+    [trimmed]
+  );
+  return rows[0] || null;
 }
 
 function serializeValue(val) {
@@ -394,6 +463,17 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
       if (tableName === "recycle_bin") {
         req.body.deleted_by = req.user?.username || req.user?.email || "unknown";
       }
+      // MARKER_GENERICTABLE_VENDORCAT_REQUIRE_CODE_TYPE_V1 / MARKER_GENERICTABLE_VENDORCAT_REJECT_DUPLICATE_CODE_V1
+      if (tableName === "vendor_category") {
+        const missing = findMissingVendorCategoryFields(req.body);
+        if (missing.length > 0) {
+          return res.status(400).json({ error: `ข้อมูลไม่ครบ ต้องมี: ${missing.join(", ")}` });
+        }
+        const dup = await findExistingVendorCategoryByCode(req.body["Code"]);
+        if (dup) {
+          return res.status(400).json({ error: `Supplier Code "${String(req.body["Code"]).trim()}" มีอยู่แล้วใน Vendor Category` });
+        }
+      }
       const columns = Object.keys(req.body).filter((c) => c !== idColumn);
       if (columns.length === 0) {
         return res.status(400).json({ error: "Request body is empty" });
@@ -406,6 +486,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
         `INSERT INTO ${table} (${columnList}) VALUES (${placeholders}) RETURNING *`,
         values
       );
+      if (tableName === "vendor_category") await syncVatReportTypeFromVendorCategory([rows[0]?.Code]); // MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
       res.status(201).json(rows[0]);
     } catch (err) {
       // MARKER_GENERICTABLE_TEMP_DEBUG_ERROR_V1 -- ชั่วคราวสำหรับ Debug เท่านั้น
@@ -421,6 +502,21 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
       const rows = Array.isArray(req.body) ? req.body : [req.body];
       if (rows.length === 0) {
         return res.status(400).json({ error: "Empty payload" });
+      }
+
+      // MARKER_GENERICTABLE_VENDORCAT_REQUIRE_CODE_TYPE_V1 -- Apply เหมือน POST เดี่ยว
+      // (ไม่เช็ค Duplicate ที่นี่ -- /upsert ใช้ ON CONFLICT DO UPDATE อยู่แล้ว ตามที่ Confirm
+      // ว่า Scope การเช็ค Duplicate อยู่แค่ POST เดี่ยวเท่านั้น)
+      if (tableName === "vendor_category") {
+        const rowErrors = rows
+          .map((r, i) => ({ i, missing: findMissingVendorCategoryFields(r) }))
+          .filter((x) => x.missing.length > 0);
+        if (rowErrors.length > 0) {
+          return res.status(400).json({
+            error: "ข้อมูลไม่ครบในบางแถว",
+            detail: rowErrors.map((x) => `แถวที่ ${x.i + 1}: ขาด ${x.missing.join(", ")}`),
+          });
+        }
       }
 
       // ── รองรับ composite conflict key เช่น onConflict=user_id,folder_key ──
@@ -462,6 +558,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
         RETURNING *`;
 
       const { rows: result } = await pool.query(sql, values);
+      if (tableName === "vendor_category") await syncVatReportTypeFromVendorCategory(result.map((r) => r.Code)); // MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
       res.status(201).json(result);
     } catch (err) {
       // MARKER_GENERICTABLE_TEMP_DEBUG_ERROR_V1 -- ชั่วคราวสำหรับ Debug เท่านั้น
@@ -502,6 +599,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
         [...values, req.params.id]
       );
       if (!rows[0]) return res.status(404).json({ error: "Not found" });
+      if (tableName === "vendor_category") await syncVatReportTypeFromVendorCategory([rows[0].Code]); // MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
       res.json(rows[0]);
     } catch (err) {
       // MARKER_GENERICTABLE_TEMP_DEBUG_ERROR_V1 -- ชั่วคราวสำหรับ Debug เท่านั้น

@@ -1,0 +1,176 @@
+/**
+ * routes/taxClosePeriod.js
+ *
+ * วงจรชีวิตข้อมูล Timeline ปิดภาษี (MARKER_TAXCLOSE_LIFECYCLE_V1)
+ *
+ *   open ──(POST /api/vat/period/close)──▶ closed ──(ครบ N วัน ปฏิทิน)──▶ purged
+ *                 ▲                            │
+ *                 └──(POST /api/vat/period/reopen — ภายใน 7 วัน)
+ *
+ * ไฟล์นี้ไม่ใช่ Router — เป็น Helper ที่ถูกเรียกจาก:
+ *   - vatPeriodRoute.js  → markTaxClosePeriodClosed / markTaxClosePeriodReopened
+ *   - app.js (Cron 5 นาที) → purgeExpiredTaxClosePeriods
+ *
+ * ล้างเฉพาะข้อมูลสถานะ Timeline (tax_close_task / _log / _period_bu)
+ * เก็บแถว tax_close_period + summary_snapshot ไว้ถาวร (ขนาดเล็ก ใช้ดูสถิติย้อนหลัง)
+ * ไม่แตะข้อมูลภาษี/เอกสารจริงใดๆ
+ */
+
+import { pool } from "../db.js";
+
+const DEFAULT_RETENTION_DAYS = 15;
+
+// ── อ่านจำนวนวันเก็บจาก system_settings (fallback 15 ถ้าไม่มี/ค่าผิด) ──
+export async function getTaxCloseRetentionDays(db) {
+  try {
+    const { rows } = await (db || pool).query(
+      `SELECT value FROM system_settings WHERE key = 'tax_close_retention_days'`
+    );
+    const n = parseInt(rows[0]?.value, 10);
+    return Number.isInteger(n) && n >= 1 && n <= 365 ? n : DEFAULT_RETENTION_DAYS;
+  } catch (err) {
+    return DEFAULT_RETENTION_DAYS;
+  }
+}
+
+// ── เรียกตอน Period ถูกปิด: Upsert แถวรอบ + ตั้งเวลาล้าง ──
+// ต้องเรียกภายใน SAVEPOINT ของ /close — ถ้าพลาดต้องไม่ทำให้การปิด Period ล้ม
+export async function markTaxClosePeriodClosed(client, periodYm, closedBy) {
+  const days = await getTaxCloseRetentionDays(client);
+  const { rows } = await client.query(
+    `INSERT INTO tax_close_period (period_ym, status, closed_at, closed_by, purge_after, updated_at)
+     VALUES ($1, 'closed', NOW(), $2, NOW() + make_interval(days => $3), NOW())
+     ON CONFLICT (period_ym) DO UPDATE SET
+       status      = 'closed',
+       closed_at   = NOW(),
+       closed_by   = EXCLUDED.closed_by,
+       purge_after = NOW() + make_interval(days => $3),
+       updated_at  = NOW()
+     WHERE tax_close_period.status <> 'purged'
+     RETURNING period_ym, purge_after`,
+    [periodYm, closedBy, days]
+  );
+  return { retention_days: days, row: rows[0] || null };
+}
+
+// ── เรียกตอน Reopen: ยกเลิกการนับถอยหลัง (ล้างได้เฉพาะรอบที่ยังไม่ purged) ──
+export async function markTaxClosePeriodReopened(client, periodYm) {
+  const { rowCount } = await client.query(
+    `UPDATE tax_close_period
+        SET status = 'open', closed_at = NULL, closed_by = NULL, purge_after = NULL, updated_at = NOW()
+      WHERE period_ym = $1 AND status = 'closed'`,
+    [periodYm]
+  );
+  return rowCount;
+}
+
+// ── Cron: ล้างรอบที่ปิดแล้วและถึงกำหนด (ทำทีละรอบใน Transaction เดียว) ──
+export async function purgeExpiredTaxClosePeriods() {
+  const { rows: due } = await pool.query(
+    `SELECT period_ym FROM tax_close_period
+      WHERE status = 'closed' AND purge_after IS NOT NULL AND purge_after <= NOW()
+      ORDER BY period_ym`
+  );
+  if (!due.length) return 0;
+
+  let purged = 0;
+  for (const { period_ym } of due) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // ล็อกแถว + เช็คซ้ำ (กัน Reopen/Cron ซ้อนกัน)
+      const { rows: locked } = await client.query(
+        `SELECT closed_at FROM tax_close_period
+          WHERE period_ym = $1 AND status = 'closed' AND purge_after <= NOW()
+          FOR UPDATE SKIP LOCKED`,
+        [period_ym]
+      );
+      if (!locked.length) {
+        await client.query("ROLLBACK");
+        continue;
+      }
+
+      // 1) Snapshot สรุปต่อ BU (สูตรเดียวกับ Macro: (DONE+NO_DATA) ÷ ทุกช่องที่ไม่ใช่ NA)
+      const { rows: perBuRows } = await client.query(
+        `WITH t AS (
+           SELECT bu_code, status, due_date, completed_at
+             FROM tax_close_task
+            WHERE period_ym = $1 AND status <> 'NA'
+         ),
+         per_bu AS (
+           SELECT bu_code,
+                  COUNT(*)::int AS total,
+                  (COUNT(*) FILTER (WHERE status IN ('DONE','NO_DATA')))::int AS done,
+                  (COUNT(*) FILTER (WHERE status NOT IN ('DONE','NO_DATA')
+                                      AND due_date IS NOT NULL
+                                      AND due_date < (($2::timestamptz) AT TIME ZONE 'Asia/Bangkok')::date))::int AS overdue,
+                  MAX(completed_at) AS last_completed_at
+             FROM t GROUP BY bu_code
+         )
+         SELECT bu_code, total, done, overdue,
+                CASE WHEN total = 0 THEN 0 ELSE ROUND(done * 100.0 / total, 2) END::float AS pct,
+                last_completed_at
+           FROM per_bu ORDER BY bu_code`,
+        [period_ym, locked[0].closed_at]
+      );
+      const { rows: scopeRows } = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE in_scope)::int AS in_scope,
+                COUNT(*) FILTER (WHERE NOT in_scope)::int AS out_of_scope,
+                COALESCE(jsonb_agg(jsonb_build_object('bu', bu_code, 'reason', reason) ORDER BY bu_code)
+                         FILTER (WHERE NOT in_scope), '[]'::jsonb) AS excluded
+           FROM tax_close_period_bu WHERE period_ym = $1`,
+        [period_ym]
+      );
+
+      const total = perBuRows.reduce((a, r) => a + r.total, 0);
+      const done = perBuRows.reduce((a, r) => a + r.done, 0);
+      const overdue = perBuRows.reduce((a, r) => a + r.overdue, 0);
+      const snapshot = {
+        period_ym,
+        closed_at: locked[0].closed_at,
+        purged_at: new Date().toISOString(),
+        overall: { total, done, overdue, pct: total ? Math.round((done * 10000) / total) / 100 : 0 },
+        bu_in_scope: scopeRows[0].in_scope,
+        bu_out_of_scope: scopeRows[0].out_of_scope,
+        bu_excluded: scopeRows[0].excluded,
+        per_bu: perBuRows,
+      };
+
+      // 2) ลบข้อมูลรายละเอียด
+      const delLog = await client.query(`DELETE FROM tax_close_task_log WHERE period_ym = $1`, [period_ym]);
+      const delTask = await client.query(`DELETE FROM tax_close_task WHERE period_ym = $1`, [period_ym]);
+      const delScope = await client.query(`DELETE FROM tax_close_period_bu WHERE period_ym = $1`, [period_ym]);
+
+      // 3) ปิดสถานะรอบเป็น purged + เก็บ snapshot
+      await client.query(
+        `UPDATE tax_close_period
+            SET status = 'purged', purged_at = NOW(), summary_snapshot = $2::jsonb, updated_at = NOW()
+          WHERE period_ym = $1`,
+        [period_ym, JSON.stringify(snapshot)]
+      );
+
+      await client.query(
+        `INSERT INTO activity_log (username, module, action, detail, created_at)
+         VALUES ('system-cron', 'VAT', 'TAX_CLOSE_PURGE', $1, NOW())`,
+        [JSON.stringify({
+          period_ym,
+          tasks_deleted: delTask.rowCount,
+          logs_deleted: delLog.rowCount,
+          scope_rows_deleted: delScope.rowCount,
+          overall: snapshot.overall,
+        })]
+      );
+
+      await client.query("COMMIT");
+      purged++;
+      console.log(`[MARKER_TAXCLOSE_LIFECYCLE_V1] purged ${period_ym}: ${delTask.rowCount} tasks, ${delLog.rowCount} logs`);
+    } catch (err) {
+      try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
+      console.error(`[MARKER_TAXCLOSE_LIFECYCLE_V1] purge ${period_ym} error:`, err.message);
+    } finally {
+      client.release();
+    }
+  }
+  return purged;
+}

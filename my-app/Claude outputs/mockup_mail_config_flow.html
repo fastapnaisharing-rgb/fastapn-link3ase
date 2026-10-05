@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Config Email Include Ignore</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#e9e9e9;margin:0;padding:24px;color:#333;font-size:13px}
+h3{max-width:900px;margin:18px auto 8px;font-size:13px;color:#555}
+.modal{background:#fff;border-radius:12px;width:900px;max-width:100%;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:0 auto}
+.mh{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:.5px solid #e8e8e8}.mh b{font-size:16px;font-weight:500;color:#1a3a5c}
+.x{width:28px;height:28px;border-radius:50%;background:#f0f0f0;text-align:center;line-height:28px;color:#666}
+.top{display:flex;gap:10px;align-items:center;padding:10px 20px;border-bottom:.5px solid #e8e8e8;background:#fafbfc}
+.in{border:.5px solid #ccc;border-radius:6px;padding:6px 10px;background:#fff;color:#555}
+.tabs{display:flex;gap:4px;padding:8px 20px 0;border-bottom:.5px solid #e8e8e8}.tab{padding:8px 16px;color:#888;border-bottom:2px solid transparent}.tab.on{color:#1a3a5c;font-weight:600;border-color:#1a3a5c}
+.body{padding:14px 20px;box-sizing:border-box}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.pn{border:.5px solid #e8e8e8;border-radius:8px;padding:10px 12px}
+.pn .t{font-size:12px;font-weight:600;margin-bottom:2px}.pn .s{font-size:10px;color:#999;margin-bottom:8px}
+.search{border:.5px solid #ccc;border-radius:6px;padding:6px 10px;color:#aaa;margin-bottom:6px;display:flex;justify-content:space-between}
+.res{border:.5px dashed #bbb;border-radius:6px;margin-bottom:8px;font-size:12px}
+.res div{padding:5px 10px;display:flex;justify-content:space-between;border-top:.5px solid #f0f0f0}.res div:first-child{border-top:none}.res i{font-style:normal;color:#1a3a5c}
+.list{border:.5px solid #e8e8e8;border-radius:6px;height:170px;overflow-y:auto}
+.list .r{display:grid;grid-template-columns:90px 1fr 20px;gap:6px;padding:6px 10px;border-top:.5px solid #f0f0f0;height:17px;align-items:center;font-size:12px}.list .r:first-child{border-top:none}
+.list .hd{background:#f5f5f3;font-size:11px;color:#666;font-weight:600;position:sticky;top:0}
+.bu{display:inline-block;background:#eaf0f6;color:#1a3a5c;border-radius:10px;padding:0 8px;font-size:11px}
+.mf{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-top:.5px solid #e8e8e8}
+.b2{padding:7px 16px;border:.5px solid #ccc;border-radius:8px}.b3{padding:7px 16px;background:#1a3a5c;color:#fff;border-radius:8px}
+.hl{outline:2px solid #e5484d;outline-offset:2px}.note{max-width:900px;margin:12px auto;color:#666;font-size:12px;line-height:1.7}
+</style></head><body>
+<h3>Mail List (ซ้าย) → เลือก/สร้าง Config แล้ว Save ก่อน → ค่อยตั้ง Include / Ignore (ขวา) · ขอบเขต BU ตามที่ Search ไว้หน้า Lobby</h3>
+<div class="modal">
+ <div class="mh"><b>✉ Config Email</b><div class="x">×</div></div>
+ <div class="top"><span style="color:#888">Config:</span><span class="in">CRG — ติดตามงานค้าง ▾</span><span style="color:#888">BU ที่เลือก:</span><span class="bu">CRG</span><span class="bu">CR-CM</span><span class="bu">LKS</span><span style="flex:1"></span><span style="color:#16794c;font-weight:600">Asset 9 · Expense 38 รายการ</span></div>
+ <div class="tabs"><div class="tab">เงื่อนไข</div><div class="tab on">Include / Ignore <small style="color:#aaa">(หลัง Save Config)</small></div><div class="tab">ผู้รับ / เนื้อหา</div><div class="tab">ตัวอย่างเมล</div></div>
+ <div class="body" style="display:grid;grid-template-columns:200px 1fr;gap:14px">
+  <div style="border-right:.5px solid #eee;padding-right:12px"><div style="font-size:11px;font-weight:600;color:#666;margin-bottom:6px">MAIL LIST</div><div class="in" style="background:#eaf0f6;border-color:#1a3a5c;color:#1a3a5c;font-weight:600;margin-bottom:6px">CRG — ติดตามงานค้าง<br><small style="font-weight:400;color:#888">Saved · 2 ชั่วโมงที่แล้ว</small></div><div class="in" style="margin-bottom:6px">LKS — เตือน 4-3</div><div class="in" style="margin-bottom:6px;color:#aaa;border-style:dashed;text-align:center">+ Config ใหม่</div></div>
+  <div>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:11px;color:#888">ขอบเขต BU</span><span style="display:inline-flex;gap:3px;background:#eceff3;border-radius:8px;padding:3px"><span style="padding:4px 14px;border-radius:6px;background:#fff;color:#1a3a5c;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)">BU ที่ค้นหา (CRG)</span><span style="padding:4px 14px;color:#6b7280">All BU</span></span><span style="font-size:10px;color:#999">ตาม Search หน้า Lobby อัตโนมัติ · สลับเป็น All BU ได้</span></div>
+  <div class="two">
+   <div class="pn" style="border-color:#bfe3cf">
+    <div class="t" style="color:#16794c">INCLUDE — นอกเงื่อนไขแต่ต้องตาม</div><div class="s">ค้นหา Vendor ตามขอบเขต BU ด้านบน</div>
+    <div class="search hl"><span>🔍 ค้นหา Vendor (ชื่อ / Supplier Code)  เช่น "อินเทอร์เน็ต"</span></div>
+    <div class="res"><div><span>N-151200 อินเทอร์เน็ตประเทศไทย (CRG)</span><i>+ เพิ่ม</i></div><div><span>N-151877 อินเทอร์เน็ต … (LKS)</span><i>+ เพิ่ม</i></div></div>
+    <div class="list hl"><div class="r hd"><span>Supplier Code</span><span>Vendor</span><span></span></div>
+     <div class="r"><span>N-151200</span><span>อินเทอร์เน็ตประเทศไทย</span><span style="color:#c0392b">✕</span></div>
+     <div class="r"><span></span><span style="color:#ccc">—</span><span></span></div><div class="r"><span></span><span></span><span></span></div><div class="r"><span></span><span></span><span></span></div><div class="r"><span></span><span></span><span></span></div></div>
+   </div>
+   <div class="pn" style="border-color:#f1c6c6">
+    <div class="t" style="color:#c0392b">IGNORE — ตรงเงื่อนไขแต่ไม่ต้องตาม</div><div class="s">ค้นหา Vendor ตามขอบเขต BU ด้านบน</div>
+    <div class="search"><span>🔍 ค้นหา Vendor (ชื่อ / Supplier Code)</span></div>
+    <div class="res" style="visibility:hidden"><div>.</div></div>
+    <div class="list"><div class="r hd"><span>Supplier Code</span><span>Vendor</span><span></span></div>
+     <div class="r"><span>V099</span><span>ตัวอย่าง Vendor ใน OTH ที่ไม่ต้องตาม</span><span style="color:#c0392b">✕</span></div>
+     <div class="r"><span>V310</span><span>ตัวอย่าง Vendor 2</span><span style="color:#c0392b">✕</span></div>
+     <div class="r"><span></span><span></span><span></span></div><div class="r"><span></span><span></span><span></span></div><div class="r"><span></span><span></span><span></span></div></div>
+   </div>
+  </div>
+  </div>
+ </div>
+ <div class="mf"><span style="color:#888">Include/Ignore แยกตามกลุ่ม Asset / Expense (สลับที่แท็บ เงื่อนไข)</span><span style="display:flex;gap:8px"><span class="b2">Cancel</span><span class="b3">Save</span></span></div>
+</div>
+<div class="note"><b>กรอบแดง</b> = ช่องค้นหา Vendor (ค้นเฉพาะ Vendor ที่มีรายการค้างใน BU ที่เลือก ไม่ใช่ทั้งระบบ) และรายการที่เลือกไว้ (ความสูงขั้นต่ำ 5 แถว ถ้าเกินเลื่อนในกล่อง)<br>
+ตัวเลือก: แยกเป็นแท็บของตัวเอง (ตามภาพ) หรือรวมอยู่แท็บ เงื่อนไข ซึ่งจะยาวขึ้น — ผมแนะนำแยกแท็บ</div>
+</body></html>

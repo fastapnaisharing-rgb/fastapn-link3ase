@@ -1,0 +1,47 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><title>Mockup ผู้รับ/เนื้อหา</title>
+<style>
+body{font-family:Segoe UI,Tahoma,sans-serif;background:#eef0f3;margin:0;padding:24px;color:#222}
+.cap{font-size:13px;font-weight:600;color:#1a3a5c;margin:0 0 8px}.grid{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.m{background:#fff;border-radius:12px;width:800px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.hd{padding:14px 20px;border-bottom:.5px solid #e8e8e8;font-size:16px}
+.tabs{display:flex;gap:4px;padding:6px 20px 0;border-bottom:.5px solid #e8e8e8}.tabs span{padding:8px 16px;font-size:13px;color:#888}.tabs .on{color:#1a3a5c;font-weight:600;border-bottom:2px solid #1a3a5c}
+.bd{padding:14px 20px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.l{font-size:12px;color:#666;margin-bottom:4px}.i{border:.5px solid #ccc;border-radius:8px;padding:7px 10px;font-size:13px;box-sizing:border-box;background:#fff}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}.chip{font-size:11px;padding:3px 9px;border-radius:12px;background:#e3f2fd;color:#1565c0;border:.5px solid #90caf9}
+.body{height:150px;line-height:1.5}
+.ft{display:flex;justify-content:space-between;padding:12px 20px;border-top:.5px solid #e8e8e8}.back{padding:5px 12px;font-size:12px;border:.5px solid #ccc;border-radius:8px}.save{padding:7px 22px;font-size:13px;background:#1a3a5c;color:#fff;border-radius:8px}
+.pv{background:#fff;border-radius:12px;width:560px;box-shadow:0 10px 30px rgba(0,0,0,.15);padding:18px 22px;font-size:14px}
+.pv h4{margin:0 0 6px;font-size:14px}.meta{font-size:12px;color:#555;line-height:1.7;border-bottom:.5px solid #e0e0e0;padding-bottom:8px;margin-bottom:10px}
+.att{display:inline-block;background:#e8f1fb;border:.5px solid #b6d4f2;border-radius:6px;padding:4px 10px;font-size:12px;margin:6px 0 12px}
+.red{color:#e00000}.grn{color:#1e9e3a}.pv ol{margin:8px 0 0 28px;padding:0}.pv li{margin-bottom:2px}
+.tip{font-size:11px;color:#888;margin-top:6px}
+</style></head><body><div class="grid">
+<div><p class="cap">1. แท็บ "ผู้รับ / เนื้อหา" (To BU)</p>
+<div class="m"><div class="hd">แก้ไข Config</div><div class="tabs"><span>เงื่อนไข</span><span>Include / Ignore</span><span class="on">ผู้รับ / เนื้อหา</span></div>
+<div class="bd">
+<div class="g2"><div><div class="l">To (คั่นด้วย ;)</div><div class="i">thidarat_ra@thebeautrium.com; Chokanan_Ph@thebeautrium.com</div></div>
+<div><div class="l">CC (คั่นด้วย ;)</div><div class="i">FAST APN Vat Controller; Kotchaporn Boonrodraks; Saranya_wa@…</div></div></div>
+<div class="g2"><div><div class="l">ชื่อผู้รับ (ใช้ในคำเรียก)</div><div class="i">พี่ตู่, นท</div></div><div><div class="l">ไฟล์แนบ</div><div class="i" style="background:#f7f7f7;color:#666">Pivot_BU_Incomplete_for_Report_{BU}.xlsx (อัตโนมัติ)</div></div></div>
+<div style="margin-bottom:10px"><div class="l">Subject</div><div class="i">{BU} - ขอติดตามใบกำกับภาษี ของรายการที่ตัดชำระตั้งแต่เดือน {เดือนเริ่ม} ถึง {เดือนสุดท้าย}</div></div>
+<div class="l">Body <span style="color:#999">— กดตัวแปรเพื่อแทรกที่เคอร์เซอร์</span></div>
+<div class="chips"><span class="chip">{BU}</span><span class="chip">{DATE}</span><span class="chip">{ชื่อผู้รับ}</span><span class="chip">{เดือนเริ่ม}</span><span class="chip">{เดือนสุดท้าย}</span><span class="chip">{TOTAL}</span><span class="chip" style="background:#fff3e0;color:#e65100;border-color:#ffcc80">{AGING_LIST} ★</span></div>
+<div class="i body">เรียน {ชื่อผู้รับ}<br><br>&nbsp;&nbsp;&nbsp;&nbsp;ข้อความนี้ถูกสร้างโดยระบบอัตโนมัติเพื่อ ติดตามใบกำกับภาษี โดยสรุปรายละเอียดเป็นราย Supplier และแบ่งข้อมูลตามความเสี่ยง ดังนี้<br><br>{AGING_LIST}</div>
+<div class="tip">★ {AGING_LIST} = ระบบสร้างบรรทัดรายเดือนให้เอง (เรียงเก่า→ใหม่ เดือนไม่มียอดแสดง 0.00 พร้อมชื่อเดือน) · Send เปิด Outlook เป็น Draft ให้ตรวจก่อนส่ง</div>
+</div><div class="ft"><span class="back">← กลับ Mail List</span><span class="save">บันทึก</span></div></div></div>
+
+<div><p class="cap">2. ตัวอย่างเมลที่ได้ (Preview ใน Outlook Draft)</p>
+<div class="pv"><h4>BTM - ขอติดตามใบกำกับภาษี ของรายการที่ตัดชำระตั้งแต่เดือน March 2026 ถึง August 2026</h4>
+<div class="meta">To: thidarat_ra@thebeautrium.com; Chokanan_Ph@thebeautrium.com<br>Cc: FAST APN Vat Controller; Kotchaporn Boonrodraks; Saranya_wa@…</div>
+<div class="att">📎 Pivot_BU_Incomplete_for_Report_BTM.xlsx</div>
+<p><b>เรียน พี่ตู่, นท</b></p>
+<p style="text-indent:2em">ข้อความนี้ถูกสร้างโดยระบบอัตโนมัติเพื่อ ติดตามใบกำกับภาษี โดยสรุปรายละเอียดเป็นราย Supplier และแบ่งข้อมูลตามความเสี่ยง ดังนี้</p>
+<ol>
+<li class="red">รายการคงค้างที่ตัดชำระเงินในเดือน March 2026 จำนวนภาษียังไม่ได้สิทธิ์ : 8,410.25 บาท</li>
+<li class="red">รายการคงค้างที่ตัดชำระเงินในเดือน April 2026 จำนวนภาษียังไม่ได้สิทธิ์ : 0.00 บาท</li>
+<li class="grn">รายการคงค้างที่ตัดชำระเงินในเดือน May 2026 จำนวนภาษียังไม่ได้สิทธิ์ : 22,816.03 บาท</li>
+<li class="grn">รายการคงค้างที่ตัดชำระเงินในเดือน June 2026 จำนวนภาษียังไม่ได้สิทธิ์ : 83,866.98 บาท</li>
+<li class="grn">รายการคงค้างที่ตัดชำระเงินในเดือน July 2026 จำนวนภาษียังไม่ได้สิทธิ์ : 128,444.44 บาท</li>
+<li class="grn">รายการคงค้างที่ตัดชำระเงินในเดือน August 2026 จำนวนภาษียังไม่ได้สิทธิ์ : 422,488.13 บาท</li></ol>
+<div class="tip">แดง = เดือนที่ Aging 5 เดือนขึ้นไป · เขียว = เดือนอื่น</div></div></div>
+</div></body></html>

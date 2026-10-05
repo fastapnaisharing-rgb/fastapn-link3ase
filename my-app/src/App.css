@@ -55,23 +55,16 @@ nav::-webkit-scrollbar {
   width: 0 !important;
 }
 
-/* ✅ Custom scrollbar เล็กๆ สำหรับ table body */
+/* ✅ MARKER_TABLE_SCROLL_HIDE_V1 — ซ่อน Scrollbar ไปเลยตามที่ขอ (ยัง Scroll ด้วย Mouse
+   Wheel/Trackpad ได้ปกติ แค่ไม่โชว์แถบ/ปุ่มลูกศรให้เกะกะ) เดิมพยายาม Custom เป็นแถบบางๆ
+   (scrollbar-width:thin + ::-webkit-scrollbar 6px) แต่บางเบราว์เซอร์/OS ยังเรนเดอร์เป็น
+   Scrollbar แบบเต็มมีปุ่มลูกศรอยู่ดี เลยซ่อนไปเลยง่ายกว่า */
 .table-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: #c5ccd6 transparent;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge เดิม */
 }
 .table-scroll::-webkit-scrollbar {
-  height: 6px;
-  width: 6px;
-  display: block;
-}
-.table-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.table-scroll::-webkit-scrollbar-thumb {
-  background: #c5ccd6;
-  border-radius: 3px;
-}
-.table-scroll::-webkit-scrollbar-thumb:hover {
-  background: #8896a8;
+  display: none; /* Chrome/Safari/Edge Chromium */
+  width: 0;
+  height: 0;
 }

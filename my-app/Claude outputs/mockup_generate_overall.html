@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Generate Overall</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#f4f4f4;margin:0;padding:20px;color:#333;font-size:13px}
+.modal{background:#fff;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.2);width:1000px;max-width:100%;overflow:hidden}
+.mh{display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #eee;font-weight:600;color:#1a3a5c;font-size:14px}
+.mb{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 20px;min-height:340px}
+.sec{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
+.seg{display:flex;gap:4px;background:#eceff3;border-radius:8px;padding:3px;margin-bottom:12px}
+.seg span{flex:1;text-align:center;padding:6px 0;border-radius:6px;color:#6b7280}.seg .on{background:#fff;color:#1a3a5c;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.drop{border:2px dashed #b9c4d0;border-radius:10px;padding:28px 12px;text-align:center;color:#888;background:#fafbfc}
+.ta{border:1px solid #ccc;border-radius:8px;padding:10px;height:70px;color:#aaa;margin-top:10px}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a3a5c;color:#fff;padding:5px 8px;text-align:left;font-weight:500}td{padding:5px 8px;border-bottom:1px solid #eee}
+.mf{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-top:1px solid #eee;background:#fafbfc}
+.btn{padding:8px 18px;border-radius:22px;border:1px solid #1a3a5c;color:#1a3a5c;background:#fff}.btn.p{background:#1a3a5c;color:#fff}.btn.g{background:#16794c;border-color:#16794c;color:#fff}
+.note{max-width:1000px;line-height:1.7;color:#666;margin-top:12px;font-size:12px}
+</style></head><body>
+<div class="modal">
+ <div class="mh"><span>Generate Overall</span><span style="color:#999">×</span></div>
+ <div class="mb">
+  <div>
+   <div class="sec">1) Format ปลายทาง</div>
+   <div class="seg"><span class="on">Onebox</span><span>T36</span></div>
+   <div class="sec">2) นำเข้าข้อมูล</div>
+   <div class="drop">ลากไฟล์ Excel/CSV มาวางที่นี่ หรือ <b style="color:#1a3a5c">เลือกไฟล์</b></div>
+   <div class="ta">หรือ วาง/ลาก Text ดิบ ลงที่นี่ (Copy จาก Excel)</div>
+  </div>
+  <div>
+   <div class="sec">3) ตัวอย่างผลลัพธ์ (Preview) <span style="text-transform:none;color:#16794c">· 120 แถว · ผิดพลาด 2 แถว</span></div>
+   <table class="tbl"><tr><th>#</th><th>คอลัมน์ 1</th><th>คอลัมน์ 2</th><th>…</th><th>สถานะ</th></tr>
+   <tr><td>1</td><td>…</td><td>…</td><td>…</td><td style="color:#16794c">OK</td></tr>
+   <tr><td>2</td><td>…</td><td>…</td><td>…</td><td style="color:#16794c">OK</td></tr>
+   <tr><td>3</td><td>…</td><td>…</td><td>…</td><td style="color:#c0392b">ขาด Tax ID</td></tr></table>
+  </div>
+ </div>
+ <div class="mf"><span style="color:#888">ไฟล์: raw_overall.xlsx</span><span style="display:flex;gap:8px"><span class="btn">ล้าง</span><span class="btn g">Generate &amp; ดาวน์โหลด Excel</span></span></div>
+</div>
+<div class="note">เปิดจากปุ่ม Generate Overall เป็น Modal กว้าง: ซ้ายเลือก Format (Onebox / T36) + นำเข้าไฟล์หรือวาง Text, ขวา Preview และตรวจแถวผิด, ล่างปุ่ม Generate ได้ไฟล์ Excel ให้ดาวน์โหลด</div>
+</body></html>

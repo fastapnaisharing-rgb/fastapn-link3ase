@@ -1719,6 +1719,13 @@ function ClosePeriodPopup({ apiFetch, isOwner, userRole, userPermissions, onClos
     const deadline = new Date(dl); deadline.setHours(0, 0, 0, 0);
     return today >= deadline;
   };
+  // MARKER_CLOSEPERIOD_BUTTON_BY_DEADLINE_V1 -- Deadline ของ Period ที่กำลังจะปิด (ใช้แสดงวันที่ปิดได้บนปุ่มเทา)
+  const deadlineOf = (type) => {
+    const monthM1 = rows?.[type.key]?.[`${type.prefix}_period_month`];
+    if (!monthM1) return null;
+    return getDeadline(nextMonthStr(monthM1), type.businessDays);
+  };
+  const fmtDeadline = (d) => d ? `${d.getDate()} ${['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][d.getMonth()]} ${d.getFullYear()}` : '';
 
   // MARKER_CLOSEPERIOD_CLOSEALL_V1 -- Owner ปิดเฉพาะเมนูที่ถึง Deadline ของตัวเองแล้วเท่านั้น เรียงตามลำดับ (กัน Deadlock)
   const doCloseAll = async () => {
@@ -1802,26 +1809,46 @@ function ClosePeriodPopup({ apiFetch, isOwner, userRole, userPermissions, onClos
                         ที่เพิ่งเปิด ไม่ใช่เดือนที่เพิ่ง Close ไป) -- เดิมเช็ค status==='closed' ก่อน
                         ไม่มีวันเป็นจริง ปุ่ม Reopen เลยไม่โผล่ -- แก้เช็ค canReopen (อยู่ใน 7 วัน
                         + เป็น Owner) เป็นเงื่อนไขหลักก่อนเสมอแทน ไม่พึ่ง status อีกต่อไป */}
-                    {!isConfirming && (
-                      canReopen ? (
+                    {/* MARKER_CLOSEPERIOD_BUTTON_BY_DEADLINE_V1
+                        ปุ่มผูกกับ Deadline ของ Period ที่กำลังจะปิด (isDue) ทุก Role รวม Owner:
+                        - ถึง Deadline แล้ว  -> Close (น้ำเงิน) [+ Reopen ถ้ายังอยู่ใน 7 วันหลังปิด]
+                        - ยังไม่ถึง + Reopen ได้ -> Reopen
+                        - ยังไม่ถึง + Reopen ไม่ได้ -> Close สีเทา กดไม่ได้ + บอกวันที่ปิดได้ */}
+                    {!isConfirming && (() => {
+                      const due = isDue(type);
+                      const reopenBtn = canReopen ? (
                         <button onClick={() => doReopen(type)} disabled={isBusy}
                           style={{ padding:'4px 10px', fontSize:'11px', borderRadius:'6px', border:'0.5px solid #856404', background:'white', color:'#856404', cursor:isBusy?'default':'pointer' }}>
                           {isBusy ? '...' : 'Reopen'}
                         </button>
-                      ) : status === 'closed' ? (
-                        <span style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'20px', background:'#f5f5f5', color:'#555', fontWeight:'500' }}>Closed</span>
-                      ) : (
-                        // MARKER_CLOSEPERIOD_ADMIN_NOTDUE_GRAY_V1 -- Admin ก่อนถึง Deadline
-                        // ปุ่มยังกดได้เหมือนเดิม (ยังขึ้น Notice เตือน) แค่เปลี่ยนเป็นสีเทา
-                        // ให้เห็นตั้งแต่แรกว่ายังไม่พร้อม -- Owner ไม่มีผลกระทบ ยังสีน้ำเงินเสมอ
-                        <button onClick={() => handleCloseClick(type)} disabled={isBusy}
-                          style={(!isOwner && !isDue(type))
-                            ? { padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'none', background:'#ccc', color:'#777', cursor:isBusy?'default':'pointer' }
-                            : { padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', cursor:isBusy?'default':'pointer' }}>
-                          {isBusy ? 'Closing...' : 'Close'}
-                        </button>
-                      )
-                    )}
+                      ) : null;
+                      if (due && status !== 'closed') {
+                        return (
+                          <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                            {reopenBtn}
+                            <button onClick={() => handleCloseClick(type)} disabled={isBusy}
+                              style={{ padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'none', background:'#1a3a5c', color:'white', cursor:isBusy?'default':'pointer' }}>
+                              {isBusy ? 'Closing...' : 'Close'}
+                            </button>
+                          </div>
+                        );
+                      }
+                      if (reopenBtn) return reopenBtn;
+                      if (status === 'closed') {
+                        return <span style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'20px', background:'#f5f5f5', color:'#555', fontWeight:'500' }}>Closed</span>;
+                      }
+                      return (
+                        <div style={{ textAlign:'right' }}>
+                          <button disabled
+                            style={{ padding:'5px 14px', fontSize:'12px', borderRadius:'6px', border:'none', background:'#ccc', color:'#777', cursor:'not-allowed' }}>
+                            Close
+                          </button>
+                          <div style={{ fontSize:'10px', color:'#999', marginTop:'3px' }}>
+                            {'ปิดได้ตั้งแต่ ' + fmtDeadline(deadlineOf(type))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {isConfirming && (
@@ -2725,6 +2752,13 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       fetchOnlineUsers();
       const onlineIv = setInterval(fetchOnlineUsers, 30000);
       return () => clearInterval(onlineIv);
+    }, []);
+    // MARKER_USERMANAGEMENT_ONLINE_REALTIME_V1 -- เดิมมีแค่ Poll ทุก 30 วิ ทำให้ User ที่เพิ่ง Login ขึ้น Offline ค้างได้นานสุดเกือบ 30 วิ
+    // -- ฟัง Event เดียวกับที่ App.js Broadcast หลัง Heartbeat (last_seen) บันทึกเสร็จแล้วเท่านั้น (MARKER_APP_TEAM_STATUS_REALTIME_AWAIT_BEAT_V1)
+    // -- การันตีว่า Refetch ตอนนี้จะได้ last_seen ล่าสุดแน่ๆ ไม่ใช่ค่าเก่าก่อน Login เหมือน Pattern เดียวกับ TeamOnlinePopup ใน App.js
+    useEffect(() => {
+      const unsubscribe = subscribeWs(['team_status_updated'], () => fetchOnlineUsers());
+      return unsubscribe;
     }, []);
 
     // MARKER_USERMANAGEMENT_SIGNUP_LISTENER_V1

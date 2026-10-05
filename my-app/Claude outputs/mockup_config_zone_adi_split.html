@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup - Config Zone ADI</title>
+<style>
+  body{margin:0;padding:24px;background:#f3f5f8;font-family:'Segoe UI',Tahoma,sans-serif;font-size:13px;color:#1f2937}
+  h2{font-size:14px;margin:26px 0 8px;color:#1a3a5c}
+  .note{font-size:12px;color:#6b7280;margin:4px 0 10px;line-height:1.7}
+  .card{position:relative;background:#fff;border:1px solid #bcd6f5;border-radius:12px;padding:16px 14px 14px;margin-top:14px;max-width:1100px}
+  .card>.tag{position:absolute;top:-9px;left:12px;background:#fff;padding:0 6px;font-size:12px;font-weight:600;color:#2f6fd6}
+  .row{display:flex;gap:14px}
+  .f{min-width:0}
+  label{display:block;font-size:12px;font-weight:500;color:#6b7280;margin-bottom:5px}
+  .in{box-sizing:border-box;height:34px;font-size:13px;padding:0 10px;border:1px solid #b8d4ec;background:#E6F1FB;color:#0C447C;border-radius:8px;display:flex;align-items:center;justify-content:flex-end}
+  .gear{width:34px;height:34px;flex-shrink:0;border:1px solid #b8d4ec;border-radius:8px;background:#fff;color:#0C447C;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 0 0 3px rgba(224,138,0,.18);outline:1.5px solid #e08a00}
+  .hl{display:inline-block;background:#fff4e0;border:1px solid #f2c777;color:#8a5a00;border-radius:12px;padding:1px 10px;font-size:11px;margin-left:6px}
+  /* modal */
+  .ov{background:rgba(26,58,92,.35);border-radius:12px;padding:26px;max-width:1100px;margin-top:14px}
+  .md{background:#fff;border-radius:12px;box-shadow:0 12px 32px rgba(26,58,92,.25)}
+  .mh{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #e8eaf0}
+  .mh b{font-size:15px;color:#1a3a5c}
+  .x{width:26px;height:26px;border-radius:50%;background:#f1f3f6;text-align:center;line-height:26px;color:#666}
+  .base{display:flex;gap:18px;align-items:center;padding:10px 18px;background:#fafbfc;border-bottom:1px solid #e8eaf0;font-size:12px;color:#555;flex-wrap:wrap}
+  .base b{color:#1a3a5c;font-size:13px}
+  .tag2{background:#e6f1fb;border:1px solid #b8d4ec;color:#0C447C;border-radius:10px;padding:1px 9px;font-size:11px}
+  .tag3{background:#fff4e0;border:1px solid #f2c777;color:#8a5a00;border-radius:10px;padding:1px 9px;font-size:11px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:0}
+  .col{padding:12px 14px}
+  .col+.col{border-left:1px solid #e8eaf0}
+  .ch{text-align:center;font-weight:600;font-size:12px;padding:5px;border-radius:6px;margin-bottom:8px}
+  .dr .ch{background:#e9edf3;color:#34455e}
+  .cr .ch{background:#f5ece3;color:#7a5436}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{font-weight:500;color:#6b7280;text-align:left;padding:3px 4px;font-size:11px}
+  td{padding:3px 3px}
+  .c{box-sizing:border-box;height:28px;border:1px solid #b8d4ec;background:#E6F1FB;color:#0C447C;border-radius:5px;padding:0 6px;display:flex;align-items:center;font-size:11.5px}
+  .c.r{justify-content:flex-end}
+  .c.auto{background:#fff7e0;border-color:#f2c777;color:#8a5a00}
+  .c.lock{background:#f3f4f6;border-color:#e5e7eb;color:#6b7280}
+  .del{width:24px;height:28px;color:#b91c1c;text-align:center;line-height:28px;font-size:14px}
+  .add{margin-top:6px;display:inline-block;border:1px dashed #2f6fd6;color:#2f6fd6;border-radius:6px;padding:4px 12px;font-size:12px}
+  .sum{display:flex;justify-content:space-between;margin-top:8px;padding:6px 8px;border-radius:6px;font-size:12px}
+  .ok{background:#eaf3e8;color:#2e7d32;border:1px solid #b7d9b2}
+  .bad{background:#fdecea;color:#b3261e;border:1px solid #f3b8b3}
+  .mf{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-top:1px solid #e8eaf0}
+  .b1{background:#1a3a5c;color:#fff;border-radius:8px;padding:8px 28px;font-weight:600}
+  .b2{border:1px solid #d1d5db;background:#fff;border-radius:8px;padding:8px 22px;color:#555;margin-right:8px}
+  .b3{border:1px solid #d1d5db;background:#fff;border-radius:8px;padding:8px 16px;color:#555}
+  .co{margin-top:10px;padding:8px 12px;border-radius:8px;font-size:12px;background:#fff4e0;border:1px solid #f2c777;color:#8a5a00;line-height:1.7;max-width:1100px}
+</style></head><body>
+
+<h2>Mockup: เฟือง Config ที่ช่อง Default (Vat) — Popup แบ่งยอดตามสาขา</h2>
+<div class="note">ช่องสีส้ม = ของใหม่ &nbsp;·&nbsp; ตัวเลขเป็นตัวอย่างเท่านั้น (Vat 700.00 / สาขา 040201 เฉลี่ย 60%) &nbsp;·&nbsp; ยังไม่ได้แก้โค้ดจริง รอยืนยัน Layout ก่อน</div>
+
+<h2>1) ตำแหน่งปุ่มเฟือง (แถวบน Operation Input)</h2>
+<div class="card"><span class="tag">Operation Input</span>
+  <div class="row">
+    <div class="f" style="flex:15"><label>Code</label><div class="in" style="justify-content:flex-start">CFW-C2443/11</div></div>
+    <div class="f" style="flex:12"><label>Tax invoice Date</label><div class="in" style="justify-content:flex-start">📅 08/27/2026</div></div>
+    <div class="f" style="flex:14"><label>TIV number</label><div class="in"></div></div>
+    <div class="f" style="flex:20"><label>Amount</label><div class="in">10,000.00 &nbsp; GRO+VT</div></div>
+    <div class="f" style="flex:16"><label>Default (Vat) <span class="hl">ช่องเดิม</span></label>
+      <div style="display:flex;gap:6px"><div class="in" style="flex:1">700.00</div><div class="gear" title="Config">⚙</div></div></div>
+  </div>
+  <div class="note" style="margin-bottom:0">เฟืองอยู่ติดขวาช่อง Default (Vat) — กดแล้วเปิด Popup ด้านล่าง &nbsp;|&nbsp; ถ้าตั้งแบ่งยอดไว้แล้ว เฟืองจะเป็นสีส้ม + มีจุดบอก (และ Simple = No/No/No, ADI = Manual-ADJ)</div>
+</div>
+
+<h2>2) Popup — แถวเริ่มต้น (กรณีหัวเฉลี่ย AVG 60%, ยอด Vat เป็น +)</h2>
+<div class="ov"><div class="md">
+  <div class="mh"><b>ตั้งค่าการตัดยอด ADI ตามสาขา</b><span class="x">×</span></div>
+  <div class="base">
+    <span>ยอดที่ตัด (Default Vat): <b>700.00</b></span>
+    <span>ประเภท: <span class="tag3">เฉลี่ย (AVG)</span></span>
+    <span>ยอดเป็น <b>+</b> → ส่วนต่างภาษีตัดที่ฝั่ง <b>Dr.</b></span>
+  </div>
+  <div class="cols">
+    <div class="col dr"><div class="ch">Debit (Dr.)</div>
+      <table>
+        <tr><th style="width:22%">Ofin Code (สาขา)</th><th style="width:13%">CPC</th><th style="width:21%">Account</th><th style="width:15%">Sub Acc</th><th style="width:22%;text-align:right">ยอด</th><th style="width:24px"></th></tr>
+        <tr><td><div class="c">040201 🔍</div></td><td><div class="c">99999</div></td><td><div class="c">11610752</div></td><td><div class="c">999999</div></td><td><div class="c r">420.00</div></td><td></td></tr>
+        <tr><td><div class="c lock">040201</div></td><td><div class="c auto">45700</div></td><td><div class="c auto">63050000</div></td><td><div class="c auto">999999</div></td><td><div class="c r auto">280.00</div></td><td></td></tr>
+      </table>
+      <div class="note" style="margin:4px 0 0"><span class="tag3">แถวส้ม</span> = ส่วนต่างภาษี AVG (ระบบคำนวณให้ ล็อกสาขาตามแถวบน) = 700.00 − 420.00</div>
+      <span class="add">+ เพิ่มแถวสาขา</span>
+      <div class="sum ok"><span>รวม Dr.</span><b>700.00</b></div>
+    </div>
+    <div class="col cr"><div class="ch">Credit (Cr.)</div>
+      <table>
+        <tr><th style="width:22%">Ofin Code (สาขา)</th><th style="width:13%">CPC</th><th style="width:21%">Account</th><th style="width:15%">Sub Acc</th><th style="width:22%;text-align:right">ยอด</th><th style="width:24px"></th></tr>
+        <tr><td><div class="c">040301 🔍</div></td><td><div class="c">99999</div></td><td><div class="c">11630052</div></td><td><div class="c">999999</div></td><td><div class="c r">700.00</div></td><td></td></tr>
+      </table>
+      <span class="add">+ เพิ่มแถวสาขา</span>
+      <div class="sum ok"><span>รวม Cr.</span><b>700.00</b></div>
+    </div>
+  </div>
+  <div class="mf"><span class="tag2">รวม Dr. = รวม Cr. = 700.00 ✓ บันทึกได้</span><div><span class="b3" style="margin-right:8px">คืนค่าเริ่มต้น</span><span class="b2">ยกเลิก</span><span class="b1">ตกลง</span></div></div>
+</div></div>
+<div class="co">แถวเริ่มต้นดึงมาจากกรอบ Debit/Credit ที่กรอกไว้แล้ว (2 ฝั่ง) &nbsp;•&nbsp; ถ้าหัวเฉลี่ย ระบบแตกแถวให้อัตโนมัติ: ส่วนที่เคลมได้ + ส่วนต่างภาษี (45700 / 63050000 / 999999) ฝั่ง Dr. เหมือน Logic เดิมของ Average-IB</div>
+
+<h2>3) Popup — หลังกด "+ เพิ่มแถวสาขา" ฝั่ง Dr. (แบ่งยอดไปอีกสาขา) แต่ยอดยังไม่ครบ</h2>
+<div class="ov"><div class="md">
+  <div class="mh"><b>ตั้งค่าการตัดยอด ADI ตามสาขา</b><span class="x">×</span></div>
+  <div class="base">
+    <span>ยอดที่ตัด (Default Vat): <b>700.00</b></span>
+    <span>ประเภท: <span class="tag3">เฉลี่ย (AVG)</span></span>
+    <span>ยอดเป็น <b>+</b> → ส่วนต่างภาษีตัดที่ฝั่ง <b>Dr.</b></span>
+  </div>
+  <div class="cols">
+    <div class="col dr"><div class="ch">Debit (Dr.)</div>
+      <table>
+        <tr><th style="width:22%">Ofin Code (สาขา)</th><th style="width:13%">CPC</th><th style="width:21%">Account</th><th style="width:15%">Sub Acc</th><th style="width:22%;text-align:right">ยอด</th><th style="width:24px"></th></tr>
+        <tr><td><div class="c">040201 🔍</div></td><td><div class="c">99999</div></td><td><div class="c">11610752</div></td><td><div class="c">999999</div></td><td><div class="c r">252.00</div></td><td><div class="del">🗑</div></td></tr>
+        <tr><td><div class="c lock">040201</div></td><td><div class="c auto">45700</div></td><td><div class="c auto">63050000</div></td><td><div class="c auto">999999</div></td><td><div class="c r auto">168.00</div></td><td></td></tr>
+        <tr><td><div class="c">040305 🔍</div></td><td><div class="c">99999</div></td><td><div class="c">11610752</div></td><td><div class="c">999999</div></td><td><div class="c r">210.00</div></td><td><div class="del">🗑</div></td></tr>
+        <tr><td><div class="c lock">040305</div></td><td><div class="c auto">45700</div></td><td><div class="c auto">63050000</div></td><td><div class="c auto">999999</div></td><td><div class="c r auto">70.00</div></td><td></td></tr>
+      </table>
+      <div class="note" style="margin:4px 0 0">ผู้ใช้กรอก "ยอดรวมของสาขา" ในแถวขาว แล้วระบบแตกเป็น เคลมได้ + ส่วนต่าง ตาม % ของแต่ละสาขา</div>
+      <span class="add">+ เพิ่มแถวสาขา</span>
+      <div class="sum ok"><span>รวม Dr.</span><b>700.00 &nbsp;(ครบ)</b></div>
+    </div>
+    <div class="col cr"><div class="ch">Credit (Cr.)</div>
+      <table>
+        <tr><th style="width:22%">Ofin Code (สาขา)</th><th style="width:13%">CPC</th><th style="width:21%">Account</th><th style="width:15%">Sub Acc</th><th style="width:22%;text-align:right">ยอด</th><th style="width:24px"></th></tr>
+        <tr><td><div class="c">040301 🔍</div></td><td><div class="c">99999</div></td><td><div class="c">11630052</div></td><td><div class="c">999999</div></td><td><div class="c r">500.00</div></td><td></td></tr>
+      </table>
+      <span class="add">+ เพิ่มแถวสาขา</span>
+      <div class="sum bad"><span>รวม Cr.</span><b>500.00 &nbsp;(ขาด 200.00)</b></div>
+    </div>
+  </div>
+  <div class="mf"><span class="tag3" style="background:#fdecea;border-color:#f3b8b3;color:#b3261e">⚠ ฝั่ง Cr. ยังขาด 200.00 — ต้องเท่ากับ 700.00 ก่อนจึงกดตกลงได้</span><div><span class="b3" style="margin-right:8px">คืนค่าเริ่มต้น</span><span class="b2">ยกเลิก</span><span class="b1" style="opacity:.4">ตกลง</span></div></div>
+</div></div>
+
+<h2>กติกาที่เสนอ (ขอให้ยืนยัน)</h2>
+<div class="co" style="background:#eaf3e8;border-color:#b7d9b2;color:#2e7d32">
+  1. เปิด Popup แล้วมี 2 คอลัมน์ Dr./Cr. พร้อมแถวเริ่มต้นจากกรอบ Debit/Credit ที่กรอกอยู่ — เพิ่มแถวสาขาได้ทั้งสองฝั่ง<br>
+  2. ยอดที่ใช้แบ่ง = ค่าในช่อง Default (Vat) (ไม่แก้เลข = Vat ที่คำนวณ, แก้เลข = ยอดที่แก้)<br>
+  3. ผลรวมฝั่ง Dr. ต้องเท่ากับฝั่ง Cr. และเท่ากับยอดที่ตัด จึงกด "ตกลง" ได้<br>
+  4. หัวเฉลี่ย (BU ของสาขานั้น % ≠ 100) และยอดเป็น + : แตกแถวส่วนเคลมได้ + ส่วนต่างภาษี <b>45700 / 63050000 / 999999</b> ที่ฝั่ง Dr. &nbsp;(ยอดติดลบ → สลับไปฝั่ง Cr. ตาม Logic Average-IB เดิม)<br>
+  5. เมื่อกด "ตกลง": Simple = No/No/No, ADI Badge = Manual-ADJ, ตาราง Upload ADI ใช้แถวตามที่ตั้งใน Popup
+</div>
+</body></html>

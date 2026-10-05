@@ -2,6 +2,33 @@
 // ── Pure Function สร้างไฟล์ Excel Popvat/Simple/ADI จาก Master Template จริง ──
 // ── แยกออกจาก Route/DB โดยตั้งใจ เพื่อ Unit Test ได้ง่าย ไม่ต้องพึ่ง Database ──
 import ExcelJS from "exceljs";
+import { createRequire } from "module";
+
+// MARKER_VATEXPORTGEN_STRIP_FILTERPRIVACY_V1 -- ExcelJS ฝัง filterPrivacy="1" ใน xl/workbook.xml ของทุกไฟล์ที่เขียนออกมา
+// ทำให้ Excel ขึ้น "Be careful! Parts of your document may include personal information..." ทุกครั้งที่ Save/Export
+// ตัด Attribute นี้ออกจาก Buffer หลังเขียน (ถ้าตัดไม่ได้ให้คืน Buffer เดิม ไม่ให้ Export ล้ม)
+async function stripFilterPrivacy(xlsxBuffer) {
+  try {
+    let JSZip;
+    try {
+      JSZip = (await import("jszip")).default;
+    } catch (e1) {
+      const req = createRequire(import.meta.url);
+      JSZip = createRequire(req.resolve("exceljs"))("jszip");
+    }
+    const zip = await JSZip.loadAsync(xlsxBuffer);
+    const f = zip.file("xl/workbook.xml");
+    if (!f) return xlsxBuffer;
+    const xml = await f.async("string");
+    const next = xml.replace(/\sfilterPrivacy="(?:1|true)"/, "");
+    if (next === xml) return xlsxBuffer;
+    zip.file("xl/workbook.xml", next);
+    return await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  } catch (err) {
+    console.error("[stripFilterPrivacy] skip:", err.message);
+    return xlsxBuffer;
+  }
+}
 
 const MONTH_ABBR = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
@@ -26,7 +53,7 @@ export function toExcelDate(dateStr) {
   const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoMatch) {
     const [, y, mo, d] = isoMatch;
-    return new Date(Number(y), Number(mo) - 1, Number(d));
+    return new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d))); // MARKER_VATEXPORT_TOEXCELDATE_UTC_FIX_V1 -- ใช้ UTC เที่ยงคืน เพราะ ExcelJS เขียน Date เป็น UTC; แบบเดิม new Date(y,m,d) = เที่ยงคืนเวลาไทย => Excel ถอยไปวันก่อนหน้า (เช่น 30-Sep โชว์ 29-Sep 17:00)
   }
 
   // Format 2: "DD-MMM-YY" หรือ "DD-MMM-YYYY" (เช่น "09-Sep-26") -- MARKER_VATEXPORT_TOEXCELDATE_DDMMMYY_FIX_V1
@@ -37,7 +64,7 @@ export function toExcelDate(dateStr) {
     if (monthIdx === undefined) return null;
     let year = Number(yRaw);
     if (year < 100) year += 2000; // "26" -> 2026
-    return new Date(year, monthIdx, Number(d));
+    return new Date(Date.UTC(year, monthIdx, Number(d))); // MARKER_VATEXPORT_TOEXCELDATE_UTC_FIX_V1
   }
 
   return null;
@@ -85,7 +112,7 @@ export async function generatePopvatWorkbook(templatePath, rows, meta) {
   ws.getCell("M7").value = meta.bu || "";
   ws.getCell("M8").value = meta.periodMmmYy || "";
 
-  return wb.xlsx.writeBuffer();
+  return stripFilterPrivacy(await wb.xlsx.writeBuffer());
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -218,7 +245,7 @@ export async function generateSimpleAdiWorkbook(simpleTemplatePath, groupedRows,
     // ไม่กระทบ) แทนการอ้าง $J$4 (=meta.bu) ตรงๆ เพราะ Prefix ควรเป็น Book (เช่น "CRG") ไม่ใช่ BU
     // C4 (Function) ใช้ meta.functionCode (Fallback "APN" เดิม -- VAT ไม่กระทบ) แทน Hardcode ตายตัว
     const c1PrefixVal = String(meta.book || meta.bu || "").replace(/"/g, '""');
-    ws.getCell("J4").value = meta.bu || "";
+    ws.getCell("J4").value = meta.book || meta.bu || ""; // MARKER_VATEXPORTGEN_BUBOOK_J4_V1 -- BU Book ตาม Macro CHECK_GROUPBRAND_APN (เช่น CTD -> HWS)
     ws.getCell("C1").value = { formula: `"${c1PrefixVal}"&"INPUTVAT_"&TEXT(TODAY(),"YYMMDD")&"-"&$Y$2` };
     ws.getCell("C2").value = meta.company || "";
     ws.getCell("C3").value = "APN";
@@ -266,10 +293,10 @@ export async function generateSimpleAdiWorkbook(simpleTemplatePath, groupedRows,
     adiTemplateWb.definedNames.model = []; // MARKER_VATEXPORT_STRIP_EXTERNAL_DEFINEDNAMES_V1
     const adiMasterWs = adiTemplateWb.worksheets[0];
 
-    let adiSheetName = sanitizeSheetName("ADI_Upload");
+    let adiSheetName = sanitizeSheetName("ADI-Upload"); // MARKER_VATEXPORTGEN_ADI_SHEETNAME_HYPHEN_V1 -- ชื่อ Sheet ตาม Macro = "ADI-Upload" (ขีดกลาง ไม่ใช่ Underscore)
     let adiSuffix = 1;
     while (usedNames.has(adiSheetName)) {
-      adiSheetName = sanitizeSheetName(`ADI_Upload_${++adiSuffix}`);
+      adiSheetName = sanitizeSheetName(`ADI-Upload_${++adiSuffix}`);
     }
     const adiWs = cloneSheetInto(outWb, adiMasterWs, adiSheetName);
 
@@ -298,10 +325,10 @@ export async function generateSimpleAdiWorkbook(simpleTemplatePath, groupedRows,
     });
 
     adiWs.getCell("X2").value = meta.folderPath || "";
-    adiWs.getCell("X7").value = meta.bu || "";
+    adiWs.getCell("X7").value = meta.book || meta.bu || ""; // MARKER_VATEXPORTGEN_BUBOOK_J4_V1
   }
 
-  return outWb.xlsx.writeBuffer();
+  return stripFilterPrivacy(await outWb.xlsx.writeBuffer());
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -324,7 +351,7 @@ export async function generateSimpleBySheetWorkbooks(simpleTemplatePath, grouped
     // ไม่กระทบ) แทนการอ้าง $J$4 (=meta.bu) ตรงๆ เพราะ Prefix ควรเป็น Book (เช่น "CRG") ไม่ใช่ BU
     // C4 (Function) ใช้ meta.functionCode (Fallback "APN" เดิม -- VAT ไม่กระทบ) แทน Hardcode ตายตัว
     const c1PrefixVal = String(meta.book || meta.bu || "").replace(/"/g, '""');
-    ws.getCell("J4").value = meta.bu || "";
+    ws.getCell("J4").value = meta.book || meta.bu || ""; // MARKER_VATEXPORTGEN_BUBOOK_J4_V1 -- BU Book ตาม Macro CHECK_GROUPBRAND_APN (เช่น CTD -> HWS)
     ws.getCell("C1").value = { formula: `"${c1PrefixVal}"&"INPUTVAT_"&TEXT(TODAY(),"YYMMDD")&"-"&$Y$2` };
     ws.getCell("C2").value = meta.company || "";
     ws.getCell("C3").value = "APN";
@@ -364,7 +391,7 @@ export async function generateSimpleBySheetWorkbooks(simpleTemplatePath, grouped
       ws.getCell(`V${rowIdx}`).value = r.grt_run ?? "";
     });
 
-    const buffer = await outWb.xlsx.writeBuffer();
+    const buffer = await stripFilterPrivacy(await outWb.xlsx.writeBuffer());
     results.push({ sheetKey: group.key, buffer });
   }
 
@@ -380,6 +407,7 @@ export async function generateAdiOnlyWorkbook(adiTemplatePath, adiRows, meta) {
   await wb.xlsx.readFile(adiTemplatePath);
   wb.definedNames.model = []; // MARKER_VATEXPORT_STRIP_EXTERNAL_DEFINEDNAMES_V1
   const ws = wb.worksheets[0];
+  ws.name = "ADI-Upload"; // MARKER_VATEXPORTGEN_ADI_SHEETNAME_HYPHEN_V1 -- บังคับชื่อ Sheet ให้ตรง Macro แม้ Template ตั้งชื่ออื่น
 
   adiRows.forEach((r, i) => {
     const rowIdx = i + 2;
@@ -406,7 +434,7 @@ export async function generateAdiOnlyWorkbook(adiTemplatePath, adiRows, meta) {
   });
 
   ws.getCell("X2").value = meta.folderPath || "";
-  ws.getCell("X7").value = meta.bu || "";
+  ws.getCell("X7").value = meta.book || meta.bu || ""; // MARKER_VATEXPORTGEN_BUBOOK_J4_V1
 
-  return wb.xlsx.writeBuffer();
+  return stripFilterPrivacy(await wb.xlsx.writeBuffer());
 }

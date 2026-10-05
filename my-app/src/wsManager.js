@@ -59,7 +59,9 @@ export function setWsUsername(username) {
   // ── Reconnect ใหม่ให้ Server รู้ Username ล่าสุด (URL Query String เดิม ──
   // ── ผูกกับตอนเปิด Connection ครั้งแรกเท่านั้น เปลี่ยนทีหลังไม่มีผลอัตโนมัติ) ──
   if (changed && ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    ws.close();
+    // MARKER_WSMANAGER_LOGOUT_CLOSE_CODE_V1 -- Logout/Force Logout (username -> null) ปิดด้วย code 4000 ให้ Backend รู้ว่าเป็น Logout จริง (Offline ทันที)
+    // -- Refresh/ปิดแท็บ/เน็ตหลุดไม่ใช่ code นี้ -> Backend รอ Grace ก่อนประกาศ Offline
+    if (username) ws.close(); else ws.close(4000, 'logout');
     ws = null;
     if (listeners.size > 0) connect();
   }
@@ -72,12 +74,13 @@ function getWsUrl() {
 
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  ws = new WebSocket(getWsUrl());
+  const sock = new WebSocket(getWsUrl());
+  ws = sock;
   setWsStatus('reconnecting'); // MARKER_WSMANAGER_CONNECTION_STATUS_V1 -- กำลังพยายามเชื่อมต่อ (ครั้งแรก หรือหลังหลุด)
 
-  ws.onopen = () => { reconnectAttempts = 0; setWsStatus('connected'); }; // MARKER_WSMANAGER_RECONNECT_BACKOFF_V1 -- เชื่อมต่อสำเร็จ รีเซ็ต Backoff กลับเป็นต่อทันทีในรอบหน้า -- MARKER_WSMANAGER_CONNECTION_STATUS_V1
+  sock.onopen = () => { reconnectAttempts = 0; setWsStatus('connected'); }; // MARKER_WSMANAGER_RECONNECT_BACKOFF_V1 -- เชื่อมต่อสำเร็จ รีเซ็ต Backoff กลับเป็นต่อทันทีในรอบหน้า -- MARKER_WSMANAGER_CONNECTION_STATUS_V1
 
-  ws.onmessage = ({ data }) => {
+  sock.onmessage = ({ data }) => {
     let parsed;
     try { parsed = JSON.parse(data); } catch { return; }
     const { event } = parsed || {};
@@ -88,8 +91,11 @@ function connect() {
       }
     });
   };
-  ws.onerror = () => console.warn('[wsManager] connection error');
-  ws.onclose = () => {
+  sock.onerror = () => console.warn('[wsManager] connection error');
+  sock.onclose = () => {
+    // MARKER_WSMANAGER_STALE_SOCKET_GUARD_V1 -- Socket เก่า (ที่ถูกแทนด้วย Connection ใหม่แล้ว เช่น Username เปลี่ยน) ปิดทีหลัง ห้ามไปเคลียร์/Reconnect ทับ Connection ใหม่
+    // -- เดิม onclose ของตัวเก่าเซ็ต ws = null ทับตัวใหม่ -> เปิด Connection ซ้ำค้างเป็น "ผี" ทำให้ Backend คิดว่า User ยัง Online
+    if (ws && ws !== sock) return;
     ws = null;
     // ── Reconnect เฉพาะตอนยังมีคน Subscribe อยู่จริง ไม่งั้นปล่อยปิดไปเลย ──
     if (listeners.size > 0) {

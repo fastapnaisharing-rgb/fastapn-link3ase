@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Group Range + Related Person</title>
+<style>
+  body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#f4f4f4;margin:0;padding:20px;color:#333;font-size:13px}
+  .card{background:#fff;border-radius:12px;padding:16px 18px;max-width:900px;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+  .ttl{font-size:12px;font-weight:600;color:#666}.sub{font-size:10px;color:#999;margin-left:8px}
+  .tbl{border:.5px solid #e8e8e8;border-radius:8px;overflow:hidden;margin:10px 0}
+  .g{display:grid;grid-template-columns:1fr 2fr 1fr 1.4fr 100px}
+  .h{background:#f6f7f9;font-size:11px;color:#666;padding:7px 10px;border-bottom:.5px solid #e8e8e8}
+  .c{padding:7px 10px;border-top:.5px solid #f0f0f0}
+  .new{background:#fff7ed;color:#c2410c;font-weight:600}
+  .box{border:1px dashed #ccc;border-radius:8px;padding:12px;display:grid;grid-template-columns:2fr 1fr 1.4fr 100px;gap:8px;align-items:end}
+  .box label{display:block;font-size:10px;color:#999;margin-bottom:4px}
+  .in{border:1px solid #ccc;border-radius:6px;padding:7px 9px;background:#fff}
+  .btn{background:#1a3a5c;color:#fff;text-align:center;padding:8px 0;border-radius:6px;font-size:12px}
+  .sm{padding:2px 8px;border:.5px solid #ccc;border-radius:5px;font-size:11px;margin-right:4px}
+  .hl{outline:2px solid #e5484d;outline-offset:2px}
+  .note{max-width:900px;line-height:1.7;color:#666;margin-top:12px;font-size:12px}
+</style></head><body>
+<div class="card">
+  <div><span class="ttl">BU GROUP RANGE</span><span class="sub">— Config ระดับระบบ ไม่บังคับกำหนดทุก BU</span></div>
+  <div class="tbl">
+    <div class="g"><div class="h">Group Name</div><div class="h">Range</div><div class="h">อ่านกี่ตำแหน่ง</div><div class="h new hl">Related Person</div><div class="h" style="text-align:center">จัดการ</div></div>
+    <div class="g"><div class="c"><b>CRG</b></div><div class="c">5000-5249</div><div class="c">4 ตำแหน่ง</div><div class="c">Jiratta</div><div class="c" style="text-align:center"><span class="sm">แก้ไข</span><span class="sm" style="color:#c0392b;border-color:#c0392b">ลบ</span></div></div>
+    <div class="g"><div class="c"><b>CRG</b></div><div class="c">5250-5499</div><div class="c">4 ตำแหน่ง</div><div class="c">Pornmalee</div><div class="c" style="text-align:center"><span class="sm">แก้ไข</span><span class="sm" style="color:#c0392b;border-color:#c0392b">ลบ</span></div></div>
+    <div class="g"><div class="c"><b>CRG</b></div><div class="c">0401-0401,4360-4363</div><div class="c">4 ตำแหน่ง</div><div class="c" style="color:#aaa">— (ไม่ระบุ)</div><div class="c" style="text-align:center"><span class="sm">แก้ไข</span><span class="sm" style="color:#c0392b;border-color:#c0392b">ลบ</span></div></div>
+  </div>
+  <div class="box">
+    <div><label>Range (คั่นด้วย , ได้หลายช่วง)</label><div class="in">เช่น 0401-0401,4360-4363</div></div>
+    <div><label>อ่านกี่ตำแหน่ง</label><div class="in">4 ตำแหน่ง ▾</div></div>
+    <div><label style="color:#c2410c">Related Person</label><div class="in hl">เช่น Jiratta</div></div>
+    <div class="btn">+ เพิ่ม</div>
+  </div>
+</div>
+<div class="note">เพิ่มคอลัมน์ "Related Person" ต่อท้าย Range (ช่องไม่บังคับ) — ใช้เฉพาะรายงาน Mail/Pivot เท่านั้น ไม่ไปยุ่งกับ Info ของ BU หรือ Vendor<br>
+ถ้ารายการไม่ตรง Range ใดเลย หรือ Range นั้นไม่ได้กรอกคน → ในรายงานจะขึ้นกลุ่ม "(ไม่ระบุ)"</div>
+</body></html>

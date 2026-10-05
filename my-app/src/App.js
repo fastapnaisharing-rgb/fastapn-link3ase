@@ -15,12 +15,14 @@ import APController, { InvoiceHistoryPage, BatchControlPage } from './pages/APCo
 import IEController, { InvoiceHistoryPage as IEInvoiceHistoryPage, GenerateMacroLogicPage as IEGenerateMacroLogicPage } from './pages/IEController'; // MARKER_APP_IE_CONTROLLER_ROUTE
 import APScanOCR from './pages/APScanOCR';
 import VatController from './pages/VatController';
+import VatDashboard from './pages/VatDashboard'; // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1
 import GLFunctionalController from './pages/GLFunctionalController'; // MARKER_GL_AP_RECON_COMPONENT_V1
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db } from './lib/db';
 import { useRealtimeRefresh } from './useRealtimeRefresh';
-import { broadcastWs, subscribeWsStatus } from './wsManager'; // MARKER_APP_SIGNAL_DOT_V1 -- เพิ่ม subscribeWsStatus สำหรับ Signal Dot หน้าชื่อ (ความเสี่ยงขาดการเชื่อมต่อ)
+import { broadcastWs, subscribeWsStatus, subscribeWs } from './wsManager'; // MARKER_APP_TEAM_LOGIN_TOAST_V1 -- subscribeWs สำหรับ Toast เข้า/ออกระบบของทีม
+// // MARKER_APP_SIGNAL_DOT_V1 -- เพิ่ม subscribeWsStatus สำหรับ Signal Dot หน้าชื่อ (ความเสี่ยงขาดการเชื่อมต่อ)
 // MARKER_APP_BATCH_REVIEW_BELL_V1
 import BatchChatDrawer from './pages/BatchChatDrawer';
 import FilePreviewPopup from './FilePreviewPopup';
@@ -1326,6 +1328,8 @@ function MainApp() {
   const bellRef = React.useRef(null);
   // MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1
   const profileIconRef = useRef(null);
+  const teamToastLastRef = useRef({});
+  const [teamToasts, setTeamToasts] = useState([]); // [{id, username, kind: 'login'|'logout'}]
   const teamHoverTimerRef = useRef(null);
   const [showTeamPopup, setShowTeamPopup] = useState(false);
   const [teamOnlineUsers, setTeamOnlineUsers] = useState([]);
@@ -1882,6 +1886,25 @@ function MainApp() {
     if (!currentUser) confirmDialog.dismiss();
   }, [currentUser]);
 
+  // MARKER_APP_TEAM_LOGIN_TOAST_V2 -- Toast ลอยมุมขวาล่าง 5 วิ เมื่อคนในทีมเข้าสู่ระบบ/ออกจากระบบ
+  // -- Backend (app.js 'team_presence') เป็นผู้ตัดสินว่าใครควรเห็น + เข้า/ออกจริงหรือไม่ -- ที่นี่แค่แสดงผล
+  useEffect(() => {
+    const myName = userName || currentUser?.email || '';
+    if (!currentUser || !myName) return undefined;
+    const unsubscribe = subscribeWs(['team_presence'], (event, payload) => {
+      const u = payload?.username;
+      const kind = payload?.kind;
+      if (!u || u === myName || (kind !== 'login' && kind !== 'logout')) return;
+      const key = payload.id || `${u}|${kind}|${Date.now()}`;
+      if (teamToastLastRef.current[key]) return; // กัน Event เดียวกันซ้ำ (ไม่ใช่ Dedupe ตามเวลา -- Login/Logout ติดกันต้องขึ้นครบ)
+      teamToastLastRef.current[key] = true;
+      const id = `${key}-${Date.now()}`;
+      setTeamToasts(prev => [...prev.slice(-3), { id, username: u, kind }]);
+      setTimeout(() => setTeamToasts(prev => prev.filter(t => t.id !== id)), 5000);
+    });
+    return unsubscribe;
+  }, [currentUser, userName]);
+
   // MARKER_FIX_HEARTBEAT_HOOKS_ORDER_V1
   // ── Heartbeat: เขียนว่ากำลังอยู่เมนูไหน ทุก 30 วิ (สำหรับกล่อง "ทีม" ที่ Home) ──
   // ── session_id = Username เอง -> Upsert ทับ Row เดิมเสมอ ไม่มี Row ซ้ำต่อคน ──
@@ -1898,9 +1921,11 @@ function MainApp() {
         );
       } catch (e) { console.error('[menu heartbeat]', e); }
     };
-    beat();
+    // MARKER_APP_TEAM_STATUS_REALTIME_AWAIT_BEAT_V1 -- ต้องรอ Upsert last_seen เสร็จก่อนค่อย Broadcast (เดิมยิงพร้อมกัน -> ฝั่งรับ Refetch ทันทีได้ last_seen เก่า -> ยังเป็น Offline จนกว่า Poll 30 วิ)
+    beat().then(() => {
     // MARKER_APP_TEAM_STATUS_REALTIME_LOGIN_V1 -- แจ้ง Home ให้ Refresh การ์ดทีมทันทีตอน Login/เปลี่ยนเมนู ไม่ต้องรอ Poll 30 วิ
-    broadcastWs('team_status_updated', { username: me });
+      broadcastWs('team_status_updated', { username: me }); // MARKER_APP_TEAM_LOGIN_TOAST_V2 -- ใช้ Refresh รายชื่อทีมเท่านั้น (Toast Login/Logout ให้ Backend ประกาศเอง)
+    });
     const interval = setInterval(beat, 30000);
     return () => clearInterval(interval);
   }, [activePage, userName, currentUser]);
@@ -2027,6 +2052,10 @@ function MainApp() {
 
       // Functions (placeholder)
       // MARKER_APP_VAT_ROUTING_RESTRUCTURE_V2 — 12 เมนู ตามโครงสร้างใหม่ (OPERATION/RECONCILE/RESULTS/BACKUP)
+      case 'vat-dashboard': // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1 -- แยกออกจาก VatController.js
+        return (isOwner || userPermissions?.['VAT'])
+          ? <VatDashboard />
+          : <NoAccessPage />;
       case 'vat-watchlist-ops':
       case 'vat-reconcile-ap01-05':
       case 'vat-simple-input-ops':
@@ -2034,7 +2063,6 @@ function MainApp() {
       case 'vat-suspense-rec':
       case 'vat-direct-debit-recon':
       case 'vat-timeline':
-      case 'vat-dashboard':
       case 'vat-upload-file':
       case 'vat-monthly-report':
       case 'vat-backup-transaction':
@@ -2400,6 +2428,17 @@ function MainApp() {
           onDismissHandled={handleDismissNotif}
           onDismissSupportNotif={handleDismissSupportNotif}
         />
+      )}
+      {/* MARKER_APP_TEAM_LOGIN_TOAST_V1 -- Toast เข้า/ออกระบบของทีม (ลอยมุมขวาล่าง หายเองใน 5 วิ) */}
+      {teamToasts.length > 0 && (
+        <div style={{ position: 'fixed', right: '20px', bottom: '20px', zIndex: 10000, display: 'flex', flexDirection: 'column', gap: '8px', pointerEvents: 'none' }}>
+          {teamToasts.map(t => (
+            <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'white', border: '0.5px solid #e0e0e0', borderLeft: `3px solid ${t.kind === 'login' ? '#639922' : '#aaa'}`, borderRadius: '10px', padding: '9px 14px', boxShadow: '0 6px 20px rgba(0,0,0,0.16)', fontSize: '12px', color: '#1a3a5c', minWidth: '190px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: t.kind === 'login' ? '#639922' : '#bbb', flexShrink: 0 }}></span>
+              <span><b>{t.username}</b> {t.kind === 'login' ? 'เข้าสู่ระบบ' : 'ออกจากระบบ'}</span>
+            </div>
+          ))}
+        </div>
       )}
       {/* MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1 */}
       {showTeamPopup && (isOwner || isAdmin) && (

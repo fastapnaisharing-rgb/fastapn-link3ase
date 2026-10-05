@@ -135,6 +135,7 @@ const QUEUE_STATUS_CONFIG = {
 const QUEUE_SOURCE_CONFIG = {
   ap_ocr:   { label: 'AP OCR',          color: '#BF360C', bg: '#FFF3E0' },
   docenter: { label: 'Document Center', color: '#0D47A1', bg: '#E3F2FD' },
+  vat_controller: { label: 'VAT AR_Collection', color: '#1B5E20', bg: '#E8F5E9' }, // MARKER_HOMEPAGE_CENTRALQUEUE_VAT_V1
 };
 function queueFmtTime(ts) {
   if (!ts) return '-';
@@ -956,6 +957,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                           <span style={{ fontSize: '9px', padding: '1px 4px', borderRadius: '3px', background: st.bg, color: st.color, fontWeight: '500' }}>{st.label}</span>
                           <span style={{ fontSize: '9px', color: '#aaa' }}>{queueFmtTime(item.created_at)}</span>
                         </div>
+                        {item.source === 'vat_controller' && item.error_msg && <div style={{ fontSize: '9.5px', color: '#666', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.error_msg}>{item.error_msg}</div>}
                       </div>
                       {isOwner && ['pending','waiting_ap'].includes(item.status) && item.source === 'docenter' && (
                         <button onClick={() => handleQueueBoost(item)} title="ลัดคิว" style={{ width: '20px', height: '20px', borderRadius: '4px', border: '0.5px solid #1a3a5c', background: '#f0f6ff', color: '#1a3a5c', fontSize: '10px', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>↑</button>
@@ -985,7 +987,8 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
             { key:'i_pro',         label:'I-Pro Interface' },
           ];
           const getMenuCount = (key) => {
-            if (key === 'docenter') return queueItems.filter(q => ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
+            if (key === 'docenter') return queueItems.filter(q => q.source !== 'vat_controller' && ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
+            if (key === 'vat_controller') return queueItems.filter(q => q.source === 'vat_controller' && ['pending','processing'].includes(q.status)).length; // MARKER_HOMEPAGE_CENTRALQUEUE_VAT_V1
             return 0;
           };
           const activeCount = queueItems.filter(q => ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
@@ -1045,7 +1048,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                         <div style={{textAlign:'center',padding:'40px',color:'#aaa',fontSize:'12px'}}><div style={{fontSize:'28px',marginBottom:'8px'}}>✅</div>ไม่มีงานในคิว</div>
                       ):displayed.map((item,qi)=>{
                         const st=getStatusTag(item.status);
-                        const src=item.source==='ap_ocr'?{label:'AP Controller',bg:'#EEF0F2',color:'#546E7A'}:{label:'Document Center',bg:'#EDF5F4',color:'#4E8079'};
+                        const src=item.source==='ap_ocr'?{label:'AP Controller',bg:'#EEF0F2',color:'#546E7A'}:item.source==='vat_controller'?{label:'VAT Controller',bg:'#E8F5E9',color:'#1B5E20'}:{label:'Document Center',bg:'#EDF5F4',color:'#4E8079'};
                         const pos=item.queue_position||(qi+1);
                         const isOcring=['ocring','processing'].includes(item.status);
                         return (
@@ -1060,6 +1063,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                                 <span style={{fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:src.bg,color:src.color}}>{src.label}</span>
                                 <span style={{fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color}}>{st.label}</span>
                               </div>
+                              {item.source==='vat_controller'&&item.error_msg&&<div style={{fontSize:'9.5px',color:['error','failed'].includes(item.status)?'#B71C1C':'#666',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={item.error_msg}>{item.error_msg}</div>}
                               {isOcring&&<div style={{height:'3px',borderRadius:'2px',background:'#dce8fb',overflow:'hidden',marginTop:'4px'}}><div style={{height:'100%',borderRadius:'2px',background:'#1a3a5c',animation:'ocrShimmer 1.5s ease-in-out infinite'}}/></div>}
                             </div>
                             <div><span style={{fontSize:'9px',padding:'1px 6px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color,whiteSpace:'nowrap'}}>{st.label}</span></div>

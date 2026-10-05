@@ -1,0 +1,36 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><title>Mockup Include/Ignore</title>
+<style>
+body{font-family:Segoe UI,Tahoma,sans-serif;background:#eef0f3;margin:0;padding:24px;color:#222}
+.cap{font-size:13px;font-weight:600;color:#1a3a5c;margin:0 0 8px}.grid{display:flex;gap:24px;flex-wrap:wrap}
+.m{background:#fff;border-radius:12px;width:760px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.hd{padding:14px 20px;border-bottom:.5px solid #e8e8e8;font-size:16px}
+.tabs{display:flex;gap:4px;padding:6px 20px 0;border-bottom:.5px solid #e8e8e8}.tabs span{padding:8px 16px;font-size:13px;color:#888}.tabs .on{color:#1a3a5c;font-weight:600;border-bottom:2px solid #1a3a5c}
+.bd{padding:14px 20px;height:400px;box-sizing:border-box;position:relative}
+.inp{width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;border:.5px solid #1565c0;border-radius:8px;box-shadow:0 0 0 2px #e3f2fd}
+.dd{position:absolute;left:20px;right:20px;top:56px;background:#fff;border:.5px solid #ccc;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.15);z-index:2}
+.r{display:flex;align-items:center;gap:10px;padding:7px 10px;font-size:12px;border-bottom:.5px solid #f0f0f0}.r b{font-weight:400;width:130px}.r i{font-style:normal;flex:1;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt{padding:3px 10px;font-size:12px;border-radius:6px;border:.5px solid}.inc{background:#e8f5e9;color:#2e7d32;border-color:#a5d6a7}.ign{background:#ffebee;color:#c62828;border-color:#ef9a9a}.done{background:#f0f0f0;color:#aaa;border-color:#ddd}.add{background:#e3f2fd;color:#1565c0;border-color:#90caf9}
+.two{display:flex;gap:12px;margin-top:62px}.bx{flex:1}.bx h4{margin:0 0 6px;font-size:13px}.box{height:260px;border:.5px solid #e0e0e0;border-radius:8px;overflow:hidden}
+.li{display:flex;gap:8px;padding:6px 10px;font-size:12px;border-bottom:.5px solid #f0f0f0}.li b{font-weight:400;width:130px}.li i{font-style:normal;flex:1;color:#666}.li u{color:#c62828;text-decoration:none}
+.ft{display:flex;justify-content:space-between;padding:12px 20px;border-top:.5px solid #e8e8e8}.back{padding:5px 12px;font-size:12px;border:.5px solid #ccc;border-radius:8px}.save{padding:7px 22px;font-size:13px;background:#1a3a5c;color:#fff;border-radius:8px}
+.emp{padding:10px;font-size:12px;color:#aaa}
+</style></head><body>
+<div class="grid">
+<div><p class="cap">A. ตอนพิมพ์ค้นหา (To BU / ตามเงื่อนไข) — ผลขึ้นลอยใต้ช่อง มีปุ่ม Include / Ignore ท้ายชื่อ</p>
+<div class="m"><div class="hd">แก้ไข Config</div><div class="tabs"><span>เงื่อนไข</span><span class="on">Include / Ignore</span><span>ผู้รับ / เนื้อหา</span></div>
+<div class="bd"><input class="inp" value="เจเดีย"><div class="dd">
+<div class="r"><b>CRG-N15703-HO</b><i>CRG-บริษัท เจเดีย โซลูชั่น จำกัด</i><span class="bt inc">Include</span><span class="bt ign">Ignore</span></div>
+<div class="r"><b>BRW-N20110-HO</b><i>BRW-เจเดีย เทรดดิ้ง จำกัด</i><span class="bt done">✓ Include</span><span class="bt ign">Ignore</span></div>
+<div class="r"><b>SF-N30871-HO</b><i>SF-เจเดีย ฟู้ด จำกัด</i><span class="bt inc">Include</span><span class="bt ign">Ignore</span></div></div>
+<div class="two"><div class="bx"><h4 style="color:#2e7d32">INCLUDE (นอกเงื่อนไข แต่ต้องตาม) (1)</h4><div class="box"><div class="li"><b>BRW-N20110-HO</b><i>BRW-เจเดีย เทรดดิ้ง</i><u>×</u></div></div></div>
+<div class="bx"><h4 style="color:#c62828">IGNORE (ในเงื่อนไข แต่ไม่ต้องตาม) (0)</h4><div class="box"><div class="emp">ยังไม่มีรายการ</div></div></div></div></div>
+<div class="ft"><span class="back">← กลับ Mail List</span><span class="save">บันทึก</span></div></div></div>
+
+<div><p class="cap">B. โหมด By Vendor — เหลือปุ่ม "เพิ่ม" ปุ่มเดียว และมีกล่องเดียว</p>
+<div class="m"><div class="hd">แก้ไข Config</div><div class="tabs"><span>เงื่อนไข</span><span class="on">Include / Ignore</span><span>ผู้รับ / เนื้อหา</span></div>
+<div class="bd"><input class="inp" value="CRG-N157"><div class="dd">
+<div class="r"><b>CRG-N15703-HO</b><i>CRG-บริษัท เจเดีย โซลูชั่น จำกัด</i><span class="bt add">เพิ่ม</span></div>
+<div class="r"><b>CRG-N15722-HO</b><i>CRG-บริษัท ไทยเอ็น จำกัด</i><span class="bt done">✓ เพิ่ม</span></div></div>
+<div class="two"><div class="bx"><h4 style="color:#1565c0">Vendor ที่ส่ง (By Vendor) (1)</h4><div class="box"><div class="li"><b>CRG-N15722-HO</b><i>CRG-บริษัท ไทยเอ็น จำกัด</i><u>×</u></div></div></div></div></div>
+<div class="ft"><span class="back">← กลับ Mail List</span><span class="save">บันทึก</span></div></div></div>
+</div></body></html>

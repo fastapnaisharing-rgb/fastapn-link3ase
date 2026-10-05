@@ -5,6 +5,17 @@ import { pool, getUsernameByEmail } from "../db.js";
 const router = Router();
 
 // ── แปลงรูปแบบเดือนจาก "2026-07" เป็น "Jul 2569" ให้อ่านง่ายในข้อความ Notification ──
+// MARKER_PERIOD_NO_SKIP_GUARD_V1
+// ── เดือนสูงสุดที่ปิดได้ = เดือนปฏิทินก่อนหน้าเดือนปัจจุบัน (เวลาไทย) เช่น วันนี้ต.ค. 2026 → ปิดได้สูงสุด 2026-09 ──
+function maxClosableMonthStr() {
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function noSkipMsg(closingMonthStr) {
+  return `ปิด Period ${fmtMonth(closingMonthStr)} ไม่ได้ — ปิดได้สูงสุดถึง ${fmtMonth(maxClosableMonthStr())} เท่านั้น (ห้ามปิดข้าม Period)`;
+}
+
 function fmtMonth(ym) {
   if (!ym) return "---";
   const [y, m] = ym.split("-").map(Number);
@@ -171,6 +182,11 @@ router.post("/close", async (req, res) => {
     const closingDate = new Date(py, pm, 1); // ไม่ลบ 1 จาก pm → ได้เดือนถัดไปจาก M-1 เดิม = เดือนที่กำลังปิดจริง
     const closingMonthStr = `${closingDate.getFullYear()}-${String(closingDate.getMonth() + 1).padStart(2, "0")}`;
 
+    // MARKER_PERIOD_NO_SKIP_GUARD_V1 -- ห้ามปิดเดือนที่ยังไม่จบ / ห้ามปิดข้าม Period (ทุก Role รวม Owner)
+    if (closingMonthStr > maxClosableMonthStr()) {
+      return res.status(409).json({ error: noSkipMsg(closingMonthStr) });
+    }
+
     const curMonthStr  = closingMonthStr; // ค่าใหม่ที่จะเซ็ตเป็น ie_period_month (M-1 ใหม่)
     const prevMonthStr = closingMonthStr; // เดือนที่เพิ่งปิดจริง ใช้บันทึกลง company_list.ie_prev_month ด้วย
 
@@ -179,6 +195,13 @@ router.post("/close", async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+
+      // MARKER_PERIOD_NO_SKIP_GUARD_V1 -- Lock แถว period_month แล้วเช็คซ้ำ กันกด Close ซ้อน (เดิมทำให้ ie_grt_prev ถูกทับเป็น 0)
+      const { rows: lockRows } = await client.query(`SELECT value FROM system_settings WHERE key = 'ie_period_month' FOR UPDATE`);
+      if (lockRows[0]?.value !== prevPeriodMonthStr) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Period ถูกปิดไปแล้ว (อาจโดยคนอื่น) กรุณารีเฟรชหน้า" });
+      }
 
       await setSetting("ie_period_status",          "closed",          username, client);
       await setSetting("ie_period_month",            curMonthStr,      username, client);
@@ -237,7 +260,7 @@ router.post("/close", async (req, res) => {
       // ── ปิด Period สำเร็จแล้ว ถือว่าคำขอ Request-Close ที่ค้างอยู่ถูก Resolve ทั้งหมด ──
       // ── ไม่ว่าจะปิดผ่าน Close ตรงหรือ Approve Request ก็ตาม ต้องหายไปทั้งคู่ ──
       await client.query(
-        `DELETE FROM notifications WHERE category = 'IE_PERIOD_REQUEST' AND handled_at IS NULL`
+        `DELETE FROM notifications WHERE category = 'IE_PERIOD_REQUEST'`
       );
 
       await client.query("COMMIT");
@@ -634,6 +657,8 @@ router.get("/notifications", async (req, res) => {
            category IN ('IE_PERIOD', 'IE_PERIOD_REQUEST')
            AND read_by @> to_jsonb($3::text)
          )
+         -- MARKER_PERIOD_NO_SKIP_GUARD_V1 -- คำขอปิด Period ที่ถูกจัดการแล้ว (handled_at) ต้องไม่โผล่ใน Bell
+         AND NOT (category = 'IE_PERIOD_REQUEST' AND handled_at IS NOT NULL)
          -- MARKER_IEPERIOD_NOTIF_NEW_THREAD_NO_EXPIRY_V1
          -- ── Fix: กระทู้ Support & Feedback ที่ยัง status = 'new' (ยังไม่ถูก Accept)
          -- ต้องขึ้นค้างใน Bell ตลอดไป ไม่จำกัดอายุ 3 วัน -- เงื่อนไข 3 วันเดิมตั้งใจ
@@ -703,6 +728,12 @@ export async function checkAutoCloseIERequest() {
     const [py, pm] = prevPeriodMonthStr.split('-').map(Number);
     const closingDate = new Date(py, pm, 1);
     const closingMonthStr = `${closingDate.getFullYear()}-${String(closingDate.getMonth() + 1).padStart(2, "0")}`;
+
+    // MARKER_PERIOD_NO_SKIP_GUARD_V1 -- Auto-close ก็ห้ามปิดข้าม: ปิดไม่ได้ก็เคลียร์คำขอที่ค้างออกจาก Bell ไปเลย
+    if (closingMonthStr > maxClosableMonthStr()) {
+      await pool.query(`DELETE FROM notifications WHERE category = 'IE_PERIOD_REQUEST'`);
+      return;
+    }
 
     const client = await pool.connect();
     try {

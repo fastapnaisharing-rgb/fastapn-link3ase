@@ -1206,7 +1206,7 @@ const computeNextSyRunning = async () => {
       }
       if (tab === 'iecode') refreshNextSyRunning();
       if (tab === 'apcode') invalidate('SupplierList');
-      if (tab === 'category') invalidate('VendorCategory');
+      if (tab === 'category') { invalidate('VendorCategory'); try { broadcastWs('sm_code_list_updated', { vendorCategory: String(data['Code'] || '') }); } catch (e) { console.error('[broadcast vendorCategory]', e); } } // MARKER_VENDORMASTER_VENDORCAT_BROADCAST_V1 -- Backend Sync Type เข้า Report แล้ว -> แจ้งหน้า VAT ให้ Refetch
       // MARKER_VENDORMASTER_SMCODE_WS_BROADCAST_V1
       if (tab === 'smcode') {
         apiFetch('/ws-notify', { method: 'POST', body: JSON.stringify({ event: 'smcode_updated' }) }).catch(e => console.error('[SmCode broadcast]', e));
@@ -1321,7 +1321,7 @@ const computeNextSyRunning = async () => {
       const updated = await apiFetch(`/${cfg.table}/${detailItem.id}`, { method: 'PUT', body: JSON.stringify(data) });
       setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === prevItem.id ? { ...i, ...updated } : i)) }));
       if (tab === 'apcode') invalidate('SupplierList');
-      if (tab === 'category') invalidate('VendorCategory');
+      if (tab === 'category') { invalidate('VendorCategory'); try { broadcastWs('sm_code_list_updated', { vendorCategory: String(data['Code'] || '') }); } catch (e) { console.error('[broadcast vendorCategory]', e); } } // MARKER_VENDORMASTER_VENDORCAT_BROADCAST_V1
     } catch (err) {
       // ❌ ย้อนกลับ
       setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === prevItem.id ? prevItem : i)) }));
@@ -1975,7 +1975,7 @@ if (tab === 'apcode' || tab === 'iecode') {
                   <div key={key} style={{ padding:'4px 6px', borderRight:'0.5px solid #e8eaf0', background: (_partKeyMapVM[key] && _usedPartsVM[_partKeyMapVM[key]]) ? '#FFF3CD' : 'transparent' }}>
                     {editMode
                       ? cfg.combo.includes(key)
-                        ? <ComboBox value={formData[key]||''} onChange={val=>setFormData({...formData,[key]:val})} options={getOptions(key, formData)} placeholder='-' />
+                        ? <ComboBox value={formData[key]||''} onChange={val=>/* MARKER_VENDORMASTER_RULE_CHANGE_CLEAR_FULL_V1 -- เลือก Invoice Rule ตอน Digit=FULL -> เคลียร์ Digit เป็นค่าว่าง (FULL ข้าม Pattern ทั้งหมด ไม่เคลียร์ Rule จะไม่มีผล) / ลบ Rule จนไม่เหลือ Rule+First+Mid+Last -> Digit กลับเป็น FULL / ปุ่ม Reset ตั้ง FULL ตามเดิม */ setFormData((key==='Invoice No.' && val && String(formData['Digit']||'').trim().toUpperCase()==='FULL') ? {...formData,[key]:val,'Digit':''} : (key==='Invoice No.' && !val && !String(formData['First Part']||'').trim() && !String(formData['Mid Part']||'').trim() && !String(formData['Last Part']||'').trim()) ? {...formData,[key]:val,'Digit':'FULL'} : {...formData,[key]:val})} options={getOptions(key, formData)} placeholder='-' />
                         : <input value={formData[key]||''} onChange={e=>setFormData({...formData,[key]:e.target.value})} style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box' }} />
                       : <div style={{ fontSize:'12px', color: formData[key] ? '#1a3a5c' : '#bbb', padding:'0 8px', height:'28px', display:'flex', alignItems:'center' }}>{formData[key]||'—'}</div>
                     }

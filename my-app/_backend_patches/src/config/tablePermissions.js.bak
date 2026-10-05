@@ -75,9 +75,12 @@ export const tablePermissions = {
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
   user_roles: {
-    // ตารางนี้ sensitive ที่สุด ควรจำกัดเฉพาะ Owner เท่านั้นที่แก้ role ของคนอื่นได้
+    // MARKER_TABLEPERMISSIONS_USERROLES_SELFSERVICE_V1
+    // ── เปิดให้ Admin/Editor ผ่าน Middleware ชั้นนี้ได้ (เพื่อแก้ Username ──────
+    // ── ตัวเอง) -- แก้ Role ของคนอื่น/ตัวเองยังถูกกันอีกชั้นที่ genericTable.js ──
+    // ── (เช็ค Column ต้องเป็น username เท่านั้น + ต้องเป็นแถวตัวเอง) ───────────
     read: { publicRead: true },
-    write: { roles: ["Owner", "owner"] },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
   system_settings: {
     read: { publicRead: true },
@@ -184,6 +187,21 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_VAT_WATCHLIST_RELATED_PERSON_V1
+  vat_watchlist_related_person: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_MAIL_CONFIG_V1
+  vat_mail_config: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_MAIL_DRAFT_V1
+  vat_mail_draft: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   // MARKER_TABLEPERMISSIONS_VAT_WATCHLIST_NOTES_V1
   vat_watchlist_notes: {
     read: { publicRead: true },
@@ -227,5 +245,32 @@ export const tablePermissions = {
   vat_watchlist_round_state: {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_RECONCILE_INPUT_SUMMARY_V1 -- VAT Input Rec. Dashboard > Quick Preview Popup > Inline Edit (Excel Grid)
+  vat_reconcile_input_summary: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_WAITING_FOR_CLAIM_V1 -- VAT Controller > Backup > Transaction, Tab 4 (Backup_Report Input Tax-Waiting for Claim)
+  vat_waiting_for_claim: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_SUMMARY_DASHBOARD_V1 -- VAT Watchlist Dashboard (vat_summary_schema.sql)
+  vat_summary_live: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  vat_summary_live_dashboard: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] }, // VIEW — ไม่มีใคร Write ตรงๆ ใส่ไว้กัน Error เฉยๆ
+  },
+  vat_summary_frozen: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  vat_summary_frozen_dashboard: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] }, // VIEW — ไม่มีใคร Write ตรงๆ ใส่ไว้กัน Error เฉยๆ
   },
 };

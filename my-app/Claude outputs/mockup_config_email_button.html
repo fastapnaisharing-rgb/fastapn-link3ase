@@ -1,0 +1,49 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><title>Mockup ปุ่ม Config Email</title>
+<style>
+body{font-family:Segoe UI,Tahoma,sans-serif;background:#f5f6f8;margin:0;padding:24px;color:#222}
+h2{font-size:15px;margin:0 0 14px}
+.card{background:#fff;border:.5px solid #e0e0e0;border-radius:10px;padding:12px 16px;margin-bottom:14px}
+.tag{font-size:12px;font-weight:600;color:#1a3a5c;margin-bottom:8px}.note{font-size:11px;color:#888;margin-top:6px}
+.row{display:flex;align-items:center;gap:8px}.sp{flex:1}
+.in{width:200px;padding:7px 10px;font-size:13px;border:.5px solid #ccc;border-radius:8px;color:#999}
+.sel{width:130px;padding:7px 10px;font-size:13px;border:.5px solid #ccc;border-radius:8px}
+svg{display:block}
+button{cursor:pointer;font-family:inherit}
+.b1{width:36px;height:36px;border:.5px solid #d0d5dd;border-radius:10px;background:#fff;color:#2e7d32;display:flex;align-items:center;justify-content:center}
+.b1:hover{background:#e8f5e9;border-color:#2e7d32}
+.b2{width:36px;height:36px;border:none;border-radius:50%;background:#2e7d32;color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(46,125,50,.4)}
+.b3{width:36px;height:36px;border:.5px solid #a5d6a7;border-radius:10px;background:#e8f5e9;color:#2e7d32;display:flex;align-items:center;justify-content:center;position:relative}
+.dot{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;border-radius:8px;background:#e53935;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.b4{height:36px;padding:0 12px;border:.5px solid #d0d5dd;border-radius:10px;background:#fff;color:#2e7d32;display:flex;align-items:center;gap:7px;font-size:13px}
+.b4:hover{background:#e8f5e9;border-color:#2e7d32}
+.b5{width:36px;height:36px;border:none;border-radius:10px;background:linear-gradient(135deg,#43a047,#1b5e20);color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(27,94,32,.35)}
+.seg{display:flex;border:.5px solid #d0d5dd;border-radius:10px;overflow:hidden;background:#fff}
+.seg button{width:38px;height:34px;border:none;background:transparent;color:#555;display:flex;align-items:center;justify-content:center}
+.seg button+button{border-left:.5px solid #e0e0e0}.seg button:hover{background:#f1f8f2;color:#2e7d32}
+.b7{width:36px;height:36px;border:1.5px solid #2e7d32;border-radius:10px;background:#fff;color:#2e7d32;display:flex;align-items:center;justify-content:center}
+.b7:hover{background:#2e7d32;color:#fff}
+.b8{width:36px;height:36px;border:none;border-radius:10px;background:#1a3a5c;color:#fff;display:flex;align-items:center;justify-content:center}
+</style></head><body>
+<h2>ตำแหน่ง: แถว Search / Base ชิดขวา — เลือกแบบที่ชอบ (บอกเลขได้เลย)</h2>
+
+<template id="mail"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></template>
+<template id="mailgear"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7"/><path d="M3 7l9 6 9-6"/><circle cx="18" cy="18" r="2.2"/><path d="M18 14.6v1.2M18 20.2v1.2M21.4 18h-1.2M15.8 18h-1.2"/></svg></template>
+<template id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></template>
+<template id="sliders"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg></template>
+<template id="bell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></template>
+
+<div id="out"></div>
+<script>
+const T=id=>document.getElementById(id).innerHTML;
+const V=[
+['1. ไอคอนซอง+เฟือง ขอบเทา (แบบที่ส่งไปตอนนี้)','<button class="b1" title="Config Email">'+T('mailgear')+'</button>','เรียบ ๆ เข้ากับช่อง Search'],
+['2. วงกลมเขียวทึบ + เงา','<button class="b2" title="Config Email">'+T('mail')+'</button>','เด่น เหมือนปุ่ม Action หลัก'],
+['3. สี่เหลี่ยมเขียวอ่อน + Badge จำนวน Config','<button class="b3" title="Config Email">'+T('mail')+'<span class="dot">3</span></button>','Badge โชว์จำนวน Config ที่มี (เหมือน Bucket ที่มีเลขกำกับ)'],
+['4. ไอคอน + ตัวอักษรสั้น','<button class="b4">'+T('mail')+'Email</button>','อ่านออกง่ายสุด ไม่ต้องเดา'],
+['5. Gradient เขียวเข้ม','<button class="b5" title="Config Email">'+T('send')+'</button>','ดู Premium ใช้ไอคอนกระดาษบิน'],
+['6. กลุ่มปุ่มไอคอน (เผื่อ Generate Overall / Bucket)','<div class="seg"><button title="Config Email">'+T('mail')+'</button><button title="Generate Overall">'+T('sliders')+'</button><button title="Bucket Waiting Claim">'+T('bell')+'</button></div>','รวมปุ่มของโซนนี้เป็นแถบเดียว ประหยัดที่ในอนาคต'],
+['7. ขอบเขียว พอชี้พื้นเต็มสี','<button class="b7" title="Config Email">'+T('mail')+'</button>','เส้นขอบเขียวเข้ม พอ Hover กลับสีชัดเจน'],
+['8. กรมท่า เข้ากับหัวตาราง','<button class="b8" title="Config Email">'+T('mail')+'</button>','สีเดียวกับหัวตาราง (#1a3a5c) ดูกลมกลืนทั้งหน้า']
+];
+document.getElementById('out').innerHTML=V.map(([t,b,n])=>`<div class="card"><div class="tag">${t}</div><div class="row"><div class="in">Search</div><div class="sel">Base: ทั้งหมด ▾</div><div class="sp"></div>${b}</div><div class="note">${n}</div></div>`).join('');
+</script></body></html>

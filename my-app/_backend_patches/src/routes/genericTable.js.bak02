@@ -1,0 +1,651 @@
+﻿import { Router } from "express";
+import { pool } from "../db.js";
+import { checkPermission } from "../middleware/checkPermission.js";
+import { tablePermissions } from "../config/tablePermissions.js";
+
+// MARKER_GENERICTABLE_PERIODPANEL_FIELD_PERMISSION_V1
+// -- Field-level Permission เฉพาะ company_list.* ของ Period Panel (Pattern/Digit/
+// -- Current/Override/Watchlist/GL Book) -- checkPermission(tableName,"write") ระดับ
+// -- Table เดิม อนุญาต Owner/Admin/Editor เขียน company_list ได้ทุกคน แต่ Field พวกนี้
+// -- ต้องเข้มกว่านั้น: Owner แก้ได้ทุกเมนู / Admin แก้ได้เฉพาะเมนูที่ตัวเองมี
+// -- Permission จริง (Manual=AP, VAT, IE) / Editor แก้ไม่ได้เลย -- ตรงกับ Rule เดียวกับ
+// -- Frontend (hasEditPermission ใน UserManagement.js) แต่บังคับซ้ำที่ Backend ด้วย
+// -- กัน Bypass ผ่าน Direct API Call (Postman/Console) ข้าม UI ไปเลย
+const PERIOD_PANEL_FIELD_PERM = {
+  ap_grt_pattern: 'Manual', ap_grn_pattern: 'Manual', ap_digit: 'Manual',
+  ap_grt: 'Manual', ap_grn: 'Manual', ap_period_mode: 'Manual',
+  vat_grt_pattern: 'VAT', vat_grn_pattern: 'VAT', vat_digit: 'VAT', vat_grn: 'VAT',
+  vat_period_mode: 'VAT', vat_watchlist_status: 'VAT', vat_gl_booking: 'VAT',
+  ie_grt_pattern: 'IE', ie_grn_pattern: 'IE', ie_digit: 'IE',
+  ie_grt: 'IE', ie_grn: 'IE', ie_period_mode: 'IE',
+};
+
+// MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
+// -- bus_type/sub_type ใน vat_watchlist_report ถูกบันทึกตอน Upload (ไม่ได้คำนวณสด) -- เมื่อ vendor_category
+// -- ถูก POST/PUT/Upsert ต้อง Sync Type/Sub Type ของรายการ pending ที่ supplier_code ตรงกันตามกติกาเดียวกับตอน Upload:
+// --   จ่ายแล้ว (payment_date มีค่า) -> ใช้ TYPE / SUB TYPE (ว่าง = OTH) ; ยังไม่จ่าย -> เปลี่ยนเฉพาะ TYPE เป็น CPN/ITC (ใช้ตรงๆ)
+// -- ไม่แตะ receive_doc_no (GRT) / status อื่น -- Best-effort: Error ไม่ทำให้การบันทึก vendor_category ล้มเหลว
+async function syncVatReportTypeFromVendorCategory(codes) {
+  try {
+    const list = [...new Set((codes || []).map((c) => String(c ?? "").trim()).filter(Boolean))];
+    if (list.length === 0) return 0;
+    const { rowCount } = await pool.query(
+      `UPDATE vat_watchlist_report r
+          SET bus_type = TRIM(v."TYPE"),
+              sub_type = CASE WHEN COALESCE(TRIM(r.payment_date::text), '') = '' THEN TRIM(v."TYPE")
+                              ELSE COALESCE(NULLIF(TRIM(v."SUB TYPE"), ''), 'OTH') END
+         FROM vendor_category v
+        WHERE TRIM(v."Code") = TRIM(r.supplier_code)
+          AND TRIM(v."Code") = ANY($1)
+          AND r.status = 'pending'
+          AND COALESCE(TRIM(v."TYPE"), '') <> ''
+          AND (
+            (COALESCE(TRIM(r.payment_date::text), '') <> ''
+              AND (r.bus_type IS DISTINCT FROM TRIM(v."TYPE")
+                   OR r.sub_type IS DISTINCT FROM COALESCE(NULLIF(TRIM(v."SUB TYPE"), ''), 'OTH')))
+            OR (COALESCE(TRIM(r.payment_date::text), '') = '' AND TRIM(v."TYPE") IN ('CPN', 'ITC')
+                AND (r.bus_type IS DISTINCT FROM TRIM(v."TYPE") OR r.sub_type IS DISTINCT FROM TRIM(v."TYPE")))
+          )`,
+      [list]
+    );
+    return rowCount || 0;
+  } catch (e) {
+    console.error("[genericTable] syncVatReportTypeFromVendorCategory failed:", e.message);
+    return 0;
+  }
+}
+
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+function serializeValue(val) {
+  if (val === null || val === undefined) return val;
+  // ── PostgreSQL native array columns (text[], etc.) ───────────────────────
+  // ── ส่ง JS array ตรงๆ ให้ pg driver แปลงเป็น array literal เอง ─────────
+  // ── (ไม่ stringify เป็น JSON เหมือน object ทั่วไป มิฉะนั้นจะเกิด ──────────
+  // ── "malformed array literal" error เมื่อ column เป็น text[]) ───────────
+  // ── ยกเว้น: ถ้า array มี element เป็น object/array (เช่น bucket_list.lines ──
+  // ── ที่เป็น jsonb array ของ line item object) ต้อง JSON.stringify ทั้ง array ──
+  // ── ก่อน ไม่งั้น pg driver จะแปลงแต่ละ element ด้วย .toString() ได้ ────────
+  // ── "[object Object]" ทำให้ Postgres error "invalid input syntax for type json" ──
+  if (Array.isArray(val)) {
+    const hasComplexElement = val.some((v) => v !== null && typeof v === 'object');
+    if (hasComplexElement) return JSON.stringify(val);
+    return val;
+  }
+  if (typeof val === 'object') return JSON.stringify(val);
+  if (typeof val === 'string') {
+    let current = val;
+    for (let i = 0; i < 5; i++) {
+      try {
+        const parsed = JSON.parse(current);
+        if (typeof parsed === 'string') {
+          current = parsed;
+        } else if (parsed !== null && typeof parsed === 'object') {
+          return JSON.stringify(parsed);
+        } else {
+          break;
+        }
+      } catch {
+        break;
+      }
+    }
+  }
+  return val;
+}
+
+export function createTableRouter(tableName, { idColumn = "id" } = {}) {
+  if (!tablePermissions[tableName]) {
+    throw new Error(`Table "${tableName}" ไม่มีอยู่ใน tablePermissions`);
+  }
+
+  const router = Router();
+  const table = quoteIdent(tableName);
+  const idCol = quoteIdent(idColumn);
+
+  router.get("/", checkPermission(tableName, "read"), async (req, res, next) => {
+    try {
+      // Patch 95: เพิ่ม offset (Additive — Table อื่นที่ไม่เคยส่งพารามิเตอร์
+      // นี้มาจะไม่ได้รับผลกระทบใดๆ เลย)
+      // Patch 97: เพิ่ม count ("true" = โหมดนับจำนวนรวม ไม่ดึงข้อมูลจริง)
+      // MARKER_GENERICTABLE_OR_SEARCH_V1 -- เพิ่ม search+search_cols (Additive)
+      // MARKER_GENERICTABLE_DISTINCT_V1 -- เพิ่ม distinct (Additive)
+      // MARKER_GENERICTABLE_AGING_BUCKETS_V1 -- เพิ่ม aging_buckets (Additive, เจาะจง Column aging_months)
+      // MARKER_GENERICTABLE_DISTINCT_GROUP_V1 -- เพิ่ม distinct_group (Additive)
+      // MARKER_GENERICTABLE_AGING_BUCKET_COUNTS_V1 -- เพิ่ม aging_bucket_counts (Additive)
+      // MARKER_GENERICTABLE_SELECT_COLUMNS_V1
+      // ── เพิ่ม select (Additive) — Bug Fix คู่กับ Frontend db.js: เดิม Endpoint นี้ทำ SELECT * เสมอ ไม่ว่า ──
+      // ── Frontend จะเรียก .select('col1,col2') มาจำกัด Column แค่ไหนก็ตาม (เพราะ db.js เดิมไม่เคยส่ง select ──
+      // ── มาเป็น Query Param เลยด้วย — แก้พร้อมกันทั้ง 2 ฝั่ง) ทำให้ตารางที่มี Column ใหญ่ (เช่น JSONB เก็บ ──
+      // ── ข้อมูลทั้งชุด) โดนดึงมาเต็มทุกครั้งแม้หน้า List จะใช้แค่ไม่กี่ Column — ตอนนี้ถ้าระบุ select มา จะ ──
+      // ── SELECT เฉพาะ Column ที่ขอ (ผ่าน quoteIdent กัน SQL Injection เหมือน Column อื่นในไฟล์นี้) ──────────
+      const { order, limit, offset, count, search, search_cols, search_mode, distinct, aging_buckets, distinct_group, aging_bucket_counts, aging_bucket_group_by, sum_col, aging_bucket_sum_col, aging_month_bucket_counts, aging_month_bucket_group_by, aging_month_bucket_sum_col, select, ...filters } = req.query; // MARKER_GENERICTABLE_SEARCH_MODE_AND_TERMS_V1 -- เพิ่ม search_mode // MARKER_GENERICTABLE_AGING_BUCKET_GROUPBY_V1 // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2 // MARKER_GENERICTABLE_AGING_MONTH_BUCKET_V3
+      const conditions = [];
+      const SOFT_DELETE_TABLES = [
+          'itemcode_list', 'supplier_list', 'vendor_category',
+          'ap_code_list', 'sm_code_list'
+        ];
+        if (SOFT_DELETE_TABLES.includes(tableName)) {
+          conditions.push(`("deleted" IS NULL OR "deleted" = false)`);
+        }
+
+      // ── Activity Log: module='BACKEND_OPS' ให้เห็นเฉพาะ Owner เท่านั้น ──
+      // ── Admin/Editor/Viewer เห็น Log ปกติได้ทุก module ยกเว้นตัวนี้ ──
+      if (tableName === 'activity_log' && req.user?.appRole !== 'Owner') {
+        conditions.push(`"module" != 'BACKEND_OPS'`);
+      }
+      const values = [];
+      let idx = 1;
+
+      for (const [key, value] of Object.entries(filters)) {
+        if (key.startsWith("ilike_")) {
+          const col = key.slice(6);
+          conditions.push(`${quoteIdent(col)} ILIKE $${idx}`);
+          values.push(`%${value}%`);
+          idx++;
+        } else if (key.startsWith("eq_")) {
+          const col = key.slice(3);
+          conditions.push(`${quoteIdent(col)} = $${idx}`);
+          values.push(value);
+          idx++;
+        } else if (key.startsWith("neq_")) {
+          const col = key.slice(4);
+          conditions.push(`${quoteIdent(col)} != $${idx}`);
+          values.push(value);
+          idx++;
+        } else if (key.startsWith("gte_")) {
+          const col = key.slice(4);
+          conditions.push(`${quoteIdent(col)} >= $${idx}`);
+          values.push(value);
+          idx++;
+        } else if (key.startsWith("lte_")) {
+          const col = key.slice(4);
+          conditions.push(`${quoteIdent(col)} <= $${idx}`);
+          values.push(value);
+          idx++;
+        } else if (key.startsWith("in_")) {
+          const col = key.slice(3);
+          const vals = value.split(",");
+          const placeholders = vals.map(() => `$${idx++}`).join(", ");
+          conditions.push(`${quoteIdent(col)} IN (${placeholders})`);
+          values.push(...vals);
+        } else if (key.startsWith("gt_")) {
+          const col = key.slice(3);
+          conditions.push(`${quoteIdent(col)} > $${idx}`);
+          values.push(value);
+          idx++;
+        } else if (key.startsWith("lt_")) {
+          const col = key.slice(3);
+          conditions.push(`${quoteIdent(col)} < $${idx}`);
+          values.push(value);
+          idx++;
+        }
+      }
+
+      // MARKER_GENERICTABLE_OR_SEARCH_V1 -- Search แบบ OR หลาย Column พร้อมกัน
+      // MARKER_GENERICTABLE_MULTI_TERM_SEARCH_V1 -- รองรับ search คั่น Comma หลายคำ (Additive, คำเดียวเหมือนเดิมทุกประการ)
+      if (search && search_cols) { // MARKER_GENERICTABLE_SEARCH_SPACE_AND_COMMA_OR_FIXED_V1 -- Space=AND ชั้นนอก, Comma=OR ชั้นใน (แก้จาก Version ก่อนที่สลับผิดด้าน)
+        const searchColumns = search_cols.split(",").map((c) => c.trim()).filter(Boolean);
+        const andGroups = search.split(/\s+/).map((s) => s.trim()).filter(Boolean); // แบ่งด้วย Space ก่อน (AND ชั้นนอก)
+        if (searchColumns.length > 0 && andGroups.length > 0) {
+          const andParts = [];
+          andGroups.forEach((group) => {
+            const orTerms = group.split(",").map((t) => t.trim()).filter(Boolean); // ในแต่ละกลุ่ม แบ่งด้วย Comma (OR ชั้นใน)
+            const orParts = [];
+            orTerms.forEach((term) => {
+              searchColumns.forEach((col) => {
+                // MARKER_GENERICTABLE_SEARCH_CAST_TEXT_V1 -- Cast เป็น ::text ก่อน ILIKE เพื่อให้ค้นหาลึก
+                // เข้าไปใน Column ประเภท JSONB ได้ด้วย (เช่น rows) — Column ประเภท text/varchar เดิม
+                // ผล ILIKE เหมือนเดิมทุกกรณี ไม่กระทบ
+                orParts.push(`${quoteIdent(col)}::text ILIKE $${idx}`);
+                values.push(`%${term}%`);
+                idx++;
+              });
+            });
+            if (orParts.length > 0) andParts.push(`(${orParts.join(" OR ")})`);
+          });
+          if (andParts.length > 0) conditions.push(`(${andParts.join(" AND ")})`);
+        }
+      }
+
+      // MARKER_GENERICTABLE_AGING_BUCKETS_V1 -- Aging หลาย Bucket พร้อมกันแบบ OR
+      if (aging_buckets) {
+        const AGING_BUCKET_SQL = {
+          expired: `${quoteIdent("aging_months")} > 6`,
+          "6-5": `${quoteIdent("aging_months")} BETWEEN 5 AND 6`,
+          "4-3": `${quoteIdent("aging_months")} BETWEEN 3 AND 4`,
+          "2-1": `${quoteIdent("aging_months")} BETWEEN 1 AND 2`,
+          "0": `${quoteIdent("aging_months")} = 0`,
+          uncount: `${quoteIdent("aging_months")} IS NULL`, // MARKER_GENERICTABLE_AGING_UNCOUNT_V1
+        };
+        const buckets = aging_buckets.split(",").map((b) => b.trim()).filter((b) => AGING_BUCKET_SQL[b]);
+        if (buckets.length > 0) {
+          conditions.push(`(${buckets.map((b) => AGING_BUCKET_SQL[b]).join(" OR ")})`);
+        }
+      }
+
+      // MARKER_GENERICTABLE_SELECT_COLUMNS_V1 -- ถ้ามี select มา ใช้จำกัด Column แทน "*" (Additive — ไม่ระบุ
+      // ก็ยังเป็น SELECT * เหมือนเดิมทุกประการ ไม่กระทบ Table/Caller เดิมที่ไม่เคยส่ง select มา)
+      // MARKER_GENERICTABLE_SELECT_DOUBLE_QUOTE_FIX_V1 -- Bug Fix ร้ายแรง: Frontend ทั่วทั้งแอป (เช่น
+      // .select('bu,bu_code_name,"THAI COMPANY NAME"')) ส่ง Column ที่มีช่องว่างมาแบบ "ครอบ Quote มาเอง
+      // แล้ว" ตั้งแต่ต้น (เพราะเดิม select param เป็น No-op ไม่เคยถูกส่งจริง — ดู MARKER_DB_SELECT_PARAM_V1
+      // ที่ db.js — พอแก้ให้ส่งจริงแล้ว โค้ดฝั่งนี้เอา Column ที่ Quote มาแล้ว เช่น `"THAI COMPANY NAME"`
+      // ไปเข้า quoteIdent() ซ้ำอีกชั้น กลายเป็น `"""THAI COMPANY NAME"""` ซึ่งอ้างถึง Column คนละชื่อ (ผิด)
+      // ทำให้ Query Error 500 ทันทีทุกจุดที่ select Column มีช่องว่าง/อักษรพิเศษ -- นี่คือสาเหตุที่แก้บั๊ก BU
+      // Lookup จุดหนึ่งแล้วอีกจุดยังพัง (Error ซ่อนอยู่ที่ชั้น Backend นี้ ไม่ใช่ Logic ที่แก้ไปแต่ละจุด) --
+      // แก้โดยลอก Quote ที่ Frontend ครอบมาเองออกก่อน 1 ชั้น แล้วให้ quoteIdent() ครอบใหม่ให้ถูกต้องเพียงชั้นเดียว
+      const stripOuterQuotes = (c) => c.replace(/^"([\s\S]*)"$/, "$1");
+      const selectClause = select
+        ? select.split(",").map((c) => c.trim()).filter(Boolean).map((c) => quoteIdent(stripOuterQuotes(c))).join(", ")
+        : "*";
+      let sql = `SELECT ${selectClause || "*"} FROM ${table}`;
+      if (conditions.length) sql += ` WHERE ${conditions.join(" AND ")}`;
+
+      // Patch 97: Count-only Mode — ตอบ { total: N } แทน Array ข้อมูลจริง
+      // ใช้ conditions/values ชุดเดียวกับตอนขอข้อมูลจริง (Filter เดียวกัน
+      // เสมอ) ไม่ต้องสร้าง Query แยกให้ Sync ผิดพลาดกันได้
+      if (count === "true") {
+        const countSql = `SELECT COUNT(*) AS total FROM ${table}` +
+          (conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "");
+        const { rows: countRows } = await pool.query(countSql, values);
+        return res.json({ total: parseInt(countRows[0].total, 10) });
+      }
+
+      // MARKER_GENERICTABLE_DISTINCT_V1 -- Distinct Mode ตอบ { values: [...] }
+      // เคารพ conditions/values เดียวกับตอนขอข้อมูลจริง (Filter เดียวกันเสมอ)
+      if (distinct) {
+        const distinctCol = quoteIdent(distinct);
+        const distinctSql = `SELECT DISTINCT ${distinctCol} AS v FROM ${table}` +
+          (conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "") +
+          ` ORDER BY ${distinctCol}`;
+        const { rows: distinctRows } = await pool.query(distinctSql, values);
+        return res.json({ values: distinctRows.map((r) => r.v) });
+      }
+
+      // MARKER_GENERICTABLE_AGING_BUCKET_COUNTS_V1 -- นับจำนวนแถวต่อ Aging Bucket
+      // เคารพ conditions/values เดียวกับตอนขอข้อมูลจริง (ไม่รวม aging_buckets
+      // เอง เพราะต้องการรู้ว่า "ถ้าไม่กรอง Aging เลย" แต่ละ Bucket มีกี่แถว)
+      // MARKER_GENERICTABLE_AGING_MONTH_BUCKET_V3 -- Aging แบบรายเดือนละเอียด (1-6 + expired) แยกจาก aging_bucket_counts เดิม (Bucket Range) เพื่อไม่กระทบของเดิม
+      if (aging_month_bucket_counts === "true") {
+        const AGING_MONTH_BUCKET_SQL = {
+          '1': `${quoteIdent("aging_months")} = 1`,
+          '2': `${quoteIdent("aging_months")} = 2`,
+          '3': `${quoteIdent("aging_months")} = 3`,
+          '4': `${quoteIdent("aging_months")} = 4`,
+          '5': `${quoteIdent("aging_months")} = 5`,
+          '6': `${quoteIdent("aging_months")} = 6`,
+          '0': `${quoteIdent("aging_months")} = 0`, // MARKER_GENERICTABLE_AGING_MONTH_BUCKET_ADD_ZERO_V4 -- เดิมไม่มี Bucket 0 ทำให้ยอดรวมใน Tooltip น้อยกว่ายอดจริง (ยอดจริงรวม Aging 0 ด้วยเสมอ)
+          expired: `${quoteIdent("aging_months")} > 6`,
+        };
+        const baseWhereMonth = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+        const monthValueExpr = aging_month_bucket_sum_col ? `COALESCE(${quoteIdent(aging_month_bucket_sum_col)}, 0)` : `1`;
+        const monthSqlParts = Object.entries(AGING_MONTH_BUCKET_SQL).map(
+          ([key, cond]) => `SUM(CASE WHEN ${cond} THEN ${monthValueExpr} ELSE 0 END) AS "${key}"`
+        );
+        if (aging_month_bucket_group_by) {
+          const groupColMonth = quoteIdent(aging_month_bucket_group_by);
+          const monthGroupSql = `SELECT ${groupColMonth} AS group_key, ${monthSqlParts.join(", ")} FROM ${table}${baseWhereMonth} GROUP BY ${groupColMonth} ORDER BY ${groupColMonth}`;
+          const { rows: monthGroupRows } = await pool.query(monthGroupSql, values);
+          const rowsOutMonth = monthGroupRows.map((r) => {
+            const out = { [aging_month_bucket_group_by]: r.group_key };
+            Object.keys(AGING_MONTH_BUCKET_SQL).forEach((key) => {
+              out[key] = aging_month_bucket_sum_col ? (parseFloat(r[key]) || 0) : (parseInt(r[key], 10) || 0);
+            });
+            return out;
+          });
+          return res.json({ rows: rowsOutMonth });
+        }
+        const monthSql = `SELECT ${monthSqlParts.join(", ")} FROM ${table}${baseWhereMonth}`;
+        const { rows: monthRows } = await pool.query(monthSql, values);
+        const rowMonth = monthRows[0] || {};
+        const countsMonth = {};
+        Object.keys(AGING_MONTH_BUCKET_SQL).forEach((key) => {
+          countsMonth[key] = aging_month_bucket_sum_col ? (parseFloat(rowMonth[key]) || 0) : (parseInt(rowMonth[key], 10) || 0);
+        });
+        return res.json({ counts: countsMonth });
+      }
+
+      if (aging_bucket_counts === "true") { // MARKER_GENERICTABLE_AGING_BUCKET_COUNTS_SINGLE_SCAN_V1 -- เปลี่ยนจาก 6 Subquery Scan แยก เป็น Query เดียว (Conditional Aggregation) สแกนตารางครั้งเดียว
+        const AGING_BUCKET_SQL = {
+          expired: `${quoteIdent("aging_months")} > 6`,
+          "6-5": `${quoteIdent("aging_months")} BETWEEN 5 AND 6`,
+          "4-3": `${quoteIdent("aging_months")} BETWEEN 3 AND 4`,
+          "2-1": `${quoteIdent("aging_months")} BETWEEN 1 AND 2`,
+          "0": `${quoteIdent("aging_months")} = 0`,
+          uncount: `${quoteIdent("aging_months")} IS NULL`, // MARKER_GENERICTABLE_AGING_UNCOUNT_V1
+        };
+        const baseWhere = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+        // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2 -- ถ้ามี aging_bucket_sum_col มา ใช้ SUM(Column นั้น) แทนการนับ 1 (Count) เดิม
+        const agingBucketValueExpr = aging_bucket_sum_col ? `COALESCE(${quoteIdent(aging_bucket_sum_col)}, 0)` : `1`;
+        const countSqlParts = Object.entries(AGING_BUCKET_SQL).map(
+          ([key, cond]) => `SUM(CASE WHEN ${cond} THEN ${agingBucketValueExpr} ELSE 0 END) AS "${key}"`
+        );
+        // MARKER_GENERICTABLE_AGING_BUCKET_GROUPBY_V1 -- ถ้ามี aging_bucket_group_by มา ให้ GROUP BY Column นั้นเพิ่ม
+        // ── ใช้ AGING_BUCKET_SQL ชุดเดียวกับด้านล่าง (Single Source of Truth เดิม ไม่ Duplicate Logic) ──
+        // ── คืนเป็น { rows: [{ [group_col]: value, expired, "6-5", "4-3", "2-1", "0", uncount }, ...] } ──
+        if (aging_bucket_group_by) {
+          const groupCol = quoteIdent(aging_bucket_group_by);
+          const bucketGroupSql = `SELECT ${groupCol} AS group_key, ${countSqlParts.join(", ")} FROM ${table}${baseWhere} GROUP BY ${groupCol} ORDER BY ${groupCol}`;
+          const { rows: bucketGroupRows } = await pool.query(bucketGroupSql, values);
+          const rowsOut = bucketGroupRows.map((r) => {
+            const out = { [aging_bucket_group_by]: r.group_key };
+            Object.keys(AGING_BUCKET_SQL).forEach((key) => { out[key] = aging_bucket_sum_col ? (parseFloat(r[key]) || 0) : (parseInt(r[key], 10) || 0); }); // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2
+            return out;
+          });
+          return res.json({ rows: rowsOut });
+        }
+        const bucketSql = `SELECT ${countSqlParts.join(", ")} FROM ${table}${baseWhere}`;
+        const { rows: bucketRows } = await pool.query(bucketSql, values);
+        const row = bucketRows[0] || {};
+        const counts = {};
+        Object.keys(AGING_BUCKET_SQL).forEach((key) => { counts[key] = aging_bucket_sum_col ? (parseFloat(row[key]) || 0) : (parseInt(row[key], 10) || 0); }); // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2
+        return res.json({ counts });
+      }
+
+      // MARKER_GENERICTABLE_DISTINCT_GROUP_V1 -- Distinct + Count แบบ GROUP BY 2 Column
+      // เคารพ conditions/values เดียวกับตอนขอข้อมูลจริง (Filter เดียวกันเสมอ)
+      if (distinct_group) {
+        const cols = distinct_group.split(",").map((c) => c.trim()).filter(Boolean);
+        // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2 -- Group by 1 Column + SUM(sum_col) เสริม (Additive, ไม่กระทบโหมด 2 Column เดิมด้านล่าง)
+        if (cols.length === 1) {
+          const groupCol1 = quoteIdent(cols[0]);
+          const aggExpr1 = sum_col ? `SUM(COALESCE(${quoteIdent(sum_col)}, 0))` : `COUNT(*)`;
+          const groupSql1 = `SELECT ${groupCol1} AS a, ${aggExpr1} AS cnt FROM ${table}` +
+            (conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "") +
+            ` GROUP BY ${groupCol1} ORDER BY ${groupCol1}`;
+          const { rows: groupRows1 } = await pool.query(groupSql1, values);
+          return res.json({
+            rows: groupRows1.map((r) => ({
+              [cols[0]]: r.a,
+              [sum_col ? "sum" : "count"]: sum_col ? (parseFloat(r.cnt) || 0) : (parseInt(r.cnt, 10) || 0),
+            })),
+          });
+        }
+        if (cols.length !== 2) {
+          return res.status(400).json({ error: "distinct_group ต้องระบุ 1 หรือ 2 Column คั่นด้วย Comma" });
+        }
+        const [colA, colB] = cols.map(quoteIdent);
+        const groupSql = `SELECT ${colA} AS a, ${colB} AS b, COUNT(*) AS cnt FROM ${table}` +
+          (conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "") +
+          ` GROUP BY ${colA}, ${colB} ORDER BY ${colA}, ${colB}`;
+        const { rows: groupRows } = await pool.query(groupSql, values);
+        return res.json({
+          rows: groupRows.map((r) => ({ [cols[0]]: r.a, [cols[1]]: r.b, count: parseInt(r.cnt, 10) })),
+        });
+      }
+
+      if (order) {
+        // MARKER_GENERICTABLE_NULLSLAST_V1 -- รองรับ Suffix .nullslast (Additive)
+        const orderParts = order.split(",").map((part) => {
+          const [col, dir, nullsOpt] = part.split(".");
+          const direction = dir && dir.toLowerCase() === "desc" ? "DESC" : "ASC";
+          const nullsSuffix = nullsOpt && nullsOpt.toLowerCase() === "nullslast" ? " NULLS LAST" : "";
+          return `${quoteIdent(col)} ${direction}${nullsSuffix}`;
+        });
+        sql += ` ORDER BY ${orderParts.join(", ")}`;
+      } else {
+        sql += ` ORDER BY ${idCol}`;
+      }
+
+      if (limit) {
+        sql += ` LIMIT $${idx}`;
+        values.push(parseInt(limit, 10));
+        idx++;
+      }
+
+      if (offset) {
+        sql += ` OFFSET $${idx}`;
+        values.push(parseInt(offset, 10));
+        idx++;
+      }
+
+      const { rows } = await pool.query(sql, values);
+      res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/:id", checkPermission(tableName, "read"), async (req, res, next) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM ${table} WHERE ${idCol} = $1`,
+        [req.params.id]
+      );
+      if (!rows[0]) return res.status(404).json({ error: "Not found" });
+      res.json(rows[0]);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/", checkPermission(tableName, "write"), async (req, res, next) => {
+    try {
+      // MARKER_GENERICTABLE_RECYCLEBIN_DELETEDBY_OVERRIDE_V1
+      // ── ตาราง recycle_bin โดยเฉพาะ: ไม่เชื่อค่า deleted_by ที่ Frontend ส่งมา
+      // ── เลย (Frontend หลายไฟล์เคยส่ง Email/Username ปนกันไม่แน่นอน) เขียนทับ
+      // ── ด้วย req.user.username เสมอ กันข้อมูลไม่ตรงกันไม่ว่า Action ไหน ─────
+      if (tableName === "recycle_bin") {
+        req.body.deleted_by = req.user?.username || req.user?.email || "unknown";
+      }
+      const columns = Object.keys(req.body).filter((c) => c !== idColumn);
+      if (columns.length === 0) {
+        return res.status(400).json({ error: "Request body is empty" });
+      }
+      const values = columns.map((c) => serializeValue(req.body[c]));
+      const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
+      const columnList = columns.map(quoteIdent).join(", ");
+
+      const { rows } = await pool.query(
+        `INSERT INTO ${table} (${columnList}) VALUES (${placeholders}) RETURNING *`,
+        values
+      );
+      if (tableName === "vendor_category") await syncVatReportTypeFromVendorCategory([rows[0]?.Code]); // MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
+      res.status(201).json(rows[0]);
+    } catch (err) {
+      // MARKER_GENERICTABLE_TEMP_DEBUG_ERROR_V1 -- ชั่วคราวสำหรับ Debug เท่านั้น
+      // เอาไว้ดู Error จริงจาก Postgres ผ่าน Response โดยไม่ต้องหา Terminal/Log
+      // ⚠️ ลบ Block นี้ทิ้งหลัง Debug เสร็จ (Production ไม่ควรโชว์ err.detail ให้ Client เห็น)
+      console.error(`[genericTable POST /${tableName}] DEBUG ERROR:`, err);
+      return res.status(500).json({ error: "Internal server error", debug_message: err.message, debug_detail: err.detail, debug_code: err.code });
+    }
+  });
+
+  router.post("/upsert", checkPermission(tableName, "write"), async (req, res, next) => {
+    try {
+      const rows = Array.isArray(req.body) ? req.body : [req.body];
+      if (rows.length === 0) {
+        return res.status(400).json({ error: "Empty payload" });
+      }
+
+      // ── รองรับ composite conflict key เช่น onConflict=user_id,folder_key ──
+      const conflictColumnsRaw = (req.query.onConflict || idColumn)
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+      const conflictColumnsSql = conflictColumnsRaw.map(quoteIdent).join(", ");
+      const conflictColumnsSet = new Set(conflictColumnsRaw);
+
+      // MARKER_GENERICTABLE_UPSERT_UNION_COLUMNS_V1
+      // ── Bug Fix: เดิมเอา Column จาก "แถวแรก" ของ Batch เท่านั้น ──────────────
+      // ── (Object.keys(rows[0])) ถ้าแถวอื่นมี Field ไม่ตรงกัน (เช่น Frontend ──
+      // ── ส่ง Field เพิ่มมาบางแถว บางแถวไม่มี) ค่าที่ไม่มีจะกลายเป็น undefined ──
+      // ── ซึ่ง pg Driver รับไม่ได้ (ต้องเป็น null เท่านั้น) → Error ทันที ──────
+      // ── แก้โดยรวม Column จาก "ทุกแถว" ใน Batch (Union) แล้วเติม null ให้ ────
+      // ── แถวที่ไม่มี Field นั้นแทน กันปัญหานี้ในทุก Table ที่ใช้ Router นี้ ───
+      const columns = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+      const colList = columns.map(quoteIdent).join(", ");
+      const updateClause = columns
+        .filter((c) => !conflictColumnsSet.has(c))
+        .map((c) => `${quoteIdent(c)} = EXCLUDED.${quoteIdent(c)}`)
+        .join(", ");
+
+      const valuesSql = [];
+      const values = [];
+      let idx = 1;
+      for (const row of rows) {
+        const placeholders = columns.map(() => `$${idx++}`);
+        valuesSql.push(`(${placeholders.join(", ")})`);
+        columns.forEach((c) => values.push(serializeValue(row[c] ?? null)));
+      }
+
+      const sql = `
+        INSERT INTO ${table} (${colList})
+        VALUES ${valuesSql.join(", ")}
+        ON CONFLICT (${conflictColumnsSql})
+        DO UPDATE SET ${updateClause}
+        RETURNING *`;
+
+      const { rows: result } = await pool.query(sql, values);
+      if (tableName === "vendor_category") await syncVatReportTypeFromVendorCategory(result.map((r) => r.Code)); // MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
+      res.status(201).json(result);
+    } catch (err) {
+      // MARKER_GENERICTABLE_TEMP_DEBUG_ERROR_V1 -- ชั่วคราวสำหรับ Debug เท่านั้น
+      console.error(`[genericTable POST /${tableName}/upsert] DEBUG ERROR:`, err);
+      return res.status(500).json({ error: "Internal server error", debug_message: err.message, debug_detail: err.detail, debug_code: err.code });
+    }
+  });
+
+  router.put("/:id", checkPermission(tableName, "write"), async (req, res, next) => {
+    try {
+      const columns = Object.keys(req.body).filter((c) => c !== idColumn);
+      if (columns.length === 0) {
+        return res.status(400).json({ error: "Request body is empty" });
+      }
+      // MARKER_GENERICTABLE_PERIODPANEL_FIELD_PERMISSION_REMOVED_V1
+      // ── เอา Field-Level Permission Check ของ Period Panel ออกตามที่ตกลง ────
+      // ── กลับไปใช้ Table-Level Permission ปกติ (Owner/Admin/Editor ทุกคน ────
+      // ── แก้ Field กลุ่มนี้ได้เหมือน Field อื่นในตาราง ไม่ต้องเช็ค Permission ──
+      // ── เฉพาะเมนู Manual/VAT/IE อีกต่อไป) ────────────────────────────────────
+      // MARKER_GENERICTABLE_USERROLES_SELFSERVICE_USERNAME_V1
+      // ── Non-Owner แก้ user_roles ได้แค่ Column "username" ของแถวตัวเองเท่านั้น ──
+      // ── (กัน Privilege Escalation -- ห้ามแตะ role/permissions/email ของใครเลย) ──
+      if (tableName === "user_roles" && req.user?.appRole !== "Owner") {
+        const disallowedCols = columns.filter((c) => c !== "username");
+        if (disallowedCols.length > 0) {
+          return res.status(403).json({ error: `Insufficient permission to update: ${disallowedCols.join(', ')}`, message: `Insufficient permission to update: ${disallowedCols.join(', ')}` });
+        }
+        const { rows: ownerCheckRows } = await pool.query(`SELECT email FROM ${table} WHERE ${idCol} = $1`, [req.params.id]);
+        if (!ownerCheckRows[0] || ownerCheckRows[0].email !== req.user?.email) {
+          return res.status(403).json({ error: "Insufficient permission to update this record", message: "Insufficient permission to update this record" });
+        }
+      }
+      const setClause = columns.map((c, i) => `${quoteIdent(c)} = $${i + 1}`).join(", ");
+      const values = columns.map((c) => serializeValue(req.body[c]));
+
+      const { rows } = await pool.query(
+        `UPDATE ${table} SET ${setClause} WHERE ${idCol} = $${columns.length + 1} RETURNING *`,
+        [...values, req.params.id]
+      );
+      if (!rows[0]) return res.status(404).json({ error: "Not found" });
+      if (tableName === "vendor_category") await syncVatReportTypeFromVendorCategory([rows[0].Code]); // MARKER_GENERICTABLE_VENDORCAT_SYNC_REPORT_TYPE_V1
+      res.json(rows[0]);
+    } catch (err) {
+      // MARKER_GENERICTABLE_TEMP_DEBUG_ERROR_V1 -- ชั่วคราวสำหรับ Debug เท่านั้น
+      console.error(`[genericTable PUT /${tableName}/:id] DEBUG ERROR:`, err);
+      return res.status(500).json({ error: "Internal server error", debug_message: err.message, debug_detail: err.detail, debug_code: err.code });
+    }
+  });
+
+  // MARKER_GENERICTABLE_SOFTDELETE_V1
+  // ── Soft Delete — ย้ายแถวที่ลบเข้า recycle_bin ก่อนเสมอ (Pattern เดียวกับ ──
+  // ── Cron 15-Day Retention ของ batch_list) ยกเว้น recycle_bin เอง กัน Insert ──
+  // ── วนเข้าตัวเอง — ทุก Table ที่ใช้ createTableRouter ได้ Soft Delete ฟรี ──
+  // MARKER_GENERICTABLE_HARD_DELETE_BYPASS_V1
+  router.delete("/:id", checkPermission(tableName, "write"), async (req, res, next) => {
+    try {
+      if (tableName === "recycle_bin" || req.query.hard === "true") {
+        const { rowCount } = await pool.query(
+          `DELETE FROM ${table} WHERE ${idCol} = $1`,
+          [req.params.id]
+        );
+        if (!rowCount) return res.status(404).json({ error: "Not found" });
+        return res.status(204).send();
+      }
+      const deletedBy = req.user?.username || req.user?.email || "unknown";
+      const { rows } = await pool.query(
+        `WITH moved AS (
+           DELETE FROM ${table} WHERE ${idCol} = $1
+           RETURNING *
+         )
+         INSERT INTO recycle_bin (source_table, source_id, source_key, data, deleted_by, deleted_at)
+         SELECT $2,
+                CASE WHEN moved.${idCol}::text ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                     THEN moved.${idCol}::text::uuid ELSE NULL END,
+                moved.${idCol}::text, to_jsonb(moved.*), $3, NOW()
+         FROM moved
+         RETURNING id`,
+        [req.params.id, tableName, deletedBy]
+      );
+      if (!rows.length) return res.status(404).json({ error: "Not found" });
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // MARKER_GENERICTABLE_BULK_DELETE_V1
+  // ── DELETE /api/{table}?eq_col=X&in_col=A,B — ลบหลายแถวทีเดียวด้วย Filter ──
+  // ── รองรับแค่ eq_/in_ (พอสำหรับ Use Case ปัจจุบัน) — ต้องมี Filter อย่างน้อย ──
+  // ── 1 ตัวเสมอ ไม่งั้นปฏิเสธ กันเผลอลบทั้ง Table โดยไม่ตั้งใจ ──────────────
+  router.delete("/", checkPermission(tableName, "write"), async (req, res, next) => {
+    try {
+      const conditions = [];
+      const values = [];
+      let idx = 1;
+
+      for (const [key, value] of Object.entries(req.query)) {
+        if (key.startsWith("eq_")) {
+          const col = key.slice(3);
+          conditions.push(`${quoteIdent(col)} = $${idx}`);
+          values.push(value);
+          idx++;
+        } else if (key.startsWith("in_")) {
+          const col = key.slice(3);
+          const vals = value.split(",");
+          const placeholders = vals.map(() => `$${idx++}`).join(", ");
+          conditions.push(`${quoteIdent(col)} IN (${placeholders})`);
+          values.push(...vals);
+        }
+      }
+
+      if (conditions.length === 0) {
+        return res.status(400).json({
+          error: "ต้องระบุเงื่อนไข Filter อย่างน้อย 1 ตัว (eq_/in_) กันลบทั้ง Table โดยไม่ตั้งใจ",
+        });
+      }
+
+      if (tableName === "recycle_bin" || req.query.hard === "true") {
+        const { rowCount } = await pool.query(
+          `DELETE FROM ${table} WHERE ${conditions.join(" AND ")}`,
+          values
+        );
+        return res.json({ deleted: rowCount });
+      }
+      const deletedBy = req.user?.username || req.user?.email || "unknown";
+      const tableNameIdx = idx;
+      const deletedByIdx = idx + 1;
+      values.push(tableName, deletedBy);
+      const { rows } = await pool.query(
+        `WITH moved AS (
+           DELETE FROM ${table} WHERE ${conditions.join(" AND ")}
+           RETURNING *
+         )
+         INSERT INTO recycle_bin (source_table, source_id, source_key, data, deleted_by, deleted_at)
+         SELECT $${tableNameIdx},
+                CASE WHEN moved.${idCol}::text ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                     THEN moved.${idCol}::text::uuid ELSE NULL END,
+                moved.${idCol}::text, to_jsonb(moved.*), $${deletedByIdx}, NOW()
+         FROM moved
+         RETURNING id`,
+        values
+      );
+      res.json({ deleted: rows.length });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  return router;
+}

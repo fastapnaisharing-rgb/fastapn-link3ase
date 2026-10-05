@@ -683,6 +683,16 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleInfoSave = async () => {
     try {
       const originalItem = infoItems.find(i => i.id === infoEditId);
+      // MARKER_BUSINESSUNIT_VAT_RATE_EDIT_PERMISSION_V1 — กันซ้ำตอน Save (เผื่อ UI ถูกข้ามมาได้)
+      if (infoEditId && originalItem && !(isOwner || isAdmin)) {
+        const vatChanged = String(infoForm['VAT %']).trim() !== String(originalItem['VAT %']).trim();
+        const lastRateChanged = String(infoForm['Last Rate (%)']).trim() !== String(originalItem['Last Rate (%)']).trim();
+        if (vatChanged || lastRateChanged) {
+          alert('เฉพาะ Owner หรือ Admin เท่านั้นที่มีสิทธิ์แก้ไข VAT % / Last Rate (%)');
+          setInfoForm(f => ({ ...f, 'VAT %': originalItem['VAT %'], 'Last Rate (%)': originalItem['Last Rate (%)'] }));
+          return;
+        }
+      }
       if (infoEditId && originalItem && String(infoForm['VAT %']).trim() !== String(originalItem['VAT %']).trim()) {
         const affectedBranches = branches.filter(b => b['BU-TaxID'] === infoForm['TAX ID']);
         setRateConfirmData({ oldRate: originalItem['VAT %'], newRate: infoForm['VAT %'], taxId: infoForm['TAX ID'], branchCount: affectedBranches.length, affectedIds: affectedBranches.map(b => b.id), formWithLastRate: { ...infoForm, 'Last Rate (%)': originalItem['VAT %'] } });
@@ -1265,8 +1275,16 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     const headCell = (isLast) => ({ padding:'3px 8px', fontSize:'11px', color:'#888', background:'#f8f9fa', fontWeight:'600', textAlign:'center', borderRight: isLast?'none':'0.5px solid #e8eaf0', borderBottom:'0.5px solid #e8eaf0' });
     const inputCell = (isLast) => ({ padding:'3px 6px', display:'flex', alignItems:'center', minHeight:'28px', borderRight: isLast?'none':'0.5px solid #e8eaf0' });
 
+    // MARKER_BUSINESSUNIT_VAT_RATE_EDIT_PERMISSION_V1
+    // ── "VAT %" / "Last Rate (%)" กระทบ Rate ที่ Cascade ไปทุก Branch (ดู handleRateConfirm) ──
+    // ── จำกัดสิทธิ์แก้ไขเฉพาะ Owner/Admin เท่านั้น — คนอื่นเห็นเป็น Read-only (🔒) ────────
+    const canEditVatRate = isOwner || isAdmin;
     const renderFieldInput = (key, label) => (
-      key === 'bu_code_name' ? (
+      (key === 'VAT %' || key === 'Last Rate (%)') && !canEditVatRate ? (
+        <span style={{ fontSize:'12px', color:'#999', width:'100%', textAlign:'center', display:'flex', alignItems:'center', justifyContent:'center', gap:'4px' }} title="เฉพาะ Owner หรือ Admin เท่านั้นที่แก้ไขได้">
+          {infoForm[key] || '-'} 🔒
+        </span>
+      ) : key === 'bu_code_name' ? (
         <input style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }}
           value={infoForm[key]||''}
           placeholder={`${infoForm['SEGMENT3']||'Segment3'} - ${infoForm['ENGLISH COMPANY NAME']||'English Company Name'}`}

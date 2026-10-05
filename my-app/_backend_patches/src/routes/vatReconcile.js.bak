@@ -1040,7 +1040,7 @@ router.get("/dashboard/report", async (req, res) => {
                   d.paid_vat::float8 AS paid_vat,
                   d.claimed_amount::float8 AS claimed_amount,
                   d.claimed_vat::float8 AS claimed_vat,
-                  d.claim_percent::float8 AS claim_percent
+                  d.claim_percent::float8 * 100 AS claim_percent -- SIMPLE_DETAIL_CLAIM_PERCENT_X100_PATCH_APPLIED (Ratio -> %)
            FROM vat_reconcile_simple_header h
            JOIN vat_reconcile_simple_detail d ON d.header_id = h.id
            WHERE h.bu = $1 AND h.reconcile_account = $2 AND h.period = $3 AND h.simple_type = $4${branchClause}
