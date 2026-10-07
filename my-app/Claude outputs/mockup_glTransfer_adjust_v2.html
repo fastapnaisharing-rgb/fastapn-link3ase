@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup v2 - GL-TransferVat Adjust Diff by ADI</title>
+<style>
+:root{--navy:#1a3a5c;--line:#e0e0e0;--mute:#888681;--red:#e5484d;--green:#2e7d32;--amber:#b45309;--bg:#eef0f3}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font:13px/1.45 "Segoe UI",Tahoma,sans-serif;color:#1f2933;padding:20px}
+.wrap{max-width:960px;margin:auto}
+.note{background:#fff8e1;border:1px solid #f2c777;border-radius:8px;padding:8px 12px;font-size:12px;color:#8a5a00;margin-bottom:12px}
+.modal{background:#fff;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.18);overflow:hidden}
+.mh{padding:14px 20px;font-size:16px;font-weight:600;display:flex;justify-content:space-between;border-bottom:1px solid var(--line)}
+.tabs{display:flex;gap:8px;padding:10px 20px 0;border-bottom:1px solid var(--line)}
+.tab{padding:7px 14px;border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;background:#f6f8fa;color:var(--mute);cursor:pointer;font-size:13px}
+.tab.on{background:#fff;color:var(--navy);font-weight:600}
+.pill{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11px;margin-left:6px}
+.p-s{background:#eceae4;color:#616e7c}.p-m{background:#fff2d9;color:var(--amber)}.p-r{background:var(--red);color:#fff}.p-g{background:#e3f3d9;color:var(--green)}
+.pane{display:none;padding:16px 20px}.pane.on{display:block}
+fieldset{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0 0 12px}legend{color:var(--navy);font-size:12px;padding:0 6px}
+.calc{display:flex;gap:20px;justify-content:flex-end;padding:6px 10px;background:#f6f8fa;border-radius:8px;font-size:12px;color:var(--mute);margin:8px 0}
+.hd{display:grid;grid-template-columns:1fr 1fr;text-align:center;font-size:11px;color:#fff}.hd div{background:var(--navy);padding:4px}
+.g8{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;padding:6px}
+.g8 i{font-style:normal;text-align:center;padding:5px;border:.5px solid var(--line);border-radius:6px;background:#f6f8fa}
+.row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.btn{padding:7px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;font-size:13px}
+.btn.o{background:#fff;color:var(--navy);border:1px solid var(--navy);font-weight:600}
+.btn.g{background:#fff;color:#555;border:1px solid #ccc}
+.gear{width:34px;height:34px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-size:17px;cursor:pointer}
+.gear.on{border-color:#e0a030;color:var(--amber);background:#fff8e1}
+.hint{font-size:11px;color:var(--amber);flex:1;min-width:150px}.sp{margin-left:auto;display:flex;gap:8px}
+.mon{display:grid;grid-template-columns:repeat(4,1fr);background:#f6f8fa;border:1px solid var(--line);border-radius:8px;margin-bottom:12px}
+.mon div{padding:8px 12px;border-right:1px solid var(--line)}.mon div:last-child{border:none}.mon small{color:var(--mute);display:block;font-size:11px}
+.cal{border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.cal .l{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee}.cal .l:last-child{border:none}
+.cfgbar{display:flex;gap:14px;align-items:center;padding:8px 12px;background:#f6f8fa;border-radius:8px;font-size:12px;margin-bottom:12px;flex-wrap:wrap}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.side h4{margin:0 0 8px;text-align:center;padding:5px;border-radius:6px;font-size:12px}
+.dr h4{background:#e8ecf3}.cr h4{background:#f6ebe0}
+.ln{display:grid;grid-template-columns:.9fr .8fr 1.1fr .9fr 1fr 22px;gap:5px;margin-bottom:5px}
+.ln span{padding:5px 6px;border:1px solid #b8d4ec;background:#eaf3fb;border-radius:6px;font-size:12px}
+.ln span.am{background:#fdf2dc;border-color:#f2c777}.ln span.n{text-align:right;background:#f1f1f1;border-color:#ddd}
+.ln.avg span{background:#fff6e0;border-color:#f2c777}.lbl{font-size:10px;color:var(--mute)}
+.add{border:1px dashed #4a86d8;color:#2a62b8;background:#fff;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer}
+.tot{margin-top:8px;padding:7px 10px;border-radius:6px;background:#e8f5e9;color:var(--green);display:flex;justify-content:space-between}
+.remark{margin:12px 0}.remark input{width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+.rt{background:#faf7f2;border:1px solid #efe6d8;border-radius:10px;padding:8px}
+.rt .top{display:flex;justify-content:flex-end;gap:22px;font-size:11px;color:#a98a5c;padding:2px 8px 6px;font-weight:600}
+.rt .h,.rt .r{display:grid;grid-template-columns:36px 1fr 110px 60px 60px;gap:0;align-items:center}
+.rt .h{font-size:10.5px;letter-spacing:.04em;color:#a98a5c;font-weight:700;background:#f7efe3;padding:5px 8px;border-radius:6px}
+.rt .r{background:#fbf9f5;border-radius:8px;margin-top:5px;padding:7px 8px}.rt .r b{color:#a98a5c}
+.rt .r .v{text-align:right}.rt .r.avg{background:#fff4de}
+.foot{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-top:1px solid var(--line)}
+.foot .m{font-size:12px}.ok{color:var(--green)}.bad{color:var(--red)}
+.dlg{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center}.dlg.on{display:flex}
+.dlg .c{width:440px;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 8px 28px rgba(0,0,0,.25)}
+.dlg h3{margin:0 0 8px;font-size:15px}.dlg p{margin:0 0 14px;line-height:1.65;white-space:pre-line;font-size:13.5px}.dlg .bt{display:flex;gap:8px;justify-content:flex-end}
+.dm{margin-top:18px}.dm h3{margin:0 0 6px;font-size:14px;color:var(--navy)}
+.dmt{background:#fff;border-radius:10px;overflow:auto;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.dmt th{background:var(--navy);color:#fff;padding:6px 8px;font-weight:500;white-space:nowrap}.dmt td{padding:6px 8px;border-bottom:1px solid #eee;white-space:nowrap}
+.dmt td.n{text-align:right}.hl{outline:2px solid #e5484d;outline-offset:-2px}
+</style></head><body><div class="wrap">
+<div class="note">Mockup v2 (ตัวเลขเป็นตัวอย่างจากรูปที่ส่งมา) — กด <b>Adjust</b> / <b>⚙</b> / Tab ③ / Submit เพื่อลอง flow ได้ · ยังไม่ได้แก้โค้ดจริง</div>
+
+<div class="modal">
+ <div class="mh"><span>GL-TransferVat</span><span style="color:var(--mute)">×</span></div>
+ <div class="tabs">
+  <div class="tab on" data-t="1">① Supplier &amp; Cal Logic <span class="pill p-s" id="stBadge">Standby</span></div>
+  <div class="tab" data-t="2">② Invoice / Tax Invoice <span class="pill p-r" id="invBadge">0</span></div>
+  <div class="tab" data-t="3" id="tab3" style="display:none">③ Config Adjust <span class="pill p-m">Manual</span></div>
+ </div>
+
+ <!-- TAB 1 -->
+ <div class="pane on" id="p1">
+  <fieldset><legend>Operation Input</legend>
+   <div class="calc"><span>คำนวณได้</span><span>Gross <b>0.00</b></span><span>Vat <b>0.00</b></span><span>Total <b>0.00</b></span></div>
+   <div class="hd"><div>Debit</div><div style="border-left:.5px solid #4a6a8c">Credit</div></div>
+   <div class="g8"><i>503001</i><i>99999</i><i>11610752</i><i>999999</i><i>503001</i><i>99999</i><i>11630052</i><i>999999</i></div>
+   <div class="row"><button class="btn g" style="opacity:.55">+ Add ใบกำกับภาษี</button>
+    <span class="hint" id="hint">กรอกใบกำกับภาษี หรือกด Adjust เพื่อปรับส่วนต่าง Vat ด้วย ADI</span>
+    <span class="sp"><button class="btn o" id="btnAdj">Adjust Diff by ADI · Vat 2,473.33</button><button class="gear" id="btnGear" title="Config">⚙</button></span></div>
+  </fieldset>
+  <div class="mon"><div><small>Gross (Invoice ทั้งหมด)</small>35,333.33</div><div><small>Vat (Invoice ทั้งหมด)</small>2,473.33</div><div><small>Amount</small>37,806.66</div><div><small>Diff Vat</small><b class="bad" id="diffV">2,473.33</b></div></div>
+  <div class="cal"><div style="color:var(--navy);margin-bottom:4px">Cal Logic <span style="color:var(--mute);font-size:11px">· ระบบคำนวณรายใบกำกับ (ปรับเองได้)</span></div>
+   <div class="l"><span>Simple Input</span><span><span id="simSel" style="border:1px solid #ccc;border-radius:6px;padding:2px 8px;margin-right:8px">Auto ▾</span><span class="pill p-s" id="simBadge">● Standby</span></span></div>
+   <div class="l"><span>ADI Journal</span><span><span style="border:1px solid #ccc;border-radius:6px;padding:2px 8px;margin-right:8px">Auto ▾</span><span class="pill p-s" id="adiBadge">● Standby</span></span></div>
+   <div id="adiSum" style="display:none;font-size:12px;color:var(--amber);padding-top:6px">ADI Manual · <b id="adiSumTxt"></b> <a href="#" id="undo" style="margin-left:10px;color:#2a62b8">ยกเลิกการ Adjust</a></div>
+  </div>
+ </div>
+
+ <!-- TAB 2 -->
+ <div class="pane" id="p2"><div style="color:var(--mute);padding:30px;text-align:center">(Tab ใบกำกับภาษีเหมือนเดิม)</div></div>
+
+ <!-- TAB 3 -->
+ <div class="pane" id="p3">
+  <div class="cfgbar"><span>ยอดที่ Adjust (Diff Vat): <b>2,473.33</b></span><span>ประเภท: <span class="pill p-m" id="typePill">ปกติ</span></span>
+   <label style="margin-left:auto"><input type="checkbox" id="chkAvg"> จำลอง VAT เฉลี่ย (Rate 70%)</label></div>
+  <div class="cols">
+   <div class="side dr"><h4>Debit (Dr.)</h4><div class="lbl ln" style="margin:0"><span style="border:0;background:none">Ofin</span><span style="border:0;background:none">CPC</span><span style="border:0;background:none">Account</span><span style="border:0;background:none">Sub Acc</span><span style="border:0;background:none;text-align:right">ยอด</span><i></i></div>
+    <div id="drRows"></div><button class="add">+ เพิ่มแถวสาขา</button><div class="tot"><span>รวม Dr.</span><b id="totDr"></b></div></div>
+   <div class="side cr"><h4>Credit (Cr.)</h4><div class="lbl ln" style="margin:0"><span style="border:0;background:none">Ofin</span><span style="border:0;background:none">CPC</span><span style="border:0;background:none">Account</span><span style="border:0;background:none">Sub Acc</span><span style="border:0;background:none;text-align:right">ยอด</span><i></i></div>
+    <div id="crRows"></div><button class="add">+ เพิ่มแถวสาขา</button> <button class="add" style="border-color:#e0a030;color:var(--amber)">Cal Avg</button><div class="tot"><span>รวม Cr.</span><b id="totCr"></b></div></div>
+  </div>
+  <div class="remark"><div class="lbl" style="font-size:11px;color:var(--mute);margin-bottom:3px">หมายเหตุ (Line Description) — ว่างได้ ระบบใช้ "Adjust Diff Vat GRN 6710900038"</div><input value="Adjust Diff Vat GRN 6710900038"></div>
+  <div style="font-size:12px;color:#a98a5c;font-weight:600;margin-bottom:4px">Monitor · RESULTS - SEGMENT ALL (ADI)</div>
+  <div class="rt"><div class="top"><span>GROSS —</span><span>VAT 2,473.33</span><span>AMOUNT —</span></div>
+   <div class="h"><span>#</span><span>RESULTS - SEGMENT ALL (ADI)</span><span style="text-align:right">LINE VALUE</span><span style="text-align:center">SIDE</span><span style="text-align:center">RATE</span></div>
+   <div id="rtRows"></div></div>
+  <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn g" id="cfgBack">คืนค่าเริ่มต้น</button><button class="btn g" id="cfgCancel">ยกเลิก</button><button class="btn" id="cfgSubmit">Submit (Adjust)</button></div>
+ </div>
+
+ <div class="foot"><span class="m bad" id="fmsg">ใบกำกับ 0 ใบ · ส่วนต่าง 35,333.33 / 2,473.33 (ต้องไม่เกิน ±1 บาท)</span>
+  <span><button class="btn g">ยกเลิก</button> <button class="btn" id="save" style="opacity:.45;margin-left:8px">บันทึก GL-TransferVat</button></span></div>
+</div>
+
+<div class="dm"><h3>Draft Monitor · Upload ADI (หลังกดบันทึก)</h3>
+ <div class="dmt"><table><tr><th>Category</th><th>Source</th><th>Acc Date</th><th class="hl">Bus</th><th class="hl">Grp</th><th class="hl">Com</th><th class="hl">Branch</th><th class="hl">CPC</th><th class="hl">Acc</th><th class="hl">Sub_Acc</th><th class="hl">Debit</th><th class="hl">Credit</th><th>Journal Name</th><th class="hl">Line Description</th></tr>
+ <tbody id="dmBody"><tr><td colspan="14" style="text-align:center;color:var(--mute);padding:14px">ยังไม่มี Draft — กด Adjust แล้วบันทึก</td></tr></tbody></table></div></div>
+</div>
+
+<div class="dlg" id="dlg"><div class="c"><h3>Adjust Diff by ADI</h3>
+<p>Simple ยึด YNY ตามระบบหรือไม่?
+
+ยึดตามระบบ  →  Simple คงเดิม
+ไม่ยึด  →  Simple เป็น Standby ค่า Null ทั้งหมด ให้ปรับเอง
+
+ADI จะสร้างตามยอด Adjust ทั้งสองกรณี</p>
+<div class="bt"><button class="btn g" id="dCancel">ยกเลิก</button><button class="btn g" id="dNo">ไม่ยึด (ปรับเอง)</button><button class="btn" id="dYes">ยึดตามระบบ</button></div></div></div>
+
+<script>
+const $=id=>document.getElementById(id);const f=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const TOTAL=2473.33;let st={adj:false,simple:'auto',avg:false};
+function tab(n){document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t==n));[1,2,3].forEach(i=>$('p'+i).classList.toggle('on',i==n))}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>tab(t.dataset.t));
+function lines(){const nr=st.avg?Math.round(TOTAL*(1-0.7)*100)/100:0;const main=Math.round((TOTAL-nr)*100)/100;
+ const L=[{s:'Dr',cpc:'99999',acc:'11610752',v:main,r:st.avg?'70':'100'}];
+ if(st.avg)L.push({s:'Dr',cpc:'45700',acc:'63050000',v:nr,r:'30',avg:1});
+ L.push({s:'Cr',cpc:'99999',acc:'11630052',v:TOTAL,r:'100'});return L}
+function ln(x){return `<div class="ln ${x.avg?'avg':''}"><span class="${x.avg?'':'n'}" style="${x.avg?'':'background:#f1f1f1;border-color:#ddd'}">503001</span><span class="${x.avg?'am':''}">${x.cpc}</span><span class="${x.avg?'am':''}">${x.acc}</span><span class="${x.avg?'am':''}">999999</span><span class="n ${x.avg?'am':''}">${f(x.v)}</span><i>${x.avg?'<b style="color:#c33">×</b>':''}</i></div>`}
+function render(){const L=lines();$('drRows').innerHTML=L.filter(x=>x.s=='Dr').map(ln).join('');$('crRows').innerHTML=L.filter(x=>x.s=='Cr').map(ln).join('');
+ const d=L.filter(x=>x.s=='Dr').reduce((a,x)=>a+x.v,0),c=L.filter(x=>x.s=='Cr').reduce((a,x)=>a+x.v,0);$('totDr').textContent=f(d);$('totCr').textContent=f(c);
+ $('typePill').textContent=st.avg?'เฉลี่ย (AVG 70%)':'ปกติ';
+ const seg=x=>['BU01','503001',x.cpc,x.acc,'999999'].join('-');
+ let h='';for(let i=0;i<Math.max(4,L.length);i++){const x=L[i];h+=x?`<div class="r ${x.avg?'avg':''}"><b>${i+1}</b><span>${seg(x)}</span><span class="v">${f(x.v)}</span><span style="text-align:center">${x.s}</span><span style="text-align:center">${x.r}</span></div>`:`<div class="r"><b>${i+1}</b><span style="color:#ccc">—</span><span class="v" style="color:#ccc">—</span><span style="text-align:center;color:#ccc">—</span><span style="text-align:center;color:#ccc">—</span></div>`}
+ $('rtRows').innerHTML=h}
+function applied(){st.adj=true;const L=lines();$('stBadge').className='pill p-m';$('stBadge').textContent='Manual';
+ $('adiBadge').className='pill p-m';$('adiBadge').textContent='● Manual · ADI ×'+L.length;
+ if(st.simple=='no'){$('simBadge').className='pill p-s';$('simBadge').textContent='● Standby (Null)';$('simSel').textContent='Standby ▾'}else{$('simBadge').className='pill p-g';$('simBadge').textContent='● Transfer ×1 (YNY)';$('simSel').textContent='Auto ▾'}
+ $('adiSum').style.display='block';$('adiSumTxt').textContent=L.length+' บรรทัด · Vat '+f(TOTAL);$('btnGear').classList.add('on');
+ $('diffV').textContent='0.00';$('diffV').className='ok';$('fmsg').className='m ok';$('fmsg').textContent='ADI Adjust '+f(TOTAL)+' / Diff Vat '+f(TOTAL)+' ✓ ตรง';$('save').style.opacity=1;
+ $('dmBody').innerHTML=L.map(x=>`<tr><td>ADI</td><td>Link3ase</td><td>05/21/2026</td><td>BU01</td><td>—</td><td>—</td><td>503001</td><td>${x.cpc}</td><td>${x.acc}</td><td>999999</td><td class="n">${x.s=='Dr'?f(x.v):'0.00'}</td><td class="n">${x.s=='Cr'?f(x.v):'0.00'}</td><td>APN-SH15-503001-IB-001</td><td>Adjust Diff Vat GRN 6710900038</td></tr>`).join('')}
+function undo(){st={adj:false,simple:'auto',avg:st.avg};$('stBadge').className='pill p-s';$('stBadge').textContent='Standby';$('adiBadge').className='pill p-s';$('adiBadge').textContent='● Standby';$('simBadge').className='pill p-s';$('simBadge').textContent='● Standby';$('simSel').textContent='Auto ▾';$('adiSum').style.display='none';$('btnGear').classList.remove('on');$('diffV').textContent=f(TOTAL);$('diffV').className='bad';$('fmsg').className='m bad';$('fmsg').textContent='ใบกำกับ 0 ใบ · ส่วนต่าง 35,333.33 / 2,473.33 (ต้องไม่เกิน ±1 บาท)';$('save').style.opacity=.45;$('tab3').style.display='none';$('dmBody').innerHTML='<tr><td colspan="14" style="text-align:center;color:#888;padding:14px">ยังไม่มี Draft</td></tr>';tab(1)}
+$('btnAdj').onclick=()=>$('dlg').classList.add('on');$('dCancel').onclick=()=>$('dlg').classList.remove('on');
+$('dYes').onclick=()=>{st.simple='yes';$('dlg').classList.remove('on');applied()};$('dNo').onclick=()=>{st.simple='no';$('dlg').classList.remove('on');applied()};
+$('btnGear').onclick=()=>{$('tab3').style.display='';render();tab(3)};
+$('cfgSubmit').onclick=()=>{$('dlg').classList.add('on')};$('cfgCancel').onclick=()=>{tab(1)};$('cfgBack').onclick=()=>{st.avg=false;$('chkAvg').checked=false;render()};
+$('chkAvg').onchange=e=>{st.avg=e.target.checked;render()};$('undo').onclick=e=>{e.preventDefault();undo()};
+$('dYes').addEventListener('click',()=>tab(1));$('dNo').addEventListener('click',()=>tab(1));
+render();
+</script></body></html>

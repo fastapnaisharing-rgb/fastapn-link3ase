@@ -16,6 +16,7 @@ const PERIOD_PANEL_FIELD_PERM = {
   ap_grt: 'Manual', ap_grn: 'Manual', ap_period_mode: 'Manual',
   vat_grt_pattern: 'VAT', vat_grn_pattern: 'VAT', vat_digit: 'VAT', vat_grn: 'VAT',
   vat_period_mode: 'VAT', vat_watchlist_status: 'VAT', vat_gl_booking: 'VAT',
+  vat_grn_ov: 'VAT', vat_over_period: 'VAT', // MARKER_GENERICTABLE_OVER_PERIOD_V1 -- Over Period (รัน GRN เดือนถัดไป) สิทธิ์เดียวกับ vat_grn
   ie_grt_pattern: 'IE', ie_grn_pattern: 'IE', ie_digit: 'IE',
   ie_grt: 'IE', ie_grn: 'IE', ie_period_mode: 'IE',
 };
@@ -248,6 +249,8 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
         const AGING_BUCKET_SQL = {
           expired: `${quoteIdent("aging_months")} > 6`,
           "6-5": `${quoteIdent("aging_months")} BETWEEN 5 AND 6`,
+          "6": `${quoteIdent("aging_months")} = 6`, // MARKER_GENERICTABLE_AGING_6_5_SPLIT_V1 -- กรองแยก 6 / 5
+          "5": `${quoteIdent("aging_months")} = 5`,
           "4-3": `${quoteIdent("aging_months")} BETWEEN 3 AND 4`,
           "2-1": `${quoteIdent("aging_months")} BETWEEN 1 AND 2`,
           "0": `${quoteIdent("aging_months")} = 0`,
@@ -581,14 +584,23 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
       // MARKER_GENERICTABLE_USERROLES_SELFSERVICE_USERNAME_V1
       // ── Non-Owner แก้ user_roles ได้แค่ Column "username" ของแถวตัวเองเท่านั้น ──
       // ── (กัน Privilege Escalation -- ห้ามแตะ role/permissions/email ของใครเลย) ──
+      // MARKER_GENERICTABLE_USERROLES_TIMELINE_CONNECT_MAILCFG_V1
+      // ── Admin แก้ vat_prepare_name ของใครก็ได้ (Connect ใน Timeline) ──────────────
+      // ── ทุก Role แก้ timeline_mail_cfg ของแถวตัวเองได้ ── role/permissions/email ยังห้ามแตะ ──
       if (tableName === "user_roles" && req.user?.appRole !== "Owner") {
-        const disallowedCols = columns.filter((c) => c !== "username");
+        const isAdminRole = req.user?.appRole === "Admin";
+        const ownCols = ["username", "timeline_mail_cfg"];
+        const adminCols = isAdminRole ? ["vat_prepare_name"] : [];
+        const disallowedCols = columns.filter((c) => !ownCols.includes(c) && !adminCols.includes(c));
         if (disallowedCols.length > 0) {
           return res.status(403).json({ error: `Insufficient permission to update: ${disallowedCols.join(', ')}`, message: `Insufficient permission to update: ${disallowedCols.join(', ')}` });
         }
-        const { rows: ownerCheckRows } = await pool.query(`SELECT email FROM ${table} WHERE ${idCol} = $1`, [req.params.id]);
-        if (!ownerCheckRows[0] || ownerCheckRows[0].email !== req.user?.email) {
-          return res.status(403).json({ error: "Insufficient permission to update this record", message: "Insufficient permission to update this record" });
+        const needOwnRow = columns.some((c) => ownCols.includes(c));
+        if (needOwnRow) {
+          const { rows: ownerCheckRows } = await pool.query(`SELECT email FROM ${table} WHERE ${idCol} = $1`, [req.params.id]);
+          if (!ownerCheckRows[0] || ownerCheckRows[0].email !== req.user?.email) {
+            return res.status(403).json({ error: "Insufficient permission to update this record", message: "Insufficient permission to update this record" });
+          }
         }
       }
       const setClause = columns.map((c, i) => `${quoteIdent(c)} = $${i + 1}`).join(", ");

@@ -142,13 +142,30 @@ async function lookupCompanyByBu(db, rawBuCode) {
   const buCodeTrim = String(rawBuCode || '').trim();
   if (!buCodeTrim) return null;
   try {
+    // MARKER_LOOKUP_COMPANY_PICKBEST_V1 -- company_list อาจมีหลายแถวที่ bu เดียวกัน (เช่น TOP มี 2 แถว แถวหนึ่งข้อมูลครบ
+    // อีกแถวชื่อบริษัทว่าง) เดิม .find() หยิบแถวแรกที่เจอ อาจได้แถวที่ว่าง -> เลือกแถวที่ข้อมูลครบที่สุดแทน
+    const pickBest = (rows) => rows.slice().sort((a, b) => {
+      const score = (r) => (r.deleted !== true ? 4 : 0) + (r.bu_code_name ? 2 : 0) + (r['THAI COMPANY NAME'] ? 1 : 0);
+      return score(b) - score(a);
+    })[0] || null;
+    const toResult = (r) => ({ bu: r.bu, bu_code_name: r.bu_code_name || null, thaiName: r['THAI COMPANY NAME'] || null });
     const { data: clList } = await db.from('company_list')
-      .select('bu,bu_code_name,"THAI COMPANY NAME"')
+      .select('bu,bu_code_name,"THAI COMPANY NAME",deleted')
       .ilike('bu', buCodeTrim);
     const candidates = Array.isArray(clList) ? clList : (clList ? [clList] : []);
-    const cl = candidates.find(r => String(r.bu || '').trim().toUpperCase() === buCodeTrim.toUpperCase()) || null;
-    if (!cl) return null;
-    return { bu: cl.bu, bu_code_name: cl.bu_code_name || null, thaiName: cl['THAI COMPANY NAME'] || null };
+    const cl = pickBest(candidates.filter(r => String(r.bu || '').trim().toUpperCase() === buCodeTrim.toUpperCase()));
+    if (cl) return toResult(cl);
+    // MARKER_LOOKUP_COMPANY_BY_SEGMENT3_FALLBACK_V1 -- ไฟล์ที่ตั้งชื่อขึ้นต้นด้วยรหัสตัวเลข (เช่น 0401_Invoice Register_...)
+    // หา company_list.bu ตรงๆ ไม่เจอ (bu เป็นรหัสย่อ เช่น TOP/LKS) -> ลองหาจาก SEGMENT3 แทน
+    // ยอมให้เจอหลายแถวได้ ถ้าเป็น bu เดียวกันทั้งหมด (เช่น TOP 2 แถว) แต่ถ้า SEGMENT3 เดียวกันมีหลาย bu
+    // (เช่น 1203 = CPBR/CPBR02..05) = กำกวม คืน null ดีกว่าเดาผิดบริษัท
+    const { data: segList } = await db.from('company_list')
+      .select('bu,bu_code_name,"THAI COMPANY NAME",deleted')
+      .eq('SEGMENT3', buCodeTrim);
+    const segCandidates = (Array.isArray(segList) ? segList : (segList ? [segList] : [])).filter(r => r.deleted !== true && String(r.bu || '').trim());
+    const distinctBus = new Set(segCandidates.map(r => String(r.bu).trim().toUpperCase()));
+    if (distinctBus.size !== 1) return null;
+    return toResult(pickBest(segCandidates));
   } catch (_) {
     return null;
   }
@@ -3956,6 +3973,27 @@ function mapRowsForExcel(rawRows, docType) {
 function DocDetailModal({ file, onClose, searchQuery='', userName, currentUser, onConfirmed }) {  // MARKER_DOCCOLLECTION_CROSSCHECK_SYNCAFTERCONFIRM_V1
   const rawRows = Array.isArray(file.rows) ? file.rows : [];
 
+  // MARKER_DOCDETAIL_AUTOHEAL_BU_NAME_V1 -- ดัก: ถ้าแถวนี้ BU Company Name / ชื่อบริษัท (ไทย) ว่าง (เช่นตอนบันทึก Lookup company_list
+  // ไม่เจอ) ให้ Lookup ใหม่ตอนเปิด Popup แล้วโชว์ทันที + เขียนกลับ doc_collection เงียบๆ (เติมเฉพาะช่องว่าง ไม่แตะ bu_code)
+  const [buHeal, setBuHeal] = React.useState(null);
+  React.useEffect(() => {
+    if (!file?.bu_code || (file.bu_code_name && file.bu_name)) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cl = await lookupCompanyByBu(db, file.bu_code);
+        if (!cl || cancelled) return;
+        const patch = {};
+        if (!file.bu_code_name && cl.bu_code_name) patch.bu_code_name = cl.bu_code_name;
+        if (!file.bu_name && cl.thaiName) patch.bu_name = cl.thaiName;
+        if (Object.keys(patch).length === 0) return;
+        setBuHeal(patch);
+        if (file.id) { try { await db.from('doc_collection').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', file.id); } catch (_) { /* สิทธิ์ไม่พอ/เขียนไม่ได้ -> โชว์อย่างเดียว */ } }
+      } catch (_) { /* ไม่เป็นไร ใช้ค่าเดิมต่อ */ }
+    })();
+    return () => { cancelled = true; };
+  }, [file?.id, file?.bu_code, file?.bu_code_name, file?.bu_name]);
+
   const fmtNum = (n) => {
     if (!n && n !== 0) return '-';
     const str = String(n).replace(/,/g, '');
@@ -4194,8 +4232,8 @@ function DocDetailModal({ file, onClose, searchQuery='', userName, currentUser, 
         <div style={{padding:'10px 20px',background:'#f8f9fa',borderBottom:'0.5px solid #e8e8e8',flexShrink:0,position:'sticky',top:0,zIndex:3}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'2px 40px'}}>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>DOC TYPE</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.doc_type}</span></div>
-            <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>BU CODE</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.bu_code_name||file.bu_code||'-'}</span></div>
-            <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>ชื่อผู้ประกอบการ</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.bu_name||file.bu_code_name||'-'}</span></div>
+            <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>BU CODE</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.bu_code_name||buHeal?.bu_code_name||file.bu_code||'-'}</span></div>
+            <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>ชื่อผู้ประกอบการ</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.bu_name||buHeal?.bu_name||file.bu_code_name||buHeal?.bu_code_name||'-'}</span></div>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>Receive Date</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{fmtDate(receiveDate)}</span></div>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>อัพโหลดโดย</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{file.uploaded_by||'-'}</span></div>
             <div style={{display:'flex',alignItems:'center'}}><span style={S.hlabel}>จำนวนรายการ</span><span style={{fontSize:'11px',color:'#888'}}>:</span><span style={S.hval}>{mappedRows.length} รายการ</span></div>

@@ -28,12 +28,24 @@
 import { Router } from "express";
 import { wsBroadcast } from "../app.js"; // MARKER_PERIOD_REALTIME_BROADCAST_V1
 import { pool, getUsernameByEmail } from "../db.js";
+import { markTaxClosePeriodClosed, markTaxClosePeriodReopened } from "./taxClosePeriod.js"; // MARKER_TAXCLOSE_LIFECYCLE_V1
 
 const router = Router();
 
 const BUSINESS_DAYS = 4; // VAT ต่างจาก AP (2 วันทำการ) — ยืนยันแล้วก่อนหน้า
 
 // ── แปลงรูปแบบเดือนจาก "2026-07" เป็น "Jul 2569" (Pattern เดียวกับ AP) ────
+// MARKER_PERIOD_NO_SKIP_GUARD_V1
+// ── เดือนสูงสุดที่ปิดได้ = เดือนปฏิทินก่อนหน้าเดือนปัจจุบัน (เวลาไทย) เช่น วันนี้ต.ค. 2026 → ปิดได้สูงสุด 2026-09 ──
+function maxClosableMonthStr() {
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function noSkipMsg(closingMonthStr) {
+  return `ปิด Period ${fmtMonth(closingMonthStr)} ไม่ได้ — ปิดได้สูงสุดถึง ${fmtMonth(maxClosableMonthStr())} เท่านั้น (ห้ามปิดข้าม Period)`;
+}
+
 function fmtMonth(ym) {
   if (!ym) return "---";
   const [y, m] = ym.split("-").map(Number);
@@ -139,6 +151,12 @@ router.post("/close", async (req, res) => {
     }
 
     const closingMonthStr = nextMonthStr(s.vat_period_month);
+
+    // MARKER_PERIOD_NO_SKIP_GUARD_V1 -- ห้ามปิดเดือนที่ยังไม่จบ / ห้ามปิดข้าม Period (ทุก Role รวม Owner) -- เดิม VAT ไม่เช็ค Deadline ฝั่ง Server เลย
+    if (closingMonthStr > maxClosableMonthStr()) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: noSkipMsg(closingMonthStr) });
+    }
     const now = new Date();
 
     await setSetting("vat_period_month", closingMonthStr, username, client);
@@ -153,9 +171,26 @@ router.post("/close", async (req, res) => {
       `UPDATE company_list SET
         vat_grn_prev = vat_grn,
         vat_grn = vat_grn_ov,
-        vat_grn_ov = 0
+        vat_grn_ov = 0,
+        vat_over_period = false -- MARKER_VATPERIOD_CLOSE_RELEASE_OVER_MODE_V1 ปิด Period แล้วปลดโหมด Over Period (เลขที่วิ่งไว้ใน vat_grn_ov ถูกดึงมาเป็นเลขปัจจุบันข้างบนแล้ว)
        WHERE deleted = false`
     );
+
+    // MARKER_VATPERIOD_CLOSE_RELEASE_FU_OVP_DRAFT_V1
+    // ปิด Period: รายการที่พักไว้ (status='ovp-draft' จาก Over Period) กลับเป็น 'draft' ทั้งหมด (Period ของแถวเป็นเดือนถัดไป = Period ใหม่พอดี)
+    // ใช้ SAVEPOINT -- ถ้าตารางไหนไม่มี/พลาด ต้องไม่ทำให้การปิด Period ล้มทั้งก้อน
+    let ovpReleased = 0;
+    for (const tbl of ["vat_upload_popvatdraft", "vat_simpleinputdraft", "vat_adi_transferdraft", "vat_watchlist_report"]) {
+      try {
+        await client.query("SAVEPOINT ovprel_sp");
+        const r = await client.query(`UPDATE ${tbl} SET status = 'draft' WHERE status = 'ovp-draft'`);
+        ovpReleased += r.rowCount;
+        await client.query("RELEASE SAVEPOINT ovprel_sp");
+      } catch (e) {
+        console.error("POST /vat/period/close release ovp-draft error:", tbl, e.message);
+        try { await client.query("ROLLBACK TO SAVEPOINT ovprel_sp"); } catch (e2) { /* ignore */ }
+      }
+    }
 
     // MARKER_VATPERIOD_CLOSE_AUTO_PVBACKUP_V1
     // กรณีไม่มีใครกด Finish: ปิด Period แล้ว Batch ที่ Export ค้างอยู่ (status='exported') เปลี่ยนเป็น 'pv-backup' อัตโนมัติ + กำหนดหมดอายุ = วันปิด (Popvat/Simple 6 เดือน, ADI 1 เดือน)
@@ -176,6 +211,18 @@ router.post("/close", async (req, res) => {
       console.error("POST /vat/period/close auto pv-backup error:", e.message);
       try { await client.query("ROLLBACK TO SAVEPOINT pvbackup_sp"); } catch (e2) { /* ignore */ }
       pvBackupCount = 0;
+    }
+
+    // MARKER_TAXCLOSE_LIFECYCLE_V1
+    // ตั้งเวลาล้างข้อมูล Timeline ปิดภาษี = วันปิด + tax_close_retention_days (ค่าเริ่มต้น 15 วัน ปฏิทิน)
+    // ใช้ SAVEPOINT -- ถ้าส่วนนี้พลาด (เช่น ยังไม่ได้รัน SQL สร้างตาราง) ต้องไม่ทำให้การปิด Period ล้มทั้งก้อน
+    try {
+      await client.query("SAVEPOINT taxclose_sp");
+      await markTaxClosePeriodClosed(client, closingMonthStr, username);
+      await client.query("RELEASE SAVEPOINT taxclose_sp");
+    } catch (e) {
+      console.error("POST /vat/period/close tax-close lifecycle error:", e.message);
+      try { await client.query("ROLLBACK TO SAVEPOINT taxclose_sp"); } catch (e2) { /* ignore */ }
     }
 
     await client.query(
@@ -278,6 +325,17 @@ router.post("/reopen", async (req, res) => {
        VALUES ($1, \'VAT\', \'REOPEN_PERIOD\', $2, NOW())`,
       [logUsername, JSON.stringify({ reverted_month: revertedMonthStr, bu_count: rowCount })]
     );
+
+    // MARKER_TAXCLOSE_LIFECYCLE_V1
+    // Reopen ภายใน 7 วัน (< 15 วันที่ล้างข้อมูล) -- ยกเลิกการนับถอยหลังล้างข้อมูล Timeline ของเดือนที่เปิดกลับ
+    try {
+      await client.query("SAVEPOINT taxclose_sp");
+      await markTaxClosePeriodReopened(client, s.vat_period_month);
+      await client.query("RELEASE SAVEPOINT taxclose_sp");
+    } catch (e) {
+      console.error("POST /vat/period/reopen tax-close lifecycle error:", e.message);
+      try { await client.query("ROLLBACK TO SAVEPOINT taxclose_sp"); } catch (e2) { /* ignore */ }
+    }
 
     // MARKER_VATPERIOD_REOPEN_CLEAR_NOTIF_V1
     // ── Bug เดิม: Reopen ไม่เคยลบ Notification "ปิด Period" ที่ /close สร้างไว้ ──

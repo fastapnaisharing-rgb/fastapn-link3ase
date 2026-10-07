@@ -54,12 +54,12 @@ export function buildAgingLines(rows, agingList, period) {
   const sums = {};
   rows.forEach((r) => { const a = Number(r.aging_months); sums[a] = (sums[a] || 0) + num(r.exp_vat); });
   const list = (agingList && agingList.length ? agingList : [6, 5, 4, 3, 2, 1, 0]).map(Number).filter((a) => a >= 0 && a <= 6).sort((a, b) => b - a);
-  return list.map((a) => ({
+  return list.map((a, i) => ({
     aging: a,
     month: monthLabel(period, a),
     total: sums[a] || 0,
     color: a >= 5 ? "red" : "green", // Aging 5-6 = แดง (กลุ่ม 6-5), 0-4 = เขียว
-    text: `รายการคงค้างที่ตัดชำระเงินในเดือน ${monthLabel(period, a)} จำนวนภาษียังไม่ได้สิทธิ์ : ${fmtMoney(sums[a] || 0)} บาท`,
+    text: `${i + 1}. รายการคงค้างที่ตัดชำระเงินในเดือน ${monthLabel(period, a)} จำนวนภาษียังไม่ได้สิทธิ์ : ${fmtMoney(sums[a] || 0)} บาท`,
   }));
 }
 
@@ -112,7 +112,7 @@ export async function buildBuWorkbook({ rows, period, buLabel, generatedBy, extr
   const rawData = rows.map((r) => withExtra(r, [
     r.doc_date == null ? null : String(r.doc_date), r.doc_no == null ? null : String(r.doc_no), r.site || null, r.pay_group || null, r.branch || null, r.tax_type || null,
     dash(r.invoice_ref), dash(r.supplier_code), dash(r.vendor_name), r.bus_type || null, dateOnly(r.payment_date), dateOnly(r.check_date), dash(r.check_no), r.receive_doc_no || null,
-    num(r.exp_amount), num(r.exp_vat), dash(r.bu), `aging ${r.aging_months} month`, r.period || null, r._taxGroup, r._person || "ไม่ระบุ", r.ap_batch_name || null,
+    num(r.exp_amount), num(r.exp_vat), dash(r._buDisp || r.bu), `aging ${r.aging_months} month`, r.period || null, r._taxGroup, r._person || "ไม่ระบุ", r.ap_batch_name || null,
   ]));
   styleHeaderSample(raw.addRow(rawHead));
   rawData.forEach((r) => raw.addRow(r));

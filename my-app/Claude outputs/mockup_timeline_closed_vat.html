@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup - Timeline Closed Vat</title>
+<style>
+  :root{--bg:#f4f3ef;--card:#fff;--ink:#1f2a37;--mute:#7b8794;--navy:#16325c;--amber:#f5c26b;--red:#d64550;--green:#2e9e5b;--line:#e6e4dd}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 "Segoe UI",Tahoma,sans-serif;padding:20px}
+  .wrap{max-width:1180px;margin:auto}
+  .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px}
+  .head h1{font-size:20px;font-weight:500;margin:0;color:var(--navy)}
+  .tools{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff}
+  .seg button{border:0;background:#fff;padding:7px 14px;font-size:13px;cursor:pointer}
+  .seg button.on{background:var(--navy);color:#fff;font-weight:600}
+  .lbl{color:var(--mute);font-size:12px}
+  .gear{width:34px;height:34px;border:1px solid var(--line);background:#fff;border-radius:6px}
+  .card{background:var(--card);border-radius:10px;padding:16px 20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  /* Timeline card (now on top) */
+  .tl{margin-bottom:12px}
+  .tl-top{display:flex;justify-content:space-between;align-items:flex-start}
+  .small{font-size:11px;color:var(--mute)}
+  .tl-title{font-size:12px;color:var(--mute);font-weight:600;letter-spacing:.2px}
+  .date{font-size:24px;font-weight:500;margin-top:2px}
+  .date.dl{color:var(--red);text-align:right}
+  .badge{background:#e3f3d9;color:#3d7a1f;border-radius:10px;padding:1px 9px;font-size:11px;margin-left:6px}
+  .bar{display:grid;grid-template-columns:repeat(31,1fr);gap:4px;margin:12px 0 8px}
+  .bar i{height:5px;border-radius:3px;background:var(--amber)}
+  .bar i.late{background:var(--red)}
+  .tl-foot{display:flex;justify-content:space-between}
+  /* KPI cards (now below) */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+  .kpi{display:flex;align-items:center;gap:12px}
+  .ico{width:40px;height:40px;border-radius:8px;display:grid;place-items:center;font-size:18px}
+  .kpi .v{font-size:22px;font-weight:500;line-height:1.1}
+  .kpi .t{font-size:12px;color:var(--mute)}
+  .tabs{display:flex;background:#eef0f6;width:max-content;font-weight:600;font-size:13px}
+  .tabs div{padding:9px 46px;border-bottom:2px solid var(--navy)}
+  .note{margin-top:18px;padding:12px 16px;border:1px dashed #b9b6a8;border-radius:8px;color:#5b5a52;font-size:13px;background:#fbfaf6}
+  @media(max-width:800px){.kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ①  KPI 4 ใบ ย้ายขึ้นบน -->
+  <div class="kpis">
+    <div class="card kpi"><div class="ico" style="background:#e8eef9">◔</div><div><div class="t">ภาพรวมที่ทำแล้ว</div><div class="v">1%</div></div></div>
+    <div class="card kpi"><div class="ico" style="background:#e4f2dc">🏢</div><div><div class="t">BU Active</div><div class="v">14</div></div></div>
+    <div class="card kpi"><div class="ico" style="background:#eceae4">🏢</div><div><div class="t">BU Inactive</div><div class="v" style="color:var(--mute)">0</div></div></div>
+    <div class="card kpi"><div class="ico" style="background:#e1f4e8;color:var(--green)">✓</div><div><div class="t">เสร็จ 100%</div><div class="v">0</div></div></div>
+  </div>
+
+  <!-- ②  Timeline อยู่บน -->
+  <div class="card tl">
+    <div class="tl-top">
+      <div>
+        <div class="tl-title">Timeline Closed Vat</div>
+        <div class="date">05-Sep-2026</div>
+        <div class="small">Sep 2569 <span class="badge">Open</span></div>
+      </div>
+      <div>
+        <div class="small" style="text-align:right">Deadline</div>
+        <div class="date dl">06-Oct-2026</div>
+        <div class="small" style="text-align:right;color:var(--red)">1 day left</div>
+      </div>
+    </div>
+    <div class="bar" id="bar"></div>
+    <div class="tl-foot small"><span>เริ่มรอบ 5 ก.ย.</span><span>วันนี้ 5 ต.ค. · ครบกำหนด 6 ต.ค.</span></div>
+  </div>
+
+  <!-- ③ แถบฟิลเตอร์ ย้ายลงมาใต้ Timeline -->
+  <div class="head" style="justify-content:flex-end">
+    <div class="tools">
+      <div class="seg"><button class="on">งานของฉัน</button><button>All User Related Status</button></div>
+      <span class="lbl">สถานะ</span>
+      <div class="seg"><button class="on">All</button><button>Pending</button><button>Confirm</button></div>
+      <button class="gear">⚙</button>
+    </div>
+  </div>
+
+  <!-- 4) ตารางสถานะเดิม -->
+  <div class="tabs"><div>Prepare to Transfer</div><div>Input</div><div>Incomplete</div></div>
+
+  <div class="note">
+    Mockup นี้ใช้ยืนยันเลย์เอาต์เท่านั้น (ยังไม่ได้แก้โค้ดจริง):
+    ① ลบหัวข้อ "Timeline ปิดภาษี" → ② การ์ด KPI 4 ใบขึ้นไปอยู่บนสุด → ③ การ์ด Timeline (ป้าย "Current period" → "Timeline Closed Vat") → ④ แถบฟิลเตอร์ (งานของฉัน / สถานะ / ⚙) ย้ายลงมาอยู่ใต้ Timeline → ⑤ ตารางสถานะเหมือนเดิม
+  </div>
+</div>
+<script>
+  const b=document.getElementById('bar');
+  for(let i=0;i<31;i++){const e=document.createElement('i');if(i>=29)e.className='late';b.appendChild(e)}
+</script>
+</body>
+</html>

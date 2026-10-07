@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><title>Mockup Mail Report Body</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font-family:Tahoma,Arial,sans-serif;background:#f3f2f1;margin:0;padding:16px;color:#222}
+.note{max-width:980px;margin:0 auto 12px;font-size:13px;color:#555;line-height:1.6}
+.mail{max-width:980px;margin:0 auto;background:#fff;padding:16px;border:1px solid #ddd;overflow-x:auto}</style></head>
+<body>
+<div class="note"><b>Mockup เนื้อเมล Report (Outlook Draft)</b> — หัวตารางสีดำสีเดียว ส่วนเนื้อตารางมีสีเฉพาะ Status · ข้อมูลเป็นตัวอย่างจากภาพ 06.2026, คอลัมน์ <b>Prepare by</b> เพิ่มต่อจาก Company Name (ชื่อเป็น Placeholder)<br>
+เป็นตาราง HTML แบบ bgcolor + inline style เพื่อให้ Outlook แสดงผลเหมือนกัน</div>
+<div class="mail">
+<p style="font-size:14px;margin:0 0 10px">เรียน เจ้าหน้าที่ Tax<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ขอแจ้งปิดภาษีซื้อ ประจำเดือน 06.2026</p>
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#bfbfbf" style="border-collapse:collapse;font-family:Tahoma,Arial,sans-serif;font-size:12px;text-align:center">
+<tr>
+<td colspan="10" bgcolor="#1f1f1f" style="padding:5px;font-weight:bold;color:#fff">Information display for responsible persons</td></tr>
+<tr bgcolor="#1f1f1f" style="color:#fff;font-weight:bold">
+<td rowspan="2" width="50" style="padding:5px">Code</td>
+<td rowspan="2" width="60" style="padding:5px">Brand</td>
+<td rowspan="2" width="260" style="padding:5px">Company Name</td>
+<td rowspan="2" width="130" style="padding:5px">Prepare by</td>
+<td rowspan="2" width="50" style="padding:5px">(%)</td>
+<td colspan="2" style="padding:3px">11610752</td>
+<td colspan="2" style="padding:3px">11610755</td>
+<td rowspan="2" width="95" style="padding:5px">Status</td></tr>
+<tr bgcolor="#1f1f1f" style="font-weight:bold;color:#fff">
+<td width="75" style="padding:3px">N</td><td width="75">A</td><td width="75">T</td><td width="75">F</td></tr>
+<!-- มีสีเฉพาะคอลัมน์ Status -->
+<tr><td>4100</td><td>CFM</td><td align="left" style="padding:3px 6px">บริษัท เซ็นทรัล ฟู้ด มินิมาร์เก็ต จำกัด</td><td>ชื่อ-นามสกุล</td><td>100</td><td>Finished</td><td>X</td><td>Finished</td><td>X</td><td bgcolor="#C6EFCE"><b style="color:#1F3864">Completed</b></td></tr>
+<tr><td>0402</td><td>CFW</td><td align="left" style="padding:3px 6px">บริษัทเซ็นทรัล ฟู้ด โฮลเซลล์ จำกัด</td><td>ชื่อ-นามสกุล</td><td>59.53</td><td>X</td><td>Finished</td><td>Finished</td><td>X</td><td bgcolor="#C6EFCE"><b style="color:#1F3864">Completed</b></td></tr>
+<tr><td>3218</td><td>BTM</td><td align="left" style="padding:3px 6px">บริษัท บิวเทรี่ยม จำกัด</td><td>ชื่อ-นามสกุล</td><td>100</td><td>Pending</td><td>X</td><td>Pending</td><td>X</td><td bgcolor="#FFC7CE"><b style="color:#9C0006">Not Complete</b></td></tr>
+<tr><td>0512</td><td>HTI</td><td align="left" style="padding:3px 6px">บริษัท ไฮเท็คซ์ อินเตอร์เอคทีฟ จำกัด</td><td>ชื่อ-นามสกุล</td><td>100</td><td>Finished</td><td>X</td><td>No Data</td><td>X</td><td bgcolor="#C6EFCE"><b style="color:#1F3864">Completed</b></td></tr>
+<tr><td>0562</td><td>OFM</td><td align="left" style="padding:3px 6px">บริษัท ซีโอแอล จำกัด (มหาชน)</td><td>ชื่อ-นามสกุล</td><td>51.75</td><td>X</td><td>Finished</td><td>No Data</td><td>X</td><td bgcolor="#C6EFCE"><b style="color:#1F3864">Completed</b></td></tr>
+<tr><td>6100</td><td>GM</td><td align="left" style="padding:3px 6px">บริษัท เซ็นทรัลกาเมนท์แฟคทอรี่ จำกัด</td><td>ชื่อ-นามสกุล</td><td>0</td><td>No Data</td><td>X</td><td>No Data</td><td>X</td><td bgcolor="#C6EFCE"><b style="color:#1F3864">Completed</b></td></tr>
+</table>
+<p style="font-size:12px;color:#666;margin-top:10px">Finished = ทำแล้ว (Y) · Pending = ยังไม่ทำ (N) · No Data = ไม่มีข้อมูล (-) · X = Out of Scope (ไม่เกี่ยวข้อง)<br>Status: Completed = ไม่มีช่อง Pending เหลือ · Not Complete = ยังมี Pending อย่างน้อย 1 ช่อง</p>
+</div></body></html>

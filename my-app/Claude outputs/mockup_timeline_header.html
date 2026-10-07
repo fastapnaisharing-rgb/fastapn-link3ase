@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Timeline Header</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:24px;background:#F4F3EF;font-family:system-ui,"Segoe UI",Tahoma,sans-serif;color:#1a2b3c}
+h2{font-size:13px;font-weight:600;color:#616e7c;margin:28px 0 8px;letter-spacing:.3px}
+h2:first-of-type{margin-top:0}
+.note{font-size:12px;color:#7b8794;margin:6px 0 0}
+.card{background:transparent;border:none;border-radius:14px}
+.hdr{padding:14px 18px;display:flex;flex-direction:column;gap:12px}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.title{font-size:20px;font-weight:600;color:#1a3a5c}
+.title small{font-size:12px;font-weight:400;color:#7b8794;margin-left:6px}
+.sp{flex:1}
+.seg{display:inline-flex;border:1px solid #D9D6CB;border-radius:8px;overflow:hidden;background:#fff}
+.seg b{font-weight:500;font-size:12px;padding:6px 12px;color:#444;border-right:1px solid #E3E5EA}
+.seg b:last-child{border-right:0}
+.seg b.on{background:#1a3a5c;color:#fff;font-weight:600}
+.seg.light b.on{background:#EEF2F7;color:#1a3a5c}
+.lbl{font-size:11px;color:#9aa5b1}
+.gear{width:32px;height:32px;border:1px solid #D9D6CB;border-radius:8px;display:grid;place-items:center;color:#616e7c;background:#fff}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.kpi{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #E3E5EA;border-radius:12px;background:#fff}
+.ic{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:15px;flex:none}
+.kpi .t{font-size:11px;color:#7b8794}.kpi .v{font-size:20px;font-weight:600;line-height:1.1}
+.period{padding:12px 16px;border:1px solid #E3E5EA;border-radius:12px;background:#fff}
+.ptop{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.pl .t,.pr .t{font-size:11px;color:#7b8794}
+.pl .v,.pr .v{font-size:20px;font-weight:600;color:#1a3a5c;line-height:1.15}
+.pr{text-align:right}
+.sub{display:flex;gap:8px;align-items:center;font-size:12px;color:#8a8a85;margin-top:2px}
+.pill{font-size:11px;font-weight:600;padding:1px 9px;border-radius:999px;background:#E6F2DA;color:#3B6D11}
+.left{font-size:12px;font-weight:600;color:#A32D2D;margin-top:2px}
+.bar{display:grid;grid-template-columns:repeat(31,1fr);gap:3px;margin-top:10px}
+.bar i{height:5px;border-radius:2px;background:#F2C57A}
+.bar i.r{background:#E04B55}.bar i.f{background:#E3E5EA}
+.bar i.today{outline:2px solid #1a3a5c;outline-offset:1px}
+.mid{display:flex;align-items:center;gap:14px;margin-top:6px}
+.mid .big{font-size:12px;color:#616e7c}
+/* variant B */
+.grid2{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px}
+.kp2{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}}
+</style></head><body>
+
+<h2>แบบ A (กรอบนอกใส · การ์ดข้อมูลพื้นขาว) · แถวชื่อ/ตัวกรอง → KPI 4 ใบ → แถบ Period เต็มความกว้าง</h2>
+<div class="card hdr">
+  <div class="row">
+    <div class="title">Timeline ปิดภาษี<small>รอบ ก.ย. 2569</small></div>
+    <div class="sp"></div>
+    <div class="seg"><b class="on">งานของฉัน</b><b>All User Related Status</b></div>
+    <span class="lbl">สถานะ</span>
+    <div class="seg light"><b class="on">All</b><b>Pending</b><b>Confirm</b></div>
+    <div class="gear">⚙</div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><div class="ic" style="background:#E6EEF7;color:#1a3a5c">◔</div><div><div class="t">ภาพรวมที่ทำแล้ว</div><div class="v">1%</div></div></div>
+    <div class="kpi"><div class="ic" style="background:#E6F2DA;color:#3B6D11">▦</div><div><div class="t">BU Active</div><div class="v">14</div></div></div>
+    <div class="kpi"><div class="ic" style="background:#EEF0F3;color:#616e7c">▧</div><div><div class="t">BU Inactive</div><div class="v">0</div></div></div>
+    <div class="kpi"><div class="ic" style="background:#E6F2DA;color:#3B6D11">✓</div><div><div class="t">เสร็จ 100%</div><div class="v">0</div></div></div>
+  </div>
+  <div class="period">
+    <div class="ptop">
+      <div class="pl"><div class="t">Current period</div><div class="v">05-Sep-2026</div><div class="sub">Sep 2569 <span class="pill">Open</span></div></div>
+      <div class="pr"><div class="t">Deadline</div><div class="v">06-Oct-2026</div><div class="left">1 day left</div></div>
+    </div>
+    <div class="bar" id="barA"></div>
+    <div class="note" style="display:flex;justify-content:space-between"><span>เริ่มรอบ 05 ก.ย.</span><span>วันนี้ 05 ต.ค. · ครบกำหนด 06 ต.ค.</span></div>
+  </div>
+</div>
+<p class="note">KPI "Period (เปิดอยู่ · ครบกำหนด…)" ถูกรวมเข้าแถบ Period ด้านล่าง (สถานะ Open + Deadline) ข้อมูลทั้งหมดจาก 2 ภาพยังอยู่ครบ</p>
+
+<h2>แบบ B · KPI 5 ใบ (เก็บใบ Period ไว้) ซ้ายคือชื่อ/KPI ขวาคือแถบ Period</h2>
+<div class="card hdr">
+  <div class="row">
+    <div class="title">Timeline ปิดภาษี<small>รอบ ก.ย. 2569</small></div>
+    <div class="sp"></div>
+    <div class="seg"><b class="on">งานของฉัน</b><b>All User Related Status</b></div>
+    <span class="lbl">สถานะ</span>
+    <div class="seg light"><b class="on">All</b><b>Pending</b><b>Confirm</b></div>
+    <div class="gear">⚙</div>
+  </div>
+  <div class="grid2">
+    <div class="kp2">
+      <div class="kpi"><div class="ic" style="background:#E6EEF7;color:#1a3a5c">◔</div><div><div class="t">ภาพรวมที่ทำแล้ว</div><div class="v">1%</div></div></div>
+      <div class="kpi"><div class="ic" style="background:#E6F2DA;color:#3B6D11">▦</div><div><div class="t">BU Active</div><div class="v">14</div></div></div>
+      <div class="kpi"><div class="ic" style="background:#EEF0F3;color:#616e7c">▧</div><div><div class="t">BU Inactive</div><div class="v">0</div></div></div>
+      <div class="kpi"><div class="ic" style="background:#E6F2DA;color:#3B6D11">✓</div><div><div class="t">เสร็จ 100%</div><div class="v">0</div></div></div>
+    </div>
+    <div class="period" style="display:flex;flex-direction:column;justify-content:center">
+      <div class="ptop">
+        <div class="pl"><div class="t">Current period</div><div class="v">05-Sep-2026</div><div class="sub">Sep 2569 <span class="pill">Open</span></div></div>
+        <div class="pr"><div class="t">Deadline</div><div class="v">06-Oct-2026</div><div class="left">1 day left</div></div>
+      </div>
+      <div class="bar" id="barB"></div>
+    </div>
+  </div>
+</div>
+<p class="note">ใช้พื้นที่แนวตั้งน้อยกว่าแบบ A แต่แถบวันจะสั้นลง</p>
+
+<script>
+function bar(id){var e=document.getElementById(id),h="";for(var n=1;n<=31;n++){h+='<i class="'+(n>=30?'r':'')+(n===30?' today':'')+'"></i>'}e.innerHTML=h}
+bar("barA");bar("barB");
+</script>
+</body></html>

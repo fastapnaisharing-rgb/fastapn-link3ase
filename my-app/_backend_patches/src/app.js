@@ -248,6 +248,7 @@ app.get("/api/vat_watchlist_report/aging_summary", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT bu, aging_label, COUNT(*)::int AS count
        FROM vat_watchlist_report
+       WHERE status NOT IN ('type_a', 'type_b', 'type_f') -- MARKER_APP_TYPE_ABF_STATUS_V1
        GROUP BY bu, aging_label`
     );
     res.json(rows);
@@ -342,7 +343,7 @@ function buildVatReportBulkInsert(rows) {
 // -- จาก vat_watchlist_old_incomplete_ref (Join Key 4 ช่อง: bu+invoice_ref+supplier_code+exp_amount+exp_vat) --
 // -- เรียกทุกครั้งหลัง Insert ข้อมูล Incomplete ใหม่ (replace_bu) และตอน Confirm Save จากหน้า Old Incomplete --
 // -- Ref Table ไม่เคยถูกแตะตอน Delete+Insert ปกติ ทำให้ Invoice ที่หายไปแล้วโผล่กลับมาใหม่ ก็ยังได้ Ref คืนอัตโนมัติ --
-async function applyOldIncompleteRefJoin(client, busFilter) {
+async function applyOldIncompleteRefJoin(client, busFilter, excludeType = false) { // MARKER_APP_REPLACE_BU_TYPE_UNTOUCHED_V1 -- excludeType=true (เรียกจาก replace_bu) ไม่แตะแถว Type A/B/F
   const params = [];
   let busClause = "";
   if (Array.isArray(busFilter) && busFilter.length > 0) {
@@ -359,7 +360,8 @@ async function applyOldIncompleteRefJoin(client, busFilter) {
        AND r.supplier_code = ref.supplier_code
        AND ROUND(r.exp_amount::numeric, 2) = ROUND(ref.exp_amount, 2)
        AND ROUND(r.exp_vat::numeric, 2) = ROUND(ref.exp_vat, 2)
-       ${busClause}`,
+       ${busClause}
+       ${excludeType ? "AND COALESCE(r.status, '') NOT IN ('type_a','type_b','type_f')" : ''}`,
     params
   );
 }
@@ -379,6 +381,16 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
   if (!Array.isArray(rawRows)) {
     return res.status(400).json({ error: "rows (array) is required" });
   }
+  // MARKER_APP_REPLACE_BU_LATE_ASOF_GUARD_V1 -- ไฟล์ที่ As-Of เป็นเดือนที่ปิด Period แล้ว ห้ามเข้า Report (ใช้ได้เฉพาะอัปเดต Freeze ผ่าน /api/vat_freeze/late_update) -- Frontend ส่ง as_of_month มา; ไม่ส่ง = ไม่ตรวจ
+  const asOfMonthIn = req.body && req.body.as_of_month;
+  if (asOfMonthIn) {
+    if (!/^\d{4}-\d{2}$/.test(String(asOfMonthIn))) return res.status(400).json({ error: "as_of_month ต้องเป็นรูปแบบ YYYY-MM" });
+    const closedQ = await pool.query("SELECT value FROM system_settings WHERE key = 'vat_period_month'");
+    const closedMonth = closedQ.rows[0] && closedQ.rows[0].value;
+    if (closedMonth && String(asOfMonthIn) <= closedMonth) {
+      return res.status(409).json({ error: `ข้อมูล ณ เดือน ${asOfMonthIn} เป็นเดือนที่ปิด Period แล้ว ห้ามนำเข้า Report (ใช้อัปเดต Freeze ได้เท่านั้น)`, code: "LATE_ASOF" });
+    }
+  }
   // ทำความสะอาด vendor_name ก่อน Insert -- เก็บ Row ไว้ครบทุก Row แค่ตัดหาง Junk ออกจาก vendor_name
   const rows = rawRows.map((r) => {
     if (r && typeof r.vendor_name === "string") {
@@ -389,9 +401,17 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SET LOCAL lock_timeout = '20s'"); // MARKER_APP_REPLACE_BU_TIMING_LOCK_V1 -- ถ้ามี Transaction อื่นล็อกตารางค้างอยู่ ให้ Error ชัดเจนภายใน 20 วินาที แทนที่จะค้างเงียบ
+    await client.query("SET LOCAL gin_pending_list_limit = 262144"); // MARKER_APP_REPLACE_BU_GIN_PENDING_V1 -- ตาราง vat_watchlist_report มี GIN Trigram Index 7 ตัว (invoice_ref/supplier_code/vendor_name/check_no/receive_doc_no/doc_no/branch) -- Insert ทีละหมื่นแถวช้ามาก ขยาย Pending List (256MB) ให้ GIN เก็บรวมไว้ก่อนแล้วค่อย Merge ทีหลัง (Autovacuum/VACUUM จัดการต่อ)
+    await client.query("SET LOCAL work_mem = '256MB'"); // MARKER_APP_REPLACE_BU_GIN_PENDING_V1 -- ใช้ตอน GIN Flush Pending List ถ้าเกิดขึ้นระหว่าง Transaction
+    const __t0 = Date.now(); const __lap = (label) => console.log(`[replace_bu] ${label}: ${Date.now() - __t0} ms (bus=${bus.length}, rows=${rows.length})`); // MARKER_APP_REPLACE_BU_TIMING_LOCK_V1
     // MARKER_APP_REPLACE_BU_KEEP_SEND_FP_V1 -- เก็บรายการที่ส่งไป Bucket ของ Full Page (status 'send_fp') ไว้ก่อนลบ แล้วคืนสถานะให้แถวที่ Match ใน Incomplete ใหม่ (bu+invoice_ref+supplier_code)
-    const keepSendFp = await client.query("SELECT bu, invoice_ref, supplier_code FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND status = 'send_fp'", [bus]);
-    await client.query("DELETE FROM vat_watchlist_report WHERE bu = ANY($1::text[])", [bus]);
+    const keepSendFp = await client.query("SELECT bu, invoice_ref, supplier_code, status FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND status IN ('send_fp', 'draft', 'fu-draft')", [bus]); // MARKER_APP_REPLACE_BU_KEEP_DRAFT_V1 -- เก็บ draft/fu-draft ด้วย: งานที่กำลังทำอยู่ (Popvat/Simple/ADI Draft) ต้องคงสถานะเดิมแม้มีการ Import ทับ
+    // MARKER_APP_TYPE_ABF_STATUS_V1 -- เก็บแถว Popvat Type A/B/F ไว้ก่อนลบ (ไม่ถูกล้างเมื่อ Upload Incomplete ใหม่)
+    const keepTypeCnt = await client.query("SELECT COUNT(*)::int AS n FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND status IN ('type_a','type_b','type_f')", [bus]); // MARKER_APP_REPLACE_BU_TYPE_UNTOUCHED_V1 -- แถว Type A/B/F ไม่ถูกแตะเลย (ไม่ลบ/ไม่ Insert กลับ/ไม่ผ่าน Trigger/ไม่ถูก Join) นับไว้แค่ส่งกลับ
+    __lap('keep rows saved');
+    const __delRes = await client.query("DELETE FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('type_a','type_b','type_f')", [bus]); // MARKER_APP_REPLACE_BU_TIMING_LOCK_V1 MARKER_APP_REPLACE_BU_TYPE_UNTOUCHED_V1 -- ไม่ลบแถว Type A/B/F -- เก็บจำนวนที่ลบไว้ส่งกลับ (หน้าเว็บไม่ต้องดึงทั้งตารางมานับเอง)
+    __lap(`deleted ${__delRes.rowCount}`);
     const REPLACE_BU_CHUNK_SIZE = 1000; // 1000 แถว x 30 คอลัมน์ = 30,000 Param (ไม่ชน Limit 65,535)
     for (let i = 0; i < rows.length; i += REPLACE_BU_CHUNK_SIZE) {
       const chunk = rows.slice(i, i + REPLACE_BU_CHUNK_SIZE);
@@ -399,18 +419,26 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
       const { sql, values } = buildVatReportBulkInsert(chunk);
       await client.query(sql, values);
     }
-    await applyOldIncompleteRefJoin(client, bus); // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_REF_JOIN_CALL_V1
+    __lap('inserted');
+    if (keepTypeCnt.rows[0].n > 0) { // MARKER_APP_REPLACE_BU_TYPE_UNTOUCHED_V1 -- แถว pending ใหม่ที่ Key ซ้ำกับแถว Type เดิม ตัดทิ้ง (แถว Type เดิมคงอยู่ตามเดิม)
+      await client.query("DELETE FROM vat_watchlist_report n USING vat_watchlist_report k WHERE n.bu = ANY($1::text[]) AND n.status = 'pending' AND k.bu = n.bu AND k.status IN ('type_a','type_b','type_f') AND k.invoice_ref = n.invoice_ref AND k.supplier_code IS NOT DISTINCT FROM n.supplier_code", [bus]);
+    }
+    await applyOldIncompleteRefJoin(client, bus, true); // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_REF_JOIN_CALL_V1
+    __lap('ref join done');
     if (keepSendFp.rowCount > 0) {
       await client.query(
-        `UPDATE vat_watchlist_report r SET status = 'send_fp'
-         FROM UNNEST($1::text[], $2::text[], $3::text[]) AS k(bu, invoice_ref, supplier_code)
+        `UPDATE vat_watchlist_report r SET status = k.status
+         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[]) AS k(bu, invoice_ref, supplier_code, status)
          WHERE r.bu = k.bu AND r.invoice_ref = k.invoice_ref AND r.supplier_code IS NOT DISTINCT FROM k.supplier_code
            AND r.status = 'pending'`,
-        [keepSendFp.rows.map((x) => x.bu), keepSendFp.rows.map((x) => x.invoice_ref), keepSendFp.rows.map((x) => x.supplier_code)]
+        [keepSendFp.rows.map((x) => x.bu), keepSendFp.rows.map((x) => x.invoice_ref), keepSendFp.rows.map((x) => x.supplier_code), keepSendFp.rows.map((x) => x.status)]
       );
     }
+    for (const __buSync of bus) { await syncDraftStatusForBu(client, __buSync); } // MARKER_APP_REPLACE_BU_SYNC_LINKED_STATUS_V1 -- หลัง Import ทับ ดึงสถานะแถวที่เหลือกลับจากตารางที่ผูกกับ Report (Popvat Draft -> draft/fu-draft, Note Accept -> Aging) ใน Transaction เดียวกัน (Type A/B/F ถูกกันไว้ในฟังก์ชันนี้อยู่แล้ว)
+    __lap('linked status synced');
     await client.query("COMMIT");
-    res.json({ success: true, deleted_bu: bus, inserted: rows.length });
+    __lap('commit');
+    res.json({ success: true, deleted_bu: bus, deleted_count: __delRes.rowCount, inserted: rows.length, kept_type: keepTypeCnt.rows[0].n });
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("vat_watchlist_report replace_bu error:", err);
@@ -685,7 +713,12 @@ app.post("/api/vat_backup_tax_invoice/purge", async (req, res) => {
     const cnt = await pool.query("SELECT COUNT(*)::int AS n FROM vat_backup_tax_invoice " + where, vals);
     const count = cnt.rows[0].n;
     if (action === "preview") {
-      return res.json({ count });
+      // MARKER_PURGE_TAX_INVOICE_PREVIEW_SAMPLE_V1 -- ขอตัวอย่างแถวจริงที่จะลบ (ไม่ใช่แค่ตัวเลข) ให้ User เช็คก่อนกดลบจริง
+      const sampleSql = "SELECT business_name, bu, bu_tax_id, bu_branch, supplier_name, tax_id_supplier, branch_supplier, " +
+        docDateExpr + " AS doc_date, tax_invoice_number, gross_value, vat_value, total_value, status, source_type " +
+        "FROM vat_backup_tax_invoice " + where + " ORDER BY " + docDateExpr + " DESC NULLS LAST LIMIT 15";
+      const sample = await pool.query(sampleSql, vals);
+      return res.json({ count, sample: sample.rows });
     }
     if (action !== "delete") {
       return res.status(400).json({ error: "action ไม่ถูกต้อง" });
@@ -705,6 +738,67 @@ app.post("/api/vat_backup_tax_invoice/purge", async (req, res) => {
     res.status(500).json({ error: "Internal server error", detail: err.message });
   }
 });
+// MARKER_APP_SYNC_DRAFT_STATUS_FN_V1 -- แยก Logic Sync สถานะ Report <-> ตารางที่ผูกอยู่ (Popvat Draft / Note ฯลฯ) เป็นฟังก์ชัน ใช้ร่วมกันระหว่าง Route sync_draft_status (runner=pool) กับ replace_bu (runner=client ใน Transaction เดียวกัน)
+async function syncDraftStatusForBu(runner, bu) {
+    const toDraft = await runner.query(
+      `UPDATE vat_watchlist_report r
+       SET status = 'draft'
+       FROM vat_upload_popvatdraft p
+       WHERE r.bu = p.bu
+         AND r.invoice_ref = p.original_invoice_number
+         AND p.status = 'draft'
+         AND (p.supplier_name IS NULL OR btrim(p.supplier_name) = '' OR left(btrim(COALESCE(r.vendor_name, '')), length(btrim(p.supplier_name))) = btrim(p.supplier_name) OR left(btrim(p.supplier_name), length(btrim(COALESCE(r.vendor_name, '')))) = btrim(COALESCE(r.vendor_name, ''))) -- MARKER_APP_SYNC_DRAFT_MATCH_SUPPLIER_V1 -- ต้อง Match BU + Invoice Ref + Supplier (ชื่อผู้ค้า ขึ้นต้นตรงกันได้ รองรับชื่อที่เคยมีข้อความ Total ต่อท้าย) ไม่ใช่แค่ Invoice Ref (Draft เก่าที่ supplier_name ว่างยังใช้ Invoice Ref อย่างเดียวเหมือนเดิม)
+         AND r.status NOT IN ('draft', 'fu-draft', 'type_a', 'type_b', 'type_f') -- MARKER_APP_TYPE_ABF_STATUS_V1 / MARKER_APP_SYNC_FU_DRAFT_V1 -- fu-draft (Over Period) ห้ามถูกเปลี่ยนเป็น draft
+         AND r.bu = $1
+       RETURNING r.id`,
+      [bu]
+    );
+    // MARKER_APP_SYNC_FU_DRAFT_V2 -- คู่ขนานกับ toDraft: Popvat Draft ที่เป็น fu-draft (Over Period) -> Report ต้องเป็น fu-draft (ไม่ทับแถวที่เป็น draft/type_a/b/f อยู่แล้ว)
+    const toFuDraft = await runner.query(
+      `UPDATE vat_watchlist_report r
+       SET status = 'fu-draft'
+       FROM vat_upload_popvatdraft p
+       WHERE r.bu = p.bu
+         AND r.invoice_ref = p.original_invoice_number
+         AND p.status = 'fu-draft'
+         AND (p.supplier_name IS NULL OR btrim(p.supplier_name) = '' OR left(btrim(COALESCE(r.vendor_name, '')), length(btrim(p.supplier_name))) = btrim(p.supplier_name) OR left(btrim(p.supplier_name), length(btrim(COALESCE(r.vendor_name, '')))) = btrim(COALESCE(r.vendor_name, '')))
+         AND r.status NOT IN ('draft', 'fu-draft', 'type_a', 'type_b', 'type_f')
+         AND r.bu = $1
+       RETURNING r.id`,
+      [bu]
+    );
+    const toPending = await runner.query(
+      `UPDATE vat_watchlist_report r
+       SET status = 'pending'
+       WHERE r.status IN ('draft', 'fu-draft') -- MARKER_APP_SYNC_FU_DRAFT_V1 -- รวม fu-draft (Over Period) ให้คืนเป็น pending เมื่อไม่มี Popvat Draft รองรับ
+         AND r.bu = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM vat_upload_popvatdraft p
+           WHERE p.bu = r.bu AND p.original_invoice_number = r.invoice_ref
+             AND (p.supplier_name IS NULL OR btrim(p.supplier_name) = '' OR left(btrim(COALESCE(r.vendor_name, '')), length(btrim(p.supplier_name))) = btrim(p.supplier_name) OR left(btrim(p.supplier_name), length(btrim(COALESCE(r.vendor_name, '')))) = btrim(COALESCE(r.vendor_name, ''))) -- MARKER_APP_SYNC_DRAFT_MATCH_SUPPLIER_V1
+             AND p.status IN ('draft', 'fu-draft', 'exported', 'pv-backup') -- MARKER_APP_SYNC_DRAFT_KEEP_EXPORTED_V1 / MARKER_APP_SYNC_FU_DRAFT_V1 -- Generate File แล้ว (exported/pv-backup) ห้ามย้อนกลับเป็น pending
+         )
+       RETURNING r.id`,
+      [bu]
+    );
+    // MARKER_APP_SYNC_AGING_ACCEPT_CONDITION_V1
+    // -- Note Accept with Condition -> Aging = 'Accept' ทันที (ทิศทางเดียว Note -> Report เท่านั้น) --
+    const toAccept = await runner.query(
+      `UPDATE vat_watchlist_report r
+       SET aging_months = NULL, aging_label = 'Accept'
+       FROM vat_watchlist_notes n
+       WHERE r.bu = n.bu
+         AND r.invoice_ref = n.invoice_ref
+         AND r.supplier_code = n.supplier_code
+         AND n.status = 'accept_with_condition'
+         AND r.aging_label != 'Accept'
+         AND r.status NOT IN ('type_a', 'type_b', 'type_f') -- MARKER_APP_TYPE_ABF_STATUS_V1
+         AND r.bu = $1
+       RETURNING r.id`,
+      [bu]
+    );
+    return { to_draft: toDraft.rowCount, to_fu_draft: toFuDraft.rowCount, to_pending: toPending.rowCount, to_accept: toAccept.rowCount };
+}
 // MARKER_APP_VAT_WATCHLIST_SYNC_DRAFT_STATUS_V1
 // -- POST /api/vat_watchlist_report/sync_draft_status -- Sync สถานะ Report <-> Popvat Draft (Bidirectional) --
 // -- ต้องอยู่ก่อน Generic Mount เหมือน replace_bu ด้านบน --
@@ -714,51 +808,21 @@ app.post("/api/vat_watchlist_report/sync_draft_status", checkPermission("vat_wat
     return res.status(400).json({ error: "bu is required" });
   }
   try {
-    const toDraft = await pool.query(
-      `UPDATE vat_watchlist_report r
-       SET status = 'draft'
-       FROM vat_upload_popvatdraft p
-       WHERE r.bu = p.bu
-         AND r.invoice_ref = p.original_invoice_number
-         AND p.status = 'draft'
-         AND (p.supplier_name IS NULL OR btrim(p.supplier_name) = '' OR left(btrim(COALESCE(r.vendor_name, '')), length(btrim(p.supplier_name))) = btrim(p.supplier_name) OR left(btrim(p.supplier_name), length(btrim(COALESCE(r.vendor_name, '')))) = btrim(COALESCE(r.vendor_name, ''))) -- MARKER_APP_SYNC_DRAFT_MATCH_SUPPLIER_V1 -- ต้อง Match BU + Invoice Ref + Supplier (ชื่อผู้ค้า ขึ้นต้นตรงกันได้ รองรับชื่อที่เคยมีข้อความ Total ต่อท้าย) ไม่ใช่แค่ Invoice Ref (Draft เก่าที่ supplier_name ว่างยังใช้ Invoice Ref อย่างเดียวเหมือนเดิม)
-         AND r.status != 'draft'
-         AND r.bu = $1
-       RETURNING r.id`,
-      [bu]
-    );
-    const toPending = await pool.query(
-      `UPDATE vat_watchlist_report r
-       SET status = 'pending'
-       WHERE r.status = 'draft'
-         AND r.bu = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM vat_upload_popvatdraft p
-           WHERE p.bu = r.bu AND p.original_invoice_number = r.invoice_ref
-             AND (p.supplier_name IS NULL OR btrim(p.supplier_name) = '' OR left(btrim(COALESCE(r.vendor_name, '')), length(btrim(p.supplier_name))) = btrim(p.supplier_name) OR left(btrim(p.supplier_name), length(btrim(COALESCE(r.vendor_name, '')))) = btrim(COALESCE(r.vendor_name, ''))) -- MARKER_APP_SYNC_DRAFT_MATCH_SUPPLIER_V1
-             AND p.status IN ('draft', 'exported', 'pv-backup') -- MARKER_APP_SYNC_DRAFT_KEEP_EXPORTED_V1 -- Generate File แล้ว (exported/pv-backup) ห้ามย้อนกลับเป็น pending
-         )
-       RETURNING r.id`,
-      [bu]
-    );
-    // MARKER_APP_SYNC_AGING_ACCEPT_CONDITION_V1
-    // -- Note Accept with Condition -> Aging = 'Accept' ทันที (ทิศทางเดียว Note -> Report เท่านั้น) --
-    const toAccept = await pool.query(
-      `UPDATE vat_watchlist_report r
-       SET aging_months = NULL, aging_label = 'Accept'
-       FROM vat_watchlist_notes n
-       WHERE r.bu = n.bu
-         AND r.invoice_ref = n.invoice_ref
-         AND r.supplier_code = n.supplier_code
-         AND n.status = 'accept_with_condition'
-         AND r.aging_label != 'Accept'
-         AND r.bu = $1
-       RETURNING r.id`,
-      [bu]
-    );
-    res.json({ success: true, to_draft: toDraft.rowCount, to_pending: toPending.rowCount, to_accept: toAccept.rowCount });
+    const synced = await syncDraftStatusForBu(pool, bu);
+    res.json({ success: true, ...synced });
   } catch (err) {
     console.error("vat_watchlist_report sync_draft_status error:", err);
+    res.status(500).json({ error: "Internal server error", detail: err.message });
+  }
+});
+// MARKER_APP_OLDINCOMPLETEREF_GET_LIST_V1 -- GET /api/vat_watchlist_old_incomplete_ref (อ่านอย่างเดียว) -- หน้า Check/Upload Incomplete เรียกใช้ตรวจ Exemption ของ Note ที่ผูก old_ref_check_no (เดิมได้ 404 -> ได้ List ว่าง -> Note ถูก Unmatch ผิด)
+// -- ใช้ Route เฉพาะ ไม่ผ่าน createTableRouter กัน Backend ล้มตอนเริ่มทำงานถ้าตารางไม่อยู่ใน tablePermissions --
+app.get("/api/vat_watchlist_old_incomplete_ref", checkPermission("vat_watchlist_report", "read"), async (req, res) => {
+  try {
+    const r = await pool.query("SELECT bu, invoice_ref, supplier_code, exp_amount, exp_vat, check_no, payment_date_old FROM vat_watchlist_old_incomplete_ref");
+    res.json(r.rows);
+  } catch (err) {
+    console.error("vat_watchlist_old_incomplete_ref GET error:", err);
     res.status(500).json({ error: "Internal server error", detail: err.message });
   }
 });
@@ -785,6 +849,152 @@ app.use("/api/vat_summary_live",            createTableRouter("vat_summary_live"
 app.use("/api/vat_summary_live_dashboard",  createTableRouter("vat_summary_live_dashboard"));
 app.use("/api/vat_summary_frozen",          createTableRouter("vat_summary_frozen"));
 app.use("/api/vat_summary_frozen_dashboard", createTableRouter("vat_summary_frozen_dashboard"));
+
+// MARKER_APP_VAT_FREEZE_API_V1 -- หน้า Freeze: สถานะต่อ BU / สั่ง Freeze Final / ประวัติ
+//   กฎ: งวดเปิด = Draft ตาม Live อัตโนมัติ (DB: fn_freeze_vat_sync_draft เรียกจาก fn_recompute_vat_summary_for_bu) | ปิด Period = Final (fn_freeze_vat_finalize)
+//   หลังปิด: <=20 วัน grace, 21-30 วัน confirm, >30 วัน locked (fn_vat_freeze_window)
+app.get("/api/vat_freeze/status", checkPermission("vat_summary_frozen", "read"), async (req, res) => {
+  try {
+    const pr = await pool.query(`SELECT period_month FROM (SELECT period_month FROM vat_summary_live UNION SELECT period_month FROM vat_summary_frozen) x WHERE period_month IS NOT NULL ORDER BY 1 DESC`);
+    const periods = pr.rows.map((r) => r.period_month);
+    const period = String(req.query.period || periods[0] || "");
+    if (!period) return res.json({ ok: true, periods, period: null, window: null, rows: [] });
+    const win = await pool.query("SELECT fn_vat_freeze_window($1) AS w", [period]);
+    const { rows } = await pool.query(
+      `WITH live AS (
+         SELECT bu, count(*)::int AS n, COALESCE(sum(exp_vat),0) AS ev, COALESCE(sum(avg_vat),0) AS av, COALESCE(sum(invoice_count),0)::int AS ic,
+                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te
+         FROM vat_summary_live WHERE period_month = $1 GROUP BY bu),
+       fz AS (
+         SELECT bu, freeze_version, max(freeze_status) AS freeze_status, max(frozen_at) AS frozen_at, max(frozen_by) AS frozen_by, max(trigger_type) AS trigger_type,
+                count(*)::int AS n, COALESCE(sum(exp_vat),0) AS ev, COALESCE(sum(avg_vat),0) AS av, COALESCE(sum(invoice_count),0)::int AS ic,
+                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te
+         FROM vat_summary_frozen WHERE period_month = $1 GROUP BY bu, freeze_version),
+       fl AS (SELECT DISTINCT ON (bu) * FROM fz ORDER BY bu, freeze_version DESC)
+       SELECT COALESCE(l.bu, f.bu) AS bu,
+              l.te AS live_total_expired, f.te AS frozen_total_expired, f.freeze_version, f.freeze_status, f.frozen_at, f.frozen_by, f.trigger_type,
+              CASE WHEN f.bu IS NULL THEN 'none'
+                   WHEN l.bu IS NULL THEN 'frozen_only'
+                   WHEN f.n = l.n AND abs(f.ev - l.ev) < 0.005 AND abs(f.av - l.av) < 0.005 AND f.ic = l.ic THEN 'synced'
+                   ELSE 'diff' END AS sync_state
+       FROM live l FULL JOIN fl f ON f.bu = l.bu
+       ORDER BY 1`,
+      [period]
+    );
+    res.json({ ok: true, periods, period, window: win.rows[0].w, rows });
+  } catch (err) {
+    console.error("GET /api/vat_freeze/status error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/api/vat_freeze/history", checkPermission("vat_summary_frozen", "read"), async (req, res) => {
+  try {
+    const { period, bu } = req.query;
+    if (!period) return res.status(400).json({ error: "period is required" });
+    const params = [String(period)];
+    let sql = "SELECT id, period_month, bu, freeze_version, trigger_type, frozen_by, frozen_at, row_count, total_exp_vat, total_expired, unrealized_in_expired, note FROM vat_freeze_log WHERE period_month = $1";
+    if (bu) { params.push(String(bu)); sql += " AND bu = $2"; }
+    sql += " ORDER BY frozen_at DESC LIMIT 500";
+    const { rows } = await pool.query(sql, params);
+    res.json({ ok: true, rows });
+  } catch (err) {
+    console.error("GET /api/vat_freeze/history error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/vat_freeze/late_update  body: { as_of_month:'YYYY-MM', bus:[...], rows:[...], confirm?:boolean }
+//   ไฟล์ Incomplete ที่ As-Of เป็นเดือนที่ปิด Period แล้ว: ไม่เข้า vat_watchlist_report เลย -- พักไว้ที่ vat_watchlist_late_stage
+//   -> fn_freeze_vat_late_update คำนวณ Freeze Final เวอร์ชันใหม่ของเดือนนั้น แล้วลบข้อมูลที่พักทิ้ง (พลาด = ลบให้ด้วย)
+//   กฎเวลา (DB: fn_vat_freeze_window): <=20 วัน อัปเดตได้ | 21-30 วัน ต้อง confirm | >30 วัน 409 ห้ามทุกกรณี | งวดยังเปิด 409
+app.post("/api/vat_freeze/late_update", checkPermission("vat_watchlist_report", "write"), async (req, res) => { // MARKER_APP_VAT_FREEZE_LATE_UPDATE_V1
+  const { as_of_month, bus, rows, confirm } = req.body || {};
+  if (!/^\d{4}-\d{2}$/.test(String(as_of_month || ""))) return res.status(400).json({ error: "as_of_month ต้องเป็นรูปแบบ YYYY-MM" });
+  if (!Array.isArray(bus) || bus.length === 0) return res.status(400).json({ error: "bus (array) is required" });
+  if (!Array.isArray(rows)) return res.status(400).json({ error: "rows (array) is required" });
+  const user = (req.user && req.user.email) || "system";
+  const client = await pool.connect();
+  try {
+    const winQ = await client.query("SELECT fn_vat_freeze_window($1) AS w", [as_of_month]);
+    const win = winQ.rows[0].w;
+    if (win.state === "open") return res.status(409).json({ error: `เดือน ${as_of_month} ยังเป็น Period ที่เปิดอยู่ ให้อัปโหลดเข้า Report ตามปกติ`, code: "PERIOD_OPEN", window: win });
+    if (win.state === "locked") return res.status(409).json({ error: `เดือน ${as_of_month} ถูกล็อกแล้ว (${win.reason || `ปิดมาแล้ว ${win.days_since_close} วัน`}) ห้ามอัปเดต Freeze ทุกกรณี ต้องแก้ด้วยวิธีอื่น`, code: "LOCKED", window: win });
+    if (win.state !== "grace" && win.state !== "confirm") return res.status(409).json({ error: "ไม่ทราบสถานะ Period", window: win });
+    if (win.state === "confirm" && !confirm) return res.json({ ok: true, needs_confirm: true, window: win });
+
+    const buSet = new Set(bus);
+    const stageRows = rows.filter((r) => r && buSet.has(r.bu));
+    await client.query("BEGIN");
+    await client.query("SET LOCAL lock_timeout = '20s'");
+    await client.query("DELETE FROM vat_watchlist_late_stage WHERE bu = ANY($1::text[]) AND as_of_month = $2", [bus, as_of_month]);
+    const cols = [...VAT_REPORT_INSERT_COLUMNS, "as_of_month", "staged_by"];
+    const CHUNK = 1000;
+    for (let i = 0; i < stageRows.length; i += CHUNK) {
+      const chunk = stageRows.slice(i, i + CHUNK);
+      const values = [];
+      const ph = chunk.map((row, ri) => {
+        const base = ri * cols.length;
+        cols.forEach((c) => values.push(c === "as_of_month" ? as_of_month : c === "staged_by" ? user : (row[c] === undefined ? null : row[c])));
+        return `(${cols.map((_, j) => `$${base + j + 1}`).join(", ")})`;
+      }).join(", ");
+      await client.query(`INSERT INTO vat_watchlist_late_stage (${cols.join(", ")}) VALUES ${ph}`, values);
+    }
+    const results = [];
+    for (const b of bus) {
+      try {
+        await client.query("SAVEPOINT late_freeze_sp");
+        const q = await client.query("SELECT fn_freeze_vat_late_update($1, $2, $3, 'late-update', $4) AS r", [as_of_month, b, user, !!confirm]);
+        results.push({ bu: b, ...q.rows[0].r });
+        await client.query("RELEASE SAVEPOINT late_freeze_sp");
+      } catch (e) {
+        try { await client.query("ROLLBACK TO SAVEPOINT late_freeze_sp"); } catch (e2) { /* ignore */ }
+        console.error("[late_update] freeze error:", b, e.message);
+        results.push({ bu: b, action: "error", error: e.message });
+      }
+    }
+    await client.query("DELETE FROM vat_watchlist_late_stage WHERE bu = ANY($1::text[]) AND as_of_month = $2", [bus, as_of_month]); // ลบข้อมูลที่พักทิ้งเสมอ (รวม BU ที่พลาด)
+    await client.query("COMMIT");
+    const count = (a) => results.filter((x) => x.action === a).length;
+    res.json({ ok: true, as_of_month, window: win, total: results.length, frozen: count("frozen"), skipped: count("skipped_no_rows"), errors: count("error"), results });
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
+    console.error("POST /api/vat_freeze/late_update error:", err.message);
+    res.status(500).json({ error: "Internal server error", detail: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/vat_freeze/run  body: { period, bus?: string[], force?: boolean, confirm?: boolean }
+//   Freeze Final ด้วยมือ (ปกติระบบทำเองตอนปิด Period) | bus ว่าง = ทุก BU ของงวดนั้น | force = ทำใหม่แม้ยอดเท่าเดิม | confirm = ยืนยันกรณี 21-30 วันหลังปิด
+//   DB บังคับกฎให้: locked (>30 วัน) ปฏิเสธทุกกรณี และ Freeze ได้เฉพาะงวดปัจจุบันของ BU
+app.post("/api/vat_freeze/run", checkPermission("vat_watchlist_report", "write"), async (req, res) => {
+  try {
+    const { period, bus, force, confirm } = req.body || {};
+    if (!period) return res.status(400).json({ error: "period is required" });
+    let targets = Array.isArray(bus) ? bus.filter(Boolean) : [];
+    if (targets.length === 0) {
+      const t = await pool.query("SELECT DISTINCT bu FROM vat_summary_live WHERE period_month = $1 ORDER BY bu", [String(period)]);
+      targets = t.rows.map((r) => r.bu);
+    }
+    const user = (req.user && req.user.email) || "system";
+    const results = [];
+    for (const b of targets) {
+      try {
+        const q = await pool.query("SELECT fn_freeze_vat_finalize($1, $2, $3, 'manual', $4, $5) AS r", [String(period), b, user, !!force, !!confirm]);
+        results.push({ bu: b, ...q.rows[0].r });
+      } catch (e) {
+        results.push({ bu: b, action: "error", error: e.message });
+      }
+    }
+    const count = (a) => results.filter((x) => x.action === a).length;
+    res.json({ ok: true, period, total: results.length, frozen: count("frozen"), unchanged: count("unchanged"), locked: count("locked"), needs_confirm: count("needs_confirm"), errors: count("error"), results });
+  } catch (err) {
+    console.error("POST /api/vat_freeze/run error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // MARKER_APP_VAT_WATCHLIST_VENDOR_NAME_JUNK_CLEAN_V1 — ตามไฟล์ตัวอย่างที่พี่ส่งมา (a25471a1 /
 // acc870aa) พบว่าเข้าใจผิดมาตลอด: ปัญหาไม่ใช่ "มีบาง Row เป็น Row สรุปยอด/Row คั่นปนมาทั้ง Row"
@@ -815,9 +1025,9 @@ function cleanJunkVendorNameJs(vendorName) {
 // สำหรับ Popup "Expired Detail" ของ VatDashboard.js (เดิมเขียนไว้ใน routes/vatSummaryRoutes.js
 // แต่ไฟล์นั้นไม่เคย import เข้า app.js จริง — ย้ายมา Mount ตรงนี้ให้ตรงกับ Pattern /api/... ของไฟล์นี้)
 //   bu          → optional, ไม่ใส่ = เอาทุก BU (ใช้สำหรับสรุปยอดตาม Reason ข้ามทุก BU)
-//   bucket=realized   → Expired แบบปกติ ไม่มี Reason แนบ (remark ว่าง)
-//   bucket=unrealized → Expired ที่มี Reason แนบมาด้วย (remark ไม่ว่าง) ไม่ Hardcode เจาะจงแค่
-//     'Check Return' แล้ว เพราะ "ไม่ว่าจะเป็นด้วยเหตุผลอะไรมันก็ต้องแสดงให้ได้"
+//   bucket=realized   → Expired แบบปกติ ที่ไม่ใช่ Accept with Condition
+//   bucket=unrealized → Accept with Condition (aging_label='Accept') ทุกใบ ไม่ว่า remark อะไรหรือว่าง
+//     (Check Return / Check On Hand / Issue / Other) เพราะ "ไม่ว่าจะเป็นด้วยเหตุผลอะไรมันก็ต้องแสดงให้ได้"
 //   ไม่ส่ง bucket → เอาทั้งหมดที่ Expired (ทั้ง Realized + Unrealized)
 app.get("/api/vat_watchlist_detail", async (req, res) => {
   try {
@@ -828,13 +1038,20 @@ app.get("/api/vat_watchlist_detail", async (req, res) => {
       params.push(bu);
       conditions.push(`w.bu = $${params.length}`);
     }
+    // MARKER_APP_VAT_WATCHLIST_DETAIL_UNREALIZED_ACCEPT_V1 -- Unrealized = Accept with Condition (aging_label='Accept')
+    // ทุกใบ ไม่ว่า remark จะเป็น Check Return / Check On Hand / Issue / Other หรือว่าง (เดิมบังคับ remark ไม่ว่าง
+    // ทำให้ Accept ที่ไม่มี remark หลุดไปเป็น Realized/ไม่แสดงเลย) / Realized = Expired ที่ไม่ใช่ Accept
+    // MARKER_APP_VAT_WATCHLIST_DETAIL_ACCEPT_ACTUAL_AGING_V1 -- Accept ถูกล้าง aging_months เป็น NULL จึงคำนวณอายุจริงจาก payment_date
+    // เทียบเดือนงวดของ BU (สูตรเดียวกับตอน Upload: ต่าง >= 7 เดือน = Expired) -- Accept ที่อายุยังไม่ถึง Expired (เช่น Aging 6) ยังไม่แสดงใน Expired Detail
+    // จนกว่างวดจะเดินไปถึง Expired เพื่อให้ตรงกับยอด Total Expired ของตารางสรุป
+    const acceptActualExpiredSql = `fn_vat_aging_month(w.payment_date, (fn_vat_effective_period_month(w.bu) || '-01')::date) = 'Expired'`;
     conditions.push(
-      `(w.aging_label ILIKE '%expired%' OR (w.aging_label = 'Accept' AND COALESCE(w.remark, '') <> '') OR w.aging_months > 6)`
+      `(w.aging_label ILIKE '%expired%' OR (w.aging_label = 'Accept' AND ${acceptActualExpiredSql}) OR w.aging_months > 6)`
     );
     if (bucket === "realized") {
-      conditions.push(`COALESCE(w.remark, '') = ''`);
+      conditions.push(`COALESCE(w.aging_label, '') <> 'Accept'`);
     } else if (bucket === "unrealized") {
-      conditions.push(`COALESCE(w.remark, '') <> ''`);
+      conditions.push(`w.aging_label = 'Accept'`);
     }
     if (bus_type) {
       params.push(bus_type);
@@ -845,8 +1062,15 @@ app.get("/api/vat_watchlist_detail", async (req, res) => {
     // Version ที่ตัดหาง Junk แล้วตอน Query (SELECT w.*, cleaned AS vendor_name -- node-postgres สร้าง
     // Object จาก Column ตามลำดับ ชื่อซ้ำกัน Column หลังสุดจะทับ Column ก่อนหน้าเสมอ จึงใช้ Pattern นี้
     // Override Field ซ้ำชื่อกันได้โดยไม่ต้อง List Column ทั้งหมดทีละตัว)
+    // MARKER_APP_VAT_WATCHLIST_DETAIL_SLIM_COLS_V1 -- ลดข้อมูลที่ดึง: เลือกเฉพาะ Column ที่ Dashboard ใช้จริง (แทน SELECT w.*)
+    // เรียงตามลำดับ Column ในตารางเดิม (Frontend ใช้ลำดับ Key ของ Object จัดลำดับตาราง) -- vendor_name ตัดหาง Junk แล้วอยู่ตำแหน่งเดิม
     const { rows } = await pool.query(
-      `SELECT w.*, ${cleanJunkVendorNameSql("w")} AS vendor_name
+      `SELECT w.doc_date, w.doc_no, w.site, w.pay_group, w.branch, w.tax_type, w.invoice_ref, w.supplier_code,
+              ${cleanJunkVendorNameSql("w")} AS vendor_name,
+              w.payment_date, w.check_date, w.check_no, w.receive_doc_date, w.receive_doc_no,
+              w.exp_amount, w.exp_vat, w.avg_amount, w.avg_vat,
+              w.bu, w.bus_type, w.aging_months, w.aging_label, w.remark,
+              w.old_ref_check_no, w.old_ref_pay_date
        FROM vat_watchlist_report w WHERE ${conditions.join(" AND ")} ORDER BY w.exp_vat DESC NULLS LAST LIMIT 1000`,
       params
     );
@@ -1114,7 +1338,7 @@ app.use("/api/tax_close_period_bu",             createTableRouter("tax_close_per
 app.use("/api/tax_close_task",                  createTableRouter("tax_close_task"));
 app.use("/api/tax_close_task_log",              createTableRouter("tax_close_task_log"));
 app.use("/api/tax_close_task_item",             createTableRouter("tax_close_task_item"));
-app.use("/api/tax_close_bu_config",             createTableRouter("tax_close_bu_config"));
+app.use("/api/tax_close_bu_config",             createTableRouter("tax_close_bu_config", { idColumn: "bu_code" })); // MARKER_APP_TAXCLOSE_BU_CONFIG_IDCOLUMN_V1 -- ตารางนี้ไม่มี Column id (PK = bu_code+config_key) ถ้าไม่ระบุ idColumn Default ORDER BY "id" จะ Error 500
 app.use("/api/timeline_watch",      createTableRouter("timeline_watch")); // MARKER_APP_MOUNT_TIMELINE_WATCH_V1 -- Timeline ปิดภาษี > Config BU > ดู Progress (1 แถวต่อ User)
 app.use("/api/timeline_progress",   createTableRouter("timeline_progress")); // MARKER_APP_MOUNT_TIMELINE_PROGRESS_V1 -- Timeline ปิดภาษี: ความคืบหน้าต่อ Period + BU (JSONB)
 app.use("/api/system_settings",     createTableRouter("system_settings", { idColumn: "key" }));

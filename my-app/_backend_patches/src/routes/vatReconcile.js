@@ -1,4 +1,4 @@
-﻿/**
+﻿﻿﻿﻿/**
  * vatReconcile.js
  * ==========================================================================
  * FASTAPN Link3ase — Feature: Reconcile รายงานภาษีซื้อ (VAT Purchase Tax Reconcile)
@@ -30,6 +30,8 @@
 import express from "express";
 import multer from "multer";
 import ExcelJS from "exceljs";
+// MARKER_VATRECONCILE_REPORT_FILES_V1
+import createReportFilesRouter from "./vatReconcileReportFiles.js";
 import { pool, getUsernameByEmail } from "../db.js";
 
 // MARKER_VATRECONCILE_MANUAL_CP874_V1
@@ -471,6 +473,13 @@ function isPageHeaderJunk(strippedLine) {
   return IS_PAGE_HEADER_SUBSTRINGS.some((s) => strippedLine.includes(s));
 }
 
+// MARKER_VATRECONCILE_IS_PAGEJUNK_V1 -- เลขหน้า/เลขล้วนยาวที่พิมพ์ซ้ำตอนขึ้นหน้าใหม่ ห้ามต่อเข้า vendor_name
+const IS_PAGE_NO_PATTERN = /(?:หน้า|page)\s*[:：]?\s*\d+\s*(?:\/|of)\s*\d+/gi; // เช่น "หน้า: 2 / 3"
+function isStripPageNoJunk(strippedLine) {
+  if (/^\d{6,}$/.test(strippedLine)) return ""; // บรรทัดเป็นเลขล้วนยาว (เช่น 10004411) ไม่ใช่ชื่อผู้ค้า
+  return strippedLine.replace(IS_PAGE_NO_PATTERN, " ").replace(/\s+/g, " ").trim();
+}
+
 function isParseAmount(raw) {
   raw = (raw || "").trim().replace(/,/g, "");
   if (!raw || raw === "-") return 0;
@@ -488,6 +497,11 @@ function isParseDate(raw) {
   if (!mm) return null;
   return `20${m[3]}-${mm}-${m[1]}`;
 }
+
+// MARKER_VATRECONCILE_IS_PAGEHEADER_ZONE_V1 -- Zone Page Header: เริ่มที่ "<BU> BOOK ..." จบที่เส้นประคั่นหัว Column
+const IS_PAGE_HEADER_START = /^[A-Za-z0-9]{2,8}\s+BOOK\b/;
+const IS_PAGE_HEADER_END = /^-{5,}(?:\s+-{5,}){2,}\s*$/;
+const IS_PAGE_HEADER_MAX_LINES = 40;
 
 function isParseRowFields(line) {
   const values = {};
@@ -533,6 +547,8 @@ function parseInputSummaryText(rawText) {
   const unmatchedLines = [];
   let currentBranch = null;
   let currentRecord = null;
+  let inPageHeader = false; // MARKER_VATRECONCILE_IS_PAGEHEADER_ZONE_V1
+  let pageHeaderCount = 0;
 
   for (let rawLine of lines) {
     const line = rawLine.replace(/\r$/, "");
@@ -551,6 +567,26 @@ function parseInputSummaryText(rawText) {
       if (m) {
         currentRecord = null;
         continue; // บรรทัดสรุป "รวมตามสาขา" -- ไม่ Insert เป็น Record
+      }
+    }
+
+    // MARKER_VATRECONCILE_IS_PAGEHEADER_ZONE_V1 -- ข้าม Page Header ทั้งก้อน (ไม่ต่อเข้า vendor_name / tax_invoice_no)
+    if (IS_DATE_ROW_PATTERN.test(line)) {
+      inPageHeader = false; // แถวข้อมูลจริง -> ปิด Zone เสมอ
+    } else if (!inPageHeader && IS_PAGE_HEADER_START.test(stripped)) {
+      inPageHeader = true;
+      pageHeaderCount = 0;
+    }
+    if (inPageHeader) {
+      pageHeaderCount++;
+      if (IS_PAGE_HEADER_END.test(stripped)) {
+        inPageHeader = false;
+        continue;
+      }
+      if (pageHeaderCount > IS_PAGE_HEADER_MAX_LINES) {
+        inPageHeader = false; // ไม่เจอเส้นประปิด Zone -> เลิก Zone แล้วประมวลผลบรรทัดนี้ตามปกติ
+      } else {
+        continue;
       }
     }
 
@@ -594,7 +630,13 @@ function parseInputSummaryText(rawText) {
       if (isPageHeaderJunk(stripped)) {
         continue; // ข้าม Page Header ที่พิมพ์ซ้ำทุกครั้งที่ขึ้นหน้าใหม่ (ไม่ใช่ข้อมูลจริง)
       }
-      currentRecord.vendor_name = (currentRecord.vendor_name + " " + stripped).trim();
+      // MARKER_VATRECONCILE_IS_MACRO_CONT_V2 -- เหมือน Macro: บรรทัดต่อเอาเฉพาะ Column tax_invoice_no (43-59) และ vendor_name (59-93) ตาม Fixed-Width
+      const cf = isParseRowFields(line);
+      const addInv = (cf.tax_invoice_no || "").replace(/^\*/, "").trim();
+      const addVen = isStripPageNoJunk((cf.vendor_name || "").trim());
+      if (!addInv && !addVen) continue; // ไม่มีข้อมูลใน 2 Column นี้ = Macro ให้เป็น Z (ทิ้ง)
+      if (addInv) currentRecord.tax_invoice_no = (currentRecord.tax_invoice_no + addInv).trim();
+      if (addVen) currentRecord.vendor_name = (currentRecord.vendor_name + " " + addVen).trim();
     }
   }
 
@@ -828,6 +870,122 @@ router.post("/input-summary/commit", upload.single("file"), async (req, res) => 
   }
 });
 
+/**
+ * DELETE /vat-reconcile/input-summary?bu=...&account=...&period=...
+ * MARKER_VATRECONCILE_INPUT_SUMMARY_CLEAR_V1 -- ล้าง Input Summary ทั้งก้อนของ BU + Account + Period (ใช้ตอนนำเข้าผิด แล้วต้องนำเข้าใหม่)
+ * รับ bu ได้ทั้งเลข ("3218") และ Short Code ("BTM") เหมือน /dashboard/report
+ */
+router.delete("/input-summary", async (req, res) => {
+  try {
+    const { account, period } = req.query;
+    let { bu } = req.query;
+    if (!bu || !account || !period) {
+      return res.status(400).json({ error: "ต้องระบุ bu, account, period ให้ครบ" });
+    }
+    bu = await resolveBuToNumeric(bu);
+    if (!bu) {
+      return res.status(422).json({ error: "ไม่พบ BU นี้ในระบบ (แปลงเป็นเลข BU ไม่ได้)" });
+    }
+    const del = await pool.query(
+      `DELETE FROM vat_reconcile_input_summary
+       WHERE bu = $1 AND reconcile_account = $2 AND period = $3`,
+      [bu, account, period]
+    );
+    console.log(`[vatReconcile] input-summary CLEAR bu=${bu} account=${account} period=${period} deleted=${del.rowCount} by=${req.user?.email || "unknown"}`);
+    res.json({ bu, account, period, deleted: del.rowCount });
+  } catch (err) {
+    console.error("[vatReconcile] input-summary clear error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างล้างข้อมูล", detail: err.message });
+  }
+});
+
+/**
+ * DELETE /vat-reconcile/tb?bu=...&account=...&period=...
+ * MARKER_VATRECONCILE_TB_CLEAR_V1 -- ล้าง Trial Balance ทั้งก้อนของ BU + Account + Period (ใช้ตอนบันทึก TB ผิด แล้วต้องนำเข้าใหม่)
+ * Freeze: Period ที่ปิดงวดแล้ว (tax_close_period.status closed/purged) หรือมี TB Period ใหม่กว่า -> 409 ล้างไม่ได้ (Input Summary ไม่ Freeze)
+ * ลบทุกแถวรวมแถว is_protected_account ด้วย (TB Commit เป็น Upsert จึงต้องล้างก่อนถึงจะแก้ที่ผิดออกได้)
+ */
+// MARKER_VATRECONCILE_CELL_EDIT_BACK_V7 -- แก้ Cell จาก Preview (Excel Grid) ลง DB | Period ที่ปิดงวดแล้ว (tax_close_period closed/purged) = 409
+const CELL_EDIT = {
+  tb: {
+    table: "vat_reconcile_tb",
+    periodSql: "SELECT period FROM vat_reconcile_tb WHERE id = $1",
+    cols: { branch: "t", cpc: "t", account: "t", subacc: "t", description: "t", beginning_balance: "n", period_activity: "n", ending_balance: "n" },
+  },
+  simple_detail: {
+    table: "vat_reconcile_simple_detail",
+    periodSql: "SELECT h.period FROM vat_reconcile_simple_detail d JOIN vat_reconcile_simple_header h ON h.id = d.header_id WHERE d.id = $1",
+    cols: { running_no: "t", receive_date: "d", tax_invoice_date: "d", tax_invoice_no: "t", vendor_name: "t", tax_id: "t", branch_field: "t", item_detail: "t",
+            paid_amount: "n", paid_vat: "n", claimed_amount: "n", claimed_vat: "n", claim_percent: "p" },
+  },
+};
+router.put("/cell", express.json(), async (req, res) => {
+  try {
+    const { table, id, field, value } = req.body || {};
+    const cfg = CELL_EDIT[table];
+    if (!cfg || !Number.isInteger(Number(id)) || !Object.prototype.hasOwnProperty.call(cfg.cols, field)) {
+      return res.status(400).json({ error: "ตาราง/คอลัมน์ไม่อนุญาตให้แก้ไข" });
+    }
+    const pr = await pool.query(cfg.periodSql, [Number(id)]);
+    if (!pr.rows.length) return res.status(404).json({ error: "ไม่พบแถวที่ต้องการแก้ไข" });
+    try {
+      const st = (await pool.query(`SELECT status FROM tax_close_period WHERE period_ym = $1`, [pr.rows[0].period])).rows[0]?.status;
+      if (st === "closed" || st === "purged") return res.status(409).json({ error: `Period ${pr.rows[0].period} ปิดงวดแล้ว แก้ไขไม่ได้`, code: "PERIOD_FROZEN" });
+    } catch (e) { if (e.code !== "42P01") throw e; }
+    const kind = cfg.cols[field];
+    let v = value === undefined || value === null || String(value).trim() === "" ? null : String(value).trim();
+    if (v !== null && (kind === "n" || kind === "p")) {
+      const n = Number(v.replace(/,/g, "").replace(/%$/, ""));
+      if (!Number.isFinite(n)) return res.status(400).json({ error: "ต้องเป็นตัวเลข" });
+      v = kind === "p" ? n / 100 : n; // claim_percent เก็บเป็นสัดส่วน (100 -> 1)
+    }
+    if (v !== null && kind === "d" && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return res.status(400).json({ error: "วันที่ต้องเป็นรูปแบบ YYYY-MM-DD" });
+    await pool.query(`UPDATE ${cfg.table} SET ${field} = $1 WHERE id = $2`, [v, Number(id)]);
+    console.log(`[vatReconcile] cell edit ${table}#${id}.${field} by=${req.user?.email || "unknown"}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[vatReconcile] cell edit error:", err);
+    res.status(500).json({ error: "บันทึกไม่สำเร็จ", detail: err.message });
+  }
+});
+
+router.delete("/tb", async (req, res) => {
+  try {
+    const { account, period } = req.query;
+    let { bu } = req.query;
+    if (!bu || !account || !period) {
+      return res.status(400).json({ error: "ต้องระบุ bu, account, period ให้ครบ" });
+    }
+    bu = await resolveBuToNumeric(bu);
+    if (!bu) {
+      return res.status(422).json({ error: "ไม่พบ BU นี้ในระบบ (แปลงเป็นเลข BU ไม่ได้)" });
+    }
+    // Freeze: TB ของ Period ที่ปิดงวดแล้ว หรือมี TB ของ Period ใหม่กว่านำเข้าแล้ว = ยอดสุดท้าย ล้างไม่ได้
+    try {
+      const st = (await pool.query(`SELECT status FROM tax_close_period WHERE period_ym = $1`, [period])).rows[0]?.status;
+      if (st === "closed" || st === "purged") {
+        return res.status(409).json({ error: `Period ${period} ปิดงวดแล้ว — TB ถูก Freeze ล้างไม่ได้`, code: "PERIOD_FROZEN" });
+      }
+    } catch (e) {
+      if (e.code !== "42P01") throw e; // ไม่มีตาราง tax_close_period = ข้ามเช็คสถานะปิดงวด
+    }
+    const newer = await pool.query(`SELECT 1 FROM vat_reconcile_tb WHERE period > $1 LIMIT 1`, [period]);
+    if (newer.rowCount > 0) {
+      return res.status(409).json({ error: `Period ${period} ถูก Freeze (มี TB ของ Period ใหม่กว่านำเข้าแล้ว) ล้างไม่ได้`, code: "PERIOD_FROZEN" });
+    }
+    const del = await pool.query(
+      `DELETE FROM vat_reconcile_tb
+       WHERE bu = $1 AND account = $2 AND period = $3`,
+      [bu, account, period]
+    );
+    console.log(`[vatReconcile] tb CLEAR bu=${bu} account=${account} period=${period} deleted=${del.rowCount} by=${req.user?.email || "unknown"}`);
+    res.json({ bu, account, period, deleted: del.rowCount });
+  } catch (err) {
+    console.error("[vatReconcile] tb clear error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างล้างข้อมูล", detail: err.message });
+  }
+});
+
 // ===========================================================================
 // ส่วนที่ 3: Dashboard Status (สรุปสถานะข้อมูลต่อ BU / Tax Type Group)
 // ===========================================================================
@@ -915,7 +1073,7 @@ router.get("/dashboard/report", async (req, res) => {
 
     if (type === "tb") {
       const { rows } = await pool.query(
-        `SELECT branch, cpc, account, subacc, description,
+        `SELECT id, branch, cpc, account, subacc, description,
                 beginning_balance::float8 AS beginning_balance,
                 period_activity::float8 AS period_activity,
                 ending_balance::float8 AS ending_balance
@@ -941,13 +1099,21 @@ router.get("/dashboard/report", async (req, res) => {
                   paid_vat::float8 AS paid_vat,
                   claimed100_amount::float8 AS claimed100_amount,
                   claimed100_vat::float8 AS claimed100_vat,
-                  calculate_tax::float8 AS calculate_tax
+                  calculate_tax::float8 AS calculate_tax,
+                  CASE
+                    WHEN tax_invoice_date IS NOT NULL AND to_char(tax_invoice_date, 'YYYY-MM') > $3 THEN 'Over Period'
+                    WHEN receive_date IS NOT NULL AND tax_invoice_date IS NOT NULL AND receive_date < tax_invoice_date THEN 'Futuredate'
+                    WHEN ABS(ROUND((COALESCE(paid_amount, 0) * 7 / 100 - COALESCE(claimed100_vat, 0))::numeric, 2)) > 0.05 THEN 'Unbalance'
+                    ELSE 'Balance'
+                  END AS status
            FROM vat_reconcile_input_summary
            WHERE bu = $1 AND reconcile_account = $2 AND period = $3
+             AND ($4::text IS NULL OR branch::text = $4::text) -- MARKER_VATRECONCILE_INPUTSUMMARY_DETAIL_BRANCH_FILTER_V1
            ORDER BY branch, tax_invoice_date`,
-          [bu, account, period]
+          [bu, account, period, req.query.branch ? String(req.query.branch) : null]
         );
-        return res.json({ type, view, rows });
+        // MARKER_VATRECONCILE_STATUS_COL_V1 -- Status ตามสูตร Excel (Futuredate: Receive Date < Tax Invoice Date · Balance: |ROUND(มูลค่า×7/100 − ภาษีใช้สิทธิ์,2)| ≤ 0.05) + Over Period
+        return res.json({ type, view, period, rows });
       }
 
       const { rows } = await pool.query(
@@ -1030,7 +1196,8 @@ router.get("/dashboard/report", async (req, res) => {
         }
         // DASHBOARD_SIMPLE_DETAIL_DROP_BRANCH_TAXTYPE_PATCH_APPLIED -- ตัด branch/tax_type_code ออก (ซ้ำซ้อนกับ Title Popup)
         const { rows } = await pool.query(
-          `SELECT d.running_no,
+          `SELECT d.id,
+                  d.running_no,
                   d.receive_date,
                   d.tax_invoice_date,
                   d.tax_invoice_no,
@@ -1049,7 +1216,48 @@ router.get("/dashboard/report", async (req, res) => {
            ORDER BY h.branch, d.receive_date, d.running_no`,
           params
         );
-        return res.json({ type, view, branch: branchFilter, rows });
+        // MARKER_VATRECONCILE_SIMPLE_ORIGINAL_LAYOUT_BACK_V5 -- หัวรายงาน + แถวแยกตามสาขา สำหรับวาด Layout ต้นฉบับ
+        const gq = await pool.query(
+          `SELECT h.branch, h.simple_type, h.report_title, h.report_id, h.print_date::text AS print_date, h.print_by, h.operator_name,
+                  h.address_line1, h.address_line2, h.address_line3, h.company_tax_id, h.branch_no,
+                  d.id, d.running_no, d.receive_date::text AS receive_date, d.tax_invoice_date::text AS tax_invoice_date,
+                  d.tax_invoice_no, d.tax_id, d.vendor_name, d.branch_field, d.item_detail,
+                  d.paid_amount::float8 AS paid_amount, d.paid_vat::float8 AS paid_vat,
+                  d.claimed_amount::float8 AS claimed_amount, d.claimed_vat::float8 AS claimed_vat,
+                  d.claim_percent::float8 * 100 AS claim_percent
+           FROM vat_reconcile_simple_header h
+           LEFT JOIN vat_reconcile_simple_detail d ON d.header_id = h.id
+           WHERE h.bu = $1 AND h.reconcile_account = $2 AND h.period = $3 AND h.simple_type = $4${branchClause}
+           ORDER BY h.branch, d.receive_date, d.running_no`,
+          params
+        );
+        const groups = [];
+        const byBranch = new Map();
+        for (const r of gq.rows) {
+          let g = byBranch.get(r.branch);
+          if (!g) {
+            g = {
+              branch: r.branch,
+              header: {
+                report_title: r.report_title, report_id: r.report_id, print_date: r.print_date, print_by: r.print_by,
+                operator_name: r.operator_name, address_line1: r.address_line1, address_line2: r.address_line2,
+                address_line3: r.address_line3, company_tax_id: r.company_tax_id, branch_no: r.branch_no,
+              },
+              rows: [],
+            };
+            byBranch.set(r.branch, g);
+            groups.push(g);
+          }
+          if (r.running_no != null || r.receive_date != null) {
+            g.rows.push({
+              id: r.id, simple_type: r.simple_type, running_no: r.running_no, receive_date: r.receive_date, tax_invoice_date: r.tax_invoice_date, // MARKER_VATRECONCILE_SIMPLE_FLAT_BACK_V11
+              tax_invoice_no: r.tax_invoice_no, tax_id: r.tax_id, vendor_name: r.vendor_name, branch_field: r.branch_field,
+              item_detail: r.item_detail, paid_amount: r.paid_amount, paid_vat: r.paid_vat,
+              claimed_amount: r.claimed_amount, claimed_vat: r.claimed_vat, claim_percent: r.claim_percent,
+            });
+          }
+        }
+        return res.json({ type, view, branch: branchFilter, rows, groups });
       }
 
       // DASHBOARD_SIMPLE_SUMMARY_FINAL_COLUMNS_PATCH_APPLIED -- Column สุดท้ายตามที่ยืนยันผ่าน Mockup แล้ว
@@ -1078,6 +1286,380 @@ router.get("/dashboard/report", async (req, res) => {
     res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างดึง Report", detail: err.message });
   }
 });
+
+// MARKER_VATRECONCILE_RECONCILE_REPORT_V1
+/**
+ * GET /vat-reconcile/dashboard/reconcile-report?bu=...&account=...&period=YYYY-MM
+ * สร้างข้อมูล Popup Preview ให้ "เหมือน Reconcile จริงตาม Macro" (ชีต ReportVat_VGR / ReportVat_AVG + Cover)
+ * ไม่มีการเขียน DB -- อ่านอย่างเดียว
+ *
+ * เลือก Template อัตโนมัติจากชนิด Simple ที่มีข้อมูลของ (BU, Account, Period):
+ *   - มี Simple AVG  -> "avg"         (ReportVat_AVG: Input-N 100% | Input ใช้สิทธิ์ x% | Excel ใช้สิทธิ์ x% | รวม | เพิ่มเติม | รวมทั้งสิ้น)
+ *   - มี Simple 100  -> "100_simple"  (ReportVat_VGR: Input-N 100% | Excel-N 100% | รวม | เพิ่มเติม | รวมทั้งสิ้น)
+ *   - ไม่มี Simple   -> "100"         (ReportVat_VGR เหมือนบน แต่ Excel-N = 0)
+ *
+ * สูตรตามไฟล์ Macro จริง:
+ *   100%: Input-N 100% = Σ paid (มูลค่า/ภาษี) | Excel-N 100% = Σ Simple 100 claimed | รวม = Input + Excel
+ *         T/B = Σ ending(SubAcc 999999) - Σ ending(CPC 46119)   (บวก/ลบ CPC 46250 หักล้างกันเอง)
+ *         Total = SUBTOTAL(9) ทุกสาขา | Check Diff = มี Unbalance ใน Detail (|paid_amount*7/100 - claimed100_vat| > 0.05) ไหม
+ *   AVG : Input-N 100% ภาษี = Σ paid_amount ที่ paid_vat=0, มูลค่า = ภาษี*100/7
+ *         Input ใช้สิทธิ์ x% = Σ claimed - Σ claimed ที่ calculate_tax=0 | Excel ใช้สิทธิ์ x% = Σ Simple AVG claimed
+ *         รวม = Input-N100% + Input ใช้สิทธิ์ + Excel ใช้สิทธิ์ | T/B = Σ ending ต่อสาขา
+ *   Cover: Per TB = Σ ending ทั้ง TB | Per Detail = รวมทั้งสิ้น(ภาษี) | Diff | (100% เท่านั้น) FinCredit 46250 = -Σ ending(CPC 46250)
+ * "ภาษีซื้อที่ต้องยื่นเพิ่มเติม" ในไฟล์เป็นค่ากรอกมือ -> ส่ง 0 (ยังไม่มีข้อมูลในระบบ)
+ */
+const RECON_THAI_MONTHS = [
+  "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+];
+function reconThaiPeriodLabel(period) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(period || ""));
+  if (!m) return String(period || "");
+  return `${RECON_THAI_MONTHS[Number(m[2]) - 1] || m[2]} ${Number(m[1]) + 543}`;
+}
+const reconR2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+function reconPickKey(row, re, exclude) {
+  return Object.keys(row || {}).find((k) => re.test(k) && !(exclude && exclude.test(k)));
+}
+
+// MARKER_VATRECONCILE_PREPARED_BY_BACK_V9
+// หา "Prepare by" ของ BU จากตารางตั้งค่า (company_list ก่อน แล้ว vat_setting) -- คอลัมน์ใดก็ได้ที่ชื่อมี prepar / ผู้จัดทำ
+const PREPARED_BY_TABLES = ["company_list", "vat_setting"];
+const PREPARED_BY_RE = /prepar|ผู้จัดทำ|maker/i;
+async function reconFindPreparedBy(buShort) {
+  if (!buShort) return null;
+  for (const t of PREPARED_BY_TABLES) {
+    let row = null;
+    for (const w of [`bu = $1 AND deleted IS NOT TRUE`, `bu = $1`]) {
+      try {
+        const q = await pool.query(`SELECT * FROM ${t} WHERE ${w} LIMIT 1`, [buShort]);
+        row = q.rows[0] || null;
+        break;
+      } catch (e) { if (e.code !== "42703" && e.code !== "42P01") throw e; if (e.code === "42P01") break; }
+    }
+    if (!row) continue;
+    const key = reconPickKey(row, PREPARED_BY_RE);
+    if (key) return { table: t, key, value: row[key] == null ? "" : String(row[key]).trim(), softDel: Object.prototype.hasOwnProperty.call(row, "deleted") };
+    console.warn(`[vatReconcile] ${t} (bu=${buShort}) ไม่มีคอลัมน์ Prepare by -- คอลัมน์ที่มี:`, Object.keys(row).join(", "));
+  }
+  return null;
+}
+router.put("/prepared-by", express.json(), async (req, res) => {
+  try {
+    let bu = String((req.body || {}).bu || "").trim();
+    const value = String((req.body || {}).value ?? "").trim();
+    if (!bu) return res.status(400).json({ error: "ต้องระบุ bu" });
+    if (/^\d+$/.test(bu)) {
+      const r = await pool.query(`SELECT bu FROM company_list WHERE split_part("COMPANY CODE", '-', 3) = $1 AND deleted IS NOT TRUE LIMIT 1`, [bu]);
+      if (r.rows[0]?.bu) bu = r.rows[0].bu;
+    }
+    const src = await reconFindPreparedBy(bu);
+    if (!src) return res.status(404).json({ error: "ไม่พบคอลัมน์ Prepare by ใน company_list / vat_setting ของ BU นี้" });
+    const qk = src.key.replace(/"/g, '""');
+    await pool.query(`UPDATE ${src.table} SET "${qk}" = $1 WHERE bu = $2${src.softDel ? " AND deleted IS NOT TRUE" : ""}`, [value || null, bu]);
+    console.log(`[vatReconcile] prepared-by ${src.table}.${src.key} bu=${bu} by=${req.user?.email || "unknown"}`);
+    res.json({ ok: true, value });
+  } catch (err) {
+    console.error("[vatReconcile] prepared-by error:", err);
+    res.status(500).json({ error: "บันทึกไม่สำเร็จ", detail: err.message });
+  }
+});
+
+const reconcileReportHandler = async (req, res) => {
+  try {
+    const { account, period } = req.query;
+    let { bu } = req.query;
+    if (!bu || !account || !period) {
+      return res.status(400).json({ error: "ต้องระบุ bu, account, period ให้ครบ" });
+    }
+    const buInput = String(bu);
+    const numericBu = await resolveBuToNumeric(buInput);
+    if (!numericBu) {
+      return res.status(422).json({ error: "ไม่พบ BU นี้ในระบบ (แปลงเป็นเลข BU ไม่ได้)" });
+    }
+    bu = numericBu;
+
+    // Short Code ของ BU (ไว้ Join branch_list / company_list)
+    let buShort = /^\d+$/.test(buInput) ? null : buInput;
+    if (!buShort) {
+      const sc = await pool.query(
+        `SELECT bu FROM company_list WHERE split_part("COMPANY CODE", '-', 3) = $1 AND deleted IS NOT TRUE LIMIT 1`,
+        [numericBu]
+      );
+      buShort = sc.rows[0]?.bu || null;
+    }
+
+    const [tbQ, inQ, simQ] = await Promise.all([
+      pool.query(
+        `SELECT branch, cpc, account, subacc, description, beginning_balance::float8 AS beginning_balance, period_activity::float8 AS period_activity, ending_balance::float8 AS ending_balance
+         FROM vat_reconcile_tb WHERE bu = $1 AND account = $2 AND period = $3`,
+        [bu, account, period]
+      ),
+      pool.query(
+        `SELECT branch,
+                COALESCE(SUM(paid_amount), 0)::float8 AS paid_amount,
+                COALESCE(SUM(paid_vat), 0)::float8 AS paid_vat,
+                COALESCE(SUM(claimed100_amount), 0)::float8 AS claimed_amount,
+                COALESCE(SUM(claimed100_vat), 0)::float8 AS claimed_vat,
+                COALESCE(SUM(paid_amount) FILTER (WHERE COALESCE(paid_vat, 0) = 0), 0)::float8 AS zero_vat_amount,
+                COALESCE(SUM(claimed100_amount) FILTER (WHERE COALESCE(calculate_tax, 0) = 0), 0)::float8 AS claimed_amount_p0,
+                COALESCE(SUM(claimed100_vat) FILTER (WHERE COALESCE(calculate_tax, 0) = 0), 0)::float8 AS claimed_vat_p0,
+                COUNT(*) FILTER (
+                  WHERE ABS(ROUND((COALESCE(paid_amount, 0) * 7 / 100 - COALESCE(claimed100_vat, 0))::numeric, 2)) > 0.05
+                )::int AS unbalance_count,
+                COUNT(*)::int AS invoice_count,
+                COUNT(*) FILTER (WHERE tax_invoice_date IS NOT NULL AND to_char(tax_invoice_date, 'YYYY-MM') > $3)::int AS over_count,
+                COUNT(*) FILTER (WHERE receive_date IS NOT NULL AND tax_invoice_date IS NOT NULL AND receive_date < tax_invoice_date AND to_char(tax_invoice_date, 'YYYY-MM') <= $3)::int AS future_count,
+                MAX(operator_name) AS operator_name
+         FROM vat_reconcile_input_summary
+         WHERE bu = $1 AND reconcile_account = $2 AND period = $3
+         GROUP BY branch`,
+        [bu, account, period]
+      ),
+      pool.query(
+        `SELECT h.branch, h.simple_type, MAX(h.operator_name) AS operator_name, MAX(h.company_tax_id) AS company_tax_id,
+                COALESCE(SUM(d.claimed_amount), 0)::float8 AS claimed_amount,
+                COALESCE(SUM(d.claimed_vat), 0)::float8 AS claimed_vat,
+                COALESCE(AVG(NULLIF(d.claim_percent, 0)), 0)::float8 * 100 AS claim_percent
+         FROM vat_reconcile_simple_header h
+         LEFT JOIN vat_reconcile_simple_detail d ON d.header_id = h.id
+         WHERE h.bu = $1 AND h.reconcile_account = $2 AND h.period = $3
+         GROUP BY h.branch, h.simple_type`,
+        [bu, account, period]
+      ),
+    ]);
+
+    // ชื่อสาขา / ข้อมูลบริษัท -- ป้องกันชื่อคอลัมน์ไม่ตรง (ไม่ Crash ถ้าไม่เจอ)
+    const branchNames = new Map();
+    const branchInfo = new Map(); // MARKER_VATRECONCILE_BRANCH_STATUS_V1 -- สถานะสาขา
+    let totalBranchCount = 0;
+    if (buShort) {
+      try {
+        const bq = await pool.query(`SELECT * FROM branch_list WHERE bu = $1 AND deleted IS NOT TRUE`, [buShort]);
+        totalBranchCount = bq.rows.length;
+        if (bq.rows.length) {
+          const codeKey = reconPickKey(bq.rows[0], /branch.*code/i) || "Branch Code";
+          const nameKey = reconPickKey(bq.rows[0], /name|desc/i, /code/i);
+          const stKey = reconPickKey(bq.rows[0], /^status$/i);
+          const inKey = reconPickKey(bq.rows[0], /inactive/i);
+          for (const r of bq.rows) {
+            if (r[codeKey] != null) branchInfo.set(String(r[codeKey]).trim(), { status: stKey && r[stKey] ? String(r[stKey]).trim() : '', inactiveDate: inKey && r[inKey] ? String(r[inKey]).slice(0, 10) : '' });
+            if (r[codeKey] != null && nameKey && r[nameKey]) branchNames.set(String(r[codeKey]).trim(), String(r[nameKey]).trim());
+          }
+        }
+      } catch (e) {
+        console.warn("[vatReconcile] reconcile-report branch_list lookup skipped:", e.message);
+      }
+    }
+    let companyName = null;
+    let companyTaxId = null;
+    let companyNameEn = null; // MARKER_VATRECONCILE_ORIGINAL_WORKBOOK_V1
+    if (buShort) {
+      try {
+        const cq = await pool.query(`SELECT * FROM company_list WHERE bu = $1 AND deleted IS NOT TRUE LIMIT 1`, [buShort]);
+        const c = cq.rows[0];
+        if (c) {
+          // MARKER_VATRECONCILE_THAI_COMPANY_V1 -- ใช้ "THAI COMPANY NAME" ก่อน ถ้าว่าง/ไม่มีค่อย Fallback ชื่ออังกฤษ
+          const thaiKey = reconPickKey(c, /thai.*company.*name/i);
+          const nk = thaiKey && c[thaiKey] ? thaiKey : reconPickKey(c, /company.*name|^name$|บริษัท/i, /thai/i);
+          const tk = reconPickKey(c, /tax.*id|taxid|เลขประจำตัว/i);
+          if (nk && c[nk]) companyName = String(c[nk]).trim();
+          if (tk && c[tk]) companyTaxId = String(c[tk]).trim();
+          const enKey = reconPickKey(c, /company.*name|^name$/i, /thai|บริษัท/i);
+          if (enKey && c[enKey]) companyNameEn = String(c[enKey]).trim();
+        }
+      } catch (e) {
+        console.warn("[vatReconcile] reconcile-report company_list lookup skipped:", e.message);
+      }
+    }
+    let preparedBySrc = null;
+    try { preparedBySrc = await reconFindPreparedBy(buShort); } catch (e) { console.warn("[vatReconcile] prepared-by lookup skipped:", e.message); } // MARKER_VATRECONCILE_PREPARED_BY_BACK_V9
+    for (const r of simQ.rows) {
+      if (!companyTaxId && r.company_tax_id) companyTaxId = String(r.company_tax_id).replace(/-\d+$/, "").trim();
+    }
+
+    // แยกข้อมูลตามชนิด Simple
+    const simple100 = new Map();
+    const simpleAvg = new Map();
+    let ratePercent = null;
+    for (const r of simQ.rows) {
+      if (String(r.simple_type) === "AVG") {
+        simpleAvg.set(r.branch, r);
+        if (!ratePercent && Number(r.claim_percent) > 0) ratePercent = reconR2(r.claim_percent);
+      } else {
+        simple100.set(r.branch, r);
+      }
+    }
+    const template = simpleAvg.size > 0 ? "avg" : simple100.size > 0 ? "100_simple" : "100";
+
+    // TB ต่อสาขา
+    const tbBy = new Map();
+    let tbAll = 0;
+    let tbFin46250 = 0;
+    let accountName = null;
+    for (const r of tbQ.rows) {
+      const b = r.branch;
+      if (!tbBy.has(b)) tbBy.set(b, { sub999: 0, cpc46119: 0, all: 0 });
+      const t = tbBy.get(b);
+      const v = Number(r.ending_balance) || 0;
+      t.all += v;
+      tbAll += v;
+      if (String(r.subacc || "").trim() === "999999") t.sub999 += v;
+      if (String(r.cpc || "").trim() === "46119") t.cpc46119 += v;
+      if (String(r.cpc || "").trim() === "46250") tbFin46250 += v;
+      if (!accountName && r.description) accountName = String(r.description).trim();
+    }
+    const inBy = new Map(inQ.rows.map((r) => [r.branch, r]));
+
+    const branchSet = new Set([...tbBy.keys(), ...inBy.keys(), ...simple100.keys(), ...simpleAvg.keys()]);
+    const branches = [...branchSet].sort();
+
+    let pairLabels;
+    if (template === "avg") {
+      const pct = ratePercent != null ? `${ratePercent}%` : "";
+      pairLabels = [
+        "ภาษีซื้อ Input-N 100%",
+        `ภาษีซื้อ Input ใช้สิทธิ์ ${pct}`.trim(),
+        `ภาษีซื้อ Excel ใช้สิทธิ์ ${pct}`.trim(),
+        "รวมภาษีซื้อ",
+        "ภาษีซื้อที่ต้องยื่นเพิ่มเติม",
+        "รวมภาษีซื้อทั้งสิ้น",
+      ];
+    } else {
+      pairLabels = ["ภาษีซื้อ Input-N 100%", "ภาษีซื้อ Excel-N 100%", "รวมภาษีซื้อ", "ภาษีซื้อที่ต้องยื่นเพิ่มเติม", "รวมภาษีซื้อทั้งสิ้น"];
+    }
+    const nPairs = pairLabels.length;
+    const TOLERANCE = 1.0; // เหมือน type=reconcile เดิม
+
+    const rows = branches.map((branch) => {
+      const i = inBy.get(branch) || {};
+      const tb = tbBy.get(branch) || { sub999: 0, cpc46119: 0, all: 0 };
+      let pairs;
+      let tbAmount;
+      if (template === "avg") {
+        const s = simpleAvg.get(branch) || {};
+        const d = reconR2(i.zero_vat_amount);
+        const c = reconR2((d * 100) / 7);
+        const e = reconR2((i.claimed_amount || 0) - (i.claimed_amount_p0 || 0));
+        const f = reconR2((i.claimed_vat || 0) - (i.claimed_vat_p0 || 0));
+        const g = reconR2(s.claimed_amount);
+        const h = reconR2(s.claimed_vat);
+        const ii = reconR2(c + e + g);
+        const j = reconR2(d + f + h);
+        pairs = [[c, d], [e, f], [g, h], [ii, j], [0, 0], [reconR2(ii), reconR2(j)]];
+        tbAmount = reconR2(tb.all);
+      } else {
+        const s = simple100.get(branch) || {};
+        const inA = reconR2(i.paid_amount);
+        const inV = reconR2(i.paid_vat);
+        const exA = reconR2(s.claimed_amount);
+        const exV = reconR2(s.claimed_vat);
+        pairs = [[inA, inV], [exA, exV], [reconR2(inA + exA), reconR2(inV + exV)], [0, 0], [reconR2(inA + exA), reconR2(inV + exV)]];
+        tbAmount = reconR2(tb.sub999 - tb.cpc46119);
+      }
+      const allVat = pairs[nPairs - 1][1];
+      const diff = reconR2(allVat - tbAmount);
+      const name = branchNames.get(String(branch).trim()) || i.operator_name || (simpleAvg.get(branch) || simple100.get(branch) || {}).operator_name || "";
+      const bInfo = branchInfo.get(String(branch).trim()) || {};
+      return {
+        branch,
+        name,
+        branchMissing: !branchInfo.has(String(branch).trim()), // MARKER_VATRECONCILE_BRANCH_MISSING_BLOCK_EXPORT_V3 -- ไม่พบสาขานี้ใน branch_list ของ BU
+        branchStatus: bInfo.status || '',
+        inactiveDate: bInfo.inactiveDate || '',
+        futureCount: Number(i.future_count) || 0, // MARKER_VATRECONCILE_FUTURE_DATE_V1 -- Future Date = Receive Date < Tax Invoice Date (ในเดือนเดียวกับ Period)
+        overCount: Number(i.over_count) || 0, // Over Period = เดือนของ Tax Invoice Date เกินเดือน Period (เช่น Period 2026-09 แต่ใบกำกับ 2026-10)
+        pairs,
+        tb: tbAmount,
+        diff,
+        status: Math.abs(diff) <= TOLERANCE ? "ตรงกัน" : "ไม่ตรงกัน",
+      };
+    });
+
+    const totalPairs = Array.from({ length: nPairs }, (_, k) => [
+      reconR2(rows.reduce((s, r) => s + r.pairs[k][0], 0)),
+      reconR2(rows.reduce((s, r) => s + r.pairs[k][1], 0)),
+    ]);
+    const totalTb = reconR2(rows.reduce((s, r) => s + r.tb, 0));
+    const totalDiff = reconR2(totalPairs[nPairs - 1][1] - totalTb);
+
+    const unbalanceCount = inQ.rows.reduce((s, r) => s + (Number(r.unbalance_count) || 0), 0);
+    const perTb = reconR2(tbAll);
+    const perDetail = totalPairs[nPairs - 1][1];
+    const coverDiff = reconR2(perTb - perDetail);
+    const finCredit = template === "avg" ? null : reconR2(-tbFin46250);
+
+    // MARKER_VATRECONCILE_EXPORT_SOURCES_V1 -- ข้อมูลต้นทางสำหรับ Export (Detail / TB / Simple) ส่งเฉพาะเมื่อขอ include=sources
+    let sources = null;
+    if (req.query.include === "sources") {
+      const [detQ, simDetQ] = await Promise.all([
+        pool.query(
+          `SELECT branch, receive_date::text AS receive_date, grt_no, tax_invoice_date::text AS tax_invoice_date, tax_invoice_no,
+                  vendor_name, tax_id, ho, branch_field, item_detail,
+                  paid_amount::float8 AS paid_amount, paid_vat::float8 AS paid_vat,
+                  claimed100_amount::float8 AS claimed100_amount, claimed100_vat::float8 AS claimed100_vat, calculate_tax::float8 AS calculate_tax
+           FROM vat_reconcile_input_summary
+           WHERE bu = $1 AND reconcile_account = $2 AND period = $3
+           ORDER BY branch, receive_date, tax_invoice_no`,
+          [bu, account, period]
+        ),
+        pool.query(
+          `SELECT h.branch, h.simple_type, d.receive_date::text AS receive_date, d.running_no, d.tax_invoice_date::text AS tax_invoice_date,
+                  d.tax_invoice_no, d.vendor_name, d.tax_id, d.branch_field, d.item_detail,
+                  d.paid_amount::float8 AS paid_amount, d.paid_vat::float8 AS paid_vat,
+                  d.claimed_amount::float8 AS claimed_amount, d.claimed_vat::float8 AS claimed_vat, d.claim_percent::float8 AS claim_percent
+           FROM vat_reconcile_simple_header h
+           JOIN vat_reconcile_simple_detail d ON d.header_id = h.id
+           WHERE h.bu = $1 AND h.reconcile_account = $2 AND h.period = $3
+           ORDER BY h.branch, d.running_no`,
+          [bu, account, period]
+        ),
+      ]);
+      sources = { detail: detQ.rows, tb: tbQ.rows, simple: simDetQ.rows };
+    }
+
+    return res.json({
+      template,
+      sheet: template === "avg" ? "ReportVat_AVG" : "ReportVat_VGR",
+      account,
+      accountName: accountName || "",
+      tbLabel: `${account.slice(0, 3)}-${account.slice(3, 5)}-${account.slice(5)}`,
+      ratePercent,
+      header: {
+        title: "รายงานสรุปภาษีซื้อ Non Merchandise",
+        company: companyName || buShort || String(numericBu),
+        taxId: companyTaxId || "",
+        companyEn: companyNameEn || "",
+        preparedBy: preparedBySrc ? preparedBySrc.value : "",
+        preparedByEditable: !!preparedBySrc,
+        periodLabel: reconThaiPeriodLabel(period),
+      },
+      pairLabels,
+      rows,
+      totals: { pairs: totalPairs, tb: totalTb, diff: totalDiff },
+      cover: {
+        perTb,
+        perDetail,
+        diff: coverDiff,
+        finCredit,
+        coverDiff: reconR2(coverDiff + (finCredit || 0)),
+      },
+      checkDiff: template === "avg"
+        ? { applicable: false }
+        : { applicable: true, unbalance: unbalanceCount, text: unbalanceCount > 0 ? "Found Diff in Detail" : "Approve Balance" },
+      futureCount: rows.reduce((s, r) => s + (r.futureCount || 0), 0), // MARKER_VATRECONCILE_FUTURE_DATE_V1
+      overCount: rows.reduce((s, r) => s + (r.overCount || 0), 0),
+      branchCount: { withData: rows.length, total: totalBranchCount || rows.length },
+      buCode: { numeric: String(numericBu), short: buShort || null }, // MARKER_VATRECONCILE_EXPORT_FILENAME_V1
+      ...(sources ? { sources } : {}),
+    });
+  } catch (err) {
+    console.error("[vatReconcile] reconcile-report error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างสร้าง Reconcile Report", detail: err.message });
+  }
+};
+router.get("/dashboard/reconcile-report", reconcileReportHandler);
+router.use(createReportFilesRouter({ reconcileReportHandler })); // MARKER_VATRECONCILE_REPORT_FILES_V1
 
 router.get("/dashboard/status", async (req, res) => {
   try {
@@ -1379,6 +1961,30 @@ function simpleComputePeriodFromBranches(branches) {
 }
 
 /**
+ * MARKER_VATRECONCILE_SIMPLE_BU_BY_BRANCH_V2
+ * หา BU (เลข) ของไฟล์ Simple Report: เทียบ "รหัสสาขา" ในไฟล์กับ branch_list ตรงๆ ก่อน (เฉพาะที่ตรงใน branch_list จริง)
+ * ไม่เจอค่อยใช้ "Bu Code" ในหัวไฟล์ (resolveBuToNumeric) -- คืน null ถ้าทั้งสองทางหาไม่เจอ
+ */
+async function resolveSimpleBu(headerCommon, branches) {
+  const cands = [headerCommon.primaryBranch, ...(branches || []).map((b) => b.branch)]
+    .map((v) => (v == null ? "" : String(v).trim()))
+    .filter(Boolean);
+  for (const br of [...new Set(cands)]) {
+    const direct = await pool.query(
+      `SELECT cl."COMPANY CODE" AS company_code
+       FROM branch_list bl
+       JOIN company_list cl ON cl.bu = bl.bu
+       WHERE bl."Branch Code" = $1 AND bl.deleted IS NOT TRUE
+       LIMIT 1`,
+      [br]
+    );
+    const numericBu = (direct.rows[0]?.company_code || "").split("-")[2];
+    if (numericBu) return numericBu;
+  }
+  return resolveBuToNumeric(headerCommon.bu);
+}
+
+/**
  * POST /vat-reconcile/simple/preview
  * รับไฟล์ Simple Report (.xlsx) -> Parse + คำนวณ Tax Type -> คืน Summary (ไม่เขียน DB)
  */
@@ -1396,7 +2002,7 @@ router.post("/simple/preview", upload.single("file"), async (req, res) => {
     }
 
     const { headerCommon, branches } = await parseSimpleReportBuffer(req.file.buffer);
-    const numericBu = await resolveBuToNumeric(headerCommon.bu);
+    const numericBu = await resolveSimpleBu(headerCommon, branches); // MARKER_VATRECONCILE_SIMPLE_BU_BY_BRANCH_V2
 
     const branchSummaries = branches.map((b) => {
       const dates = b.rows.map((r) => r.receive_date).filter(Boolean);
@@ -1457,9 +2063,9 @@ router.post("/simple/commit", upload.single("file"), async (req, res) => {
       });
     }
     const { headerCommon, branches } = await parseSimpleReportBuffer(req.file.buffer);
-    const numericBu = await resolveBuToNumeric(headerCommon.bu);
+    const numericBu = await resolveSimpleBu(headerCommon, branches); // MARKER_VATRECONCILE_SIMPLE_BU_BY_BRANCH_V2
     if (!numericBu) {
-      return res.status(422).json({ error: `ไม่พบ BU "${headerCommon.bu}" ในระบบ (แปลงเป็นเลข BU ไม่ได้)` });
+      return res.status(422).json({ error: `ไม่พบ BU "${headerCommon.bu}" / สาขา "${headerCommon.primaryBranch || ''}" ในระบบ (แปลงเป็นเลข BU ไม่ได้)` });
     }
 
     // SIMPLE_PERIOD_FROM_DATES_PATCH_APPLIED -- คำนวณ Period จากคอลัมน์วันที่ในไฟล์เอง (Logic เดียวกับ Preview)

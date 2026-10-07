@@ -1,0 +1,46 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mockup - Enabled First</title>
+<style>
+:root{--navy:#16325c}*{box-sizing:border-box}body{margin:0;background:#f4f3ef;font:13px "Segoe UI",Tahoma,sans-serif;padding:20px;color:#1f2933}
+h3{margin:18px 0 6px;font-size:13px;color:#616e7c}h2{font-size:12px;letter-spacing:.5px;color:#6b4a10;margin:14px 0 6px}
+.box{border:1px solid #e3e0d6;border-radius:12px;padding:10px;background:#f7f6f2;margin-bottom:6px}
+.row{display:grid;gap:10px}.c4{grid-template-columns:repeat(4,1fr)}.c5{grid-template-columns:repeat(5,1fr)}.c6{grid-template-columns:repeat(6,1fr)}
+.card{background:#fff;border-radius:10px;border-top:3px solid #e7a21c;padding:8px 10px;min-height:92px}
+.card.off{opacity:.55;background:#fbfaf8;border-top-color:#ccc}
+.tag{display:inline-block;font-size:10px;padding:1px 7px;border-radius:5px;background:#fdeed3;margin-right:4px}.off .tag{background:#fbe4e4}
+.nm{font-weight:600;margin:4px 0 8px}.sw{display:flex;border-radius:8px;overflow:hidden;background:#eceae4;font-size:11px}
+.sw b{flex:1;text-align:center;padding:5px;font-weight:600}.on b:first-child{background:#3b6d11;color:#fff}.dis b:last-child{background:#c27474;color:#fff}
+.mv{outline:2px dashed #3b6d11;outline-offset:2px}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:900px){.cmp{grid-template-columns:1fr}}
+.note{margin-top:14px;padding:10px 14px;border:1px dashed #b9b6a8;border-radius:8px;background:#fbfaf6;color:#5b5a52}
+</style></head><body>
+<div class="cmp">
+<div>
+<h3>ก่อน (ลำดับคงที่)</h3>
+<h2>SIMPLE</h2><div class="box"><div class="row c4">
+ <div class="card off"><span class="tag">X</span>Expense 100%<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>Expense AVG<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card"><span class="tag">N</span>Asset 100%<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card"><span class="tag">N</span>Asset AVG<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div></div></div>
+<h2>INPUT SUMMARY</h2><div class="box"><div class="row c5">
+ <div class="card off"><span class="tag">X</span>- A<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card"><span class="tag">N</span>- N<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card"><span class="tag">N</span>- T<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>- F<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>- M<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div></div></div>
+</div>
+<div>
+<h3>หลัง (Enable ขึ้นก่อน · สลับเฉพาะใน Box ตัวเอง)</h3>
+<h2>SIMPLE</h2><div class="box"><div class="row c4">
+ <div class="card mv"><span class="tag">N</span>Asset 100%<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card mv"><span class="tag">N</span>Asset AVG<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>Expense 100%<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>Expense AVG<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div></div></div>
+<h2>INPUT SUMMARY</h2><div class="box"><div class="row c5">
+ <div class="card mv"><span class="tag">N</span>- N<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card mv"><span class="tag">N</span>- T<div class="sw on" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>- A<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>- F<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div>
+ <div class="card off"><span class="tag">X</span>- M<div class="sw dis" style="margin-top:14px"><b>Enable</b><b>Disable</b></div></div></div></div>
+</div></div>
+<div class="note">กรอบเขียวประ = การ์ดที่ถูกยกขึ้นมาก่อน · ลำดับเดิมคงไว้ภายในกลุ่ม Enable และกลุ่ม Disable (เรียงเสถียร) · Box ที่เป็น Grid (Incomplete / Input Reconcile) ให้ "All" อยู่หน้าสุดเสมอ ตามด้วย Tax Type ที่ Enable (N, T) แล้วจึงตามด้วยที่ Disable (A, F, M)</div>
+</body></html>

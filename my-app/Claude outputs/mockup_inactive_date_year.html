@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup Inactive Date ปีคู่ พ.ศ.</title>
+<style>
+  :root { --navy:#1a3a5c; --line:#cfd6e2; --mut:#8a8f98; --be:#b04a08; --be-bg:#fdeede; --sel:#1a2230; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#f4f6f9; color:#1a2a3a; font-family:"Sarabun","Segoe UI",Tahoma,sans-serif; font-size:13px; padding:20px 16px 40px; }
+  h1 { font-size:16px; margin:0 0 4px; color:var(--navy); }
+  .sub { color:var(--mut); margin:0 0 16px; font-size:12px; }
+  .wrap { display:flex; flex-wrap:wrap; gap:18px; max-width:980px; }
+  .col { flex:1 1 360px; }
+  .tag { display:inline-block; font-size:10.5px; background:#eef2f7; color:#44556a; border-radius:4px; padding:1px 7px; margin-bottom:8px; }
+  .row { display:flex; border:1px dashed #1f5f7a; background:#fff; min-height:46px; }
+  .row .k { width:150px; padding:8px 10px; font-weight:700; color:var(--navy); border-right:1px dashed #1f5f7a; font-size:12px; }
+  .row .k small { color:#aaa; font-weight:400; }
+  .row .v { flex:1; padding:8px 10px; background:#edf1f5; position:relative; display:flex; align-items:center; }
+  .row .v input { width:100%; border:none; background:transparent; font-size:13px; font-family:inherit; outline:none; padding-right:26px; }
+  .cal-ic { position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; font-size:14px; }
+  .pop { position:absolute; left:0; top:100%; margin-top:4px; width:268px; background:#fff; border:1px solid #d5dbe5; border-radius:10px; box-shadow:0 10px 28px rgba(10,20,35,.25); padding:8px; z-index:10; display:none; }
+  .pop.open { display:block; }
+  .hd { display:flex; align-items:center; justify-content:space-between; padding:2px 4px 8px; }
+  .hd button.t { border:none; background:none; font-size:13px; font-weight:700; color:var(--navy); cursor:pointer; font-family:inherit; }
+  .hd button.n { border:none; background:none; cursor:pointer; font-size:15px; color:#556; padding:0 6px; }
+  .dg { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; text-align:center; }
+  .dg .w { font-size:10.5px; color:var(--mut); padding:3px 0; }
+  .dg .d { padding:5px 0; border-radius:6px; cursor:pointer; font-size:12px; }
+  .dg .d:hover { background:#eef3fb; }
+  .dg .d.sel { background:var(--sel); color:#fff; }
+  .dg .d.out { color:#c3c8d0; }
+  .mg { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+  .mg .m { padding:9px 0; text-align:center; border-radius:6px; cursor:pointer; }
+  .mg .m:hover { background:#eef3fb; }
+  .mg .m.sel { background:var(--sel); color:#fff; }
+  .yl { max-height:210px; overflow-y:auto; }
+  .yl .y { display:flex; align-items:baseline; justify-content:space-between; padding:7px 12px; border-radius:6px; cursor:pointer; font-size:13px; }
+  .yl .y:hover { background:#eef3fb; }
+  .yl .y.sel { background:var(--sel); color:#fff; }
+  .yl .y b { font-weight:700; }
+  .yl .y span { color:var(--be); font-size:11.5px; }
+  .yl .y.sel span { color:#ffd9b8; }
+  .pill { display:inline-block; margin-left:8px; font-size:10.5px; font-weight:700; color:var(--be); background:var(--be-bg); border:0.5px solid var(--be); border-radius:99px; padding:1px 8px; white-space:nowrap; }
+  .note { max-width:980px; margin-top:16px; font-size:12px; line-height:1.65; color:#44556a; }
+  .note b { color:var(--navy); }
+  .old { background:#fff; border:1px solid #d5dbe5; border-radius:10px; padding:8px; width:268px; box-shadow:0 4px 12px rgba(10,20,35,.1); }
+  .old .y { padding:6px 12px; font-size:13px; color:#444; }
+</style>
+</head>
+<body>
+<h1>Mockup: Inactive Date แสดงปี ค.ศ. คู่ พ.ศ. ที่ระดับปี</h1>
+<p class="sub">ซ้าย = ปฏิทินเดิม (ของ Browser แก้ไม่ได้) · ขวา = ปฏิทินใหม่ที่ทำเอง ลองกดได้จริง ยังไม่ได้แก้ในระบบ</p>
+
+<div class="wrap">
+  <div class="col">
+    <span class="tag">เดิม: &lt;input type="date"&gt; ของ Browser</span>
+    <div class="old">
+      <div style="font-weight:700;color:#1a3a5c;padding:2px 6px 8px">October 2026 ▾</div>
+      <div class="y">2026</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center;padding:2px 0 6px;color:#555">
+        <div style="padding:7px 0">Jan</div><div>Feb</div><div>Mar</div><div>Apr</div>
+        <div style="padding:7px 0">May</div><div>Jun</div><div>Jul</div><div>Aug</div>
+        <div style="padding:7px 0">Sep</div><div style="background:#1a2230;color:#fff;border-radius:6px;padding:7px 0">Oct</div><div>Nov</div><div>Dec</div>
+      </div>
+      <div class="y">2027</div><div class="y">2028</div>
+    </div>
+    <p style="color:var(--mut);font-size:11.5px;margin-top:8px">ปีมีแต่ ค.ศ. ไม่มีที่ให้ใส่ พ.ศ.</p>
+  </div>
+
+  <div class="col">
+    <span class="tag">ใหม่: ปฏิทินที่ทำเอง (ปีมี ค.ศ. คู่ พ.ศ.)</span>
+    <div class="row">
+      <div class="k">Inactive Date <span style="color:#d33">*</span> <small>(เฉพาะ Closed)</small></div>
+      <div class="v" id="v">
+        <input id="inp" type="text" placeholder="mm/dd/yyyy" value="">
+        <span id="pill"></span>
+        <span class="cal-ic" id="ic">📅</span>
+        <div class="pop" id="pop"></div>
+      </div>
+    </div>
+    <p style="color:var(--mut);font-size:11.5px;margin-top:8px">กดไอคอน 📅 → กดชื่อเดือน/ปีด้านบน → เลือกเดือน → กดปีเพื่อเปิดรายการปี (ค.ศ. · พ.ศ.)</p>
+  </div>
+</div>
+
+<div class="note">
+  <b>สิ่งที่ได้:</b> ระดับปีมีทั้ง ค.ศ. และ พ.ศ. ในบรรทัดเดียวกัน (เช่น 2026 · พ.ศ. 2569) ช่องวันที่ยังพิมพ์ได้เอง และมีป้าย พ.ศ. ต่อท้ายหลังเลือกวันที่<br>
+  <b>ข้อสังเกต:</b> ค่าที่เก็บลงฐานข้อมูลยังเป็น ค.ศ. (YYYY-MM-DD) เหมือนเดิม ช่องไหนที่ใช้ &lt;input type="date"&gt; แบบเดียวกันสามารถเปลี่ยนมาใช้ตัวเดียวกันนี้ได้ (Inactive Date เป็นช่องแรก)<br>
+  <b>ข้อแลกเปลี่ยน:</b> ต้องเขียนปฏิทินเองแทนของ Browser (ปุ่มเลื่อนเดือน/ปี, เลือกวัน) หน้าตาจะต่างจากปฏิทินเดิมเล็กน้อย
+</div>
+
+<script>
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONF=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const pad=n=>String(n).padStart(2,'0');
+let st={view:'day', y:2026, m:9, sel:null};
+const pop=document.getElementById('pop'), inp=document.getElementById('inp'), pill=document.getElementById('pill');
+function parse(v){ const m=String(v).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(!m) return null; return {m:+m[1]-1,d:+m[2],y:+m[3]}; }
+function render(){
+  if(st.view==='day'){
+    const first=new Date(st.y,st.m,1).getDay(), dim=new Date(st.y,st.m+1,0).getDate(), prev=new Date(st.y,st.m,0).getDate();
+    let cells=''; ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(w=>cells+=`<div class="w">${w}</div>`);
+    for(let i=first-1;i>=0;i--) cells+=`<div class="d out">${prev-i}</div>`;
+    for(let d=1;d<=dim;d++){ const on=st.sel&&st.sel.y===st.y&&st.sel.m===st.m&&st.sel.d===d; cells+=`<div class="d ${on?'sel':''}" data-d="${d}">${d}</div>`; }
+    pop.innerHTML=`<div class="hd"><button class="t" id="t">${MONF[st.m]} ${st.y} ▾</button><span><button class="n" id="pv">‹</button><button class="n" id="nx">›</button></span></div><div class="dg">${cells}</div>`;
+    pop.querySelectorAll('.d[data-d]').forEach(el=>el.onclick=()=>{ st.sel={y:st.y,m:st.m,d:+el.dataset.d}; setVal(); pop.classList.remove('open'); });
+    pop.querySelector('#t').onclick=()=>{st.view='month';render();};
+    pop.querySelector('#pv').onclick=()=>{ st.m--; if(st.m<0){st.m=11;st.y--;} render(); };
+    pop.querySelector('#nx').onclick=()=>{ st.m++; if(st.m>11){st.m=0;st.y++;} render(); };
+  } else if(st.view==='month'){
+    pop.innerHTML=`<div class="hd"><button class="t" id="t">${st.y} · พ.ศ. ${st.y+543} ▾</button></div><div class="mg">${MON.map((m,i)=>`<div class="m ${i===st.m?'sel':''}" data-m="${i}">${m}</div>`).join('')}</div>`;
+    pop.querySelectorAll('.m').forEach(el=>el.onclick=()=>{ st.m=+el.dataset.m; st.view='day'; render(); });
+    pop.querySelector('#t').onclick=()=>{st.view='year';render();};
+  } else {
+    const ys=[]; for(let y=st.y-4;y<=st.y+6;y++) ys.push(y);
+    pop.innerHTML=`<div class="hd"><button class="t">เลือกปี (ค.ศ. · พ.ศ.)</button></div><div class="yl">${ys.map(y=>`<div class="y ${y===st.y?'sel':''}" data-y="${y}"><b>${y}</b><span>พ.ศ. ${y+543}</span></div>`).join('')}</div>`;
+    pop.querySelectorAll('.y').forEach(el=>el.onclick=()=>{ st.y=+el.dataset.y; st.view='month'; render(); });
+    const cur=pop.querySelector('.y.sel'); if(cur) cur.scrollIntoView({block:'center'});
+  }
+}
+function setVal(){
+  if(!st.sel){ inp.value=''; pill.innerHTML=''; return; }
+  inp.value=`${pad(st.sel.m+1)}/${pad(st.sel.d)}/${st.sel.y}`;
+  pill.innerHTML=`<span class="pill">พ.ศ. ${st.sel.y+543}</span>`;
+}
+document.getElementById('ic').onclick=e=>{ e.stopPropagation(); const p=parse(inp.value); if(p){st.y=p.y;st.m=p.m;st.sel=p;} st.view='day'; render(); pop.classList.toggle('open'); };
+pop.onclick=e=>e.stopPropagation();
+document.addEventListener('click',()=>pop.classList.remove('open'));
+inp.addEventListener('input',()=>{ const p=parse(inp.value); if(p){ st.sel=p; st.y=p.y; st.m=p.m; pill.innerHTML=`<span class="pill">พ.ศ. ${p.y+543}</span>`; } else pill.innerHTML=''; });
+render();
+</script>
+</body>
+</html>

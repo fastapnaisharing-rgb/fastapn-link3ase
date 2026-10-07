@@ -116,6 +116,22 @@ router.get("/status", async (req, res) => {
 });
 
 // ── POST /api/vat/period/close — ปิด Period ปัจจุบัน + เปิดเดือนถัดไป ─────
+// MARKER_VATPERIOD_CLOSE_INTEGRITY_CHECK_V1 -- นับจำนวนแถวตามสถานะ Over/ปกติ ก่อน-หลังปิด Period เพื่อตรวจว่าข้อมูลไม่ตกหล่น
+async function countOverStatuses(client) {
+  const out = { pre: 0, ovp: 0, draft: 0, fu: 0 };
+  for (const tbl of ["vat_upload_popvatdraft", "vat_simpleinputdraft", "vat_adi_transferdraft", "vat_watchlist_report"]) {
+    try {
+      await client.query("SAVEPOINT cntchk_sp");
+      const { rows } = await client.query(`SELECT status, COUNT(*)::int AS n FROM ${tbl} WHERE status IN ('pre-draft','ovp-draft','draft','fu-draft') GROUP BY status`);
+      rows.forEach((r) => { const k = { "pre-draft": "pre", "ovp-draft": "ovp", draft: "draft", "fu-draft": "fu" }[r.status]; if (k) out[k] += r.n; });
+      await client.query("RELEASE SAVEPOINT cntchk_sp");
+    } catch (e) {
+      try { await client.query("ROLLBACK TO SAVEPOINT cntchk_sp"); } catch (e2) { /* ignore */ }
+    }
+  }
+  return out;
+}
+
 router.post("/close", async (req, res) => {
   const role = req.user.appRole;
   const permissions = req.user.permissions || {};
@@ -159,6 +175,38 @@ router.post("/close", async (req, res) => {
     }
     const now = new Date();
 
+    // MARKER_VATPERIOD_CLOSE_AUTO_FREEZE_V1 -- ก่อนเลื่อนงวด: เปลี่ยน Draft ของงวดที่กำลังปิดเป็น Final ทุก BU (Draft ตาม Live มาตลอดแล้ว) -- หลังปิด Draft หยุด และเริ่มนับหน้าต่างอัปเดต 20/30 วัน
+    // ใช้ SAVEPOINT ต่อ BU -- ถ้า Freeze พลาดต้องไม่ทำให้การปิด Period ล้ม (แจ้งผลใน activity_log + Response)
+    const freezeSummary = { frozen: 0, unchanged: 0, cleared: 0, skipped: 0, errors: [] };
+    try {
+      // MARKER_VATPERIOD_CLOSE_FREEZE_CLEARED_BU_V1 -- รายชื่อ BU ที่ต้อง Freeze = company_list (ทุก BU) + BU ที่มีใน Live + BU ที่มี Draft ค้าง
+      // กัน BU ที่เคลียร์หมดก่อนปิดเดือน (Live ว่าง) หลุดรอบ -- ฟังก์ชัน Finalize จะย้าย Draft ค้างไป History แล้วถือเดือนนั้นเป็นศูนย์
+      // งวดของแต่ละ BU = fn_vat_effective_period_month (BU โหมด prev ถือเดือนก่อนหน้างวดระบบ) -- Final ตามงวดของ BU เอง
+      const { rows: freezeBus } = await client.query(
+        `SELECT b.bu, fn_vat_effective_period_month(b.bu) AS period_month
+           FROM (SELECT bu FROM company_list WHERE bu IS NOT NULL AND btrim(bu) <> ''
+                 UNION SELECT bu FROM vat_summary_live
+                 UNION SELECT bu FROM vat_summary_frozen WHERE freeze_status = 'draft') b
+          WHERE fn_vat_effective_period_month(b.bu) IS NOT NULL
+          ORDER BY b.bu`);
+      for (const { bu: fbu, period_month: fper } of freezeBus) {
+        try {
+          await client.query("SAVEPOINT closefreeze_sp");
+          const fr = await client.query(`SELECT fn_freeze_vat_finalize($1, $2, $3, 'auto-close') AS r`, [fper, fbu, username]);
+          const act = fr.rows[0] && fr.rows[0].r && fr.rows[0].r.action;
+          if (act === "frozen") freezeSummary.frozen++; else if (act === "unchanged") freezeSummary.unchanged++; else if (act === "cleared") freezeSummary.cleared++; else freezeSummary.skipped++;
+          await client.query("RELEASE SAVEPOINT closefreeze_sp");
+        } catch (e) {
+          try { await client.query("ROLLBACK TO SAVEPOINT closefreeze_sp"); } catch (e2) { /* ignore */ }
+          console.error("POST /vat/period/close auto freeze error:", fbu, e.message);
+          freezeSummary.errors.push({ bu: fbu, error: e.message });
+        }
+      }
+    } catch (e) {
+      console.error("POST /vat/period/close auto freeze list error:", e.message);
+      freezeSummary.errors.push({ bu: "*", error: e.message });
+    }
+
     await setSetting("vat_period_month", closingMonthStr, username, client);
     await setSetting("vat_period_current_status", "open", username, client);
     await setSetting("vat_period_closed_by", username, username, client);
@@ -171,9 +219,57 @@ router.post("/close", async (req, res) => {
       `UPDATE company_list SET
         vat_grn_prev = vat_grn,
         vat_grn = vat_grn_ov,
-        vat_grn_ov = 0
+        vat_grn_ov = 0,
+        vat_over_period = false -- MARKER_VATPERIOD_CLOSE_RELEASE_OVER_MODE_V1 ปิด Period แล้วปลดโหมด Over Period (เลขที่วิ่งไว้ใน vat_grn_ov ถูกดึงมาเป็นเลขปัจจุบันข้างบนแล้ว)
        WHERE deleted = false`
     );
+
+    // MARKER_VATPERIOD_CLOSE_RELEASE_FU_OVP_DRAFT_V1
+    // ปิด Period: รายการที่พักไว้ (status='ovp-draft' จาก Over Period) กลับเป็น 'draft' ทั้งหมด (Period ของแถวเป็นเดือนถัดไป = Period ใหม่พอดี)
+    // ใช้ SAVEPOINT -- ถ้าตารางไหนไม่มี/พลาด ต้องไม่ทำให้การปิด Period ล้มทั้งก้อน
+    const cntBefore = await countOverStatuses(client); // MARKER_VATPERIOD_CLOSE_INTEGRITY_CHECK_V1
+    let ovpReleased = 0;
+    // MARKER_VATPERIOD_REOPEN_RESTORE_OVER_V1 -- จดรายการที่ปล่อยตอนปิด เพื่อให้ /reopen ย้อนกลับได้ตรงตัว (ไม่ต้องเดาจากรูปแบบวันที่)
+    try {
+      await client.query("SAVEPOINT ovplog_sp");
+      await client.query(`CREATE TABLE IF NOT EXISTS vat_close_released_rows (tbl text NOT NULL, row_id bigint NOT NULL, lane text NOT NULL, closed_period text, created_at timestamptz DEFAULT NOW())`);
+      await client.query(`DELETE FROM vat_close_released_rows`);
+      await client.query("RELEASE SAVEPOINT ovplog_sp");
+    } catch (e) {
+      console.error("POST /vat/period/close ovp log init error:", e.message);
+      try { await client.query("ROLLBACK TO SAVEPOINT ovplog_sp"); } catch (e2) { /* ignore */ }
+    }
+    const logReleased = async (tbl, lane, rows) => {
+      if (!rows || !rows.length) return;
+      await client.query(
+        `INSERT INTO vat_close_released_rows (tbl, row_id, lane, closed_period) SELECT $1, x, $2, $3 FROM unnest($4::bigint[]) AS x`,
+        [tbl, lane, closingMonthStr, rows.map((r) => r.id)]
+      );
+    };
+    for (const tbl of ["vat_upload_popvatdraft", "vat_simpleinputdraft", "vat_adi_transferdraft", "vat_watchlist_report"]) {
+      try {
+        await client.query("SAVEPOINT ovprel_sp");
+        const r = await client.query(`UPDATE ${tbl} SET status = 'draft' WHERE status = 'fu-draft' RETURNING id`); // FU-Draft (Confirm แล้วตอน Over) -> draft
+        ovpReleased += r.rowCount;
+        await logReleased(tbl, 'fu', r.rows);
+        if (tbl === "vat_simpleinputdraft" || tbl === "vat_adi_transferdraft") { // OVP-Draft (ยังไม่ Confirm ฝั่ง Over) -> pre-draft
+          const r2 = await client.query(`UPDATE ${tbl} SET status = 'pre-draft' WHERE status = 'ovp-draft' RETURNING id`);
+          ovpReleased += r2.rowCount;
+          await logReleased(tbl, 'ovp', r2.rows);
+        }
+        await client.query("RELEASE SAVEPOINT ovprel_sp");
+      } catch (e) {
+        console.error("POST /vat/period/close release ovp-draft error:", tbl, e.message);
+        try { await client.query("ROLLBACK TO SAVEPOINT ovprel_sp"); } catch (e2) { /* ignore */ }
+      }
+    }
+
+    const cntAfter = await countOverStatuses(client); // MARKER_VATPERIOD_CLOSE_INTEGRITY_CHECK_V1
+    const integrityOk = cntAfter.ovp === 0 && cntAfter.fu === 0
+      && (cntBefore.pre + cntBefore.ovp) === cntAfter.pre
+      && (cntBefore.draft + cntBefore.fu) === cntAfter.draft;
+    const integrityText = `ตรวจข้อมูลตอนปิด: ก่อน Pre-draft ${cntBefore.pre} / OVP ${cntBefore.ovp} / Draft ${cntBefore.draft} / FU ${cntBefore.fu} → หลัง Pre-draft ${cntAfter.pre} / Draft ${cntAfter.draft} / OVP ${cntAfter.ovp} / FU ${cntAfter.fu} — ${integrityOk ? "ครบ ไม่ตกหล่น" : "⚠ ตัวเลขไม่ตรง กรุณาตรวจสอบ"}`;
+    if (!integrityOk) console.error("POST /vat/period/close integrity mismatch:", JSON.stringify({ cntBefore, cntAfter }));
 
     // MARKER_VATPERIOD_CLOSE_AUTO_PVBACKUP_V1
     // กรณีไม่มีใครกด Finish: ปิด Period แล้ว Batch ที่ Export ค้างอยู่ (status='exported') เปลี่ยนเป็น 'pv-backup' อัตโนมัติ + กำหนดหมดอายุ = วันปิด (Popvat/Simple 6 เดือน, ADI 1 เดือน)
@@ -211,7 +307,7 @@ router.post("/close", async (req, res) => {
     await client.query(
       `INSERT INTO activity_log (username, module, action, detail, created_at)
        VALUES ($1, 'VAT', 'CLOSE_PERIOD', $2, NOW())`,
-      [logUsername, JSON.stringify({ closed_month: closingMonthStr, bu_reset_count: rowCount, pv_backup_rows: pvBackupCount })]
+      [logUsername, JSON.stringify({ closed_month: closingMonthStr, bu_reset_count: rowCount, pv_backup_rows: pvBackupCount, freeze: freezeSummary, over_before: cntBefore, over_after: cntAfter, integrity_ok: integrityOk })]
     );
 
     await client.query(
@@ -226,7 +322,7 @@ router.post("/close", async (req, res) => {
          read_by = EXCLUDED.read_by`,
       [
         `ปิด VAT Period ${fmtMonth(closingMonthStr)} — ทุก BU`,
-        `สั่งปิด VAT Period เดือน ${fmtMonth(closingMonthStr)} ให้ทุก BU (${rowCount} บริษัท) — เลขวิ่ง GRN Reset เป็น 0 — ดำเนินการโดย ${username}`,
+        `สั่งปิด VAT Period เดือน ${fmtMonth(closingMonthStr)} ให้ทุก BU (${rowCount} บริษัท) — เลขวิ่ง GRN Reset เป็น 0 — ดำเนินการโดย ${username} — ${integrityText}`,
         username,
         JSON.stringify([username]),
       ]
@@ -240,6 +336,8 @@ router.post("/close", async (req, res) => {
       closed_month: closingMonthStr,
       bu_reset_count: rowCount,
       closed_by: username,
+      freeze: freezeSummary,
+      integrity: { ok: integrityOk, before: cntBefore, after: cntAfter },
     });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -320,6 +418,32 @@ router.post("/reopen", async (req, res) => {
       try { await client.query("ROLLBACK TO SAVEPOINT taxclose_sp"); } catch (e2) { /* ignore */ }
     }
 
+    // MARKER_VATPERIOD_REOPEN_RESTORE_OVER_V1
+    // Reopen: รายการที่ถูกปล่อยตอน Close กลับไปเป็น Over อีกครั้ง (draft -> fu-draft, pre-draft -> ovp-draft)
+    // ย้อนเฉพาะแถวที่ยังไม่ถูกเปลี่ยนต่อ (ยัง draft / pre-draft อยู่ ; ที่ Export / Confirm ไปแล้วไม่แตะ)
+    let overRestored = 0;
+    for (const [tbl, lane, fromSt, toSt] of [["vat_upload_popvatdraft", "fu", "draft", "fu-draft"], ["vat_simpleinputdraft", "fu", "draft", "fu-draft"], ["vat_adi_transferdraft", "fu", "draft", "fu-draft"], ["vat_watchlist_report", "fu", "draft", "fu-draft"], ["vat_simpleinputdraft", "ovp", "pre-draft", "ovp-draft"], ["vat_adi_transferdraft", "ovp", "pre-draft", "ovp-draft"]]) {
+      try {
+        await client.query("SAVEPOINT ovprestore_sp");
+        const r = await client.query(
+          `UPDATE ${tbl} SET status = $1 WHERE status = $2 AND id IN (SELECT row_id FROM vat_close_released_rows WHERE tbl = $3 AND lane = $4)`,
+          [toSt, fromSt, tbl, lane]
+        );
+        overRestored += r.rowCount;
+        await client.query("RELEASE SAVEPOINT ovprestore_sp");
+      } catch (e) {
+        console.error("POST /vat/period/reopen restore over error:", tbl, lane, e.message);
+        try { await client.query("ROLLBACK TO SAVEPOINT ovprestore_sp"); } catch (e2) { /* ignore */ }
+      }
+    }
+    try {
+      await client.query("SAVEPOINT ovpclr_sp");
+      await client.query(`DELETE FROM vat_close_released_rows`);
+      await client.query("RELEASE SAVEPOINT ovpclr_sp");
+    } catch (e) {
+      try { await client.query("ROLLBACK TO SAVEPOINT ovpclr_sp"); } catch (e2) { /* ignore */ }
+    }
+
     // MARKER_VATPERIOD_REOPEN_CLEAR_NOTIF_V1
     // ── Bug เดิม: Reopen ไม่เคยลบ Notification "ปิด Period" ที่ /close สร้างไว้ ──
     // ── ทำให้ Bell ยังค้างขึ้นแจ้งว่าปิด Period อยู่ ทั้งที่ Reopen ไปแล้ว ──
@@ -329,7 +453,7 @@ router.post("/reopen", async (req, res) => {
 
     await client.query("COMMIT");
     wsBroadcast('period_status_updated', { type: 'VAT' }); // MARKER_PERIOD_REALTIME_BROADCAST_V1
-    res.json({ ok: true, reverted_month: revertedMonthStr, bu_count: rowCount });
+    res.json({ ok: true, reverted_month: revertedMonthStr, bu_count: rowCount, over_restored: overRestored });
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("POST /vat/period/reopen error:", err.message);

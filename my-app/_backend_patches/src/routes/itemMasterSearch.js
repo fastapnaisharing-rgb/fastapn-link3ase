@@ -20,6 +20,7 @@ router.get("/itemcode-search", async (req, res) => {
     const sourceModule = String(req.query.sourceModule || "AP").trim();
     const favKey = String(req.query.favKey || "").trim();
     // MARKER_ITEMCODE_ALLBU_TOGGLE_V1 -- Toggle "ค้นหาทุก BU" ฝั่ง Editor+ (ItemCodeSearchPopup)
+    const book = String(req.query.book || "").trim().toLowerCase();
     const allBu = String(req.query.allBu || "").trim() === "true";
 
     const params = [sourceModule];
@@ -29,7 +30,11 @@ router.get("/itemcode-search", async (req, res) => {
 
     if (!allBu) {
       params.push(bu);
-      where += ` AND (LOWER(bu) = 'free' OR ($${params.length} <> '' AND LOWER(bu) = $${params.length}))`;
+      const bi = params.length;
+      // MARKER_ITEMCODE_GROUPBOOK_V1 -- Group Book (CGT/CGR/CMG): รวม Item ที่ BU = Book ด้วย
+      params.push(book);
+      const bk = params.length;
+      where += ` AND (LOWER(bu) = 'free' OR ($${bi} <> '' AND LOWER(bu) = $${bi}) OR ($${bk} <> '' AND LOWER(bu) = $${bk}))`;
     }
 
     if (q) {
@@ -44,7 +49,7 @@ router.get("/itemcode-search", async (req, res) => {
       orderBy = `(favorite_taxids @> jsonb_build_array($${params.length}::text)) DESC, code ASC`;
     }
 
-    params.push(50);
+    params.push(300); // MARKER_ITEMCODE_LIMIT_300_V1
     const sql = `
       SELECT id, code, bu, description, cpc, account, sub, spec_tx,
              dis_g, dis_g_desc, i_and_g, i_and_g_desc, value, value_desc,

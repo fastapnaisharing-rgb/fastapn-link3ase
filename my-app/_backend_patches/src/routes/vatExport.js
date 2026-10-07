@@ -507,16 +507,16 @@ router.get("/history", async (req, res) => {
     const batchIds = Array.from(batchMap.keys()).filter(Boolean);
     if (batchIds.length > 0) { // MARKER_VATEXPORT_FINISH_PVBACKUP_V1
       const { rows: fin } = await pool.query(
-        `SELECT batch_id, MIN(finished_at) AS finished_at, MIN(expire_at) AS expire_at FROM (
-           SELECT batch_id, finished_at, expire_at FROM vat_upload_popvatdraft WHERE status = 'pv-backup' AND batch_id = ANY($1)
-           UNION ALL SELECT batch_id, finished_at, expire_at FROM vat_simpleinputdraft WHERE status = 'sm-backup' AND batch_id = ANY($1)
-           UNION ALL SELECT batch_id, finished_at, expire_at FROM vat_adi_transferdraft WHERE status = 'adi-backup' AND batch_id = ANY($1)
+        `SELECT batch_id, MIN(finished_at) AS finished_at, MIN(expire_at) AS expire_at, MIN(NULLIF(period, '')) AS period FROM ( /* MARKER_VATEXPORT_HISTORY_RETURN_PERIOD_V1 */
+           SELECT batch_id, finished_at, expire_at, period FROM vat_upload_popvatdraft WHERE status = 'pv-backup' AND batch_id = ANY($1)
+           UNION ALL SELECT batch_id, finished_at, expire_at, period FROM vat_simpleinputdraft WHERE status = 'sm-backup' AND batch_id = ANY($1)
+           UNION ALL SELECT batch_id, finished_at, expire_at, period FROM vat_adi_transferdraft WHERE status = 'adi-backup' AND batch_id = ANY($1)
          ) t GROUP BY batch_id`,
         [batchIds]
       );
       fin.forEach((f) => {
         const bt = batchMap.get(f.batch_id);
-        if (bt) { bt.status = 'pv-backup'; /* รวมทุกประเภท Backup: UI ใช้ซ่อนจากประวัติ Export */ bt.finishedAt = f.finished_at; bt.expireAt = f.expire_at; }
+        if (bt) { bt.status = 'pv-backup'; /* รวมทุกประเภท Backup: UI ใช้ซ่อนจากประวัติ Export */ bt.finishedAt = f.finished_at; bt.expireAt = f.expire_at; bt.period = f.period || null; }
       });
     }
     res.json({ ok: true, batches: Array.from(batchMap.values()) });
@@ -621,6 +621,52 @@ router.post("/batch/:batchId/finish", async (req, res) => {
   } catch (err) {
     try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
     console.error("POST /vat-export/batch/:batchId/finish error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
+  }
+});
+
+// MARKER_VATEXPORT_POPVAT_END_PROCESS_DIRECT_V1 -- Feature ใหม่แยกจาก Flow เดิมทั้งหมด (ไม่แก้ /generate /finish เดิม)
+// ── POST /api/vat-export/popvat/end-process-direct -- ข้าม Generate/Download: รายการ Popvat ที่ติ๊กไว้ (status='draft' เท่านั้น)
+//    ย้ายตรงเป็น 'pv-backup' + expire_at = +6 เดือน เหมือนผ่าน Finish ปกติ แต่ไม่มีไฟล์จริง (ไม่ผ่าน status='exported' เลย)
+//    ใช้ Batch_id สมมติ (Label "DirectBackup" ให้ดูออกว่าข้าม Generate) เพื่อให้ยังโผล่ในหน้า Transaction Backup + Restore คืนเป็น Draft ได้ปกติ (ใช้ Endpoint Restore เดิมร่วมกันได้เลย เพราะ Restore ไม่ได้เช็คว่ามีไฟล์)
+router.post("/popvat/end-process-direct", async (req, res) => {
+  const { bu, ids } = req.body || {};
+  if (!bu || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: "ข้อมูลไม่ครบ (ต้องมี bu และ ids อย่างน้อย 1 รายการ)" });
+  }
+  const idInts = ids.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+  if (idInts.length === 0) {
+    return res.status(400).json({ error: "ids ไม่ถูกต้อง" });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    // MARKER_VATEXPORT_DIRECTBACKUP_DAILY_V1 -- รวมเป็น 1 Batch ต่อ BU ต่อวัน (เดิมแยกตามนาที ทำให้ Transaction Backup มี Batch เยอะ)
+    const batchId = `${bu}_DirectBackup_${yyyy}${mm}${dd}`;
+    const upd = await client.query(
+      `UPDATE vat_upload_popvatdraft
+       SET batch_id = $1, status = '${BACKUP_STATUS.popvat}', finished_at = NOW(), expire_at = NOW() + INTERVAL '${PV_RETENTION.popvat}'
+       WHERE id = ANY($2) AND bu = $3 AND status = 'draft'
+       RETURNING id, expire_at`,
+      [batchId, idInts, bu]
+    );
+    if (upd.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "ไม่พบรายการสถานะ draft ตรงกับที่เลือก (อาจถูก Export/End Process ไปแล้ว)" });
+    }
+    await client.query("COMMIT");
+    broadcastVatExportUpdate("vat_export_updated", { batchId, buList: [bu] });
+    const expireAt = upd.rows[0]?.expire_at || null;
+    res.json({ ok: true, updated: upd.rowCount, skipped: idInts.length - upd.rowCount, batchId, expireAt });
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
+    console.error("POST /vat-export/popvat/end-process-direct error:", err.message);
     res.status(500).json({ error: "Internal server error" });
   } finally {
     client.release();

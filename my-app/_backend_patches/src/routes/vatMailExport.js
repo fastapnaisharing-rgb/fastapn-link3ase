@@ -16,10 +16,10 @@ const router = Router();
 const RED = "#C00000"; const GREEN = "#1E8E3E"; // Aging 5-6 = แดง, 0-4 = เขียว (ตามตัวอย่างเมล)
 const escHtml = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // เนื้อหาเมลแบบ HTML: ตัวแปรปกติแทนค่าแล้ว escape, {AGING_LIST} ใส่สีแดง/เขียวรายบรรทัด, {BU_LIST} เป็นตาราง
-function buildBodyHtml(template, vars, lines, buListHtml) {
+function buildBodyHtml(template, vars, lines, buListHtml, invoiceHtml) {
   const agingHtml = lines.map((l) => `<span style="color:${l.aging >= 5 ? RED : GREEN}">${escHtml(l.text)}</span>`).join("<br>");
   const renderSeg = (tpl) => String(tpl || "").split("{AGING_LIST}").map((seg) => escHtml(applyVars(seg, vars)).replace(/\r?\n/g, "<br>")).join(agingHtml);
-  const html = String(template || "").split("{BU_LIST}").map(renderSeg).join(buListHtml || "");
+  const html = String(template || "").split("{INVOICE_LIST}").map((t) => t.split("{BU_LIST}").map(renderSeg).join(buListHtml || "")).join(invoiceHtml || ""); // MARKER_VATMAILEXPORT_INVOICE_LIST_V1
   return `<div style="font-family:Tahoma,'Segoe UI',sans-serif;font-size:11pt">${html}</div>`;
 }
 const STORAGE_ROOT = "C:\\apps\\fastapn-backend\\storage";
@@ -131,7 +131,16 @@ async function fetchRows(cfg, scope, ctx) {
   } else {
     sql = `SELECT * FROM vat_watchlist_report WHERE ${cond}`;
   }
-  const { rows } = await pool.query(sql, params);
+  const { rows: rawRows } = await pool.query(sql, params);
+  // MARKER_VATMAILEXPORT_JUNK_SUBTOTAL_V1 -- ตัดข้อความสรุปยอดกลุ่ม ("Total Group Branch : &cp_group1 : ...") ที่ติดมากับชื่อผู้ค้า/คอลัมน์อื่น; แถวที่ไม่มีใบแจ้งหนี้/เช็ค = แถวสรุปล้วน ตัดทิ้ง
+  const JUNK_RE = /\s*(?:[-=_]{3,}\s*)?(?:total\s*group\s*branch|&cp_).*$/i;
+  const rows = [];
+  rawRows.forEach((r) => {
+    let junk = false;
+    Object.keys(r).forEach((k) => { if (typeof r[k] === "string" && JUNK_RE.test(r[k])) { junk = true; r[k] = r[k].replace(JUNK_RE, "").trim(); } });
+    if (junk && !String(r.invoice_ref || "").trim() && !String(r.check_no || "").trim()) return;
+    rows.push(r);
+  });
   return { rows, rules, bus };
 }
 
@@ -174,9 +183,28 @@ async function loadLookups(rows) {
     const b = String(r.branch || "").trim();
     const br = branchByCode[b] || branchByCode[cleanBranch(b)] || {};
     const bi = buInfoByBu[String(r.bu || "").trim()] || {};
-    return { name: bi.name || "", taxId: pickCol(br, "BU-TaxID", "BU-Tax ID") || bi.taxId || "", branch: pickCol(br, "BU-Branch") };
+    return { name: bi.name || "", taxId: pickCol(br, "BU-TaxID", "BU-Tax ID") || bi.taxId || "", branch: pickCol(br, "BU-Branch"), brandBu: pickCol(br, "BU") }; // MARKER_VATMAILEXPORT_BU_BY_BRANCHLIST_V1 -- brandBu = branch_list."BU" (เช่น 502xxx = KFC)
   };
   return { buInfoByBu, rowInfo };
+}
+
+// MARKER_VATMAILEXPORT_BU_BY_BRANCHLIST_V1 -- Group Range (vat_watchlist_bu_group_range) ใช้เป็นตัวสำรอง: ตัด A/T/F -> อ่าน N ตำแหน่ง -> Range แคบสุดชนะ (ตรรกะเดียวกับ Frontend matchVatWatchlistBuGroup)
+async function loadBuGroupRanges() {
+  try { const { rows } = await pool.query(`SELECT * FROM vat_watchlist_bu_group_range`); return rows; } catch { return []; }
+}
+function matchBuGroup(branch, ranges) {
+  if (!branch || !Array.isArray(ranges) || ranges.length === 0) return "";
+  const clean = String(branch).trim().replace(/^[ATF]/i, "");
+  let best = ""; let bestSpan = Infinity;
+  for (const r of ranges) {
+    const key = r.prefix_length ? clean.slice(0, Number(r.prefix_length)) : clean;
+    if (r.exclude_start && r.exclude_end && key >= String(r.exclude_start) && key <= String(r.exclude_end)) continue;
+    if (key >= String(r.range_start) && key <= String(r.range_end)) {
+      const span = (Number(r.range_end) || 0) - (Number(r.range_start) || 0);
+      if (span < bestSpan) { bestSpan = span; best = r.group_name || ""; }
+    }
+  }
+  return best;
 }
 
 // ── {BU_LIST}: 1 แถวต่อ 1 BU = ชื่อบริษัทไทย, Tax ID ของ BU, ช่วงเดือนที่ตัดชำระ (Min-Max payment_date) ──
@@ -217,6 +245,9 @@ async function generateMails(cfg, ctx, username, preview) {
     r._person = matchRelatedPerson(r, rl);
   });
   const lk = await loadLookups(rows);
+  // MARKER_VATMAILEXPORT_BU_BY_BRANCHLIST_V1 -- _buDisp = BU ที่แสดงใน Raw/Pivot: branch_list."BU" (Branch Code) -> Group Range -> BU เดิมของแถว (r.bu ยังใช้หาอีเมล/Related Person ตามเดิม)
+  const buRanges = await loadBuGroupRanges();
+  rows.forEach((r) => { r._buDisp = lk.rowInfo(r).brandBu || matchBuGroup(r.branch, buRanges) || r.bu; });
 
   const todayStr = new Date().toLocaleDateString("en-GB");
   const baseVars = { BU: scope.label, DATE: todayStr, "ชื่อผู้รับ": rules.recipient_name || "" };
@@ -228,8 +259,18 @@ async function generateMails(cfg, ctx, username, preview) {
     const lines = buildAgingLines(subset, zone ? [] : rules.aging, period);
     const withData = lines.filter((l) => l.total !== 0);
     const buList = buildBuList(subset, lk.rowInfo);
+    // MARKER_VATMAILEXPORT_INVOICE_LIST_V1 -- {INVOICE_LIST}: ตารางใบแจ้งหนี้ (สูงสุด 30 รายการ เรียง Aging มาก -> น้อย)
+    const invSorted = [...subset].sort((a, b) => Number(b.aging_months) - Number(a.aging_months));
+    const invShow = invSorted.slice(0, 30); const invMore = invSorted.length - invShow.length;
+    const fmtD = (d) => { if (!d) return ""; const t = new Date(d); return isNaN(t) ? String(d) : t.toLocaleDateString("en-GB"); };
+    const invText = invShow.map((r) => `${r.bu || ""} | ${r.invoice_ref || ""} | ${r.check_no || ""} | ${fmtD(r.payment_date)} | ${fmtMoney(num(r.exp_amount))} | ${fmtMoney(num(r.exp_vat))}`).join("\n") + (invMore > 0 ? `\n... และอีก ${invMore} รายการ (ดูในไฟล์แนบ)` : "");
+    const tdS = "border:1px solid #bbb;padding:3px 8px";
+    const invoiceHtml = invShow.length
+      ? `<table style="border-collapse:collapse;font-size:10pt"><tr>${["BU", "Invoice", "Check No", "วันที่ชำระ", "มูลค่าก่อน VAT", "VAT"].map((h) => `<th style="${tdS};background:#f0f0f0">${h}</th>`).join("")}</tr>${invShow.map((r) => `<tr><td style="${tdS}">${escHtml(r.bu)}</td><td style="${tdS}">${escHtml(r.invoice_ref)}</td><td style="${tdS}">${escHtml(r.check_no)}</td><td style="${tdS}">${escHtml(fmtD(r.payment_date))}</td><td style="${tdS};text-align:right">${escHtml(fmtMoney(num(r.exp_amount)))}</td><td style="${tdS};text-align:right">${escHtml(fmtMoney(num(r.exp_vat)))}</td></tr>`).join("")}</table>${invMore > 0 ? `<div style="font-size:10pt;color:#666">... และอีก ${invMore} รายการ (ดูในไฟล์แนบ)</div>` : ""}`
+      : "";
     const vars = {
       ...baseVars, ...extra,
+      INVOICE_LIST: invText,
       AGING_LIST: lines.map((l) => l.text).join("\n"),
       BU_LIST: buListText(buList),
       "เดือนเริ่ม": lines.length ? lines[0].month : "",
@@ -237,11 +278,12 @@ async function generateMails(cfg, ctx, username, preview) {
       TOTAL: fmtMoney(subset.reduce((s, r) => s + num(r.exp_vat), 0)),
       _hasData: withData.length,
     };
+    vars.BU_Code = vars.BU; vars.Sup_Greeting = vars["ชื่อผู้รับ"]; // MARKER_VATMAILEXPORT_PLACEHOLDER_OWNER_V1 -- ชื่อใหม่ (ชื่อเดิม {BU} {ชื่อผู้รับ} ยังใช้ได้)
     if (cfg.send_type === "SUPPLIER") { // MARKER_VATMAILEXPORT_SUPPLIER_MONTH_RANGE_V1 -- เมล Supplier: เดือนเริ่ม/สุดท้าย = Min/Max วันที่ชำระ รูปแบบ MM/YYYY
       const mins = buList.map((e) => e.min).filter(Boolean); const maxs = buList.map((e) => e.max).filter(Boolean);
       if (mins.length) { vars["เดือนเริ่ม"] = fmtMY(new Date(Math.min(...mins))); vars["เดือนสุดท้าย"] = fmtMY(new Date(Math.max(...maxs))); }
     }
-    return { lines, vars, buList };
+    return { lines, vars, buList, invoiceHtml };
   };
 
   if (cfg.send_type === "SUPPLIER") {
@@ -260,7 +302,35 @@ async function generateMails(cfg, ctx, username, preview) {
       const { rows: vc } = await pool.query(`SELECT "Code", "BU", "EMAIL" FROM vendor_category WHERE "Code" = ANY($1) AND COALESCE(TRIM("EMAIL"), '') <> ''`, [codes]);
       vc.forEach((v) => { const k = `${String(v.Code).trim()}|${String(v.BU || "").trim()}`; if (!emailByCodeBu[k]) emailByCodeBu[k] = v.EMAIL; if (!emailByCode[v.Code]) emailByCode[v.Code] = v.EMAIL; });
     } catch (e) { console.error("vendor_category EMAIL:", e.message); }
+    // MARKER_VATMAILEXPORT_VENDOR_GREETING_V1 -- Greeting Name ต่อผู้ค้า+BU จาก vendor_category."GREETING_NAME" ใช้เป็น {ชื่อผู้รับ} (ว่าง = ใช้ของ Config)
+    const greetByCodeBu = {}; const greetByCode = {};
+    try {
+      const { rows: gv } = await pool.query(`SELECT "Code", "BU", "GREETING_NAME" FROM vendor_category WHERE "Code" = ANY($1) AND COALESCE(TRIM("GREETING_NAME"), '') <> ''`, [codes]);
+      gv.forEach((v) => { const g = String(v.GREETING_NAME || "").trim(); const k = `${String(v.Code).trim()}|${String(v.BU || "").trim()}`; if (!greetByCodeBu[k]) greetByCodeBu[k] = g; if (!greetByCode[v.Code]) greetByCode[v.Code] = g; });
+    } catch (e) { console.error("vendor_category GREETING_NAME:", e.message); } // ยังไม่ได้เพิ่มคอลัมน์ = ข้าม ใช้ชื่อผู้รับของ Config
+    const resolveGreeting = (code, sub) => {
+      for (const b of new Set(sub.map((r) => String(r.bu || "").trim()))) { const g = greetByCodeBu[`${String(code).trim()}|${b}`]; if (g) return g; }
+      return greetByCode[code] || "";
+    };
     const splitMails = (t) => String(t || "").split(/[;,\n]+/).map((x) => x.trim()).filter(Boolean);
+    // MARKER_VATMAILEXPORT_BU_CC_V1 + MARKER_VATMAILEXPORT_PLACEHOLDER_OWNER_V1 -- ข้อมูลผู้ค้า (ที่อยู่/เบอร์ = ร่วมทุก BU) + BU Contact เจ้าของงาน (แยกตามผู้ค้า+BU) จาก vendor_category
+    const vcByCodeBu = {}; const vcByCode = {};
+    try {
+      const { rows: vx } = await pool.query(`SELECT "Code", "BU", "ADDRESS", "PHONE", "BU_CONTACT_NAME", "BU_CONTACT_EMAIL", "BU_CONTACT_PHONE" FROM vendor_category WHERE "Code" = ANY($1)`, [codes]);
+      vx.forEach((v) => { const c = String(v.Code).trim(); const k = `${c}|${String(v.BU || "").trim()}`; if (!vcByCodeBu[k]) vcByCodeBu[k] = v; (vcByCode[c] = vcByCode[c] || []).push(v); });
+    } catch (e) { console.error("vendor_category address/phone/bu_contact:", e.message); } // ยังไม่ได้เพิ่มคอลัมน์ = ข้าม (ค่าว่าง ไม่เพิ่ม CC)
+    const buSet = (sub) => [...new Set(sub.map((r) => String(r.bu || "").trim()))];
+    const buContactOf = (code, sub, f) => [...new Set(buSet(sub).map((b) => String((vcByCodeBu[`${String(code).trim()}|${b}`] || {})[f] || "").trim()).filter(Boolean))];
+    const supInfoOf = (code, sub, f) => { // ที่อยู่/เบอร์: ใช้ของ BU ในรายการก่อน ไม่มีค่อยใช้แถวอื่นของผู้ค้าเดียวกัน (ร่วมทุก BU)
+      for (const b of buSet(sub)) { const v = String((vcByCodeBu[`${String(code).trim()}|${b}`] || {})[f] || "").trim(); if (v) return v; }
+      return (vcByCode[String(code).trim()] || []).map((v) => String(v[f] || "").trim()).find(Boolean) || "";
+    };
+    const supPhoneOf = (code, sub) => supInfoOf(code, sub, "PHONE") || sub.map((r) => String(r.phone || "").trim()).find(Boolean) || ""; // ไม่มีใน Vendor Category = ใช้เบอร์จากรายงาน (vat_watchlist_report.phone)
+    const resolveBuCc = (code, sub) => { // อีเมลเจ้าของงาน (อาจหลายอัน คั่น ; ) -> รายการไม่ซ้ำ
+      const out = []; const seen = new Set();
+      buContactOf(code, sub, "BU_CONTACT_EMAIL").forEach((e) => splitMails(e).forEach((mm) => { const k = mm.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(mm); } }));
+      return out;
+    };
     const resolveTo = (code, sub) => {
       const seen = new Set(); const out = [];
       const add = (t) => splitMails(t).forEach((m) => { const lk2 = m.toLowerCase(); if (!seen.has(lk2)) { seen.add(lk2); out.push(m); } });
@@ -270,16 +340,29 @@ async function generateMails(cfg, ctx, username, preview) {
       return out.join("; ");
     };
     // MARKER_VATMAILEXPORT_ZONE_CC_V1 -- สั่งจาก Incomplete Zone: CC อัตโนมัติ = FAST_VAT_CC (.env) ถ้าไม่ตั้งค่าใช้ CC ของ Config
-    const ccFor = () => (zone ? (String(process.env.FAST_VAT_CC || "").trim() || cfg.mail_cc || "") : (cfg.mail_cc || ""));
+    // MARKER_VATMAILEXPORT_BU_CC_V1 -- ccFor(extra): CC ของ Config (หรือ FAST_VAT_CC) + อีเมลเจ้าของงาน (BU Contact) ของ BU ที่อยู่ในรายการของ Supplier นี้ (ไม่ซ้ำกัน)
+    // MARKER_VATMAILEXPORT_TOCC_PLACEHOLDER_V1 -- To/CC พิมพ์ {Sup_Email} / {BU_Contact_Email} ได้ -> แทนด้วยข้อมูลระดับ Vendor Detail ของผู้ค้ารายนั้น
+    let curCtx = null;
+    const phAddr = (t) => String(t || "").replace(/\{(Sup_Email|BU_Contact_Email)\}/g, (_, k) => (!curCtx ? "" : (k === "Sup_Email" ? resolveTo(curCtx[0], curCtx[1]) : resolveBuCc(curCtx[0], curCtx[1]).join("; "))));
+    const ccFor = (extra) => {
+      const base = phAddr(zone ? (String(process.env.FAST_VAT_CC || "").trim() || cfg.mail_cc || "") : (cfg.mail_cc || ""));
+      const add = splitMails(Array.isArray(extra) ? extra.join(";") : extra);
+      if (!add.length) return base;
+      const seen = new Set(); const out = [];
+      [...splitMails(base), ...add].forEach((m) => { const k = m.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(m); } });
+      return out.join("; ");
+    };
 
     const suppliers = [];
     for (const code of codes) {
       const sub = groups.get(code);
       const name = sub[0].vendor_name || code;
-      const to = resolveTo(code, sub);
+      curCtx = [code, sub];
+      const buCc = resolveBuCc(code, sub); // MARKER_VATMAILEXPORT_BU_CC_V1 (+ MARKER_VATMAILEXPORT_SUP_EMAIL_V1: {Sup_Email} = อีเมลผู้ค้าจาก Vendor Category -> supplier_list ผ่าน resolveTo)
+      const to = (rules.to_source === "MANUAL" && String(cfg.mail_to || "").trim()) ? splitMails(phAddr(cfg.mail_to)).join("; ") : (rules.to_source === "BU_CONTACT" ? buCc.join("; ") : resolveTo(code, sub)); /* MARKER_VATMAILEXPORT_TO_SOURCE_BU_CONTACT_V1 */ // MARKER_VATMAILEXPORT_INVOICE_LIST_V1 -- to_source
       if (preview) {
         suppliers.push({
-          supplier_code: code, supplier_name: name, to, to_missing: !to, cc: ccFor(), cc_missing: !ccFor(),
+          supplier_code: code, supplier_name: name, to, to_missing: !to, cc: ccFor(buCc), cc_missing: !ccFor(), bu_cc: buCc.join("; "),
           count: sub.length, total_vat: sub.reduce((s, r) => s + num(r.exp_vat), 0),
           bus: [...new Set(sub.map((r) => r.bu))],
           invoices: [...sub].sort((a, b) => Number(b.aging_months) - Number(a.aging_months)).map((r) => ({ bu: r.bu, invoice_ref: r.invoice_ref, check_no: r.check_no, payment_date: r.payment_date, exp_vat: num(r.exp_vat), aging_months: r.aging_months })),
@@ -291,13 +374,20 @@ async function generateMails(cfg, ctx, username, preview) {
       const { buffer } = await buildBuWorkbook({ rows: sub, period, buLabel: `${name} (${code})`, generatedBy: username, extraCols, rawCols: SUPPLIER_RAW_COLS });
       const fileName = `${safe(code)}_Outstanding_${stamp}.xlsx`;
       const fileId = await storeFile("vat-mail", sub[0].bu || bus[0], `mail${cfg.id}_${code}_${stamp}`, fileName, buffer, username);
-      const { vars, lines, buList } = makeVars(sub, { SUPPLIER: name, "Supplier Name": name });
+      const greetName = rules.name_source === "MANUAL" ? "" : resolveGreeting(code, sub); // MARKER_VATMAILEXPORT_VENDOR_GREETING_V1
+      const { vars, lines, buList, invoiceHtml } = makeVars(sub, {
+        SUPPLIER: name, "Supplier Name": name, // ชื่อเดิม (ยังใช้ได้)
+        // MARKER_VATMAILEXPORT_PLACEHOLDER_OWNER_V1 -- ชื่อใหม่ Sup_ = ของ Supplier / BU_Contact_ = ของเจ้าของงานฝั่ง BU
+        Sup_Name: name, Sup_Email: resolveTo(code, sub), Sup_Phone: supPhoneOf(code, sub), Sup_Address: supInfoOf(code, sub, "ADDRESS"),
+        BU_Contact_Name: buContactOf(code, sub, "BU_CONTACT_NAME").join("; "), BU_Contact_Email: buCc.join("; "), BU_Contact_Phone: buContactOf(code, sub, "BU_CONTACT_PHONE").join("; "),
+        ...(greetName ? { "ชื่อผู้รับ": greetName } : {}),
+      });
       mails.push({
         supplier_code: code, supplier_name: name,
         to, to_missing: !to,
-        cc: ccFor(),
+        cc: ccFor(buCc), bu_cc: buCc.join("; "),
         subject: applyVars(cfg.subject_template, vars), bodyText: applyVars(cfg.body_template, vars),
-        bodyHtml: buildBodyHtml(cfg.body_template, vars, lines, buListHtmlOf(buList)),
+        bodyHtml: buildBodyHtml(cfg.body_template, vars, lines, buListHtmlOf(buList), invoiceHtml),
         file_id: fileId, file_name: fileName, count: sub.length, total_vat: sub.reduce((s, r) => s + num(r.exp_vat), 0),
       });
     }
@@ -308,11 +398,28 @@ async function generateMails(cfg, ctx, username, preview) {
     // MARKER_VATMAILEXPORT_BU_FILENAME_V1 -- ชื่อไฟล์แนบเมล To BU ตามที่ใช้จริง: Pivot_BU_Incomplete_for_Report_{BU}.xlsx (ALL = ALL, หลาย BU = ต่อด้วย _)
     const fileName = `Pivot_BU_Incomplete_for_Report_${safe(scope.label === "ALL BU" ? "ALL" : bus.join("_"))}.xlsx`;
     const fileId = await storeFile("vat-mail", bus[0], `mail${cfg.id}_${stamp}`, fileName, buffer, username);
-    const { vars, lines, buList } = makeVars(rows);
+    const { vars, lines, buList, invoiceHtml } = makeVars(rows);
+    // MARKER_VATMAILEXPORT_TO_SOURCE_BU_CONTACT_V1 -- To BU: เลือก {BU_Contact_Email} = อีเมลเจ้าของงานของ BU ในรายการ (จาก vendor_category, ไม่ซ้ำ)
+    let toBu = cfg.mail_to || ""; let ccBu = cfg.mail_cc || "";
+    // To BU: {BU_Contact_Email} = อีเมลเจ้าของงานของ BU ในรายการ / {Sup_Email} = อีเมลผู้ค้าทุกรายในรายการ (จาก vendor_category, ไม่ซ้ำ)
+    const tokTxt = String(cfg.mail_to || "") + String(cfg.mail_cc || "");
+    const wantBuC = rules.to_source === "BU_CONTACT" || /\{BU_Contact_Email\}/.test(tokTxt); const wantSup = /\{Sup_Email\}/.test(tokTxt);
+    if (wantBuC || wantSup) {
+      const emBu = []; const emSup = []; const seenB = new Set(); const seenS = new Set();
+      const addTo = (arr, seen, t) => String(t || "").split(/[;,\n]+/).map((x) => x.trim()).filter(Boolean).forEach((m) => { const k = m.toLowerCase(); if (!seen.has(k)) { seen.add(k); arr.push(m); } });
+      try {
+        const pairs = new Set(rows.map((r) => `${String(r.supplier_code || "").trim()}|${String(r.bu || "").trim()}`));
+        const { rows: vx } = await pool.query(`SELECT "Code", "BU", "EMAIL", "BU_CONTACT_EMAIL" FROM vendor_category WHERE "Code" = ANY($1)`, [[...new Set(rows.map((r) => String(r.supplier_code || "").trim()))]]);
+        vx.forEach((v) => { if (!pairs.has(`${String(v.Code).trim()}|${String(v.BU || "").trim()}`)) return; addTo(emBu, seenB, v.BU_CONTACT_EMAIL); addTo(emSup, seenS, v.EMAIL); });
+      } catch (e) { console.error("BU mail To/CC placeholders:", e.message); }
+      const sub2 = (t) => String(t || "").replace(/\{BU_Contact_Email\}/g, emBu.join("; ")).replace(/\{Sup_Email\}/g, emSup.join("; "));
+      toBu = rules.to_source === "BU_CONTACT" ? emBu.join("; ") : sub2(cfg.mail_to);
+      ccBu = sub2(cfg.mail_cc);
+    }
     mails.push({
-      to: cfg.mail_to || "", cc: cfg.mail_cc || "",
+      to: toBu, cc: ccBu,
       subject: applyVars(cfg.subject_template, vars), bodyText: applyVars(cfg.body_template, vars),
-      bodyHtml: buildBodyHtml(cfg.body_template, vars, lines, buListHtmlOf(buList)),
+      bodyHtml: buildBodyHtml(cfg.body_template, vars, lines, buListHtmlOf(buList), invoiceHtml),
       file_id: fileId, file_name: fileName, count: rows.length, total_vat: rows.reduce((s, r) => s + num(r.exp_vat), 0),
       aging_lines: lines,
     });

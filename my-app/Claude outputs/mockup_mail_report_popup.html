@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><title>Mockup Email Report Popup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--navy:#1a3a5c;--line:#E3E5EA;--mut:#616e7c;--bg:#F4F3EF}
+*{box-sizing:border-box}
+body{font-family:Tahoma,"Segoe UI",Arial,sans-serif;background:var(--bg);margin:0;padding:16px;color:#1f2933;font-size:13px}
+.wrap{max-width:1000px;margin:0 auto}
+.note{font-size:12px;color:var(--mut);margin:0 0 10px;line-height:1.6}
+.bar{background:#fff;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.seg{display:inline-flex}
+.seg button{height:30px;padding:0 14px;border:.5px solid #ccc;background:#fff;cursor:pointer;font-size:12px}
+.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}
+.seg button.on{background:var(--navy);color:#fff;font-weight:600}
+.mailbtn{height:30px;padding:0 14px;border-radius:8px;border:1px solid var(--navy);background:#fff;color:var(--navy);font-weight:600;cursor:pointer;font-size:12px}
+.mailbtn:hover{background:#EEF2F7}
+.sp{flex:1}
+.ov{position:fixed;inset:0;background:rgba(15,30,50,.45);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
+.ov.show{display:flex}
+.box{background:#fff;border-radius:14px;width:860px;max-width:100%;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(15,30,50,.28)}
+.hd{padding:12px 16px;background:#EEF2F7;border-bottom:2px solid var(--navy);font-weight:700;color:var(--navy);font-size:15px;display:flex;align-items:center}
+.hd .x{margin-left:auto;cursor:pointer;color:var(--mut);font-weight:400}
+.bd{padding:14px 16px;overflow:auto}
+.row{display:grid;grid-template-columns:110px 1fr;gap:8px;align-items:center;margin-bottom:8px}
+.row label{font-size:12px;color:var(--mut)}
+input.t{height:32px;border:.5px solid #ccc;border-radius:8px;padding:0 10px;font-size:13px;width:100%}
+.fixed{background:#F4F3EF;border:.5px solid var(--line);border-radius:8px;padding:8px 10px;color:#1f2933}
+.sec{font-size:12px;font-weight:600;color:var(--navy);margin:12px 0 6px}
+.src{width:100%;border-collapse:collapse;font-size:12px}
+.src th{background:var(--bg);color:var(--mut);text-align:left;padding:5px 8px;font-weight:600}
+.src td{border-top:.5px solid var(--line);padding:5px 8px}
+.tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;background:#EAF3DE;color:#27500A;margin-left:4px}
+.ft{padding:10px 16px;background:var(--bg);border-top:.5px solid var(--line);display:flex;gap:8px;align-items:center}
+.ft .i{flex:1;font-size:11px;color:var(--mut)}
+.b{height:32px;padding:0 16px;border-radius:8px;border:.5px solid #ccc;background:#fff;cursor:pointer}
+.b.p{background:var(--navy);color:#fff;border:none;font-weight:600}
+.pv{border:.5px solid var(--line);border-radius:8px;padding:10px;overflow:auto;background:#fff}
+.pv table{border-collapse:collapse;font-size:11px;text-align:center;font-family:Tahoma,Arial,sans-serif}
+.pv td,.pv th{border:1px solid #bfbfbf;padding:3px 6px}
+.pv th{background:#1f1f1f;color:#fff}
+.g{background:#C6EFCE;font-weight:700;color:#1F3864}.y{background:#FFF2CC;font-weight:700;color:#1F3864}.r{background:#FF6699;font-weight:700;color:#1F3864}
+.ok{background:#C6EFCE;font-weight:700;color:#1F3864}.nc{background:#FFC7CE;font-weight:700;color:#9C0006}
+.pa{display:none}.all .pa{display:table-cell}
+</style></head>
+<body><div class="wrap" id="w">
+<p class="note"><b>Mockup ปุ่ม + Popup Email Report</b> (หน้า Timeline) — ปุ่มอยู่ตรงกรอบแดงที่ชี้ ข้างปุ่ม My Job / All Job · กดปุ่มเพื่อเปิด Popup · กดสลับ My Job / All Job เพื่อดูคอลัมน์ Prepare by ที่เปลี่ยนตามแท็บ · ข้อมูลในตารางเป็นตัวอย่าง</p>
+<div class="bar">
+  <span class="seg"><button class="on" id="bm" onclick="setTab('mine')">My Job</button><button id="ba" onclick="setTab('all')">All Job</button></span>
+  <button class="mailbtn" onclick="document.getElementById('ov').classList.add('show')">✉ Email Report</button>
+  <span class="sp"></span>
+  <span style="color:var(--mut);font-size:12px">สถานะ</span>
+  <span class="seg"><button class="on">All</button><button>Pending</button><button>Confirm</button></span>
+</div>
+
+<div class="ov" id="ov" onmousedown="if(event.target===this)this.classList.remove('show')">
+ <div class="box">
+  <div class="hd">Email Report · แจ้งปิดภาษีซื้อ <span class="x" onclick="document.getElementById('ov').classList.remove('show')">✕</span></div>
+  <div class="bd">
+   <div class="row"><label>ขอบเขตข้อมูล</label><div class="fixed" id="scope">My Job — เฉพาะ BU ของฉัน (12 BU)</div></div>
+   <div class="row"><label>To</label><input class="t" value="FAST TAX Staff Group"></div>
+   <div class="row"><label>Cc</label><input class="t" value="FAST TAX Manager; FAST APN Vat Controller; FAST AP Non Merchandise Manager; FASTAPN Mailbox"></div>
+   <div class="row"><label>หัวเรื่อง</label><div class="fixed">แจ้งปิดภาษีซื้อ ประจำเดือน 09.2026 <span class="tag">อัตโนมัติ จากรอบ VAT</span></div></div>
+   <div class="row"><label>Greeting</label><input class="t" value="เรียน เจ้าหน้าที่ Tax"></div>
+   <div class="row"><label>Name (ท้ายเมล)</label><input class="t" value="Karn Lertwuttipong"></div>
+   <div class="row"><label>Body</label><div class="fixed">ขอแจ้งปิดภาษีซื้อ ประจำเดือน 09.2026 <span class="tag">Fix</span> — แล้วตามด้วยตารางด้านล่างที่ดึงจากระบบอัตโนมัติ</div></div>
+
+   <div class="sec">ตารางด้านล่าง ดึงอะไรบ้าง (Fix — แก้ไม่ได้)</div>
+   <table class="src">
+     <tr><th>คอลัมน์</th><th>ดึงจาก</th></tr>
+     <tr><td>Code · Brand · Company Name</td><td>Company List (VAT Setting)</td></tr>
+     <tr class="pa2"><td>Prepare by <span class="tag">เฉพาะ All Job</span></td><td>Company List › Prepare By</td></tr>
+     <tr><td>(%)</td><td>VAT Rate ของ BU จาก Company List</td></tr>
+     <tr><td>11610752 (N, A) · 11610755 (T, F)</td><td>Timeline › Final Step › Incomplete ของแต่ละ Tax Code<br>Y → Finished · N → Pending · ไม่มีข้อมูล → No Data · X → X (Out of Scope)</td></tr>
+     <tr><td>Status</td><td>Completed = ไม่มีช่อง Pending เหลือ · Not Complete = ยังมี Pending</td></tr>
+   </table>
+
+   <div class="sec">ตัวอย่างเนื้อเมลที่จะได้</div>
+   <div class="pv" id="pv">
+     <div style="font-size:12px;margin-bottom:6px">เรียน เจ้าหน้าที่ Tax<br>&nbsp;&nbsp;&nbsp;ขอแจ้งปิดภาษีซื้อ ประจำเดือน 09.2026</div>
+     <table>
+      <tr><th rowspan="2">Code</th><th rowspan="2">Brand</th><th rowspan="2">Company Name</th><th rowspan="2" class="pa">Prepare by</th><th rowspan="2">(%)</th><th colspan="2">11610752</th><th colspan="2">11610755</th><th rowspan="2">Status</th></tr>
+      <tr><th>N</th><th>A</th><th>T</th><th>F</th></tr>
+      <tr><td>3218</td><td>BTM</td><td style="text-align:left">บริษัท บิวเทรี่ยม จำกัด</td><td class="pa">Karn L.</td><td>100</td><td>Pending</td><td>X</td><td>Pending</td><td>X</td><td class="nc">Not Complete</td></tr>
+      <tr><td>4100</td><td>CFM</td><td style="text-align:left">บริษัท เซ็นทรัล ฟู้ด มินิมาร์เก็ต จำกัด</td><td class="pa">Karn L.</td><td>100</td><td>Finished</td><td>X</td><td>Finished</td><td>X</td><td class="ok">Completed</td></tr>
+      <tr><td>0402</td><td>CFW</td><td style="text-align:left">บริษัทเซ็นทรัล ฟู้ด โฮลเซลล์ จำกัด</td><td class="pa">Karn L.</td><td>59.53</td><td>X</td><td>Finished</td><td>No Data</td><td>X</td><td class="ok">Completed</td></tr>
+     </table>
+     <div style="font-size:12px;margin-top:8px">Karn Lertwuttipong</div>
+   </div>
+  </div>
+  <div class="ft"><span class="i">กด "เปิด Draft" = เปิด Outlook Draft (ยังไม่ส่งจริง) · คุณตรวจแล้วกดส่งเอง</span><button class="b" onclick="document.getElementById('ov').classList.remove('show')">ยกเลิก</button><button class="b p">เปิด Draft ใน Outlook</button></div>
+ </div>
+</div>
+<script>
+function setTab(t){
+  var w=document.getElementById('w');
+  w.classList.toggle('all',t==='all');
+  document.getElementById('bm').classList.toggle('on',t==='mine');
+  document.getElementById('ba').classList.toggle('on',t==='all');
+  document.getElementById('scope').textContent=t==='all'?'All Job — ทุก BU ที่ Viewer เห็น (20 BU)':'My Job — เฉพาะ BU ของฉัน (12 BU)';
+  document.querySelectorAll('.pa2').forEach(function(e){e.style.display=t==='all'?'':'none';});
+}
+setTab('mine');
+</script>
+</body></html>

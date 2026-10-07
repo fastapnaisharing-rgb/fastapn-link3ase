@@ -229,7 +229,7 @@ function formatDdMmmYy(value) {
 }
 
 // ── Zone B: สี per ประเภท (display_type จาก vat_summary_live_dashboard) ───
-const CATEGORY_ORDER = ["CPN", "ITC", "LAND", "UTL", "OTH", "Unpaid"];
+const CATEGORY_ORDER = ["CPN", "ITC", "LAND", "UTL", "OTH"]; // MARKER_VATDASHBOARD_TRUE_TYPE_V1 -- ไม่มี Type "Unpaid" (Unpaid = Payment Status ไม่ใช่ Type)
 const CATEGORY_COLORS = {
   CPN: "#0f7a6b",
   ITC: "#1a3a5c",
@@ -239,21 +239,20 @@ const CATEGORY_COLORS = {
   // MARKER_UNPAID_COLOR_CLASH_FIX_V1 — เดิมใช้ "#1a3a5c" (Navy) ตาม MARKER_UNPAID_NAVY_V1 แต่สีซ้ำ
   // กับ ITC เป๊ะ (ITC ก็ Navy เดียวกัน) ทำให้แยกไม่ออกใน Donut/Legend เปลี่ยนเป็นสีเทาเข้ม (Slate)
   // แทน ไม่ซ้ำกับสีอื่นในชุดนี้เลย (CPN เขียว/ITC น้ำเงินเข้ม/LAND ทอง/UTL ฟ้า/OTH เทาอ่อน)
-  Unpaid: "#5c5f66",
 };
 
 // ── Zone F: สี per Aging Bucket — MARKER_ZONEF_EXCLUDE_UNPAID_V1
 // แก้ตามที่ขอ: "ไม่จ่าย" (payment_type = Unpaid) ทำให้มันขึ้น TOP ของทุก BU เพราะเป็นก้อนใหญ่สุด
 // เสมอ ไม่มีประโยชน์ในการจัดอันดับ — เลยตัดออกจาก Zone F ไปเลย (ไม่ Sum เข้า total/การจัดอันดับ
 // ด้วย) เหลือเฉพาะรายการที่ "จ่ายแล้ว" แบ่งตาม aging_risk เป็นความเสี่ยงต่ำ/กลาง/สูง + Expired ──
-const AGING_BUCKET_ORDER = ["low", "medium", "high", "expired"];
+const AGING_BUCKET_ORDER = ["zero", "low", "medium", "high", "expired"]; // MARKER_AGING_ZERO_BUCKET_V1 -- Aging 0 (No Risk) แยกเป็นอีก Bucket/สี ไม่รวมกับ 1-2
 // MARKER_AGING_COLORS_V2 — ตามที่ขอ: เสี่ยงต่ำ=เขียว, เสี่ยงปานกลาง=เหลือง, เสี่ยงสูง=แดง,
 // หมดอายุ=เทา (ไม่ใช่ Traffic Light ไล่เขียว→แดง→แดงเข้มแบบเดิม เพราะหมดอายุเปลี่ยนเป็นเทาแทน)
-const AGING_BUCKET_COLORS = { low: "#6fcf73", medium: "#f0c419", high: "#e53935", expired: "#9aa2ae" };
+const AGING_BUCKET_COLORS = { zero: "#3fb8c9", low: "#6fcf73", medium: "#f0c419", high: "#e53935", expired: "#9aa2ae" };
 // MARKER_AGING_LABELS_DATERANGE_V1 — เปลี่ยนป้ายจากชื่อความเสี่ยงเป็นช่วงเดือนตามที่ขอ
 // "low" ครอบคลุม aging_month 0/1/2 จริง (No Risk + Low Risk พับรวมกันอยู่แล้วใน agingBucketOf)
 // เลยเป็น "0-2" ไม่ใช่ "1-2"
-const AGING_BUCKET_LABELS = { low: "0-2", medium: "3-4", high: "5-6", expired: "Expired" };
+const AGING_BUCKET_LABELS = { zero: "0", low: "1-2", medium: "3-4", high: "5-6", expired: "Expired" };
 const UNPAID_BUCKET_COLOR = "#1a3a5c"; // MARKER_UNPAID_NAVY_V1 — Navy เหมือนกับ Zone B
 const UNPAID_BUCKET_LABEL = "Unpaid";
 
@@ -261,6 +260,8 @@ const UNPAID_BUCKET_LABEL = "Unpaid";
 // ตาม Type (CPN/ITC/LAND/UTL/OTH) + แท่ง "Total" ปิดท้าย ตามภาพตัวอย่าง Power BI ที่ส่งมา —
 // ไม่โชว์ Expired (ภาพตัวอย่างมีแค่ 3 แผง High/Medium/Low เท่านั้น)
 const WATERFALL_BUCKET_ORDER = ["high", "medium", "low"];
+// MARKER_ZONED_WATERFALL_HOVER_V2 -- Hover ทุกแท่ง (รวม Total) แยกยอดตาม Aging เดือนของแผงนั้น (สีเดียวกันก็แยกบรรทัด)
+const WATERFALL_AGING_MONTHS = { high: ["5", "6"], medium: ["3", "4"], low: ["0", "1", "2"] };
 const WATERFALL_BUCKET_LABELS = {
   high: "Outstanding balances by High Risk (Aging ≥ 5)",
   medium: "Outstanding balances by Medium Risk (Aging ≥ 3)",
@@ -274,6 +275,9 @@ const WATERFALL_BUCKET_LABELS = {
 // แทน (กดปุ่มที่การ์ด "Total Vat Expired All" เปิด Popup รายละเอียด) ดู
 // MARKER_ZONEC_EXPIRED_DETAIL_POPUP_V1 ท้ายไฟล์
 const PAYMENT_STATUS_TYPES = ["CPN", "ITC", "LAND", "UTL", "OTH"];
+// MARKER_VATDASHBOARD_TRUE_TYPE_V1 -- Type จริงของ Vendor (View ส่ง true_type มาให้ ไม่ว่าจ่ายแล้วหรือยัง) -- Unpaid/Paid/Expired เป็น Payment Status คนละมิติ ไม่ใช่ Type
+// ถ้า View ยังไม่มี true_type (ยังไม่ได้รัน SQL) -> Fallback เป็น bus_type ที่เป็น 4 Type หลัก ไม่งั้น OTH
+const typeKeyOf = (r) => (PAYMENT_STATUS_TYPES.includes(r.true_type) ? r.true_type : (PAYMENT_STATUS_TYPES.includes(r.bus_type) ? r.bus_type : "OTH"));
 // MARKER_ZONEC_EXPIRED_TREND_TYPE_COLORS_V1 — สีประจำแต่ละ Type สำหรับเส้นในกราฟเทียบ 3 เดือน
 const TYPE_TREND_COLORS = {
   CPN: "#1a56db",
@@ -302,7 +306,7 @@ const SINGLEBU_POINT_LABELS = { unpaid: "Unpaid", "0": "0", "1": "1", "2": "2", 
 // 5-6=แดง(high), Expired=เทา
 const SINGLEBU_POINT_COLORS = {
   unpaid: UNPAID_BUCKET_COLOR,
-  "0": AGING_BUCKET_COLORS.low,
+  "0": AGING_BUCKET_COLORS.zero,
   "1": AGING_BUCKET_COLORS.low,
   "2": AGING_BUCKET_COLORS.low,
   "3": AGING_BUCKET_COLORS.medium,
@@ -388,8 +392,27 @@ function useVatSummaryDashboard() {
 }
 
 export default function VatDashboard() {
-  const { rows, buToBase, periodMonth, loading, error, refetch } = useVatSummaryDashboard();
+  const { rows: rowsRaw, buToBase, periodMonth, loading, error, refetch } = useVatSummaryDashboard();
   const { userName, currentUser } = useAuth();
+  // MARKER_VATDASHBOARD_PAYMENT_TYPE_FILTER_V1 -- หลอด Filter Bank Transfer | Cheque | Direct Debit (กรองทั้งหน้า)
+  // คลิกธรรมดา = เลือกค่าเดียว (คลิกค่าที่เลือกอยู่ซ้ำ = ปลดเป็น No Filter) | Ctrl/Cmd+คลิก = เพิ่ม/เอาออกจากชุดที่เลือก
+  // ถ้าเลือกหลายค่าอยู่แล้วคลิกธรรมดาที่ค่าที่เลือกอยู่ = ปลดหมด | ไม่เลือกเลย = ทุกค่า
+  // rowsRaw = ข้อมูลเต็ม (ใช้ทำรายชื่อ BU/Base ให้ปุ่มไม่หายตอนกรอง) | rows = หลังกรอง payment_type ที่ทุก Zone ใช้
+  const PAY_FILTER_OPTIONS = ["Bank Transfer", "Cheque", "Direct Debit"];
+  const [payFilter, setPayFilter] = React.useState([]);
+  const rows = React.useMemo(
+    () => (payFilter.length ? rowsRaw.filter((r) => payFilter.includes(r.payment_type)) : rowsRaw),
+    [rowsRaw, payFilter]
+  );
+  const togglePayFilter = (val, e) => {
+    const multi = !!(e && (e.ctrlKey || e.metaKey));
+    setPayFilter((prev) => {
+      const on = prev.includes(val);
+      if (multi) return on ? prev.filter((v) => v !== val) : [...prev, val];
+      if (on) return [];
+      return [val];
+    });
+  };
   const [now, setNow] = React.useState(() => new Date());
   React.useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30000);
@@ -402,8 +425,8 @@ export default function VatDashboard() {
 
   // ── Zone A, แถวที่ 1: Base Filter (ทั้งหมด + Base จริงจาก company_list.base) ──
   const buTabs = React.useMemo(
-    () => [...new Set(rows.map((r) => r.bu).filter(Boolean))].sort(),
-    [rows]
+    () => [...new Set(rowsRaw.map((r) => r.bu).filter(Boolean))].sort(), // ใช้ rowsRaw: ปุ่ม BU/Base ไม่หายเมื่อกรอง payment_type
+    [rowsRaw]
   );
   const baseTabs = React.useMemo(
     () => [...new Set(buTabs.map((b) => buToBase[b]).filter(Boolean))].sort(),
@@ -433,6 +456,14 @@ export default function VatDashboard() {
     setBuFilter(null);
   };
 
+  // MARKER_HEADER_STALE_STATUS_V1 -- เดือนล่าสุดที่มีข้อมูลจริง < Period ปัจจุบัน = ปิด Period แล้วแต่ยังไม่มี Incomplete ใหม่
+  const dataMonth = React.useMemo(() => {
+    let latest = null;
+    rowsRaw.forEach((r) => { const pm = r.period_month; if (typeof pm === "string" && /^\d{4}-\d{2}$/.test(pm) && (!latest || pm > latest)) latest = pm; });
+    return latest;
+  }, [rowsRaw]);
+  const isStale = !!(dataMonth && periodMonth && dataMonth < periodMonth);
+
   const displayRows = React.useMemo(() => {
     let r = rows;
     if (baseFilter) r = r.filter((row) => buToBase[row.bu] === baseFilter);
@@ -449,6 +480,36 @@ export default function VatDashboard() {
   //   "aging" = เฉพาะที่จ่ายแล้ว "และ" เริ่มมีอายุแล้ว (ตัด Unpaid + ตัด aging_risk='No Risk' ออก
   //             เหลือเฉพาะ 1-2/3-4/5-6 เดือน หรือ หมดอายุ)
   const [vatScope, setVatScope] = React.useState("aging"); // Default ตามที่ขอ
+  // MARKER_VATDASHBOARD_BROWSER_FULLSCREEN_V1 -- ปุ่มเต็มจอจริงของเบราว์เซอร์ (เหมือนกด F5 ใน PowerPoint) เฉพาะส่วน Dashboard (ซ่อนเมนู/Sidebar) กด Esc หรือกดปุ่มอีกครั้งเพื่อออก
+  const dashRootRef = React.useRef(null);
+  const [isBrowserFull, setIsBrowserFull] = React.useState(false);
+  React.useEffect(() => {
+    const onChange = () => setIsBrowserFull(!!document.fullscreenElement && document.fullscreenElement === dashRootRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleBrowserFull = () => {
+    try {
+      if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); }
+      else if (dashRootRef.current && dashRootRef.current.requestFullscreen) { dashRootRef.current.requestFullscreen().catch(() => {}); }
+    } catch (e) { /* เบราว์เซอร์ไม่รองรับ/ถูกบล็อก -- ไม่ทำอะไร */ }
+  };
+  // ปุ่มลัด Insert = สลับเต็มจอ (Insert ไม่มีหน้าที่อื่นในเบราว์เซอร์) -- ไม่ทำงานตอนกำลังพิมพ์ในช่องกรอก
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Insert" || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const el = e.target;
+      const tag = el && el.tagName ? el.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea" || tag === "select" || (el && el.isContentEditable)) return;
+      e.preventDefault();
+      toggleBrowserFull();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  const [sbHover, setSbHover] = React.useState(null); // MARKER_SINGLEBU_TYPE_TOOLTIP_V1 -- จุดที่เมาส์ชี้ในกราฟเส้น BU เดียว { inst, key } (inst = กราฟหน้าหลัก/Popup)
+  const [wfPos, setWfPos] = React.useState({ x: 0, y: 0 }); // MARKER_WATERFALL_TOOLTIP_FIXED_V1 -- ตำแหน่งเมาส์ ใช้วาง Tooltip แบบ fixed ไม่ถูกกรอบแผงบัง
+  const [wfHover, setWfHover] = React.useState(null); // MARKER_ZONED_WATERFALL_HOVER_V1 -- แท่งที่เมาส์ชี้ (แผง Low) เพื่อโชว์ Tooltip แบ่ง Aging 0 / 1-2
 
   // MARKER_UNPAID_DEFINITION_SYNC_V1 -- เดิมต้องตรงกับ CASE ของ display_type ใน vat_summary_schema.sql
   // เป๊ะ (WHEN bus_type IN ('N-PAY','N-PO3') THEN 'Unpaid' / WHEN payment_type='Cheque Return' THEN
@@ -513,7 +574,8 @@ export default function VatDashboard() {
     if (r.aging_risk === "Medium Risk") return "medium";
     if (r.aging_risk === "High Risk") return "high";
     if (r.aging_risk === "Expired") return "expired";
-    return "low"; // "No Risk" / "Low Risk" / อื่นๆ (เช่น Uncount) → fallback เป็น "low"
+    if (r.aging_risk === "No Risk") return "zero"; // MARKER_AGING_ZERO_BUCKET_V1 -- Aging 0 แยกสีต่างหาก
+    return "low"; // "Low Risk" / อื่นๆ (เช่น Uncount) → fallback เป็น "low"
   }
 
   // ── Zone B: รวมยอด VAT คงค้าง (exp_vat) แยกตาม Type/Category เสมอ — กรองด้วย vatScope เท่านั้น
@@ -522,7 +584,7 @@ export default function VatDashboard() {
     const sums = {};
     displayRows.forEach((r) => {
       if (!inVatScope(r, vatScope)) return;
-      const key = r.display_type || r.bus_type || "OTH";
+      const key = typeKeyOf(r);
       sums[key] = (sums[key] || 0) + (Number(r[vatField]) || 0);
     });
     const total = Object.values(sums).reduce((a, b) => a + b, 0);
@@ -546,7 +608,7 @@ export default function VatDashboard() {
   const categoryBreakdownOverall = React.useMemo(() => {
     const sums = {};
     displayRows.forEach((r) => {
-      const key = r.display_type || r.bus_type || "OTH";
+      const key = typeKeyOf(r);
       sums[key] = (sums[key] || 0) + (Number(r[vatField]) || 0);
     });
     const total = Object.values(sums).reduce((a, b) => a + b, 0);
@@ -624,7 +686,7 @@ export default function VatDashboard() {
       if (!bu) return;
       if (!inVatScope(r, vatScope)) return;
       const isUnpaid = isUnpaidRow(r);
-      if (!map[bu]) map[bu] = { bu, low: 0, medium: 0, high: 0, expired: 0, unpaid: 0, total: 0 };
+      if (!map[bu]) map[bu] = { bu, zero: 0, low: 0, medium: 0, high: 0, expired: 0, unpaid: 0, total: 0 };
       const amt = Number(r[vatField]) || 0;
       const bucket = isUnpaid ? "unpaid" : agingBucketOf(r);
       map[bu][bucket] += amt;
@@ -637,27 +699,37 @@ export default function VatDashboard() {
   // Fix Scope เป็น "Aging" เสมอ (ตัด Unpaid + ตัด aging_risk='No Risk' ออก) ไม่ผูกกับปุ่ม
   // All/Paid/Aging ของ Zone B เพราะความหมายของ Zone นี้คือ "ยอดที่เริ่มมีอายุแล้ว" โดยเฉพาะ
   const agingRiskWaterfall = React.useMemo(() => {
+    // MARKER_ZONED_WATERFALL_ZERO_SPLIT_V1 -- ปุ่ม All/Paid: แผง Low (Aging ≤ 2) รวม Aging 0 (No Risk) เข้ามาด้วย แล้วแบ่งแต่ละแท่ง/Total เป็น 2 สี (0 กับ 1-2) ; ปุ่ม Aging: ไม่รวม Aging 0 เหมือนเดิม
+    const includeZero = vatScope !== "aging";
     const buckets = { high: {}, medium: {}, low: {} };
     displayRows.forEach((r) => {
       if (isUnpaidRow(r)) return;
-      if (r.aging_risk === "No Risk") return;
-      const bucket = agingBucketOf(r);
+      let bucket = agingBucketOf(r);
+      const isZero = bucket === "zero";
+      if (isZero) { if (!includeZero) return; bucket = "low"; }
       if (bucket === "expired" || !buckets[bucket]) return;
-      const key = r.display_type || r.bus_type || "OTH";
+      const key = typeKeyOf(r);
       const amt = Number(r[vatField]) || 0;
-      buckets[bucket][key] = (buckets[bucket][key] || 0) + amt;
+      const e = buckets[bucket][key] || (buckets[bucket][key] = { amount: 0, zero: 0, ag: {} });
+      e.amount += amt;
+      const am = String(r.aging_month == null ? "" : r.aging_month).trim();
+      e.ag[am] = (e.ag[am] || 0) + amt;
+      if (isZero) e.zero += amt;
     });
     const result = {};
     WATERFALL_BUCKET_ORDER.forEach((bucket) => {
       const sums = buckets[bucket];
       const items = Object.keys(sums)
-        .map((key) => ({ key, amount: sums[key] }))
+        .map((key) => ({ key, amount: sums[key].amount, zero: sums[key].zero, ag: sums[key].ag }))
         .sort((a, b) => b.amount - a.amount);
       const total = items.reduce((s, it) => s + it.amount, 0);
-      result[bucket] = { items, total };
+      const zero = items.reduce((s, it) => s + it.zero, 0);
+      const ag = {};
+      items.forEach((it) => Object.keys(it.ag).forEach((m) => { ag[m] = (ag[m] || 0) + it.ag[m]; }));
+      result[bucket] = { items, total, zero, ag };
     });
     return result;
-  }, [displayRows, vatField]);
+  }, [displayRows, vatField, vatScope]);
 
   // ── Zone C: แบ่งตามสถานะการจ่าย (Paid/Unpaid/Expired → Realized/Unrealized) x Type —
   // MARKER_ZONEC_PAYMENT_STATUS_V1 — ใช้ r.bus_type ดิบ (ไม่ใช่ display_type) เป็นตัวแบ่ง Type
@@ -671,7 +743,7 @@ export default function VatDashboard() {
   // โดยไม่ต้องแก้โครงสร้าง) / Realized = หมดอายุตามเวลาธรรมชาติ ไม่มี Reason
   const paymentStatusBreakdown = React.useMemo(() => {
     const groups = { paid: {}, unpaid: {}, expired: {}, realized_expired: {}, unrealized_expired: {} };
-    const typeOf = (r) => (PAYMENT_STATUS_TYPES.includes(r.bus_type) ? r.bus_type : "OTH");
+    const typeOf = typeKeyOf;
     displayRows.forEach((r) => {
       const amt = Number(r[vatField]) || 0;
       const t = typeOf(r);
@@ -695,6 +767,25 @@ export default function VatDashboard() {
       result[k] = { sums: groups[k], total };
     });
     return result;
+  }, [displayRows, vatField]);
+
+  // MARKER_ZONEC_PAID_AGING_TOOLTIP_V1 -- Tooltip การ์ด Total Vat Paid: ยอดที่จ่ายแล้วแยกตาม Aging (0-6, Expired)
+  // ใช้แถวชุดเดียวกับ groups.paid ใน paymentStatusBreakdown (ไม่ใช่ Unpaid) ผลรวม = ยอดบนการ์ดพอดี (Aging ที่ไม่รู้จักรวมใน "อื่นๆ")
+  const paidAgingBreakdown = React.useMemo(() => {
+    const keys = ["0", "1", "2", "3", "4", "5", "6", "Expired", "other"];
+    const make = () => { const o = {}; keys.forEach((k) => { o[k] = 0; }); return o; };
+    const out = { ALL: make() };
+    PAYMENT_STATUS_TYPES.forEach((t) => { out[t] = make(); });
+    displayRows.forEach((r) => {
+      if (isUnpaidRow(r)) return;
+      const amt = Number(r[vatField]) || 0;
+      const raw = r.aging_month === "Expired" ? "Expired" : String(r.aging_month ?? "");
+      const k = keys.includes(raw) && raw !== "other" ? raw : "other";
+      const t = typeKeyOf(r);
+      out.ALL[k] += amt;
+      if (out[t]) out[t][k] += amt;
+    });
+    return out;
   }, [displayRows, vatField]);
 
   // MARKER_ZONEC_EXPIRED_DETAIL_BY_BU_V1 -- เหมือน paymentStatusBreakdown แต่ Group ตาม r.bu แทน
@@ -731,8 +822,20 @@ export default function VatDashboard() {
   const expiredTrend3Month = React.useMemo(() => {
     // สร้างรายชื่อ 3 เดือนล่าสุด (รวมเดือนปัจจุบัน) ตามรูปแบบ "YYYY-MM" ของ periodMonth
     const months = [];
-    if (periodMonth && /^\d{4}-\d{2}$/.test(periodMonth)) {
-      const [y, m] = periodMonth.split("-").map(Number);
+    // MARKER_ZONEC_EXPIRED_TREND_ANCHOR_LAST_LIVE_V1 -- หลังปิด Period แล้วยังไม่มี Live เดือนใหม่
+    // ให้ยึดเดือนล่าสุดที่มีข้อมูลจริง (<= periodMonth) เพื่อให้ Compare 3 month คงเดิมจนกว่า Live ใหม่จะเข้ามา
+    const _isPm = (s) => typeof s === "string" && /^\d{4}-\d{2}$/.test(s);
+    let anchorMonth = periodMonth;
+    if (_isPm(periodMonth)) {
+      let latest = null;
+      rows.forEach((row) => {
+        const pm = row.period_month;
+        if (_isPm(pm) && pm <= periodMonth && (!latest || pm > latest)) latest = pm;
+      });
+      if (latest) anchorMonth = latest;
+    }
+    if (_isPm(anchorMonth)) {
+      const [y, m] = anchorMonth.split("-").map(Number);
       for (let i = 2; i >= 0; i--) {
         const d = new Date(y, m - 1 - i, 1);
         months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
@@ -747,7 +850,7 @@ export default function VatDashboard() {
 
     // MARKER_ZONEC_EXPIRED_TREND_BYTYPE_V1 — แยก Realized+Unrealized ตาม Type (CPN/ITC/LAND/UTL/OTH)
     // ด้วย เพื่อใช้เปรียบเทียบ MoM รายTypeใน Popup (MARKER_ZONEC_EXPIRED_MOM_BYTYPE_V1 ด้านล่าง)
-    const typeOfRow = (row) => (PAYMENT_STATUS_TYPES.includes(row.bus_type) ? row.bus_type : "OTH");
+    const typeOfRow = typeKeyOf;
     const byMonth = {};
     months.forEach((m) => { byMonth[m] = { realized: 0, unrealized: 0, expired: 0, hasData: false, byType: {} }; });
     r.forEach((row) => {
@@ -833,19 +936,25 @@ export default function VatDashboard() {
   const singleBuMonthlyPoints = React.useMemo(() => {
     if (!buFilter) return null;
     const sums = {};
-    singleBuPointOrder.forEach((k) => { sums[k] = 0; });
+    const typeSums = {}; // MARKER_SINGLEBU_TYPE_TOOLTIP_V1 -- ยอดแยกตาม Type (CPN/ITC/LAND/UTL/OTH) ของแต่ละจุด ใช้โชว์ใน Tooltip
+    singleBuPointOrder.forEach((k) => { sums[k] = 0; typeSums[k] = {}; });
+    const addTo = (k, r, amt) => {
+      sums[k] += amt;
+      const t = typeKeyOf(r);
+      typeSums[k][t] = (typeSums[k][t] || 0) + amt;
+    };
     displayRows.forEach((r) => {
       if (!inVatScope(r, vatScope)) return;
       const amt = Number(r[vatField]) || 0;
       if (isUnpaidRow(r)) {
-        if (Object.prototype.hasOwnProperty.call(sums, "unpaid")) sums.unpaid += amt;
+        if (Object.prototype.hasOwnProperty.call(sums, "unpaid")) addTo("unpaid", r, amt);
         return;
       }
       if (r.aging_month === "Expired") {
-        if (Object.prototype.hasOwnProperty.call(sums, "expired")) sums.expired += amt;
+        if (Object.prototype.hasOwnProperty.call(sums, "expired")) addTo("expired", r, amt);
         return;
       }
-      if (Object.prototype.hasOwnProperty.call(sums, r.aging_month)) sums[r.aging_month] += amt;
+      if (Object.prototype.hasOwnProperty.call(sums, r.aging_month)) addTo(r.aging_month, r, amt);
     });
     const total = Object.values(sums).reduce((a, b) => a + b, 0);
     const points = singleBuPointOrder.map((k) => ({
@@ -853,6 +962,7 @@ export default function VatDashboard() {
       label: SINGLEBU_POINT_LABELS[k],
       value: sums[k],
       color: SINGLEBU_POINT_COLORS[k],
+      byType: typeSums[k],
     }));
     return { points, total };
   }, [displayRows, buFilter, vatScope, singleBuPointOrder, vatField]);
@@ -966,6 +1076,9 @@ export default function VatDashboard() {
   // MARKER_ZONEC_EXPIRED_DETAIL_POPUP_V1 — Popup แสดง Realized/Unrealized Expired แบบละเอียด
   // (กดปุ่ม "i" ที่การ์ด Total Vat Expired All เปิด)
   const [showExpiredDetailPopup, setShowExpiredDetailPopup] = React.useState(false);
+  const [expiredDetailFull, setExpiredDetailFull] = React.useState(false); // MARKER_EXPIRED_DETAIL_FULLSCREEN_V1 -- ปุ่มขยาย Popup Expired Detail เต็มจอ
+  const [paidHoverTip, setPaidHoverTip] = React.useState(null); // MARKER_ZONEC_PAID_AGING_TOOLTIP_V1 -- { key: 'ALL'|Type, x, y } | null
+  const [expiredHoverTip, setExpiredHoverTip] = React.useState(null); // MARKER_ZONEC_EXPIRED_HOVER_RU_V1 -- { key: 'ALL'|Type, x, y } | null
   // MARKER_ZONEC_EXPIRED_DETAIL_VIEW_TOGGLE_V1 — สลับมุมมองใน Popup Expired Detail: "type" หรือ "bu"
   // (เอากลับมาแล้วตามที่ขอ — "ตัด Zone BU" ที่พูดก่อนหน้าเข้าใจผิด)
   const [expiredDetailView, setExpiredDetailView] = React.useState("type");
@@ -1062,14 +1175,22 @@ export default function VatDashboard() {
   // MARKER_ZONEC_EXPIRED_REASON_CARDS_SCOPE_BY_BU_V1 — ตอนกดยอด Unrealized ของ BU ไหนในตาราง
   // ด้านบน (ซ้าย 70%) Card ฝั่งขวา (30%) ต้องเปลี่ยนมาแบ่งองค์ประกอบเฉพาะ BU นั้น ไม่ใช่โชว์ยอดรวม
   // ทุก BU ค้างอยู่เหมือนเดิม ตามที่ขอ: "เมื่อกดด้านข้างต้องเปลี่ยนแล้วแบ่งมาให้ว่าประกอบด้วยอะไรบ้าง"
+  // MARKER_ZONEC_EXPIRED_REASON_CARDS_FOLLOW_VIEW_SCOPE_V1 -- การ์ดต้องตาม Scope เดียวกับตารางซ้าย:
+  // กดยอด Unrealized ของ BU -> BU นั้น / ไม่งั้นถ้าหน้าหลักเลือก BU (buFilter) -> BU นั้น /
+  // ไม่งั้นถ้าเลือก Base (baseFilter) -> เฉพาะ BU ใน Base นั้น / ไม่เลือกอะไร = ภาพรวมทุก BU
+  // MARKER_ZONEC_EXPIRED_UNREALIZED_ANY_REASON_V2 -- Unrealized = Expired ที่มี Reason/Remark แนบ "ทุกชนิด"
+  // (Check Return, Issue, Other) ไม่ใช่แค่ is_cheque_return -- ตารางซ้ายและการ์ดขวาใช้ข้อมูลชุดเดียวกัน
+  // (/vat_watchlist_detail?bucket=unrealized) และจำกัดเฉพาะ BU ที่ปรากฏในตารางตาม Scope ปัจจุบัน
+  const viewBuSet = React.useMemo(() => new Set(expiredDetailByBU.map((r) => r.bu)), [expiredDetailByBU]);
   const reasonCardsScopeBu = (buDetailSelection && buDetailSelection.bu && buDetailSelection.bucket === "unrealized")
     ? buDetailSelection.bu
-    : null;
+    : (buFilter || (viewBuSet.size === 1 ? Array.from(viewBuSet)[0] : null));
+  const reasonCardsScopeBase = !reasonCardsScopeBu && baseFilter ? baseFilter : null;
   const unrealizedReasonBuckets = React.useMemo(() => {
     const buckets = { check_return: { rows: [], total: 0 }, issue: { rows: [], total: 0 }, other: { rows: [], total: 0 } };
     const source = reasonCardsScopeBu
       ? unrealizedReasonState.rows.filter((r) => r.bu === reasonCardsScopeBu)
-      : unrealizedReasonState.rows;
+      : unrealizedReasonState.rows.filter((r) => viewBuSet.has(r.bu));
     source.forEach((r) => {
       const note = reasonNoteColOf(r);
       const amt = Number(r[vatField]) || 0;
@@ -1079,7 +1200,23 @@ export default function VatDashboard() {
       buckets[key].total += amt;
     });
     return buckets;
-  }, [unrealizedReasonState.rows, vatField, reasonNoteColOf, reasonCardsScopeBu]);
+  }, [unrealizedReasonState.rows, vatField, reasonNoteColOf, reasonCardsScopeBu, viewBuSet]);
+  // ตาราง By BU: Unrealized นับจากชุดเดียวกับการ์ด (Reason ใดก็ได้) / Realized = Total Expired - Unrealized
+  // ถ้ายังโหลดไม่เสร็จ ใช้ค่าเดิมจาก View ไปก่อน
+  const expiredDetailRows = React.useMemo(() => {
+    if (unrealizedReasonState.loading || unrealizedReasonState.error) return expiredDetailByBU;
+    const un = {};
+    unrealizedReasonState.rows.forEach((r) => {
+      if (!viewBuSet.has(r.bu)) return;
+      un[r.bu] = (un[r.bu] || 0) + (Number(r[vatField]) || 0);
+    });
+    return expiredDetailByBU
+      .map((row) => {
+        const unrealized = Math.min(un[row.bu] || 0, row.total);
+        return { bu: row.bu, realized: row.total - unrealized, unrealized, total: row.total };
+      })
+      .sort((a, b) => b.unrealized - a.unrealized || b.total - a.total);
+  }, [expiredDetailByBU, unrealizedReasonState, viewBuSet, vatField]);
   const selectReasonDetail = React.useCallback((reasonKey, reasonLabel) => {
     const bucket = unrealizedReasonBuckets[reasonKey] || { rows: [] };
     setBuDetailSelection((prev) => ({
@@ -1132,7 +1269,7 @@ export default function VatDashboard() {
       if (!bu) return;
       if (!inVatScope(r, vatScope)) return;
       const isUnpaid = isUnpaidRow(r);
-      if (!map[bu]) map[bu] = { bu, low: 0, medium: 0, high: 0, expired: 0, unpaid: 0, total: 0 };
+      if (!map[bu]) map[bu] = { bu, zero: 0, low: 0, medium: 0, high: 0, expired: 0, unpaid: 0, total: 0 };
       const amt = Number(r[vatField]) || 0;
       const bucket = isUnpaid ? "unpaid" : agingBucketOf(r);
       map[bu][bucket] += amt;
@@ -1188,6 +1325,34 @@ export default function VatDashboard() {
           ))}
         </div>
         <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+        {/* MARKER_SINGLEBU_TYPE_TOOLTIP_V1 -- Tooltip ตอนชี้จุด: ยอดของ Aging นั้นประกอบด้วย Type อะไรเท่าไหร่ (รวมกัน = ยอดจุดนั้น) */}
+        {sbHover && sbHover.inst === showCompare && (() => {
+          const c = singleBuChartGeom.coords.find((q) => q.key === sbHover.key);
+          if (!c || !c.value) return null;
+          const entries = PAYMENT_STATUS_TYPES
+            .map((t) => [t, (c.byType && c.byType[t]) || 0])
+            .filter(([, v]) => Math.abs(v) > 0.004)
+            .sort((a, b) => b[1] - a[1]);
+          const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+          const tipLeft = wfPos.x + 16 + 260 > vw ? Math.max(8, wfPos.x - 260 - 16) : wfPos.x + 16;
+          const title = /^\d+$/.test(String(c.label)) ? `Aging ${c.label}` : c.label;
+          return (
+            <div style={{ position: "fixed", left: tipLeft, top: Math.max(8, wfPos.y - 60), zIndex: 9999, pointerEvents: "none", background: "white", border: "1px solid #dde3e8", borderRadius: "8px", boxShadow: "0 4px 14px rgba(0,0,0,0.15)", padding: "8px 10px", minWidth: "170px", fontSize: "11px", color: "#333" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", fontWeight: 700, borderBottom: "1px solid #eee", paddingBottom: "4px", marginBottom: "4px" }}>
+                <span>BU {buFilter} · {title}</span>
+                <span>{formatFull(c.value)}</span>
+              </div>
+              {entries.map(([t, v]) => (
+                <div key={t} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "1px 0" }}>
+                  <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: CATEGORY_COLORS[t] || "#999", display: "inline-block" }} />
+                  <span style={{ flex: 1 }}>{t}</span>
+                  <span style={{ fontWeight: 600 }}>{formatFull(v)}</span>
+                  <span style={{ color: "#999", width: "42px", textAlign: "right" }}>{c.value ? ((v / c.value) * 100).toFixed(1) : "0.0"}%</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <svg width="100%" height="100%" viewBox={`0 0 ${SINGLEBU_CHART_W} ${SINGLEBU_CHART_H}`} preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
           {/* โซนพื้นหลัง: Unpaid / Green Flag (0-4) / Red Flag (5-6) / Expired */}
           <rect x={0} y={0} width={singleBuChartGeom.unpaidEnd} height={SINGLEBU_CHART_H} fill={UNPAID_BUCKET_COLOR} opacity={0.08} />
@@ -1226,9 +1391,10 @@ export default function VatDashboard() {
                 <title>{`${c.label}: 0`}</title>
               </g>
             ) : (
-              <circle key={c.key} cx={c.x} cy={c.y} r={2.8} fill={c.color} stroke="white" strokeWidth={0.8}>
-                <title>{`${c.label}: ${formatFull(c.value)}`}</title>
-              </circle>
+              <g key={c.key} onMouseEnter={(e) => { setWfPos({ x: e.clientX, y: e.clientY }); setSbHover({ inst: showCompare, key: c.key }); }} onMouseMove={(e) => setWfPos({ x: e.clientX, y: e.clientY })} onMouseLeave={() => setSbHover(null)} style={{ cursor: "default" }}>
+                <circle cx={c.x} cy={c.y} r={7} fill="transparent" />
+                <circle cx={c.x} cy={c.y} r={2.8} fill={c.color} stroke="white" strokeWidth={0.8} />
+              </g>
             )
           )}
         </svg>
@@ -1246,11 +1412,12 @@ export default function VatDashboard() {
         <div style={{ display: "flex", gap: "8px", fontSize: "9px", color: "#555", flexWrap: "wrap", marginTop: "6px", flexShrink: 0 }}>
           {[
             ["Unpaid", UNPAID_BUCKET_COLOR, "unpaid"],
-            ["0-4 (Green Flag)", AGING_BUCKET_COLORS.low, "green"],
+            ["0 (No Risk)", AGING_BUCKET_COLORS.zero, "__zero"],
+            ["1-4 (Green Flag)", AGING_BUCKET_COLORS.low, "green"],
             ["5-6 (Red Flag)", AGING_BUCKET_COLORS.high, "red"],
             ["Expired", AGING_BUCKET_COLORS.expired, "expired"],
           ]
-            .filter(([, , g]) => singleBuPointOrder.some((k) => SINGLEBU_GROUP_OF[k] === g))
+            .filter(([, , g]) => (g === "__zero" ? singleBuPointOrder.includes("0") : singleBuPointOrder.some((k) => SINGLEBU_GROUP_OF[k] === g)))
             .map(([label, color]) => (
             <span key={label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
               <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: color, display: "inline-block" }} />
@@ -1397,7 +1564,7 @@ export default function VatDashboard() {
     // ของหน้า (ไม่ลอย ไม่ใช้ sticky/zIndex อะไรเลย) ความสูง Fix 40vh ส่วน Zone C/D/E แยกเป็นกรอบ
     // Scroll ของตัวเองต่างหาก (flex:1) เริ่มต้นพอดีที่ขอบล่างของส่วน 40% — Root Container เลยไม่ต้อง
     // Scroll เองอีกต่อไป (overflow:"hidden") เพราะแบ่งให้ลูกแต่ละก้อนจัดการ Scroll ของตัวเอง
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", padding: "16px", gap: "14px", overflow: "hidden", boxSizing: "border-box" }}>
+    <div ref={dashRootRef} style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", padding: "16px", gap: "14px", overflow: "hidden", boxSizing: "border-box", background: isBrowserFull ? "#f3f4f6" : undefined }}>
       {/* ── ส่วนบน 40%: Header + Zone A + Zone B + Zone F เป็น "ส่วนนึงของ Page" ปกติ ไม่ลอย ──── */}
       <div style={{ flexShrink: 0 }}>
         {/* MARKER_STICKY_FIXED_HEIGHT_40VH_V1 — Fix ความสูงส่วนนี้ (Header+Zone A/B/F) ไว้ที่ 40vh
@@ -1436,15 +1603,30 @@ export default function VatDashboard() {
                     >
                       🔄
                     </button>
-                    <span style={{ color: loading ? "#d9a441" : "#2e9e5b" }}>●</span>
-                    {loading ? "กำลังโหลด..." : "Live"}
-                    {periodMonth && <> &nbsp;|&nbsp; Period: {periodMonth}</>}
+                    <span style={{ color: loading || isStale ? "#d9a441" : "#2e9e5b" }}>●</span>
+                    {loading ? "กำลังโหลด..." : isStale
+                      ? <span style={{ color: "#b7791f", fontWeight: 600 }} title={`ปิด Period แล้ว ยังไม่มี Incomplete เดือน ${periodMonth} เข้ามา — ตัวเลขที่เห็นคือข้อมูลเดือน ${dataMonth}`}>รอข้อมูลใหม่</span>
+                      : "Live"}
+                    {isStale
+                      ? <> &nbsp;|&nbsp; <span style={{ color: "#b7791f" }}>ข้อมูลเดือน {dataMonth} (รอไฟล์ {periodMonth})</span></>
+                      : (periodMonth && <> &nbsp;|&nbsp; Period: {periodMonth}</>)}
                     &nbsp;|&nbsp; อัปเดตล่าสุด: {formatThaiTime(now)}
                   </span>
                 </div>
               </div>
               <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "5px" }}>
-                <div style={{ fontSize: "12px", color: "#555" }}>{formatThaiDate(now)}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={toggleBrowserFull}
+                    title={isBrowserFull ? "ออกจากเต็มจอ (Esc หรือ Insert)" : "เต็มจอ (Insert) — ซ่อนเมนู/แถบเบราว์เซอร์"}
+                    aria-label={isBrowserFull ? "ออกจากเต็มจอ" : "เต็มจอ"}
+                    style={{ width: "22px", height: "22px", padding: 0, border: "0.5px solid #d0d5dd", borderRadius: "6px", background: "#f0f0f0", color: "#555", cursor: "pointer", fontSize: "13px", lineHeight: 1 }}
+                  >
+                    {isBrowserFull ? "🗗" : "⛶"}
+                  </button>
+                  <div style={{ fontSize: "12px", color: "#555" }}>{formatThaiDate(now)}</div>
+                </div>
                 {(userName || currentUser?.username) && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px" }}>
                     <span style={{ fontSize: "12px", color: "#555" }}>{userName || currentUser?.username}</span>
@@ -1457,24 +1639,44 @@ export default function VatDashboard() {
                 )}
                 {/* MARKER_VATDASHBOARD_BOOKING_CLAIM_TOGGLE_V1 -- แทนที่ปุ่ม Refresh เดิม: สลับยอดเต็ม (Booking)
                     กับยอดเฉลี่ยตาม Rate (Claim %) ทั่วทั้งหน้า (Zone A/B/F + Summary Overall + Popup) */}
-                <div
-                  title={valueMode === "claim" ? "ยอดเฉลี่ยตาม Rate (avg_vat)" : "ยอดเต็ม 100% (exp_vat)"}
-                  style={{ display: "flex", alignItems: "center", border: "0.5px solid #d0d5dd", borderRadius: "14px", padding: "2px", background: "#f0f0f0" }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setValueMode("booking")}
-                    style={{ padding: "3px 10px", fontSize: "10px", fontWeight: 600, borderRadius: "12px", border: "none", cursor: "pointer", background: valueMode === "booking" ? "#1a3a5c" : "transparent", color: valueMode === "booking" ? "white" : "#777", transition: "background 0.15s, color 0.15s" }}
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div
+                    title="กรองตามวิธีจ่าย (คลิก = เลือกค่าเดียว / คลิกซ้ำ = ปลด / Ctrl+คลิก = เลือกหลายค่า)"
+                    style={{ display: "flex", alignItems: "center", border: "0.5px solid #d0d5dd", borderRadius: "14px", padding: "2px", background: "#f0f0f0" }}
                   >
-                    Booking
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setValueMode("claim")}
-                    style={{ padding: "3px 10px", fontSize: "10px", fontWeight: 600, borderRadius: "12px", border: "none", cursor: "pointer", background: valueMode === "claim" ? "#0f7a6b" : "transparent", color: valueMode === "claim" ? "white" : "#777", transition: "background 0.15s, color 0.15s" }}
+                    {PAY_FILTER_OPTIONS.map((opt) => {
+                      const active = payFilter.includes(opt);
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={(e) => togglePayFilter(opt, e)}
+                          style={{ padding: "3px 10px", fontSize: "10px", fontWeight: 600, borderRadius: "12px", border: "none", cursor: "pointer", background: active ? "#0f7a6b" : "transparent", color: active ? "white" : "#777", transition: "background 0.15s, color 0.15s", whiteSpace: "nowrap" }}
+                        >
+                          {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div
+                    title={valueMode === "claim" ? "ยอดเฉลี่ยตาม Rate (avg_vat)" : "ยอดเต็ม 100% (exp_vat)"}
+                    style={{ display: "flex", alignItems: "center", border: "0.5px solid #d0d5dd", borderRadius: "14px", padding: "2px", background: "#f0f0f0" }}
                   >
-                    Claim %
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setValueMode("booking")}
+                      style={{ padding: "3px 10px", fontSize: "10px", fontWeight: 600, borderRadius: "12px", border: "none", cursor: "pointer", background: valueMode === "booking" ? "#1a3a5c" : "transparent", color: valueMode === "booking" ? "white" : "#777", transition: "background 0.15s, color 0.15s" }}
+                    >
+                      Booking
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setValueMode("claim")}
+                      style={{ padding: "3px 10px", fontSize: "10px", fontWeight: 600, borderRadius: "12px", border: "none", cursor: "pointer", background: valueMode === "claim" ? "#0f7a6b" : "transparent", color: valueMode === "claim" ? "white" : "#777", transition: "background 0.15s, color 0.15s" }}
+                    >
+                      Claim %
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1766,22 +1968,46 @@ export default function VatDashboard() {
             รวมกรอบเดียวกับ Summary Vat cards ด้านบน คั่นด้วยเส้น border-top บางๆ
             MARKER_ZONEC_EXPIRED_DETAIL_POPUP_V1 -- การ์ด "Total Vat Expired All" มีปุ่มเปิด Popup
             แสดง Realized/Unrealized Expired แบบละเอียด แทนการโชว์เป็นแถวเพิ่มในตารางหลัก */}
+        {/* MARKER_ZONEC_SECTION_DIVIDER_V1 -- แถบคั่นหัวข้อ ระหว่างการ์ด Summary กับแถว Paid / Unpaid / Expired */}
+        <div style={{ borderTop: "1px solid #e5e5e5", background: "#eef6f4", padding: "9px 14px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}> {/* MARKER_ZONEC_DIVIDER_CENTER_V1 -- จัดกลาง + ขยายฟอนต์หัวข้อ */}
+          <span style={{ width: "3px", height: "18px", borderRadius: "2px", background: "#0f7a6b", display: "inline-block" }} />
+          <span style={{ fontSize: "15px", fontWeight: 700, color: "#0f7a6b", letterSpacing: "0.3px", textAlign: "center" }}>
+            Details by Payment Status and Vendor Type
+          </span>
+        </div>
         {PAYMENT_STATUS_ROWS.map((rowDef) => {
           const { sums, total } = paymentStatusBreakdown[rowDef.key];
           const isExpiredRow = rowDef.key === "expired";
+          const expHoverProps = (k) => isExpiredRow ? {
+            onMouseEnter: (e) => setExpiredHoverTip({ key: k, x: e.clientX, y: e.clientY }),
+            onMouseMove: (e) => setExpiredHoverTip({ key: k, x: e.clientX, y: e.clientY }),
+            onMouseLeave: () => setExpiredHoverTip(null),
+          } : rowDef.key === "paid" ? {
+            onMouseEnter: (e) => setPaidHoverTip({ key: k, x: e.clientX, y: e.clientY }),
+            onMouseMove: (e) => setPaidHoverTip({ key: k, x: e.clientX, y: e.clientY }),
+            onMouseLeave: () => setPaidHoverTip(null),
+          } : {}; // MARKER_ZONEC_EXPIRED_HOVER_RU_V1 / MARKER_ZONEC_PAID_AGING_TOOLTIP_V1
           return (
             <div key={rowDef.key} style={{ borderTop: "1px solid #e5e5e5", display: "flex" }}>
-              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-                <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, color: rowDef.color, background: "#f5f6f8", padding: "7px 6px", borderBottom: "1px solid #e5e5e5", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-                  {rowDef.label} All
-                  {isExpiredRow && (
-                    <button
-                      onClick={() => setShowExpiredDetailPopup(true)}
-                      title="ดูรายละเอียด Realized / Unrealized Expired"
-                      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "16px", height: "16px", padding: 0, border: "1px solid #b91c1c", borderRadius: "50%", background: "white", color: "#b91c1c", fontSize: "10px", fontWeight: 700, cursor: "pointer", lineHeight: 1 }}
-                    >
-                      i
-                    </button>
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }} {...expHoverProps("ALL")}>
+                <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, color: rowDef.color, background: "#f5f6f8", padding: "7px 6px", borderBottom: "1px solid #e5e5e5", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    {rowDef.label} All
+                    {isExpiredRow && (
+                      <button
+                        onClick={() => setShowExpiredDetailPopup(true)}
+                        title="ดูรายละเอียด Realized / Unrealized Expired"
+                        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "16px", height: "16px", padding: 0, border: "1px solid #b91c1c", borderRadius: "50%", background: "white", color: "#b91c1c", fontSize: "10px", fontWeight: 700, cursor: "pointer", lineHeight: 1 }}
+                      >
+                        i
+                      </button>
+                    )}
+                  </span>
+                  {/* MARKER_ZONEC_PCT_OF_OVERALL_V1 -- ป้าย % อยู่บรรทัดที่ 2 ใต้ชื่อ (Layout เดียวกับคอลัมน์ Type) ฐาน = Summary Vat Overall */}
+                  {categoryBreakdownOverall.total > 0 && (
+                    <span style={{ fontSize: "10px", fontWeight: 700, padding: "1px 8px", borderRadius: "999px", background: "#e3f3ee", color: "#0f7a6b" }}>
+                      {((total / categoryBreakdownOverall.total) * 100).toFixed(1)}%
+                    </span>
                   )}
                 </div>
                 <div style={{ textAlign: "center", fontSize: "20px", fontWeight: 700, color: rowDef.color, padding: "14px 6px" }}>
@@ -1789,9 +2015,17 @@ export default function VatDashboard() {
                 </div>
               </div>
               {PAYMENT_STATUS_TYPES.map((t) => (
-                <div key={t} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid #e5e5e5" }}>
-                  <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, color: "#444", background: "#f5f6f8", padding: "7px 6px", borderBottom: "1px solid #e5e5e5" }}>
-                    {rowDef.label} [{t}]
+                <div key={t} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid #e5e5e5" }} {...expHoverProps(t)}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px", textAlign: "center", fontSize: "12px", fontWeight: 700, color: "#444", background: "#f5f6f8", padding: "7px 6px", borderBottom: "1px solid #e5e5e5" }}>
+                    <span>{rowDef.label} [{t}]</span>
+                    {/* MARKER_ZONEC_PCT_OF_OVERALL_V1 */}
+                    {/* ฐานของคอลัมน์ Type = ยอด Summary Vat All [Type] (= Paid + Unpaid ของ Type นั้น) ; คอลัมน์ All ใช้ฐาน Summary Vat Overall */}
+                  {/* MARKER_ZONEC_PCT_TYPE_OF_OVERALL_V1 -- ฐานของ % ทุกคอลัมน์ Type = Summary Vat Overall (เช่น CPN Paid 14,678,137.38 / 278,020,524.65 = 5.3%) */}
+                  {categoryBreakdownOverall.total > 0 && (
+                    <span style={{ fontSize: "10px", fontWeight: 700, padding: "1px 8px", borderRadius: "999px", background: "#e3f3ee", color: "#0f7a6b" }}>
+                      {(((sums[t] || 0) / categoryBreakdownOverall.total) * 100).toFixed(1)}%
+                    </span>
+                  )}
                   </div>
                   <div style={{ textAlign: "center", fontSize: "20px", fontWeight: 700, color: "#1a3a5c", padding: "14px 6px" }}>
                     {formatFull(sums[t] || 0)}
@@ -1812,7 +2046,34 @@ export default function VatDashboard() {
         <div style={{ borderTop: "1px solid #e5e5e5" }}>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", padding: "12px 10px" }}>
             {WATERFALL_BUCKET_ORDER.map((bucket) => {
-              const { items, total } = agingRiskWaterfall[bucket];
+              const { items, total, zero: totalZero, ag: totalAg } = agingRiskWaterfall[bucket];
+              const splitZero = bucket === "low" && totalZero > 0; // MARKER_ZONED_WATERFALL_ZERO_SPLIT_V1
+              // Tooltip แยกยอดตาม Aging เดือน (แสดงเฉพาะเดือนที่อยู่ในแผงนี้ ; Aging 0 แสดงเฉพาะตอน All/Paid)
+              const agMonths = WATERFALL_AGING_MONTHS[bucket].filter((m) => m !== "0" || vatScope !== "aging");
+              const agTip = (title, amount, ag, posBottom) => (
+                <div
+                  style={{
+                    /* MARKER_WATERFALL_TOOLTIP_FIXED_V1 -- เดิม absolute ภายในแผง (overflow:hidden) เลยโดนขอบแผงตัดตอนชี้แท่งชิดซ้าย/ขวา
+                       เปลี่ยนเป็น fixed ตามเมาส์ + Clamp ไม่ให้หลุดจอ (สลับไปโผล่ซ้ายเมาส์ถ้าชิดขอบขวา) */
+                    position: "fixed",
+                    left: (() => { const w = typeof window !== "undefined" ? window.innerWidth : 1200; const est = 270; return wfPos.x + 16 + est > w ? Math.max(8, wfPos.x - est - 16) : wfPos.x + 16; })(),
+                    top: Math.max(8, wfPos.y - 50),
+                    zIndex: 9999, pointerEvents: "none",
+                    background: "rgba(30,41,59,0.95)", color: "white", borderRadius: "6px", padding: "6px 9px", fontSize: "10px", lineHeight: 1.5, whiteSpace: "nowrap", boxShadow: "0 3px 10px rgba(0,0,0,0.25)",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: "2px" }}>{title} · {formatCompact(amount)}</div>
+                  {agMonths.map((m) => {
+                    const v = (ag && ag[m]) || 0;
+                    return (
+                      <div key={m} style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                        <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: m === "0" ? AGING_BUCKET_COLORS.zero : AGING_BUCKET_COLORS[bucket], display: "inline-block" }} />
+                        Aging {m}: {formatFull(v)} ({amount ? ((v / amount) * 100).toFixed(1) : "0.0"}%)
+                      </div>
+                    );
+                  })}
+                </div>
+              );
               const color = AGING_BUCKET_COLORS[bucket];
               const chartH = 170;
               let cum = 0;
@@ -1825,14 +2086,21 @@ export default function VatDashboard() {
                 <div key={bucket} style={{ flex: "1 1 320px", minWidth: "280px", border: "1px solid #e5e5e5", borderRadius: "8px", overflow: "hidden" }}>
                   <div style={{ background: "#eef1f4", borderBottom: `2px dotted ${color}`, padding: "8px 10px", fontSize: "12px", fontWeight: 700, color }}>
                     {WATERFALL_BUCKET_LABELS[bucket]}
+                    
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-end", gap: "6px", padding: "28px 10px 6px", minHeight: `${chartH + 50}px` }}>
                     {bars.length === 0 ? (
                       <div style={{ flex: 1, textAlign: "center", fontSize: "11px", color: "#aaa", paddingBottom: "20px" }}>ไม่มีข้อมูล</div>
                     ) : (
                       <>
-                        {bars.map((b) => (
-                          <div key={b.key} style={{ flex: 1, position: "relative", height: `${chartH}px` }}>
+                        {bars.map((b, bi) => (
+                          <div
+                            key={b.key}
+                            style={{ flex: 1, position: "relative", height: `${chartH}px` }}
+                            onMouseEnter={(e) => { setWfPos({ x: e.clientX, y: e.clientY }); setWfHover(`${bucket}|${b.key}`); }}
+                            onMouseMove={(e) => setWfPos({ x: e.clientX, y: e.clientY })}
+                            onMouseLeave={() => setWfHover(null)}
+                          >
                             <span
                               style={{
                                 position: "absolute",
@@ -1855,17 +2123,30 @@ export default function VatDashboard() {
                                 right: "15%",
                                 bottom: `${total ? (b.bottom / total) * chartH : 0}px`,
                                 height: `${total ? (b.amount / total) * chartH : 0}px`,
-                                background: CATEGORY_COLORS[b.key] || "#8d7363",
+                                background: CATEGORY_COLORS[b.key] || color, /* MARKER_ZONED_WATERFALL_TYPE_COLOR_V1 -- แท่ง Type ใช้สีประจำ Type เหมือน Donut (แท่ง Total ยังเป็นสี Risk) */
+                                opacity: 1,
                                 borderRadius: "3px 3px 0 0",
                               }}
                             />
+                            {wfHover === `${bucket}|${b.key}` && agTip(b.key, b.amount, b.ag, total ? ((b.bottom + b.amount / 2) / total) * chartH : 0)}
                           </div>
                         ))}
-                        <div style={{ flex: 1, position: "relative", height: `${chartH}px` }}>
+                        <div
+                          style={{ flex: 1, position: "relative", height: `${chartH}px` }}
+                          onMouseEnter={(e) => { setWfPos({ x: e.clientX, y: e.clientY }); setWfHover(`${bucket}|__total`); }}
+                          onMouseMove={(e) => setWfPos({ x: e.clientX, y: e.clientY })}
+                          onMouseLeave={() => setWfHover(null)}
+                        >
+                          {wfHover === `${bucket}|__total` && agTip("Total", total, totalAg, chartH / 2)}
                           <span style={{ position: "absolute", left: 0, right: 0, textAlign: "center", bottom: `${chartH + 4}px`, fontSize: "11px", fontWeight: 800, color, whiteSpace: "nowrap" }}>
                             {formatCompact(total)}
                           </span>
-                          <div style={{ position: "absolute", left: "15%", right: "15%", bottom: 0, height: `${chartH}px`, background: color, borderRadius: "3px 3px 0 0" }} />
+                          <div style={{ position: "absolute", left: "15%", right: "15%", bottom: 0, height: `${chartH}px`, background: color, borderRadius: "3px 3px 0 0", overflow: "hidden" }}>
+                            {/* MARKER_ZONED_WATERFALL_TOTAL_SPLIT_V2 -- ปุ่ม All/Paid แผง Low: ส่วน Aging 0 (No Risk) เป็นสีฟ้า ที่เหลือ (Aging 1-2) เป็นสีเขียว */}
+                            {splitZero && total > 0 && (
+                              <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: `${(totalZero / total) * chartH}px`, background: AGING_BUCKET_COLORS.zero }} />
+                            )}
+                          </div>
                         </div>
                       </>
                     )}
@@ -2156,6 +2437,56 @@ export default function VatDashboard() {
         );
       })()}
 
+      {/* MARKER_ZONEC_PAID_AGING_TOOLTIP_V1 -- Hover การ์ด Total Vat Paid (All / แต่ละ Type) แสดงยอดแยกตาม Aging */}
+      {paidHoverTip && (() => {
+        const k = paidHoverTip.key;
+        const src = paidAgingBreakdown[k] || {};
+        const colorOf = (m) => (m === "0" ? AGING_BUCKET_COLORS.zero : m === "1" || m === "2" ? AGING_BUCKET_COLORS.low : m === "3" || m === "4" ? AGING_BUCKET_COLORS.medium : m === "5" || m === "6" ? AGING_BUCKET_COLORS.high : m === "Expired" ? AGING_BUCKET_COLORS.expired : "#bbb");
+        const labelOf = (m) => (m === "Expired" ? "Expired" : m === "other" ? "อื่นๆ" : `Aging ${m}`);
+        const entries = ["0", "1", "2", "3", "4", "5", "6", "Expired", "other"].map((m) => [m, src[m] || 0]).filter(([, v]) => Math.abs(v) > 0.004);
+        const tot = entries.reduce((a, [, v]) => a + v, 0);
+        const pc = (v) => (tot ? ((v / tot) * 100).toFixed(1) : "0.0");
+        return (
+          <div style={{ position: "fixed", left: Math.min(paidHoverTip.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 280), top: Math.max(8, paidHoverTip.y - 40), background: "rgba(30,41,59,0.96)", color: "white", borderRadius: "8px", padding: "8px 12px", fontSize: "11px", lineHeight: 1.6, boxShadow: "0 4px 14px rgba(0,0,0,0.25)", zIndex: 9999, pointerEvents: "none", minWidth: "240px" }}>
+            <div style={{ fontWeight: 700, marginBottom: "4px", borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "4px" }}>
+              Paid {k === "ALL" ? "All" : `[${k}]`} · {formatFull(tot)}
+            </div>
+            {entries.length === 0 && <div style={{ opacity: 0.7 }}>ไม่มียอด</div>}
+            {entries.map(([m, v]) => (
+              <div key={m} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: colorOf(m), display: "inline-block" }} />
+                <span style={{ flex: 1 }}>{labelOf(m)}</span>
+                <span style={{ fontWeight: 700 }}>{formatFull(v)}</span>
+                <span style={{ opacity: 0.7, width: "44px", textAlign: "right" }}>{pc(v)}%</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* MARKER_ZONEC_EXPIRED_HOVER_RU_V1 -- Hover การ์ด Total Vat Expired (All / แต่ละ Type) แสดงยอด Realized / Unrealized */}
+      {expiredHoverTip && (() => {
+        const k = expiredHoverTip.key;
+        const realized = k === "ALL" ? paymentStatusBreakdown.realized_expired.total : (paymentStatusBreakdown.realized_expired.sums[k] || 0);
+        const unrealized = k === "ALL" ? paymentStatusBreakdown.unrealized_expired.total : (paymentStatusBreakdown.unrealized_expired.sums[k] || 0);
+        const tot = realized + unrealized;
+        const pc = (v) => (tot ? ((v / tot) * 100).toFixed(1) : "0.0");
+        return (
+          <div style={{ position: "fixed", left: expiredHoverTip.x + 14, top: expiredHoverTip.y - 80, background: "rgba(30,41,59,0.96)", color: "white", borderRadius: "8px", padding: "8px 12px", fontSize: "11px", lineHeight: 1.6, boxShadow: "0 4px 14px rgba(0,0,0,0.25)", zIndex: 9999, pointerEvents: "none", minWidth: "210px" }}>
+            <div style={{ fontWeight: 700, marginBottom: "4px", borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "4px" }}>
+              Expired {k === "ALL" ? "All" : `[${k}]`} · {formatFull(tot)}
+            </div>
+            {/* MARKER_EXPIRED_HOVER_RU_COLORS_V1 -- Realized = แดง / Unrealized = เขียว (ตัวอักษรอ่านง่ายบนพื้นเข้ม) */}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", color: "#f87171" }}>
+              <span>Realized</span><span style={{ fontWeight: 700 }}>{formatFull(realized)} ({pc(realized)}%)</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", color: "#4ade80" }}>
+              <span>Unrealized</span><span style={{ fontWeight: 700 }}>{formatFull(unrealized)} ({pc(unrealized)}%)</span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* MARKER_ZONEF_ROW_TOOLTIP_V1 — Tooltip ลอยแบบ Fixed Position (หนี Overflow ของ Container
           ทุกชั้นเพราะไม่มี Ancestor ไหนใช้ transform) ปกติโผล่ "สูงขวา" ของ Mouse แต่
           MARKER_ZONEF_TOOLTIP_CLAMP_V1 — ถ้าชิดขอบขวาจอจนล้นออกไป (เช่นแถวอยู่ท้ายสุดของ Zone F
@@ -2210,16 +2541,24 @@ export default function VatDashboard() {
       {showExpiredDetailPopup && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100 }}
-          onClick={() => setShowExpiredDetailPopup(false)}
+          onClick={() => { setShowExpiredDetailPopup(false); setExpiredDetailFull(false); }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ background: "white", borderRadius: "12px", width: "95vw", maxWidth: "1200px", height: "90vh", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}
+            style={{ background: "white", borderRadius: expiredDetailFull ? 0 : "12px", width: expiredDetailFull ? "100vw" : "95vw", maxWidth: expiredDetailFull ? "none" : "1200px", height: expiredDetailFull ? "100vh" : "90vh", maxHeight: expiredDetailFull ? "100vh" : "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "14px 18px", borderBottom: "1px solid #e8e8e8", flexShrink: 0, background: "#b91c1c", color: "white" }}>
               <div style={{ fontSize: "15px", fontWeight: 700, flex: 1 }}>Expired Detail — Realized vs Unrealized</div>
               <button
-                onClick={() => setShowExpiredDetailPopup(false)}
+                onClick={() => setExpiredDetailFull((v) => !v)}
+                title={expiredDetailFull ? "ย่อกลับ" : "ขยายเต็มจอ"}
+                aria-label={expiredDetailFull ? "ย่อกลับ" : "ขยายเต็มจอ"}
+                style={{ width: "26px", height: "26px", padding: 0, border: "none", borderRadius: "50%", background: "rgba(255,255,255,0.2)", cursor: "pointer", fontSize: "14px", color: "white" }}
+              >
+                {expiredDetailFull ? "🗗" : "⛶"}
+              </button>
+              <button
+                onClick={() => { setShowExpiredDetailPopup(false); setExpiredDetailFull(false); }}
                 style={{ width: "26px", height: "26px", padding: 0, border: "none", borderRadius: "50%", background: "rgba(255,255,255,0.2)", cursor: "pointer", fontSize: "14px", color: "white" }}
               >
                 ✕
@@ -2435,12 +2774,12 @@ export default function VatDashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {expiredDetailByBU.length === 0 ? (
+                          {expiredDetailRows.length === 0 ? (
                             <tr>
                               <td colSpan={4} style={{ textAlign: "center", padding: "14px", color: "#999" }}>ไม่มีข้อมูล</td>
                             </tr>
                           ) : (
-                            expiredDetailByBU.map((row) => {
+                            expiredDetailRows.map((row) => {
                               const isRealizedSel = buDetailSelection && buDetailSelection.bu === row.bu && buDetailSelection.bucket === "realized";
                               const isUnrealizedSel = buDetailSelection && buDetailSelection.bu === row.bu && buDetailSelection.bucket === "unrealized";
                               return (
@@ -2489,8 +2828,8 @@ export default function VatDashboard() {
                         พื้นที่ว่างด้านล่างไม่เท่าความสูงตาราง BU ฝั่งซ้าย (70%) ตามที่ขอ "ขยายให้สูงเท่ากัน"
                         -- ให้แต่ละ Card เป็น flex:1 แบ่งพื้นที่สูงเท่ากันเต็มความสูง Zone 40% แทน */}
                     <div style={{ flex: "0 0 30%", minHeight: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
-                      <div style={{ fontSize: "10px", fontWeight: 700, color: reasonCardsScopeBu ? "#7c3aed" : "#999", flexShrink: 0 }}>
-                        {reasonCardsScopeBu ? `เฉพาะ BU: ${reasonCardsScopeBu}` : "ทุก BU"}
+                      <div style={{ fontSize: "10px", fontWeight: 700, color: (reasonCardsScopeBu || reasonCardsScopeBase) ? "#7c3aed" : "#999", flexShrink: 0 }}>
+                        {reasonCardsScopeBu ? `เฉพาะ BU: ${reasonCardsScopeBu}` : reasonCardsScopeBase ? `เฉพาะ Base: ${reasonCardsScopeBase}` : `ทุก BU ในตาราง (${viewBuSet.size})`}
                       </div>
                       {unrealizedReasonState.loading ? (
                         <div style={{ fontSize: "11px", color: "#999", textAlign: "center", padding: "10px 0" }}>กำลังโหลด...</div>
@@ -2568,9 +2907,16 @@ export default function VatDashboard() {
                           "payment_date", "check_date", "check_no", "receive_doc_date", "receive_doc_no",
                           "exp_amount", "exp_vat", "old_ref_check_no", "old_ref_pay_date",
                         ];
+                        // MARKER_ZONEC_EXPIRED_DETAIL_DEFAULT_COLS_REALIZED_V1 -- ตามที่ขอ: Realized ไม่ต้องแสดง id, Note/Remark, phone,
+                        // ap_source, ap_batch_name..old_ref_*, rate_unresolved, type_* (ไม่ต้องดึงเยอะ) -- ใช้ Whitelist เหมือนฝั่ง Unrealized
+                        const DEFAULT_REALIZED_COLS = [
+                          "doc_date", "doc_no", "site", "pay_group", "branch", "tax_type", "invoice_ref", "supplier_code", "vendor_name",
+                          "payment_date", "check_date", "check_no", "receive_doc_date", "receive_doc_no",
+                          "exp_amount", "exp_vat", "avg_amount", "avg_vat",
+                        ];
                         const orderedCols = isUnrealizedView
                           ? orderedColsAll.filter((c) => c === noteCol || DEFAULT_UNREALIZED_COLS.includes(c))
-                          : orderedColsAll;
+                          : orderedColsAll.filter((c) => DEFAULT_REALIZED_COLS.includes(c));
                         // MARKER_ZONEC_EXPIRED_DETAIL_CELL_NAV_V1 -- กดลูกศร = เลื่อนเลือก Cell ทีละช่อง
                         // (ไม่ใช่ Scroll หน้าทั้งหน้า) ถ้ากดค้าง Browser จะยิง keydown ซ้ำๆ เอง ทำให้เหมือนเลื่อนรัว
                         // ส่วนถ้าอยากใช้ Scroll ปกติ (เม้าส์/Trackpad) ยังใช้ได้ตามปกติเพราะไม่ได้ปิด overflow

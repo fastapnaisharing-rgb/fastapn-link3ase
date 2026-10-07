@@ -16,6 +16,7 @@ import IEController, { InvoiceHistoryPage as IEInvoiceHistoryPage, GenerateMacro
 import APScanOCR from './pages/APScanOCR';
 import VatController from './pages/VatController';
 import VatDashboard from './pages/VatDashboard'; // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1
+import VatFreeze from './pages/VatFreeze'; // MARKER_APP_VAT_FREEZE_PAGE_V1
 import GLFunctionalController from './pages/GLFunctionalController'; // MARKER_GL_AP_RECON_COMPONENT_V1
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
@@ -2055,6 +2056,10 @@ function MainApp() {
       case 'vat-dashboard': // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1 -- แยกออกจาก VatController.js
         return (isOwner || userPermissions?.['VAT'])
           ? <VatDashboard />
+          : <NoAccessPage />;
+      case 'vat-freeze': // MARKER_APP_VAT_FREEZE_PAGE_V1
+        return (isOwner || userPermissions?.['VAT'])
+          ? <VatFreeze />
           : <NoAccessPage />;
       case 'vat-watchlist-ops':
       case 'vat-reconcile-ap01-05':

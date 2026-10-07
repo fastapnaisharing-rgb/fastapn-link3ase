@@ -54,12 +54,12 @@ export function buildAgingLines(rows, agingList, period) {
   const sums = {};
   rows.forEach((r) => { const a = Number(r.aging_months); sums[a] = (sums[a] || 0) + num(r.exp_vat); });
   const list = (agingList && agingList.length ? agingList : [6, 5, 4, 3, 2, 1, 0]).map(Number).filter((a) => a >= 0 && a <= 6).sort((a, b) => b - a);
-  return list.map((a) => ({
+  return list.map((a, i) => ({
     aging: a,
     month: monthLabel(period, a),
     total: sums[a] || 0,
     color: a >= 5 ? "red" : "green", // Aging 5-6 = แดง (กลุ่ม 6-5), 0-4 = เขียว
-    text: `รายการคงค้างที่ตัดชำระเงินในเดือน ${monthLabel(period, a)} จำนวนภาษียังไม่ได้สิทธิ์ : ${fmtMoney(sums[a] || 0)} บาท`,
+    text: `${i + 1}. รายการคงค้างที่ตัดชำระเงินในเดือน ${monthLabel(period, a)} จำนวนภาษียังไม่ได้สิทธิ์ : ${fmtMoney(sums[a] || 0)} บาท`,
   }));
 }
 
@@ -88,12 +88,12 @@ function styleHeaderSample(row) { // ตามไฟล์ตัวอย่า�
 }
 
 // ── Workbook ส่งถึง BU: ชีท Pivot (PivotTable จริง) + Raw + Aging Summary ──
-export async function buildBuWorkbook({ rows, period, buLabel, generatedBy }) {
+export async function buildBuWorkbook({ rows, period, buLabel, generatedBy, extraCols, rawCols }) { // MARKER_VATMAILEXPORT_SUPPLIER_EXTRACOLS_V1 -- extraCols = { head:[...], values:(row)=>[...] } คอลัมน์เพิ่มต่อท้ายชีท Raw (ไม่กระทบ Index ของ Pivot/SUMIF)
   const wb = new ExcelJS.Workbook();
   wb.creator = generatedBy || "Link3ase";
 
   // ---------- Pivot (ชีทแรก = sheet1.xml) : หัวรายงาน + พื้นที่ให้ PivotTable วาง ----------
-  const pv = wb.addWorksheet("Incompleted_Pivot", { views: [{ state: "frozen", ySplit: 10, zoomScale: 90, showGridLines: false }] });
+  const pv = wb.addWorksheet("Incompleted_Pivot", { views: [{ state: "frozen", ySplit: 10, zoomScale: 70, showGridLines: false }] });
   pv.addRow([`รายการใบกำกับภาษีที่ยังไม่ได้รับ — ${buLabel}`]).font = { bold: true, size: 14, color: { argb: "FF1A3A5C" } };
   pv.addRow([`Period: ${period || "-"}   |   จำนวนรายการ: ${rows.length.toLocaleString()}   |   สร้างเมื่อ: ${new Date().toLocaleString("en-GB")}`]).font = { color: { argb: "FF666666" } };
   pv.addRow(["* Pivot Table จริง -- ถ้าตัวเลขไม่ขึ้น กด Data > Refresh All  |  เลือก Aging ได้ที่ Slicer ด้านบน"]).font = { italic: true, size: 9, color: { argb: "FF999999" } };
@@ -101,17 +101,23 @@ export async function buildBuWorkbook({ rows, period, buLabel, generatedBy }) {
 
   // ---------- Raw ----------
   const raw = wb.addWorksheet("ICP_Report_BU");
-  const rawHead = ["ว.ด.ป.", "เลขที่", "Site", "Pay Group", "Branch", "ประเภทภาษี", "ใบแจ้งหนี้", "Supplier Code", "ชื่อผู้ค้า", "Business", "ชำระเงิน", "เช็ค", "เลขที่เช็ค", "Receive Doc.", "มูลค่าสินค้า", "เงินภาษี", "BU", "Aging", "Period", "Tax Group", "Related Persons", "AP Batch Name"];
+  const rawHeadBase = ["ว.ด.ป.", "เลขที่", "Site", "Pay Group", "Branch", "ประเภทภาษี", "ใบแจ้งหนี้", "Supplier Code", "ชื่อผู้ค้า", "Business", "ชำระเงิน", "เช็ค", "เลขที่เช็ค", "Receive Doc.", "มูลค่าสินค้า", "เงินภาษี", "BU", "Aging", "Period", "Tax Group", "Related Persons", "AP Batch Name"];
+  // MARKER_VATMAILEXPORT_SUPPLIER_RAWCOLS_V1 -- rawCols = Index (เริ่ม 0) ของคอลัมน์ Raw ที่จะแสดง (ไม่ระบุ = ทั้ง 22 คอลัมน์) -- Index ของ Pivot/สูตร/Format แปลงตามตำแหน่งใหม่ให้อัตโนมัติ
+  const baseIdx = Array.isArray(rawCols) && rawCols.length ? rawCols : rawHeadBase.map((_, i) => i);
+  const nIdx = (orig) => baseIdx.indexOf(orig); // ตำแหน่งใหม่ (0-based) ของคอลัมน์เดิม | -1 = ไม่มีในไฟล์นี้
+  const colLetter = (n1) => { let n = n1; let out = ""; while (n > 0) { const m = (n - 1) % 26; out = String.fromCharCode(65 + m) + out; n = Math.floor((n - 1) / 26); } return out; };
+  const rawHead = [...baseIdx.map((i) => rawHeadBase[i]), ...(extraCols ? extraCols.head : [])];
+  const withExtra = (r, base) => baseIdx.map((i) => base[i]).concat(extraCols ? extraCols.values(r) : []);
   const dash = (v) => (v == null || String(v).trim() === "" ? "-" : String(v));
-  const rawData = rows.map((r) => [
+  const rawData = rows.map((r) => withExtra(r, [
     r.doc_date == null ? null : String(r.doc_date), r.doc_no == null ? null : String(r.doc_no), r.site || null, r.pay_group || null, r.branch || null, r.tax_type || null,
     dash(r.invoice_ref), dash(r.supplier_code), dash(r.vendor_name), r.bus_type || null, dateOnly(r.payment_date), dateOnly(r.check_date), dash(r.check_no), r.receive_doc_no || null,
     num(r.exp_amount), num(r.exp_vat), dash(r.bu), `aging ${r.aging_months} month`, r.period || null, r._taxGroup, r._person || "ไม่ระบุ", r.ap_batch_name || null,
-  ]);
+  ]));
   styleHeaderSample(raw.addRow(rawHead));
   rawData.forEach((r) => raw.addRow(r));
-  [11, 12].forEach((c) => { raw.getColumn(c).numFmt = "dd-mmm-yy"; });
-  [15, 16].forEach((c) => { raw.getColumn(c).numFmt = MONEY; });
+  [10, 11].forEach((o) => { if (nIdx(o) >= 0) raw.getColumn(nIdx(o) + 1).numFmt = "dd-mmm-yy"; });
+  [14, 15].forEach((o) => { if (nIdx(o) >= 0) raw.getColumn(nIdx(o) + 1).numFmt = MONEY; });
   raw.views = [{ state: "frozen", ySplit: 1 }];
   raw.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: rawHead.length } };
   autoWidth(raw);
@@ -123,7 +129,7 @@ export async function buildBuWorkbook({ rows, period, buLabel, generatedBy }) {
   rows.forEach((r) => { const a = Number(r.aging_months); agSum[a] = (agSum[a] || 0) + num(r.exp_vat); });
   [6, 5, 4, 3, 2, 1, 0].forEach((a, i) => {
     const r = i + 2;
-    const row = ag.addRow([`aging ${a} month`, monthLabel(period, a), { formula: `SUMIF(ICP_Report_BU!$R:$R,$A${r},ICP_Report_BU!$P:$P)`, result: agSum[a] || 0 }]);
+    const row = ag.addRow([`aging ${a} month`, monthLabel(period, a), { formula: `SUMIF(ICP_Report_BU!$${colLetter(nIdx(17) + 1)}:$${colLetter(nIdx(17) + 1)},$A${r},ICP_Report_BU!$${colLetter(nIdx(15) + 1)}:$${colLetter(nIdx(15) + 1)})`, result: agSum[a] || 0 }]);
     row.getCell(3).numFmt = MONEY;
   });
   [18, 18, 18].forEach((w, i) => { ag.getColumn(i + 1).width = w; });
@@ -135,14 +141,15 @@ export async function buildBuWorkbook({ rows, period, buLabel, generatedBy }) {
     // Row: Related Persons > ชื่อผู้ค้า > Supplier Code > BU > เลขที่เช็ค > ชำระเงิน > ใบแจ้งหนี้ | Filter: Tax Group | Values: Sum มูลค่าสินค้า, เงินภาษี
     buf = await injectPivot(buf, {
       header: rawHead, rows: rawData, dataSheet: "ICP_Report_BU", hostSheetFile: "sheet1.xml",
-      rowFields: [20, 8, 7, 16, 12, 10, 6],
+      rowFields: [20, 8, 7, 16, 12, 10, 6].map(nIdx).filter((i) => i >= 0),
       // MARKER_VATMAILEXPORT_SLICER_SWITCH_V1 -- USE_SLICER=true: Slicer (Aging) | false: Aging เป็น Report Filter (เลือกหลายค่าได้)
       ...(USE_SLICER
         ? { slicers: [
-            { field: 17, caption: "Aging", from: [3, 3], to: [7, 7], columnCount: 4, reverse: true },
+            // ตามค่าที่ผู้ใช้ปรับ: Columns 3 | ปุ่มสูง 0.28" | Slicer สูง 1.15" x กว้าง 5.97" (วางเริ่มที่คอลัมน์ C แถว 2)
+            { field: nIdx(17), caption: "Aging", from: [2, 1], fromOff: [552450, 0], to: [6, 6], toOff: [874395, 95250], columnCount: 3, rowHeight: 256032, reverse: true },
           ] }
-        : { pageField: 17 }),
-      dataFields: [{ idx: 14, name: "Sum of มูลค่าสินค้า" }, { idx: 15, name: "Sum of เงินภาษี" }], pivotTop: 10,
+        : { pageField: nIdx(17) }),
+      dataFields: [{ idx: nIdx(14), name: "Sum of มูลค่าสินค้า" }, { idx: nIdx(15), name: "Sum of เงินภาษี" }], pivotTop: 10,
     });
   } catch (e) { pivotOk = false; console.error("injectPivot failed:", e); }
   const grandA = rows.reduce((t, r) => t + num(r.exp_amount), 0);

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup ช่องวันที่ ค.ศ. + พ.ศ.</title>
+<style>
+  :root { --ink:#1a2a3a; --mut:#8a8f98; --line:#d8dbe0; --navy:#1a3a5c; --be:#b04a08; --be-bg:#fdeede; --ce:#1d5fb8; --ce-bg:#e3eefc; --ok:#0f7a6b; --bg:#f4f6f9; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:"Sarabun","Segoe UI",Tahoma,sans-serif; font-size:13px; padding:20px 16px 40px; }
+  h1 { font-size:16px; margin:0 0 4px; color:var(--navy); }
+  .sub { color:var(--mut); margin:0 0 16px; font-size:12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; max-width:1000px; }
+  .card { background:#fff; border:0.5px solid #dfe3ea; border-radius:10px; padding:14px; }
+  .card h2 { font-size:13px; margin:0 0 2px; color:var(--navy); }
+  .card p.d { margin:0 0 12px; color:var(--mut); font-size:11.5px; }
+  label { display:block; font-size:11px; color:#888; margin-bottom:4px; }
+  .fld { position:relative; }
+  .fld input[type=text] { width:100%; padding:6px 66px 6px 8px; font-size:12px; border:0.5px solid var(--line); border-radius:8px; background:#FFFBEA; font-family:inherit; }
+  .fld .cal { position:absolute; right:6px; top:50%; transform:translateY(-50%); font-size:13px; color:#888; }
+  .yr { position:absolute; right:26px; top:50%; transform:translateY(-50%); border:0.5px solid #cfd6e2; background:#fff; border-radius:6px; font-size:10.5px; padding:1px 6px; color:var(--navy); cursor:pointer; font-family:inherit; }
+  .yr:hover { background:#eef3fb; }
+  .row { display:flex; align-items:center; gap:6px; margin-top:6px; min-height:22px; flex-wrap:wrap; }
+  .pill { font-size:10.5px; font-weight:700; border-radius:99px; padding:1px 9px; border:0.5px solid; }
+  .pill.ce { color:var(--ce); background:var(--ce-bg); border-color:var(--ce); }
+  .pill.be { color:var(--be); background:var(--be-bg); border-color:var(--be); }
+  .hint { font-size:10.5px; color:var(--mut); }
+  .conv { font-size:10.5px; color:var(--ok); font-weight:600; }
+  .menu { position:absolute; left:0; top:100%; margin-top:4px; width:230px; background:#fff; border:1px solid #d5dbe5; border-radius:8px; box-shadow:0 8px 24px rgba(10,20,35,.22); padding:4px; z-index:5; display:none; }
+  .menu.open { display:block; }
+  .menu .h { padding:4px 8px; font-size:10.5px; color:var(--mut); }
+  .menu .it { display:flex; justify-content:space-between; padding:5px 8px; border-radius:6px; cursor:pointer; font-size:12px; }
+  .menu .it:hover { background:#eef3fb; }
+  .menu .it.cur { background:#eaf0f6; font-weight:700; }
+  .menu .it span.b { color:var(--be); font-size:11px; }
+  .tag { display:inline-block; font-size:10px; background:#eef2f7; color:#44556a; border-radius:4px; padding:1px 6px; margin-bottom:8px; }
+  .note { max-width:1000px; margin-top:14px; font-size:12px; color:#44556a; line-height:1.6; }
+  .note b { color:var(--navy); }
+</style>
+</head>
+<body>
+<h1>Mockup: ช่องวันที่แสดงทั้ง ค.ศ. และ พ.ศ. คู่กัน</h1>
+<p class="sub">ตัวอย่างบนช่อง Tax Invoice Date (หน้า Add Tax Invoice) ลองพิมพ์/กดปุ่มได้จริง ยังไม่ได้แก้ในระบบ</p>
+
+<div class="grid">
+
+  <div class="card">
+    <span class="tag">แบบ A · ป้ายปีใต้ช่อง (อัปเดตสด)</span>
+    <h2>พิมพ์ ค.ศ. → เห็น พ.ศ. ทันที</h2>
+    <p class="d">ลองพิมพ์ 08/27/2026 หรือ 8/27/2569 (พ.ศ.) ระบบแปลงเป็น ค.ศ. ให้เอง พร้อมบอกว่าแปลงอะไร</p>
+    <label>Tax Invoice Date</label>
+    <div class="fld">
+      <input type="text" id="a" value="08/27/2026" placeholder="MM/DD/YYYY">
+      <button class="yr" type="button" id="ayr">ปี ▾</button>
+      <span class="cal">📅</span>
+      <div class="menu" id="amenu"></div>
+    </div>
+    <div class="row" id="arow"></div>
+  </div>
+
+  <div class="card">
+    <span class="tag">แบบ B · ปุ่ม “ปี ▾” (รายการปี ค.ศ. + พ.ศ. คู่กัน)</span>
+    <h2>เลือกปีจากรายการ</h2>
+    <p class="d">กดปุ่ม “ปี ▾” จะเห็นปี ค.ศ. คู่กับ พ.ศ. ระหว่างกำลังเลือก (ปฏิทินเดิมของ Browser ยังใช้ได้เหมือนเดิม)</p>
+    <label>Tax Invoice Date</label>
+    <div class="fld">
+      <input type="text" id="b" value="" placeholder="MM/DD/YYYY">
+      <button class="yr" type="button" id="byr">ปี ▾</button>
+      <span class="cal">📅</span>
+      <div class="menu" id="bmenu"></div>
+    </div>
+    <div class="row"><span class="hint">กดปุ่ม ปี ▾ แล้วเลือกปี ระบบใส่ปีให้ในช่อง (คงเดือน/วันเดิมถ้ามี)</span></div>
+  </div>
+
+  <div class="card">
+    <span class="tag">แบบ A+B รวมกัน (ที่แนะนำ)</span>
+    <h2>ใช้ทั้งป้ายใต้ช่อง และปุ่ม ปี ▾</h2>
+    <p class="d">ป้ายใต้ช่องบอกปีที่ใช้อยู่ทั้งสองระบบ ปุ่ม ปี ▾ ใช้ตอนเลือกปี</p>
+    <label>Tax Invoice Date</label>
+    <div class="fld">
+      <input type="text" value="05/15/2026" readonly>
+      <button class="yr" type="button" disabled>ปี ▾</button>
+      <span class="cal">📅</span>
+    </div>
+    <div class="row"><span class="pill ce">ค.ศ. 2026</span><span class="pill be">พ.ศ. 2569</span></div>
+  </div>
+
+</div>
+
+<div class="note">
+  <b>จุดที่จะใส่ (ถ้าอนุมัติ):</b> Tax Invoice Date และ Receive Date ใน Add Tax Invoice (Full Page), Quick Action, ADI Tax Invoice Date ใน Simple Input<br>
+  <b>กติกาแปลงปี:</b> ปี &gt; 2400 ถือเป็น พ.ศ. แปลงเป็น ค.ศ. (ลบ 543) ให้อัตโนมัติ ปี 2 หลักใช้กติกาเดิมของระบบ ค่าที่บันทึกลงฐานข้อมูลเป็น ค.ศ. เหมือนเดิมทั้งหมด
+</div>
+
+<script>
+const YEARS = [2024,2025,2026,2027,2028];
+function pad(n){return String(n).padStart(2,'0');}
+function parse(v){
+  const m = String(v).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if(!m) return null;
+  let y=+m[3], conv=false;
+  if(y>2400){ y-=543; conv=m[3]; }
+  else if(y<100){ y+=2000; }
+  return {mm:+m[1], dd:+m[2], y, conv};
+}
+function buildMenu(menuEl, inputEl, onPick){
+  const cur = (parse(inputEl.value)||{}).y;
+  menuEl.innerHTML = '<div class="h">เลือกปี (ค.ศ. · พ.ศ.)</div>' + YEARS.map(y =>
+    `<div class="it ${y===cur?'cur':''}" data-y="${y}"><span>${y}</span><span class="b">พ.ศ. ${y+543}</span></div>`).join('');
+  menuEl.querySelectorAll('.it').forEach(el => el.onclick = () => {
+    const y = +el.dataset.y; const p = parse(inputEl.value);
+    inputEl.value = p ? `${pad(p.mm)}/${pad(p.dd)}/${y}` : `01/01/${y}`;
+    menuEl.classList.remove('open'); onPick && onPick();
+  });
+}
+function wire(inId, btnId, menuId, onChange){
+  const inp=document.getElementById(inId), btn=document.getElementById(btnId), menu=document.getElementById(menuId);
+  btn.onclick = (e)=>{ e.stopPropagation(); buildMenu(menu, inp, onChange); menu.classList.toggle('open'); };
+  inp.addEventListener('input', ()=>onChange&&onChange());
+  inp.addEventListener('blur', ()=>{ const p=parse(inp.value); if(p){ inp.value=`${pad(p.mm)}/${pad(p.dd)}/${p.y}`; onChange&&onChange(); }});
+  document.addEventListener('click', ()=>menu.classList.remove('open'));
+}
+function renderA(){
+  const p = parse(document.getElementById('a').value), row=document.getElementById('arow');
+  if(!p){ row.innerHTML='<span class="hint">พิมพ์วันที่ในรูปแบบ MM/DD/YYYY</span>'; return; }
+  let h = `<span class="pill ce">ค.ศ. ${p.y}</span><span class="pill be">พ.ศ. ${p.y+543}</span>`;
+  if(p.conv) h += `<span class="conv">แปลงจาก พ.ศ. ${p.conv} → ค.ศ. ${p.y} แล้ว</span>`;
+  row.innerHTML = h;
+}
+wire('a','ayr','amenu',renderA); renderA();
+wire('b','byr','bmenu',null);
+</script>
+</body>
+</html>

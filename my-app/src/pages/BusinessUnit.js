@@ -62,6 +62,133 @@ function StatusDropdown({ value, onChange, options, style }) {
   );
 }
 
+// MARKER_DATEFIELD_BE_COMPARE_V1 -- ช่องวันที่แบบพิมพ์ได้ + ปฏิทินที่ทำเอง: ระดับปีโชว์เลข พ.ศ. กำกับข้าง ค.ศ. (เลขเปรียบเทียบเฉยๆ ไม่มีผลกับค่า) ค่าที่ส่งออกยังเป็น ISO YYYY-MM-DD (ค.ศ.) เหมือน <input type="date"> เดิม
+function DateFieldBE({ value, onChange, disabled, style }) {
+  // MARKER_BUSINESSUNIT_DATEFIELD_NATIVE_LOOK_BE_V1 -- ปฏิทินหน้าตาเหมือนของ Browser (วัน: ลูกศร ↑↓ + Clear/Today ; เดือน/ปี: รายการปีแถบเทา กางเดือนใต้ปีที่เลือก) แต่แสดงเลข พ.ศ. ข้างทุกปี ; ค่าที่เก็บเป็น ค.ศ. (YYYY-MM-DD) เหมือนเดิม
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const parseIso = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null; };
+  const toDisp = (v) => { const p = parseIso(v); return p ? `${pad2(p.m + 1)}/${pad2(p.d)}/${p.y}` : ''; };
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MONF = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const [text, setText] = useState(toDisp(value));
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState('day'); // 'day' | 'ym'
+  const [vy, setVy] = useState(new Date().getFullYear());
+  const [vm, setVm] = useState(new Date().getMonth());
+  const [ey, setEy] = useState(new Date().getFullYear()); // ปีที่กางเดือนอยู่ในมุมมอง ym
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const wrapRef = useRef(null);
+  const popRef = useRef(null);
+  useEffect(() => { setText(toDisp(value)); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const h = (e) => {
+      if (wrapRef.current && wrapRef.current.contains(e.target)) return;
+      if (popRef.current && popRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  useEffect(() => {
+    if (!open || view !== 'ym' || !popRef.current) return;
+    const box = popRef.current.querySelector('[data-ylist="1"]');
+    const el = popRef.current.querySelector('[data-ey="1"]');
+    if (box && el) box.scrollTop = el.offsetTop;
+  }, [open, view]);
+  const sel = parseIso(value);
+  const commit = (raw) => {
+    const t = String(raw || '').trim();
+    if (!t) { onChange(''); return; }
+    const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t);
+    if (m) {
+      const mo = +m[1], d = +m[2], y = +m[3];
+      const dt = new Date(y, mo - 1, d);
+      if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) { onChange(`${y}-${pad2(mo)}-${pad2(d)}`); return; }
+    }
+    setText(toDisp(value)); // อ่านไม่ออก -> คืนค่าเดิม
+  };
+  const openPop = () => {
+    if (disabled) return;
+    if (!open && wrapRef.current) {
+      const r = wrapRef.current.getBoundingClientRect();
+      setPos({ top: Math.min(r.bottom + 2, window.innerHeight - 330), left: Math.max(8, Math.min(r.right - 250, window.innerWidth - 260)) });
+      const p = sel || { y: new Date().getFullYear(), m: new Date().getMonth() };
+      setVy(p.y); setVm(p.m); setEy(p.y); setView('day');
+    }
+    setOpen((o) => !o);
+  };
+  const first = new Date(vy, vm, 1).getDay();
+  const dim = new Date(vy, vm + 1, 0).getDate();
+  const prevDim = new Date(vy, vm, 0).getDate();
+  const trailing = Math.max(0, 42 - first - dim);
+  const prevMonth = () => { if (vm === 0) { setVm(11); setVy(vy - 1); } else setVm(vm - 1); };
+  const nextMonth = () => { if (vm === 11) { setVm(0); setVy(vy + 1); } else setVm(vm + 1); };
+  const hdBtn = { border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: 700, color: '#1a3a5c', padding: '2px 4px' };
+  const arrBtn = { border: 'none', background: 'none', cursor: 'pointer', fontSize: '17px', color: '#333', padding: '0 8px', lineHeight: 1 };
+  const selCell = { background: '#6e6e6e', color: '#fff', fontWeight: 700, border: '2px solid #111' };
+  const years = [];
+  for (let y = 1950; y <= 2100; y++) years.push(y);
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
+      <input type="text" disabled={disabled} value={text} placeholder="mm/dd/yyyy" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} style={{ ...style, paddingRight: '26px' }} />
+      <span onClick={openPop} style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', cursor: disabled ? 'default' : 'pointer', fontSize: '14px', opacity: disabled ? 0.4 : 1 }}>{'📅'}</span>
+      {open && ReactDOM.createPortal(
+        <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: '240px', background: 'white', border: '0.5px solid #ddd', borderRadius: '8px', boxShadow: '0 6px 18px rgba(0,0,0,0.22)', zIndex: 99999, padding: '8px', fontSize: '13px', color: '#222' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '6px' }}>
+            <button type="button" style={hdBtn} onClick={() => { if (view === 'day') { setEy(vy); setView('ym'); } else { setView('day'); } }}>
+              {MONF[vm]} {vy} <span style={{ color: '#999', fontWeight: 400, fontSize: '11px' }}>({vy + 543})</span> {'▾'}
+            </button>
+            {view === 'day' && (
+              <span>
+                <button type="button" style={arrBtn} onClick={prevMonth}>{'↑'}</button>
+                <button type="button" style={arrBtn} onClick={nextMonth}>{'↓'}</button>
+              </span>
+            )}
+          </div>
+          {view === 'day' && (
+            <React.Fragment>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px', textAlign: 'center' }}>
+                {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((w) => <div key={w} style={{ fontSize: '12px', fontWeight: 700, color: '#222', padding: '4px 0' }}>{w}</div>)}
+                {Array.from({ length: first }, (_, i) => <div key={'o' + i} style={{ padding: '6px 0', color: '#8a8a8a' }}>{prevDim - first + 1 + i}</div>)}
+                {Array.from({ length: dim }, (_, i) => {
+                  const d = i + 1;
+                  const on = sel && sel.y === vy && sel.m === vm && sel.d === d;
+                  return <div key={d} onClick={() => { onChange(`${vy}-${pad2(vm + 1)}-${pad2(d)}`); setOpen(false); }} style={{ padding: '6px 0', borderRadius: '4px', cursor: 'pointer', boxSizing: 'border-box', ...(on ? selCell : { border: '2px solid transparent' }) }} onMouseEnter={(e) => { if (!on) e.currentTarget.style.background = '#eef3fb'; }} onMouseLeave={(e) => { if (!on) e.currentTarget.style.background = 'transparent'; }}>{d}</div>;
+                })}
+                {Array.from({ length: trailing }, (_, i) => <div key={'t' + i} style={{ padding: '6px 0', color: '#8a8a8a' }}>{i + 1}</div>)}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 4px 2px' }}>
+                <button type="button" style={{ border: 'none', background: 'none', color: '#1a73e8', cursor: 'pointer', fontSize: '13px' }} onClick={() => { onChange(''); setOpen(false); }}>Clear</button>
+                <button type="button" style={{ border: 'none', background: 'none', color: '#1a73e8', cursor: 'pointer', fontSize: '13px' }} onClick={() => { const t = new Date(); onChange(`${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`); setOpen(false); }}>Today</button>
+              </div>
+            </React.Fragment>
+          )}
+          {view === 'ym' && (
+            <div data-ylist="1" style={{ position: 'relative', maxHeight: '250px', overflowY: 'auto' }}>
+              {years.map((y) => (
+                <div key={y}>
+                  <div {...(y === ey ? { 'data-ey': '1' } : {})} onClick={() => setEy(y)} style={{ display: 'flex', alignItems: 'baseline', background: '#ececec', padding: '5px 10px', cursor: 'pointer', fontSize: '13px' }}>
+                    <span>{y}</span><span style={{ marginLeft: '14px', fontSize: '12px', color: '#777' }}>{y + 543}</span>
+                  </div>
+                  {y === ey && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '2px', padding: '6px 2px' }}>
+                      {MON.map((m, i) => {
+                        const on = sel && sel.y === y && sel.m === i;
+                        return <div key={m} onClick={() => { setVy(y); setVm(i); setView('day'); }} style={{ padding: '9px 0', textAlign: 'center', borderRadius: '4px', cursor: 'pointer', boxSizing: 'border-box', ...(on ? selCell : { border: '2px solid transparent' }) }} onMouseEnter={(e) => { if (!on) e.currentTarget.style.background = '#eef3fb'; }} onMouseLeave={(e) => { if (!on) e.currentTarget.style.background = 'transparent'; }}>{m}</div>;
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 // MARKER_BUSINESSUNIT_FIX_INFOCELL_STYLE_V1
 function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_COMBOBOX_PORTAL_FIX_V1
   const [open, setOpen] = useState(false);
@@ -1220,7 +1347,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                   <div style={valueCellStyle}>
                     {editMode ? (
                       key === 'Inactive Date' ? (
-                        <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={inputBare} />
+                        <DateFieldBE disabled={isDisabled} value={form[key] || ''} onChange={v => { setForm({ ...form, [key]: v }); setError(''); }} style={inputBare} />
                       ) : key === 'Branch Address' ? (
                         <textarea value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
                       ) : key === 'status' ? (

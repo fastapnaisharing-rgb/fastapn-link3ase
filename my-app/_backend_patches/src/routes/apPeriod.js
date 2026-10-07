@@ -653,7 +653,8 @@ router.get("/notifications", async (req, res) => {
          -- หรือกด Mark Read เอง) ไม่ต้องส่งกลับมาอีกเลย ไม่ใช่แค่ทำสีจาง ──
          AND NOT (
            category IN ('AP_PERIOD', 'AP_PERIOD_REQUEST')
-           AND read_by @> to_jsonb($3::text)
+           -- MARKER_APPERIOD_NOTIF_READBY_EMAIL_V2 -- read_by เก็บเป็นอีเมล ต้องเช็คทั้ง username และอีเมล
+           AND (read_by @> to_jsonb($3::text) OR read_by @> to_jsonb($4::text))
          )
          -- MARKER_PERIOD_NO_SKIP_GUARD_V1 -- คำขอปิด Period ที่ถูกจัดการแล้ว (handled_at) ต้องไม่โผล่ใน Bell
          AND NOT (category = 'AP_PERIOD_REQUEST' AND handled_at IS NOT NULL)
@@ -669,14 +670,28 @@ router.get("/notifications", async (req, res) => {
            notifications.created_at > NOW() - INTERVAL '3 days'
            OR (notifications.category = 'support-feedback' AND t.status = 'new')
          )
+         -- MARKER_APPERIOD_NOTIF_30MIN_AFTER_LOGIN_V1
+         -- ── AP_PERIOD (แจ้งเพื่อทราบว่าปิด/เปิด Period แล้ว) อยู่ใน Bell ได้แค่ 30 นาที
+         -- ── หลัง User นี้ Login (หรือหลังสร้าง Notification ถ้าสร้างหลัง Login) ──
+         AND (
+           notifications.category <> 'AP_PERIOD'
+           OR NOW() < GREATEST(
+                notifications.created_at,
+                COALESCE(
+                  (SELECT MAX(a.created_at) FROM activity_log a
+                    WHERE a.user_email = $4::text AND a.action = 'LOGIN' AND a.module = 'AUTH'),
+                  notifications.created_at
+                )
+              ) + INTERVAL '30 minutes'
+         )
        ORDER BY notifications.created_at DESC
        LIMIT 50`,
-      [permList, userRole, username]
+      [permList, userRole, username, req.user.email]
     );
 
     const result = rows.map(n => ({
       ...n,
-      is_read: Array.isArray(n.read_by) && n.read_by.includes(username)
+      is_read: Array.isArray(n.read_by) && (n.read_by.includes(username) || n.read_by.includes(req.user.email))
     }));
 
     res.json(result);

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup v5 - Timeline Closed Vat</title>
+<style>
+:root{--bg:#f4f3ef;--card:#fff;--ink:#1f2a37;--mute:#7b8794;--navy:#16325c;--amber:#f5c26b;--red:#d64550;--green:#2e9e5b;--line:#e6e4dd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 "Segoe UI",Tahoma,sans-serif;padding:20px}
+.wrap{max-width:1180px;margin:auto}
+.card{background:var(--card);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05);overflow:hidden}
+.sec{padding:16px 22px}
+.sec+.sec{border-top:1px solid var(--line)}
+.small{font-size:11px;color:var(--mute)}
+.tl-top{display:flex;justify-content:space-between}
+.tl-title{font-size:12px;color:var(--mute);font-weight:600}
+.date{font-size:24px;font-weight:500;margin-top:2px}
+.date.dl{color:var(--red);text-align:right}
+.badge{background:#e3f3d9;color:#3d7a1f;border-radius:10px;padding:1px 9px;font-size:11px;margin-left:6px}
+.bar{display:grid;grid-template-columns:repeat(31,1fr);gap:4px;margin:12px 0 8px}
+.bar i{height:5px;border-radius:3px;background:var(--amber)}.bar i.late{background:var(--red)}
+.tl-foot{display:flex;justify-content:space-between}
+/* KPI strip: ไม่เป็นการ์ดแยก คั่นด้วยเส้นแนวตั้ง */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);background:#faf9f6}
+.kpi{display:flex;align-items:center;gap:12px;padding:4px 18px}
+.kpi+.kpi{border-left:1px solid var(--line)}
+.kpi:first-child{padding-left:0}
+.ico{width:38px;height:38px;border-radius:8px;display:grid;place-items:center;font-size:17px}
+.kpi .v{font-size:22px;font-weight:500;line-height:1.1}.kpi .t{font-size:12px;color:var(--mute)}
+/* แถบ Tab + ฟิลเตอร์ บรรทัดเดียวกัน */
+.bar2{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:0 22px 0 0}
+.tabs{display:flex;font-weight:600;font-size:13px}
+.tabs div{padding:12px 28px;border-bottom:2px solid transparent;color:var(--mute)}
+.tabs div.on{color:var(--navy);border-color:var(--navy);background:#eef0f6}
+.tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:6px 0}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:#fff;padding:6px 12px;font-size:13px}
+.seg button.on{background:var(--navy);color:#fff;font-weight:600}
+.lbl{color:var(--mute);font-size:12px}
+.gear{width:32px;height:32px;border:1px solid var(--line);background:#fff;border-radius:6px}
+.grid{margin-top:12px;background:#fff;border-radius:10px;overflow:hidden}.gh{display:grid;grid-template-columns:repeat(6,1fr);background:#eef0f6;font-weight:600;font-size:13px;border-bottom:2px solid var(--navy)}.gh div{padding:10px 14px;text-align:center}.rows{padding:30px;text-align:center;color:var(--mute)}.table{margin-top:12px;height:90px;border:1px dashed #b9b6a8;border-radius:10px;display:grid;place-items:center;color:var(--mute)}
+.note{margin-top:14px;padding:12px 16px;border:1px dashed #b9b6a8;border-radius:8px;color:#5b5a52;font-size:13px;background:#fbfaf6}
+@media(max-width:800px){.kpis{grid-template-columns:repeat(2,1fr);gap:10px 0}}
+</style></head><body><div class="wrap">
+
+<div class="card">
+  <!-- ส่วน 1: Timeline (สัดส่วนเดิม) -->
+  <div class="sec">
+    <div class="tl-top">
+      <div><div class="tl-title">Timeline Closed Vat</div><div class="date">05-Sep-2026</div>
+        <div class="small">Sep 2569 <span class="badge">Open</span></div></div>
+      <div><div class="small" style="text-align:right">Deadline</div><div class="date dl">06-Oct-2026</div>
+        <div class="small" style="text-align:right;color:var(--red)">1 day left</div></div>
+    </div>
+    <div class="bar" id="bar"></div>
+    <div class="tl-foot small"><span>เริ่มรอบ 5 ก.ย.</span><span>วันนี้ 5 ต.ค. · ครบกำหนด 6 ต.ค.</span></div>
+  </div>
+
+  <!-- ส่วน 2: KPI 4 ช่อง (อยู่ในการ์ดเดียวกัน) -->
+  <div class="sec kpis">
+    <div class="kpi"><div class="ico" style="background:#e8eef9">◔</div><div><div class="t">ภาพรวมที่ทำแล้ว</div><div class="v">1%</div></div></div>
+    <div class="kpi"><div class="ico" style="background:#e4f2dc">🏢</div><div><div class="t">BU Active</div><div class="v">14</div></div></div>
+    <div class="kpi"><div class="ico" style="background:#eceae4">🏢</div><div><div class="t">BU Inactive</div><div class="v" style="color:var(--mute)">0</div></div></div>
+    <div class="kpi"><div class="ico" style="background:#e1f4e8;color:var(--green)">✓</div><div><div class="t">เสร็จ 100%</div><div class="v">0</div></div></div>
+  </div>
+
+  <!-- ส่วน 3: ฟิลเตอร์ (ในการ์ด) -->
+  <div class="sec" style="display:flex;justify-content:flex-end">
+    <div class="tools">
+      <div class="seg"><button class="on">My Job</button><button>All Job</button></div>
+      <span class="lbl">สถานะ</span>
+      <div class="seg"><button class="on">All</button><button>Pending</button><button>Confirm</button></div>
+      <button class="gear">⚙</button>
+    </div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="gh">
+    <div style="grid-column:span 2">Prepare to Transfer</div><div style="grid-column:span 2">Input</div><div style="grid-column:span 2">Incomplete</div>
+  </div>
+  <div class="rows">ข้อมูลในตาราง (เหมือนเดิม) — Prepare to Transfer / Input / Incomplete คือหัว Column ของตาราง</div>
+</div>
+<div class="note">Mockup v5 (ยังไม่แก้โค้ดจริง): การ์ดใบเดียว = ① Timeline Closed Vat ② KPI 4 ช่อง ③ ฟิลเตอร์ · ส่วน Prepare to Transfer / Input / Incomplete เป็นหัว Column ของตาราง อยู่นอกการ์ด เหมือนเดิม</div>
+</div>
+<script>const b=document.getElementById('bar');for(let i=0;i<31;i++){const e=document.createElement('i');if(i>=29)e.className='late';b.appendChild(e)}</script>
+</body></html>
