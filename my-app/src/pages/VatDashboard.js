@@ -351,6 +351,7 @@ const scopeBtnStyle = (active, isLast) => ({
 // ── Hook: ดึงข้อมูลสรุปจริงจาก vat_summary_live_dashboard ──────────────────
 function useVatSummaryDashboard() {
   const [rows, setRows] = React.useState([]);
+  const [frozenRows, setFrozenRows] = React.useState([]); // MARKER_VATDASHBOARD_FROZEN_FALLBACK_V1
   const [buToBase, setBuToBase] = React.useState({}); // MARKER_VATDASHBOARD_BU_BASE_MAP_V1 -- company_list.base
   const [periodMonth, setPeriodMonth] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
@@ -360,11 +361,14 @@ function useVatSummaryDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [summaryRes, periodRes, companies] = await Promise.all([
+      const [summaryRes, periodRes, companies, frozenRes] = await Promise.all([
         apiFetch("/vat_summary_live_dashboard"),
         apiFetch("/vat/period/status").catch(() => null),
         apiFetch("/company_list").catch(() => []),
+        apiFetch("/vat_summary_frozen_dashboard").catch(() => []),
       ]);
+      const fl = Array.isArray(frozenRes) ? frozenRes : (Array.isArray(frozenRes?.rows) ? frozenRes.rows : []);
+      setFrozenRows(fl.filter((r) => String(r.freeze_status || "").toLowerCase() === "final"));
       const list = Array.isArray(summaryRes) ? summaryRes : (Array.isArray(summaryRes?.rows) ? summaryRes.rows : []);
       setRows(list);
       setPeriodMonth(periodRes?.vat_period_current_month || null);
@@ -388,11 +392,22 @@ function useVatSummaryDashboard() {
     return () => { cancelled = true; };
   }, [fetchData]);
 
-  return { rows, buToBase, periodMonth, loading, error, refetch: fetchData };
+  return { rows, frozenRows, buToBase, periodMonth, loading, error, refetch: fetchData };
 }
 
 export default function VatDashboard() {
-  const { rows: rowsRaw, buToBase, periodMonth, loading, error, refetch } = useVatSummaryDashboard();
+  const { rows: liveRowsRaw, frozenRows, buToBase, periodMonth, loading, error, refetch } = useVatSummaryDashboard();
+  // MARKER_VATDASHBOARD_FROZEN_FALLBACK_V1 -- หลังปิดงวด: BU ที่ยังไม่มี Incomplete ของงวดใหม่เข้า Live แสดงยอด Freeze (Final) ของงวดที่ปิดล่าสุด
+  //   BU ที่ Live มีงวดใหม่กว่า Final แล้ว -> ใช้ Live | งวดเก่าที่มีแต่ใน Freeze ถูกเติมเข้ากราฟเทียบย้อนหลังด้วย
+  const rowsRaw = React.useMemo(() => {
+    const frozenMax = {};
+    frozenRows.forEach((r) => { if (r.bu && (!frozenMax[r.bu] || r.period_month > frozenMax[r.bu])) frozenMax[r.bu] = r.period_month; });
+    // Live งวดเดียวกับ Final ล่าสุดของ BU ให้ Final เป็นตัวแทน (ยอด Freeze ตาม Note ตามเงื่อนไขที่ระบบกำหนด)
+    const live = liveRowsRaw.filter((r) => !(r.bu && frozenMax[r.bu] && r.period_month === frozenMax[r.bu]));
+    const liveKeys = new Set(live.map((r) => (r.bu || "") + "|" + (r.period_month || "")));
+    const frozen = frozenRows.filter((r) => !liveKeys.has((r.bu || "") + "|" + (r.period_month || "")));
+    return [...live, ...frozen];
+  }, [liveRowsRaw, frozenRows]);
   const { userName, currentUser } = useAuth();
   // MARKER_VATDASHBOARD_PAYMENT_TYPE_FILTER_V1 -- หลอด Filter Bank Transfer | Cheque | Direct Debit (กรองทั้งหน้า)
   // คลิกธรรมดา = เลือกค่าเดียว (คลิกค่าที่เลือกอยู่ซ้ำ = ปลดเป็น No Filter) | Ctrl/Cmd+คลิก = เพิ่ม/เอาออกจากชุดที่เลือก
@@ -400,9 +415,24 @@ export default function VatDashboard() {
   // rowsRaw = ข้อมูลเต็ม (ใช้ทำรายชื่อ BU/Base ให้ปุ่มไม่หายตอนกรอง) | rows = หลังกรอง payment_type ที่ทุก Zone ใช้
   const PAY_FILTER_OPTIONS = ["Bank Transfer", "Cheque", "Direct Debit"];
   const [payFilter, setPayFilter] = React.useState([]);
-  const rows = React.useMemo(
+  // MARKER_VATDASHBOARD_LATEST_PERIOD_PER_BU_V1 -- vat_summary_live เก็บแถวของหลายงวดไว้ได้ (ฟังก์ชัน Recompute ลบเฉพาะงวดปัจจุบันของ BU) ถ้าเอาทุกงวดมารวมกัน
+  // ยอดของ BU ที่มีทั้งงวดเก่าและงวดใหม่จะถูกนับซ้ำ (เช่น TOP มีทั้ง 2026-09 และ 2026-10) -- ทุกการ์ด/Zone ใช้เฉพาะ "งวดล่าสุดของแต่ละ BU"
+  // rowsAllPeriods = ทุกงวด (เฉพาะกราฟเทียบย้อนหลัง 3 เดือนใช้) | rows = งวดล่าสุดต่อ BU (ทุกอย่างที่เหลือใช้)
+  const rowsAllPeriods = React.useMemo(
     () => (payFilter.length ? rowsRaw.filter((r) => payFilter.includes(r.payment_type)) : rowsRaw),
     [rowsRaw, payFilter]
+  );
+  const latestPeriodByBu = React.useMemo(() => {
+    const m = {};
+    rowsRaw.forEach((r) => {
+      const pm = r.period_month;
+      if (r.bu && typeof pm === "string" && /^\d{4}-\d{2}$/.test(pm) && (!m[r.bu] || pm > m[r.bu])) m[r.bu] = pm;
+    });
+    return m;
+  }, [rowsRaw]);
+  const rows = React.useMemo(
+    () => rowsAllPeriods.filter((r) => !r.bu || !latestPeriodByBu[r.bu] || r.period_month === latestPeriodByBu[r.bu]),
+    [rowsAllPeriods, latestPeriodByBu]
   );
   const togglePayFilter = (val, e) => {
     const multi = !!(e && (e.ctrlKey || e.metaKey));
@@ -828,7 +858,7 @@ export default function VatDashboard() {
     let anchorMonth = periodMonth;
     if (_isPm(periodMonth)) {
       let latest = null;
-      rows.forEach((row) => {
+      rowsAllPeriods.forEach((row) => {
         const pm = row.period_month;
         if (_isPm(pm) && pm <= periodMonth && (!latest || pm > latest)) latest = pm;
       });
@@ -844,7 +874,7 @@ export default function VatDashboard() {
       months.push(periodMonth || "-");
     }
 
-    let r = rows;
+    let r = rowsAllPeriods;
     if (baseFilter) r = r.filter((row) => buToBase[row.bu] === baseFilter);
     if (buFilter) r = r.filter((row) => row.bu === buFilter);
 
@@ -872,7 +902,7 @@ export default function VatDashboard() {
       }
     });
     return months.map((m) => ({ month: m, ...byMonth[m] }));
-  }, [rows, baseFilter, buFilter, buToBase, vatField, periodMonth]);
+  }, [rowsAllPeriods, baseFilter, buFilter, buToBase, vatField, periodMonth]);
 
   // MARKER_ZONEC_EXPIRED_MOM_BYTYPE_V1 — เปรียบเทียบเดือนปัจจุบัน vs เดือนก่อนหน้า รายType (All +
   // CPN/ITC/LAND/UTL/OTH) สำหรับลูกศรขึ้น/ลงข้างตาราง By Type ใน Popup -- ใช้ expiredTrend3Month

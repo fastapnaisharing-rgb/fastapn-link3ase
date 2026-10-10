@@ -15,6 +15,7 @@ import APController, { InvoiceHistoryPage, BatchControlPage } from './pages/APCo
 import IEController, { InvoiceHistoryPage as IEInvoiceHistoryPage, GenerateMacroLogicPage as IEGenerateMacroLogicPage } from './pages/IEController'; // MARKER_APP_IE_CONTROLLER_ROUTE
 import APScanOCR from './pages/APScanOCR';
 import VatController from './pages/VatController';
+import { maybeUpdateSpHandler } from './spHandlerAutoUpdate'; // MARKER_SP_HANDLER_AUTOUPDATE_V1
 import VatDashboard from './pages/VatDashboard'; // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1
 import VatFreeze from './pages/VatFreeze'; // MARKER_APP_VAT_FREEZE_PAGE_V1
 import GLFunctionalController from './pages/GLFunctionalController'; // MARKER_GL_AP_RECON_COMPONENT_V1
@@ -1344,6 +1345,12 @@ function MainApp() {
   const { currentUser, userRole, userName, logout, userPermissions } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
+  // MARKER_SP_HANDLER_AUTOUPDATE_V1 -- Login แล้ว (มี currentUser) ให้ Handler SharePoint ตรวจ/อัปเดตตัวเอง (หน่วงเล็กน้อยไม่ขวางหน้าแรก)
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    const tm = setTimeout(() => { maybeUpdateSpHandler(); }, 4000);
+    return () => clearTimeout(tm);
+  }, [currentUser]);
   const hasAnyDocAccess = Object.values(userPermissions?.docAccess || {}).some(v => v === true);
 
   // ── Reset pendingHistoryTab ทันทีหลัง Consume (กันบังคับ Inbox ซ้ำตอน Navigate ปกติ) ──
@@ -2057,8 +2064,8 @@ function MainApp() {
         return (isOwner || userPermissions?.['VAT'])
           ? <VatDashboard />
           : <NoAccessPage />;
-      case 'vat-freeze': // MARKER_APP_VAT_FREEZE_PAGE_V1
-        return (isOwner || userPermissions?.['VAT'])
+      case 'vat-freeze': // MARKER_APP_VAT_FREEZE_PAGE_V1 MARKER_APP_VAT_FREEZE_OWNER_ONLY_V15 -- Owner เท่านั้น
+        return isOwner
           ? <VatFreeze />
           : <NoAccessPage />;
       case 'vat-watchlist-ops':
@@ -2328,7 +2335,7 @@ function MainApp() {
                 <React.Fragment key={g.label}>
                   {gi > 0 && fpDiv()}
                   {fpGroup(g.icon, g.label)}
-                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
+                  {g.items.filter(it => it.id !== 'vat-freeze' || isOwner).map(it => fpSub(it.id, it.icon, it.label))} {/* MARKER_APP_VAT_FREEZE_OWNER_ONLY_V15 -- ซ่อนเมนู Freeze จากคนที่ไม่ใช่ Owner */}
                 </React.Fragment>
               ))}
             </div>

@@ -161,6 +161,37 @@ const formatDateDisplayMDY = (iso) => {
   return m ? `${m[2]}/${m[3]}/${m[1]}` : iso;
 };
 
+// MARKER_CHECKRETURN_MANUAL_OLDDATE_HYBRID_V1 -- Hybrid Date (พิมพ์ได้ MM/DD/YYYY + เลือกจาก Calendar) แบบเดียวกับ Add Tax / Quick Action; value/onChange เป็น 'YYYY-MM-DD'
+const HybridDateInput = ({ value, onChange, style }) => {
+  const textRef = React.useRef(null);
+  return (
+    <div style={{ position: 'relative', display: 'inline-block', ...(style && style.wrap) }}>
+      <input
+        key={value || 'empty'}
+        ref={textRef}
+        type="text"
+        defaultValue={formatDateDisplayMDY(value)}
+        placeholder="MM/DD/YYYY"
+        onBlur={async (e) => {
+          const parsed = await resolveFlexibleDateInput(e.target);
+          if (parsed) { e.target.value = formatDateDisplayMDY(parsed); onChange(parsed); }
+          else if (!e.target.value.trim()) { onChange(''); }
+          else { e.target.value = formatDateDisplayMDY(value); }
+        }}
+        style={{ width: '100%', boxSizing: 'border-box', border: '0.5px solid #ccc', ...(style && style.input) }}
+      />
+      <span style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '12px', color: '#888' }}>📅</span>
+      <input
+        type="date"
+        tabIndex={-1}
+        value={value || ''}
+        onChange={(e) => { const v = e.target.value; if (textRef.current) textRef.current.value = formatDateDisplayMDY(v); onChange(v); }}
+        style={{ position: 'absolute', right: 0, top: 0, width: '20px', height: '100%', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }}
+      />
+    </div>
+  );
+};
+
 // MARKER_VATCONTROLLER_INVOICE_STRUCTURE_APPLY_V1 -- ก็อปมาจาก Logic "Invoice Structure" ของ AP (APController.js: buildInvoiceNumber/INVOICE_PATTERN_BUILDERS)
 // เพื่อ Apply กับ SM-Code: Special Rule1 ใช้แทน "Invoice No." (Invoice Rule/Pattern code), Digit ใช้ Field "Digit" ที่มีอยู่แล้วใน SM-Code (Confirm แล้ว)
 const vcPad2 = (n) => String(n).padStart(2, '0');
@@ -898,6 +929,19 @@ function computeVatWatchlistGrt(row, business) {
   return computeVatWatchlistGrtDecideFromRef(ref) || raw;
 }
 
+// MARKER_VATWATCHLISTOPS_FREEZE_REFRESH_BU_V1 -- Note/Check Return เปลี่ยน Unrealized (Accept) -> ขอให้ Backend Freeze ซ้ำเฉพาะ BU นั้น (เฉพาะงวดที่ Final แล้วและยังอยู่ในกรอบเวลา DB เป็นคนตัดสินกฎเวลา)
+// รวมหลายครั้งติดกันเป็นครั้งเดียวต่อ BU (หน่วง 3 วินาที) กัน Freeze ถี่จนเกิดเวอร์ชันเยอะ
+const _vatFreezeRefreshTimers = {};
+function vatFreezeRefreshBu(buCode) {
+  if (!buCode) return;
+  clearTimeout(_vatFreezeRefreshTimers[buCode]);
+  _vatFreezeRefreshTimers[buCode] = setTimeout(() => {
+    apiFetch('/vat_freeze/refresh_bu', { method: 'POST', body: JSON.stringify({ bu: buCode }) })
+      .then((r) => { if (r && (r.action === 'needs_confirm' || r.action === 'locked')) console.warn('[vat_freeze/refresh_bu]', buCode, r.action, '-- Owner ต้องกด Freeze ซ้ำที่หน้า VAT Freeze เอง'); })
+      .catch((e) => console.warn('[vat_freeze/refresh_bu] failed:', e && e.message));
+  }, 3000);
+}
+
 function computeVatWatchlistAging(business, row, currentPeriodMonth) {
   if (business === 'N-PAY' || business === 'N-PO3') {
     return { months: null, label: 'IV-Aging Uncount' };
@@ -1123,14 +1167,27 @@ function VatCheckReturnMatchContent({ files, onClose }) {
   const [bus, setBus] = React.useState([]); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1 -- เปลี่ยนจาก bu เดี่ยว เป็น bus (Array) รองรับหลาย BU ในไฟล์เดียว
   const [buTab, setBuTab] = React.useState('all'); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1 -- Tab เลือกดู All หรือ BU เดียว
   const [results, setResults] = React.useState([]);
+  // MARKER_CHECKRETURN_REMARK_DBLCLICK_EDIT_V1 -- Double click ที่ Remark ใน Match with Condition -> หน้าต่างข้อความลอยให้แก้ (เหมือน Description ใน AP Controller): Enter บันทึก / Shift+Enter ขึ้นบรรทัดใหม่ / Esc ยกเลิก
+  const [editRemarkKey, setEditRemarkKey] = React.useState(null);
+  const [editRemarkVal, setEditRemarkVal] = React.useState('');
+  const [editRemarkPos, setEditRemarkPos] = React.useState({ top: 0, left: 0 });
+  const editRemarkCancelRef = React.useRef(false);
+  const commitEditRemark = (key, val) => {
+    const nv = String(val || '').trim();
+    setResults((prev) => prev.map((x) => (`${x.bu}|||${x.checkNo}|||${x.supplierCode}` === key ? { ...x, matchRemark: nv || null } : x)));
+  };
   const [saving, setSaving] = React.useState(false);
   const [saveDone, setSaveDone] = React.useState(false);
   // MARKER_VATWATCHLISTOPS_CHECKRETURN_TABS_MANUALMATCH_V1 -- Tab Matched/Unmatch + Manual Match State
   const [expiredRows, setExpiredRows] = React.useState([]); // เก็บไว้ใช้หา Candidate ตอน Manual Match
   const [activeTab, setActiveTab] = React.useState('matched'); // 'matched' | 'unmatch'
   const [manualMatchRow, setManualMatchRow] = React.useState(null);
+  const [manualMatchHighlightKey, setManualMatchHighlightKey] = React.useState(null); // MARKER_VATWATCHLISTOPS_MANUALMATCH_ROW_HIGHLIGHT_V1 -- จำแถวที่กด Manual Match ล่าสุด เพื่อ Highlight ในตาราง Unmatch
   const [manualMatchSelected, setManualMatchSelected] = React.useState(() => new Set());
   const [manualMatchSaving, setManualMatchSaving] = React.useState(false);
+  const [manualOldDoc, setManualOldDoc] = React.useState(''); // MARKER_MANUALMATCH_OLD_PAYMENT_V1 -- Old Payment Doc/Date (ไม่บังคับกรอก) ค่ากลางของทุกรายการที่เลือก
+  const [manualOldDate, setManualOldDate] = React.useState('');
+  const [manualOldPerRow, setManualOldPerRow] = React.useState({}); // { invoice_ref: { doc, date } } กรอกเฉพาะรายการ
   const [manualMatchedKeys, setManualMatchedKeys] = React.useState(() => new Set());
   const [singleSavedKeys, setSingleSavedKeys] = React.useState(() => new Set()); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- จำแถว Old Ref ที่ยอดไม่ตรง แต่กดปุ่ม Save เดี่ยวยืนยันไปแล้ว
   const [oldRefDetailRow, setOldRefDetailRow] = React.useState(null); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- แถวที่กำลังเปิดดู Detail ประกอบยอด (ใช้ได้กับทุกแถวที่ Match แล้ว ไม่ใช่แค่ Old Ref ที่ยอดไม่ตรง)
@@ -1246,8 +1303,9 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             if (notedInvoiceKeys.has(`${String(row.invoice_ref || '').trim()}|||${String(row.supplier_code || '').trim()}`)) return false; // MARKER_VATWATCHLISTOPS_CHECKRETURN_EXCLUDE_NOTEDINVOICE_LIVE_V1 -- เช็คซ้ำจาก Note สดๆ กันเคส note_status บนแถวยังไม่ Sync
             const business = computeVatWatchlistBusiness(row, vendorCategoryByCode, today);
             const aging = computeVatWatchlistAging(business, row, effectivePeriodMonth);
+            if (String(row.payment_date || '').trim() === '') return false; // MARKER_VATWATCHLISTOPS_CHECKRETURN_CANDIDATE_PAID_ONLY_V1 -- ไม่มี Payment (ยังไม่จ่าย) ไม่เกี่ยวข้องกับเช็คคืน ห้ามเป็น Candidate
             return aging.label === 'Expired' || aging.label === 'IV-Aging Uncount'; // MARKER_VATWATCHLISTOPS_CHECKRETURN_INCLUDE_UNCOUNT_V1 -- ปลดเงื่อนไขเพิ่ม: แถวที่ไม่มี payment_date (Aging ค้างที่ IV-Aging Uncount ตลอดไป ไม่ว่าจะเป็นเช็คแบบไหน) ก็เป็น Candidate ได้ด้วย -- Expired เดิมยังผ่านเหมือนเดิมทุกอย่าง
-          }).map((row) => ({ ...row, __bu: buCode })); // ติด Tag BU ไว้ใช้กับ Manual Match ทีหลัง
+          }).map((row) => ({ ...row, __bu: buCode, __aging: computeVatWatchlistAging(computeVatWatchlistBusiness(row, vendorCategoryByCode, today), row, effectivePeriodMonth).label })); // ติด Tag BU ไว้ใช้กับ Manual Match ทีหลัง -- MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_PROVE_EXPIRED_V1 เก็บ Aging ที่คำนวณสดไว้พิสูจน์ว่า Expired จริง
           allExpiredRows = allExpiredRows.concat(expiredRowsForBu);
 
           expiredRowsForBu.forEach((r) => {
@@ -1481,7 +1539,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
           const vatSum = group.reduce((s, r) => s + (Number(r.exp_vat) || 0), 0);
 
           let bestMatch = null;
-          let closestMatch = null; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- เก็บยอดที่ใกล้เคียงที่สุด (ไม่สนใจ Tolerance) ไว้โชว์อ้างอิงเวลา Tier 1.5 เจอเลขที่เช็คตรงแต่ยอดไม่ Reconcile
+          let closestMatch = null; // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- เก็บยอดที่ใกล้เคียงที่สุด (ไม่สนใจ Tolerance) ไว้โชว์อ้างอิงเวลา Tier 1.5 เจอเลขที่เช็คตรงแต่ยอดไม่ Balance
           WHT_RATES.forEach(({ rate, label }) => {
             const calc = preVatSum * (1 - rate) + vatSum;
             const diff = Math.abs(calc - reportAmount);
@@ -1561,7 +1619,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             const missingAmount = missingPreVat * (1 - rateInfo.rate) + missingVat;
             matchRemark = `อ้างอิงเช็คเดิม ${cleanCheckNo(invoiceNum)}: ยอดตามใบที่เหลือไม่ครบเต็มเช็ค ขาดยอด ${missingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท หลังหักภาษี ${fullBestMatch.rateLabel} ด้วย Invoice No. ${missingRefs} (จ่ายจบไปแล้ว)`;
           } else if (isOldRefMatch) {
-            // ยอดไม่ Reconcile แม้แต่กลุ่มเต็ม -- ห้ามจับจอง Line ตอนนี้ -- เก็บไว้เป็น Soft Candidate ให้ Tier 2/3/4 ได้ลองก่อน
+            // ยอดไม่ Balance แม้แต่กลุ่มเต็ม -- ห้ามจับจอง Line ตอนนี้ -- เก็บไว้เป็น Soft Candidate ให้ Tier 2/3/4 ได้ลองก่อน
             oldRefSoftCandidate = { group, fullGroup: fullGroupForRemark || group, rowBu, supplierNum };
           } else if (bestMatch) { // MARKER_VATWATCHLISTOPS_CHECKRETURN_EXACTMATCH_V1 -- Match รอบแรกสำเร็จจริง กันรอบ 2 หยิบกลุ่มนี้ซ้ำ
             usedGroupKeys.add(matchedGroupKey);
@@ -1942,7 +2000,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         }
 
         // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1
-        // ── รอบสุดท้าย: เก็บตกกลุ่ม Tier 1.5 ที่ยอดไม่ Reconcile (Soft Candidate) -- Tier 2/3/4 ลองหมดแล้ว ──
+        // ── รอบสุดท้าย: เก็บตกกลุ่ม Tier 1.5 ที่ยอดไม่ Balance (Soft Candidate) -- Tier 2/3/4 ลองหมดแล้ว ──
         // ── เหลือ Line ไหนที่ยังไม่ถูกใช้บ้าง ค่อยจับจองเท่าที่เหลือ ตั้งเป็น Matched + Badge "ตรวจสอบยอด" ──
         // ── ให้ AP Review เอง พร้อม Remark บอกยอดที่ขาด + Invoice No. ที่เกี่ยวข้อง เสมอ (ไม่ว่ายอดจะ ──
         // ── Reconcile ได้หรือไม่ก็ตาม -- ตามที่ Confirm กับ User) ──────────────────────────────────────
@@ -1987,7 +2045,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             const k = `${x.invoice_ref}|||${x.supplier_code}`;
             return !remainKeySet.has(k) && !softGroupKeySet.has(k);
           });
-          let remark = `เจอเลขที่เช็คเดิมตรงกัน แต่ยอดไม่ Reconcile -- ขาดยอด ${shortfall != null ? shortfall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'} บาท หลังหักภาษี ${closestRemain ? closestRemain.rateLabel : '-'} ด้วย Invoice No. ${remainingRefs}`;
+          let remark = `เจอเลขที่เช็คเดิมตรงกัน แต่ยอดไม่ Balance -- ขาดยอด ${shortfall != null ? shortfall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'} บาท หลังหักภาษี ${closestRemain ? closestRemain.rateLabel : '-'} ด้วย Invoice No. ${remainingRefs}`;
           if (extraMissing.length > 0) {
             remark += ` (มีใบที่จ่ายจบไปแล้วเพิ่มเติม: ${extraMissing.map((x) => x.invoice_ref).join(', ')})`;
           }
@@ -2019,7 +2077,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
 
   const displayResults = buTab === 'all' ? results : results.filter((r) => r.bu === buTab); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1 -- Filter ตาม Tab BU ที่เลือก
   const matchedResults = displayResults.filter((r) => r.matched || r.foundNote || r.alreadyRecorded); // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_TO_MATCHED_TAB_V1 -- แถวที่เคยมี Note (Found Note!!! เดิม) ถือว่าจัดการไปแล้วจริง ย้ายไปนับเป็น Matched แทนที่จะไปกอง Unmatch (ทำให้ Unmatch เหลือแต่รายการที่ต้องตรวจสอบจริงๆ)
-  const conditionResults = matchedResults.filter((r) => r.oldRefAmountMismatch); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- แยก Match ที่ "ไม่ 100%" (ยอดไม่ Reconcile เป๊ะ ต้อง Review เอง) ออกมาเป็น Tab ต่างหาก ตามที่ Confirm กับ User
+  const conditionResults = matchedResults.filter((r) => r.oldRefAmountMismatch); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- แยก Match ที่ "ไม่ 100%" (ยอดไม่ Balance เป๊ะ ต้อง Review เอง) ออกมาเป็น Tab ต่างหาก ตามที่ Confirm กับ User
   const cleanMatchedResults = matchedResults.filter((r) => !r.oldRefAmountMismatch); // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- Matched Tab เดิม เหลือเฉพาะ Match ที่มั่นใจ 100% เท่านั้น
   const unmatchedResults = displayResults.filter((r) => !r.matched && !r.foundNote && !r.alreadyRecorded); // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_TO_MATCHED_TAB_V1 -- ตัดแถวที่เคยมี Note (Found Note!!!) ออกจาก Unmatch เพราะย้ายไปนับใน Matched แล้ว (เดิมสถานะนี้ใน Unmatch ไม่ Sync กับ Matched Tab)
   const unmatchSearchLower = unmatchSearch.trim().toLowerCase(); // MARKER_VATWATCHLISTOPS_CHECKRETURN_UNMATCH_SEARCH_V1
@@ -2063,6 +2121,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
       });
       Object.keys(touchedByBuCRM1).forEach((buKeyCRM1) => {
         broadcastWs('vat_watchlist_draft_updated', { bu: buKeyCRM1, invoice_refs: touchedByBuCRM1[buKeyCRM1] });
+        vatFreezeRefreshBu(buKeyCRM1); // MARKER_VATWATCHLISTOPS_FREEZE_REFRESH_BU_V1
       });
       setSaveDone(true);
     } catch (err) {
@@ -2071,7 +2130,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
     setSaving(false);
   };
 
-  // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- Save เดี่ยวต่อแถว สำหรับเคส Old Ref เจอเลขที่เช็คตรง แต่ยอดไม่ Reconcile -- ให้ AP Review เองก่อนกดยืนยันทีละรายการ
+  // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- Save เดี่ยวต่อแถว สำหรับเคส Old Ref เจอเลขที่เช็คตรง แต่ยอดไม่ Balance -- ให้ AP Review เองก่อนกดยืนยันทีละรายการ
   const handleSaveSingleMatch = async (r) => {
     const rowKey = `${r.bu}|||${r.checkNo}|||${r.supplierCode}`;
     try {
@@ -2095,6 +2154,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         await apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', { method: 'POST', body: JSON.stringify(payload) });
       }
       broadcastWs('vat_watchlist_draft_updated', { bu: r.bu, invoice_refs: r.invoiceRefs }); // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1
+      vatFreezeRefreshBu(r.bu); // MARKER_VATWATCHLISTOPS_FREEZE_REFRESH_BU_V1
       setSingleSavedKeys((prev) => { const next = new Set(prev); next.add(rowKey); return next; });
     } catch (err) {
       confirmDialog.alert('บันทึกไม่สำเร็จ: ' + (err?.message || ''), { title: 'ผิดพลาด', variant: 'danger' });
@@ -2136,6 +2196,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
       };
       await apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', { method: 'POST', body: JSON.stringify(payload) });
       broadcastWs('vat_watchlist_draft_updated', { bu: dr.bu, invoice_refs: [invoiceRef] }); // MARKER_VATCONTROLLER_DB_SYNC_PROTECT_V1
+      vatFreezeRefreshBu(dr.bu); // MARKER_VATWATCHLISTOPS_FREEZE_REFRESH_BU_V1
       setDetailAddedKeys((prev) => { const next = new Set(prev); next.add(itemKey); return next; });
     } catch (err) {
       confirmDialog.alert('เพิ่มไม่สำเร็จ: ' + (err?.message || ''), { title: 'ผิดพลาด', variant: 'danger' });
@@ -2172,12 +2233,95 @@ function VatCheckReturnMatchContent({ files, onClose }) {
   };
 
   // MARKER_VATWATCHLISTOPS_CHECKRETURN_TABS_MANUALMATCH_V1 -- หา Candidate + Save Manual Match
+  // MARKER_CHECKRETURN_EXPORT_EXCEL_V1 -- Export Detail ของ Tab ที่เปิดอยู่ (Matched / Match with Condition / Unmatch) เป็น Excel
+  const exportCheckReturnTabExcel = async () => {
+    try {
+      const num = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
+      const sup = (r) => `${r.supplierCode || ''}${r.vendorName ? ` — ${r.vendorName}` : ''}`;
+      let sheetName = 'Matched'; let cols = []; let rowsOut = [];
+      if (activeTab === 'unmatch') {
+        sheetName = 'Unmatch';
+        cols = [['BU', 8], ['Invoice Num', 18], ['Supplier', 38], ['Invoice Date', 14], ['Invoice Amount', 16], ['Description', 60]];
+        rowsOut = unmatchResultsFiltered.map((r) => [r.bu, r.checkNo, sup(r), formatReportDate(r.invoiceDate), num(r.reportAmount), r.description || '']);
+      } else {
+        const isCond = activeTab === 'condition';
+        const list = isCond ? conditionResults : cleanMatchedResults;
+        sheetName = isCond ? 'Match with Condition' : 'Matched';
+        cols = [['BU', 8], ['เลขที่เช็ค', 16], ['Supplier', 38], ['Invoice', 9], ['มูลค่าสินค้า', 15], ['เงินภาษี', 14], ['APN-RETURN CHQ', 17], ['WHT ที่ใกล้เคียง', 14], ['ยอดที่คำนวณได้', 16], ['Invoice Num', 16], [isCond ? 'Remark' : 'Description', 60]];
+        rowsOut = list.map((r) => [r.bu, r.checkNo, sup(r), num(r.invoiceCount), num(r.preVatSum), num(r.vatSum), num(r.reportAmount), r.matchedRate || '', num(r.calcAmount), r.checkNo || '', isCond ? (r.matchRemark || '') : (r.matchingStatus || r.description || '')]);
+      }
+      if (rowsOut.length === 0) { alert('ไม่มีข้อมูลใน Tab นี้ให้ Export'); return; }
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet(sheetName);
+      const hdrFill = (cell, argb) => { cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } }; };
+      if (activeTab === 'unmatch') {
+        ws.columns = cols.map(([header, width]) => ({ header, width }));
+        rowsOut.forEach((arr) => ws.addRow(arr));
+        const h1 = ws.getRow(1); h1.eachCell((c) => hdrFill(c, 'FF1A3A5C'));
+        ws.eachRow((row, ri) => { if (ri > 1) row.eachCell((cell) => { if (typeof cell.value === 'number') cell.numFmt = '#,##0.00'; }); });
+        ws.views = [{ state: 'frozen', ySplit: 1 }];
+      } else {
+        // MARKER_CHECKRETURN_EXPORT_EXCEL_V3 -- 1 ใบ Check Return = แถวสรุป (กี่บรรทัด/รวม/ฝั่ง Check Return/Diff) + แถว Detail รายบรรทัด (ฝั่ง Check Return ว่าง) คั่นด้วยแถวว่าง
+        const listD = activeTab === 'condition' ? conditionResults : cleanMatchedResults;
+        const WHT_D = { 'ไม่หัก': 0, '1%': 0.01, '2%': 0.02, '3%': 0.03, '5%': 0.05 };
+        const toDate = (v) => { if (!v) return null; const d = v instanceof Date ? v : new Date(v); return Number.isNaN(d.getTime()) ? null : d; };
+        const heads = ['Invoice No. / สรุป', 'Old Payment', 'Old Payment Date', 'New Payment', 'New Payment Date', 'มูลค่าสินค้า', 'เงินภาษี', 'ยอดสุทธิ', 'เลขที่เช็ค', 'Supplier', 'WHT', 'APN-RETURN CHQ', 'Diff (Matched − CHQ)', 'Diff (รวมทุกบรรทัด − CHQ)'];
+        const widths = [34, 16, 16, 16, 16, 15, 14, 16, 16, 38, 9, 17, 18, 22];
+        // แถว 1 = หัว Zone, แถว 2 = หัวคอลัมน์
+        ws.columns = widths.map((width) => ({ width }));
+        ws.addRow(['Incomplete (ที่ Match แล้ว)', '', '', '', '', '', '', '', 'APN-RETURN CHQ (Check Return)', '', '', '', 'Diff', '']);
+        ws.mergeCells(1, 1, 1, 8); ws.mergeCells(1, 9, 1, 12); ws.mergeCells(1, 13, 1, 14);
+        hdrFill(ws.getCell(1, 1), 'FF2F6F4F'); hdrFill(ws.getCell(1, 9), 'FF8A5A00'); hdrFill(ws.getCell(1, 13), 'FF7A1F1F');
+        [1, 9, 13].forEach((c) => { ws.getCell(1, c).alignment = { horizontal: 'center' }; });
+        const hr = ws.addRow(heads);
+        hr.eachCell((c) => hdrFill(c, 'FF1A3A5C'));
+        const money = '#,##0.00'; const dfmt = 'dd-mmm-yy';
+        listD.forEach((r, idx) => {
+          const rate = WHT_D[r.matchedRate] != null ? WHT_D[r.matchedRate] : 0;
+          const fromOld = String(r.matchMethod || '').indexOf('Old Ref Check No.') === 0;
+          const net = (x) => (Number(x.exp_amount) || 0) * (1 - rate) + (Number(x.exp_vat) || 0);
+          const mLines = r.matchedLines || []; const eLines = r.extraLines || [];
+          const sumP = mLines.reduce((a, x) => a + (Number(x.exp_amount) || 0), 0);
+          const sumV = mLines.reduce((a, x) => a + (Number(x.exp_vat) || 0), 0);
+          const sumN = mLines.reduce((a, x) => a + net(x), 0);
+          const sumAll = sumN + eLines.reduce((a, x) => a + net(x), 0);
+          const rep = Number(r.reportAmount) || 0;
+          const sr = ws.addRow([`${mLines.length} บรรทัด (Matched) · รวม`, '', '', '', '', sumP, sumV, sumN, r.checkNo || '', sup(r), r.matchedRate || '', rep, sumN - rep, sumAll - rep]);
+          sr.font = { bold: true };
+          sr.eachCell({ includeEmpty: true }, (c, ci) => {
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ci <= 8 ? 'FFE5F3EA' : (ci <= 12 ? 'FFFFF7E0' : 'FFFBEAEA') } };
+            if (typeof c.value === 'number') c.numFmt = money;
+          });
+          [13, 14].forEach((ci) => { const c = sr.getCell(ci); if (typeof c.value === 'number' && Math.abs(c.value) >= 0.005) c.font = { bold: true, color: { argb: 'FF991B1B' } }; });
+          const all = [...mLines.map((x) => ({ ...x, __st: 'matched' })), ...eLines.map((x) => ({ ...x, __st: 'unmatch' }))];
+          all.forEach((x) => {
+            const isM = x.__st === 'matched';
+            const dr = ws.addRow([`  ${x.invoice_ref || ''} · ${x.alreadyRecorded ? 'Recorded' : (isM ? 'Matched' : 'ไม่พบ Detail')}`, fromOld ? (r.checkNo || '') : '', fromOld ? toDate(x.old_ref_pay_date || x.payment_date_old) : null, isM ? (x.check_no || '') : '', isM ? toDate(x.payment_date) : null, Number(x.exp_amount) || 0, Number(x.exp_vat) || 0, net(x)]);
+            [6, 7, 8].forEach((ci) => { dr.getCell(ci).numFmt = money; });
+            [3, 5].forEach((ci) => { dr.getCell(ci).numFmt = dfmt; });
+            if (!isM && !x.alreadyRecorded) dr.eachCell((c) => { c.font = { color: { argb: 'FF991B1B' } }; });
+          });
+          if (idx < listD.length - 1) ws.addRow([]);
+        });
+        ws.views = [{ state: 'frozen', ySplit: 2 }];
+      }
+      const buf = await wb.xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      const d = new Date(); const p2 = (n) => String(n).padStart(2, '0');
+      const a = document.createElement('a');
+      a.href = url; a.download = `CheckReturn_${sheetName.replace(/\s+/g, '')}_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}.${p2(d.getMinutes())}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('exportCheckReturnTabExcel error:', err);
+      alert('Export Excel ไม่สำเร็จ กรุณาลองใหม่');
+    }
+  };
   const getManualMatchCandidates = (row) => {
     const supplierCode = String(row.supplierCode || '').trim();
     // MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_EXCLUDE_USED_V1 -- ตัด Invoice_ref ที่ถูก Match ไปแล้วออกจาก Candidate (ไม่ว่าจะ Match โดย Tier Auto ตัวไหน กับ Report Row อื่น หรือ Manual เองไปแล้วในรอบนี้) กันโชว์ซ้ำตลอดไป
     const usedByAutoMatch = new Set();
     results.forEach((rr) => { if (rr.matched && Array.isArray(rr.invoiceRefs)) rr.invoiceRefs.forEach((ref) => usedByAutoMatch.add(ref)); });
-    return expiredRows.filter((r) => String(r.supplier_code || '').trim() === supplierCode && r.__bu === row.bu && !usedByAutoMatch.has(r.invoice_ref) && !manualConsumedRefs.has(r.invoice_ref)); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1 -- ต้องเป็น BU เดียวกับแถวนี้ด้วย กัน Candidate ข้าม BU
+    return expiredRows.filter((r) => r.__aging === 'Expired' /* MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_PROVE_EXPIRED_V1 -- Manual Match ต้องพิสูจน์ก่อนว่าหมดอายุจริง (Aging คำนวณสดจากวันชำระเงิน > 6 เดือน) ไม่ใช่แค่อยู่ใน List */ && ((Number(r.exp_amount) || 0) + (Number(r.exp_vat) || 0)) <= (Number(row.reportAmount) || 0) + 0.01 /* MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_AMOUNT_CAP_V1 -- ยอดรวมของใบ (มูลค่าสินค้า+ภาษี) ต้องไม่เกินยอด Check Return แถวนั้น */ && String(r.supplier_code || '').trim() === supplierCode && r.__bu === row.bu && !usedByAutoMatch.has(r.invoice_ref) && !manualConsumedRefs.has(r.invoice_ref)); // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1 -- ต้องเป็น BU เดียวกับแถวนี้ด้วย กัน Candidate ข้าม BU
   };
 
   const toggleManualMatchSelect = (invoiceRef) => {
@@ -2198,11 +2342,16 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         const payload = {
           bu: manualMatchRow.bu, invoice_ref: t.invoice_ref, supplier_code: t.supplier_code, // MARKER_VATWATCHLISTOPS_CHECKRETURN_MULTIBU_V1
           note: manualMatchRow.description, remark: 'Check Return', check_no: manualMatchRow.checkNo,
-          old_ref_check_no: t.old_ref_check_no || null, old_ref_pay_date: t.old_ref_pay_date || null, // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_V1 -- t มาจาก expiredRows ตรงๆ อยู่แล้ว มี 2 Field นี้ติดมาด้วย
+          old_ref_check_no: ((manualOldPerRow[t.invoice_ref]?.doc || '').trim() || manualOldDoc.trim() || t.old_ref_check_no || null), old_ref_pay_date: ((manualOldPerRow[t.invoice_ref]?.date || '') || manualOldDate || t.old_ref_pay_date || null), // MARKER_MANUALMATCH_OLD_PAYMENT_V1 -- กรอกเองก่อน (รายการ > ค่ากลาง) ไม่กรอกใช้ค่าเดิมของแถว // MARKER_VATWATCHLISTOPS_NOTES_OLDREF_V1 -- t มาจาก expiredRows ตรงๆ อยู่แล้ว มี 2 Field นี้ติดมาด้วย
           status: 'accept_with_condition', note_by: userName, note_at: new Date().toISOString(),
           image_ids: JSON.stringify([]),
         };
         await apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', { method: 'POST', body: JSON.stringify(payload) });
+      }
+      // MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_BROADCAST_V1 -- บันทึก Note แล้วต้อง Broadcast ให้ตัวเลขแท็บ Note/Aging และตารางหน้า Watchlist Refetch
+      if (targets.length > 0) {
+        broadcastWs('vat_watchlist_draft_updated', { bu: manualMatchRow.bu, invoice_refs: targets.map((t) => t.invoice_ref) });
+        vatFreezeRefreshBu(manualMatchRow.bu); // MARKER_VATWATCHLISTOPS_FREEZE_REFRESH_BU_V1
       }
       setManualMatchedKeys((prev) => {
         const next = new Set(prev);
@@ -2216,6 +2365,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
       });
       setManualMatchRow(null);
       setManualMatchSelected(new Set());
+      setManualOldDoc(''); setManualOldDate(''); setManualOldPerRow({});
     } catch (err) {
       confirmDialog.alert('บันทึก Manual Match ไม่สำเร็จ: ' + (err?.message || ''), { title: 'ผิดพลาด', variant: 'danger' });
     }
@@ -2324,6 +2474,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                 onClick={() => setActiveTab('unmatch')}
                 style={{ padding: '8px 14px', fontSize: '12px', border: 'none', background: 'none', cursor: 'pointer', color: activeTab === 'unmatch' ? '#1a3a5c' : '#999', fontWeight: activeTab === 'unmatch' ? '500' : '400', borderBottom: activeTab === 'unmatch' ? '2px solid #1a3a5c' : '2px solid transparent' }}
               >Unmatch ({unmatchedResults.length})</button>
+              <button type="button" onClick={exportCheckReturnTabExcel} title="Export Detail ของ Tab นี้เป็น Excel" style={{ marginLeft: 'auto', alignSelf: 'center', padding: '4px 12px', fontSize: '12px', border: '0.5px solid #1a7f37', borderRadius: '6px', background: 'white', color: '#1a7f37', cursor: 'pointer' }}>Export Excel</button>{/* MARKER_CHECKRETURN_EXPORT_EXCEL_V1 */}
             </div>
 
             {activeTab === 'matched' && (
@@ -2332,7 +2483,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                 <thead>
                   <tr style={{ background: '#f5f5f5', position: 'sticky', top: 0 }}> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_LAYOUT_V2 -- แถวหัวกลุ่ม: Incomplete / ไฟล์ Report / Results */}
                     <th colSpan={6} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd' }}>Incomplete</th>
-                    <th colSpan={1} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd' }}>ไฟล์ Report</th>
+                    <th rowSpan={2} style={{ textAlign: 'right', verticalAlign: 'bottom', padding: '8px', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd', background: '#f5f5f5' }}>APN-RETURN CHQ</th>{/* MARKER_CHECKRETURN_MERGE_RETURNCHQ_HEADER_V1 -- รวมหัวกลุ่ม+หัวคอลัมน์ เป็นช่องเดียว */}
                     <th colSpan={6} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd' }}>Results</th>
                   </tr>
                   <tr style={{ background: '#f5f5f5', position: 'sticky', top: '25px' }}>
@@ -2342,11 +2493,11 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                     <th style={{ textAlign: 'center', padding: '8px' }}>Invoice</th>
                     <th style={{ textAlign: 'right', padding: '8px' }}>มูลค่าสินค้า</th>
                     <th style={{ textAlign: 'right', padding: '8px' }}>เงินภาษี</th>
-                    <th style={{ textAlign: 'right', padding: '8px', borderLeft: '0.5px solid #ddd' }}>Amount</th>
+                    
                     <th style={{ textAlign: 'center', padding: '8px', borderLeft: '0.5px solid #ddd' }}>WHT ที่ตรง</th>
                     <th style={{ textAlign: 'right', padding: '8px', background: '#FFF7E0' }}>ยอดที่คำนวณได้</th> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_CALCAMOUNT_COL_V1 */}
-                    <th style={{ textAlign: 'left', padding: '8px' }}>Remark</th>
-                    <th style={{ textAlign: 'left', padding: '8px' }}>Description</th>
+                    <th style={{ textAlign: 'left', padding: '8px' }} title="Invoice Num ในไฟล์ APN-Return-chq">Invoice Num</th>{/* MARKER_VATWATCHLISTOPS_CHECKRETURN_RETURNCHQ_INVNUM_V1 */}
+                    <th style={{ textAlign: 'left', padding: '8px' }}>Description</th>{/* MARKER_CHECKRETURN_MATCHED_REMOVE_REMARK_COL_V1 -- เอาคอลัมน์ Remark (คำว่า Check Return เหมือนกันทุกแถว) ออก */}
                     <th style={{ textAlign: 'left', padding: '8px' }}>สถานะ</th>
                     <th style={{ textAlign: 'center', padding: '8px' }}>Detail</th>{/* MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 */}
                   </tr>
@@ -2363,7 +2514,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                       <td style={{ padding: '8px', textAlign: 'right', borderLeft: '0.5px solid #eee' }}>{r.reportAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
                       <td style={{ padding: '8px', textAlign: 'center', borderLeft: '0.5px solid #eee' }}>{r.matchedRate || '—'}</td>
                       <td style={{ padding: '8px', textAlign: 'right', background: '#FFFBF0' }}>{r.calcAmount != null ? r.calcAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_CALCAMOUNT_COL_V1 */}
-                      <td style={{ padding: '8px' }}>Check Return</td>
+                      <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{r.checkNo || '—'}</td>{/* MARKER_VATWATCHLISTOPS_CHECKRETURN_RETURNCHQ_INVNUM_V1 -- Invoice Num ของไฟล์ APN-Return-chq */}
                       <td style={{ padding: '8px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.matchingStatus || r.description || ''}>{r.matchingStatus || r.description || '—'}</td> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_STATUS_V1 -- Middle Conf. โชว์ Invoice No. + Description ของทุกใบที่ร่วม Match แทน Description เดี่ยว */}
                       <td style={{ padding: '8px' }}>
                         {(r.alreadyRecorded || r.foundNote) ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_RECORDED_V1 -- เคยมี Note บันทึกไว้แล้วในอดีต ไม่ใช่ Match ใหม่ -- MARKER_VATWATCHLISTOPS_CHECKRETURN_MIDDLECONF_V1 เผื่อ Tier 2/3/4
@@ -2376,7 +2527,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                           <span style={{ background: '#CCFBF1', color: '#0F766E', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>Middle Conf.</span>
                         ) : r.matchMethod === 'Old Ref Check No. (เต็มเช็ค)' ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_DEFERRED_FIX4_V1 -- ยืนยัน Match จริงจากยอดรวม "ทั้งเช็คเดิม" (มีบางใบจ่ายจบไปแล้ว) -- ไม่ต้อง Review เดี่ยว แต่โชว์ Remark ให้เห็นว่าขาดใบไหนไปบ้าง
                           <span style={{ background: '#DBEAFE', color: '#1E40AF', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }} title={r.matchRemark || ''}>Matched (อ้างอิงเช็คเดิม)</span>
-                        ) : r.oldRefAmountMismatch ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- เจอเลขที่เช็คเก่าตรงกัน แต่ยอดไม่ Reconcile (เช่นบางใบในเช็คเดิมจ่ายจบไปแล้ว) -- ให้ AP Review เองก่อน Save
+                        ) : r.oldRefAmountMismatch ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_AMOUNTMISMATCH_FIX3_V1 -- เจอเลขที่เช็คเก่าตรงกัน แต่ยอดไม่ Balance (เช่นบางใบในเช็คเดิมจ่ายจบไปแล้ว) -- ให้ AP Review เองก่อน Save
                           singleSavedKeys.has(`${r.bu}|||${r.checkNo}|||${r.supplierCode}`) ? (
                             <span style={{ background: '#E4EDF7', color: '#1a3a5c', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>บันทึกแล้ว</span>
                           ) : (
@@ -2417,19 +2568,25 @@ function VatCheckReturnMatchContent({ files, onClose }) {
             </div>
             )}
 
-            {activeTab === 'condition' && ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- Tab ใหม่: Match ได้แต่ไม่ 100% (Old Ref เจอเลขที่เช็คเดิมตรง แต่ยอดไม่ Reconcile) แยกออกจาก Matched ปกติ ตามที่ Confirm กับ User ("แยกตัวที่ Match ได้แต่ไม่ 100%")
+            {activeTab === 'condition' && ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_OLDREF_CONDITION_TAB_V1 -- Tab ใหม่: Match ได้แต่ไม่ 100% (Old Ref เจอเลขที่เช็คเดิมตรง แต่ยอดไม่ Balance) แยกออกจาก Matched ปกติ ตามที่ Confirm กับ User ("แยกตัวที่ Match ได้แต่ไม่ 100%")
             <div style={{ border: '0.5px solid #ddd', borderRadius: '8px', overflow: 'auto', flex: 1, minHeight: 0 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                 <thead>
-                  <tr style={{ background: '#f5f5f5', position: 'sticky', top: 0 }}>
+                  <tr style={{ background: '#f5f5f5', position: 'sticky', top: 0 }}> {/* MARKER_CHECKRETURN_CONDITION_ZONE_HEADER_V1 -- แถวหัว Zone เหมือนแท็บ Matched: Incomplete / ไฟล์ Report / Results */}
+                    <th colSpan={6} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd' }}>Incomplete</th>
+                    <th rowSpan={2} style={{ textAlign: 'right', verticalAlign: 'bottom', padding: '8px', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd', background: '#f5f5f5' }}>APN-RETURN CHQ</th>{/* MARKER_CHECKRETURN_MERGE_RETURNCHQ_HEADER_V1 -- รวมหัวกลุ่ม+หัวคอลัมน์ เป็นช่องเดียว */}
+                    <th colSpan={5} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', color: '#888', borderBottom: '0.5px solid #ddd', borderLeft: '0.5px solid #ddd' }}>Results</th>
+                  </tr>
+                  <tr style={{ background: '#f5f5f5', position: 'sticky', top: '25px' }}>
                     <th style={{ textAlign: 'left', padding: '8px' }}>BU</th>
                     <th style={{ textAlign: 'left', padding: '8px' }}>เลขที่เช็คเดิม</th>
                     <th style={{ textAlign: 'left', padding: '8px' }}>Supplier</th>
                     <th style={{ textAlign: 'center', padding: '8px' }}>Invoice</th>
                     <th style={{ textAlign: 'right', padding: '8px' }}>มูลค่าสินค้า</th>
                     <th style={{ textAlign: 'right', padding: '8px' }}>เงินภาษี</th>
-                    <th style={{ textAlign: 'right', padding: '8px', borderLeft: '0.5px solid #ddd' }}>Amount (Report)</th>
-                    <th style={{ textAlign: 'right', padding: '8px', background: '#FFF7E0' }}>ยอดที่คำนวณได้ (ใกล้เคียงสุด)</th>
+                    <th style={{ textAlign: 'center', padding: '8px', borderLeft: '0.5px solid #ddd' }}>WHT ที่ใกล้เคียง</th>{/* MARKER_CHECKRETURN_CONDITION_WHT_COL_V1 */}
+                    <th style={{ textAlign: 'right', padding: '8px', background: '#FFF7E0' }}>ยอดที่คำนวณได้</th>
+                    <th style={{ textAlign: 'left', padding: '8px' }} title="Invoice Num ในไฟล์ APN-Return-chq">Invoice Num</th>{/* MARKER_VATWATCHLISTOPS_CHECKRETURN_RETURNCHQ_INVNUM_V1 */}
                     <th style={{ textAlign: 'left', padding: '8px' }}>Remark</th>
                     <th style={{ textAlign: 'left', padding: '8px', width: '190px' }}>สถานะ / Action</th>
                   </tr>
@@ -2447,8 +2604,43 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                         <td style={{ padding: '8px', textAlign: 'right' }}>{r.preVatSum != null ? r.preVatSum.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
                         <td style={{ padding: '8px', textAlign: 'right' }}>{r.vatSum != null ? r.vatSum.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
                         <td style={{ padding: '8px', textAlign: 'right', borderLeft: '0.5px solid #eee' }}>{r.reportAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', borderLeft: '0.5px solid #eee' }}>{r.matchedRate || '—'}</td>{/* MARKER_CHECKRETURN_CONDITION_WHT_COL_V1 */}
                         <td style={{ padding: '8px', textAlign: 'right', background: '#FFFBF0' }}>{r.calcAmount != null ? r.calcAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
-                        <td style={{ padding: '8px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.matchRemark || ''}>{r.matchRemark || '—'}</td>
+                        <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{r.checkNo || '—'}</td>{/* MARKER_VATWATCHLISTOPS_CHECKRETURN_RETURNCHQ_INVNUM_V1 */}
+                        <td style={{ padding: '8px', maxWidth: '260px' }}> {/* MARKER_CHECKRETURN_REMARK_DBLCLICK_EDIT_V1 */}
+                          <div
+                            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: condSaved ? 'default' : 'text' }}
+                            title={condSaved ? (r.matchRemark || '') : ((r.matchRemark || '') + ' (Double-click เพื่อแก้ไข)')}
+                            onDoubleClick={condSaved ? undefined : (e) => {
+                              const rc = e.currentTarget.getBoundingClientRect();
+                              const vw = window.innerWidth; const vh = window.innerHeight;
+                              setEditRemarkPos({ top: (rc.bottom + 170 > vh) ? Math.max(8, rc.top - 160) : rc.bottom + 4, left: Math.max(8, Math.min(rc.left, vw - 460)) });
+                              editRemarkCancelRef.current = false;
+                              setEditRemarkVal(r.matchRemark || '');
+                              setEditRemarkKey(condKey);
+                            }}
+                          >{r.matchRemark || '—'}</div>
+                          {editRemarkKey === condKey && (
+                            <div style={{ position: 'fixed', top: editRemarkPos.top, left: editRemarkPos.left, width: '440px', background: 'white', border: '0.5px solid #c5d8f0', borderRadius: '8px', boxShadow: '0 4px 14px rgba(26,58,92,0.2)', padding: '8px', zIndex: 3000, boxSizing: 'border-box' }}>
+                              <textarea
+                                autoFocus
+                                value={editRemarkVal}
+                                onChange={(e) => setEditRemarkVal(e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitEditRemark(condKey, editRemarkVal); editRemarkCancelRef.current = true; setEditRemarkKey(null); }
+                                  else if (e.key === 'Escape') { e.stopPropagation(); editRemarkCancelRef.current = true; setEditRemarkKey(null); }
+                                }}
+                                onBlur={() => {
+                                  if (editRemarkCancelRef.current) { editRemarkCancelRef.current = false; return; }
+                                  commitEditRemark(condKey, editRemarkVal);
+                                  setEditRemarkKey(null);
+                                }}
+                                style={{ width: '100%', minHeight: '90px', fontSize: '12px', padding: '6px 8px', border: '0.5px solid #ddd', borderRadius: '5px', outline: 'none', color: '#1a3a5c', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
+                              <div style={{ fontSize: '10px', color: '#999', marginTop: '5px' }}>Enter เพื่อบันทึก · Shift+Enter ขึ้นบรรทัดใหม่ · Esc เพื่อยกเลิก</div>
+                            </div>
+                          )}
+                        </td>
                         <td style={{ padding: '8px' }}>
                           <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
                             {condSaved ? (
@@ -2466,9 +2658,27 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                     );
                   })}
                   {conditionResults.length === 0 && (
-                    <tr><td colSpan={10} style={{ padding: '16px', textAlign: 'center', color: '#999' }}>ไม่มีรายการที่ต้องตรวจสอบยอด</td></tr>
+                    <tr><td colSpan={11} style={{ padding: '16px', textAlign: 'center', color: '#999' }}>ไม่มีรายการที่ต้องตรวจสอบยอด</td></tr>
                   )}
                 </tbody>
+                <tfoot>
+                  {conditionResults.length > 0 && (() => { // MARKER_VATWATCHLISTOPS_CHECKRETURN_CONDITION_SUMMARY_FOOTER_V1 -- แถวสรุปยอดรวมท้ายตาราง Match with Condition เหมือนแท็บ Matched
+                    const totalInvoiceCount = conditionResults.reduce((s, r) => s + (Number(r.invoiceCount) || 0), 0);
+                    const totalPreVat = conditionResults.reduce((s, r) => s + (Number(r.preVatSum) || 0), 0);
+                    const totalVat = conditionResults.reduce((s, r) => s + (Number(r.vatSum) || 0), 0);
+                    const totalAmount = conditionResults.reduce((s, r) => s + (Number(r.reportAmount) || 0), 0);
+                    return (
+                      <tr style={{ borderTop: '1.5px solid #ccc', background: '#F7F8FA', fontWeight: 500, position: 'sticky', bottom: 0 }}>
+                        <td colSpan={3} style={{ padding: '8px', textAlign: 'right' }}>รวมทั้งหมด {conditionResults.length.toLocaleString()} รายการ</td>
+                        <td style={{ padding: '8px', textAlign: 'center' }}>{totalInvoiceCount.toLocaleString()}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{totalPreVat.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{totalVat.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                        <td style={{ padding: '8px', textAlign: 'right', borderLeft: '0.5px solid #ddd' }}>{totalAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                        <td colSpan={5}></td>
+                      </tr>
+                    );
+                  })()}
+                </tfoot>
               </table>
             </div>
             )}
@@ -2502,7 +2712,7 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                     const isManualMatched = manualMatchedKeys.has(key);
                     const manualMatchCandidateCount = (isManualMatched || r.foundNote) ? null : getManualMatchCandidates(r).length; // MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_HIDE_EMPTY_V1 -- เช็คก่อนว่ามี Candidate ให้ Manual Match จริงมั้ย (ไม่ต้องเช็คถ้าไม่ต้องโชว์ปุ่มอยู่แล้ว)
                     return (
-                      <tr key={i} style={{ borderTop: '0.5px solid #eee' }}>
+                      <tr key={i} style={{ borderTop: '0.5px solid #eee', ...(manualMatchHighlightKey === key ? { background: '#FFF3C4', boxShadow: 'inset 3px 0 0 #E0A100' } : null) }}> {/* MARKER_VATWATCHLISTOPS_MANUALMATCH_ROW_HIGHLIGHT_V1 -- Highlight แถวที่กด Manual Match */}
                         <td style={{ padding: '8px', fontWeight: '500' }}>{r.bu}</td>
                         <td style={{ padding: '8px' }}>{r.checkNo}</td>
                         <td style={{ padding: '8px' }}>{r.supplierCode}{r.vendorName ? ` — ${r.vendorName}` : ''}</td>
@@ -2515,10 +2725,10 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                           ) : r.foundNote ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_FOUNDNOTE_V1 -- เคย Match ไปแล้วในอดีต ไม่ต้องทำอะไรต่อ
                             <span style={{ background: '#FAC775', color: '#412402', fontSize: '11px', fontWeight: '500', padding: '3px 8px', borderRadius: '6px' }}>Found Note!!!</span>
                           ) : manualMatchCandidateCount === 0 ? ( // MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_HIDE_EMPTY_V1 -- ไม่มี Incomplete ให้ Match เลย ไม่ต้องโชว์ปุ่มหลอกๆ ให้กดแล้วเจอ "ไม่พบ"
-                            <span style={{ color: '#bbb', fontSize: '11px' }} title="ไม่พบ Incomplete ที่ Supplier Code นี้ (Expired + ยังไม่มี Note)">— ไม่มี Candidate</span>
+                            <span style={{ color: '#bbb', fontSize: '11px' }} title="ไม่พบ Incomplete ที่เข้าเงื่อนไข (Supplier Code เดียวกัน + Expired จริง + ยอดรวมไม่เกินยอดเช็ค + ยังไม่มี Note)">— ไม่มี Candidate</span>
                           ) : (
                             <button
-                              onClick={() => { setManualMatchRow(r); setManualMatchSelected(new Set()); }}
+                              onClick={() => { setManualMatchRow(r); setManualMatchHighlightKey(key); setManualMatchSelected(new Set()); }}
                               style={{ padding: '4px 10px', fontSize: '11px', border: '0.5px solid #ccc', borderRadius: '6px', background: 'white', cursor: 'pointer', color: '#1a3a5c' }}
                             >Manual Match</button>
                           )}
@@ -2556,17 +2766,17 @@ function VatCheckReturnMatchContent({ files, onClose }) {
         {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_TABS_MANUALMATCH_V1 -- Manual Match Modal */}
         {manualMatchRow && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300 }}>
-            <div style={{ background: 'white', borderRadius: '12px', padding: '1.5rem', width: '620px', maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_TABLE_SCROLL_V1 -- เปลี่ยนจาก overflowY:auto ทั้ง Modal เป็น Flex Column: หัวเรื่อง/แถบสรุป/ปุ่ม อยู่นิ่งตลอด Scroll ได้แค่ Zone ตาราง Candidate ด้านในเท่านั้น */}
+            <div style={{ background: 'white', borderRadius: '12px', padding: '1.5rem', width: '860px', maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_TABLE_SCROLL_V1 -- เปลี่ยนจาก overflowY:auto ทั้ง Modal เป็น Flex Column: หัวเรื่อง/แถบสรุป/ปุ่ม อยู่นิ่งตลอด Scroll ได้แค่ Zone ตาราง Candidate ด้านในเท่านั้น */}
               <div style={{ fontSize: '14px', fontWeight: '500', marginBottom: '4px', flexShrink: 0 }}>Manual Match — Invoice {manualMatchRow.checkNo}</div>
               <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px', flexShrink: 0 }}>
                 Supplier {manualMatchRow.supplierCode}{manualMatchRow.vendorName ? ` — ${manualMatchRow.vendorName}` : ''} · Amount จากไฟล์ {manualMatchRow.reportAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}
               </div>
-              <div style={{ fontSize: '11px', color: '#999', marginBottom: '6px', flexShrink: 0 }}>รายการ Incomplete ที่ Supplier Code เดียวกัน + Expired + ยังไม่มี Note (เลือกได้มากกว่า 1 รายการ)</div>
+              <div style={{ fontSize: '11px', color: '#999', marginBottom: '6px', flexShrink: 0 }}>รายการ Incomplete ที่ Supplier Code เดียวกัน + Expired จริง + ยอดรวมไม่เกินยอดเช็ค + ยังไม่มี Note (เลือกได้มากกว่า 1 รายการ)</div>
               <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}> {/* MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_TABLE_SCROLL_V1 -- Zone Scroll เฉพาะตาราง Candidate เท่านั้น (ปิดท้ายที่ Edit 2 ก่อนแถบสรุปยอด) */}
               {(() => { // MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_TABLE_SCROLL_V1 -- List Candidate เปลี่ยนจาก Card/Label เรียงต่อกัน เป็นตารางมีหัวคอลัมน์ + Checkbox เลือกทั้งหมดที่หัวตาราง
                 const candidates = getManualMatchCandidates(manualMatchRow);
                 if (candidates.length === 0) {
-                  return <div style={{ padding: '1.5rem', textAlign: 'center', color: '#999', fontSize: '13px' }}>ไม่พบ Incomplete ที่ Supplier Code นี้ (Expired + ยังไม่มี Note)</div>;
+                  return <div style={{ padding: '1.5rem', textAlign: 'center', color: '#999', fontSize: '13px' }}>ไม่พบ Incomplete ที่เข้าเงื่อนไข (Supplier Code เดียวกัน + Expired จริง + ยอดรวมไม่เกินยอดเช็ค + ยังไม่มี Note)</div>;
                 }
                 const allChecked = candidates.every((c) => manualMatchSelected.has(c.invoice_ref));
                 const toggleSelectAll = () => {
@@ -2591,23 +2801,38 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                           <th style={{ textAlign: 'right', padding: '8px' }}>เงินภาษี</th>
                           <th style={{ textAlign: 'right', padding: '8px' }}>ยอดรวม</th>
                           <th style={{ textAlign: 'center', padding: '8px' }}>Status</th>
+                          <th style={{ textAlign: 'left', padding: '8px' }}>Old Payment Doc</th>{/* MARKER_MANUALMATCH_OLD_PAYMENT_V1 */}
+                          <th style={{ textAlign: 'left', padding: '8px' }}>Old Payment Date</th>
                         </tr>
                       </thead>
                       <tbody>
                         {candidates.map((c, ci) => {
                           const rowTotal = (Number(c.exp_amount) || 0) + (Number(c.exp_vat) || 0);
+                          // MARKER_VATWATCHLISTOPS_MANUALMATCH_CHECKNO_COLOR_V1 -- เลขที่เช็คของ Candidate ตรงกับเลข Invoice ของ Check Return ไหม: ตรง = เขียว, ไม่ตรง/ว่าง = แดง (ตัดท้าย "-CHECK" และช่องว่างก่อนเทียบ)
+                          const _normChk = (v) => String(v == null ? '' : v).trim().toUpperCase().replace(/[-\s]*CHECK$/i, '').trim();
+                          const chkMatch = _normChk(c.check_no) !== '' && _normChk(c.check_no) === _normChk(manualMatchRow.checkNo);
                           return (
-                            <tr key={c.invoice_ref || ci} style={{ borderTop: ci > 0 ? '0.5px solid #eee' : 'none', cursor: 'pointer' }} onClick={() => toggleManualMatchSelect(c.invoice_ref)}>
+                            <tr key={c.invoice_ref || ci} style={{ borderTop: ci > 0 ? '0.5px solid #eee' : 'none', cursor: 'pointer', background: chkMatch ? '#E8F5E9' : '#FDECEC' }} onClick={() => toggleManualMatchSelect(c.invoice_ref)}>
                               <td style={{ padding: '8px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
                                 <input type="checkbox" checked={manualMatchSelected.has(c.invoice_ref)} onChange={() => toggleManualMatchSelect(c.invoice_ref)} style={{ margin: 0 }} />
                               </td>
                               <td style={{ padding: '8px' }}>{c.invoice_ref}</td>
-                              <td style={{ padding: '8px', color: '#999' }}>{c.check_no || '—'}</td>
+                              <td style={{ padding: '8px', fontWeight: '500', color: chkMatch ? '#1B5E20' : '#B71C1C' }} title={chkMatch ? 'เลขที่เช็คตรงกับ Check Return' : 'เลขที่เช็คไม่ตรงกับ Check Return'}>{c.check_no || '—'}</td>
                               <td style={{ padding: '8px', textAlign: 'right' }}>{c.exp_amount != null ? Number(c.exp_amount).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
                               <td style={{ padding: '8px', textAlign: 'right' }}>{c.exp_vat != null ? Number(c.exp_vat).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'}</td>
                               <td style={{ padding: '8px', textAlign: 'right' }}>{rowTotal.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
                               <td style={{ padding: '8px', textAlign: 'center' }}>
-                                <span style={{ background: '#FCEBEB', color: '#A32D2D', fontSize: '10px', padding: '2px 7px', borderRadius: '6px' }}>Expired</span>
+                                {(() => { // MARKER_VATWATCHLISTOPS_CHECKRETURN_MANUALMATCH_REAL_STATUS_V1 -- เดิม Hardcode "Expired" ทุกแถว -- แสดง Aging Label จริงของแถวนั้นแทน
+                                  const agLbl = c.__aging || c.aging_label || '—';
+                                  const isExp = agLbl === 'Expired';
+                                  return <span style={{ background: isExp ? '#FCEBEB' : '#F0F0F0', color: isExp ? '#A32D2D' : '#666', fontSize: '10px', padding: '2px 7px', borderRadius: '6px' }}>{agLbl}</span>;
+                                })()}
+                              </td>
+                              <td style={{ padding: '4px 8px' }} onClick={(e) => e.stopPropagation()}>{/* MARKER_MANUALMATCH_OLD_PAYMENT_V1 */}
+                                <input type="text" value={manualOldPerRow[c.invoice_ref]?.doc || ''} placeholder={manualOldDoc || c.old_ref_check_no || ''} onChange={(e) => { const v = e.target.value; setManualOldPerRow((prev) => ({ ...prev, [c.invoice_ref]: { ...(prev[c.invoice_ref] || {}), doc: v } })); }} style={{ width: '120px', fontSize: '11px', padding: '3px 6px', border: '0.5px solid #ccc', borderRadius: '5px', boxSizing: 'border-box' }} />
+                              </td>
+                              <td style={{ padding: '4px 8px' }} onClick={(e) => e.stopPropagation()}>
+                                <HybridDateInput value={manualOldPerRow[c.invoice_ref]?.date || ''} onChange={(v) => { setManualOldPerRow((prev) => ({ ...prev, [c.invoice_ref]: { ...(prev[c.invoice_ref] || {}), date: v } })); }} style={{ wrap: { width: '130px' }, input: { fontSize: '11px', padding: '3px 22px 3px 6px', borderRadius: '5px' } }} />
                               </td>
                             </tr>
                           );
@@ -2637,8 +2862,15 @@ function VatCheckReturnMatchContent({ files, onClose }) {
                   </div>
                 );
               })()}
+              <div style={{ marginTop: '10px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', fontSize: '12px', flexShrink: 0 }}>{/* MARKER_MANUALMATCH_OLD_PAYMENT_V1 -- ค่ากลางสำหรับทุกรายการที่เลือก (ไม่บังคับ) บันทึกลง old_ref_check_no / old_ref_pay_date ของ Note -> Report */}
+                <span style={{ color: '#555' }}>Old Payment Doc</span>
+                <input type="text" value={manualOldDoc} onChange={(e) => setManualOldDoc(e.target.value)} placeholder="ไม่บังคับ" style={{ width: '170px', fontSize: '12px', padding: '5px 8px', border: '0.5px solid #ccc', borderRadius: '6px', boxSizing: 'border-box' }} />
+                <span style={{ color: '#555' }}>Old Payment Date</span>
+                <HybridDateInput value={manualOldDate} onChange={setManualOldDate} style={{ wrap: { width: '150px' }, input: { fontSize: '12px', padding: '5px 24px 5px 8px', borderRadius: '6px' } }} />
+                <span style={{ color: '#999', fontSize: '11px' }}>ใช้กับทุกรายการที่เลือก (รายการที่กรอกเองในตารางจะใช้ค่าของรายการนั้น)</span>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
-                <button onClick={() => { setManualMatchRow(null); setManualMatchSelected(new Set()); }} disabled={manualMatchSaving} style={{ padding: '7px 14px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={() => { setManualMatchRow(null); setManualMatchSelected(new Set()); setManualOldDoc(''); setManualOldDate(''); setManualOldPerRow({}); }} disabled={manualMatchSaving} style={{ padding: '7px 14px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer' }}>ยกเลิก</button>
                 <button
                   onClick={handleManualMatchConfirm}
                   disabled={manualMatchSaving || manualMatchSelected.size === 0}
@@ -8655,10 +8887,11 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
   const quickActionTaxInvoiceDateTextRef = React.useRef(null); // MARKER_VATWATCHLISTOPS_QUICKACTION_HYBRID_DATE_V1
   const quickActionTaxInvoiceNumberRef = React.useRef(null); // MARKER_VATWATCHLISTOPS_QUICKACTION_HYBRID_DATE_V1 -- Auto Focus หลังเลือก Tax Invoice Date จาก Calendar
   const [quickActionSaving, setQuickActionSaving] = React.useState(false);
+  const [quickActionPrev, setQuickActionPrev] = React.useState(false); // MARKER_QA_PREV_MODE_V1 -- Prev = วันที่ใช้สิทธิ์สิ้นเดือนที่แล้ว + Popvat A/B/F อัปเดตเป็น Type อย่างเดียว ไม่ออก Draft
   const [quickActionConnLost, setQuickActionConnLost] = React.useState(false); // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1
   const [quickActionReconnectSecondsLeft, setQuickActionReconnectSecondsLeft] = React.useState(30); // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1
   const [quickActionMultiSupplier, setQuickActionMultiSupplier] = React.useState(false); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_MULTI_SUPPLIER_CANCEL_V1 -- เลือกหลาย Supplier = โหมด Cancel เท่านั้น (ปุ่ม Simple Input Ops)
-  const [qaPopBOpen, setQaPopBOpen] = React.useState(false); // MARKER_VATWATCHLISTOPS_QA_POPVAT_PARTUSED_V1 -- Modal B - Part Used (วันที่/เดือน/จำนวนเงินที่ใช้ไปแล้ว -> ระบบรวมเป็น match_remark)
+  const [qaPopBOpen, setQaPopBOpen] = React.useState(false); // MARKER_VATWATCHLISTOPS_QA_POPVAT_PARTUSED_V1 -- Modal B - Partial Used (วันที่/เดือน/จำนวนเงินที่ใช้ไปแล้ว -> ระบบรวมเป็น match_remark)
   const [qaPopBDate, setQaPopBDate] = React.useState('');
   const [qaPopBMonth, setQaPopBMonth] = React.useState('');
   const [qaPopBAmount, setQaPopBAmount] = React.useState('');
@@ -9443,6 +9676,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
       ? { vendor_name: `หลาย Supplier (${supplierCodes.size} ราย)`, supplier_code: '', tax_id: '', branch_no: '' }
       : { vendor_name: targets[0]?.vendor_name || '', supplier_code: targets[0]?.supplier_code || '', tax_id: '', branch_no: '' });
     setQuickActionReceiveDate('');
+    setQuickActionPrev(false); // MARKER_QA_PREV_MODE_V1
     setShowQuickAction(true);
     quickActionFillStartedAtRef.current = selectionFillStartedAtRef.current || new Date(); // MARKER_VAT_SELECTION_FILLSTART_V1 -- มี Selection อยู่ก่อนเปิดแล้ว ใช้เวลาที่เริ่มเลือกจริง / ไม่มี (คลิกขวาแถวเดียวตรงๆ) ใช้เวลาที่เปิด Quick Action เหมือนเดิม
     try {
@@ -9552,14 +9786,32 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
     setDetailReloadKey((k) => k + 1);
     await confirmDialog.alert(`ส่ง ${n} รายการไป Bucket ของ Full Page แล้ว`, { title: 'Send to Full Page' });
   };
-  const handleAddQuickActionData = async (popCode = 'N', popRemark = '', popUseDate = '') => { // MARKER_VATWATCHLISTOPS_QA_POPVAT_CODE_MENU_V1 -- N Normal / A Submit with Condition / B Part Used / F Expired Balance
+  const handleQuickActionPrevToggle = (toPrev) => { // MARKER_QA_PREV_MODE_V1
+    if (quickActionSaving) return;
+    setQuickActionPrev(toPrev);
+    let nv;
+    if (toPrev) {
+      const now = new Date();
+      const base = /^\d{4}-\d{2}$/.test(String(quickActionPeriodMonth || '')) ? quickActionPeriodMonth : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const [by, bm] = base.split('-').map(Number);
+      const ld = new Date(by, bm - 1, 0); // วันสุดท้ายของเดือนก่อน Period
+      nv = `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}`;
+    } else {
+      nv = vatAdjustReceiveForOver('', quickActionPeriodMonth, !!(quickActionOver || quickActionAutoOver));
+    }
+    setQuickActionReceiveDate(nv);
+    if (quickActionReceiveDateTextRef.current) quickActionReceiveDateTextRef.current.value = formatDateDisplayMDY(nv);
+  };
+  const handleAddQuickActionData = async (popCode = 'N', popRemark = '', popUseDate = '') => { // MARKER_VATWATCHLISTOPS_QA_POPVAT_CODE_MENU_V1 -- N Normal / A Submit with Condition / B Partial Used / F Expired Balance
     if (quickActionRows.length === 0) return;
-    if (popCode === 'F' && !/^\d{4}-\d{2}/.test(String(quickActionVatPeriodMonth || ''))) { // MARKER_VATWATCHLISTOPS_QA_POPVAT_F_VATPERIOD_V1 -- F ต้องอ้างอิง Period VAT เท่านั้น
+    if (quickActionPrev && popCode === 'N') { await confirmDialog.alert('โหมด Prev ใช้ได้เฉพาะ Popvat A / B / F (อัปเดตเป็น Type อย่างเดียว) กรุณาสลับกลับเป็น Current หากต้องการ Popvat Normal', { title: 'Prev' }); return; }
+    const prevMode = !!quickActionPrev && ['A', 'B', 'F'].includes(popCode); // MARKER_QA_PREV_MODE_V1
+    if (popCode === 'F' && !prevMode && !/^\d{4}-\d{2}/.test(String(quickActionVatPeriodMonth || ''))) { // MARKER_VATWATCHLISTOPS_QA_POPVAT_F_VATPERIOD_V1 -- F ต้องอ้างอิง Period VAT เท่านั้น
       await confirmDialog.alert('ไม่พบ Period VAT ปัจจุบัน จึงสร้างเลข GRN แบบ F + YY ไม่ได้', { title: 'ไม่พบ Period VAT' });
       return;
     }
     // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_SYNC_V1 -- Tax Invoice Number Sync จาก GRT แล้ว ไม่ต้องบังคับกรอกแยก เหลือแค่ Tax Invoice Date
-    if (!quickActionTaxInvoiceDate) { // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REQUIRED_FIELD_ALERT_V1 -- แจ้งเตือนแทนที่จะเงียบๆ ไม่ทำอะไรเลย
+    if (!prevMode && !quickActionTaxInvoiceDate) { // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REQUIRED_FIELD_ALERT_V1 -- แจ้งเตือนแทนที่จะเงียบๆ ไม่ทำอะไรเลย
       await confirmDialog.alert('ไม่สามารถ Popvat ได้ เนื่องจากไม่มีข้อมูลตาม Required Field (กรุณากรอก Tax Invoice Date)', { title: 'ข้อมูลไม่ครบ', variant: 'danger' }); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_ALERT_CONFIRMDIALOG_V1 -- ใช้ Popup ของโปรเจกต์แทน Native alert()
       return;
     }
@@ -9567,7 +9819,7 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
     {
       const _missingQA = [];
       if (!quickActionReceiveDate) _missingQA.push('Receive Date');
-      if (!quickActionGrtRunning) _missingQA.push('GRN (เลข Running)');
+      if (!prevMode && !quickActionGrtRunning) _missingQA.push('GRN (เลข Running)');
       if (_missingQA.length > 0) {
         await confirmDialog.alert(`ไม่สามารถ Popvat ได้ เนื่องจากไม่มีข้อมูลตาม Required Field (กรุณากรอก ${_missingQA.join(', ')})`, { title: 'ข้อมูลไม่ครบ', variant: 'danger' });
         return;
@@ -9578,25 +9830,26 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
     const draftId = generateQuickActionDraftId(); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_SYNC_V1 -- Draft ID เดียวกันทุกแถวใน Save รอบนี้
     const grtCombined = quickActionGrtRunning ? `${quickActionGrtPrefix}${String(quickActionGrtRunning).padStart(quickActionGrtDigitCount, '0')}` : null;
     const remainingRowsQA = [...quickActionRows]; // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- Queue ที่ยังไม่สำเร็จ (แถวที่สำเร็จแล้วจะถูกเอาออกทันที)
+    const prevDraftIdsQA = []; // MARKER_QA_PREV_MODE_V2
     const savedInvoiceRefsQA = []; // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- เก็บไว้ Broadcast/Report ตอนจบ
     try {
       while (remainingRowsQA.length > 0) {
         const row = remainingRowsQA[0];
         try {
-          await apiFetch('/vat_upload_popvatdraft', {
+          const _draftRespQA = await apiFetch('/vat_upload_popvatdraft', { // MARKER_QA_PREV_MODE_V2 -- Prev: สร้างแถวแล้ว End Process ทันที (เข้า Transaction Backup) ไม่ค้างเป็น Draft
             method: 'POST',
             body: JSON.stringify({
               bu: bu?.bu,
               book: bu?.BOOK || null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
-              period: formatQuickActionPeriodMMYYYY(quickActionOverRef.current ? vatShiftYm(quickActionPeriodMonth, 1) : quickActionPeriodMonth), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
+              period: formatQuickActionPeriodMMYYYY(prevMode ? vatShiftYm(quickActionPeriodMonth, -1) : (quickActionOverRef.current ? vatShiftYm(quickActionPeriodMonth, 1) : quickActionPeriodMonth)), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_BOOK_PERIOD_V2
               draft_id: draftId,
               branch: row.branch || null,
               grt_number: row.receive_doc_no || null, // MARKER_VATWATCHLISTOPS_QUICKACTION_FIX_GRT_TAXINVOICE_FIELDS_V1 -- ดึงจากเลขที่ GRT เดิมของแต่ละ Invoice (เหมือน Cancel Flow) ไม่ใช่ grtCombined ที่ Auto-gen ใหม่
               original_invoice_number: row.invoice_ref || null,
               receipt_date: formatQuickActionReceiveDateText(quickActionReceiveDate),
-              tax_invoice_number: (grtCombined && (popCode === 'A' || popCode === 'B')) ? `${grtCombined}${popCode}` : ((grtCombined && popCode === 'F') ? `${grtCombined}F${String(quickActionVatPeriodMonth || '').slice(2, 4)}` : grtCombined), // MARKER_VATWATCHLISTOPS_QA_POPVAT_F_GRN_SUFFIX_V1 -- F + YY ของ Period ปัจจุบัน เช่น F26 // MARKER_VATWATCHLISTOPS_QA_POPVAT_A_GRN_SUFFIX_V1 -- A: ต่อท้ายเลข GRN ด้วย A | MARKER_VATWATCHLISTOPS_QUICKACTION_TAXINVOICE_REVERT_GRTCOMBINED_V1 -- ยืนยันแล้วว่าต้องเป็น grtCombined (prefix+running) เหมือนเดิม ไม่ใช่ช่องพิมพ์เอง
-              tax_invoice_date: formatQuickActionReceiveDateText(quickActionTaxInvoiceDate), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_TAX_INVOICE_DATE_FORMAT_V1 -- Format DD-MMM-YY เหมือน Receipt Date
-              vendor_tax_invoice_number: quickActionTaxInvoiceNumber, // MARKER_VATWATCHLISTOPS_VENDOR_TAXINVOICE_USE_TYPED_V1 -- เปลี่ยนจาก grtCombined เป็นค่าที่พิมพ์จริงในช่อง Tax Invoice Number
+              tax_invoice_number: prevMode ? null : (grtCombined && (popCode === 'A' || popCode === 'B')) ? `${grtCombined}${popCode}` : ((grtCombined && popCode === 'F') ? `${grtCombined}F${String(quickActionVatPeriodMonth || '').slice(2, 4)}` : grtCombined), // MARKER_VATWATCHLISTOPS_QA_POPVAT_F_GRN_SUFFIX_V1 -- F + YY ของ Period ปัจจุบัน เช่น F26 // MARKER_VATWATCHLISTOPS_QA_POPVAT_A_GRN_SUFFIX_V1 -- A: ต่อท้ายเลข GRN ด้วย A | MARKER_VATWATCHLISTOPS_QUICKACTION_TAXINVOICE_REVERT_GRTCOMBINED_V1 -- ยืนยันแล้วว่าต้องเป็น grtCombined (prefix+running) เหมือนเดิม ไม่ใช่ช่องพิมพ์เอง
+              tax_invoice_date: prevMode ? null : formatQuickActionReceiveDateText(quickActionTaxInvoiceDate), // MARKER_VATWATCHLISTOPS_QUICK_ACTION_TAX_INVOICE_DATE_FORMAT_V1 -- Format DD-MMM-YY เหมือน Receipt Date
+              vendor_tax_invoice_number: prevMode ? null : quickActionTaxInvoiceNumber, // MARKER_VATWATCHLISTOPS_VENDOR_TAXINVOICE_USE_TYPED_V1 -- เปลี่ยนจาก grtCombined เป็นค่าที่พิมพ์จริงในช่อง Tax Invoice Number
               supplier_tax_id: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1 -- เข้าระบบปลายทางไม่ได้ ไม่ต้องใส่แล้ว
               supplier_branch_number: null, // MARKER_VATWATCHLISTOPS_QUICK_ACTION_REMOVE_SUPPLIER_FIELDS_V1
               supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
@@ -9604,11 +9857,12 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
               product_value: row.exp_amount || null,
               vat_amount: row.exp_vat || null,
               username, fill_started_at: (quickActionFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
-              status: vatDraftStatus(quickActionOverRef.current),
+              status: prevMode ? 'draft' : vatDraftStatus(quickActionOverRef.current),
               action: (popCode && popCode !== 'N') ? `Popvat_${popCode}` : 'Popvat', // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 MARKER_VATWATCHLISTOPS_QA_POPVAT_CODE_MENU_V1
               menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- Quick Action Popvat Normal
             }),
           });
+          if (prevMode && _draftRespQA && _draftRespQA.id != null) prevDraftIdsQA.push(_draftRespQA.id); // MARKER_QA_PREV_MODE_V2
           const reportRows = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
           const matchedReport = (Array.isArray(reportRows) ? reportRows : []).filter((r) => (r.status === 'pending' || r.status === 'send_fp') && vatSameSupplierCode(r, row)); // MARKER_VATWATCHLISTOPS_FULLPAGE_BUCKET_SEND_FP_STATUS_V1 MARKER_VATCONTROLLER_STATUS_KEY_SUPPLIER_V1
           for (const r of matchedReport) {
@@ -9617,28 +9871,16 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
             await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify(typePut) });
           }
           // MARKER_VATCONTROLLER_QUICKACTION_PROGRESSIVE_RESUME_V1 -- แถวนี้สำเร็จแล้ว: ลบออกจากจอทันที (Progressive) ไม่รอครบก่อน
-          if (POPVAT_ABF_WRITE_NOTE && ['A', 'B', 'F'].includes(popCode) && popRemark) { // MARKER_VATWATCHLISTOPS_QA_POPVAT_SUBMIT_CONDITION_V1 -- A: Remark ที่กรอกวิ่งเข้า match_remark ของ Note (status accept_with_condition)
+          if (POPVAT_ABF_WRITE_NOTE && ['A', 'B', 'F'].includes(popCode) && popRemark) { // MARKER_QA_PREV_NO_NOTE_V1 -- ไม่เขียน Note ให้ (ผู้ใช้ Keyin เอง) เก็บเหตุผลที่ Remark ของ Type อย่างเดียว
             // MARKER_VATWATCHLISTOPS_QA_POPVAT_NOTE_DETAIL_V1 -- Note ละเอียด: ใช้ไปเมื่อไหร่ / Supplier / GRN / Tax Invoice / ยอด / Draft ID (ตามรอยใบกำกับภาษีได้)
-            const labelPopQA = ({ A: 'A - Submit with Condition', B: 'B - Part Used', F: 'F - Expired Balance' })[popCode];
+            const labelPopQA = ({ A: 'A - Submit with Condition', B: 'B - Partial Used', F: 'F - Expired Balance' })[popCode];
             const grnPopQA = (grtCombined && (popCode === 'A' || popCode === 'B')) ? `${grtCombined}${popCode}` : ((grtCombined && popCode === 'F') ? `${grtCombined}F${String(quickActionVatPeriodMonth || '').slice(2, 4)}` : (grtCombined || '-'));
             const nowPopQA = new Date();
             const p2PopQA = (n) => String(n).padStart(2, '0');
             const usedAtPopQA = `${p2PopQA(nowPopQA.getDate())}-${['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][nowPopQA.getMonth()]}-${String(nowPopQA.getFullYear()).slice(2)} ${p2PopQA(nowPopQA.getHours())}:${p2PopQA(nowPopQA.getMinutes())}`;
             const fmPopQA = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            const noteTxtPopQA = [
-              `[${labelPopQA}]`,
-              `เหตุผล: ${popRemark}`,
-              `ใช้ไปเมื่อ (Popvat): ${usedAtPopQA} โดย ${username || '-'}`,
-              `Supplier: ${row.vendor_name || '-'} (${row.supplier_code || '-'})`,
-              `Invoice Ref.: ${row.invoice_ref || '-'}`,
-              `Period ที่ Popvat: ${formatQuickActionPeriodMMYYYY(quickActionPeriodMonth) || '-'}`,
-              `GRN ที่ Popvat: ${grnPopQA}`,
-              `Tax Invoice: ${quickActionTaxInvoiceNumber || '-'} (ลงวันที่ ${formatQuickActionReceiveDateText(quickActionTaxInvoiceDate) || '-'})`,
-              `ยอด: มูลค่า ${fmPopQA(row.exp_amount)} / ภาษี ${fmPopQA(row.exp_vat)}`,
-              `วันที่ใช้สิทธิ์ (Receive Date): ${formatQuickActionReceiveDateText(quickActionReceiveDate) || '-'}`, // MARKER_VATWATCHLISTOPS_TYPE_ABF_STATUS_V1
-              `Draft ID: ${draftId}`,
-            ].join('\n');
-            const notePayloadA = { bu: bu?.bu, invoice_ref: row.invoice_ref, supplier_code: row.supplier_code, note: noteTxtPopQA, remark: ({ A: 'A - Submit with Condition', B: 'B - Part Used', F: 'F - Expired Balance' })[popCode], match_remark: popRemark, check_no: row.check_no || '', status: 'pending', note_by: username, note_at: new Date().toISOString() };
+            const noteTxtPopQA = `${popRemark}`; // MARKER_QA_NOTE_SHORT_V2 -- เก็บแค่ Type + เหตุผล ข้อมูลอื่นมีใน Incomplete อยู่แล้ว
+            const notePayloadA = { bu: bu?.bu, invoice_ref: row.invoice_ref, supplier_code: row.supplier_code, note: noteTxtPopQA, remark: ({ A: 'A - Submit with Condition', B: 'B - Partial Used', F: 'F - Expired Balance' })[popCode], match_remark: popRemark, check_no: row.check_no || '', status: 'pending', note_by: username, note_at: new Date().toISOString() };
             await apiFetch('/vat_watchlist_notes/upsert?onConflict=bu,invoice_ref,supplier_code', { method: 'POST', body: JSON.stringify({ ...notePayloadA, image_ids: JSON.stringify([]) }) });
             setNoteMap((prev) => ({ ...prev, [getNoteKey(row)]: { ...notePayloadA, image_ids: [] } }));
           }
@@ -9661,16 +9903,23 @@ function IncompleteBuOperationTest({ bu, onBack, onGotoUploadFile, onSwitchBu })
           // เชื่อมกลับมาได้ -- Loop จะวนมาทำแถวเดิม (remainingRowsQA[0]) ซ้ำอัตโนมัติ ไม่ shift ออก จึงไม่ข้าม ไม่ซ้ำ
         }
       }
+      if (prevMode && prevDraftIdsQA.length > 0) { // MARKER_QA_PREV_MODE_V2 -- เหมือนปุ่ม End Process: ย้ายเข้า Transaction Backup ทันที
+        try {
+          await apiFetch('/vat-export/popvat/end-process-direct', { method: 'POST', body: JSON.stringify({ bu: bu?.bu, ids: prevDraftIdsQA }) });
+        } catch (epErr) {
+          await confirmDialog.alert('อัปเดต Type + Note แล้ว แต่ End Process เข้า Backup ไม่สำเร็จ: ' + (epErr?.message || '') + '\nรายการยังค้างเป็น Draft ใน Draft Monitor กดจบงานด้วยปุ่ม End Process ได้', { title: 'Prev', variant: 'danger' });
+        }
+      }
       // MARKER_VATWATCHLISTOPS_QUICK_ACTION_GRT_AUTOGEN_V1 -- กันเลขซ้ำรอบหน้า: Update Running ล่าสุดกลับเข้า company_list
       const usedRunning = parseInt(quickActionGrtRunning, 10);
-      if (usedRunning > 0 && bu?.id) {
+      if (!prevMode && usedRunning > 0 && bu?.id) {
         await apiFetch(`/company_list/${bu.id}`, { method: 'PUT', body: JSON.stringify({ [quickActionOverRef.current ? 'vat_grn_ov' : 'vat_grn']: usedRunning }) }).catch((err) => console.error('Update vat_grn error:', err));
         setQuickActionVatGrnOverride(usedRunning); // MARKER_VATWATCHLISTOPS_VAT_GRN_REALTIME_V2 -- Session ตัวเอง Sync ทันที
         broadcastWs('vat_grn_updated', { bu: bu?.bu, vat_grn: usedRunning, over: quickActionOverRef.current }); // MARKER_VATWATCHLISTOPS_VAT_GRN_REALTIME_V2 -- แจ้ง Session อื่นให้ Sync ด้วย
         broadcastWs('company_list_updated', { bu: bu?.bu }); // MARKER_VATWATCHLISTOPS_VAT_GRN_STALE_LIST_FIX_V1 -- แจ้ง List/Lobby (Monitor Table, Recent Uploads, Upload File Lobby ฯลฯ) ให้ Reload company_list สดใหม่ กัน bu prop ค้างเลข vat_grn เก่าหลัง Remount
       }
       // MARKER_VATCONTROLLER_KEEP_SEARCH_AFTER_POPVAT_V1 -- ไม่ล้าง Search หลัง Quick Action แล้ว (เดิม MARKER_VATWATCHLISTOPS_QUICK_ACTION_CLEAR_SEARCH_V1)
-      reportVatTransactionToDashboard(draftId, savedInvoiceRefsQA.length, quickActionFillStartedAtRef.current); // MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1
+      if (!prevMode) reportVatTransactionToDashboard(draftId, savedInvoiceRefsQA.length, quickActionFillStartedAtRef.current); // MARKER_VAT_TRANSACTION_TO_DASHBOARD_V1
       setShowQuickAction(false);
       setDetailReloadKey((k) => k + 1); // MARKER_VATWATCHLISTOPS_RELOAD_AFTER_POPVAT_V1 -- Popvat เสร็จ รีโหลดตาราง/แท็บ Type ของตัวเองทันที ไม่ต้องรอ Broadcast ย้อนกลับ
     } catch (err) {
@@ -10525,6 +10774,8 @@ let simpleReceiveDateFP;
         nextEntries[`${t.invoice_ref || ''}|${t.supplier_code || ''}`] = payload; // payload (image_ids เป็น Array) ใช้กับ Local Cache เท่านั้น
       }
       setNoteMap((prev) => ({ ...prev, ...nextEntries }));
+      broadcastWs('vat_watchlist_draft_updated', { bu: bu.bu, invoice_refs: targets.map((t) => t.invoice_ref) }); // MARKER_VATWATCHLISTOPS_NOTE_SAVE_BROADCAST_V1 -- Note เปลี่ยน Aging (Accept) ให้กราฟ Aging Overview/ตัวเลขแท็บ/Session อื่น Refetch ตาม
+      vatFreezeRefreshBu(bu.bu); // MARKER_VATWATCHLISTOPS_FREEZE_REFRESH_BU_V1
       setDetailReloadKey((k) => k + 1); // MARKER_VATWATCHLISTOPS_NOTE_SAVE_RELOAD_TYPE_V1 -- Note (เช่น Accept with Condition) ทำให้ DB Trigger เปลี่ยน Aging/Type ของแถว -> Refetch ตาราง + ตัวเลขแท็บ Type/Note ทันที
       if (noteModalGroupTargets) setSelectedNoteRows(new Map()); // MARKER_VATWATCHLISTOPS_GROUP_NOTE_SELECT_V1 -- เคลียร์การเลือกหลัง Group Save สำเร็จ
       setNoteModalGroupTargets(null);
@@ -10555,6 +10806,8 @@ let simpleReceiveDateFP;
         delete next[key];
         return next;
       });
+      broadcastWs('vat_watchlist_draft_updated', { bu: bu.bu, invoice_refs: [noteModalRow.invoice_ref] }); // MARKER_VATWATCHLISTOPS_NOTE_SAVE_BROADCAST_V1 -- ลบ Note คืน Aging เดิม ให้กราฟ/Session อื่น Refetch
+      vatFreezeRefreshBu(bu.bu); // MARKER_VATWATCHLISTOPS_FREEZE_REFRESH_BU_V1
       setDetailReloadKey((k) => k + 1); // MARKER_VATWATCHLISTOPS_NOTE_SAVE_RELOAD_TYPE_V1 -- ลบ Note -> Trigger คืน Aging/Type เดิม -> Refetch ให้ตรงทันที
       setNoteModalRow(null);
     } catch (err) {
@@ -13606,7 +13859,14 @@ let simpleReceiveDateFP;
               </div>
               <div style={{ padding: '14px 20px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}> {/* MARKER_OVER_PERIOD_HEADER_RIGHT_V1 -- Toggle Over Period อยู่ขวาสุดของแถวหัวข้อ Tax Invoice */}
-                  <div style={{ fontSize: '11px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tax Invoice</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}> {/* MARKER_QA_PREV_MODE_V1 -- สวิตช์ Current | Prev */}
+                    <div style={{ fontSize: '11px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tax Invoice</div>
+                    <div style={{ display: 'inline-flex', border: '1px solid #cfd6dd', borderRadius: '999px', overflow: 'hidden', fontSize: '11px' }} title="Prev = วันที่ใช้สิทธิ์ As of สิ้นเดือนที่แล้ว · Popvat A/B/F อัปเดตเป็น Type แล้วเข้า Transaction Backup ทันที (เหมือน End Process) ไม่ผ่าน Draft">
+                      {[['Current', false], ['Prev', true]].map(([lbl, v]) => (
+                        <button key={lbl} type="button" disabled={quickActionSaving} onClick={() => handleQuickActionPrevToggle(v)} style={{ padding: '2px 10px', border: 'none', cursor: quickActionSaving ? 'default' : 'pointer', background: quickActionPrev === v ? (v ? '#e8a13a' : '#1a3a5c') : 'white', color: quickActionPrev === v ? 'white' : '#666', fontWeight: quickActionPrev === v ? 600 : 400 }}>{lbl}</button>
+                      ))}
+                    </div>
+                  </div>
                   <button type="button" onClick={handleToggleQuickActionOver} disabled={quickActionOverBusy} title={quickActionOver ? 'Over Period เปิดอยู่: GRN วิ่งท่อเดือนถัดไป · กดเพื่อกลับปกติ (ปิด Period แล้วระบบปลดให้เอง)' : 'เปิด Over Period: สับท่อไปรัน GRN ของเดือนถัดไป'} style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: 0, padding: '1px 7px 1px 3px', border: '0.5px solid ' + (quickActionOver ? '#e8a13a' : '#ccc'), borderRadius: '999px', background: quickActionOver ? '#fff4e0' : '#f5f5f5', cursor: quickActionOverBusy ? 'wait' : 'pointer', fontSize: '10px', fontWeight: 600, color: quickActionOver ? '#a85d00' : '#777' }}>
                       <span style={{ width: '22px', height: '12px', borderRadius: '999px', background: quickActionOver ? '#e8a13a' : '#bbb', position: 'relative', display: 'inline-block' }}><span style={{ position: 'absolute', top: '1px', left: quickActionOver ? '11px' : '1px', width: '10px', height: '10px', borderRadius: '50%', background: '#fff' }} /></span>
                       Over Period {quickActionOver ? 'ON' : 'OFF'}
@@ -13696,11 +13956,11 @@ let simpleReceiveDateFP;
               </div>
             </div>
             <div style={{ padding: '14px 20px', borderTop: '0.5px solid #e8e8e8', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '8px', flexShrink: 0 }}> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_FOOTER_REORDER_V1 -- ชิดซ้าย, เรียง Normal ก่อน Cancel */}
-              <div style={{ position: 'relative', display: quickActionMultiSupplier ? 'none' : undefined }}><button type="button" onClick={() => { setQaCancelMenuOpen(false); setQaPopMenuOpen((v) => !v); }} /* MARKER_VATWATCHLISTOPS_QA_MENU_EXCLUSIVE_V1 -- เปิดเมนูใดเมนูหนึ่งต้องปิดอีกเมนู */ disabled={quickActionSaving} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: quickActionConnLost ? '#c0392b' : '#1a3a5c', color: 'white', cursor: quickActionSaving ? 'default' : 'pointer', opacity: quickActionSaving ? 0.6 : 1 }}>{quickActionConnLost ? `กำลังเชื่อมต่อใหม่... (${quickActionReconnectSecondsLeft}s)` : (quickActionSaving ? 'กำลังบันทึก...' : 'Popvat - Normal ▾')}</button>{qaPopMenuOpen && !quickActionSaving && (<div style={{ position: 'absolute', left: 0, minWidth: '100%', bottom: 'calc(100% + 6px)', background: 'white', border: '0.5px solid #ddd', borderRadius: '10px', boxShadow: '0 6px 20px rgba(0,0,0,0.18)', zIndex: 5, overflow: 'hidden' }}><button type="button" onClick={() => { setQaPopMenuOpen(false); handleAddQuickActionData('N'); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>N - Normal</button><button type="button" onClick={() => { setQaPopMenuOpen(false); setQaPopCondText('ดำเนินการใช้สิทธิ์ไปก่อน'); setQaPopCondMode('A'); setQaPopCondOpen(true); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', borderTop: '0.5px solid #eee', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>A - Submit with Condition</button><button type="button" onClick={() => { setQaPopMenuOpen(false); setQaPopBDate(''); setQaPopBMonth(''); setQaPopBAmount(''); setQaPopBExtra(''); setQaPopBOpen(true); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', borderTop: '0.5px solid #eee', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>B - Part Used</button><button type="button" onClick={() => { setQaPopMenuOpen(false); setQaPopCondText('ยอดคงเหลือหมดอายุ'); setQaPopCondMode('F'); setQaPopCondOpen(true); }} /* MARKER_VATWATCHLISTOPS_TYPE_ABF_V4 -- A/F: Remark ค่าเริ่มต้นตาม Type */ style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', borderTop: '0.5px solid #eee', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>F - Expired Balance</button></div>)}{qaPopBOpen && (<div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1600 }}><div style={{ background: 'white', borderRadius: '12px', width: '480px', maxWidth: '92vw', padding: '18px 20px' }}><div style={{ fontSize: '15px', fontWeight: 500, marginBottom: '4px' }}>B - Part Used</div><div style={{ fontSize: '12px', color: '#888', marginBottom: '6px' }}>ระบุรายละเอียดส่วนที่เคยใช้ไปแล้ว (บังคับกรอกเฉพาะวันที่) -- ระบบจะรวมเป็น Remark ให้เอง วันที่ใช้สิทธิ์ = วันที่ที่ระบุด้านล่าง</div><div style={{ fontSize: '12px', color: '#555', margin: '8px 0 3px' }}>ใช้ไปเมื่อไหร่ (วันที่)</div><div style={{ position: 'relative' }}><input key={`qpbd${qaPopBDate || 'x'}`} type="text" defaultValue={formatDateDisplayMDY(qaPopBDate)} placeholder="MM/DD/YYYY" onBlur={async (e) => { const parsed = await resolveFlexibleDateInput(e.target); if (parsed) { e.target.value = formatDateDisplayMDY(parsed); setQaPopBDate(parsed); } else if (!e.target.value.trim()) { setQaPopBDate(''); } else { e.target.value = formatDateDisplayMDY(qaPopBDate); } }} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '7px 30px 7px 10px' }} /><span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '13px', color: '#888' }}>📅</span><input type="date" tabIndex={-1} value={qaPopBDate || ''} onChange={(e) => setQaPopBDate(e.target.value)} style={{ position: 'absolute', right: 0, top: 0, width: '30px', height: '100%', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }} /></div>{/* MARKER_VATWATCHLISTOPS_QA_PARTUSED_REMARK_DATE_V1 MARKER_VATWATCHLISTOPS_QA_PARTUSED_REMARK_AMOUNT_V1 */}<div style={{ fontSize: '12px', color: '#555', margin: '8px 0 3px' }}>ใช้ไปเท่าไหร่ (จำนวนเงิน)</div><input type="number" step="0.01" value={qaPopBAmount} onChange={(e) => setQaPopBAmount(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '7px 10px' }} /><div style={{ fontSize: '12px', color: '#555', margin: '8px 0 3px' }}>รายละเอียดเพิ่มเติม (ถ้ามี)</div><input type="text" value={qaPopBExtra} onChange={(e) => setQaPopBExtra(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '7px 10px' }} /><div style={{ marginTop: '12px', padding: '8px 10px', background: '#f5f9ff', border: '0.5px solid #cfe0f5', borderRadius: '8px', fontSize: '12px', color: '#34495e', lineHeight: 1.7 }}><div><b>Remark ที่จะบันทึก:</b> {`ใช้สิทธิ์ไปแล้วบางส่วน${qaPopBDate ? ` วันที่ ${qaPopBDate.split('-').reverse().join('/')}` : ''}` + (Number(qaPopBAmount) > 0 ? ` จำนวน ${Number(qaPopBAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '') + (qaPopBExtra.trim() ? ` | ${qaPopBExtra.trim()}` : '')}</div><div><b>เปลี่ยนสถานะ:</b> Pending → Type B</div><div><b>วันที่ใช้สิทธิ์ (Receive Date):</b> {formatQuickActionReceiveDateText(quickActionReceiveDate) || '-'}</div></div><div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}><button type="button" onClick={() => setQaPopBOpen(false)} style={{ padding: '7px 14px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', color: '#555', cursor: 'pointer' }}>ยกเลิก</button>{(() => { const okB = !!qaPopBDate; /* MARKER_VATWATCHLISTOPS_QA_PARTUSED_OPTIONAL_AMOUNT_V1 */ return (<button type="button" disabled={!okB} onClick={() => { const remarkB = `ใช้สิทธิ์ไปแล้วบางส่วน วันที่ ${qaPopBDate.split('-').reverse().join('/')}` + (Number(qaPopBAmount) > 0 ? ` จำนวน ${Number(qaPopBAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '') + (qaPopBExtra.trim() ? ` | ${qaPopBExtra.trim()}` : ''); setQaPopBOpen(false); handleAddQuickActionData('B', remarkB); }} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: okB ? 'pointer' : 'default', opacity: okB ? 1 : 0.5 }}>Popvat - B</button>); })()}</div></div></div>)}{qaPopCondOpen && (<div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1600 }}><div style={{ background: 'white', borderRadius: '12px', width: '480px', maxWidth: '92vw', padding: '18px 20px' }}><div style={{ fontSize: '15px', fontWeight: 500, marginBottom: '4px' }}>{qaPopCondMode === 'F' ? 'F - Expired Balance' : 'A - Submit with Condition'}</div><div style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>Remark ค่าเริ่มต้นของ Type นี้ (แก้ไขได้ หรือกด Popvat ได้เลยถ้าไม่เปลี่ยน)</div><textarea autoFocus value={qaPopCondText} onChange={(e) => setQaPopCondText(e.target.value)} rows={4} placeholder={qaPopCondMode === 'F' ? 'Expired Balance...' : 'Submit with Condition...'} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 10px', resize: 'vertical' }} /><div style={{ marginTop: '10px', padding: '8px 10px', background: '#f5f9ff', border: '0.5px solid #cfe0f5', borderRadius: '8px', fontSize: '12px', color: '#34495e', lineHeight: 1.7 }}><div><b>Remark ที่จะบันทึก:</b> {qaPopCondText.trim() || '-'}</div><div><b>เปลี่ยนสถานะ:</b> Pending → Type {qaPopCondMode}</div><div><b>วันที่ใช้สิทธิ์ (Receive Date):</b> {formatQuickActionReceiveDateText(quickActionReceiveDate) || '-'}</div></div><div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}><button type="button" onClick={() => setQaPopCondOpen(false)} style={{ padding: '7px 14px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', color: '#555', cursor: 'pointer' }}>ยกเลิก</button><button type="button" disabled={!qaPopCondText.trim()} onClick={() => { const t = qaPopCondText.trim(); setQaPopCondOpen(false); handleAddQuickActionData(qaPopCondMode, t); }} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: qaPopCondText.trim() ? 'pointer' : 'default', opacity: qaPopCondText.trim() ? 1 : 0.5 }}>{`Popvat - ${qaPopCondMode}`}</button></div></div></div>)}</div> {/* MARKER_VATCONTROLLER_QUICKACTION_CONN_UI_V1 */}
+              <div style={{ position: 'relative', display: quickActionMultiSupplier ? 'none' : undefined }}><button type="button" onClick={() => { setQaCancelMenuOpen(false); setQaPopMenuOpen((v) => !v); }} /* MARKER_VATWATCHLISTOPS_QA_MENU_EXCLUSIVE_V1 -- เปิดเมนูใดเมนูหนึ่งต้องปิดอีกเมนู */ disabled={quickActionSaving} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: quickActionConnLost ? '#c0392b' : '#1a3a5c', color: 'white', cursor: quickActionSaving ? 'default' : 'pointer', opacity: quickActionSaving ? 0.6 : 1 }}>{quickActionConnLost ? `กำลังเชื่อมต่อใหม่... (${quickActionReconnectSecondsLeft}s)` : (quickActionSaving ? 'กำลังบันทึก...' : (quickActionPrev ? 'Popvat - Prev ▾' : 'Popvat - Normal ▾'))}</button>{qaPopMenuOpen && !quickActionSaving && (<div style={{ position: 'absolute', left: 0, minWidth: '100%', bottom: 'calc(100% + 6px)', background: 'white', border: '0.5px solid #ddd', borderRadius: '10px', boxShadow: '0 6px 20px rgba(0,0,0,0.18)', zIndex: 5, overflow: 'hidden' }}><button type="button" onClick={() => { setQaPopMenuOpen(false); handleAddQuickActionData('N'); }} disabled={quickActionPrev} title={quickActionPrev ? 'โหมด Prev ใช้ได้เฉพาะ A / B / F' : undefined} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>N - Normal</button><button type="button" onClick={() => { setQaPopMenuOpen(false); setQaPopCondText('ดำเนินการใช้สิทธิ์ไปก่อน'); setQaPopCondMode('A'); setQaPopCondOpen(true); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', borderTop: '0.5px solid #eee', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>A - Submit with Condition</button><button type="button" onClick={() => { setQaPopMenuOpen(false); setQaPopBDate(''); setQaPopBMonth(''); setQaPopBAmount(''); setQaPopBExtra(''); setQaPopBOpen(true); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', borderTop: '0.5px solid #eee', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>B - Partial Used</button><button type="button" onClick={() => { setQaPopMenuOpen(false); setQaPopCondText('ยอดคงเหลือหมดอายุ'); setQaPopCondMode('F'); setQaPopCondOpen(true); }} /* MARKER_VATWATCHLISTOPS_TYPE_ABF_V4 -- A/F: Remark ค่าเริ่มต้นตาม Type */ style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', borderTop: '0.5px solid #eee', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>F - Expired Balance</button></div>)}{qaPopBOpen && (<div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1600 }}><div style={{ background: 'white', borderRadius: '12px', width: '480px', maxWidth: '92vw', padding: '18px 20px' }}><div style={{ fontSize: '15px', fontWeight: 500, marginBottom: '4px' }}>B - Partial Used</div><div style={{ fontSize: '12px', color: '#888', marginBottom: '6px' }}>ระบุรายละเอียดส่วนที่เคยใช้ไปแล้ว (บังคับกรอกเฉพาะวันที่) -- ระบบจะรวมเป็น Remark ให้เอง วันที่ใช้สิทธิ์ = วันที่ที่ระบุด้านล่าง</div><div style={{ fontSize: '12px', color: '#555', margin: '8px 0 3px' }}>ใช้ไปเมื่อไหร่ (วันที่)</div><div style={{ position: 'relative' }}><input key={`qpbd${qaPopBDate || 'x'}`} type="text" defaultValue={formatDateDisplayMDY(qaPopBDate)} placeholder="MM/DD/YYYY" onBlur={async (e) => { const parsed = await resolveFlexibleDateInput(e.target); if (parsed) { e.target.value = formatDateDisplayMDY(parsed); setQaPopBDate(parsed); } else if (!e.target.value.trim()) { setQaPopBDate(''); } else { e.target.value = formatDateDisplayMDY(qaPopBDate); } }} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '7px 30px 7px 10px' }} /><span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '13px', color: '#888' }}>📅</span><input type="date" tabIndex={-1} value={qaPopBDate || ''} onChange={(e) => setQaPopBDate(e.target.value)} style={{ position: 'absolute', right: 0, top: 0, width: '30px', height: '100%', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }} /></div>{/* MARKER_VATWATCHLISTOPS_QA_PARTUSED_REMARK_DATE_V1 MARKER_VATWATCHLISTOPS_QA_PARTUSED_REMARK_AMOUNT_V1 */}<div style={{ fontSize: '12px', color: '#555', margin: '8px 0 3px' }}>ใช้ไปเท่าไหร่ (จำนวนเงิน)</div><input type="number" step="0.01" value={qaPopBAmount} onChange={(e) => setQaPopBAmount(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '7px 10px' }} /><div style={{ fontSize: '12px', color: '#555', margin: '8px 0 3px' }}>รายละเอียดเพิ่มเติม (ถ้ามี)</div><input type="text" value={qaPopBExtra} onChange={(e) => setQaPopBExtra(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '7px 10px' }} /><div style={{ marginTop: '12px', padding: '8px 10px', background: '#f5f9ff', border: '0.5px solid #cfe0f5', borderRadius: '8px', fontSize: '12px', color: '#34495e', lineHeight: 1.7 }}><div><b>Remark ที่จะบันทึก:</b> {`ใช้สิทธิ์ไปแล้วบางส่วน${qaPopBDate ? ` วันที่ ${qaPopBDate.split('-').reverse().join('/')}` : ''}` + (Number(qaPopBAmount) > 0 ? ` จำนวน ${Number(qaPopBAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '') + (qaPopBExtra.trim() ? ` | ${qaPopBExtra.trim()}` : '')}</div><div><b>เปลี่ยนสถานะ:</b> Pending → Type B</div><div><b>วันที่ใช้สิทธิ์ (Receive Date):</b> {formatQuickActionReceiveDateText(quickActionReceiveDate) || '-'}</div></div><div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}><button type="button" onClick={() => setQaPopBOpen(false)} style={{ padding: '7px 14px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', color: '#555', cursor: 'pointer' }}>ยกเลิก</button>{(() => { const okB = !!qaPopBDate; /* MARKER_VATWATCHLISTOPS_QA_PARTUSED_OPTIONAL_AMOUNT_V1 */ return (<button type="button" disabled={!okB} onClick={() => { const remarkB = `ใช้สิทธิ์ไปแล้วบางส่วน วันที่ ${qaPopBDate.split('-').reverse().join('/')}` + (Number(qaPopBAmount) > 0 ? ` จำนวน ${Number(qaPopBAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '') + (qaPopBExtra.trim() ? ` | ${qaPopBExtra.trim()}` : ''); setQaPopBOpen(false); handleAddQuickActionData('B', remarkB); }} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: okB ? 'pointer' : 'default', opacity: okB ? 1 : 0.5 }}>Popvat - B</button>); })()}</div></div></div>)}{qaPopCondOpen && (<div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1600 }}><div style={{ background: 'white', borderRadius: '12px', width: '480px', maxWidth: '92vw', padding: '18px 20px' }}><div style={{ fontSize: '15px', fontWeight: 500, marginBottom: '4px' }}>{qaPopCondMode === 'F' ? 'F - Expired Balance' : 'A - Submit with Condition'}</div><div style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>Remark ค่าเริ่มต้นของ Type นี้ (แก้ไขได้ หรือกด Popvat ได้เลยถ้าไม่เปลี่ยน)</div><textarea autoFocus value={qaPopCondText} onChange={(e) => setQaPopCondText(e.target.value)} rows={4} placeholder={qaPopCondMode === 'F' ? 'Expired Balance...' : 'Submit with Condition...'} style={{ width: '100%', boxSizing: 'border-box', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 10px', resize: 'vertical' }} /><div style={{ marginTop: '10px', padding: '8px 10px', background: '#f5f9ff', border: '0.5px solid #cfe0f5', borderRadius: '8px', fontSize: '12px', color: '#34495e', lineHeight: 1.7 }}><div><b>Remark ที่จะบันทึก:</b> {qaPopCondText.trim() || '-'}</div><div><b>เปลี่ยนสถานะ:</b> Pending → Type {qaPopCondMode}</div><div><b>วันที่ใช้สิทธิ์ (Receive Date):</b> {formatQuickActionReceiveDateText(quickActionReceiveDate) || '-'}</div></div><div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}><button type="button" onClick={() => setQaPopCondOpen(false)} style={{ padding: '7px 14px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', color: '#555', cursor: 'pointer' }}>ยกเลิก</button><button type="button" disabled={!qaPopCondText.trim()} onClick={() => { const t = qaPopCondText.trim(); setQaPopCondOpen(false); handleAddQuickActionData(qaPopCondMode, t); }} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: qaPopCondText.trim() ? 'pointer' : 'default', opacity: qaPopCondText.trim() ? 1 : 0.5 }}>{`Popvat - ${qaPopCondMode}`}</button></div></div></div>)}</div> {/* MARKER_VATCONTROLLER_QUICKACTION_CONN_UI_V1 */}
               <div style={{ width: '0.5px', height: '24px', background: '#e8e8e8' }} /> {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 */}
               {/* MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_REMOVE_V1 -- ลบ Dropdown เหตุผล Cancel (Cancel/Simple_NNN/Simple_YNY) ออกจาก Quick Action -- Form นี้ไม่มีระบบออก Simple ต่อจาก Cancel เลย เหตุผลอื่นนอกจาก "Cancel" เฉยๆ ไม่มีความหมาย -- quickActionCancelReason ยังคงเป็น Default 'Cancel' เสมอ (ไม่มี UI ให้เปลี่ยนอีกต่อไป) ไม่กระทบ Full Page ที่ Auto-Tag ค่า Simple_NNN/YNY เองแยกต่างหากคนละจุด (ยืนยันจากผู้ใช้ให้แก้เฉพาะ Quick Action เท่านั้น) */}
               <div style={{ position: 'relative' }}> {/* MARKER_VATWATCHLISTOPS_QA_GLTRANSFER_V1 -- ปุ่ม Cancel + เมนูลอย Netting-Zero / GL-Transfer */}
-                <button type="button" onClick={() => { setQaPopMenuOpen(false); setQaCancelMenuOpen((v) => !v); }} /* MARKER_VATWATCHLISTOPS_QA_MENU_EXCLUSIVE_V1 */ disabled={quickActionSaving} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: quickActionConnLost ? '#c0392b' : '#EF9F27', color: 'white', cursor: quickActionSaving ? 'default' : 'pointer', opacity: quickActionSaving ? 0.6 : 1 }}>{quickActionConnLost ? `กำลังเชื่อมต่อใหม่... (${quickActionReconnectSecondsLeft}s)` : 'Popvat - Cancel ▾'}</button>
+                <button type="button" onClick={() => { setQaPopMenuOpen(false); setQaCancelMenuOpen((v) => !v); }} /* MARKER_VATWATCHLISTOPS_QA_MENU_EXCLUSIVE_V1 */ disabled={quickActionSaving || quickActionPrev} title={quickActionPrev ? 'โหมด Prev ไม่รองรับ Cancel' : undefined} style={{ padding: '7px 14px', fontSize: '13px', border: 'none', borderRadius: '8px', background: quickActionConnLost ? '#c0392b' : '#EF9F27', color: 'white', cursor: (quickActionSaving || quickActionPrev) ? 'default' : 'pointer', opacity: (quickActionSaving || quickActionPrev) ? 0.45 : 1 }}>{quickActionConnLost ? `กำลังเชื่อมต่อใหม่... (${quickActionReconnectSecondsLeft}s)` : 'Popvat - Cancel ▾'}</button>
                 {qaCancelMenuOpen && !quickActionSaving && (
                   <div style={{ position: 'absolute', left: 0, right: 0, bottom: 'calc(100% + 6px)', background: 'white', border: '0.5px solid #ddd', borderRadius: '10px', boxShadow: '0 6px 20px rgba(0,0,0,0.18)', zIndex: 5, overflow: 'hidden' }}>
                     <button type="button" title="Cancel (Popvat - Cancel ตามเดิม)" onClick={() => { setQaCancelMenuOpen(false); handleCancelQuickActionData(); }} style={{ display: 'block', width: '100%', textAlign: 'center', padding: '9px 10px', border: 'none', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1a3a5c', whiteSpace: 'nowrap' }}>CL-Transaction</button>
@@ -14727,6 +14987,21 @@ let simpleReceiveDateFP;
 // -- ยังไม่ผูก UI/Logic ใดๆ รอออกแบบเพิ่มเติมทีหลัง --
 const VAT_SUPPORT_CACHE_TTL_MS = 2 * 60 * 1000; // MARKER_SMCODE_MODAL_SPEED_V1
 let __vatSupportCache = { sm: null, br: null, vc: null, ts: 0 }; // MARKER_SMCODE_MODAL_SPEED_V1 -- Cache ระดับ Module (รอด Remount ตอนสลับ BU) ถูกอัปเดตเมื่อ Broadcast Refetch
+// MARKER_VATCONTROLLER_SIMPLEOPS_GROUPRANGE_BU_V1 -- Resolve BU จาก Group Range ก่อน (เช่น Branch ของ KFC -> CRG) เหมือน Logic ของหน้า Watchlist (Group Range ชนะ branch_list เสมอ)
+function matchBuGroupRange(branchCode, groupRanges) {
+  if (!branchCode || !Array.isArray(groupRanges) || groupRanges.length === 0) return null;
+  const clean = String(branchCode).replace(/^[ATF]/, '');
+  let best = null; let bestSpan = Infinity;
+  for (const r of groupRanges) {
+    const key = r.prefix_length ? clean.slice(0, r.prefix_length) : clean;
+    if (r.exclude_start && r.exclude_end && key >= r.exclude_start && key <= r.exclude_end) continue;
+    if (key >= r.range_start && key <= r.range_end) {
+      const span = (Number(r.range_end) || 0) - (Number(r.range_start) || 0);
+      if (span < bestSpan) { bestSpan = span; best = r.group_name; }
+    }
+  }
+  return best;
+}
 function useVatSupportingData() {
   const [smCodes, setSmCodes] = React.useState(__vatSupportCache.sm || []);
   const [branches, setBranches] = React.useState(__vatSupportCache.br || []);
@@ -16699,11 +16974,29 @@ function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFoc
   // ── โหมด BU เดียว (matchedBu ตั้งแล้ว) -- ดึงแถวเดียวจาก bucketRows (Filter eq_bu มาแล้ว ควรเหลือแถวเดียวพอดี) ──
   // MARKER_VATWATCHLISTOPS_AGING_LINE_8POINT_MONTHLY_V25 -- เปลี่ยนแหล่งข้อมูลจาก bucketRows (5 Bucket ช่วง) เป็น monthBucketRows (รายเดือนจริง 0-6+Expired)
   const singleBuRow = matchedBu ? (monthBucketRows.find((r) => r.bu === matchedBu) || null) : null;
+  // MARKER_AGING_LABEL_DATA_PERIOD_V1 -- ป้ายเดือนต้องอิง "งวดของข้อมูลจริง" ของ BU (งวดล่าสุดใน vat_summary_live) ไม่ใช่งวดปัจจุบัน
+  //   (ปิดงวดแล้วแต่ยังไม่มี Incomplete เดือนใหม่: Aging คำนวณจากข้อมูลเดือนเดิม ป้ายต้องเป็นเดือนเดิมด้วย เช่น 2026-09 ไม่ใช่ 2026-10)
+  const [buDataPeriod, setBuDataPeriod] = React.useState(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    setBuDataPeriod(null);
+    if (!matchedBu) return undefined;
+    (async () => {
+      try {
+        const res = await apiFetch(`/vat_summary_live?eq_bu=${encodeURIComponent(matchedBu)}`);
+        const list = Array.isArray(res) ? res : (Array.isArray(res?.rows) ? res.rows : []);
+        let latest = null;
+        list.forEach((r) => { const pm = r && r.period_month; if (typeof pm === 'string' && /^\d{4}-\d{2}$/.test(pm) && (!latest || pm > latest)) latest = pm; });
+        if (!cancelled) setBuDataPeriod(latest);
+      } catch (e) { if (!cancelled) setBuDataPeriod(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [matchedBu]);
   const singleBuPoints = React.useMemo(() => {
     if (!singleBuRow) return [];
     // MARKER_VATWATCHLISTOPS_AGING_LINE_MONTH_LABEL_V26 -- คำนวณ เดือน/ปี ย้อนหลังจากวันนี้ต่อจุด (เช่น Aging 3 -> มิ.ย. 2026) ใช้แสดงตอน Hover
     // อ้างอิง VAT Period ของ BU (รองรับ vat_period_mode='prev') -- ไม่มี Period = ไม่โชว์ป้ายเดือน (ไม่ใช้วันที่ปัจจุบันแทน)
-    const effMonthFP = getEffectivePeriodMonth(agingCompanyByBu[matchedBu], agingPeriodMonth);
+    const effMonthFP = buDataPeriod || getEffectivePeriodMonth(agingCompanyByBu[matchedBu], agingPeriodMonth);
     const mFP = /^(\d{4})-(\d{1,2})$/.exec(String(effMonthFP || ''));
     const baseFP = mFP ? new Date(Number(mFP[1]), Number(mFP[2]) - 1, 1) : null;
     return VAT_AGING_LINE_MONTHLY_POINTS.map((b) => {
@@ -16719,7 +17012,7 @@ function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFoc
       }
       return { ...b, value: Number(singleBuRow[b.key] || 0), monthLabel };
     });
-  }, [singleBuRow, matchedBu, agingPeriodMonth, agingCompanyByBu]);
+  }, [singleBuRow, matchedBu, agingPeriodMonth, agingCompanyByBu, buDataPeriod]);
   const singleBuTotal = singleBuPoints.reduce((s, p) => s + p.value, 0);
 
   const RADIUS = 78; // MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_DYNAMIC_SIZE_V21 -- เดิม 62 (viewBox 160) ปรับเป็น viewBox 200 คงที่ (ขนาดจริงบนจอคุม CSS ผ่าน donutSizePx แทน)
@@ -16953,7 +17246,19 @@ function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFoc
         {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BASE_SEARCH_LINK_V5 -- โหมด BU เดียว: กราฟเส้นแยกตาม Aging */}
         {!loading && matchedBu && !singleBuRow && <div style={{ fontSize: '11px', color: '#aaa' }}>ไม่มีข้อมูล Pending สำหรับ BU นี้</div>}
         {!loading && matchedBu && singleBuRow && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', height: '80%', minHeight: 0, justifyContent: 'center' }}> {/* MARKER_VATWATCHLISTOPS_AGING_LINE_HEIGHT_80PCT_V33 -- เดิมเต็ม 100% (flex:1) จุดสูงสุดชิดขอบบนเกินไป ลดเหลือ 80% ของพื้นที่ */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', height: '80%', minHeight: 0, justifyContent: 'center', position: 'relative' }}> {/* MARKER_VATWATCHLISTOPS_AGING_LINE_HEIGHT_80PCT_V33 -- เดิมเต็ม 100% (flex:1) จุดสูงสุดชิดขอบบนเกินไป ลดเหลือ 80% ของพื้นที่ */}
+            {/* MARKER_AGING_WAIT_INCOMPLETE_BADGE_V1 -- BU ที่ข้อมูลยังเป็นเดือนก่อนงวดปัจจุบัน (ปิดงวดแล้วแต่ยังไม่มี Incomplete เดือนใหม่) แสดงสถานะรอข้อมูล ไม่กระทบตัวเลขในกราฟ */}
+            {(() => {
+              const effP = getEffectivePeriodMonth(agingCompanyByBu[matchedBu], agingPeriodMonth);
+              if (!buDataPeriod || !effP || !(buDataPeriod < effP)) return null;
+              const mm = /^(\d{4})-(\d{2})$/.exec(String(effP));
+              const lbl = mm ? `${mm[2]}.${mm[1]}` : effP;
+              return (
+                <div style={{ position: 'absolute', top: '30%', left: '30%', width: '42%', textAlign: 'center', pointerEvents: 'none', zIndex: 2 }}>
+                  <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: '10px', background: '#FFF7E0', border: '1px solid #E0A100', color: '#8A5A00', fontSize: '11px', fontWeight: 600 }}>Wait to update - Incomplete {lbl}</span>
+                </div>
+              );
+            })()}
             <svg viewBox="0 0 300 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
               {(() => {
                 // MARKER_VATWATCHLISTOPS_AGING_LINE_LABEL_0_POINT_1_V35 -- maxV/เส้น/จุด คำนวณจากข้อมูลตั้งแต่ 1 เป็นต้นไปเท่านั้น (ไม่รวม 0) แต่ตำแหน่ง x ยังอิง Slot เดิมทั้ง 8 ช่อง ให้ Label เรียงตรงกัน
@@ -19016,8 +19321,8 @@ function VatAdiUploadReportPanel({ bu }) { // MARKER_VATWATCHLISTOPS_ADI_UPLOAD_
   );
 }
 
-function VatInputRecPage() { // MARKER_VATCONTROLLER_MOUNT_DASHBOARD_V1
-  return <VatReconcileDashboard />; // Dashboard เขียน Title "Input Vat Rec." ไว้ในตัวเองแล้ว
+function VatInputRecPage({ onNavigate }) { // MARKER_VATCONTROLLER_MOUNT_DASHBOARD_V1
+  return <VatReconcileDashboard onNavigate={onNavigate} />; // Dashboard เขียน Title "Input Vat Rec." ไว้ในตัวเองแล้ว
 }
 
 // MARKER_VATWATCHLISTOPS_TAX_INVOICE_PAGE_V1 -- หน้า Tax Invoice (ยังไม่ Matching) เก็บใน vat_backup_tax_invoice
@@ -20388,7 +20693,13 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
   // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_PREVIEW_TRIGGER_V1 -- State จริงของ Row 1 (Zone A-1) -- CODE คือตัว Trigger หลักของ Preview/Collect
   const [adiRow1Code, setAdiRow1Code] = React.useState('');
   const adiLastAddedCodeRef = React.useRef(''); // MARKER_VATCONTROLLER_SIMPLEOPS_STAR_RECALL_V1 -- พิมพ์ * ในช่อง Code / Tax invoice Date = ดึงค่าที่ Add ล่าสุดมาใส่ (เหมือน Macro ManualForm)
-  const adiLastAddedDateRef = React.useRef('');
+
+  // MARKER_VATCONTROLLER_SIMPLEOPS_FILLSTART_V1 -- Fill Start ของ Simple Input Ops: เริ่มนับตอนมีค่าในช่อง Code (พิมพ์/เลือกจากค้นหา/Call Vendor) | Code ว่าง (Clear / หลัง Add) = ล้าง รอบหน้านับใหม่ -- ส่งไปกับ +Add (User Transaction)
+  const smOpsFillStartedAtRef = React.useRef(null);
+  React.useEffect(() => {
+    if (String(adiRow1Code || '').trim()) { if (!smOpsFillStartedAtRef.current) smOpsFillStartedAtRef.current = new Date(); }
+    else smOpsFillStartedAtRef.current = null;
+  }, [adiRow1Code]);  const adiLastAddedDateRef = React.useRef('');
   const [smSideBtnMsg, setSmSideBtnMsg] = React.useState(''); // MARKER_VATCONTROLLER_SIMPLEOPS_OVERALL_BUCKET_BUTTONS_V1 -- ข้อความแจ้งปุ่ม Placeholder (Generate Overall / Bucket Waiting Claim)
   const [smPreTotalMode, setSmPreTotalMode] = React.useState('all'); // MARKER_VATCONTROLLER_SIMPLEOPS_PREDRAFT_TOTAL_V1 -- 'all' = สุทธิ (Invoice − Credit) | 'invoice' | 'credit'
   // MARKER_VATCONTROLLER_SIMPLEOPS_CALL_VENDOR_V1 -- คลิกขวาแถวใน Upload Simple -> เมนู "Call Vendor" : ดึง SM-Code + Tax Invoice Date มาใส่ Operation Input แล้ว Focus ที่ TIV Number
@@ -20436,6 +20747,21 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
   const { smCodes: smCodeSupportData, branches: smSupportBranches, vendorCategories: smSupportVendorCategories, loading: smSupportLoading } = useVatSupportingData();
   // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SEGMENTALL_COMPANYCODE_V1 -- ต้องดึง company_list มาด้วย เพื่อเอา "COMPANY CODE" (Format bus-grp-com เช่น "1-32-3218") มาต่อหน้า Segment All (ADI) ตามที่แจ้ง -- Match ด้วย bu ของ Branch แต่ละฝั่ง (Debit/Credit อาจคนละ Company กันได้ เพราะเป็นเงื่อนไข Interbranch)
   const [smSupportCompanies, setSmSupportCompanies] = React.useState([]);
+  const [smGroupRanges, setSmGroupRanges] = React.useState([]); // MARKER_VATCONTROLLER_SIMPLEOPS_GROUPRANGE_BU_V1
+  React.useEffect(() => {
+    let cancelled = false;
+    apiFetch('/vat_watchlist_bu_group_range').then((l) => { if (!cancelled) setSmGroupRanges(Array.isArray(l) ? l : []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  // MARKER_VATCONTROLLER_SIMPLEOPS_SELECTOR_BY_COM_V1 -- ตามที่แจ้ง: ตัวเลือกด้านขวาต้องอิงตาม COM (ชื่อกลุ่มใน Group Range เช่น CRG) ไม่ใช่ BU (เช่น KFC) -- แปลง BU -> COM ผ่าน Branch ของ BU นั้นเทียบ Group Range (ไม่เจอ = ใช้ BU เดิม)
+  const smComOfBuMap = React.useMemo(() => {
+    const map = {};
+    const add = (bu, code) => { if (!bu || map[bu]) return; const g = matchBuGroupRange(code, smGroupRanges); if (g) map[bu] = g; };
+    (smSupportBranches || []).forEach((b) => add(String(b['bu'] || '').trim(), b['Branch Code']));
+    (smSupportCompanies || []).forEach((c) => add(String(c.bu || '').trim(), c.SEGMENT3));
+    return map;
+  }, [smSupportBranches, smSupportCompanies, smGroupRanges]);
+  const smComOf = (bu) => { const k = String(bu || '').trim(); return smComOfBuMap[k] || k; };
   React.useEffect(() => {
     let cancelled = false;
     apiFetch('/company_list').then((list) => { if (!cancelled) setSmSupportCompanies(Array.isArray(list) ? list : []); }).catch((err) => console.error('fetch company_list error (Simple Input Ops):', err));
@@ -20646,12 +20972,12 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
   const [selectedOpsDraftIds, setSelectedOpsDraftIds] = React.useState(() => new Set());
   const [opsLaneView, setOpsLaneView] = React.useState('current'); // MARKER_OPS_LANE_TOGGLE_V1 -- สลับดูคิว: 'current' = pre-draft (Confirm ได้) / 'over' = ovp-draft (ดูอย่างเดียว ไม่มี Confirm)
   const opsLaneCounts = React.useMemo(() => {
-    const src = smDraftBuFilter ? (opsTab === 'simple' ? smDraftSimpleRows : smDraftAdiRows).filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.menu_source === 'sm-vat') : [];
+    const src = smDraftBuFilter ? (opsTab === 'simple' ? smDraftSimpleRows : smDraftAdiRows).filter((r) => smComOf(r.bu) === smDraftBuFilter && r.menu_source === 'sm-vat') : [];
     return { current: src.filter((r) => r.status === 'pre-draft').length + (opsTab === 'simple' ? pendingSimpleRows : pendingAdiRows).length, over: src.filter((r) => r.status === 'ovp-draft').length };
   }, [smDraftBuFilter, opsTab, smDraftSimpleRows, smDraftAdiRows, pendingSimpleRows, pendingAdiRows]);
   const opsQueueRows = React.useMemo(() => {
     const realRows = smDraftBuFilter
-      ? (opsTab === 'simple' ? smDraftSimpleRows : smDraftAdiRows).filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.menu_source === 'sm-vat' && (r.status === (opsLaneView === 'over' ? 'ovp-draft' : 'pre-draft'))) // MARKER_VATCONTROLLER_SIMPLEOPS_PREVIEW_PREDRAFT_ONLY_V1 -- Confirm แล้ว (status=draft) ต้องหายจาก Preview ไปอยู่ใน Draft Monitor อย่างเดียว
+      ? (opsTab === 'simple' ? smDraftSimpleRows : smDraftAdiRows).filter((r) => smComOf(r.bu) === smDraftBuFilter && r.menu_source === 'sm-vat' && (r.status === (opsLaneView === 'over' ? 'ovp-draft' : 'pre-draft'))) // MARKER_VATCONTROLLER_SIMPLEOPS_PREVIEW_PREDRAFT_ONLY_V1 -- Confirm แล้ว (status=draft) ต้องหายจาก Preview ไปอยู่ใน Draft Monitor อย่างเดียว
       : [];
     const localRows = opsLaneView === 'over' ? [] : (opsTab === 'simple' ? pendingSimpleRows : pendingAdiRows);
     return [
@@ -20690,13 +21016,13 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
   const smDraftBuCounts = React.useMemo(() => { // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_V1 -- นับจำนวน Draft ต่อ BU แยก Simple/ADI สำหรับโชว์ใน Dropdown เช่น "REV (1|2)"
     const counts = {};
     for (const r of smDraftSimpleRows) {
-      const buKey = String(r.bu || '').trim();
+      const buKey = smComOf(r.bu);
       if (!buKey) continue;
       if (!counts[buKey]) counts[buKey] = { simple: 0, adi: 0 };
       counts[buKey].simple += 1;
     }
     for (const r of smDraftAdiRows) {
-      const buKey = String(r.bu || '').trim(); // ยืนยันจาก Full Page: vat_adi_transferdraft ก็มี Column 'bu' ตรงๆ เหมือนกัน (แยกจาก 'bus' ที่เป็น Segment1)
+      const buKey = smComOf(r.bu); // ยืนยันจาก Full Page: vat_adi_transferdraft ก็มี Column 'bu' ตรงๆ เหมือนกัน (แยกจาก 'bus' ที่เป็น Segment1)
       if (!buKey) continue;
       if (!counts[buKey]) counts[buKey] = { simple: 0, adi: 0 };
       counts[buKey].adi += 1;
@@ -20712,7 +21038,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
       const comParts = String(company?.['COMPANY CODE'] || '').split('-').map((s) => s.trim()).filter(Boolean);
       return { buKey, com: comParts[2] || '' };
     });
-  }, [smDraftBuCounts, smDraftBuFilter, smSupportCompanies]);
+  }, [smDraftBuCounts, smDraftBuFilter, smSupportCompanies, smGroupRanges]);
 
   // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREVIEW_HOIST_V1 -- ยก Const คำนวณ Preview Row (matchedSm..computedAdiPreviewRows) ออกจาก IIFE (isAdiPreviewMode) ขึ้นมาระดับบนสุด เพราะปุ่ม +Add และตาราง Upload Simple/ADI อยู่นอก IIFE นี้ ต้องใช้ค่าเดียวกัน
           const matchedSm = matchedSmRow1; // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_ROW1_MATCHEDSM_HOIST_V1 -- ใช้ตัวที่ยกขึ้นไประดับบนแล้ว ไม่ Match ซ้ำ
@@ -21082,8 +21408,8 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
   const handleRestoreToPreDraft = async () => {
     if (smRestoring || smDraftSel.size === 0) return;
     const sel = smDraftSel;
-    const simpleRows = smDraftSimpleRows.filter((r) => (r.status === 'draft' || r.status === 'fu-draft') && String(r.bu || '').trim() === smDraftBuFilter && sel.has(smDraftKeyOf(r))); // MARKER_RESTORE_FU_PARITY_V1
-    const adiRows = smDraftAdiRows.filter((r) => (r.status === 'draft' || r.status === 'fu-draft') && String(r.bu || '').trim() === smDraftBuFilter && sel.has(smDraftKeyOf(r))); // MARKER_RESTORE_FU_PARITY_V1
+    const simpleRows = smDraftSimpleRows.filter((r) => (r.status === 'draft' || r.status === 'fu-draft') && smComOf(r.bu) === smDraftBuFilter && sel.has(smDraftKeyOf(r))); // MARKER_RESTORE_FU_PARITY_V1
+    const adiRows = smDraftAdiRows.filter((r) => (r.status === 'draft' || r.status === 'fu-draft') && smComOf(r.bu) === smDraftBuFilter && sel.has(smDraftKeyOf(r))); // MARKER_RESTORE_FU_PARITY_V1
     if (simpleRows.length === 0 && adiRows.length === 0) { await confirmDialog.alert('ไม่พบรายการที่เลือก', { title: 'Restore' }); return; }
     const ok = await confirmDialog.confirm(`Restore กลับเป็น Pre-draft ${sel.size} รายการ (Simple ${simpleRows.length} / ADI ${adiRows.length})?\nเลข GRN ที่ใส่ไว้ใน Simple จะถูกล้าง (เลข Running ที่ใช้ไปแล้วจะไม่ถูกคืน)`, { title: 'Restore เป็น Pre-draft' });
     if (!ok) return;
@@ -21118,7 +21444,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
   const handleConfirmOpsRows = async () => {
     if (opsConfirming) return;
     if (!smDraftBuFilter) { await confirmDialog.alert('กรุณาเลือก BU ที่มุมขวาบนก่อน Confirm', { title: 'ยังไม่ได้เลือก BU' }); return; }
-    const isMine = (r) => String(r.bu || '').trim() === smDraftBuFilter && r.menu_source === 'sm-vat' && (r.status === 'pre-draft' || r.status === 'ovp-draft');
+    const isMine = (r) => smComOf(r.bu) === smDraftBuFilter && r.menu_source === 'sm-vat' && (r.status === 'pre-draft' || r.status === 'ovp-draft');
     let simpleRows = smDraftSimpleRows.filter(isMine);
     let adiRows = smDraftAdiRows.filter(isMine);
     // ติ๊กเลือก -> ทำเฉพาะ draft_id ที่ติ๊ก / ไม่ติ๊กเลย -> ทำทั้งหมดของ BU
@@ -21134,7 +21460,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
     let buRowRef = null;
     try {
       const info = await popvatLoadBuInfo([smDraftBuFilter], true); // ดึง company_list ล่าสุดสด ๆ กันเลข Running เก่า
-      const buRow = (info.list || []).find((c) => c.bu === smDraftBuFilter && !c.deleted);
+      const buRow = (info.list || []).find((c) => c.bu === smDraftBuFilter && !c.deleted); // MARKER_VATCONTROLLER_SIMPLEOPS_CONFIRM_SET_BU_TO_COM_V1 -- Confirm แล้วเขียน bu ของแถวเป็น COM (เช่น KFC -> CRG) เพื่อให้หน้า VAT Resource from Operation นับ/โชว์ถูก COM
       if (!buRow) throw new Error(`ไม่พบ BU ${smDraftBuFilter} ใน company_list`);
       buRowRef = buRow;
       const cfg = popvatCalcGrt(buRow, info.currentPeriodMonth);
@@ -21165,15 +21491,15 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
         running[field] += 1; usedField.add(field);
         g.grn = `${g.over ? overPrefix : cfg.prefix}${String(running[field]).padStart(cfg.digitCount, '0')}`;
         for (const r of g.simple) {
-          await apiFetch(`/vat_simpleinputdraft/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: vatDraftStatus(g.over), tax_invoice_number: g.grn, ...(g.over ? { period: overPeriodText } : {}), ...((g.over && overDateFor(r.receive_date)) ? { receive_date: overDateFor(r.receive_date) } : {}) }) });
-          done.push({ url: `/vat_simpleinputdraft/${r.id}`, prev: { status: r.status || 'pre-draft', tax_invoice_number: r.tax_invoice_number || '', ...(g.over ? { period: r.period || null } : {}), ...((g.over && overDateFor(r.receive_date)) ? { receive_date: r.receive_date } : {}) } });
+          await apiFetch(`/vat_simpleinputdraft/${r.id}`, { method: 'PUT', body: JSON.stringify({ bu: smDraftBuFilter, status: vatDraftStatus(g.over), tax_invoice_number: g.grn, ...(g.over ? { period: overPeriodText } : {}), ...((g.over && overDateFor(r.receive_date)) ? { receive_date: overDateFor(r.receive_date) } : {}) }) });
+          done.push({ url: `/vat_simpleinputdraft/${r.id}`, prev: { bu: r.bu, status: r.status || 'pre-draft', tax_invoice_number: r.tax_invoice_number || '', ...(g.over ? { period: r.period || null } : {}), ...((g.over && overDateFor(r.receive_date)) ? { receive_date: r.receive_date } : {}) } });
         }
       }
       const overByDraft = new Map(groups.map((g) => [g.draftId, g.over]));
       for (const r of adiRows) { // ADI เข้า Draft Monitor เช่นกัน (ตามใบ Simple คู่กันถ้ามี)
         const aOver = overByDraft.has(r.draft_id) ? overByDraft.get(r.draft_id) : isOverRow(r);
-        await apiFetch(`/vat_adi_transferdraft/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: vatDraftStatus(aOver), ...(aOver ? { period: overPeriodText, ...(overAdiPeriod ? { adi_period: overAdiPeriod } : {}), ...(overDateFor(r.acc_date) ? { acc_date: overDateFor(r.acc_date) } : {}) } : {}) }) });
-        done.push({ url: `/vat_adi_transferdraft/${r.id}`, prev: { status: r.status || 'pre-draft', ...(aOver ? { period: r.period || null, adi_period: r.adi_period || null, acc_date: r.acc_date || null } : {}) } });
+        await apiFetch(`/vat_adi_transferdraft/${r.id}`, { method: 'PUT', body: JSON.stringify({ bu: smDraftBuFilter, status: vatDraftStatus(aOver), ...(aOver ? { period: overPeriodText, ...(overAdiPeriod ? { adi_period: overAdiPeriod } : {}), ...(overDateFor(r.acc_date) ? { acc_date: overDateFor(r.acc_date) } : {}) } : {}) }) });
+        done.push({ url: `/vat_adi_transferdraft/${r.id}`, prev: { bu: r.bu, status: r.status || 'pre-draft', ...(aOver ? { period: r.period || null, adi_period: r.adi_period || null, acc_date: r.acc_date || null } : {}) } });
       }
       if (groups.length > 0) {
         const latest = await apiFetch(`/company_list/${buRow.id}`);
@@ -21559,7 +21885,9 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
               onClick={async () => {
                 // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_INSERT_V1 -- ตามที่แจ้ง: กด "+ Add" ต้อง Insert เข้า DB จริงทันที (status='pre-draft') พร้อม draft_id ร่วมกันระหว่าง Simple/ADI ถ้าเป็นข้อมูลชุดเดียวกัน -- ยังไม่รัน GRN ที่จุดนี้ (รอ Confirm)
                 // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_BU_FRESH_RESOLVE_V1 -- Bug Fix: ห้ามใช้ smDraftBuFilter (State ของ Dropdown ที่อาจค้างจากรอบก่อนหน้า) มาเป็น bu ตอน Insert -- ต้อง Resolve ใหม่จาก Code/Branch ที่กรอกอยู่ตอนนี้จริงๆ (สูตรเดียวกับ Effect AUTOBU_LIVE) กันเคส Insert ผิด BU (เช่น ควรเป็น CFW แต่ดันเป็น REV ค้างจากรอบก่อน)
-                const resolvedInsertBu = String(matchedSm?.['BU'] || debitBranchMatch?.['bu'] || creditBranchMatch?.['bu'] || '').trim();
+                const _grpBranch = (adiRow1AmountIsNegative ? creditBranchMatch : debitBranchMatch) || debitBranchMatch || creditBranchMatch; // MARKER_VATCONTROLLER_SIMPLEOPS_GROUPRANGE_BU_V1 -- Group Range ชนะ branch_list (KFC -> CRG)
+                const _grpBu = matchBuGroupRange(_grpBranch?.['Branch Code'], smGroupRanges);
+                const resolvedInsertBu = String(_grpBu || buInfoBranchMatch?.['bu'] || debitBranchMatch?.['bu'] || creditBranchMatch?.['bu'] || matchedSm?.['BU'] || '').trim(); // MARKER_VATCONTROLLER_SIMPLEOPS_BRANCH_BU_BEFORE_SMCODE_V1 -- BU ต้องมาจาก Branch (ตัวเดียวกับที่ Zone B โชว์ = CRG) ก่อน BU ของ SM-Code (KFC)
                 if (!adiRow1Code?.trim()) { alert('กรุณากรอก Code ก่อนกด Add'); return; }
                 if (!resolvedInsertBu) { alert('ไม่พบ BU จาก Code/Branch ที่กรอก กรุณาตรวจสอบ Code อีกครั้งก่อนกด Add'); return; }
                 if (!computedSimpleRow && (!computedAdiPreviewRows || computedAdiPreviewRows.length === 0)) { alert('ไม่พบข้อมูลที่จะ Add (เช็ค Code/ข้อมูลที่กรอกอีกครั้ง)'); return; }
@@ -21580,17 +21908,18 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
                   const draftId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; // MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_PREDRAFT_INSERT_V1 -- Draft ID เดียวกันทั้ง Simple+ADI ของการ Add รอบนี้ (Cascade ลบ/Confirm พร้อมกันได้) -- Format เดียวกับ generateQuickActionDraftId ของ Full Page แต่ Component นี้คนละ Scope กัน เลย Inline สูตรเดียวกันแทน (ไม่แตะ Full Page)
                   const nowIso = new Date().toISOString();
                   const smUsername = smUserName || smCurrentUser?.email || 'unknown';
+                  const smFillStartedAt = (smOpsFillStartedAtRef.current || new Date()).toISOString(); // MARKER_VATCONTROLLER_SIMPLEOPS_FILLSTART_V1
                   if (computedSimpleRow) {
                     await apiFetch('/vat_simpleinputdraft', {
                       method: 'POST',
-                      body: JSON.stringify({ ...computedSimpleRow, bu: resolvedInsertBu, draft_id: draftId, status: addStatus, menu_source: 'sm-vat', username: smUsername, created_at: nowIso }),
+                      body: JSON.stringify({ ...computedSimpleRow, bu: resolvedInsertBu, draft_id: draftId, status: addStatus, menu_source: 'sm-vat', username: smUsername, fill_started_at: smFillStartedAt, created_at: nowIso }),
                     });
                   }
                   if (computedAdiPreviewRows && computedAdiPreviewRows.length > 0) {
                     for (const r of computedAdiPreviewRows) {
                       await apiFetch('/vat_adi_transferdraft', {
                         method: 'POST',
-                        body: JSON.stringify({ ...r, bu: resolvedInsertBu, draft_id: draftId, status: addStatus, menu_source: 'sm-vat', username: smUsername, created_at: nowIso }),
+                        body: JSON.stringify({ ...r, bu: resolvedInsertBu, draft_id: draftId, status: addStatus, menu_source: 'sm-vat', username: smUsername, fill_started_at: smFillStartedAt, created_at: nowIso }),
                       });
                     }
                   }
@@ -21701,7 +22030,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
           </div>
           {/* MARKER_VATCONTROLLER_SIMPLEOPS_PREDRAFT_TOTAL_V1 -- ยอดรวม Pre-draft (Simple) ของ BU ที่เลือก : Invoice = +, Credit (ใบลดหนี้) = - */}
           {(() => {
-            const _rows = smDraftSimpleRows.filter((r) => (r.status === 'pre-draft' || r.status === 'ovp-draft') && r.menu_source === 'sm-vat' && (!smDraftBuFilter || String(r.bu || '').trim() === smDraftBuFilter));
+            const _rows = smDraftSimpleRows.filter((r) => (r.status === 'pre-draft' || r.status === 'ovp-draft') && r.menu_source === 'sm-vat' && (!smDraftBuFilter || smComOf(r.bu) === smDraftBuFilter));
             let ex = 0, vat = 0, nInv = 0, nCr = 0;
             for (const r of _rows) {
               const sign = r.invoice_ref === 'Credit' ? -1 : 1;
@@ -22181,7 +22510,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
               </div>
             </div>
             <div style={{ display: 'flex', gap: '4px', padding: '10px 20px 0', borderBottom: '0.5px solid #e8e8e8' }}>
-              {[{ key: 'simple', label: 'Upload Simple', count: (smDraftBuFilter ? smDraftSimpleRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.status === smViewStatus).length : 0) }, { key: 'adi', label: 'Upload ADI', count: (smDraftBuFilter ? smDraftAdiRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.status === smViewStatus).length : 0) }].map((t) => ( // MARKER_VATCONTROLLER_SIMPLEOPS_DRAFTMONITOR_TAB_BADGE_COUNT_V1 -- Badge แดงนับจำนวนแถว Draft ต่อ Tab ตาม BU ที่เลือก (Pattern เดียวกับ Draft Monitor ของ Full Page)
+              {[{ key: 'simple', label: 'Upload Simple', count: (smDraftBuFilter ? smDraftSimpleRows.filter((r) => smComOf(r.bu) === smDraftBuFilter && r.status === smViewStatus).length : 0) }, { key: 'adi', label: 'Upload ADI', count: (smDraftBuFilter ? smDraftAdiRows.filter((r) => smComOf(r.bu) === smDraftBuFilter && r.status === smViewStatus).length : 0) }].map((t) => ( // MARKER_VATCONTROLLER_SIMPLEOPS_DRAFTMONITOR_TAB_BADGE_COUNT_V1 -- Badge แดงนับจำนวนแถว Draft ต่อ Tab ตาม BU ที่เลือก (Pattern เดียวกับ Draft Monitor ของ Full Page)
                 <button
                   key={t.key}
                   type="button"
@@ -22191,7 +22520,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
               ))}
               <div style={{ marginLeft: 'auto', paddingBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}> {/* MARKER_OVP_DRAFT_VIEW_TOGGLE_V1 */}
                 {[{ key: 'draft', label: 'Draft', st: 'draft' }, { key: 'fu', label: 'FU-Draft', st: 'fu-draft' }].map((v) => {
-                  const _n = smDraftBuFilter ? (smDraftMonitorTab === 'simple' ? smDraftSimpleRows : smDraftAdiRows).filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.status === v.st).length : 0;
+                  const _n = smDraftBuFilter ? (smDraftMonitorTab === 'simple' ? smDraftSimpleRows : smDraftAdiRows).filter((r) => smComOf(r.bu) === smDraftBuFilter && r.status === v.st).length : 0;
                   const _on = smDraftView === v.key;
                   return (<button key={v.key} type="button" onClick={() => setSmDraftView(v.key)} title={v.key === 'fu' ? 'รายการ Over Period ที่พักไว้ (ไม่เข้า Upload File) จะกลับเป็น Draft เมื่อปิด Period' : 'รายการ Draft ปกติ'} style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '14px', cursor: 'pointer', fontWeight: 500, border: '1px solid ' + (v.key === 'fu' ? '#e8a13a' : '#1a3a5c'), background: _on ? (v.key === 'fu' ? '#e8a13a' : '#1a3a5c') : '#fff', color: _on ? '#fff' : (v.key === 'fu' ? '#a85d00' : '#1a3a5c') }}>{v.label} ({_n})</button>);
                 })}
@@ -22222,7 +22551,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
                   <thead>
                     <tr>
                       <th style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 10px', background: '#1a3a5c', width: '34px' }}>
-                        {(() => { const _vis = (smDraftBuFilter ? smDraftSimpleRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.status === smViewStatus && (smSimpleTypeFilter === 'all' || r.invoice_ref === smSimpleTypeFilter)) : []).map(smDraftKeyOf); return (<input type="checkbox" checked={_vis.length > 0 && _vis.every((k) => smDraftSel.has(k))} onChange={(e) => smDraftToggle(_vis, e.target.checked)} />); })()}
+                        {(() => { const _vis = (smDraftBuFilter ? smDraftSimpleRows.filter((r) => smComOf(r.bu) === smDraftBuFilter && r.status === smViewStatus && (smSimpleTypeFilter === 'all' || r.invoice_ref === smSimpleTypeFilter)) : []).map(smDraftKeyOf); return (<input type="checkbox" checked={_vis.length > 0 && _vis.every((k) => smDraftSel.has(k))} onChange={(e) => smDraftToggle(_vis, e.target.checked)} />); })()}
                       </th>
                       {VAT_SIMPLE_INPUT_OPS_COLUMNS.map((c) => (
                         <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left' }}>{c.label}</th>
@@ -22232,7 +22561,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
                   <tbody>
                     {(() => {
                       // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_REQUIRE_BU_V1 -- Bug Fix: ตามที่ยืนยัน -- ต้องเลือก BU ก่อนทุกจุดเหมือนตาราง Preview (เดิม Popup นี้ Fallback โชว์ "ทุก BU รวมกัน" เมื่อไม่ได้เลือก ทำให้ Logic ไม่ตรงกับตาราง Preview ที่บังคับเลือก BU ก่อนเสมอ)
-                      const buFilteredRows = smDraftBuFilter ? smDraftSimpleRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.status === smViewStatus) : []; // MARKER_VATCONTROLLER_SIMPLEOPS_DRAFTMONITOR_DRAFT_ONLY_V1 -- Draft Monitor โชว์เฉพาะที่ Confirm แล้ว (pre-draft อยู่ใน Preview)
+                      const buFilteredRows = smDraftBuFilter ? smDraftSimpleRows.filter((r) => smComOf(r.bu) === smDraftBuFilter && r.status === smViewStatus) : []; // MARKER_VATCONTROLLER_SIMPLEOPS_DRAFTMONITOR_DRAFT_ONLY_V1 -- Draft Monitor โชว์เฉพาะที่ Confirm แล้ว (pre-draft อยู่ใน Preview)
                       const filteredRows = smSimpleTypeFilter === 'all' ? buFilteredRows : buFilteredRows.filter((r) => r.invoice_ref === smSimpleTypeFilter);
                       if (smDraftSimpleLoading) {
                         return <tr><td colSpan={VAT_SIMPLE_INPUT_OPS_COLUMNS.length + 1} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>;
@@ -22274,7 +22603,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
                   <thead>
                     <tr>
                       <th style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 10px', background: '#1a3a5c', width: '34px' }}>
-                        {(() => { const _vis = (smDraftBuFilter ? smDraftAdiRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.status === smViewStatus) : []).map(smDraftKeyOf); return (<input type="checkbox" checked={_vis.length > 0 && _vis.every((k) => smDraftSel.has(k))} onChange={(e) => smDraftToggle(_vis, e.target.checked)} />); })()}
+                        {(() => { const _vis = (smDraftBuFilter ? smDraftAdiRows.filter((r) => smComOf(r.bu) === smDraftBuFilter && r.status === smViewStatus) : []).map(smDraftKeyOf); return (<input type="checkbox" checked={_vis.length > 0 && _vis.every((k) => smDraftSel.has(k))} onChange={(e) => smDraftToggle(_vis, e.target.checked)} />); })()}
                       </th>
                       {VAT_ADI_TRANSFER_COLUMNS.map((c) => (
                         <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 10px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left' }}>{c.label}</th>
@@ -22284,7 +22613,7 @@ function VatSimpleInputOpsLobby({ onSubTabChange, setPendingCrossBu, crossReturn
                   <tbody>
                     {(() => {
                       // MARKER_VATCONTROLLER_SIMPLEINPUT_DRAFTMONITOR_BUFILTER_REQUIRE_BU_V1 -- Bug Fix: ตามที่ยืนยัน -- ต้องเลือก BU ก่อนทุกจุดเหมือนตาราง Preview (ไม่เลือก BU = มั่ว/ปนกันหลาย BU ไม่ควรโชว์)
-                      const buFilteredAdiRows = smDraftBuFilter ? smDraftAdiRows.filter((r) => String(r.bu || '').trim() === smDraftBuFilter && r.status === smViewStatus) : []; // MARKER_VATCONTROLLER_SIMPLEOPS_DRAFTMONITOR_DRAFT_ONLY_V1
+                      const buFilteredAdiRows = smDraftBuFilter ? smDraftAdiRows.filter((r) => smComOf(r.bu) === smDraftBuFilter && r.status === smViewStatus) : []; // MARKER_VATCONTROLLER_SIMPLEOPS_DRAFTMONITOR_DRAFT_ONLY_V1
                       if (smDraftAdiLoading) {
                         return <tr><td colSpan={VAT_ADI_TRANSFER_COLUMNS.length + 1} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>;
                       }
@@ -22451,7 +22780,7 @@ function DraftPopvatEditableCell({ row, field, onSaved }) {
     <td onClick={startEdit} title="คลิกเพื่อแก้ไข" style={{ padding: '7px 10px', cursor: 'text', background: '#fffdf2' }}>{cur}</td>
   );
 }
-function VatBackupViewModal({ batch, initialTab, onClose }) {
+function VatBackupViewModal({ batch, initialTab, initialSearch, onClose }) {
   const fmtDate = (v) => {
     if (!v) return null;
     const parts = String(v).slice(0, 10).split('-');
@@ -22465,7 +22794,7 @@ function VatBackupViewModal({ batch, initialTab, onClose }) {
   }, [onClose]);
   const [tab, setTab] = React.useState(initialTab || 'popvat');
   const [simpleTypeFilter, setSimpleTypeFilter] = React.useState('all');
-  const [search, setSearch] = React.useState('');
+  const [search, setSearch] = React.useState(initialSearch || ''); // MARKER_VATCONTROLLER_BACKUP_SEARCH_TAXINV_V14 -- รับคำค้นจากหน้า Transaction Backup แล้ว Highlight แถวที่ตรงทันที
   const [data, setData] = React.useState({ popvat: [], simple: [], adi: [] });
   const [loading, setLoading] = React.useState(true);
 const SIMPLE_BKVIEW_COLUMNS = [ // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_SIMPLE_RESTORE_CASCADE_V1 -- Column ตาม Schema vat_simpleinputdraft
@@ -22573,6 +22902,14 @@ const ADI_BKVIEW_COLUMNS = [ // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_ADI_DISPLAY_
   const rows = cur.rows; // MARKER_VATCONTROLLER_BACKUP_VIEW_SEARCH_HIGHLIGHT_V1 -- Search = Highlight แถวที่ตรง (ไม่ซ่อนแถวอื่น) + เลื่อนไปแถวแรกที่ตรง
   const bkRowMatch = (r, cols) => !!kw && cols.some((c) => String(r[c.key] ?? '').toLowerCase().includes(kw));
   const bkMatchCount = (key) => { const t = cfg[key]; return t ? t.rows.filter((r) => bkRowMatch(r, t.cols)).length : 0; };
+  const bkAutoTabRef = React.useRef(false);
+  React.useEffect(() => {
+    if (loading || bkAutoTabRef.current) return;
+    bkAutoTabRef.current = true;
+    if (!kw || bkMatchCount(tab) > 0) return;
+    const hit = ['popvat', 'simple', 'adi'].find((k) => bkMatchCount(k) > 0);
+    if (hit) setTab(hit);
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => {
     if (!kw || loading) return;
     const el = document.querySelector('[data-bkmatch="1"]');
@@ -22660,30 +22997,33 @@ function VatBackupTransactionLobby() {
   const [bkPeriod, setBkPeriod] = React.useState('');
   const [bkSearch, setBkSearch] = React.useState('');
   const [bkRefresh, setBkRefresh] = React.useState(0);
+  const [bkSearchDebounced, setBkSearchDebounced] = React.useState('');
+  React.useEffect(() => { const t = setTimeout(() => setBkSearchDebounced(bkSearch), 350); return () => clearTimeout(t); }, [bkSearch]);
   const [bkViewBatch, setBkViewBatch] = React.useState(null); // MARKER_VATCONTROLLER_BACKUP_VIEW_MODAL_V1
   const isBkTab = tab === 'popvat' || tab === 'simple' || tab === 'adi';
   React.useEffect(() => {
     if (!isBkTab) return undefined;
     let cancelled = false;
     setBkLoading(true);
-    apiFetch(`/vat-export/backup?type=${tab}`)
+    const qTerm = bkSearchDebounced.trim(); // MARKER_VATCONTROLLER_BACKUP_SEARCH_TAXINV_V14 -- ค้นใน DB (Tax Invoice / Invoice / GRT / Supplier ฯลฯ) แล้วเหลือเฉพาะ Batch ที่เจอ
+    apiFetch(`/vat-export/backup?type=${tab}${qTerm ? `&q=${encodeURIComponent(qTerm)}` : ''}`)
       .then((res) => { if (!cancelled) setBkRows(res && Array.isArray(res.batches) ? res.batches : []); })
       .catch(() => { if (!cancelled) setBkRows([]); })
       .finally(() => { if (!cancelled) setBkLoading(false); });
     return () => { cancelled = true; };
-  }, [tab, isBkTab, bkRefresh]);
+  }, [tab, isBkTab, bkRefresh, bkSearchDebounced]);
   React.useEffect(() => { setBkBu(''); setBkPeriod(''); setBkSearch(''); }, [tab]);
   const bkBuOptions = React.useMemo(() => [...new Set(bkRows.map((r) => r.bu).filter(Boolean))].sort(), [bkRows]);
   const bkPeriodOptions = React.useMemo(() => [...new Set(bkRows.map((r) => r.period).filter(Boolean))].sort().reverse(), [bkRows]);
   const bkFiltered = React.useMemo(() => {
     const q = bkSearch.trim().toLowerCase();
-    return bkRows.filter((r) => (!bkBu || r.bu === bkBu) && (!bkPeriod || r.period === bkPeriod) && (!q || String(r.batch_id || '').toLowerCase().includes(q) || String(r.bu || '').toLowerCase().includes(q)));
-  }, [bkRows, bkBu, bkPeriod, bkSearch]);
+    return bkRows.filter((r) => (!bkBu || r.bu === bkBu) && (!bkPeriod || r.period === bkPeriod) && (!q || bkSearch.trim() !== bkSearchDebounced.trim() || (r.match_count || 0) > 0 || String(r.batch_id || '').toLowerCase().includes(q) || String(r.bu || '').toLowerCase().includes(q)));
+  }, [bkRows, bkBu, bkPeriod, bkSearch, bkSearchDebounced]);
   const bkModulesForTab = tab === 'popvat' ? ['vat-popvat'] : tab === 'simple' ? ['vat-simple', 'vat-simple-adi'] : ['vat-adi', 'vat-simple-adi'];
   const bkCell = (r, key) => {
     if (key === 'bu') return r.bu || '-';
     if (key === 'period') return r.period || '-';
-    if (key === 'batch_id') return r.batch_id || '-';
+    if (key === 'batch_id') return (<span>{r.batch_id || '-'}{bkSearchDebounced.trim() && r.match_count > 0 && <span title="จำนวนแถวที่ตรงกับคำค้น" style={{ marginLeft: '8px', padding: '1px 8px', borderRadius: '10px', background: '#f59e0b', color: 'white', fontSize: '11px' }}>พบ {r.match_count} แถว</span>}</span>);
     if (key === 'receive_from') return r.receive_from ? String(r.receive_from).slice(0, 10) : '-';
     if (key === 'receive_to') return r.receive_to ? String(r.receive_to).slice(0, 10) : '-';
     if (key === 'count_inv') return r.count_inv != null ? r.count_inv : '-';
@@ -22718,7 +23058,7 @@ function VatBackupTransactionLobby() {
             <select disabled={!isBkTab} value={bkBu} onChange={(e) => setBkBu(e.target.value)} style={{ fontSize: '12.5px', color: '#333', background: '#f4f6f9', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '7px 10px' }}><option value="">BU: ทั้งหมด</option>{bkBuOptions.map((b) => <option key={b} value={b}>{b}</option>)}</select>
             <select disabled={!isBkTab} value={bkPeriod} onChange={(e) => setBkPeriod(e.target.value)} style={{ fontSize: '12.5px', color: '#333', background: '#f4f6f9', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '7px 10px' }}><option value="">Period: ทั้งหมด</option>{bkPeriodOptions.map((p) => <option key={p} value={p}>{p}</option>)}</select>
             <div style={{ flex: 1 }} />
-            <input disabled={!isBkTab} type="search" value={bkSearch} onChange={(e) => setBkSearch(e.target.value)} placeholder={isBkTab ? 'ค้นหา Batch ID / BU' : 'ค้นหา Supplier / Tax Invoice / Draft ID'} style={{ flex: 1, minWidth: '180px', fontSize: '12.5px', color: '#333', background: '#f4f6f9', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '7px 10px' }} />
+            <input disabled={!isBkTab} type="search" value={bkSearch} onChange={(e) => setBkSearch(e.target.value)} placeholder={isBkTab ? 'ค้นหา Tax Invoice / Invoice / GRT / Supplier / Batch ID / BU' : 'ค้นหา Supplier / Tax Invoice / Draft ID'} style={{ flex: 1, minWidth: '180px', fontSize: '12.5px', color: '#333', background: '#f4f6f9', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '7px 10px' }} />
           </div>
           <div style={{ flex: 1, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px', whiteSpace: 'nowrap' }}>
@@ -22748,7 +23088,7 @@ function VatBackupTransactionLobby() {
             </table>
           </div>
         </>
-        {bkViewBatch && <VatBackupViewModal batch={bkViewBatch} initialTab={tab} onClose={() => setBkViewBatch(null)} />}
+        {bkViewBatch && <VatBackupViewModal batch={bkViewBatch} initialTab={tab} initialSearch={bkSearchDebounced.trim()} onClose={() => setBkViewBatch(null)} />}
         {/* MARKER_VATCONTROLLER_BACKUP_TRANSACTION_WAITING_CLAIM_SOURCE_NOTE_V1 -- ตามที่แจ้ง: ข้อมูล Tab นี้ต้องรับมาจาก Simple (vat_simpleinputdraft) แต่เกณฑ์/Mapping ยังไม่ Fix -- รอ Design รอบถัดไป ยังไม่ต่อ Query จริง */}
       </div>
     </div>
@@ -22766,7 +23106,7 @@ export default function VatController({ activeSubTab = 'vat-watchlist-ops', onSu
     return <VatUploadFileLobby onSubTabChange={onSubTabChange} pendingCrossBu={pendingCrossBu} setPendingCrossBu={setPendingCrossBu} crossReturn={crossReturn} />;
   }
   if (activeSubTab === 'vat-input-rec') { // MARKER_VATCONTROLLER_MOUNT_INPUT_VAT_REC_V1
-    return <VatInputRecPage />;
+    return <VatInputRecPage onNavigate={onSubTabChange} />;
   }
   if (activeSubTab === 'vat-backup-tax-invoice') { // MARKER_VATWATCHLISTOPS_TAX_INVOICE_PAGE_V1
     return <VatTaxInvoicePage />;
@@ -22778,7 +23118,7 @@ export default function VatController({ activeSubTab = 'vat-watchlist-ops', onSu
     return <VatBackupTransactionLobby />;
   }
   if (activeSubTab === 'vat-timeline') { // MARKER_VATCONTROLLER_MOUNT_TIMELINE_RESTORE_V1
-    return <TimelinePage />;
+    return <TimelinePage onNavigate={onSubTabChange} />; // MARKER_TIMELINE_GO_RECON_V1
   }
   const title = VAT_MENU_LABEL_MAP[activeSubTab] || 'VAT Controller';
   return <PlaceholderPage title={title} />;

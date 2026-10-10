@@ -1618,7 +1618,7 @@
 // MARKER_CLOSEPERIOD_POPUP_V1
 // -- Popup ปิด Period แบบ Multi-Type (AP/VAT/IE) -- แทนที่ปุ่ม "Close period"
 // -- เดิมที่ Hardcode เรียกแค่ /ap/period/close เท่านั้น --
-// -- Owner: ปิดได้ทันที + Reopen ได้ภายใน 7 วันหลัง Close --
+// -- Owner: ปิดได้ทันที + Reopen ได้ถึง Deadline + 7 วัน --
 // -- Admin: ปิดได้เฉพาะเมนูที่มี Permission จริง ต้องพิมพ์รหัส 6 หลักยืนยันก่อน --
 // -- Other: โชว์เฉพาะ Owner (ยังไม่มี Backend รองรับ) --
 function ClosePeriodPopup({ apiFetch, isOwner, userRole, userPermissions, onClose }) {
@@ -1793,7 +1793,14 @@ function ClosePeriodPopup({ apiFetch, isOwner, userRole, userPermissions, onClos
               const closedAt = data?.[`${type.prefix}_period_closed_at`];
               const isConfirming = confirmingKey === type.key;
               const isBusy = busyKey === type.key;
-              const canReopen = isOwner && closedAt && (Date.now() - new Date(closedAt).getTime()) <= 7*24*60*60*1000;
+              // MARKER_REOPEN_WINDOW_DEADLINE7_FRONT_V1 -- Reopen ได้ถึง Deadline + 7 วัน (สิ้นวัน) ของงวดที่ปิด (ตรงกับ Backend) ไม่ใช่ 7 วันหลังกดปิด
+              const canReopen = isOwner && !!closedAt && (() => {
+                const cm = data?.[`${type.prefix}_period_month`];
+                const dl = cm ? getDeadline(cm, type.businessDays) : null;
+                if (!dl) return false;
+                const end = new Date(dl); end.setHours(0, 0, 0, 0); end.setDate(end.getDate() + 8);
+                return Date.now() < end.getTime();
+              })();
 
               return (
                 <div key={type.key} style={{ border:'0.5px solid #e0e0e0', borderRadius:'8px', padding:'10px 12px' }}>
@@ -3104,6 +3111,26 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     for (let i = 0; i < (name || '').length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
     return DASHBOARD_PALETTE[h % DASHBOARD_PALETTE.length];
   }
+  // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_ACTION_TS_V1 -- แถว Timestamp (is_timestamp): แสดงชื่อ Action ในคอลัมน์ Sub-item/Action | ไม่คำนวณ Per Trans / Gap
+  const TS_EVENT_LABEL = { PERIOD_SELECT: 'เลือก Period', EXPIRED_REVIEWED: 'ตรวจสอบ Expired แล้ว', SAVE: 'Save รายงาน', FIRST_DRAFT: 'First Draft', DRAFT_NOTE: 'Note (First Draft)', CONFIRM: 'Confirm รายงาน', RELEASE: 'Release รายงาน', SP_SENT: 'ส่ง SharePoint', LOGIN: 'เข้าสู่ระบบ', LOGOUT: 'ออกจากระบบ', MENU_ENTER: 'เข้าเมนู', BATCH_APPROVE: 'Approve Batch', DOWNLOAD_EXCEL: 'Download Excel', CLOSE_PERIOD: 'ปิดงวด', delete_file: 'ลบไฟล์' };
+  function tsActionLabel(t) {
+    const base = TS_EVENT_LABEL[t.event] || String(t.event || '').replace(/^API\s+/, '');
+    if (/^DELETE /.test(String(t.event || ''))) return `ลบข้อมูล · ${String(t.event).replace(/^DELETE \/api\//, '')}`;
+    if (t.event === 'MENU_ENTER' && t.module_src) return `${base} ${t.module_src}`;
+    const ctx = [t.account, t.period].filter(Boolean).join(' · ');
+    if (t.event === 'DRAFT_NOTE') return `${base}${ctx ? ` (${ctx})` : ''}: ${t.note || '(ลบ Note)'}`; // MARKER_USERMANAGEMENT_DRAFT_NOTE_TS_V1 -- Note ผูกกับ Timeline
+    return ctx ? `${base} (${ctx})` : base;
+  }
+  // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_TIMELINE_TS_V1 -- สี/กลุ่มของ Timestamp บน Timeline
+  function tsCategory(t) {
+    const e = String(t.event || '');
+    if (e === 'LOGIN') return { key: 'in', label: 'เข้าระบบ', color: '#1f8a5f' };
+    if (e === 'LOGOUT') return { key: 'out', label: 'ออกระบบ', color: '#8e3b46' };
+    if (e === 'MENU_ENTER') return { key: 'menu', label: 'เข้าเมนู', color: '#2f6fd1' };
+    if (/^DELETE /.test(e) || e === 'delete_file') return { key: 'del', label: 'ลบ', color: '#d64545' };
+    if (['PERIOD_SELECT', 'EXPIRED_REVIEWED', 'SAVE', 'FIRST_DRAFT', 'DRAFT_NOTE', 'CONFIRM', 'RELEASE', 'SP_SENT'].includes(e)) return { key: 'recon', label: 'Reconcile', color: '#7b5cc4' };
+    return { key: 'other', label: 'อื่นๆ', color: '#8a94a3' };
+  }
   function dashboardModuleStyle(mod) {
     const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' } };
     return MAP[mod] || { bg: '#f0f3f7', color: '#667085' };
@@ -3304,20 +3331,41 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                     {granularity === 'daily' && (
                       <div style={{ background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
                         <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#16232f', marginBottom: '12px' }}>Timeline ทั้งวัน (00:00–24:00)</div>
-                        <div style={{ position: 'relative', height: '28px', background: '#f4f6f9', borderRadius: '8px' }}>
-                          {dailyRows.map((t, i) => {
-                            const dt = new Date(t.ts);
-                            const minOfDay = isNaN(dt.getTime()) ? 0 : dt.getHours() * 60 + dt.getMinutes();
-                            const st = dashboardModuleStyle(t.module);
-                            const tip = t.is_weekend_source ? `${fmtTime(t.ts)} (ทำวันเสาร์-อาทิตย์ นับรวมวันจันทร์) · ${t.invoice_no || ''}` : `${fmtTime(t.ts)} · ${t.invoice_no || ''}`; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
-                            return (
-                              <div key={i} title={tip}
-                                style={{ position: 'absolute', top: '6px', left: `calc(${(minOfDay / 1440 * 100).toFixed(2)}% - 5px)`,
-                                  width: '10px', height: '10px', borderRadius: '50%', background: st.color,
-                                  border: t.is_weekend_source ? '2px dashed #6b7fd7' : '2px solid #ffffff', cursor: 'pointer' }} />
-                            );
-                          })}
-                        </div>
+                        {(() => { /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_TIMELINE_TS_V1 -- 2 เลน: บน = Transaction (นับ) / ล่าง = Timestamp Action (แสดงอย่างเดียว) */
+                          const tsRowsAll = dailyRows.filter((x) => x.is_timestamp);
+                          const hasTs = tsRowsAll.length > 0;
+                          const cats = new Map(); tsRowsAll.forEach((x) => { const c = tsCategory(x); if (!cats.has(c.key)) cats.set(c.key, c); });
+                          const posOf = (ts) => { const dt = new Date(ts); const m = isNaN(dt.getTime()) ? 0 : dt.getHours() * 60 + dt.getMinutes(); return `calc(${(m / 1440 * 100).toFixed(2)}% - 5px)`; };
+                          return (
+                            <>
+                              <div style={{ position: 'relative', height: hasTs ? '54px' : '28px', background: '#f4f6f9', borderRadius: '8px' }}>
+                                {hasTs && <div style={{ position: 'absolute', left: 0, right: 0, top: '27px', borderTop: '1px dashed #d9dee5' }} />}
+                                {dailyRows.filter((x) => !x.is_timestamp).map((t, i) => {
+                                  const st = dashboardModuleStyle(t.module);
+                                  const tip = t.is_weekend_source ? `${fmtTime(t.ts)} (ทำวันเสาร์-อาทิตย์ นับรวมวันจันทร์) · ${t.invoice_no || ''}` : `${fmtTime(t.ts)} · ${t.invoice_no || ''}`; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
+                                  return (
+                                    <div key={`t${i}`} title={tip}
+                                      style={{ position: 'absolute', top: '6px', left: posOf(t.ts), width: '10px', height: '10px', borderRadius: '50%', background: st.color,
+                                        border: t.is_weekend_source ? '2px dashed #6b7fd7' : '2px solid #ffffff', cursor: 'pointer' }} />
+                                  );
+                                })}
+                                {tsRowsAll.map((t, i) => {
+                                  const c = tsCategory(t);
+                                  return (
+                                    <div key={`s${i}`} title={`${fmtTime(t.ts)} · ${tsActionLabel(t)}`}
+                                      style={{ position: 'absolute', top: '35px', left: posOf(t.ts), width: '9px', height: '9px', borderRadius: '2px', background: c.color, border: '1.5px solid #ffffff', cursor: 'pointer' }} />
+                                  );
+                                })}
+                              </div>
+                              {hasTs && (
+                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '8px', fontSize: '10px', color: '#667085' }}>
+                                  <span>● บน = Transaction (นับ) · ■ ล่าง = Action (Timestamp ไม่คำนวณ)</span>
+                                  {[...cats.values()].map((c) => (<span key={c.key}><span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px', background: c.color, marginRight: '4px' }} />{c.label}</span>))}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '10px', color: '#a3adb8' }}>
                           <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
                         </div>
@@ -3343,7 +3391,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_TABLE_DENSITY_V9 */}
                         <thead>
                           <tr>
-                            <th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เริ่ม</th><th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เสร็จ</th><th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>ระยะเวลา</th><th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Sub-item</th><th style={{ ...S.th, width: '12%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Per Trans</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 */}<th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>BU</th><th style={{ ...S.th, width: '13%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Invoice No.</th><th style={{ ...S.th, width: '8%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Module</th><th style={{ ...S.th, width: '20%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Batch/Draft</th><th style={{ ...S.th, width: '15%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Gap</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_FREEZE_HEADER_V2 -- Freeze หัว Column ตอน Scroll (รายวัน) + เพิ่ม Padding แนวตั้งให้หัวสูงเต็มขอบกล่อง */}
+                            <th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เริ่ม</th><th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เสร็จ</th><th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>ระยะเวลา</th><th style={{ ...S.th, width: '14%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Sub-item/Action</th><th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Per Trans</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 */}<th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>BU</th><th style={{ ...S.th, width: '13%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Invoice No.</th><th style={{ ...S.th, width: '8%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Module</th><th style={{ ...S.th, width: '20%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Batch/Draft</th><th style={{ ...S.th, width: '15%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Gap</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_FREEZE_HEADER_V2 -- Freeze หัว Column ตอน Scroll (รายวัน) + เพิ่ม Padding แนวตั้งให้หัวสูงเต็มขอบกล่อง */}
                           </tr>
                         </thead>
                         <tbody>
@@ -3352,7 +3400,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                             const gap = t.gap_minutes != null ? Math.round(t.gap_minutes) : null;
                             const cellSm = { ...S.td, padding: '6px 10px', fontSize: '11px' };
                             const cellEllipsis = { ...cellSm, overflow: 'visible', textOverflow: 'clip', whiteSpace: 'normal', wordBreak: 'break-word' }; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_NO_TRUNCATE_COLUMNS_V1 -- เลิก Truncate ด้วย ... ให้ขึ้นเต็มข้อความ (Wrap แทน) */
-                            const rowBg = t.is_weekend_source ? { background: '#eef0fb' } : {}; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
+                            const rowBg = t.is_timestamp ? { background: '#fafbfc', color: '#667085' } : (t.is_weekend_source ? { background: '#eef0fb' } : {}); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
                             return (
                               <tr key={i} style={rowBg}>
                                 <td style={cellSm}>
@@ -3373,8 +3421,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                                   const ss = totalSec % 60;
                                   return mm > 0 ? `${mm} นาที ${ss} วิ` : `${ss} วิ`;
                                 })()}</td>
-                                <td style={cellSm}>{t.sub_items}</td> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 -- ย้ายมาไว้ถัดจากระยะเวลา */}
+                                <td style={t.is_timestamp ? cellEllipsis : cellSm} title={t.is_timestamp ? (t.event === 'DRAFT_NOTE' ? tsActionLabel(t) : (t.event || '')) : ''}>{t.is_timestamp ? <span style={{ fontStyle: 'italic' }}>{tsActionLabel(t)}</span> : t.sub_items}</td> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 -- ย้ายมาไว้ถัดจากระยะเวลา */}
                                 <td style={cellSm}>{(() => { /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 -- Per Trans = ระยะเวลา(เสร็จ-เริ่ม) หาร Sub-item ตรงๆ ใช้ ms เดียวกับคอลัมน์ระยะเวลา */
+                                  if (t.is_timestamp) return '—'; /* Timestamp ไม่คำนวณ Per Trans */
                                   if (t.has_fill_start === false) return '-'; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_HASFILLSTART_DISPLAY_V19 -- ไม่มีข้อมูล fill_started_at จริง ไม่ใช่ 0.0 นาที */
                                   if (!t.start_ts || !t.end_ts || !t.sub_items) return '—';
                                   const ms = new Date(t.end_ts) - new Date(t.start_ts);
@@ -3384,8 +3433,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                                 })()}</td>
                                 <td style={cellSm}>{t.bu || '-'}</td>
                                 <td style={cellEllipsis} title={t.invoice_no || ''}>{t.invoice_no || '-'}</td>
-                                <td style={cellSm}><span style={{ fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '5px', background: st.bg, color: st.color }}>{t.module}</span></td>
-                                <td style={cellEllipsis} title={t.batch_id || 'Draft'}>{t.batch_id || 'Draft'}</td>
+                                <td style={cellSm}>{t.module ? <span style={{ fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '5px', background: st.bg, color: st.color }}>{t.module}</span> : '-'}</td>
+                                <td style={cellEllipsis} title={t.batch_id || 'Draft'}>{t.is_timestamp ? '-' : (t.batch_id || 'Draft')}</td>
                                 <td style={{ ...cellSm, color: gap != null && gap > 15 ? '#c0392b' : '#667085', fontWeight: 600 }}>{gap == null ? '—' : gap + ' นาที'}</td>
                               </tr>
                             );

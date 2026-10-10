@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Export Excel v5</title>
+<style>
+body{font-family:Tahoma,Arial,sans-serif;font-size:12px;margin:16px;color:#222;background:#fff}
+h3{margin:0 0 4px;font-size:14px} p{margin:0 0 10px;color:#666}
+.wrap{overflow:auto;border:1px solid #ccc}
+table{border-collapse:collapse;min-width:1250px}
+th,td{border:1px solid #d4d4d4;padding:4px 8px;white-space:nowrap}
+th{background:#1a3a5c;color:#fff;text-align:left}
+th.g{background:#2f6f4f;text-align:center}
+th.g2{background:#8a5a00;text-align:center}
+th.g3{background:#7a1f1f;text-align:center}
+td.n{text-align:right}
+tr.s td{background:#e5f3ea;font-weight:700}
+tr.s td.c{background:#fff7e0}
+tr.s td.df{background:#fbeaea}
+tr.d td{color:#444}
+tr.d td.e{background:#fafafa}
+tr.u td{color:#991b1b}
+.red{color:#991b1b;font-weight:700}
+.gap td{border:none;height:8px}
+.note{margin-top:10px;color:#555;line-height:1.8}
+</style></head><body>
+<h3>Mockup v5 — ต่อ 1 ใบ Check Return: แถวสรุป (กี่บรรทัด · รวมเท่าไหร่ · Diff) แล้วตามด้วยบรรทัด Detail → จากนั้นขึ้นใบถัดไป</h3>
+<div class="wrap"><table>
+<thead>
+<tr><th colspan="8" class="g">Incomplete (ฝั่งเขียว)</th><th colspan="4" class="g2">APN-RETURN CHQ (ฝั่ง Check Return)</th><th colspan="2" class="g3">Diff</th></tr>
+<tr>
+<th>จำนวนบรรทัด / Invoice No.</th><th>Old Payment</th><th>Old Payment Date</th><th>New Payment</th><th>New Payment Date</th><th>มูลค่าสินค้า</th><th>เงินภาษี</th><th>ยอดสุทธิ</th>
+<th>เลขที่เช็ค</th><th>Supplier</th><th>WHT</th><th>APN-RETURN CHQ</th>
+<th>Diff (Matched − CHQ)</th><th>Diff (รวมทุกบรรทัด − CHQ)</th>
+</tr></thead>
+<tbody>
+<!-- ใบที่ 1 -->
+<tr class="s"><td>4 บรรทัด (Matched)</td><td>รวม</td><td></td><td></td><td class="n">9,964.02</td><td class="n">697.48</td><td class="n">10,661.50</td>
+<td class="c">110349174</td><td class="c">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="c">ไม่หัก</td><td class="c n">11,162.62</td><td class="df n red">−501.12</td><td class="df n red">+325.08</td></tr>
+<tr class="d"><td>&nbsp;&nbsp;CLIV1504019</td><td>Matched</td><td>110349174</td><td>09 Jul 15</td><td>16184-EFT</td><td>02 Jul 23</td><td class="n">1,776.03</td><td class="n">124.32</td><td class="n">1,900.35</td><td class="e" colspan="6"></td></tr>
+<tr class="d"><td>&nbsp;&nbsp;CLIV1503004</td><td>Matched</td><td>110349174</td><td>09 Jul 15</td><td>16184-EFT</td><td>02 Jul 23</td><td class="n">4,596.96</td><td class="n">321.79</td><td class="n">4,918.75</td><td class="e" colspan="6"></td></tr>
+<tr class="d"><td>&nbsp;&nbsp;CEIV1504006</td><td>Matched</td><td>110349174</td><td>09 Jul 15</td><td>16184-EFT</td><td>02 Jul 23</td><td class="n">2,213.41</td><td class="n">154.94</td><td class="n">2,368.35</td><td class="e" colspan="6"></td></tr>
+<tr class="d"><td>&nbsp;&nbsp;CEIV1503006</td><td>Matched</td><td>110349174</td><td>09 Jul 15</td><td>16184-EFT</td><td>02 Jul 23</td><td class="n">1,377.62</td><td class="n">96.43</td><td class="n">1,474.05</td><td class="e" colspan="6"></td></tr>
+<tr class="d u"><td>&nbsp;&nbsp;LPIV 1503005</td><td>Unmatch (จ่ายจบแล้ว)</td><td>110349174</td><td>09 Jul 15</td><td>—</td><td>—</td><td class="n">195.42</td><td class="n">13.68</td><td class="n">209.10</td><td class="e" colspan="6"></td></tr>
+<tr class="gap"><td colspan="14"></td></tr>
+<!-- ใบที่ 2 -->
+<tr class="s"><td>1 บรรทัด (Matched)</td><td>รวม</td><td></td><td></td><td class="n">9,000.00</td><td class="n">630.00</td><td class="n">9,360.00</td>
+<td class="c">110347749</td><td class="c">N-109501 PROPERTY CARE</td><td class="c">ไม่หัก</td><td class="c n">9,357.00</td><td class="df n">+3.00</td><td class="df n">+3.00</td></tr>
+<tr class="d"><td>&nbsp;&nbsp;PC-0001</td><td>Matched</td><td>110347749</td><td>…</td><td>…</td><td>…</td><td class="n">9,000.00</td><td class="n">630.00</td><td class="n">9,360.00</td><td class="e" colspan="6"></td></tr>
+</tbody></table></div>
+<div class="note">
+• <b>แถวสรุป (ตัวหนา)</b>: ฝั่งเขียวบอก <b>จำนวนบรรทัดที่ Match และยอดรวม</b> ฝั่ง Check Return ขึ้น <b>1 ครั้งต่อใบ</b> พร้อม Diff<br>
+• <b>แถวใต้แถวสรุป</b>: Detail รายบรรทัดของใบนั้น (ฝั่ง Check Return ว่าง ไม่ซ้ำ) ตามด้วยใบถัดไป<br>
+• Diff ซ้าย = ยอดรวม Matched − CHQ (−501.12) · Diff ขวา = รวมบรรทัดที่จ่ายจบแล้วด้วย − CHQ (+325.08)
+</div>
+</body></html>

@@ -18,8 +18,12 @@
 // ============================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom'; // MARKER_VATRECONCILE_SAMPLING_BTN_V1 -- Popup Sampling วาดซ้อนใน Popup Reconcile
 import { confirmDialog } from '../confirmDialog'; // MARKER_VATRECONCILE_REPORT_FILES_CONFIRM_V1 -- ใช้ Dialog ของระบบแทน window.confirm
 import VatReconcileSystem from './VatReconcileSystem';
+import BranchFormModal from './BranchFormModal'; // MARKER_VATRECONCILE_BRANCHFORM_V1 -- ฟอร์ม New/Edit Branch (เหมือน Master Data > Branch)
+import { subscribeWs, broadcastWs } from '../wsManager';
+import { db } from '../lib/db'; // MARKER_RECON_FIRSTDRAFT_TO_TIMELINE_V1
 
 const VAT_RECONCILE_API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
 
@@ -110,6 +114,19 @@ async function fetchReportPreview({ type, bu, account, period, view, branch }) {
   return data;
 }
 
+// MARKER_VATRECONCILE_REBIND_BRANCHES_V1 -- หลังเพิ่ม/แก้สาขา: ให้ Backend ผูกแถว Input Summary ที่เคย Fallback ใหม่ด้วย branch_list จริง
+async function rebindBranches({ bu, period, branch }) {
+  const token = sessionStorage.getItem('fastapn_token');
+  const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/rebind-branches`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ bu, period, branch }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `ผูกสาขาใหม่ไม่สำเร็จ (HTTP ${res.status})`);
+  return data;
+}
+
 // MARKER_VATRECONCILEDASHBOARD_RECONCILE_POPUP_V1 -- ดึงข้อมูล Popup Preview แบบ Reconcile จริงตาม Macro (Template 100% / 100%+Simple / เฉลี่ย AVG)
 async function fetchReconcileReport({ bu, account, period }, includeSources) {
   const token = sessionStorage.getItem('fastapn_token');
@@ -130,16 +147,23 @@ function rfAuth(extra) {
   const token = sessionStorage.getItem('fastapn_token');
   return { ...(extra || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
-async function fetchReportFiles({ period, scope }) { // MARKER_VATRECONCILE_REPORT_FILES_SCOPE_V1 -- ไม่ต้องเลือก BU (แสดงทุก BU ของ Period) | scope = mine | all
-  const params = new URLSearchParams({ period, scope: scope || 'mine' });
+async function fetchReportFiles({ period, scope }) { // MARKER_VATRECONCILE_REPORT_FILES_ALL_PERIODS_V16 -- period ไม่ส่ง = แสดงทุก Period (ไม่ Filter)
+  // MARKER_VATRECONCILE_REPORT_FILES_SCOPE_V1 -- ไม่ต้องเลือก BU (แสดงทุก BU ของ Period) | scope = mine | all
+  const params = new URLSearchParams({ scope: scope || 'mine' });
+  if (period) params.set('period', period);
   const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report-files?${params}`, { headers: rfAuth() });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `โหลดรายการไฟล์ไม่สำเร็จ (HTTP ${res.status})`);
   return data.files || [];
 }
-async function exportReportFile({ bu, account, period }) {
+function logActivityTs(event, { bu, account, period } = {}) { // MARKER_VATRECONCILE_ACTIVITY_TS_V1 -- ยิง Timestamp (ไม่รอผล ไม่ขัดการทำงาน)
+  try {
+    fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/activity-ts`, { method: 'POST', headers: rfAuth({ 'Content-Type': 'application/json' }), body: JSON.stringify({ event, bu, account, period }) }).catch(() => {});
+  } catch (_) { /* ignore */ }
+}
+async function exportReportFile({ bu, account, period, fillStartedAt, draft }) {
   const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report-files/export`, {
-    method: 'POST', headers: rfAuth({ 'Content-Type': 'application/json' }), body: JSON.stringify({ bu, account, period }),
+    method: 'POST', headers: rfAuth({ 'Content-Type': 'application/json' }), body: JSON.stringify({ bu, account, period, fill_started_at: fillStartedAt || null, draft: draft === true }), // MARKER_VATRECONCILE_USER_TRANSACTION_V1
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `Export ไม่สำเร็จ (HTTP ${res.status})`);
@@ -156,14 +180,132 @@ async function downloadReportFile(file) {
   a.href = url; a.download = file.file_name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
+async function confirmReportFile(file) { // MARKER_VATRECONCILE_REPORT_CONFIRM_V1 -- Confirm ไฟล์ก่อน Download / ส่ง SharePoint
+  const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report-files/${file.id}/confirm`, { method: 'POST', headers: rfAuth() });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d?.error || `Confirm ไม่สำเร็จ (HTTP ${res.status})`);
+  return d;
+}
+async function releaseReportFile(file) { // MARKER_VATRECONCILE_REPORT_RELEASE_V1 -- ปุ่มเดียวกับ Confirm (สลับ Confirm <-> Release)
+  const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report-files/${file.id}/release`, { method: 'POST', headers: rfAuth() });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d?.error || `Release ไม่สำเร็จ (HTTP ${res.status})`);
+  return d;
+}
+// Timeline (First Draft/Note/Confirm/Release/Delete) อัปเดตที่ Backend แล้ว (vatReconcileReportFiles.js)
+
+async function saveDraftNote(file, note) { // MARKER_VATRECONCILE_FIRST_DRAFT_NOTE_V1 -- Note ของ First Draft (ผูก Timeline ฝั่ง Backend)
+  const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report-files/${file.id}/note`, { method: 'PUT', headers: rfAuth({ 'Content-Type': 'application/json' }), body: JSON.stringify({ note }) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d?.error || `บันทึก Note ไม่สำเร็จ (HTTP ${res.status})`);
+  return d;
+}
 async function deleteReportFile(file) { // MARKER_VATRECONCILE_REPORT_FILES_DELETE_V1
   const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report-files/${file.id}`, { method: 'DELETE', headers: rfAuth() });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(d?.error || `ลบไม่สำเร็จ (HTTP ${res.status})`);
 }
+// MARKER_VATRECONCILE_DOT_CLEAR_V1 -- ล้างข้อมูลที่อัปโหลด (Input Summary / Simple 100 / Simple AVG) ของ BU + Account + Period ลบจริงใน DB
+async function clearReconData({ kind, bu, account, period }) {
+  const q = new URLSearchParams({ bu, account, period });
+  let path = 'input-summary';
+  if (kind !== 'input_summary') { path = 'simple'; q.set('type', kind); }
+  const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/${path}?${q.toString()}`, { method: 'DELETE', headers: rfAuth() });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d?.error || `ล้างข้อมูลไม่สำเร็จ (HTTP ${res.status})`);
+  return d;
+}
+const DOT_KIND_LABEL = { input_summary: 'Input Summary', simple_100: 'Simple 100', simple_avg: 'Simple AVG' };
 const rfSize = (n) => { const b = Number(n || 0); return b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`; };
 const rfDate = (d) => { try { return new Date(d).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }); } catch { return ''; } };
-const RF_TEMPLATE = { '100': '100%', '100_simple': '100% + Simple', avg: 'เฉลี่ย (AVG)' };
+const RF_TEMPLATE = { '100': '100%', '100_simple': '100% + Simple', avg: 'เฉลี่ย (AVG)', pct: 'หัว %' };
+
+// MARKER_VATRECONCILE_SP_SEND_FRONT_V1 -- ส่งไฟล์ Report ไป SharePoint: เว็บโหลดไฟล์ลง Downloads -> สั่ง Handler (fastapn-sp://) ย้ายเข้าโฟลเดอร์ OneDrive -> บันทึกว่าส่งแล้ว
+// เลข BU + เดือน อ่านจากชื่อไฟล์ {เลข BU}_{BU}_{Account}_{MON-YY}.xlsx (อ่านไม่ได้ = ไม่ส่ง) -- ตรงกับ Backend (vatReconcileReportFiles.js parseSpTarget)
+const SP_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+function parseSpTarget(fileName) {
+  const m = /^(\d{3,6})_.+_([A-Za-z]{3})-(\d{2})\.xlsx$/.exec(String(fileName || ''));
+  if (!m) return null;
+  const mi = SP_MONTHS.indexOf(m[2].toUpperCase());
+  if (mi < 0) return null;
+  return { buCode: m[1], period: `20${m[3]}.${String(mi + 1).padStart(2, '0')}` };
+}
+async function markReportSentToSp(file) {
+  const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/dashboard/report-files/${file.id}/sp-sent`, { method: 'POST', headers: rfAuth() });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d?.error || `บันทึกการส่งไม่สำเร็จ (HTTP ${res.status})`);
+  return d;
+}
+function launchSpHandler(fileName, t) {
+  const uri = `fastapn-sp://send?name=${encodeURIComponent(fileName)}&bu=${encodeURIComponent(t.buCode)}&period=${encodeURIComponent(t.period)}`;
+  const a = document.createElement('a');
+  a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+}
+// MARKER_VATRECONCILE_SP_DELETE_FRONT_V1 -- ลบไฟล์ใน SharePoint ผ่าน Folder Path เดียวกับตอนส่ง (Handler action=delete)
+function launchSpDelete(fileName, t) {
+  const uri = `fastapn-sp://delete?name=${encodeURIComponent(fileName)}&bu=${encodeURIComponent(t.buCode)}&period=${encodeURIComponent(t.period)}`;
+  const a = document.createElement('a');
+  a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+}
+
+// MARKER_VATRECONCILE_FILE_ICONS_V1 -- ไอคอนปุ่ม Download / ลบ / ส่ง SharePoint ในตารางไฟล์ Report
+const RF_ICON_PATH = {
+  download: 'M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 19h14',
+  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 001 1h8a1 1 0 001-1l1-12M9 7V4h6v3',
+  send: 'M12 20V8m0 0l-4.5 4.5M12 8l4.5 4.5M5 4h14',
+  check: 'M5 12.5l4.5 4.5L19 7.5',
+  release: 'M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-3', // MARKER_VATRECONCILE_REPORT_CONFIRM_V1
+  timeline: 'M3 5h18v16H3zM3 10h18M8 3v4M16 3v4M8 14h3', // MARKER_RECON_GO_TIMELINE_V1
+  note: 'M5 3h10l4 4v14H5zM15 3v4h4M8 12h8M8 16h6', // MARKER_VATRECONCILE_FIRST_DRAFT_NOTE_V1
+};
+function RfIcon({ kind, size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+      <path d={RF_ICON_PATH[kind]} />
+    </svg>
+  );
+}
+
+function SpSendDialog({ file, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null); // { ok, text }
+  const t = parseSpTarget(file.file_name);
+  const confirmSend = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      await downloadReportFile(file); // เบราว์เซอร์โหลดไฟล์ลง Downloads (Login ปกติ)
+      launchSpHandler(file.file_name, t); // Handler รอไฟล์ใน Downloads แล้วย้ายเข้าโฟลเดอร์ SharePoint (OneDrive)
+      await markReportSentToSp(file);
+      setMsg({ ok: true, text: 'ส่งคำสั่งแล้ว — ไฟล์ถูกย้ายเข้าโฟลเดอร์ SharePoint ในเครื่อง รอ OneDrive ซิงก์ขึ้น (ถ้าไม่มีแจ้งเตือนมุมจอ ให้ติดตั้ง Handler ที่ Document Center > Setup > Tools)' });
+      if (onDone) onDone();
+    } catch (err) {
+      setMsg({ ok: false, text: err?.message || 'ส่งไม่สำเร็จ' });
+    } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1200, background: 'rgba(15, 23, 42, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => { if (!busy) onClose(); }}>
+      <div style={{ background: '#fff', borderRadius: 12, width: 520, maxWidth: '94vw', boxShadow: '0 12px 40px rgba(0,0,0,.25)', padding: 22 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#1e2a3a' }}>ส่งไฟล์ไป SharePoint</div>
+        <div style={{ fontSize: 13, color: '#57606a', marginTop: 10, wordBreak: 'break-all' }}><b>ไฟล์:</b> {file.file_name}</div>
+        {t ? (
+          <div style={{ fontSize: 13, color: '#57606a', marginTop: 6, wordBreak: 'break-all' }}><b>ปลายทาง:</b> VAT Controller \ My System \ Z_Report Reconcile \ <b>{t.buCode}</b> \ <b>{t.period}</b> \</div>
+        ) : (
+          <div style={{ fontSize: 13, color: '#cf222e', marginTop: 8 }}>อ่านเลข BU / เดือน จากชื่อไฟล์ไม่ได้ (รูปแบบต้องเป็น เลขBU_BU_Account_MON-YY.xlsx) จึงส่งไม่ได้</div>
+        )}
+        <ul style={{ fontSize: 12.5, color: '#6b7788', margin: '10px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+          <li>ถ้าในโฟลเดอร์ปลายทางมีไฟล์ชื่อเดียวกัน จะถูกเขียนทับ (SharePoint เก็บ Version History ให้)</li>
+          <li>ต้องติดตั้ง SharePoint Handler บนเครื่องนี้ และมีสิทธิ์ Edit ในโฟลเดอร์ SharePoint</li>
+          <li>ไฟล์จะขึ้น SharePoint เมื่อ OneDrive ซิงก์เสร็จ (เครื่องต้องเปิดและออนไลน์)</li>
+        </ul>
+        {msg && <div style={{ marginTop: 12, fontSize: 12.5, color: msg.ok ? '#1a7f37' : '#cf222e' }}>{msg.text}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+          <button type="button" disabled={busy} onClick={onClose} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#24292f', cursor: 'pointer' }}>{msg && msg.ok ? 'ปิด' : 'ยกเลิก'}</button>
+          {!(msg && msg.ok) && <button type="button" disabled={busy || !t} onClick={confirmSend} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', background: '#0969da', color: '#fff', cursor: 'pointer', opacity: busy || !t ? 0.5 : 1 }}>{busy ? 'กำลังส่ง...' : 'Confirm ส่ง'}</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function StatusDot({ active }) {
   return (
@@ -219,9 +361,9 @@ function buildPivotRows(rows) {
   const result = [];
   for (const [label, group] of byLabel) {
     const anyActive = group.some(
-      (r) => r.tb_active || r.input_summary_active || r.simple_100_active || r.simple_avg_active
+      (r) => r.input_summary_active || r.simple_100_active || r.simple_avg_active
     );
-    if (!anyActive) continue; // MARKER_VATRECONCILEDASHBOARD_HIDE_EMPTY_BU_V1 -- ไม่มีข้อมูลเลย ไม่ต้องโชว์แถวนี้
+    if (!anyActive) continue; // MARKER_VATRECONCILEDASHBOARD_HIDE_EMPTY_BU_V1 -- ไม่มีข้อมูลเลย ไม่ต้องโชว์แถวนี้ | MARKER_VATRECONCILEDASHBOARD_DETAIL_FIRST_V1 -- ยึด Detail (Input Summary/Simple) เป็นหลัก: มีแต่ TB = ไม่มีข้อมูล
 
     const accMap = new Map();
     for (const r of group) {
@@ -434,8 +576,16 @@ function CommandCenterCombobox({ label, value, onChange, options, resolveFn }) {
 }
 
 
-export default function VatReconcileDashboard({ defaultPeriod }) {
-  const [period, setPeriod] = useState(defaultPeriod || new Date().toISOString().slice(0, 7));
+// MARKER_RECON_JUMP_V1 -- Timeline กด "ไป Reconcile" -> ฝากค่า Period/BU/Account ไว้ใน sessionStorage แล้วหน้านี้เลือกให้เอง
+function peekReconJump() {
+  try { const j = JSON.parse(sessionStorage.getItem('recon_jump') || 'null'); return j && j.period && j.bu && Date.now() - (j.t || 0) < 60000 ? j : null; } catch (e) { return null; }
+}
+
+export default function VatReconcileDashboard({ defaultPeriod, onNavigate }) {
+  const [reconJump, setReconJump] = useState(peekReconJump);
+  const [period, setPeriodRaw] = useState((reconJump && reconJump.period) || defaultPeriod || new Date().toISOString().slice(0, 7));
+  const fillStartedAtRef = useRef(new Date()); // MARKER_VATRECONCILE_USER_TRANSACTION_V1 -- Start_fill: เลือก Period = เริ่มนับงาน | Save (Export) = 1 Job แล้วเริ่มนับใหม่
+  const setPeriod = useCallback((v) => { fillStartedAtRef.current = new Date(); setPeriodRaw(v); logActivityTs('PERIOD_SELECT', { period: v }); }, []);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -450,6 +600,7 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
   const [availablePeriods, setAvailablePeriods] = useState([]);
   // MARKER_VATRECONCILEDASHBOARD_BU_100PERCENT_X_V1
   const [companyList, setCompanyList] = useState([]);
+  const buPercentRef = useRef(new Map()); // MARKER_RECON_FIRSTDRAFT_TO_TIMELINE_V1 -- ให้ Callback อ่าน VAT % ของ BU (หัว 100 / หัว %) ตอนเรียกใช้
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
@@ -492,31 +643,75 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
   const [reportFilesError, setReportFilesError] = useState('');
   const [filePreview, setFilePreview] = useState(null); // MARKER_VATRECONCILE_FILE_PREVIEW_FRONT_V18
   const [reportScope, setReportScope] = useState('mine'); // MARKER_VATRECONCILE_REPORT_FILES_SCOPE_V1
+  const [noteDlg, setNoteDlg] = useState(null); // MARKER_VATRECONCILE_FIRST_DRAFT_NOTE_V1 -- { file, value, saving, err }
+  const [spConfirm, setSpConfirm] = useState(null); // MARKER_VATRECONCILE_SP_SEND_FRONT_V1 -- ไฟล์ที่กำลังจะส่ง SharePoint (เปิดกล่อง Confirm)
   const loadReportFiles = useCallback(async () => {
     setReportFilesLoading(true);
     setReportFilesError('');
     try {
-      setReportFiles(await fetchReportFiles({ period, scope: reportScope }));
+      setReportFiles(await fetchReportFiles({ scope: reportScope })); // V16: ไม่ Filter ตาม Period/BU
     } catch (err) {
       setReportFilesError(err?.message || 'โหลดรายการไฟล์ไม่สำเร็จ');
     } finally {
       setReportFilesLoading(false);
     }
-  }, [period, reportScope]);
+  }, [reportScope]);
   useEffect(() => { loadReportFiles(); }, [loadReportFiles]);
-  const handleExportFromPopup = useCallback(async () => {
+  const handleExportFromPopup = useCallback(async (opts) => { // MARKER_VATRECONCILE_FIRST_DRAFT_V1 -- opts.draft = First Draft
     if (!reconPopup) return;
-    const file = await exportReportFile({ bu: reconPopup.bu, account: reconPopup.account, period: reconPopup.period });
+    const d0 = fillStartedAtRef.current || new Date(); const p2 = (n) => String(n).padStart(2, '0');
+    const fillStartedAt = `${d0.getFullYear()}-${p2(d0.getMonth() + 1)}-${p2(d0.getDate())} ${p2(d0.getHours())}:${p2(d0.getMinutes())}:${p2(d0.getSeconds())}.${String(d0.getMilliseconds()).padStart(3, '0')}`;
+    const file = await exportReportFile({ bu: reconPopup.bu, account: reconPopup.account, period: reconPopup.period, fillStartedAt, draft: opts?.draft === true });
+    fillStartedAtRef.current = new Date(); // Job ถัดไปเริ่มนับใหม่
+    // Timeline: Backend อัปเดตเอง
     await loadReportFiles();
     return file;
   }, [reconPopup, loadReportFiles]);
   const handleDeleteReportFile = useCallback(async (file) => { // MARKER_VATRECONCILE_REPORT_FILES_DELETE_V1
-    const ok = await confirmDialog.confirm(`ต้องการลบไฟล์ ${file.file_name} ?\nลบแล้วกู้คืนไม่ได้ (Export ใหม่ได้จาก Preview)`, { title: 'ลบไฟล์รายงานภาษี', confirmText: 'ลบไฟล์', cancelText: 'ยกเลิก', variant: 'danger' });
+    const spT = file.sp_sent_at ? parseSpTarget(file.file_name) : null;
+    const spNote = file.sp_sent_at ? (spT ? '\n\nหมายเหตุ: ไฟล์นี้ส่งไป SharePoint แล้ว — ระบบจะลบไฟล์ใน SharePoint ด้วย (ผ่านโฟลเดอร์ OneDrive ในเครื่องนี้ กู้คืนได้จาก Recycle Bin ของ SharePoint)' : '\n\nหมายเหตุ: ไฟล์นี้ส่งไป SharePoint แล้ว แต่อ่านชื่อไฟล์ไม่ได้ — ไฟล์ใน SharePoint จะไม่ถูกลบ') : ''; // MARKER_VATRECONCILE_DELETE_SP_NOTE_V2
+    const ok = await confirmDialog.confirm(`ต้องการลบไฟล์ ${file.file_name} ?\nลบแล้วกู้คืนไม่ได้ (Export ใหม่ได้จาก Preview)${spNote}`, { title: 'ลบไฟล์รายงานภาษี', confirmText: 'ลบไฟล์', cancelText: 'ยกเลิก', variant: 'danger' });
     if (!ok) return;
     try {
       await deleteReportFile(file);
+      try { // ย้อนสถานะ Timeline (Finish -> Pending) ตามไฟล์ที่ลบ
+        const all = await fetchReportFiles({ scope: 'all' });
+        const rest = (Array.isArray(all) ? all : []).filter((r) => r.id !== file.id && r.bu === file.bu && String(r.account) === String(file.account) && r.period === file.period);
+        /* Timeline อัปเดตที่ Backend */
+      } catch (e) { /* ไม่กระทบการลบ */ }
+      if (spT) { try { launchSpDelete(file.file_name, spT); } catch (e) { /* ลบ SharePoint ไม่สำเร็จ = ไม่กระทบการลบในระบบ */ } }
       await loadReportFiles();
     } catch (err) { setReportFilesError(err?.message || 'ลบไม่สำเร็จ'); }
+  }, [loadReportFiles]);
+  const handleConfirmReportFile = useCallback(async (file) => { // MARKER_VATRECONCILE_REPORT_CONFIRM_V1 -- ปุ่มเดียว: ยังไม่ Confirm = Confirm (เริ่มนับ Expire + ส่ง SharePoint ให้อัตโนมัติ) | Confirm แล้ว = Release
+    try {
+      if (file.confirmed_at) {
+        const okR = await confirmDialog.confirm(`Release ไฟล์ ${file.file_name} ?\nยกเลิกการ Confirm และหยุดนับวันหมดอายุของ Input — Download จะถูกล็อกอีกครั้ง\n(ไฟล์ที่ส่งไป SharePoint แล้วจะไม่ถูกลบ)`, { title: 'Release ไฟล์รายงาน' });
+        if (!okR) return;
+        await releaseReportFile(file);
+        try { // Release -> Timeline Final กลับ Pending (First Draft กลับด้วยเมื่อไม่มีไฟล์ Draft เหลืออยู่)
+          const all = await fetchReportFiles({ scope: 'all' });
+          const hasDraft = (Array.isArray(all) ? all : []).some((r) => r.is_draft && r.id !== file.id && r.bu === file.bu && String(r.account) === String(file.account) && r.period === file.period);
+          /* Timeline อัปเดตที่ Backend */
+        } catch (e) { /* ไม่กระทบการ Release */ }
+        await loadReportFiles();
+        return;
+      }
+      const ok = await confirmDialog.confirm(`Confirm ไฟล์ ${file.file_name} ?\nถือว่าจบงาน: เริ่มนับวันหมดอายุของ Input และระบบจะส่งไฟล์ไป SharePoint ให้อัตโนมัติ\n(ถ้า Export ใหม่ทับไฟล์นี้ ต้อง Confirm ใหม่)`, { title: 'Confirm ไฟล์รายงาน' });
+      if (!ok) return;
+      await confirmReportFile(file);
+      /* Timeline อัปเดตที่ Backend */
+      await loadReportFiles();
+      const t = parseSpTarget(file.file_name);
+      if (t) { // ส่ง SharePoint อัตโนมัติ (ขั้นตอนเดียวกับปุ่มส่งเดิม)
+        try {
+          await downloadReportFile(file);
+          launchSpHandler(file.file_name, t);
+          await markReportSentToSp(file);
+          await loadReportFiles();
+        } catch (e) { setReportFilesError(`Confirm แล้ว แต่ส่ง SharePoint อัตโนมัติไม่สำเร็จ: ${e?.message || ''}`); }
+      } else setReportFilesError('Confirm แล้ว แต่อ่านเลข BU / เดือน จากชื่อไฟล์ไม่ได้ จึงไม่ส่ง SharePoint');
+    } catch (err) { setReportFilesError(err?.message || 'ไม่สำเร็จ'); }
   }, [loadReportFiles]);
   const handleDownloadReportFile = useCallback(async (file) => {
     try { await downloadReportFile(file); } catch (err) { setReportFilesError(err?.message || 'ดาวน์โหลดไม่สำเร็จ'); }
@@ -533,6 +728,19 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
     }
   }, [period]);
 
+  const [clearNotice, setClearNotice] = useState(null);
+  const [dotMenu, setDotMenu] = useState(null); // MARKER_VATRECONCILE_DOT_CLEAR_V1
+  useEffect(() => {
+    if (!dotMenu) return undefined;
+    const close = () => setDotMenu(null);
+    window.addEventListener('click', close); window.addEventListener('scroll', close, true); window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); window.removeEventListener('keydown', close); };
+  }, [dotMenu]);
+  const openDotMenu = (e, kind, bu, account, active, label) => {
+    if (!active) return;
+    e.preventDefault();
+    setDotMenu({ x: e.clientX, y: e.clientY, kind, bu, account, label: label || bu });
+  };
   const loadStatus = useCallback(async (p) => {
     setLoading(true);
     setErrorMessage('');
@@ -547,6 +755,32 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => { // รับ Broadcast จากเครื่องอื่น/เครื่องตัวเอง -> โหลดสถานะจุดใหม่ถ้าเป็น Period เดียวกัน
+    const unsub = subscribeWs(['vat_reconcile_data_changed'], (ev, parsed) => {
+      const d = (parsed && (parsed.data || parsed)) || {};
+      if (!d.period || d.period === period) loadStatus(period);
+    });
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [period, loadStatus]);
+
+  const handleClearDot = useCallback(async (m) => {
+    setDotMenu(null);
+    const ok = await confirmDialog.confirm(`ล้างข้อมูล ${DOT_KIND_LABEL[m.kind]} ของ BU ${m.label || m.bu} · Account ${m.account} · Period ${period} ?\nลบข้อมูลออกจากฐานข้อมูลจริง กู้คืนไม่ได้ (ต้อง Upload ใหม่)`, { title: 'ล้างข้อมูล', confirmText: 'ล้างข้อมูล', cancelText: 'ยกเลิก', variant: 'danger' });
+    if (!ok) return;
+    try {
+      const r = await clearReconData({ kind: m.kind, bu: m.bu, account: m.account, period });
+      const n = Number(r?.deleted) || 0;
+      const det = r?.details != null ? ` (${Number(r.details)} รายการ)` : '';
+      broadcastWs('vat_reconcile_data_changed', { bu: m.bu, account: m.account, period, kind: m.kind }); // MARKER_VATRECONCILE_DOT_CLEAR_BROADCAST_V1 -- ทุกเครื่องโหลดสถานะจุดใหม่ทันที
+      await loadStatus(period);
+      confirmDialog.alert( // MARKER_VATRECONCILE_DOT_CLEAR_POPUP_V1 -- แจ้งผลการล้างเป็น Popup
+        n > 0
+          ? `ล้าง ${DOT_KIND_LABEL[m.kind]} สำเร็จ\nBU ${m.label || m.bu} · Account ${m.account} · Period ${period}\nลบทั้งหมด ${n} ชุด${det}`
+          : `ไม่พบข้อมูล ${DOT_KIND_LABEL[m.kind]} ที่จะลบ (ลบ 0 รายการ)\nBU ${m.label || m.bu} · Account ${m.account} · Period ${period}`,
+        { title: n > 0 ? 'ล้างข้อมูลสำเร็จ' : 'ไม่มีข้อมูลที่ลบ', variant: n > 0 ? 'success' : 'warning' });
+    } catch (err) { confirmDialog.alert(err?.message || 'ล้างข้อมูลไม่สำเร็จ', { title: 'ล้างข้อมูลไม่สำเร็จ', variant: 'danger' }); }
+  }, [period, loadStatus]);
 
   useEffect(() => {
     // Period ว่างเปล่าด้วยเหตุผลใดก็ตาม -> Default กลับเป็นเดือนปัจจุบันอัตโนมัติ กันยิง Request ว่างไป Backend
@@ -659,6 +893,7 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
     return map;
   }, [companyList]);
   const isBu100Percent = (buCode) => buPercentMap.get(buCode) === 100;
+  buPercentRef.current = buPercentMap;
 
   // MARKER_VATRECONCILEDASHBOARD_TAXTYPE_ACCOUNT_APPLICABLE_V1
   // อ่าน company_list['allowed_tax_type'] (คอลัมน์ "Tax type" ใน VAT Config) เพื่อเช็คว่า BU นี้ควรมี Account ไหนบ้าง
@@ -693,6 +928,14 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
     setCcBusinessUnit(label);
     setCcAccountCode(account);
   }, []);
+
+  useEffect(() => { // MARKER_RECON_JUMP_V1 -- ข้อมูลของ Period โหลดเสร็จ -> เลือก BU + Account ตามที่ Timeline ส่งมา (ครั้งเดียว)
+    if (!reconJump || loading || period !== reconJump.period || !rows.length) return;
+    const hit = rows.find((r) => r.label === reconJump.bu && (!reconJump.account || r.account === reconJump.account));
+    if (hit) handleSelectBuAccount(hit.label, hit.account);
+    try { sessionStorage.removeItem('recon_jump'); } catch (e) {}
+    setReconJump(null);
+  }, [reconJump, loading, rows, period, handleSelectBuAccount]);
 
   // ── รายชื่อ BU สำหรับ Combobox: กรองเหลือเฉพาะ BU ที่มีข้อมูลจริงใน Period ที่เลือกอยู่เท่านั้น
   //    (ถ้า Period นั้นไม่มี BU ไหนมีข้อมูลเลย -> List ว่างเปล่าไปเลย ไม่มี Fallback โชว์ทุก BU แล้ว) ──
@@ -744,6 +987,7 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
 
                 {loading && <p style={{ fontSize: 13, color: '#666' }}>กำลังโหลด...</p>}
                 {errorMessage && <p style={{ fontSize: 13, color: '#a30d16' }}>{errorMessage}</p>}
+                {clearNotice && <p style={{ fontSize: 13, fontWeight: 700, color: clearNotice.ok ? '#1a7f37' : '#a30d16' }}>{clearNotice.ok ? '✅ ' : '⚠️ '}{clearNotice.text}</p>}
 
                 {!loading && !errorMessage && (
                   // MARKER_VATRECONCILEDASHBOARD_PIVOT_BU_ACCOUNT_V1 -- overflow-x เพิ่มเข้ามา เผื่อ BU มีหลาย Account จนตารางกว้างเกินพื้นที่
@@ -884,11 +1128,12 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
                                   <td
                                     style={plainCellStyle}
                                     onClick={onClick}
+                                    onContextMenu={(e) => openDotMenu(e, 'input_summary', pr.bu, acct, cell.input_summary_active, pr.label)}
                                     onDoubleClick={() => handleQuickPreview('input_summary', pr.label, acct)}
                                     title={`BU ${pr.label} · Account ${acct} (Double-click เพื่อดู Input Summary Preview)`}
                                   ><StatusDot active={cell.input_summary_active} /></td>
-                                  <td style={plainCellStyle} onClick={onClick} title={`BU ${pr.label} · Account ${acct}`}><StatusDot active={cell.simple_100_active} /></td>
-                                  {is100 ? xCell(plainCellStyle, 'avg', 'BU นี้ตั้งค่า VAT 100% — ไม่มี Simple AVG แน่นอน') : <td style={plainCellStyle} onClick={onClick} title={`BU ${pr.label} · Account ${acct}`}><StatusDot active={cell.simple_avg_active} /></td>}
+                                  <td style={plainCellStyle} onClick={onClick} onContextMenu={(e) => openDotMenu(e, 'simple_100', pr.bu, acct, cell.simple_100_active, pr.label)} title={`BU ${pr.label} · Account ${acct}`}><StatusDot active={cell.simple_100_active} /></td>
+                                  {is100 ? xCell(plainCellStyle, 'avg', 'BU นี้ตั้งค่า VAT 100% — ไม่มี Simple AVG แน่นอน') : <td style={plainCellStyle} onClick={onClick} onContextMenu={(e) => openDotMenu(e, 'simple_avg', pr.bu, acct, cell.simple_avg_active, pr.label)} title={`BU ${pr.label} · Account ${acct}`}><StatusDot active={cell.simple_avg_active} /></td>}
                                   <td style={plainCellStyle} onClick={onClick} title={`BU ${pr.label} · Account ${acct}`}><ReadyBadge ready={cell.ready} /></td>
                                 </React.Fragment>
                               );
@@ -903,6 +1148,12 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
               </>
             )}
 
+            {dotMenu && (
+              <div role="menu" onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', left: dotMenu.x, top: dotMenu.y, zIndex: 3000, background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: 4, minWidth: 170 }}>
+                <div style={{ padding: '4px 10px', fontSize: 11, color: '#6e7781' }}>{dotMenu.bu} · {dotMenu.account} · {DOT_KIND_LABEL[dotMenu.kind]}</div>
+                <button type="button" onClick={() => handleClearDot(dotMenu)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', fontSize: 13, fontWeight: 700, color: '#cf222e', background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer' }}>🗑 ล้างข้อมูล</button>
+              </div>
+            )}
             {activeTab === 'upload' && (
               <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
                 <VatReconcileSystem onCommitSuccess={handleCommitSuccess} />
@@ -959,7 +1210,7 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
                   cursor: (ccBusinessUnit && ccAccountCode) ? 'pointer' : 'not-allowed', flexShrink: 0,
                 }}
               >
-                Preview
+                Reconcile {/* MARKER_VATRECONCILE_BUTTON_RENAME_V21 -- เปลี่ยนชื่อปุ่มจาก Preview */}
               </button>
             </div>
           </div>
@@ -982,16 +1233,16 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
               </button>
             ))}
             <span style={{ fontSize: 12, color: '#8b95a1', alignSelf: 'center', marginLeft: 4 }}>
-              {reportFilesLoading ? 'กำลังโหลด…' : `${reportFiles.length} ไฟล์ · ${formatPeriodLabel(period)}`}
+              {reportFilesLoading ? 'กำลังโหลด…' : `${reportFiles.length} ไฟล์ · ทุก Period`}
             </span>
           </div>
         </div>
         {reportFilesError && <p style={{ fontSize: 13, color: '#a30d16', margin: '8px 16px 0' }}>{reportFilesError}</p>}
         <div style={{ padding: 0, overflowX: 'auto', overflowY: 'auto', flex: 1, minHeight: 0 }}>
-          <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'separate', borderSpacing: 0, minWidth: 720 }}>
+          <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'separate', borderSpacing: 0, minWidth: 860 }}>
             <thead>
               <tr style={{ background: RP_HEAD_GRAD }}>
-                {['BU', 'Filename', 'Report Type', 'Generated By', 'Expire Date', 'Preview', 'Download'].map((h) => (
+                {['BU', 'Filename', 'Report Type', 'Generated By', 'Expire Date', 'Preview', 'Status', 'Action'].map((h) => ( /* MARKER_VATRECONCILE_ACTION_HEADER_V1 -- หัวคอลัมน์ Download -> Action (มี Confirm/Release + โหลด + ลบ) */
                   <th key={h} style={{ position: 'sticky', top: 0, background: RP_HEAD_GRAD, textAlign: h === 'Filename' ? 'left' : 'center', padding: '8px 10px', color: '#334155', fontWeight: 700, fontSize: 11.5, boxShadow: `0 1px 0 ${RP_BORDER}` }}>{h}</th>
                 ))}
               </tr>
@@ -999,26 +1250,34 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
             <tbody>
               {reportFiles.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: '48px 16px', textAlign: 'center', color: '#8b95a1', fontSize: 13 }}>
-                    {reportFilesLoading ? 'กำลังโหลด…' : 'ยังไม่มีไฟล์ที่ Generate ไว้ — กด Preview แล้วกด "Export ไฟล์" ใน Popup'}
+                  <td colSpan={8} style={{ padding: '48px 16px', textAlign: 'center', color: '#8b95a1', fontSize: 13 }}>
+                    {reportFilesLoading ? 'กำลังโหลด…' : 'ยังไม่มีไฟล์ที่ Generate ไว้ — กด Reconcile แล้วกด "Export ไฟล์" ใน Popup'}
                   </td>
                 </tr>
               ) : reportFiles.map((f, i) => (
                 <tr key={f.id} style={{ borderBottom: '0.5px solid #eee', background: i % 2 === 0 ? '#fff' : '#fafbfc' }}>
                   <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700 }}>{f.bu}</td>
-                  <td style={{ padding: '8px 10px' }}>{f.file_name}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>Input Reconcile · {f.account} · {RF_TEMPLATE[f.template] || f.template || '-'}</td>
+                  <td style={{ padding: '8px 10px' }}>{f.file_name}{f.is_draft && f.draft_serial && <div style={{ fontSize: 10.5, color: '#7d4e00', marginTop: 2 }}>Serial {f.draft_serial}</div>}{!f.is_draft && f.draft_serial && <div style={{ fontSize: 10.5, color: '#8a94a3', marginTop: 2 }} title="First Draft ของชุดนี้ (ถูกลบตอน Confirm)">จาก Draft {f.draft_serial}</div>}{f.is_draft && f.note && <div style={{ fontSize: 11, color: '#57606a', marginTop: 2, whiteSpace: 'pre-wrap' }}>Note: {f.note}</div>}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>Input Reconcile · {f.account} · {RF_TEMPLATE[f.template] || f.template || '-'}{f.period ? ` · ${formatPeriodLabel(f.period)}` : ''}</td>
                   <td style={{ padding: '8px 10px', textAlign: 'center' }}>{f.created_by || '—'}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>ถาวร</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }} title={f.input_expire_at ? 'วันหมดอายุของ Input (นับจากวัน Confirm)' : 'ยังไม่ Confirm'}>{f.input_expire_at ? new Date(f.input_expire_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
                   <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                     <button type="button" title="Preview" onClick={() => setFilePreview(f)} style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid #d0d7de', background: '#fff', color: '#57606a', cursor: 'pointer' }}>Preview</button>
                   </td>
+                  {/* MARKER_VATRECONCILE_STATUS_ACTION_COLUMNS_V1 -- Status = ปุ่มสลับ Confirm/Release | Action = ไอคอน Download + Delete */}
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                      {f.is_draft ? (<span title="First Draft — เก็บใน Backend เท่านั้น ยังไม่ส่ง SharePoint (Save เมื่อ Balance เพื่อใช้งานจริง)" style={{ padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid #bf8700', background: '#fff8c5', color: '#7d4e00' }}>Draft</span>) : (
+                      <button type="button" title={f.confirmed_at ? `Confirm แล้ว${f.confirmed_by ? ` โดย ${f.confirmed_by}` : ''} · ${rfDate(f.confirmed_at)} — กดเพื่อ Release` : 'Confirm ไฟล์ (จบงาน: เริ่มนับ Expire + ส่ง SharePoint อัตโนมัติ)'} disabled={!!f.file_removed_at} onClick={() => handleConfirmReportFile(f)} style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, borderRadius: 6, border: `1px solid ${f.confirmed_at ? '#bf8700' : '#1a7f37'}`, background: '#fff', color: f.confirmed_at ? '#9a6700' : '#1a7f37', cursor: 'pointer', opacity: f.file_removed_at ? 0.4 : 1 }}><RfIcon kind={f.confirmed_at ? 'release' : 'check'} />{f.confirmed_at ? 'Release' : 'Confirm'}</button>)}
+                  </td>
                   <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                     <div style={{ display: 'inline-flex', gap: 4 }}>
-                      <button type="button" title="Download" onClick={() => handleDownloadReportFile(f)} style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid #0969da', background: '#0969da', color: '#fff', cursor: 'pointer' }}>Download</button>
-                      <button type="button" title="ลบไฟล์" onClick={() => handleDeleteReportFile(f)} style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid #cf222e', background: '#fff', color: '#cf222e', cursor: 'pointer' }}>ลบ</button>
+                      {!f.is_draft && <button type="button" title={f.confirmed_at ? 'Download' : 'ยังไม่ Confirm — Download ไม่ได้'} disabled={!f.confirmed_at} onClick={() => handleDownloadReportFile(f)} style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center', borderRadius: 6, border: '1px solid #0969da', background: '#0969da', color: '#fff', cursor: f.confirmed_at ? 'pointer' : 'not-allowed', opacity: f.confirmed_at ? 1 : 0.35 }}><RfIcon kind="download" /></button>}
+                      {f.is_draft && <button type="button" title={f.note ? 'แก้ Note' : 'เพิ่ม Note'} onClick={() => setNoteDlg({ file: f, value: f.note || '', saving: false, err: '' })} style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center', borderRadius: 6, border: '1px solid #bf8700', background: f.note ? '#fff8c5' : '#fff', color: '#7d4e00', cursor: 'pointer' }}><RfIcon kind="note" /></button>}
+                      <button type="button" title="ลบไฟล์" onClick={() => handleDeleteReportFile(f)} style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center', borderRadius: 6, border: '1px solid #cf222e', background: '#fff', color: '#cf222e', cursor: 'pointer' }}><RfIcon kind="trash" /></button>
+                      <button type="button" title={onNavigate ? `ไป Timeline ของ BU ${f.bu}` : 'ไม่พร้อมใช้งาน'} disabled={!onNavigate} onClick={() => { try { sessionStorage.setItem('timeline_jump', JSON.stringify({ bu: f.bu, t: Date.now() })); } catch (e) {} onNavigate && onNavigate('vat-timeline'); }} style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center', borderRadius: 6, border: '1px solid #1a3a5c', background: '#fff', color: '#1a3a5c', cursor: onNavigate ? 'pointer' : 'not-allowed' }}><RfIcon kind="timeline" /></button>
                     </div>
                   </td>
+                  {/* MARKER_VATRECONCILE_SP_COLUMN_REMOVED_V1 -- เอาคอลัมน์ SharePoint ออก: ส่งอัตโนมัติตอน Confirm ไม่มีปุ่มส่งเอง */}
                 </tr>
               ))}
             </tbody>
@@ -1027,6 +1286,25 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
       </div>
 
       {filePreview && <FileSheetPreview file={filePreview} onClose={() => setFilePreview(null)} />}
+      {noteDlg && ( // MARKER_VATRECONCILE_FIRST_DRAFT_NOTE_V1
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => !noteDlg.saving && setNoteDlg(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10, padding: 18, width: 440, maxWidth: '92vw', boxShadow: '0 12px 40px rgba(0,0,0,.25)' }}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Note · First Draft</div>
+            <div style={{ fontSize: 11.5, color: '#57606a', marginBottom: 8 }}>{noteDlg.file.file_name}{noteDlg.file.draft_serial ? ` · ${noteDlg.file.draft_serial}` : ''}<br />Note จะบันทึกลง Timeline ของคุณด้วย</div>
+            <textarea autoFocus value={noteDlg.value} maxLength={2000} onChange={(e) => setNoteDlg({ ...noteDlg, value: e.target.value })} rows={5} style={{ width: '100%', boxSizing: 'border-box', fontSize: 13, padding: 8, border: '1px solid #d0d7de', borderRadius: 6, resize: 'vertical' }} placeholder="เช่น รอแก้ยอดสาขา 040201 / รอเอกสารเพิ่ม" />
+            {noteDlg.err && <div style={{ color: '#cf222e', fontSize: 12, marginTop: 6 }}>{noteDlg.err}</div>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+              <button type="button" disabled={noteDlg.saving} onClick={() => setNoteDlg(null)} style={{ padding: '6px 14px', fontSize: 13, borderRadius: 6, border: '1px solid #d0d7de', background: '#fff', cursor: 'pointer' }}>ยกเลิก</button>
+              <button type="button" disabled={noteDlg.saving} onClick={async () => {
+                setNoteDlg((d) => ({ ...d, saving: true, err: '' }));
+                try { await saveDraftNote(noteDlg.file, noteDlg.value); /* Timeline อัปเดตที่ Backend */setNoteDlg(null); await loadReportFiles(); }
+                catch (err) { setNoteDlg((d) => (d ? { ...d, saving: false, err: err?.message || 'บันทึกไม่สำเร็จ' } : d)); }
+              }} style={{ padding: '6px 14px', fontSize: 13, fontWeight: 700, borderRadius: 6, border: 'none', background: '#1a7f37', color: '#fff', cursor: 'pointer' }}>{noteDlg.saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {spConfirm && <SpSendDialog file={spConfirm} onClose={() => setSpConfirm(null)} onDone={loadReportFiles} />}
 
       {/* DASHBOARD_SIMPLE_DETAIL_MODAL_PATCH_APPLIED -- Modal เต็มจอ ดู Detail ราย Invoice ของ Simple 100/AVG */}
       {simpleDetailModal && (
@@ -1124,13 +1402,8 @@ export default function VatReconcileDashboard({ defaultPeriod }) {
 // MARKER_VATRECONCILEDASHBOARD_RECONCILE_POPUP_V1 -- Popup แสดง Reconcile ตาม Template จริงของ Macro
 // (ชีต ReportVat_VGR / ReportVat_AVG + Cover: Per TB / Per Detail / Diff, Check Diff, Total) ข้อมูลมาจาก /dashboard/reconcile-report
 const RP_BORDER = '#d0d7de';
-// MARKER_VATRECONCILE_BRANCH_STATUS_V1 -- สีสถานะสาขา (ตรงกับหน้า Business Unit)
-const RP_BRANCH_STATUS = {
-  Active: { background: '#EAF3DE', color: '#27500A' },
-  Closed: { background: '#FCEBEB', color: '#791F1F' },
-  Relocate: { background: '#FFF3CD', color: '#856404' },
-  Temporary: { background: '#E6F1FB', color: '#0C447C' },
-};
+// MARKER_VATRECONCILE_BRANCH_DOT_V1 -- สถานะสาขาแสดงเป็นจุดสีข้างรหัสสาขา (เขียว=Active, แดง=Closed, เหลือง=Relocate, น้ำเงิน=Temporary) ไม่มีคอลัมน์แยก
+const RP_BRANCH_DOT = { Active: '#2da44e', Closed: '#cf222e', Relocate: '#d4a72c', Temporary: '#0969da' };
 const RP_HEAD_GRAD = 'linear-gradient(180deg, #eef4ff, #e3ecfb)';
 const rpFmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const RP_PROCESS = {
@@ -1157,14 +1430,38 @@ const RP_PROCESS = {
     'ภาษีตาม T/B = TB รวมตามสาขา · ผลต่าง = ภาษีรวมทั้งสิ้น − T/B · Total = SUM ทุกสาขา (แบบ AVG ไม่มี Check Diff และไม่มีบรรทัด FinCredit 46250)',
   ],
 };
-const RP_TEMPLATE_LABEL = { '100': 'แบบ 100% (ไม่มี Simple)', '100_simple': 'แบบ 100% + Simple', avg: 'แบบเฉลี่ย (AVG) + Simple' };
+const RP_TEMPLATE_LABEL = { '100': 'แบบ 100% (ไม่มี Simple)', '100_simple': 'แบบ 100% + Simple', avg: 'แบบเฉลี่ย (AVG) + Simple', pct: 'แบบหัว % (เฉลี่ยตาม % สาขา)' }; // MARKER_VATRECONCILE_PCT_TEMPLATE_V1
 
 function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
   const { loading, error, bu, account } = state;
+  const [sampleHost, setSampleHost] = useState(null); // ที่วาง Popup Sampling (อยู่ใน Popup Reconcile)
+  const [samplingOpen, setSamplingOpen] = useState(false); // MARKER_VATRECONCILE_SAMPLING_BTN_V1 -- ปุ่ม Sampling ที่แถบล่าง เปิด/ปิดแผงหาชุดรายการที่รวมกันได้ยอด
   const [liveData, setLiveData] = useState(null); // MARKER_VATRECONCILE_CELL_EDIT_FRONT_V14 -- ข้อมูล Reconcile ที่คำนวณใหม่หลังแก้ต้นทาง
   const data = liveData || state.data;
   const refreshTimer = useRef(null);
-  const onSourceEdited = () => {
+  const [branchForm, setBranchForm] = useState(null); // MARKER_VATRECONCILE_BRANCHFORM_V1 -- { branch } = เปิดฟอร์มสาขาจากไอคอนในแถว
+  const reloadAfterBranchChange = async (branch) => { // ผูกใหม่ทุกจุดที่ Match ด้วยสาขา -> โหลดรายงานใหม่ + ล้าง Cache Detail
+    try { await rebindBranches({ bu: state.bu, period: state.period, branch }); } catch (e) { console.error('[rebind-branches]', e); }
+    try { setLiveData(await fetchReconcileReport({ bu: state.bu, account: state.account, period: state.period })); } catch (e) { /* ใช้ข้อมูลเดิม */ }
+    setTabData({});
+  };
+  useEffect(() => { // คนอื่นเพิ่ม/แก้สาขา -> Popup ที่เปิดอยู่ผูกใหม่/โหลดใหม่ตามด้วย
+    const unsub = subscribeWs(['branch_list_updated'], () => { reloadAfterBranchChange(); });
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [state.bu, state.account, state.period]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onSourceEdited = (rowId, nextRow) => {
+    // MARKER_VATRECONCILE_EDIT_SYNC_CACHE_V1 -- แก้ Cell แล้วต้องอัปเดตแถวเดียวกันในทุก Tab ที่ Cache ไว้ (เดิมสลับสาขา/แท็บแล้วกลับมาเห็นค่าเก่า เหมือนไม่ Update)
+    if (rowId != null && nextRow) {
+      setTabData((prev) => {
+        const out = {};
+        for (const [k, t] of Object.entries(prev)) {
+          if (t && t.data && Array.isArray(t.data.rows) && t.data.rows.some((r) => r.id === rowId)) {
+            out[k] = { ...t, data: { ...t.data, rows: t.data.rows.map((r) => (r.id === rowId ? { ...r, ...nextRow } : r)) } };
+          } else out[k] = t;
+        }
+        return out;
+      });
+    }
     clearTimeout(refreshTimer.current);
     refreshTimer.current = setTimeout(() => {
       fetchReconcileReport({ bu: state.bu, account: state.account, period: state.period }).then(setLiveData).catch(() => {});
@@ -1172,45 +1469,66 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
   };
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
   const [exporting, setExporting] = useState(false);
+  const [expiredAck, setExpiredAck] = useState(false); // MARKER_VATRECONCILE_EXPIRED_REVIEW_GATE_V1 -- Expired (ไม่มี F ใน GRT_No) ต้องกด "ตรวจสอบแล้ว" ก่อน Save
   const [branchQ, setBranchQ] = useState(''); // MARKER_VATRECONCILEDASHBOARD_POPUP_MANYBRANCH_V1 -- ค้นหาสาขา / แสดงเฉพาะสาขาที่ไม่ตรง
   const [onlyDiff, setOnlyDiff] = useState(false);
+  const [onlyMissing, setOnlyMissing] = useState(false); // MARKER_VATRECONCILE_MISSING_CHIP_FILTER_V1
+  const [onlyIssue, setOnlyIssue] = useState(false); // MARKER_VATRECONCILE_NB_ISSUE_CHIPS_V1
   const [expanded, setExpanded] = useState(true); // MARKER_VATRECONCILEDASHBOARD_POPUP_EXPAND_V1 -- ขยาย Popup เต็มจอ
   const [exportMsg, setExportMsg] = useState(null); // { ok, text }
-  const [prepVal, setPrepVal] = useState(null); // MARKER_VATRECONCILE_FILE_PREVIEW_FRONT_V18 -- Prepare by ของ BU (null = ใช้ค่าจาก data.header.preparedBy)
-  const savePrep = async (next) => {
+  const [prepVal, setPrepVal] = useState(null); // MARKER_VATRECONCILE_EXCEL_LOOK_FRONT_V20 -- ค่า Prepare by ที่แก้แล้ว (null = ใช้ค่าจาก data.header.preparedBy)
+  const [prepEdit, setPrepEdit] = useState(false);
+  const [prepDraft, setPrepDraft] = useState('');
+  const prepCancel = useRef(false);
+  const savePrep = async () => {
+    if (prepCancel.current) { prepCancel.current = false; setPrepEdit(false); return; }
     const cur = prepVal != null ? prepVal : (data?.header?.preparedBy || '');
-    const v = String(next || '').trim();
-    if (v === cur) return;
+    const next = prepDraft.trim();
+    setPrepEdit(false);
+    if (next === cur) return;
     try {
       const token = sessionStorage.getItem('fastapn_token');
       const res = await fetch(`${VAT_RECONCILE_API_BASE}/vat-reconcile/prepared-by`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ bu: state.bu, value: v }),
+        body: JSON.stringify({ bu: state.bu, value: next }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error || `บันทึกไม่สำเร็จ (HTTP ${res.status})`);
-      setPrepVal(v);
+      setPrepVal(next);
     } catch (err) {
       window.alert(err?.message || 'บันทึกไม่สำเร็จ');
     }
   };
   // MARKER_VATRECONCILE_TABS_V1 -- กดยอดผลต่าง/สาขาที่มี Notice แล้วสลับเป็น Tab Detail ภายใน Popup เดิม: Reconcile | Input Summary | Simple (เฉพาะเมื่อมี Simple)
   const [view, setView] = useState('reconcile'); // 'reconcile' | 'input' | 'simple'
+  useEffect(() => { setSamplingOpen(false); }, [view]); // เปลี่ยนหน้า = ปิด Sampling
   const [selBranch, setSelBranch] = useState('');
+  const [simpleSel, setSimpleSel] = useState(''); // MARKER_VATRECONCILE_PCT_SIMPLE_BOTH_TABS_V1 -- Template หัว %: เลือก Simple AVG / Simple 100 ได้ทั้งสองแท็บ
   const [tabData, setTabData] = useState({}); // key -> { loading, error, data }
-  const simpleType = data?.template === 'avg' ? 'simple_avg' : data?.template === '100_simple' ? 'simple_100' : null;
+  // MARKER_VATRECONCILE_PCT_SIMPLE_TAB_V1 -- Template หัว % ใช้ทั้ง Simple AVG และ Simple 100 (เหมือนไฟล์ต้นแบบ): สาขาที่มี Simple AVG ดู AVG ก่อน ไม่มีก็ดู Simple 100
+  const simpleTypeOf = (b) => {
+    if (data?.template === 'avg') return 'simple_avg';
+    if (data?.template === '100_simple') return 'simple_100';
+    if (data?.template === 'pct') {
+      const rb = (data.rows || []).find((x) => String(x.branch) === String(b));
+      if (simpleSel === 'simple_100' || simpleSel === 'simple_avg') return simpleSel;
+      return rb && rb.hasSimple100 && !rb.hasSimpleAvg ? 'simple_100' : 'simple_avg';
+    }
+    return null;
+  };
+  const simpleType = simpleTypeOf(selBranch);
   // MARKER_VATRECONCILE_DETAIL_ICON_V3
-  const tabKey = (v, b) => (v === 'simple' ? `simple|${b}` : v === 'tb' ? 'tb|' : `input|${b || ''}`); // MARKER_VATRECONCILE_SHEET_TABS_FRONT_V13 // MARKER_VATRECONCILE_DETAIL_BTN_BRANCH_ONLY_V1
-  const goView = (v, branch, force) => {
+  const tabKey = (v, b, st) => (v === 'simple' ? `simple|${st || ''}|${b}` : v === 'tb' ? 'tb|' : `input|${b || ''}`); // MARKER_VATRECONCILE_SHEET_TABS_FRONT_V13 // MARKER_VATRECONCILE_DETAIL_BTN_BRANCH_ONLY_V1
+  const goView = (v, branch, force, forceType) => {
     const b = branch === undefined ? selBranch : branch;
     setView(v);
     setSelBranch(b);
     if (v === 'reconcile' || v === 'cover' || v === 'pivot') return; // MARKER_VATRECONCILE_SHEET_TABS_FRONT_V13
     if (v === 'input' && !b && !force) return; // MARKER_VATRECONCILE_DETAIL_BTN_BRANCH_ONLY_V1 -- ไม่เลือกสาขา = ไม่โหลดทุกสาขาเอง (ต้องกด "โหลดทุกสาขา")
-    const key = tabKey(v, b);
+    const type = v === 'input' ? 'input_summary' : v === 'tb' ? 'tb' : (forceType || simpleTypeOf(b));
+    const key = tabKey(v, b, type);
     if (tabData[key]) return;
-    const type = v === 'input' ? 'input_summary' : v === 'tb' ? 'tb' : simpleType;
     if (!type) return;
     setTabData((p) => ({ ...p, [key]: { loading: true, error: '', data: null } }));
     fetchReportPreview({ type, bu: state.bu, account: state.account, period: state.period, view: 'detail', branch: b || undefined })
@@ -1218,76 +1536,129 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
       .catch((err) => setTabData((p) => ({ ...p, [key]: { loading: false, error: err?.message || 'โหลด Detail ไม่สำเร็จ', data: null } })));
   };
   const isLocalView = view === 'reconcile' || view === 'cover' || view === 'pivot';
-  const curTab = isLocalView ? null : tabData[tabKey(view, selBranch)];
-  const doExport = async () => {
+  const curTab = isLocalView ? null : tabData[tabKey(view, selBranch, simpleType)];
+  // MARKER_VATRECONCILE_ESC_BACK_TO_RECONCILE_V1 -- อยู่หน้า Detail/Simple/TB แล้วกด Esc = กลับหน้า Reconcile (ไม่ปิด Popup) | ถ้ากำลังพิมพ์/แก้ Cell อยู่ ให้ Esc ทำหน้าที่เดิม (ยกเลิกแก้ไข)
+  const goViewRef = useRef(goView);
+  goViewRef.current = goView;
+  useEffect(() => {
+    if (view !== 'input' && view !== 'simple' && view !== 'tb') return undefined;
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target;
+      const tag = t && t.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      goViewRef.current('reconcile', '');
+    };
+    window.addEventListener('keydown', onEsc, true);
+    return () => window.removeEventListener('keydown', onEsc, true);
+  }, [view]);
+  const doExport = async (draft) => { // MARKER_VATRECONCILE_FIRST_DRAFT_V1 -- draft=true: เก็บเป็น First Draft (ไม่ต้อง Balance/ตรวจ Expired)
+    const isDraft = draft === true;
+    if (!isDraft && expiredGate) { setExportMsg({ ok: false, text: 'ต้องกด "ตรวจสอบแล้ว" รายการ Expired ก่อน Save' }); return; }
+    if (!isDraft && saveBlocked) { setExportMsg({ ok: false, text: 'Save ไม่ได้: ยังไม่ Balance' }); return; }
     setExporting(true); setExportMsg(null);
     try {
-      const f = await onExport();
-      setExportMsg({ ok: true, text: `เก็บไฟล์ ${f?.file_name || ''} ไว้ที่ "ที่เก็บไฟล์รายงานภาษี" แล้ว` });
+      const f = await onExport({ draft: isDraft });
+      setExportMsg({ ok: true, text: `${isDraft ? '[First Draft] ' : ''}เก็บไฟล์ ${f?.file_name || ''} ไว้ที่ "ที่เก็บไฟล์รายงานภาษี" แล้ว` });
       onClose(); // MARKER_VATRECONCILE_CLOSE_AFTER_EXPORT_V11
     } catch (err) {
-      setExportMsg({ ok: false, text: err?.message || 'Export ไม่สำเร็จ' });
+      setExportMsg({ ok: false, text: err?.message || 'Save ไม่สำเร็จ' });
     } finally { setExporting(false); }
   };
-  const th = (extra) => ({
+  const tdBase = { padding: '6px 8px', borderBottom: `1px solid ${RP_BORDER}`, borderRight: `1px solid ${RP_BORDER}`, textAlign: 'right' };
+  const cell = (v) => (v ? rpFmt(v) : <span style={{ color: '#9aa4b2' }}>-</span>);
+  const th = (extra) => ({ // MARKER_VATRECONCILE_REVERT_EXCEL_LOOK_V21 -- หน้า Reconcile กลับเป็นตารางทำงาน (หน้าตาแบบชีต Excel ย้ายไปอยู่ที่ Preview ไฟล์ Export เท่านั้น)
     background: RP_HEAD_GRAD, padding: '6px 8px', borderBottom: `1px solid ${RP_BORDER}`, borderRight: `1px solid ${RP_BORDER}`,
     fontWeight: 700, textAlign: 'center', whiteSpace: 'nowrap', position: 'sticky', zIndex: 2, color: '#334155', ...extra,
   });
-  const tdBase = { padding: '6px 8px', borderBottom: `1px solid ${RP_BORDER}`, borderRight: `1px solid ${RP_BORDER}`, textAlign: 'right' };
-  const cell = (v) => (v ? rpFmt(v) : <span style={{ color: '#9aa4b2' }}>-</span>);
-  const pill = (ok, text) => (
-    <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 11.5, fontWeight: 700, background: ok ? '#dcfce7' : '#ffe5e5', color: ok ? '#1a7f37' : '#cf222e' }}>{text}</span>
-  );
   const nPairs = data ? data.pairLabels.length : 0;
   const shownRows = data ? data.rows.filter((r) => {
     if (onlyDiff && r.status === 'ตรงกัน') return false;
+    if (onlyMissing && !r.branchMissing) return false;
+    if (onlyIssue && !((r.overCount || 0) > 0 || ((r.futureCount || 0) > 0 && r.status !== 'ตรงกัน'))) return false; // MARKER_VATRECONCILE_FUTURE_ONLY_IF_DIFF_V1 -- Future Date ที่ไม่มี Diff (บันทึกตรง มียอดใน TB) ยอมรับได้ ไม่นับเป็น Issue
     const q = branchQ.trim().toLowerCase();
     return !q || String(r.branch).toLowerCase().includes(q) || String(r.name || '').toLowerCase().includes(q);
   }) : [];
-  const cover = data?.cover;
-  const cards = data ? [
-    ['Per TB', rpFmt(cover.perTb)],
-    ['Per Detail', rpFmt(cover.perDetail)],
-    ['Diff', rpFmt(cover.diff)],
-    ...(cover.finCredit != null ? [['FinCredit 46250', rpFmt(cover.finCredit)], ['Diff (หลัง FinCredit)', rpFmt(cover.coverDiff)]] : []),
-    ['สาขาที่มียอด', `${data.branchCount.withData} / ${data.branchCount.total}`],
-  ] : [];
+  const notBalanceCount = data ? data.rows.filter((r) => r.status !== 'ตรงกัน').length : 0;
+  const issueCount = data ? data.rows.filter((r) => (r.overCount || 0) > 0 || ((r.futureCount || 0) > 0 && r.status !== 'ตรงกัน')).length : 0;
+  const okBranchSet = data ? new Set(data.rows.filter((r) => r.status === 'ตรงกัน').map((r) => String(r.branch))) : new Set();
+  const futureBranchSet = data ? new Set(data.rows.flatMap((r) => r.futureCauseIds || [])) : null; // ใช้เป็น Set ของ id แถวที่เป็นสาเหตุ Diff // MARKER_VATRECONCILE_FUTURE_CAUSE_V1 -- สาขาที่ Future Date เป็นสาเหตุของ Diff
   const missingBranches = data ? data.rows.filter((r) => r.branchMissing).map((r) => r.branch) : []; // MARKER_VATRECONCILE_BRANCH_MISSING_FRONT_V10
   const hasDiff = data ? (data.checkDiff.applicable ? data.checkDiff.unbalance > 0 : Math.abs(data.totals.diff) > 1) || data.rows.some((r) => r.status !== 'ตรงกัน') : false;
+  const saveBlocked = !!data && hasDiff; // MARKER_VATRECONCILE_SAVE_ONLY_BALANCE_V1 -- Save ได้เมื่อ Balance เท่านั้น (เกณฑ์เดียวกับป้าย Check Diff / Approve Balance)
+  const expiredTotal = data ? data.rows.reduce((n, r) => n + (r.expiredCount || 0), 0) : 0;
+  const expiredGate = expiredTotal > 0 && !expiredAck; // ยังมี Expired ที่ยังไม่ตรวจสอบ -> Save ไม่ได้เลย
+  useEffect(() => { setExpiredAck(false); }, [expiredTotal]); // แก้จนไม่เหลือ / จำนวนเปลี่ยน -> เริ่มใหม่
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15, 23, 42, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: expanded ? 4 : 16 }} onClick={onClose}>
+      {branchForm && ( // MARKER_VATRECONCILE_BRANCHFORM_V1 -- ฟอร์มสาขา (New/Edit) เปิดจากไอคอนสาขาในแถว -- Save แล้วผูก + โหลดรายงานใหม่ทันที
+        <div onClick={(e) => e.stopPropagation()}>
+          <BranchFormModal
+            show
+            initialForm={{ 'Branch Code': branchForm.branch, bu: state.bu }}
+            onClose={() => setBranchForm(null)}
+            onSaved={async (saved) => { await reloadAfterBranchChange(saved && saved['Branch Code']); setBranchForm(null); }}
+          />
+        </div>
+      )}
       <div style={{ background: '#fff', borderRadius: 12, width: expanded ? '99vw' : 'min(1500px, 96vw)', height: expanded ? '98vh' : undefined, maxHeight: expanded ? '98vh' : '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', position: 'relative', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 18px', borderBottom: `1px solid ${RP_BORDER}`, flexShrink: 0 }}>
           <p style={{ fontSize: 15, fontWeight: 700, color: '#334155', margin: 0 }}>
-            Preview · Input Reconcile · {bu} · {account} · {periodLabel}
+            {/* MARKER_VATRECONCILE_BACK_IN_TITLE_V1 -- ปุ่ม "‹ กลับ Reconcile" ย้ายมาแทนคำว่า Reconcile ที่หัวหน้าต่าง (เฉพาะตอนอยู่หน้า Detail/Simple) */}
+            {!loading && !error && data && (view === 'input' || view === 'simple' || view === 'tb')
+              ? <button type="button" onClick={() => goView('reconcile', '')} title="กลับหน้า Reconcile" style={{ padding: '3px 12px', fontSize: 14, fontWeight: 700, borderRadius: 6, cursor: 'pointer', border: `1px solid ${RP_BORDER}`, background: '#fff', color: '#0969da' }}>‹ กลับ Reconcile</button>
+              : 'Reconcile'}
+            {' · '}{bu} · {account} · {periodLabel}
             {data && <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 500, color: '#57606a' }}>({RP_TEMPLATE_LABEL[data.template]})</span>}
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* MARKER_VATRECONCILE_HEADER_SOURCE_TABS_V1 -- แท็บ Detail | Simple | TB ที่หัว Popup (เฉพาะตอนเลือกสาขา) -- สาขาไหนไม่มีข้อมูลฝั่งไหน Disable แท็บนั้น */}
+            {!loading && !error && data && selBranch && (view === 'input' || view === 'simple' || view === 'tb') && (() => {
+              const br = data.rows.find((x) => String(x.branch) === String(selBranch));
+              const nz = (p) => !!p && (Math.abs(Number(p[0]) || 0) > 0.004 || Math.abs(Number(p[1]) || 0) > 0.004);
+              const hasDetail = !!br && nz(br.pairs && br.pairs[0]);
+              const hasSimple = !!simpleType && !!br && (data.template === 'pct' ? !!(br.hasSimpleAvg || br.hasSimple100) : ((br.pairs || []).slice(1, data.template === 'avg' ? 3 : 2).some(nz)));
+              const hasTb = !!br && Math.abs(Number(br.tb) || 0) > 0.004;
+              const tabs = [
+                { v: 'input', label: 'Detail', on: hasDetail, tip: 'ไม่มีข้อมูล Detail (Input Summary) ของสาขานี้' },
+                ...(data.template === 'pct'
+                  ? [
+                      { v: 'simple', st: 'simple_avg', label: 'Simple AVG', on: !!(br && br.hasSimpleAvg), always: true, tip: 'ไม่มีข้อมูล Simple AVG ของสาขานี้' },
+                      { v: 'simple', st: 'simple_100', label: 'Simple 100', on: !!(br && br.hasSimple100), always: true, tip: 'ไม่มีข้อมูล Simple 100 ของสาขานี้' },
+                    ]
+                  : (simpleType ? [{ v: 'simple', label: 'Simple', on: hasSimple, tip: 'ไม่มีข้อมูล Simple Report ของสาขานี้' }] : [])),
+                { v: 'tb', label: 'TB', on: hasTb, tip: 'ไม่มียอด TB ของสาขานี้' },
+              ];
+              return (
+                <span style={{ display: 'inline-flex', marginRight: 4, border: `1px solid ${RP_BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
+                  {tabs.map((t, ti) => {
+                    const active = view === t.v && (!t.st || t.st === simpleType);
+                    return (
+                      <button key={t.st || t.v} type="button" disabled={!t.on && !active && !t.always} title={t.on || active || t.always ? `ดู ${t.label} ของสาขา ${selBranch}` : t.tip}
+                        onClick={() => { if (!active) { if (t.st) setSimpleSel(t.st); goView(t.v, selBranch, false, t.st); } }}
+                        style={{ padding: '4px 14px', fontSize: 12.5, fontWeight: 700, border: 'none', borderLeft: ti ? `1px solid ${RP_BORDER}` : 'none', cursor: active ? 'default' : (t.on || t.always ? 'pointer' : 'not-allowed'), background: active ? '#0969da' : (t.on ? '#fff' : '#f3f4f6'), color: active ? '#fff' : (t.on ? '#0969da' : '#b6bcc4') }}>
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </span>
+              );
+            })()}
             <button type="button" aria-label={expanded ? 'ย่อ' : 'ขยาย'} title={expanded ? 'ย่อ' : 'ขยายเต็มจอ'} onClick={() => setExpanded((v) => !v)} style={{ background: 'none', border: `1px solid ${RP_BORDER}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, padding: '3px 10px', color: '#334155' }}>{expanded ? '⤡ ย่อ' : '⤢ ขยาย'}</button>
             <button type="button" aria-label="ปิด" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#666' }}>✕</button>
           </div>
         </div>
 
-        {/* MARKER_VATRECONCILE_NO_TABBAR_BACK_BTN_V4 -- ไม่มีแถบแท็บ: เข้า Detail ผ่านไอคอนในหน้า Cover เท่านั้น / มีปุ่มกลับ */}
-        {!loading && !error && data && (view === 'input' || view === 'simple') && (
+        {/* MARKER_VATRECONCILE_NO_TABBAR_BACK_BTN_V4 -- ปุ่มกลับย้ายไปหัวหน้าต่างแล้ว (MARKER_VATRECONCILE_BACK_IN_TITLE_V1) เหลือแถบบอกสาขาที่เลือก */}
+        {!loading && !error && data && (view === 'input' || view === 'simple' || view === 'tb') && selBranch && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px 0', flexShrink: 0, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => goView('reconcile', '')}
-              style={{ padding: '5px 14px', fontSize: 12.5, fontWeight: 700, borderRadius: 6, cursor: 'pointer', border: `1px solid ${RP_BORDER}`, background: '#fff', color: '#24292f' }}>
-              ‹ กลับ Reconcile
-            </button>
-            {simpleType && [['input', 'Input Summary'], ['simple', simpleType === 'simple_avg' ? 'Simple AVG' : 'Simple 100%']].map(([k, label]) => (
-              <button key={k} type="button" onClick={() => goView(k)}
-                style={{ padding: '5px 14px', fontSize: 12.5, fontWeight: 700, borderRadius: 6, cursor: 'pointer', border: `1px solid ${RP_BORDER}`, background: view === k ? '#24292f' : '#fff', color: view === k ? '#fff' : '#24292f' }}>
-                {label}
-              </button>
-            ))}
-            {view !== 'reconcile' && selBranch && (
-              <span style={{ marginLeft: 8, fontSize: 12.5, color: '#334155' }}>
-                สาขา <b>{selBranch}</b>
-                <button type="button" onClick={() => goView(view, '', true)} style={{ marginLeft: 8, fontSize: 12, cursor: 'pointer', border: `1px solid ${RP_BORDER}`, borderRadius: 6, background: '#fff', padding: '2px 8px' }}>ดูทุกสาขา</button>
-              </span>
-            )}
+            <span style={{ fontSize: 12.5, color: '#334155' }}>
+              สาขา <b>{selBranch}</b>
+              <button type="button" onClick={() => goView(view, '', true)} style={{ marginLeft: 8, fontSize: 12, cursor: 'pointer', border: `1px solid ${RP_BORDER}`, borderRadius: 6, background: '#fff', padding: '2px 8px' }}>ดูทุกสาขา</button>
+            </span>
           </div>
         )}
 
@@ -1309,7 +1680,7 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
                   {view === 'simple' && curTab.data.groups && curTab.data.groups.length > 0 ? (
                     <SimpleOriginalView data={curTab.data} bu={bu} onEdited={onSourceEdited} flat simpleType={simpleType} />
                   ) : (
-                    <ReportPreviewTable key={`${view}|${selBranch}`} data={curTab.data} initialBranch={view === 'input' ? selBranch : ''} onEdited={onSourceEdited} />
+                    <ReportPreviewTable key={`${view}|${selBranch}`} okBranches={okBranchSet} futureBranches={futureBranchSet} data={curTab.data} initialBranch={view === 'input' ? selBranch : ''} onEdited={onSourceEdited} samplingOpen={samplingOpen} sampleHost={sampleHost} onSamplingClose={() => setSamplingOpen(false)} />
                   )}
                 </div>
               )}
@@ -1399,47 +1770,48 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
                 <div style={{ fontSize: 13, color: '#57606a' }}>ประจำเดือน {data.header.periodLabel}</div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '14px 0 10px', flexWrap: 'wrap', gap: 8 }}>
-                <span style={{ fontWeight: 700, fontSize: 14, color: '#24292f' }}>Account {data.account}{data.accountName ? ` · ${data.accountName}` : ''}</span>
-                {data.checkDiff.applicable
-                  ? <span>{pill(data.checkDiff.unbalance === 0, `Check Diff: ${data.checkDiff.text}${data.checkDiff.unbalance ? ` (${data.checkDiff.unbalance} รายการ)` : ''}`)}</span>
-                  : <span>{pill(!hasDiff, hasDiff ? 'Found Diff' : 'Approve Balance')}</span>}
-              </div>
+              {/* MARKER_VATRECONCILE_NO_ACCOUNT_LINE_V1 -- เอาบรรทัด Account + ป้าย Check Diff ออกตามที่แจ้ง (เลข Account อยู่ที่หัวหน้าต่างแล้ว / ถ้าไม่ Balance ปุ่ม Save ล็อกและมีข้อความแดงบอก) */}
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 12 }}>
-                {cards.map(([k, v]) => (
-                  <div key={k} style={{ border: `1px solid ${RP_BORDER}`, borderRadius: 10, padding: '8px 12px' }}>
-                    <div style={{ fontSize: 11, color: '#57606a' }}>{k}</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: (k === 'Diff' || k.startsWith('Diff (')) && Number(String(v).replace(/,/g, '')) !== 0 ? '#cf222e' : '#24292f' }}>{v}</div>
-                  </div>
-                ))}
-              </div>
-
+              {/* MARKER_VATRECONCILE_NO_SUMMARY_CARDS_V1 -- เอาการ์ดสรุป (Per TB / Per Detail / Diff / FinCredit / สาขาที่มียอด) ออกตามที่แจ้ง -- ตัวเลขเหล่านี้ยังมีใน Total ของตาราง และหน้า Preview */}
               {data.overCount > 0 && (
                 <div style={{ margin: '0 0 10px', padding: '8px 12px', borderRadius: 8, background: '#ffe5e5', color: '#cf222e', fontSize: 12.5, fontWeight: 600 }}>
                   ⚠ Over Period {data.overCount} รายการ ใน {data.rows.filter((r) => r.overCount > 0).length} สาขา (Tax Invoice Date เป็นเดือนหลังเดือน {data.header.periodLabel}) — กดแถวสาขาเพื่อดู Detail
                 </div>
               )}
-              {data.futureCount > 0 && (
-                <div style={{ margin: '0 0 10px', padding: '8px 12px', borderRadius: 8, background: '#fff3cd', color: '#856404', fontSize: 12.5, fontWeight: 600 }}>
-                  ⚠ พบ Future Date {data.futureCount} รายการ ใน {data.rows.filter((r) => r.futureCount > 0).length} สาขา (Receive Date น้อยกว่า Tax Invoice Date) — กดไอคอน Detail ในช่อง NOTE/STATUS ของสาขาเพื่อดูรายการ
-                </div>
-              )}
+              {/* MARKER_VATRECONCILE_NO_FUTURE_BANNER_V1 -- เอาแถบเตือน Future Date ออก (ยังมีไอคอน/Tooltip รายสาขาใน Note/Status) */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
                 <input
                   type="text" value={branchQ} onChange={(e) => setBranchQ(e.target.value)} placeholder="ค้นหารหัส/ชื่อสาขา"
                   style={{ padding: '5px 10px', border: `1px solid ${RP_BORDER}`, borderRadius: 6, fontSize: 12.5, width: 220 }}
                 />
-                <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', color: '#334155' }}>
-                  <input type="checkbox" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} /> เฉพาะสาขา Not Balance
-                </label>
+                {(() => {
+                  const chip = (color, bg, bd, on) => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, border: `1px solid ${bd}`, background: bg, color, fontWeight: 600, fontSize: 12.5, cursor: 'pointer', boxShadow: on ? '0 0 0 2px #0969da inset' : 'none' });
+                  const badge = (bg) => ({ minWidth: 20, textAlign: 'center', padding: '1px 6px', borderRadius: 999, background: bg, color: '#fff', fontSize: 11.5 });
+                  return (
+                    <>
+                      {missingBranches.length > 0 && ( // MARKER_VATRECONCILE_MISSING_BRANCH_CHIP_V1 -- มีสาขาที่ยังไม่ผูก Branch -> ห้ามขึ้น Balance ทุกสาขา (ขึ้น Error แทนจนกว่าจะผูก)
+                        <span role="button" tabIndex={0} title={`ยังไม่ผูกสาขาใน Branch List: ${missingBranches.join(', ')} — กดเพื่อกรองเฉพาะสาขาที่ไม่พบ (กดซ้ำเพื่อยกเลิก)`} onClick={() => setOnlyMissing((v) => !v)} style={chip('#cf222e', '#fff5f5', '#f5b5ae', onlyMissing)}>
+                          ❗ ไม่พบสาขา <span style={badge('#cf222e')}>{missingBranches.length}</span> สาขา — ยังไม่ผูก Branch
+                        </span>
+                      )}
+                      {notBalanceCount > 0 ? (
+                        <span role="button" tabIndex={0} title="กดเพื่อกรองเฉพาะสาขา Not Balance (กดซ้ำเพื่อยกเลิก)" onClick={() => setOnlyDiff((v) => !v)} style={chip('#cf222e', '#fff5f5', '#ffb8bc', onlyDiff)}>
+                          ⚠ Not Balance <span style={badge('#cf222e')}>{notBalanceCount}</span> สาขา
+                        </span>
+                      ) : (
+                        missingBranches.length > 0 ? null : <span style={{ ...chip('#1a7f37', '#f0fbf3', '#a7dfb8', false), cursor: 'default' }}>✔ Balance ทุกสาขา</span>
+                      )}
+                      {issueCount > 0 ? (
+                        <span role="button" tabIndex={0} title="Over Period / Future Date — กดเพื่อกรองเฉพาะสาขาที่มี Issue (กดซ้ำเพื่อยกเลิก)" onClick={() => setOnlyIssue((v) => !v)} style={chip('#9a6700', '#fffbea', '#f0d58a', onlyIssue)}>
+                          🚩 Issue <span style={badge('#bf8700')}>{issueCount}</span> สาขา
+                        </span>
+                      ) : (
+                        <span style={{ ...chip('#1a7f37', '#f0fbf3', '#a7dfb8', false), cursor: 'default' }}>✔ ไม่มี Issue</span>
+                      )}
+                    </>
+                  );
+                })()}
                 <span style={{ color: '#57606a' }}>แสดง {shownRows.length} / {data.rows.length} สาขา (Total คิดจากทุกสาขา)</span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', color: '#334155' }} title={data.header.preparedByEditable ? 'Prepare by ของ BU นี้ (ออกในไฟล์ Export ช่อง ผู้จัดทำ) -- แก้แล้วบันทึกลง DB' : 'ไม่พบคอลัมน์ Prepare by ใน company_list / vat_setting ของ BU นี้ -- Export จะใช้ชื่อผู้ Export แทน'}>
-                  Prepare by
-                  <input key={prepVal != null ? prepVal : (data.header.preparedBy || '')} type="text" defaultValue={prepVal != null ? prepVal : (data.header.preparedBy || '')} disabled={!data.header.preparedByEditable}
-                    onBlur={(e) => savePrep(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                    style={{ padding: '4px 8px', border: `1px solid ${RP_BORDER}`, borderRadius: 6, fontSize: 12.5, width: 200, background: data.header.preparedByEditable ? '#fff' : '#f6f8fa' }} />
-                </label>
               </div>
               <div style={{ border: `1px solid ${RP_BORDER}`, borderRadius: 8, overflow: 'auto', maxHeight: expanded ? 'none' : '46vh', flex: expanded ? '1 1 0' : '0 0 auto', minHeight: expanded ? 200 : 0 }}>
                 <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: 12.5, fontVariantNumeric: 'tabular-nums', minWidth: 1250 }}>
@@ -1447,11 +1819,10 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
                     <tr>
                       <th rowSpan={2} style={th({ top: 0 })}>รหัสสาขา</th>
                       <th rowSpan={2} style={th({ top: 0 })}>สาขา</th>
-                      <th rowSpan={2} style={th({ top: 0 })}>สถานะสาขา</th>
                       {data.pairLabels.map((p) => <th key={p} colSpan={2} style={th({ top: 0 })}>{p}</th>)}
                       <th style={th({ top: 0 })}>ภาษีตาม T/B</th>
                       <th rowSpan={2} style={th({ top: 0 })}>ผลต่าง</th>
-                      <th rowSpan={2} style={th({ top: 0 })}>NOTE/STATUS</th>
+                      <th rowSpan={2} style={th({ top: 0 })}>Tools</th>
                     </tr>
                     <tr>
                       {data.pairLabels.map((p) => (
@@ -1465,24 +1836,20 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
                   </thead>
                   <tbody>
                     {shownRows.length === 0 && (
-                      <tr><td colSpan={3 + nPairs * 2 + 3} style={{ ...tdBase, textAlign: 'center', color: '#999', padding: '24px 4px' }}>ไม่พบข้อมูลของ BU / Account / Period นี้</td></tr>
+                      <tr><td colSpan={2 + nPairs * 2 + 3} style={{ ...tdBase, textAlign: 'center', color: '#999', padding: '24px 4px' }}>ไม่พบข้อมูลของ BU / Account / Period นี้</td></tr>
                     )}
                     {shownRows.map((r) => {
                       const ok = r.status === 'ตรงกัน';
-                      const hasFuture = (r.futureCount || 0) > 0; // MARKER_VATRECONCILE_DRILLDOWN_V1
+                      const hasFuture = (r.futureCount || 0) > 0 && !ok; // MARKER_VATRECONCILE_DRILLDOWN_V1 | MARKER_VATRECONCILE_FUTURE_ONLY_IF_DIFF_V1 -- Future Date + ไม่มี Diff = ยอมรับได้ ไม่แจ้งเตือน
                       const hasOver = (r.overCount || 0) > 0;
-                      const attn = !ok || hasFuture || hasOver; // สาขาที่ตรงและไม่มี Future Date / Over Period ไม่ต้องกดดู Detail
+                      const attn = !ok || hasFuture || hasOver || (r.expiredCount || 0) > 0; // สาขาที่ตรงและไม่มี Future Date / Over Period ไม่ต้องกดดู Detail
                       return (
                         <tr key={r.branch} style={r.branchMissing ? { background: '#ffd6d6' } : undefined} title={r.branchMissing ? 'ไม่พบสาขานี้ในรายการสาขา (Branch) — ไม่อนุญาตให้ Export' : undefined}>
-                          <td style={{ ...tdBase, textAlign: 'left' }}>{r.branch}</td>
-                          <td style={{ ...tdBase, textAlign: 'left', minWidth: 220 }}>{r.name}</td>
-                          <td style={{ ...tdBase, textAlign: 'center', whiteSpace: 'nowrap' }} title={r.inactiveDate ? `Inactive Date: ${r.inactiveDate}` : ''}>
-                            {r.branchStatus ? (
-                              <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 11.5, fontWeight: 700, ...(RP_BRANCH_STATUS[r.branchStatus] || { background: '#f1efe8', color: '#444441' }) }}>
-                                {r.branchStatus}{r.branchStatus === 'Closed' && r.inactiveDate ? ` · ${r.inactiveDate}` : ''}
-                              </span>
-                            ) : <span style={{ color: '#9aa4b2' }}>-</span>}
+                          <td style={{ ...tdBase, textAlign: 'left', whiteSpace: 'nowrap' }} title={r.branchStatus ? `${r.branchStatus}${r.inactiveDate ? ` · Inactive Date: ${r.inactiveDate}` : ''}` : 'ไม่ทราบสถานะสาขา'}>
+                            <span aria-label={r.branchStatus || 'ไม่ทราบสถานะ'} style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', marginRight: 7, background: RP_BRANCH_DOT[r.branchStatus] || '#b6bcc4', verticalAlign: 'middle' }} />
+                            {r.branch}
                           </td>
+                          <td style={{ ...tdBase, textAlign: 'left', minWidth: 220 }}>{r.name}</td>
                           {r.pairs.map((p, i) => (
                             <React.Fragment key={i}>
                               <td style={tdBase}>{cell(p[0])}</td>
@@ -1492,31 +1859,39 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
                           <td style={tdBase}>{cell(r.tb)}</td>
                           <td style={{ ...tdBase, color: ok ? 'inherit' : '#cf222e', fontWeight: ok ? 400 : 700 }}>{rpFmt(r.diff)}</td>
                           <td style={{ ...tdBase, textAlign: 'center', whiteSpace: 'nowrap' }}>
-                            {/* MARKER_VATRECONCILE_SINGLE_NOTICE_ICON_V9 -- ไอคอนเดียว: Detail (ปกติ) / Notice (มีปัญหา) */}
+                            {/* MARKER_VATRECONCILE_TOOLS_COLUMN_FRONT_V22 -- Tools 1 แถว (Branch ใช้งานเฉพาะสาขาที่ไม่พบในรายการสาขา): Detail | Branch | Cross check | Notice */}
                             {(() => {
                               const issues = [
-                                r.branchMissing && 'ไม่พบสาขานี้ในรายการสาขา (Branch) — ไม่อนุญาตให้ Export', // MARKER_VATRECONCILE_BRANCH_MISSING_FRONT_V10
+                                r.branchMissing && 'ไม่พบสาขานี้ในรายการสาขา (Branch) — ไม่อนุญาตให้ Export',
                                 !ok && `Error: Not Balance (ผลต่าง ${rpFmt(r.diff)})`,
                                 hasOver && `Over Period ${r.overCount} รายการ (เดือนของ Tax Invoice Date เกินเดือน Period)`,
+                                (r.expiredCount || 0) > 0 && `Expired ${r.expiredCount} รายการ (Tax Invoice Date เกิน Aging 6 เดือนจาก Period)`, // MARKER_VATRECONCILE_EXPIRED_V1
                                 hasFuture && `Future Date ${r.futureCount} รายการ (Receive Date น้อยกว่า Tax Invoice Date)`,
                               ].filter(Boolean);
                               const has = issues.length > 0;
                               const severe = !ok || hasOver || r.branchMissing;
-                              const col = !has ? '#0969da' : severe ? '#cf222e' : '#856404';
-                              return (
-                                <button type="button" aria-label={has ? 'มี Notice ดู Detail' : 'ดู Detail'}
-                                  title={has ? issues.join('\n') + '\n(กดเพื่อดู Detail)' : 'ดู Detail (Input Summary) ของสาขานี้'}
-                                  onClick={() => goView('input', r.branch)}
-                                  style={{ position: 'relative', verticalAlign: 'middle', width: 24, height: 24, padding: 0, borderRadius: 6, cursor: 'pointer', border: `1px solid ${!has ? '#0969da' : severe ? '#f1a9a9' : '#e8d48a'}`, background: !has ? '#fff' : severe ? '#ffe5e5' : '#fff3cd', color: col, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                                  {has ? (
-                                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2 14.5 13.5h-13z" /><path d="M8 6.5v3.2M8 11.6v.1" /></svg>
-                                  ) : (
-                                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="1.5" width="11" height="13" rx="1.5" /><path d="M5 5.5h6M5 8h6M5 10.5h4" /></svg>
-                                  )}
-                                  {issues.length > 1 && (
-                                    <span style={{ position: 'absolute', top: -6, right: -6, minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7, background: '#cf222e', color: '#fff', fontSize: 10, fontWeight: 700, lineHeight: '14px', textAlign: 'center' }}>{issues.length}</span>
+                              const svgP = { width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true };
+                              const tool = (key, enabled, title, onClick, color, bg, bd, icon, badge) => (
+                                <button key={key} type="button" aria-label={title} title={title} disabled={!enabled}
+                                  onClick={enabled && onClick ? onClick : undefined}
+                                  style={{ position: 'relative', width: 26, height: 26, padding: 0, borderRadius: 6, cursor: enabled ? 'pointer' : 'not-allowed', border: `1px solid ${enabled ? bd : '#d0d7de'}`, background: enabled ? bg : '#f3f4f6', color: enabled ? color : '#b6bcc4', opacity: enabled ? 1 : 0.6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  {icon}
+                                  {enabled && badge > 1 && (
+                                    <span style={{ position: 'absolute', top: -6, right: -6, minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7, background: '#cf222e', color: '#fff', fontSize: 10, fontWeight: 700, lineHeight: '14px', textAlign: 'center' }}>{badge}</span>
                                   )}
                                 </button>
+                              );
+                              return (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 26px)', gap: 4, justifyContent: 'center', padding: '2px 0' }} /* MARKER_VATRECONCILE_TOOLS_ONE_LINE_V1 */>
+                                  {tool('detail', true, 'Detail (Input Summary) ของสาขานี้', () => goView('input', r.branch), '#0969da', '#fff', '#0969da',
+                                    <svg {...svgP}><rect x="2.5" y="1.5" width="11" height="13" rx="1.5" /><path d="M5 5.5h6M5 8h6M5 10.5h4" /></svg>)}
+                                  {tool('branch', true, r.branchMissing ? 'ไม่พบสาขานี้ในรายการสาขา (Branch) — กดเพื่อเพิ่มสาขา' : 'สาขานี้ผูก Branch แล้ว — กดเพื่อแก้ไขสาขา', () => setBranchForm({ branch: r.branch }), r.branchMissing ? '#cf222e' : '#1a7f37', r.branchMissing ? '#ffe5e5' : '#f0fbf3', r.branchMissing ? '#cf222e' : '#1a7f37', // MARKER_VATRECONCILE_BRANCH_ICON_RED_V1 -- ไม่มีสาขา = แดง / ผูกแล้ว = เขียว (เปิดใช้ได้เพื่อแก้ไข)
+                                    <svg {...svgP}><path d="M2.5 14.5h11M4 14.5V3h5.5v11.5M9.5 7H12v7.5" /><path d="M6 5.5h1.5M6 8h1.5M6 10.5h1.5" /></svg>)}
+                                  {tool('cross', !ok, !ok ? `Cross check (ผลต่าง ${rpFmt(r.diff)}) — ยังไม่เปิดใช้งาน` : 'Cross check: ไม่มีผลต่าง', null, '#0969da', '#fff', '#0969da',
+                                    <svg {...svgP}><path d="M2.5 5.5h10l-2.5-2.5M13.5 10.5h-10l2.5 2.5" /></svg>)}
+                                  {tool('notice', has, has ? issues.join('\n') + '\n(กดเพื่อดู Detail)' : 'Notice: ไม่มีรายการที่ต้องแจ้ง', () => goView('input', r.branch), severe ? '#cf222e' : '#856404', severe ? '#ffe5e5' : '#fff3cd', severe ? '#f1a9a9' : '#e8d48a',
+                                    <svg {...svgP}><path d="M8 2 14.5 13.5h-13z" /><path d="M8 6.5v3.2M8 11.6v.1" /></svg>, issues.length)}
+                                </div>
                               );
                             })()}
                           </td>
@@ -1524,7 +1899,7 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
                       );
                     })}
                     <tr>
-                      <td colSpan={3} style={{ ...tdBase, textAlign: 'left', fontWeight: 800, background: RP_HEAD_GRAD, position: 'sticky', bottom: 0, borderTop: `2px solid ${RP_BORDER}` }}>Total</td>
+                      <td colSpan={2} style={{ ...tdBase, textAlign: 'left', fontWeight: 800, background: RP_HEAD_GRAD, position: 'sticky', bottom: 0, borderTop: `2px solid ${RP_BORDER}` }}>Total</td>
                       {data.totals.pairs.map((p, i) => (
                         <React.Fragment key={i}>
                           <td style={{ ...tdBase, fontWeight: 800, background: RP_HEAD_GRAD, position: 'sticky', bottom: 0, borderTop: `2px solid ${RP_BORDER}` }}>{rpFmt(p[0])}</td>
@@ -1547,34 +1922,27 @@ function ReconcileReportPopup({ state, periodLabel, onClose, onExport }) {
           )}
         </div>
 
-        {/* MARKER_VATRECONCILE_SHEET_TABS_FRONT_V13 -- แถบชีตแบบ Excel (ล่าง) */}
+        {/* MARKER_VATRECONCILE_SHEET_TABS_REMOVED_V1 -- เอาปุ่มชีต (ReportVat / Detail / Simple) ออกจาก Reconcile Panel แต่คงแถบล่างไว้เป็นที่ว่างสำหรับใช้งานอื่น -- เข้า Detail/Simple ผ่านไอคอน Tools และมีปุ่ม "กลับ Reconcile" ด้านบน */}
         {!loading && !error && data && (
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, padding: '0 14px', background: '#f3f3f3', borderTop: `1px solid ${RP_BORDER}`, flexShrink: 0, overflowX: 'auto' }}>
-            {[
-              ['cover', 'Cover'],
-              ['reconcile', data.sheet || 'ReportVat_VGR'],
-              ['input', data.template === 'avg' ? 'A-Detail' : 'Detail'],
-              ['tb', 'TB'],
-              ...(data.template === 'avg' ? [] : [['pivot', 'Pivot']]),
-              ...(simpleType ? [['simple', simpleType === 'simple_avg' ? 'Simple AVG' : 'Simple Excel BU']] : []),
-            ].map(([k, label]) => {
-              const on = view === k;
-              return (
-                <button key={k} type="button" onClick={() => goView(k, k === 'input' ? selBranch : undefined, k === 'input' && data.rows.length <= 30)}
-                  style={{ padding: '6px 16px', fontSize: 12.5, fontWeight: on ? 700 : 500, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none', borderTop: on ? '2px solid #1a7f37' : '2px solid transparent', background: on ? '#fff' : 'transparent', color: on ? '#1a7f37' : '#475569' }}>
-                  {label}
-                </button>
-              );
-            })}
+          <div style={{ minHeight: 34, padding: '4px 14px', background: '#f3f3f3', borderTop: `1px solid ${RP_BORDER}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            {view === 'input' && (
+              <button type="button" onClick={() => setSamplingOpen((v) => !v)} title="หาชุดรายการที่รวมกันได้ยอดที่ต้องการ" style={{ padding: '4px 14px', fontSize: 12.5, fontWeight: 700, borderRadius: 6, cursor: 'pointer', border: `1px solid ${samplingOpen ? '#1a7f37' : RP_BORDER}`, background: samplingOpen ? '#1a7f37' : '#fff', color: samplingOpen ? '#fff' : '#24292f' }}>Sampling</button>
+            )}
           </div>
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, padding: '10px 18px', borderTop: `1px solid ${RP_BORDER}`, flexShrink: 0 }}>
-          {missingBranches.length > 0 && !exportMsg && <span style={{ fontSize: 12.5, marginRight: 'auto', color: '#cf222e', fontWeight: 600 }}>ไม่อนุญาตให้ Export: ไม่พบสาขา {missingBranches.slice(0, 5).join(', ')}{missingBranches.length > 5 ? ` และอีก ${missingBranches.length - 5} สาขา` : ''} ในรายการสาขา (Branch) — แถวไฮไลต์แดง</span>}
+          {missingBranches.length > 0 && !exportMsg && <span style={{ fontSize: 12.5, marginRight: 'auto', color: '#cf222e', fontWeight: 600 }}>ไม่อนุญาตให้ Save: ไม่พบสาขา {missingBranches.slice(0, 5).join(', ')}{missingBranches.length > 5 ? ` และอีก ${missingBranches.length - 5} สาขา` : ''} ในรายการสาขา (Branch) — แถวไฮไลต์แดง</span>}
+          {/* MARKER_VATRECONCILE_NO_SAVE_BLOCK_MSG_V1 -- ไม่แสดงข้อความเหตุผลที่ Save ไม่ได้ (ปุ่ม Save ยัง Disable ตาม Balance) */}
           {exportMsg && <span style={{ fontSize: 12.5, marginRight: 'auto', color: exportMsg.ok ? '#1a7f37' : '#cf222e' }}>{exportMsg.text}</span>}
-          <button type="button" onClick={doExport} disabled={exporting || loading || !!error || !data || data.rows.length === 0 || missingBranches.length > 0} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', background: '#1a7f37', color: '#fff', cursor: 'pointer', opacity: exporting || loading || !!error || !data || data.rows.length === 0 || missingBranches.length > 0 ? 0.5 : 1 }}>{exporting ? 'กำลัง Export...' : 'Export ไฟล์'}</button>
+          {expiredGate && <span style={{ fontSize: 12.5, marginRight: 'auto', color: '#9a6700', fontWeight: 600 }}>มี Expired {expiredTotal} รายการ (ไม่มี F ใน GRT_No) — ต้องตรวจสอบก่อน Save</span>}
+          {expiredGate && <button type="button" onClick={() => { setExpiredAck(true); logActivityTs('EXPIRED_REVIEWED', { bu: state.bu, account: state.account, period: state.period }); }} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: '1px solid #bf8700', background: '#fff8c5', color: '#7d4e00', cursor: 'pointer' }}>ตรวจสอบแล้ว</button>}
+          <button type="button" title="เก็บไฟล์เป็น Draft ใน Backend (ไม่ต้อง Balance) — ไม่ส่ง SharePoint / Confirm / Download ไม่ได้" onClick={() => doExport(true)} disabled={exporting || loading || !!error || !data || data.rows.length === 0 || missingBranches.length > 0} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: '1px solid #bf8700', background: '#fff8c5', color: '#7d4e00', cursor: 'pointer', opacity: exporting || loading || !!error || !data || data.rows.length === 0 || missingBranches.length > 0 ? 0.5 : 1 }}>First Draft</button>
+          <button type="button" onClick={() => doExport()} disabled={exporting || loading || !!error || !data || data.rows.length === 0 || missingBranches.length > 0 || saveBlocked || expiredGate} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', background: '#1a7f37', color: '#fff', cursor: 'pointer', opacity: exporting || loading || !!error || !data || data.rows.length === 0 || missingBranches.length > 0 || saveBlocked || expiredGate ? 0.5 : 1 }}>{exporting ? 'กำลัง Save...' : 'Save'}</button>
           <button type="button" onClick={onClose} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: `1px solid ${RP_BORDER}`, background: '#fff', color: '#24292f', cursor: 'pointer' }}>ปิด</button>
         </div>
+        {/* ที่วาง Popup Sampling (ซ้อนใน Popup Reconcile) */}
+        <div ref={setSampleHost} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5 }} />
       </div>
     </div>
   );
@@ -1619,8 +1987,31 @@ function FileSheetPreview({ file, onClose }) {
       span.set(`${r1}:${c1}`, [r2 - r1 + 1, c2 - c1 + 1]);
       for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) if (r !== r1 || c !== c1) covered.add(`${r}:${c}`);
     });
+    // MARKER_VATRECONCILE_PREVIEW_TEXT_OVERFLOW_V1 -- ข้อความยาวที่จัดชิดซ้ายและช่องขวาว่าง ให้ล้นไปช่องข้างเคียงเหมือน Excel (เช่น ผู้จัดทำ / ผู้อนุมัติ ท้ายรายงาน)
+    const vis = sh.cols.map((w, i) => ({ w, c: i + 1 })).filter((x) => !sh.hidden[x.c - 1]);
+    sh.rows.forEach((r) => {
+      vis.forEach((x, vi) => {
+        const key = `${r.r}:${x.c}`;
+        const c = cellMap.get(key);
+        if (!c || !c[1] || c[3] || span.has(key) || covered.has(key)) return;
+        const ta = ((d && d.styles[c[2]]) || '').match(/text-align:\s*(\w+)/);
+        if (ta && ta[1] !== 'left') return;
+        const need = String(c[1]).length * 7 + 10;
+        let acc = x.w; let n = 1;
+        for (let j = vi + 1; j < vis.length && acc < need; j++) {
+          const k2 = `${r.r}:${vis[j].c}`;
+          const c2 = cellMap.get(k2);
+          if ((c2 && c2[1]) || span.has(k2) || covered.has(k2)) break;
+          acc += vis[j].w; n++;
+        }
+        if (n > 1) {
+          span.set(key, [1, n]);
+          for (let j = vi + 1; j < vi + n; j++) covered.add(`${r.r}:${vis[j].c}`);
+        }
+      });
+    });
     return { cellMap, span, covered };
-  }, [sh]);
+  }, [sh, d]);
   const visCols = sh ? sh.cols.map((w, i) => ({ w, c: i + 1 })).filter((x) => !sh.hidden[x.c - 1]) : [];
   const gl = sh && sh.grid ? '1px solid #e1e1e1' : 'none';
   const hdrCell = { background: '#f3f3f3', border: '1px solid #d4d4d4', color: '#555', fontSize: 11, textAlign: 'center', padding: '1px 4px', position: 'sticky', zIndex: 2 };
@@ -1634,7 +2025,7 @@ function FileSheetPreview({ file, onClose }) {
             <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 500, color: '#57606a' }}>(ไฟล์ที่ Export จริง · อ่านอย่างเดียว)</span>
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button type="button" onClick={download} style={{ padding: '4px 12px', fontSize: 12, fontWeight: 700, borderRadius: 6, border: '1px solid #0969da', background: '#0969da', color: '#fff', cursor: 'pointer' }}>Download</button>
+            <button type="button" onClick={download} disabled={!file.confirmed_at} title={file.confirmed_at ? '' : 'ยังไม่ Confirm — Download ไม่ได้'} style={{ padding: '4px 12px', fontSize: 12, fontWeight: 700, borderRadius: 6, border: '1px solid #0969da', background: '#0969da', color: '#fff', cursor: file.confirmed_at ? 'pointer' : 'not-allowed', opacity: file.confirmed_at ? 1 : 0.35 }}>Download</button>
             <button type="button" aria-label="ปิด" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#666' }}>✕</button>
           </div>
         </div>
@@ -1642,7 +2033,7 @@ function FileSheetPreview({ file, onClose }) {
           {st.loading && <p style={{ fontSize: 13, color: '#666', padding: 18 }}>กำลังเปิดไฟล์...</p>}
           {st.error && <p style={{ fontSize: 13, color: '#a30d16', padding: 18 }}>{st.error}</p>}
           {sh && grid && (
-            <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', fontFamily: 'Calibri, Tahoma, sans-serif', fontSize: 13, color: '#000' }}>
+            <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: 38 + visCols.reduce((t, x) => t + x.w, 0), fontFamily: 'Calibri, Tahoma, sans-serif', fontSize: 13, color: '#000' }}>{/* MARKER_VATRECONCILE_PREVIEW_FIXED_WIDTH_V1 -- ต้องกำหนด width ของตาราง ไม่งั้น tableLayout:fixed ถูก Browser ตีเป็น Auto แล้วความกว้างคอลัมน์ตามความยาวข้อความ (เช่น A/K กว้างเพราะข้อความหัวกระดาษ/ลายเซ็น) */}
               <colgroup><col style={{ width: 38 }} />{visCols.map((x) => <col key={x.c} style={{ width: x.w }} />)}</colgroup>
               <thead>
                 <tr>
@@ -1814,10 +2205,10 @@ function SimpleOriginalView({ data, bu, onEdited, flat, simpleType }) {
     }
     setBusy(false);
   };
-  const cellEd = (gi, ri, r, col, shown, style) => {
+  const cellEd = (gi, ri, r, col, shown, style, colSpan) => {
     const on = edit && edit.gi === gi && edit.ri === ri && edit.col === col;
     return (
-      <td style={on ? { ...style, padding: 0 } : style} title={r.id ? 'ดับเบิลคลิกเพื่อแก้ไข' : undefined}
+      <td colSpan={colSpan} style={on ? { ...style, padding: 0 } : style} title={r.id ? 'ดับเบิลคลิกเพื่อแก้ไข' : undefined}
         onDoubleClick={() => { if (!r.id) return; cancelRef.current = false; setEdit({ gi, ri, col }); setVal(r[col] == null ? '' : String(r[col])); }}>
         {on ? (
           <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onBlur={commitEdit}
@@ -1833,7 +2224,10 @@ function SimpleOriginalView({ data, bu, onEdited, flat, simpleType }) {
   const td = { border: BD, padding: '2px 6px', fontSize: 12, verticalAlign: 'top' };
   const tdR = { ...td, textAlign: 'right', whiteSpace: 'nowrap' };
   const tdC = { ...td, textAlign: 'center', whiteSpace: 'nowrap' };
-  const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  const sum0 = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  // MARKER_VATRECONCILE_SIMPLE_PRINTED_SUBTOTAL_FRONT_V1 -- รวมสาขา ใช้ยอดที่พิมพ์มากับไฟล์ Simple (ไม่คำนวณใหม่); รวมสุทธิ = ผลรวมแถว
+  const subHdr = new Map(groups.map((g) => [g.rows, g.header || {}]));
+  const sum = (rows, k) => { const h = subHdr.get(rows); const v = h ? h['sub_' + k] : null; return v != null && v !== '' ? Number(v) : sum0(rows, k); };
   const allRows = groups.reduce((a, g) => a.concat(g.rows), []);
   const lbl = { fontWeight: 700, paddingRight: 8, whiteSpace: 'nowrap' };
   const Total = ({ label, rows }) => (
@@ -1847,68 +2241,132 @@ function SimpleOriginalView({ data, bu, onEdited, flat, simpleType }) {
       <td style={td}></td>
     </tr>
   );
-  if (flat) { // MARKER_VATRECONCILE_SIMPLE_FLAT_FRONT_V19
-    const NAVY = '#002060';
+  if (flat) { // MARKER_VATRECONCILE_SIMPLE_REPORT_FORMAT_FRONT_V21 -- Layout ตามไฟล์ Simple_Report_Vat ต้นฉบับ (รายงาน Oracle: หัวรายงาน + Block ต่อสาขา + รวมสาขา/รวมสุทธิ)
     const FB = '1px solid #000';
-    const hd = { background: NAVY, color: '#fff', fontWeight: 700, textAlign: 'center', border: '1px solid #fff', padding: '3px 4px', fontSize: 12, verticalAlign: 'middle', height: 36 };
-    const bx = { border: FB, padding: '1px 4px', fontSize: 12, fontFamily: 'Tahoma, "Segoe UI", sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', verticalAlign: 'bottom', background: '#fff' };
+    const FONT = 'Tahoma, "Segoe UI", sans-serif';
+    const PX = [11.5, 7.164, 7.164, 7.164, 7.5, 7.164, 7.164, 7.164, 8.664, 7.164, 7.164, 7.164, 14.664, 7.164, 10.5, 8.332, 7.164, 7.5, 18, 12.832, 16.164, 17.5, 7.164, 7.164, 7.164, 13].map((w) => Math.round(w * 7 + 5));
+    const T9 = { fontFamily: FONT, fontSize: 12, color: '#000', background: '#fff', padding: '0 4px', verticalAlign: 'top', overflow: 'hidden' };
+    const lab = { ...T9, fontWeight: 700 };
+    const hidden = { ...T9, color: '#fff' }; // ต้นฉบับตั้งสีตัวอักษรขาว (ซ่อนค่า)
+    const hd = { ...T9, background: '#e7f3fd', fontWeight: 700, textAlign: 'center', verticalAlign: 'middle', border: FB, padding: '0 2px' };
+    const bx = { ...T9, border: FB, verticalAlign: 'bottom', whiteSpace: 'nowrap' };
     const bxR = { ...bx, textAlign: 'right' };
     const nf = (v) => {
       if (v == null || v === '') return '';
       const n = Number(v); if (!Number.isFinite(n)) return String(v);
-      const t = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      return n < 0 ? <span style={{ color: '#ff0000' }}>({t})</span> : t;
+      return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
-    const pc = (v) => (v == null || v === '' ? '' : Number.isInteger(Number(v)) ? String(Number(v)) : Number(v).toFixed(2));
-    const colW = [92, 53, 79, 66, 92, 119, 238, 106, 53, 198, 99, 99, 99, 99, 66];
-    const typ = (r) => r.simple_type || (simpleType === 'simple_avg' ? 'AVG' : '100');
-    const SumRow = ({ label, rows, bg }) => (
-      <tr>
-        {Array.from({ length: 15 }, (_, i) => {
-          const base = { ...bx, background: bg, fontWeight: 700 };
-          if (i === 0) return <td key={i} style={base}>{label}</td>;
-          if (i >= 10 && i <= 13) return <td key={i} style={{ ...base, textAlign: 'right' }}>{nf(sum(rows, ['paid_amount', 'paid_vat', 'claimed_amount', 'claimed_vat'][i - 10]))}</td>;
-          return <td key={i} style={base} />;
-        })}
+    const pc = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? '' : `${Number(v).toFixed(2)}%`);
+    const NC = 26;
+    const Sp = ({ h }) => <tr style={{ height: h }}><td colSpan={NC} style={{ background: '#fff', padding: 0 }} /></tr>;
+    const BuCode = h0.bu_code || bu || '';
+    const SubRow = ({ label, rows, top }) => {
+      const base = { ...bx, fontWeight: 700 };
+      const num = (k) => <td style={{ ...base, textAlign: 'right' }}>{nf(sum(rows, k))}</td>;
+      return (
+        <tr style={{ height: 26 }}>
+          <td colSpan={15} style={base} />
+          <td colSpan={4} style={base}>{label}</td>
+          {num('paid_amount')}{num('paid_vat')}
+          <td colSpan={2} style={{ ...base, textAlign: 'right' }}>{nf(sum(rows, 'claimed_amount'))}</td>
+          <td colSpan={2} style={{ ...base, textAlign: 'right' }}>{nf(sum(rows, 'claimed_vat'))}</td>
+          <td style={base} />
+        </tr>
+      );
+    };
+    const GrandRow = () => (
+      <tr style={{ height: 26 }}>
+        <td colSpan={15} style={T9} />
+        <td colSpan={4} style={{ ...T9, fontWeight: 700 }}>รวมสุทธิ</td>
+        <td style={{ ...T9, fontWeight: 700, textAlign: 'right' }}>{nf(sum0(allRows, 'paid_amount'))}</td>
+        <td style={{ ...T9, fontWeight: 700, textAlign: 'right' }}>{nf(sum0(allRows, 'paid_vat'))}</td>
+        <td colSpan={2} style={{ ...T9, fontWeight: 700, textAlign: 'right' }}>{nf(sum0(allRows, 'claimed_amount'))}</td>
+        <td colSpan={2} style={{ ...T9, fontWeight: 700, textAlign: 'right' }}>{nf(sum0(allRows, 'claimed_vat'))}</td>
+        <td style={T9} />
       </tr>
     );
+    const co = (g, i) => {
+      const h = g.header || {};
+      const rows = [
+        ['ชื่อผู้ประกอบการ', h.operator_name, 'เลขประจำตัวผู้เสียภาษี', h.company_tax_id ? `: ${h.company_tax_id}` : ''],
+        ['ที่อยู่', h.address_line1, 'รหัสสาขา', `: ${g.branch}`],
+        ['', h.address_line2, 'สาขาที่', h.branch_no ? `: ${h.branch_no}` : ''],
+        ['', h.address_line3, '', ''],
+      ];
+      return rows.map(([l1, v1, l2, v2], k) => (
+        <tr key={`co${i}-${k}`} style={{ height: k === 0 ? 19 : 18 }}>
+          <td colSpan={3} style={lab}>{l1}</td>
+          <td colSpan={6} style={T9}>{v1 || ''}</td>
+          <td style={T9} />
+          <td colSpan={2} style={lab}>{l2}</td>
+          <td colSpan={k < 2 ? 3 : 13} style={hidden}>{v2}</td>
+          {k < 2 && <td colSpan={10} style={T9} />}
+        </tr>
+      ));
+    };
     return (
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: '#fff', border: `1px solid ${RP_BORDER}`, color: '#000' }}>
-        <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: colW.reduce((a, b) => a + b, 0) }}>
-          <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
-          <thead>
-            <tr>
-              {['Branch', 'Type', 'Receive Date', 'Running No', 'Tax Invoice Date', 'Tax Invoice No', 'Vendor Name', 'Tax ID', 'Branch', 'Item Detail', 'Paid Amount', 'Paid VAT', 'Claim Amount', 'Claim VAT', 'Claim %'].map((h, i) => (
-                <th key={i} style={{ ...hd, position: 'sticky', top: 0, zIndex: 2 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
+        <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: PX.reduce((a, b) => a + b, 0), margin: '0 auto' }}>
+          <colgroup>{PX.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
           <tbody>
+            <tr style={{ height: 35 }}><td colSpan={NC} style={{ ...T9, fontSize: 24, fontWeight: 700, textAlign: 'center' }}>{h0.report_title || 'รายงานภาษีซื้อ'}</td></tr>
+            <Sp h={12} />
+            {[['Bu Code:', BuCode], ['Report ID:', h0.report_id || ''], ['Print Date:', h0.print_date || ''], ['Print By:', h0.print_by || '']].map(([l, v], i) => (
+              <tr key={`m${i}`} style={{ height: 18 }}>
+                <td colSpan={2} style={lab}>{'   '}{l}</td>
+                <td colSpan={3} style={T9}>{v}</td>
+                <td colSpan={NC - 5} style={T9} />
+              </tr>
+            ))}
+            <Sp h={19} />
             {groups.map((g, gi) => (
               <React.Fragment key={g.branch}>
+                {co(g, gi)}
+                <tr style={{ height: 27 }}><td colSpan={NC} style={{ ...T9, borderBottom: FB }} /></tr>
+                <tr style={{ height: 32 }}>
+                  <th colSpan={3} style={hd}>รับสินค้า/รับเอกสาร</th>
+                  <th colSpan={9} style={hd}>ใบกำกับภาษี</th>
+                  <th colSpan={2} rowSpan={2} style={hd}>เลขประจำตัวผู้เสียภาษีอากร</th>
+                  <th rowSpan={2} style={hd}>สถานประกอบการ สาขาที่</th>
+                  <th colSpan={4} rowSpan={2} style={hd}>รายการ</th>
+                  <th colSpan={2} style={hd}>ภาษีซื้อที่ชำระ</th>
+                  <th colSpan={5} style={hd}>ภาษีซื้อที่ใช้สิทธิ์</th>
+                </tr>
+                <tr style={{ height: 29 }}>
+                  <th style={hd}>วัน/เดือน/ปี</th>
+                  <th colSpan={2} style={hd}>ลำดับที่</th>
+                  <th colSpan={3} style={hd}>วัน/เดือน/ปี</th>
+                  <th colSpan={2} style={hd}>เลขที่</th>
+                  <th colSpan={4} style={hd}>ชื่อผู้ค้า</th>
+                  <th style={hd}>มูลค่าสินค้า</th>
+                  <th style={hd}>เงินภาษี</th>
+                  <th colSpan={2} style={hd}>มูลค่าสินค้า</th>
+                  <th colSpan={2} style={hd}>เงินภาษี</th>
+                  <th style={hd}>(%)</th>
+                </tr>
                 {g.rows.map((r, i) => (
-                  <tr key={r.id ?? i}>
-                    <td style={bx}>{g.branch}</td>
-                    <td style={bx}>{typ(r)}</td>
+                  <tr key={r.id ?? i} style={{ height: 26 }}>
                     {cellEd(gi, i, r, 'receive_date', soDate(r.receive_date), bxR)}
-                    {cellEd(gi, i, r, 'running_no', r.running_no ?? '', bx)}
-                    {cellEd(gi, i, r, 'tax_invoice_date', soDate(r.tax_invoice_date), bxR)}
-                    {cellEd(gi, i, r, 'tax_invoice_no', r.tax_invoice_no || '', bx)}
-                    {cellEd(gi, i, r, 'vendor_name', r.vendor_name || '', bx)}
-                    {cellEd(gi, i, r, 'tax_id', soZero(r.tax_id), bx)}
+                    {cellEd(gi, i, r, 'running_no', r.running_no ?? '', bx, 2)}
+                    {cellEd(gi, i, r, 'tax_invoice_date', soDate(r.tax_invoice_date), bxR, 3)}
+                    {cellEd(gi, i, r, 'tax_invoice_no', r.tax_invoice_no || '', bx, 2)}
+                    {cellEd(gi, i, r, 'vendor_name', r.vendor_name || '', bx, 4)}
+                    {cellEd(gi, i, r, 'tax_id', soZero(r.tax_id), bx, 2)}
                     {cellEd(gi, i, r, 'branch_field', soZero(r.branch_field), bx)}
-                    {cellEd(gi, i, r, 'item_detail', r.item_detail || '', bx)}
+                    {cellEd(gi, i, r, 'item_detail', r.item_detail || '', bx, 4)}
                     {cellEd(gi, i, r, 'paid_amount', nf(r.paid_amount), bxR)}
                     {cellEd(gi, i, r, 'paid_vat', nf(r.paid_vat), bxR)}
-                    {cellEd(gi, i, r, 'claimed_amount', nf(r.claimed_amount), bxR)}
-                    {cellEd(gi, i, r, 'claimed_vat', nf(r.claimed_vat), bxR)}
+                    {cellEd(gi, i, r, 'claimed_amount', nf(r.claimed_amount), bxR, 2)}
+                    {cellEd(gi, i, r, 'claimed_vat', nf(r.claimed_vat), bxR, 2)}
                     {cellEd(gi, i, r, 'claim_percent', pc(r.claim_percent), bxR)}
                   </tr>
                 ))}
-                <SumRow label={`${g.branch} รวมสาขา`} rows={g.rows} bg="#deebf7" />
+                <SubRow label={`รวมสาขา ${g.branch}`} rows={g.rows} />
+                <tr style={{ height: 12 }}><td colSpan={NC} style={{ background: '#fff', padding: 0, borderTop: FB }} /></tr>
+                {gi < groups.length - 1 && <Sp h={19} />}
               </React.Fragment>
             ))}
-            <SumRow label="รวมสุทธิ" rows={allRows} bg="#bdd7ee" />
+            <GrandRow />
           </tbody>
         </table>
       </div>
@@ -2025,7 +2483,7 @@ const EDITABLE_TABLE_BY_REPORT = { 'input_summary|detail': 'vat_reconcile_input_
 function toIsoDay(v) {
   const s = String(v ?? '').trim();
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  if (m) return `${Number(m[1]) >= 2500 ? Number(m[1]) - 543 : m[1]}-${m[2]}-${m[3]}`; // MARKER_VATRECONCILE_EXPIRED_V1 -- ปี พ.ศ. -> ค.ศ.
   const p = parseDdMmmYy(s);
   return p ? `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}` : null;
 }
@@ -2037,11 +2495,13 @@ function calcInputStatusRow(row, period) {
   const pm = String(period || '').slice(0, 7);
   let status;
   if (pm && inv.slice(0, 7) > pm) status = 'Over Period';
+  else if (pm && !/f/i.test(String(row.grt_no ?? '')) && (Number(pm.slice(0, 4)) * 12 + Number(pm.slice(5, 7))) - (Number(inv.slice(0, 4)) * 12 + Number(inv.slice(5, 7))) > 6) status = 'Expired'; // MARKER_VATRECONCILE_EXPIRED_V1 -- เกิน 6 เดือนจาก Period และ GRT_No ไม่มี F
   else if (rc && rc < inv) status = 'Futuredate';
   else {
     const amt = Number(String(row.paid_amount ?? 0).replace(/,/g, '')) || 0;
     const vat = Number(String(row.claimed100_vat ?? 0).replace(/,/g, '')) || 0;
-    status = Math.abs(Math.round((amt * 7 / 100 - vat) * 100) / 100) > 0.05 ? 'Unbalance' : 'Balance';
+    const f = row.claim_percent && !row.is_n ? Number(row.claim_percent) / 100 : 1; // MARKER_VATRECONCILE_PCT_STATUS_FRONT_V1 -- แถวหัว % เทียบกับ (มูลค่า × 7% × %) ไม่ใช่ 100%
+    status = Math.abs(Math.round((amt * 7 / 100 * f - vat) * 100) / 100) > 0.05 ? 'Unbalance' : 'Balance';
   }
   return { ...row, status };
 }
@@ -2126,9 +2586,9 @@ async function findSubsetSums(items, targetC, tolC, maxK, maxSets, shouldAbort) 
 
 // MARKER_VATRECONCILE_SUBSET_SUM_FRONT_V15 -- แผงค้นหาชุดรายการที่รวมกันได้ยอดที่ต้องการ (Detail)
 const SS_COLS = [['paid_vat', 'เงินภาษีที่ชำระ'], ['paid_amount', 'มูลค่าที่ชำระ'], ['claimed100_vat', 'เงินภาษีที่ใช้สิทธิ์'], ['claimed100_amount', 'มูลค่าที่ใช้สิทธิ์'], ['calculate_tax', 'Calculate Tax']];
-function SubsetSumPanel({ rows, onPick, onClear }) {
+function SubsetSumPanel({ rows, onPick, onClear, modal, onClose }) {
   const cols = SS_COLS.filter(([k]) => rows.some((r) => r[k] !== undefined));
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!modal);
   const [col, setCol] = useState('paid_vat');
   const [target, setTarget] = useState('');
   const [tol, setTol] = useState('0');
@@ -2167,10 +2627,19 @@ function SubsetSumPanel({ rows, onPick, onClear }) {
   const box = { border: '1px solid #d0d7de', borderRadius: 8, padding: '8px 12px', marginBottom: 10, background: '#fafbfc' };
   const inp = { fontSize: 12.5, padding: '4px 8px', border: '1px solid #d0d7de', borderRadius: 6 };
   return (
-    <div style={box}>
-      <button type="button" onClick={() => setOpen((o) => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: '#334155', padding: 0 }}>
-        {open ? '▾' : '▸'} หาชุดรายการที่รวมกันได้ยอดที่ต้องการ
-      </button>
+    <div style={modal ? { marginBottom: 0 } : box}>
+      {modal
+        ? (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>Sampling · หาชุดรายการที่รวมกันได้ยอดที่ต้องการ</span>
+            <button type="button" aria-label="ปิด" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#666' }}>✕</button>
+          </div>
+        )
+        : (
+          <button type="button" onClick={() => setOpen((o) => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: '#334155', padding: 0 }}>
+            {open ? '▾' : '▸'} หาชุดรายการที่รวมกันได้ยอดที่ต้องการ
+          </button>
+        )}
       {open && (
         <div style={{ marginTop: 8 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
@@ -2182,7 +2651,7 @@ function SubsetSumPanel({ rows, onPick, onClear }) {
             {!running
               ? <button type="button" onClick={calc} style={{ ...inp, background: '#1a7f37', color: '#fff', fontWeight: 700, border: 'none', padding: '5px 16px', cursor: 'pointer' }}>Calculate</button>
               : <button type="button" onClick={() => { abortRef.current = true; }} style={{ ...inp, background: '#cf222e', color: '#fff', fontWeight: 700, border: 'none', padding: '5px 16px', cursor: 'pointer' }}>หยุด</button>}
-            <span style={{ color: '#57606a' }}>ค้นจาก {rows.length.toLocaleString()} แถวที่แสดงอยู่ (ตามตัวกรอง/สาขาที่เลือก)</span>
+            {/* MARKER_VATRECONCILE_NO_SEARCH_COUNT_V1 -- เอาข้อความ "ค้นจาก N แถวที่แสดงอยู่" ออกตามที่แจ้ง */}
           </div>
           {running && <div style={{ marginTop: 6, fontSize: 12.5, color: '#57606a' }}>กำลังค้นหา...</div>}
           {result && !running && (
@@ -2190,7 +2659,45 @@ function SubsetSumPanel({ rows, onPick, onClear }) {
               {result.note && <div style={{ color: '#856404', marginBottom: 4 }}>{result.note}</div>}
               {result.sets.length === 0 && !result.note?.startsWith('กรอก') && !result.note?.startsWith('มี ') && <div style={{ color: '#cf222e' }}>ไม่พบชุดที่รวมได้ยอดนี้ (ภายใน {maxK} รายการ) {result.ms != null ? `· ใช้เวลา ${result.ms} ms` : ''}</div>}
               {result.sets.length > 0 && <div style={{ color: '#57606a', marginBottom: 4 }}>พบ {result.sets.length}{result.sets.length >= 30 ? '+' : ''} ชุด (เรียงจากใช้รายการน้อยที่สุด) · กดชุดเพื่อไฮไลต์แถวในตาราง · ใช้เวลา {result.ms} ms</div>}
-              <div style={{ maxHeight: 220, overflowY: 'auto', display: 'grid', gap: 6 }}>
+              {modal && result.sets.length > 0 && (() => {
+                const ai = pick >= 0 && pick < result.sets.length ? pick : 0;
+                const cur = result.sets[ai];
+                const nf = (v) => Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 });
+                return (
+                  <div>
+                    <div style={{ display: 'flex', gap: 2, overflowX: 'auto', borderBottom: '1px solid #d0d7de', marginBottom: 8 }}>
+                      {result.sets.map((st, i) => (
+                        <button key={i} type="button" onClick={() => { setPick(i); onPick(st.rows.map((r) => r.id)); }}
+                          style={{ padding: '5px 14px', fontSize: 12.5, fontWeight: ai === i ? 700 : 500, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none', borderBottom: ai === i ? '2px solid #1a7f37' : '2px solid transparent', background: 'transparent', color: ai === i ? '#1a7f37' : '#475569' }}>
+                          ชุดที่ {i + 1} <span style={{ color: '#8b95a1', fontWeight: 500 }}>({st.rows.length})</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ marginBottom: 6, color: '#334155' }}><b>ชุดที่ {ai + 1}</b> · {cur.rows.length} รายการ · รวม <b>{nf(cur.sum)}</b></div>
+                    <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #d0d7de', borderRadius: 6 }}>
+                      <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12.5 }}>
+                        <thead><tr style={{ background: '#eef4ff' }}>
+                          <th style={{ padding: '4px 8px', textAlign: 'center', borderBottom: '1px solid #d0d7de' }}>#</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #d0d7de' }}>เลขที่ใบกำกับภาษี</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #d0d7de' }}>GRT_No.</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #d0d7de' }}>{(SS_COLS.find(([k]) => k === col) || [null, col])[1]}</th>
+                        </tr></thead>
+                        <tbody>
+                          {cur.rows.map((r, j) => (
+                            <tr key={j}>
+                              <td style={{ padding: '3px 8px', textAlign: 'center', borderBottom: '1px solid #eee' }}>{j + 1}</td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee' }}>{r.tax_invoice_no || r.id}</td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee' }}>{r.grt_no || ''}</td>
+                              <td style={{ padding: '3px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>{nf(r[col])}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+              {!modal && <div style={{ maxHeight: 220, overflowY: 'auto', display: 'grid', gap: 6 }}>
                 {result.sets.map((s, i) => (
                   <div key={i} onClick={() => { setPick(i); onPick(s.rows.map((r) => r.id)); }}
                     style={{ border: `1px solid ${pick === i ? '#bf8700' : '#d0d7de'}`, background: pick === i ? '#fff8c5' : '#fff', borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}>
@@ -2200,7 +2707,7 @@ function SubsetSumPanel({ rows, onPick, onClear }) {
                     </div>
                   </div>
                 ))}
-              </div>
+              </div>}
             </div>
           )}
         </div>
@@ -2209,13 +2716,24 @@ function SubsetSumPanel({ rows, onPick, onClear }) {
   );
 }
 
-function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onEdited }) {
+function ReportPreviewTable({ okBranches, futureBranches, data, onRowAction, actionLabel, initialBranch, onEdited, samplingOpen, sampleHost, onSamplingClose }) {
   const [columnFilters, setColumnFilters] = React.useState({});
   const [branchFilter, setBranchFilter] = React.useState(initialBranch || ''); // MARKER_VATRECONCILE_TABS_V1 -- เปิดมากรองสาขาที่กดมาจากตาราง Reconcile
-  const [localRows, setLocalRows] = React.useState(data.rows || []);
+  // V2: คงสถานะ Futuredate ไว้ทุกแถว (ไฮไลต์เฉพาะแถวที่รวมแล้วเท่ากับ Diff) · MARKER_VATRECONCILE_PCT_STATUS_FRONT_V2 -- Balance/Unbalance คำนวณใหม่จากค่าในแถวเสมอ (แถวหัว % เทียบกับ มูลค่า×7%×%)
+  const demoteFuture = (rows) => (!rows ? rows : rows.map((r) => {
+    if (!r || (r.status !== 'Balance' && r.status !== 'Unbalance')) return r;
+    const f = r.claim_percent && !r.is_n ? Number(r.claim_percent) / 100 : 1;
+    const amt = Number(String(r.paid_amount ?? 0).replace(/,/g, '')) || 0;
+    const vat = Number(String(r.claimed100_vat ?? 0).replace(/,/g, '')) || 0;
+    const st = Math.abs(Math.round((amt * 7 / 100 * f - vat) * 100) / 100) > 0.05 ? 'Unbalance' : 'Balance';
+    return st === r.status ? r : { ...r, status: st };
+  }));
+  const [localRows, setLocalRows] = React.useState(() => demoteFuture(data.rows || []));
+  const [taxSel, setTaxSel] = React.useState(''); // MARKER_VATRECONCILE_TAX_CHIPS_V1 -- กรองตาม Tax Type (All | T | F หรือ All | A | N) เมื่อมีหลาย Tax Type
   const [hiIds, setHiIds] = React.useState(() => new Set()); // MARKER_VATRECONCILE_SUBSET_SUM_FRONT_V15
   const [selection, setSelection] = React.useState(null); // {r1,c1,r2,c2} -- r/c = index เข้า filteredRows/columns (คำนวณสดทุก Render)
   const [isDragging, setIsDragging] = React.useState(false);
+  const [rangeDragging, setRangeDragging] = React.useState(false); // MARKER_VATRECONCILE_TEXT_SELECT_COPY_V1 -- ลากข้ามหลาย Cell = เลือกช่วง Cell · ลากใน Cell เดียว = เลือกข้อความจริงแล้ว Ctrl+C ได้
   const [editingCell, setEditingCell] = React.useState(null); // {rowId, col}
   const [editVal, setEditVal] = React.useState('');
   const [savingCell, setSavingCell] = React.useState(false);
@@ -2231,7 +2749,7 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
   const [sbw, setSbw] = React.useState(0); // ความกว้าง Scrollbar แนวตั้งของตัวตาราง (ใช้เว้นขอบขวาของหัวให้ตรงกัน)
   const widthCacheRef = React.useRef({ rows: null, w: null });
 
-  React.useEffect(() => { setLocalRows(data.rows || []); }, [data.rows]);
+  React.useEffect(() => { setLocalRows(demoteFuture(data.rows || [])); }, [data.rows, futureBranches]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useLayoutEffect(() => {
     const g = gridRef.current;
     if (!g) return undefined;
@@ -2243,7 +2761,7 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
     return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', upd); };
   }, [localRows.length]);
   React.useEffect(() => {
-    const onUp = () => setIsDragging(false);
+    const onUp = () => { setIsDragging(false); setRangeDragging(false); };
     window.addEventListener('mouseup', onUp);
     return () => window.removeEventListener('mouseup', onUp);
   }, []);
@@ -2287,7 +2805,7 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
     return <p style={{ fontSize: 13, color: '#999', textAlign: 'center', padding: '24px 0' }}>ไม่พบข้อมูล</p>;
   }
   // MARKER_VATRECONCILEDASHBOARD_PREVIEWTABLE_EDITABLE_GRID_V1 -- ตัด 'id' ออกจาก Column ที่แสดง/Filter/Copy (ใช้แค่เป็น Key อ้างอิงตอน PUT เท่านั้น ไม่ต้องโชว์)
-  const columns = Object.keys(localRows[0]).filter((k) => k !== 'id');
+  const columns = Object.keys(localRows[0]).filter((k) => k !== 'id' && k !== 'claim_percent' && k !== 'is_n'); // MARKER_VATRECONCILE_CLAIM_PERCENT_HIDDEN_V1 -- claim_percent ใช้คำนวณ/ล็อกช่องเท่านั้น ไม่แสดงเป็นคอลัมน์
   const editableTable = EDITABLE_TABLE_BY_REPORT[`${data.type}|${data.view || ''}`];
   const isEditable = !!editableTable && typeof localRows[0]?.id !== 'undefined';
   const branchOptions = columns.includes('branch')
@@ -2314,6 +2832,10 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
   };
   const handleMouseEnter = (r, c) => {
     if (!isEditable || !isDragging) return;
+    if (selection && (r !== selection.r1 || c !== selection.c1) && !rangeDragging) {
+      setRangeDragging(true);
+      try { window.getSelection && window.getSelection().removeAllRanges(); } catch (e) { /* ignore */ }
+    }
     setSelection((s) => (s ? { ...s, r2: r, c2: c } : { r1: r, c1: c, r2: r, c2: c }));
   };
   const handleCopy = () => {
@@ -2328,8 +2850,24 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
       lines.push(vals.join('\t'));
     }
     const text = lines.join('\n');
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).catch(() => {});
+    // MARKER_VATRECONCILE_COPY_FALLBACK_V1 -- navigator.clipboard ใช้ได้เฉพาะ HTTPS/localhost (เปิดผ่าน http://IP จะเป็น undefined แล้ว Copy เงียบหาย) -> ใช้ textarea + execCommand('copy') เป็นตัวสำรอง
+    const legacyCopy = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        gridRef.current && gridRef.current.focus();
+      } catch (e) { /* ignore */ }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+      navigator.clipboard.writeText(text).catch(legacyCopy);
+    } else {
+      legacyCopy();
     }
   };
   // MARKER_VATRECONCILEDASHBOARD_GRID_KEYNAV_V1 -- เลื่อน Cell ด้วยคีย์บอร์ดแบบ Excel (กดค้างได้ + Auto Scroll ตาม)
@@ -2374,7 +2912,13 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
   const handleGridKeyDown = (e) => {
     if (editingCell || (e.target && e.target.tagName === 'INPUT')) return;
     const ctrl = e.ctrlKey || e.metaKey;
-    if (ctrl && e.key.toLowerCase() === 'c') { e.preventDefault(); handleCopy(); return; }
+    if (ctrl && (e.key.toLowerCase() === 'c' || e.code === 'KeyC')) {
+      // MARKER_VATRECONCILE_TEXT_SELECT_COPY_V1 -- มีข้อความที่ลากเลือกไว้ใน Cell เดียว -> ให้ Browser Copy ข้อความนั้นตามปกติ
+      const _single = selection && selection.r1 === selection.r2 && selection.c1 === selection.c2;
+      let _txt = ''; try { _txt = window.getSelection ? String(window.getSelection()) : ''; } catch (err) { /* ignore */ }
+      if (_single && _txt.trim()) return;
+      e.preventDefault(); handleCopy(); return;
+    } //  // MARKER_VATRECONCILE_COPY_THAI_LAYOUT_V1 -- แป้นพิมพ์ภาษาไทย e.key ของ Ctrl+C ไม่ใช่ 'c' -> เช็ค e.code (ตำแหน่งปุ่ม) ด้วย
     if (!isEditable || e.altKey) return;
     const pageRows = Math.max(1, Math.floor(((gridRef.current && gridRef.current.clientHeight) || 400) / 33) - 1);
     const sh = e.shiftKey;
@@ -2408,16 +2952,20 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
   };
   const startEdit = (row, col) => {
     if (!isEditable || col === 'status') return; // Status เป็นคอลัมน์คำนวณ แก้ไม่ได้
+    if (col === 'tax_type') return; // MARKER_VATRECONCILE_PCT_N_ROWS_FRONT_V1 -- Tax Type แสดงอย่างเดียว (การย้ายต้องเปลี่ยน Account ด้วย ยังไม่เปิดให้แก้จากช่องนี้)
+    if (row.is_n && (col === 'claimed100_amount' || col === 'claimed100_vat' || col === 'calculate_tax')) return; // Input N ในหัว % = 100% คำนวณให้ แก้ที่ช่องที่ชำระแทน
+    if (row.claim_percent && (col === 'claimed100_amount' || col === 'claimed100_vat')) return; // MARKER_VATRECONCILE_CLAIM_PERCENT_HEADER_V1 -- ช่องใช้สิทธิ์ = ที่ชำระ x % (คำนวณ) แก้ที่ช่องที่ชำระแทน
     setEditingCell({ rowId: row.id, col });
-    setEditVal(String(row[col] ?? ''));
+    setEditVal(DATE_COLUMNS.has(col) ? fmtDdMmmYy(row[col]) : String(row[col] ?? '')); // MARKER_VATRECONCILE_DATE_DDMMMYY_GRID_V1 -- วันที่แสดง/แก้เป็น dd-mmm-yy
   };
   const commitEdit = async (dir) => {
     if (!editingCell || savingCell) return;
     const { rowId, col } = editingCell;
     const row = localRows.find((r) => r.id === rowId);
     if (!row) { endEdit(); return; }
-    const nextVal = editVal.trim();
-    const curVal = String(row[col] ?? '').trim();
+    let nextVal = editVal.trim();
+    if (DATE_COLUMNS.has(col) && nextVal !== '') { const iso = toIsoDay(nextVal); if (iso) nextVal = iso; } // dd-mmm-yy -> ISO ก่อนบันทึก (DB เก็บ ISO)
+    const curVal = DATE_COLUMNS.has(col) ? (toIsoDay(row[col]) || String(row[col] ?? '').trim()) : String(row[col] ?? '').trim();
     if (nextVal === curVal) { endEdit(dir); return; }
     setSavingCell(true);
     try {
@@ -2447,8 +2995,19 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
         }
       }
       for (const [f, v] of Object.entries(updates)) await putField(f, v);
-      setLocalRows((prev) => prev.map((r) => (r.id === rowId ? (editableTable === 'vat_reconcile_input_summary' ? calcInputStatusRow({ ...r, ...updates }, data.period) : { ...r, ...updates }) : r)));
-      if (typeof onEdited === 'function') onEdited();
+      // MARKER_VATRECONCILE_PCT_STATUS_FRONT_V1 -- แก้ มูลค่า/ภาษีที่ชำระของแถวหัว % -> คำนวณช่องใช้สิทธิ์ (x%) + Calculate Tax ในหน้าจอใหม่ทันที (ไม่งั้น Status เป็น Unbalance ทั้งที่ถูก)
+      const localExtra = {};
+      const _pct = Number(row.claim_percent) || 0;
+      if (_pct && !row.is_n && editableTable === 'vat_reconcile_input_summary' && (col === 'paid_amount' || col === 'paid_vat')) {
+        const _r2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
+        const _L = Number(String(updates.paid_amount ?? row.paid_amount ?? 0).replace(/,/g, '')) || 0;
+        const _V = Number(String(updates.paid_vat ?? row.paid_vat ?? 0).replace(/,/g, '')) || 0;
+        const _n = _r2(_L * _pct / 100);
+        localExtra.claimed100_amount = _n; localExtra.claimed100_vat = _r2(_V * _pct / 100); localExtra.calculate_tax = _r2(_L - _n);
+      }
+      const nextRow = editableTable === 'vat_reconcile_input_summary' ? demoteFuture([calcInputStatusRow({ ...row, ...updates, ...localExtra }, data.period)])[0] : { ...row, ...updates };
+      setLocalRows((prev) => prev.map((r) => (r.id === rowId ? nextRow : r)));
+      if (typeof onEdited === 'function') onEdited(rowId, nextRow);
       endEdit(dir);
     } catch (err) {
       console.error('[VatReconcileDashboard] ReportPreviewTable inline edit error:', err);
@@ -2486,6 +3045,7 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
   const activeFilterCols = Object.keys(columnFilters).filter((k) => columnFilters[k]);
   const filteredBase = localRows.filter((r) => {
     if (branchFilter && String(r.branch ?? '').trim() !== branchFilter) return false;
+    if (taxSel && String(r.tax_type ?? '') !== taxSel) return false;
     for (const col of activeFilterCols) {
       if (!columnFilters[col].has(cellText(r, col))) return false;
     }
@@ -2563,7 +3123,14 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
     if (isSimpleReport && SIMPLE_REPORT_LABELS[c]) return SIMPLE_REPORT_LABELS[c];
     if (c === 'branch' && data.type === 'tb') return 'Branch';
     if (c === 'branch') return 'สาขา';
+    if (c === 'tax_type') return 'Tax'; // MARKER_VATRECONCILE_PCT_N_ROWS_FRONT_V1
+    if (c === 'src_account') return 'Account'; // MARKER_VATRECONCILE_SIMPLE_N_MERGE_V1 -- ที่มาของแถว Simple (11610755 / 11610752)
     if (c === 'status' && data.type === 'input_summary' && data.view === 'detail') return 'Status'; // MARKER_VATRECONCILE_STATUS_COL_V1 -- หัวคอลัมน์ตาม Excel
+    // MARKER_VATRECONCILE_CLAIM_PERCENT_HEADER_V1 -- BU ที่ใช้สิทธิ์เฉลี่ย (เช่น CFW 59.53%) หัวช่องใช้สิทธิ์เปลี่ยนจาก 100% เป็น % จริงของ BU (หลาย % ในไฟล์เดียว = ตาม % สาขา)
+    if (data.type === 'input_summary' && data.view === 'detail' && (c === 'claimed100_amount' || c === 'claimed100_vat') && COLUMN_LABELS[c]) {
+      if (data.claim_percent) return COLUMN_LABELS[c].replace('100%', `${data.claim_percent}%`);
+      if (data.claim_percent_mixed) return COLUMN_LABELS[c].replace('100%', 'ตาม % สาขา');
+    }
     return COLUMN_LABELS[c] || c;
   };
 
@@ -2571,6 +3138,7 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
     if (status === 'Balance') return { bg: '#dafbe1', color: '#1a7f37' }; // MARKER_VATRECONCILE_STATUS_COL_V1
     if (status === 'Futuredate') return { bg: '#fff3cd', color: '#856404' };
     if (status === 'Over Period') return { bg: '#ffe5e5', color: '#cf222e' };
+    if (status === 'Expired') return { bg: '#e8e8ee', color: '#5a2d82' }; // MARKER_VATRECONCILE_EXPIRED_V1
     if (status === 'Unbalance') return { bg: '#fff1e0', color: '#bc4c00' };
     if (status === 'ตรงกัน') return { bg: '#dafbe1', color: '#1a7f37' };
     if (status === 'ไม่ตรงกัน') return { bg: '#fff1e0', color: '#bc4c00' };
@@ -2639,9 +3207,10 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
             onChange={(e) => setBranchFilter(e.target.value)}
             style={{ fontSize: 12.5, padding: '5px 10px', borderRadius: 6, border: '1px solid #d0d7de', background: '#fff' }}
           >
-            <option value="">ทั้งหมด ({localRows.length})</option>
+            {/* MARKER_VATRECONCILE_BRANCH_SELECT_COUNT_V1 -- ตัวเลขใน () ต้องเป็นจำนวน "สาขา" จริง ไม่ใช่จำนวนแถว; แต่ละสาขาบอกจำนวนรายการของตัวเอง */}
+            <option value="">ทั้งหมด ({branchOptions.length} สาขา · {localRows.length} รายการ)</option>
             {branchOptions.map((b) => (
-              <option key={b} value={b}>{b}</option>
+              <option key={b} value={b}>{b} ({localRows.filter((r) => String(r.branch) === String(b)).length} รายการ)</option>
             ))}
           </select>
           {branchFilter && (
@@ -2651,7 +3220,17 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
       )}
 
       {data.type === 'input_summary' && data.view === 'detail' && filteredRows.length > 0 && typeof filteredRows[0].id !== 'undefined' && (
-        <SubsetSumPanel rows={filteredRows} onPick={(ids) => setHiIds(new Set(ids))} onClear={() => setHiIds(new Set())} />
+        // samplingOpen === undefined = หน้า Preview อื่นๆ แสดงแผงแบบเดิม | มีค่า (true/false) = ปุ่ม Sampling ที่แถบล่างของ Reconcile Panel เปิด Popup (วาดซ้อนใน Popup Reconcile ผ่าน sampleHost)
+        samplingOpen === undefined
+          ? <SubsetSumPanel rows={filteredRows} onPick={(ids) => setHiIds(new Set(ids))} onClear={() => setHiIds(new Set())} />
+          : (samplingOpen && sampleHost && createPortal(
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'auto', background: 'rgba(15, 23, 42, 0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={onSamplingClose}>
+              <div style={{ background: '#fff', borderRadius: 10, width: 'min(980px, 96%)', maxHeight: '86%', overflowY: 'auto', padding: '14px 18px', boxShadow: '0 12px 40px rgba(0,0,0,0.3)' }} onClick={(e) => e.stopPropagation()}>
+                <SubsetSumPanel modal onClose={onSamplingClose} rows={filteredRows} onPick={(ids) => setHiIds(new Set(ids))} onClear={() => setHiIds(new Set())} />
+              </div>
+            </div>,
+            sampleHost
+          ))
       )}
 
       {activeFilterCols.length > 0 && (
@@ -2668,11 +3247,20 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
       )}
 
       {/* MARKER_VATRECONCILEDASHBOARD_PREVIEWTABLE_EDITABLE_GRID_V1 -- ห่อด้วย div ที่ Focus ได้ เพื่อดักจับ Ctrl+C (Copy ช่วงที่ Drag-Select ไว้) */}
-      {isEditable && (
-        <p style={{ fontSize: 11.5, color: '#57606a', margin: '0 0 8px' }}>
-          💡 Double-click ที่ช่องเพื่อแก้ไข (Enter/คลิกที่อื่นเพื่อบันทึก, Esc เพื่อยกเลิก) — Drag เลือกหลายช่องแล้ว Ctrl+C เพื่อ Copy
-        </p>
-      )}
+      {(() => { // MARKER_VATRECONCILE_TAX_CHIPS_V1 -- ปุ่มกรอง Tax Type: แสดงเมื่อมีมากกว่า 1 ชนิด
+        const types = [...new Set(localRows.map((r) => (r.tax_type == null ? '' : String(r.tax_type))).filter(Boolean))].sort();
+        if (!columns.includes('tax_type') || types.length < 2) return null;
+        const chip = (val, label) => (
+          <button key={label} type="button" onClick={() => setTaxSel(val)} style={{ padding: '3px 14px', fontSize: 12.5, fontWeight: 700, borderRadius: 999, cursor: 'pointer', border: `1px solid ${taxSel === val ? '#0969da' : '#d0d7de'}`, background: taxSel === val ? '#0969da' : '#fff', color: taxSel === val ? '#fff' : '#24292f' }}>{label}</button>
+        );
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '0 0 8px' }}>
+            <span style={{ fontSize: 12, color: '#57606a', marginRight: 2 }}>Tax</span>
+            {chip('', 'All')}
+            {types.map((t) => chip(t, t))}
+          </div>
+        );
+      })()}
       </div>
       <div ref={hdrRef} style={{ overflow: 'hidden', flexShrink: 0, marginRight: sbw }}>
       <table style={tblStyle}>
@@ -2742,7 +3330,7 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
             </tr>
           )}
           {filteredRows.map((r, i) => (
-            <tr key={i} style={{ background: hiIds.has(r.id) ? '#fff3bf' : i % 2 === 0 ? '#fff' : '#fafbfc' }}>
+            <tr key={i} style={{ background: hiIds.has(r.id) ? '#fff3bf' : (() => { /* MARKER_VATRECONCILE_FUTURE_ROW_ORANGE_V1 -- แถวที่ Receive Date < Tax Invoice Date (Future Date) ไฮไลต์ทั้งแถวสีส้ม */ const _rc = toIsoDay(r.receive_date); const _iv = toIsoDay(r.tax_invoice_date); if (r.status === 'Expired') return '#e9defa'; /* MARKER_VATRECONCILE_EXPIRED_V1 */ return (_rc && _iv && _rc < _iv && !(okBranches && okBranches.has(String(r.branch))) && (!futureBranches || futureBranches.has(r.id))) ? '#ffd9a8' : null; })() || (i % 2 === 0 ? '#fff' : '#fafbfc') }}>
               {columns.map((c, colIdx) => {
                 // MARKER_VATRECONCILEDASHBOARD_PREVIEWTABLE_EDITABLE_GRID_V1
                 const selected = isEditable && isCellSelected(i, colIdx);
@@ -2776,10 +3364,18 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
                   );
                 }
 
+                if (c === 'tax_type') { // MARKER_VATRECONCILE_PCT_N_ROWS_FRONT_V1 -- ป้าย Tax Type หน้าสุด (N ในหัว % = สีแดง)
+                  const isN = !!r.is_n;
+                  return (
+                    <td key={c} {...cellHandlers} title={isN ? 'Input N — ใช้สิทธิ์ 100% (แยกตาม Tax Code จากไฟล์ All Type)' : `Tax Type ${r[c] || ''}`} style={{ padding: '8px 6px', border: '1px solid #eaeef2', textAlign: 'center', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: (isEditable && rangeDragging) ? 'none' : 'text' }}>
+                      <span style={{ display: 'inline-block', minWidth: 22, padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 700, background: '#eef1f4', color: '#57606a' }}>{r[c] || '-'}</span>
+                    </td>
+                  );
+                }
                 if (c === 'status') {
                   const sc = statusColor(r[c]);
                   return (
-                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', border: '1px solid #eaeef2', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: isEditable ? 'none' : 'auto' }}>
+                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', border: '1px solid #eaeef2', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: (isEditable && rangeDragging) ? 'none' : 'text' }}>
                       <span style={{ background: sc.bg, color: sc.color, fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20, whiteSpace: 'nowrap' }}>
                         {r[c]}
                       </span>
@@ -2788,7 +3384,7 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
                 }
                 if (c === 'branch') {
                   return (
-                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', fontWeight: 600, color: '#24292f', border: '1px solid #eaeef2', whiteSpace: 'nowrap', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: isEditable ? 'none' : 'auto' }}>
+                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', fontWeight: 600, color: '#24292f', border: '1px solid #eaeef2', whiteSpace: 'nowrap', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: (isEditable && rangeDragging) ? 'none' : 'text' }}>
                       {r[c]}
                     </td>
                   );
@@ -2800,14 +3396,14 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
                   const rawVal = r[c];
                   const hasVal = rawVal !== null && rawVal !== undefined && String(rawVal).trim() !== '';
                   return (
-                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', color: '#57606a', border: '1px solid #eaeef2', whiteSpace: 'nowrap', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: isEditable ? 'none' : 'auto' }}>
+                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', color: '#57606a', border: '1px solid #eaeef2', whiteSpace: 'nowrap', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: (isEditable && rangeDragging) ? 'none' : 'text' }}>
                       {hasVal ? String(rawVal).padStart(5, '0') : ''}
                     </td>
                   );
                 }
                 if (c === 'tax_id' || c === 'company_tax_id') {
                   return (
-                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', color: '#57606a', border: '1px solid #eaeef2', whiteSpace: 'nowrap', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: isEditable ? 'none' : 'auto' }}>
+                    <td key={c} {...cellHandlers} style={{ padding: '8px 12px', color: '#57606a', border: '1px solid #eaeef2', whiteSpace: 'nowrap', background: selBg, cursor: isEditable ? 'cell' : 'default', userSelect: (isEditable && rangeDragging) ? 'none' : 'text' }}>
                       {r[c] ? String(r[c]).padStart(13, '0') : ''}
                     </td>
                   );
@@ -2824,9 +3420,9 @@ function ReportPreviewTable({ data, onRowAction, actionLabel, initialBranch, onE
                     maxWidth: isNum ? 'none' : 280,
                     background: selBg,
                     cursor: isEditable ? 'cell' : 'default',
-                    userSelect: isEditable ? 'none' : 'auto',
+                    userSelect: (isEditable && rangeDragging) ? 'none' : 'text',
                   }}>
-                    {isNum ? numVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(r[c] ?? '')}
+                    {DATE_COLUMNS.has(c) ? fmtDdMmmYy(r[c]) : isNum ? numVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(r[c] ?? '')}
                   </td>
                 );
               })}

@@ -197,8 +197,12 @@ function typeSimToYn(typeSim) {
 }
 
 // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1 -- Invoice Ref ย่อสำหรับใส่ใน Y2 (Invoice=IV, Credit=CN, ค่าอื่นที่ไม่รู้จัก Default เป็น IV)
+// MARKER_VATEXPORT_Y2_SHORT_N_Y_I_C_V1 -- Type 3 ตัว (เช่น NNN/YNY) -> ตัวเดียว: มี Y อย่างน้อย 1 ตัว = Y, ไม่มีเลย = N
+function typeSimToShortYN(typeSim) {
+  return String(typeSim || "").toUpperCase().includes("Y") ? "Y" : "N";
+}
 function invoiceRefToAbbrev(invoiceRef) {
-  return String(invoiceRef || "").trim().toLowerCase() === "credit" ? "CN" : "IV";
+  return String(invoiceRef || "").trim().toLowerCase() === "credit" ? "C" : "I"; // MARKER_VATEXPORT_Y2_SHORT_N_Y_I_C_V1 -- ย่อเหลือตัวเดียว: Credit=C, Invoice=I
 }
 
 // ── Excel Sheet ชื่อห้ามเกิน 31 ตัวอักษร และห้ามมีอักขระ \/?*[]: ──
@@ -257,7 +261,7 @@ export async function generateSimpleAdiWorkbook(simpleTemplatePath, groupedRows,
     ws.getCell("C13").value = meta.periodMmmYy || "";
     ws.getCell("M1").value = "FASTAPN LINK3ASE"; // MARKER_VATEXPORT_SIMPLE_M1_CREATEDBY_V1 -- ทับค่า Static เดิมจาก Template ("AP_UpdateTax_System")
     ws.getCell("M2").value = meta.folderPath || "";
-    ws.getCell("Y2").value = `${meta.hhmm || ""}${group.typeSim || ""}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
+    ws.getCell("Y2").value = `${meta.hhmm || ""}${typeSimToShortYN(group.typeSim)}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
 
     group.rows.forEach((r, i) => {
       const rowIdx = i + 16;
@@ -363,7 +367,7 @@ export async function generateSimpleBySheetWorkbooks(simpleTemplatePath, grouped
     ws.getCell("C13").value = meta.periodMmmYy || "";
     ws.getCell("M1").value = "FASTAPN LINK3ASE"; // MARKER_VATEXPORT_SIMPLE_M1_CREATEDBY_V1 -- ทับค่า Static เดิมจาก Template ("AP_UpdateTax_System")
     ws.getCell("M2").value = meta.folderPath || "";
-    ws.getCell("Y2").value = `${meta.hhmm || ""}${group.typeSim || ""}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
+    ws.getCell("Y2").value = `${meta.hhmm || ""}${typeSimToShortYN(group.typeSim)}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
 
     group.rows.forEach((r, i) => {
       const rowIdx = i + 16;

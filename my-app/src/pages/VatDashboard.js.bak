@@ -456,6 +456,14 @@ export default function VatDashboard() {
     setBuFilter(null);
   };
 
+  // MARKER_HEADER_STALE_STATUS_V1 -- เดือนล่าสุดที่มีข้อมูลจริง < Period ปัจจุบัน = ปิด Period แล้วแต่ยังไม่มี Incomplete ใหม่
+  const dataMonth = React.useMemo(() => {
+    let latest = null;
+    rowsRaw.forEach((r) => { const pm = r.period_month; if (typeof pm === "string" && /^\d{4}-\d{2}$/.test(pm) && (!latest || pm > latest)) latest = pm; });
+    return latest;
+  }, [rowsRaw]);
+  const isStale = !!(dataMonth && periodMonth && dataMonth < periodMonth);
+
   const displayRows = React.useMemo(() => {
     let r = rows;
     if (baseFilter) r = r.filter((row) => buToBase[row.bu] === baseFilter);
@@ -814,8 +822,20 @@ export default function VatDashboard() {
   const expiredTrend3Month = React.useMemo(() => {
     // สร้างรายชื่อ 3 เดือนล่าสุด (รวมเดือนปัจจุบัน) ตามรูปแบบ "YYYY-MM" ของ periodMonth
     const months = [];
-    if (periodMonth && /^\d{4}-\d{2}$/.test(periodMonth)) {
-      const [y, m] = periodMonth.split("-").map(Number);
+    // MARKER_ZONEC_EXPIRED_TREND_ANCHOR_LAST_LIVE_V1 -- หลังปิด Period แล้วยังไม่มี Live เดือนใหม่
+    // ให้ยึดเดือนล่าสุดที่มีข้อมูลจริง (<= periodMonth) เพื่อให้ Compare 3 month คงเดิมจนกว่า Live ใหม่จะเข้ามา
+    const _isPm = (s) => typeof s === "string" && /^\d{4}-\d{2}$/.test(s);
+    let anchorMonth = periodMonth;
+    if (_isPm(periodMonth)) {
+      let latest = null;
+      rows.forEach((row) => {
+        const pm = row.period_month;
+        if (_isPm(pm) && pm <= periodMonth && (!latest || pm > latest)) latest = pm;
+      });
+      if (latest) anchorMonth = latest;
+    }
+    if (_isPm(anchorMonth)) {
+      const [y, m] = anchorMonth.split("-").map(Number);
       for (let i = 2; i >= 0; i--) {
         const d = new Date(y, m - 1 - i, 1);
         months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
@@ -1583,9 +1603,13 @@ export default function VatDashboard() {
                     >
                       🔄
                     </button>
-                    <span style={{ color: loading ? "#d9a441" : "#2e9e5b" }}>●</span>
-                    {loading ? "กำลังโหลด..." : "Live"}
-                    {periodMonth && <> &nbsp;|&nbsp; Period: {periodMonth}</>}
+                    <span style={{ color: loading || isStale ? "#d9a441" : "#2e9e5b" }}>●</span>
+                    {loading ? "กำลังโหลด..." : isStale
+                      ? <span style={{ color: "#b7791f", fontWeight: 600 }} title={`ปิด Period แล้ว ยังไม่มี Incomplete เดือน ${periodMonth} เข้ามา — ตัวเลขที่เห็นคือข้อมูลเดือน ${dataMonth}`}>รอข้อมูลใหม่</span>
+                      : "Live"}
+                    {isStale
+                      ? <> &nbsp;|&nbsp; <span style={{ color: "#b7791f" }}>ข้อมูลเดือน {dataMonth} (รอไฟล์ {periodMonth})</span></>
+                      : (periodMonth && <> &nbsp;|&nbsp; Period: {periodMonth}</>)}
                     &nbsp;|&nbsp; อัปเดตล่าสุด: {formatThaiTime(now)}
                   </span>
                 </div>
@@ -2883,9 +2907,16 @@ export default function VatDashboard() {
                           "payment_date", "check_date", "check_no", "receive_doc_date", "receive_doc_no",
                           "exp_amount", "exp_vat", "old_ref_check_no", "old_ref_pay_date",
                         ];
+                        // MARKER_ZONEC_EXPIRED_DETAIL_DEFAULT_COLS_REALIZED_V1 -- ตามที่ขอ: Realized ไม่ต้องแสดง id, Note/Remark, phone,
+                        // ap_source, ap_batch_name..old_ref_*, rate_unresolved, type_* (ไม่ต้องดึงเยอะ) -- ใช้ Whitelist เหมือนฝั่ง Unrealized
+                        const DEFAULT_REALIZED_COLS = [
+                          "doc_date", "doc_no", "site", "pay_group", "branch", "tax_type", "invoice_ref", "supplier_code", "vendor_name",
+                          "payment_date", "check_date", "check_no", "receive_doc_date", "receive_doc_no",
+                          "exp_amount", "exp_vat", "avg_amount", "avg_vat",
+                        ];
                         const orderedCols = isUnrealizedView
                           ? orderedColsAll.filter((c) => c === noteCol || DEFAULT_UNREALIZED_COLS.includes(c))
-                          : orderedColsAll;
+                          : orderedColsAll.filter((c) => DEFAULT_REALIZED_COLS.includes(c));
                         // MARKER_ZONEC_EXPIRED_DETAIL_CELL_NAV_V1 -- กดลูกศร = เลื่อนเลือก Cell ทีละช่อง
                         // (ไม่ใช่ Scroll หน้าทั้งหน้า) ถ้ากดค้าง Browser จะยิง keydown ซ้ำๆ เอง ทำให้เหมือนเลื่อนรัว
                         // ส่วนถ้าอยากใช้ Scroll ปกติ (เม้าส์/Trackpad) ยังใช้ได้ตามปกติเพราะไม่ได้ปิด overflow

@@ -4,6 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 // MARKER_UPLOADGEN_DOCACCESS_FIX_V1
 import { broadcastWs, subscribeWs } from '../wsManager';
+import SpCloneExplorer from './SpCloneExplorer'; // MARKER_UPLOADGEN_SP_CLONE_V1
+import ReconcileResultsExplorer from './ReconcileResultsExplorer'; // MARKER_UPLOADGEN_VAT_RESULTS_EXPLORER_V1
 
 const DOC_FOLDERS = [
   { key: 'ap',   label: 'AP Manual',       icon: '🧾', permKey: 'Manual', color: '#E6F1FB', textColor: '#0C447C', desc: 'ใบวางบิล, ใบเสร็จ, หนังสือยืนยัน', docTypes: ['APN01','AP09','AP07'] },
@@ -5293,13 +5295,37 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const hasLoadedBrowseOnceRef = React.useRef(false);
   // MARKER_FOLDERDETAIL_PREFETCH_CACHE_V1 -- Cache หน้าถัดไปที่ Prefetch ไว้เงียบๆ เบื้องหลัง
   const prefetchCacheRef = React.useRef(new Map());
+  const PREFETCH_NEXT_PAGE = false; // MARKER_UPLOADGEN_BROWSE_PERF_V1 -- ปิด Prefetch (เดิมดึงซ้ำอีก 100 แถวเต็ม ทุกครั้งที่โหลดหน้า)
+  const wsRefreshTimerRef = React.useRef(null); // MARKER_UPLOADGEN_BROWSE_PERF_V1 -- debounce Realtime Refresh
   const browseCacheKey = (tab, bu, sort, page, pp) => `${tab}|${bu}|${sort}|${page}|${pp}`;
+  // MARKER_UPLOADGEN_BROWSE_LAZY_ATTACH_V1 -- โหมดปกติไม่ดึง attachments / ocr_text / pdf_file มาพร้อมแถว (ดู loadBrowseAttachments ด้านล่าง)
+  const BROWSE_COLUMNS = 'id,serial_code,bu_code,bu_code_name,doc_type,doc_name,rows,source,file_date,uploaded_by,created_at,updated_at,bu_name,content_hash,is_draft,status,fill_started_at,cross_check,downloaded_at';
+  const browseAttachSeqRef = React.useRef(0);
+  const mergePrevAttachments = (prev, rows) => {
+    // คงรูปเดิมของแถวเดิมไว้ชั่วคราว (กัน Thumbnail กระพริบเป็น "…" ตอน Refresh) -- loadBrowseAttachments จะอ่านค่าล่าสุดมาทับอีกรอบ
+    const pm = new Map((prev || []).map(f => [f.id, f.attachments]));
+    return rows.map(r => (pm.get(r.id) !== undefined ? { ...r, attachments: pm.get(r.id) } : r));
+  };
+  const loadBrowseAttachments = React.useCallback(async (list) => {
+    const seq = ++browseAttachSeqRef.current;
+    const ids = (list || []).map(f => f.id).filter(Boolean);
+    const CHUNK = 10;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      if (seq !== browseAttachSeqRef.current) return; // มีการโหลดหน้าใหม่แล้ว เลิกรอบเก่า
+      try {
+        const { data } = await db.from('doc_collection').select('id,attachments').in('id', ids.slice(i, i + CHUNK));
+        if (seq !== browseAttachSeqRef.current) return;
+        const map = new Map((data || []).map(r => [r.id, Array.isArray(r.attachments) ? r.attachments : []]));
+        setBrowseFiles(prev => prev.map(f => (map.has(f.id) ? { ...f, attachments: map.get(f.id) } : f)));
+      } catch (e) { /* โหลดรูปไม่สำเร็จ -> ตารางยังใช้งานได้ */ }
+    }
+  }, []);
 
   const runBrowseQuery = React.useCallback(async (tab, bu, sort, page, pp) => {
     if (sort === 'amount_desc') {
       // Amount ไม่มี Column เก็บตรงๆ (คำนวณจาก rows) ต้องดึง Tab+BU นี้มาทั้งหมด (ไม่ใช่ทั้งตาราง)
       // แล้วคำนวณ+เรียง+แบ่งหน้าในเบราว์เซอร์ เหมือนพฤติกรรมเดิมทุกประการ
-      let q = db.from('doc_collection').select('*').neq('status', 'draft');
+      let q = db.from('doc_collection').select(BROWSE_COLUMNS).neq('status', 'draft'); // MARKER_UPLOADGEN_BROWSE_LAZY_ATTACH_V1
       q = applyTabFilter(q, tab);
       if (bu !== 'ALL') q = q.eq('bu_code', bu);
       const { data } = await q;
@@ -5317,7 +5343,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     if (sort === 'bu_desc')  { orderCol = 'bu_code';   ascending = false; }
     if (sort === 'date_desc'){ orderCol = 'file_date'; ascending = false; }
 
-    let q = db.from('doc_collection').select('*').neq('status', 'draft').order(orderCol, { ascending });
+    let q = db.from('doc_collection').select(BROWSE_COLUMNS).neq('status', 'draft').order(orderCol, { ascending }); // MARKER_UPLOADGEN_BROWSE_LAZY_ATTACH_V1
     q = applyTabFilter(q, tab);
     if (bu !== 'ALL') q = q.eq('bu_code', bu);
     const start = (page - 1) * pp;
@@ -5339,7 +5365,8 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     if (cached) {
       // มี Prefetch ไว้แล้ว ใช้ได้ทันทีไม่ต้องรอ Network เลย
       prefetchCacheRef.current.delete(key);
-      setBrowseFiles(cached.rows);
+      setBrowseFiles(prev => mergePrevAttachments(prev, cached.rows)); // MARKER_UPLOADGEN_BROWSE_LAZY_ATTACH_V1
+      loadBrowseAttachments(cached.rows);
       setBrowseTotal(cached.total);
       hasLoadedBrowseOnceRef.current = true;
       return;
@@ -5349,13 +5376,14 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     if (isFirst) setLoading(true); else setRefreshing(true);
     try {
       const { rows, total } = await runBrowseQuery(activeTab, buFilter, sortBy, currentPage, perPage);
-      setBrowseFiles(rows);
+      setBrowseFiles(prev => mergePrevAttachments(prev, rows)); // MARKER_UPLOADGEN_BROWSE_LAZY_ATTACH_V1
       setBrowseTotal(total);
+      loadBrowseAttachments(rows);
       hasLoadedBrowseOnceRef.current = true;
 
       // MARKER_FOLDERDETAIL_PREFETCH_NEXT_PAGE_V1 -- Prefetch หน้าถัดไปเงียบๆ เบื้องหลัง
       // (ถ้ามีจริง) เพื่อให้กดหน้าถัดไปแล้วรู้สึกเหมือนไม่มีจังหวะรอเลย
-      if (sortBy !== 'amount_desc') {
+      if (PREFETCH_NEXT_PAGE && sortBy !== 'amount_desc') {
         const totalPagesNow = Math.max(1, Math.ceil(total / perPage));
         if (currentPage < totalPagesNow) {
           const nextKey = browseCacheKey(activeTab, buFilter, sortBy, currentPage + 1, perPage);
@@ -5371,23 +5399,22 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   // MARKER_FOLDERDETAIL_FETCH_COUNTS_V1 -- Badge/Pill/Total: Query นับอย่างเดียว ไม่ดึง rows/attachments/ocr_text
   const fetchCounts = useCallback(async () => {
     try {
-      const tabDefs = [
-        { key: 'APN01', build: q => q.eq('doc_type', 'APN01') },
-        { key: 'AP07',  build: q => q.eq('doc_type', 'AP07') },
-        { key: 'AP09',  build: q => q.eq('doc_type', 'AP09') },
-        { key: 'TRANS', build: q => q.in('doc_type', ['TRANS', 'STORE']) },
-      ];
-      const [tabResults, allCountRes, buGroupRes] = await Promise.all([
-        Promise.all(tabDefs.map(({ build }) =>
-          build(db.from('doc_collection').select('id', { count: 'exact', head: true }).neq('status', 'draft'))
-        )),
-        db.from('doc_collection').select('id', { count: 'exact', head: true }).neq('status', 'draft'),
+      // MARKER_UPLOADGEN_BROWSE_PERF_V1 -- นับทุก doc_type ใน Query เดียว (เดิม 4 Tab + ทั้งหมด = 5 Query) + นับตาม BU อีก 1 Query
+      const [typeGroupRes, buGroupRes] = await Promise.all([
+        db.from('doc_collection').distinctGroup('doc_type', 'doc_type').neq('status', 'draft'),
         applyTabFilter(db.from('doc_collection').distinctGroup('bu_code', 'bu_code').neq('status', 'draft'), activeTab),
       ]);
-      const nextTabCounts = {};
-      tabDefs.forEach(({ key }, i) => { nextTabCounts[key] = tabResults[i]?.count || 0; });
+      const typeCount = {};
+      let totalAll = 0;
+      (typeGroupRes?.data?.rows || []).forEach(g => { const n = g.count || 0; totalAll += n; typeCount[g.doc_type || ''] = (typeCount[g.doc_type || ''] || 0) + n; });
+      const nextTabCounts = {
+        APN01: typeCount['APN01'] || 0,
+        AP07:  typeCount['AP07']  || 0,
+        AP09:  typeCount['AP09']  || 0,
+        TRANS: (typeCount['TRANS'] || 0) + (typeCount['STORE'] || 0),
+      };
       setTabCounts(nextTabCounts);
-      setTotalAllCount(allCountRes?.count || 0);
+      setTotalAllCount(totalAll);
       const groups = buGroupRes?.data?.rows || [];
       const map = {};
       groups.forEach(g => { map[g.bu_code || '?'] = g.count || 0; });
@@ -5456,11 +5483,11 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
         // ข้อมูลเปลี่ยน (Save/Delete จากที่ไหนก็ตาม) — เคลียร์หน้าที่ Prefetch ไว้ล่วงหน้าทิ้ง
         // กันไม่ให้กดหน้าถัดไปแล้วได้ข้อมูลเก่าที่ Cache ไว้ก่อนมีการเปลี่ยนแปลง
         prefetchCacheRef.current.clear();
-        fetchBrowseFiles();
-        fetchCounts();
+        clearTimeout(wsRefreshTimerRef.current); // MARKER_UPLOADGEN_BROWSE_PERF_V1
+        wsRefreshTimerRef.current = setTimeout(() => { fetchBrowseFiles(); fetchCounts(); }, 600);
       }
     });
-    return unsub;
+    return () => { clearTimeout(wsRefreshTimerRef.current); if (typeof unsub === 'function') unsub(); };
   }, [search, fetchFiles, fetchBrowseFiles, fetchCounts]);
 
   // ── Queue: ดึงรายการและนับ pending/ocring ────────────────────────────────
@@ -5641,6 +5668,9 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
     if (rowRequiresCrossCheck && !file.cross_check?.confirmed) { alert('กรุณากด "ดู" เพื่อเปิด Cross Check ตรวจให้เกิน 70% แล้วกด Confirm ก่อนถึงจะ Download ได้'); return; }
     setDownloadingRow(file.id);
     try {
+      if (file.source === 'ocr_pdf' && file.attachments === undefined) { // MARKER_UPLOADGEN_BROWSE_LAZY_ATTACH_V1
+        try { const { data: ar } = await db.from('doc_collection').select('id,attachments').eq('id', file.id).maybeSingle(); file = { ...file, attachments: Array.isArray(ar?.attachments) ? ar.attachments : [] }; } catch (_) {}
+      }
       // ocr_pdf → download PDF image แทน Excel
       if (file.source === 'ocr_pdf' && Array.isArray(file.attachments) && file.attachments.length > 0) {
         const att = file.attachments[0];
@@ -6060,7 +6090,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                             ))}
                             {file.attachments.length>3&&<span style={{ fontSize:'10px',color:'#aaa' }}>+{file.attachments.length-3}</span>}
                           </>
-                        ) : <span style={{ fontSize:'10px',color:'#ccc' }}>-</span>}
+                        ) : <span style={{ fontSize:'10px',color:'#ccc' }}>{file.attachments === undefined ? '…' : '-'}</span>}
                       </div>
                     </td>
                     
@@ -6078,7 +6108,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                               // (6 ชม.หลังโหลด + มี fill_started_at + created_at ครบ → Confirm ให้อัตโนมัติ)
                               db.from('doc_collection').update({ downloaded_at: new Date().toISOString() }).eq('id', file.id).catch(()=>{});
                             }} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #0F6E56',background:'#0F6E56',cursor:'pointer',fontSize:'9px',color:'white',fontWeight:'700',padding:'0',display:'flex',alignItems:'center',justifyContent:'center' }}>PDF</button>
-                          : <button title="ดู" onClick={()=>setViewFile(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>👁</button>
+                          : <button title="ดู" onClick={async()=>{ try { const { data: full } = await db.from('doc_collection').select(BROWSE_COLUMNS + ',attachments').eq('id', file.id).maybeSingle(); if (full) setViewFile(full); } catch(err) { alert('โหลดข้อมูลเอกสารไม่สำเร็จ: ' + err.message); } }} /* MARKER_UPLOADGEN_BROWSE_LAZY_ATTACH_V1 */ style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background:'white',cursor:'pointer',fontSize:'12px' }}>👁</button>
                         }
                         <button title={file.status==='draft' ? 'ยังเป็น Draft — Submit เป็น Active ก่อน' : ((!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed) ? 'ต้อง Cross Check + Confirm ก่อนถึงจะ Download ได้' : 'Download')} onClick={()=>handleRowDownload(file)} disabled={downloadingRow===file.id || file.status==='draft' || (!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #ddd',background: (downloadingRow===file.id || file.status==='draft' || (!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed)) ? '#eee' : 'white',cursor: (downloadingRow===file.id || file.status==='draft' || (!!file.fill_started_at && !(file.doc_type==='AP09' && file.doc_name==='Inputsummary') && !file.cross_check?.confirmed)) ? 'default' : 'pointer',fontSize:'12px' }}>⬇</button> {/* MARKER_DOCCOLLECTION_CROSSCHECK_ROWDOWNLOAD_V1 */}
                         <button title="จัดการรูปแนบ" onClick={()=>setAttachModal(file)} style={{ width:'26px',height:'26px',borderRadius:'4px',border:'0.5px solid #1a3a5c',background:'white',cursor:'pointer',fontSize:'12px' }}>📎</button>
@@ -6500,6 +6530,9 @@ function SupportAttachDropZone({ attachments, setAttachments, maxImages = 5 }) {
   );
 }
 
+// MARKER_DOCCENTER_SKELETON_CACHE_V1 -- แคชข้อมูลหน้า Document Center ไว้ที่ระดับโมดูล (ต่อผู้ใช้) เปิดซ้ำแล้วเห็นตัวเลขเดิมทันที แล้วค่อยอัปเดตเงียบๆ | ครั้งแรกแสดงโครงการ์ด (skeleton) แทนข้อความ "กำลังโหลด"
+let DOC_CENTER_CACHE = null;
+
 function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   const downloadOutlookHandler = async (full) => {
     try {
@@ -6517,29 +6550,80 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     } catch (err) { alert('ดาวน์โหลดไม่สำเร็จ: ' + err.message); }
   };
 
+  // MARKER_UPLOADGEN_SP_HANDLER_CARD_V1 -- SharePoint Handler (ส่งไฟล์รายงานภาษีไป SharePoint ด้วยปุ่ม Confirm ใน Input VAT Recon)
+  const downloadSpHandler = async (full) => {
+    try {
+      const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token');
+      const path = full ? '/api/file-storage/sp-handler' : '/api/file-storage/sp-handler/ps1-only';
+      const filename = full ? 'fastapn-sp-handler.zip' : 'fastapn-sp.ps1';
+      const res = await fetch(`${apiBase}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { alert('ดาวน์โหลดไม่สำเร็จ: ' + err.message); }
+  };
+
+  // MARKER_UPLOADGEN_SP_HANDLER_VERSION_LINE_V1 -- แสดงเวอร์ชันล่าสุด + เวลาปล่อย + เวอร์ชัน/เวลาอัปเดตของเครื่องฉัน ใต้การ์ด SharePoint Handler
+  const [spInfo, setSpInfo] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      try {
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        const token = sessionStorage.getItem('fastapn_token');
+        const res = await fetch(`${apiBase}/api/file-storage/sp-handler/my-status`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok && !stop) setSpInfo(await res.json());
+      } catch (_) { /* เงียบ */ }
+    })();
+    return () => { stop = true; };
+  }, []);
+  // MARKER_UPLOADGEN_OUTLOOK_HANDLER_VERSION_V1 -- เวอร์ชันล่าสุดของ Outlook Handler + เครื่องฉัน (สคริปต์รายงานกลับเองทุกครั้งที่ใช้) -> ป้าย "ควร Update"
+  const [olInfo, setOlInfo] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      try {
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        const token = sessionStorage.getItem('fastapn_token');
+        const res = await fetch(`${apiBase}/api/file-storage/outlook-handler/my-status`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok && !stop) setOlInfo(await res.json());
+      } catch (_) { /* เงียบ */ }
+    })();
+    return () => { stop = true; };
+  }, []);
+  const fmtSpTime = (t) => { try { return new Date(t).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return '-'; } };
+
   const { currentUser, userName, userPermissions } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
-  const [userRoleData, setUserRoleData] = useState(null);
-  const [fileCounts, setFileCounts] = useState({});
-  const [folderBatches, setFolderBatches] = useState({});
-  const [folderDrafts, setFolderDrafts] = useState({});
+  const canSpHandler = !!(isOwner || (userPermissions && userPermissions['VAT'])); // MARKER_UPLOADGEN_SP_HANDLER_VAT_ONLY_V1 -- การ์ด SharePoint Handler เห็นเฉพาะ Owner / ผู้มีสิทธิ์ VAT (กฎเดียวกับ Home)
+  const dcCache = (DOC_CENTER_CACHE && DOC_CENTER_CACHE.email === ((currentUser && currentUser.email) || '')) ? DOC_CENTER_CACHE : null; // MARKER_DOCCENTER_SKELETON_CACHE_V1
+  const [userRoleData, setUserRoleData] = useState(dcCache ? dcCache.userRoleData : null);
+  const [fileCounts, setFileCounts] = useState(dcCache ? dcCache.fileCounts : {});
+  const [folderBatches, setFolderBatches] = useState(dcCache ? dcCache.folderBatches : {});
+  const [folderDrafts, setFolderDrafts] = useState(dcCache ? dcCache.folderDrafts : {});
   // MARKER_DOCCENTER_PRECOMPUTED_BATCH_COUNT_V1
   // ── นับจำนวน Batch (ไม่รวม AP09) ไว้ล่วงหน้าตอน Fetch เลย แทนที่จะ .filter() ──
   // ── ซ้ำทุกครั้งที่ Card Re-render (5 Folder Card x ทุกรอบ Render ที่ไม่จำเป็น) ──
-  const [folderBatchCounts, setFolderBatchCounts] = useState({});
+  const [folderBatchCounts, setFolderBatchCounts] = useState(dcCache ? dcCache.folderBatchCounts : {});
   const [detailFolder, setDetailFolder] = useState(null);
   const [detailSearch, setDetailSearch] = useState('');
   const [detailBU, setDetailBU] = useState('');
   const [detailMode, setDetailMode] = useState('batch');
   const [detailViewFile, setDetailViewFile] = useState(null); // MARKER_APMANUAL_EDITOR_PERM_AND_VIEW_V1
-  const [requests, setRequests] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [requests, setRequests] = useState(dcCache ? dcCache.requests : []);
+  const [loading, setLoading] = useState(!dcCache);
   const [requesting, setRequesting] = useState({});
   const [toast, setToast] = useState(null);
   const [activeFolder, setActiveFolder] = useState(null);
+  const [vatSub, setVatSub] = useState(null); // MARKER_UPLOADGEN_VAT_HUB_V1 -- null=หน้า 3 การ์ด | 'recon'=Z_Report Reconcile | 'detail'=VAT Detail (Backend)
   const [activeTab, setActiveTab] = useState('folders');
   useEffect(() => { if (jumpToSetupToken) setActiveTab('setup'); }, [jumpToSetupToken]);
   const [showHandlerDetail, setShowHandlerDetail] = useState(false);
+  const [showSpDetail, setShowSpDetail] = useState(false); // MARKER_UPLOADGEN_SP_HANDLER_CARD_V1
 
   // ── Support & Feedback State (Phase 2) ──
   const [supportThreads, setSupportThreads] = useState([]);
@@ -6646,13 +6730,15 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 
   const fetchData = useCallback(async () => {
     if (!currentUser) return;
-    setLoading(true);
+    if (!DOC_CENTER_CACHE || DOC_CENTER_CACHE.email !== (currentUser.email || '')) setLoading(true); // MARKER_DOCCENTER_SKELETON_CACHE_V1 -- มีข้อมูลเดิมแล้วไม่ล้างหน้า
+    const dcNew = { email: currentUser.email || '', userRoleData: null, requests: [], fileCounts: {}, folderBatches: {}, folderDrafts: {}, folderBatchCounts: {} };
+    let dcOk = false;
     try {
       const { data: roleData } = await db.from('user_roles').select('*').eq('email', currentUser.email).single();
-      setUserRoleData(roleData);
+      setUserRoleData(roleData); dcNew.userRoleData = roleData || null;
       if (roleData?.id) {
         const { data: reqData } = await db.from('access_requests').select('*').eq('requester_id', roleData.id);
-        setRequests(reqData || []);
+        setRequests(reqData || []); dcNew.requests = reqData || [];
       }
       // MARKER_DOCCENTER_PERF_SELECT_TRIM_V1
       // ── ตัด bu_name, created_at ออก เพราะไม่ได้ใช้จริงในหน้านี้เลย (เช็คทุกจุด ──
@@ -6665,7 +6751,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         const counts = {};
         countData.forEach(r => { counts[r.folder_key] = (counts[r.folder_key] || 0) + 1; });
         if (batchData) counts['ap'] = (counts['ap']||0) + (batchData.filter(r=>r.doc_type==='APN01'&&r.status!=='draft').length);
-        setFileCounts(counts);
+        setFileCounts(counts); dcNew.fileCounts = counts;
       }
       if (batchData) {
         const allBatches = batchData||[];
@@ -6679,16 +6765,18 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
             byFolderDraft[f.key] = draftOnly.filter(b=>(f.docTypes).includes(b.doc_type));
           }
         });
-        setFolderBatches(byFolder);
-        setFolderDrafts(byFolderDraft);
+        setFolderBatches(byFolder); dcNew.folderBatches = byFolder;
+        setFolderDrafts(byFolderDraft); dcNew.folderDrafts = byFolderDraft;
         // MARKER_DOCCENTER_PRECOMPUTED_BATCH_COUNT_V1
         const counts2 = {};
         DOC_FOLDERS.forEach(f => {
           if (f.docTypes) counts2[f.key] = byFolder[f.key].filter(r=>r.doc_type!=='AP09').length;
         });
-        setFolderBatchCounts(counts2);
+        setFolderBatchCounts(counts2); dcNew.folderBatchCounts = counts2;
       }
+      dcOk = true;
     } catch (err) { console.error('fetchData error:', err); }
+    if (dcOk) DOC_CENTER_CACHE = dcNew;
     setLoading(false);
   }, [currentUser]);
 
@@ -6701,13 +6789,15 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     const fn = e => {
       if (e.key !== 'Escape') return;
       if (activeFolder && activeFolder.key !== 'ap') {
+        // MARKER_UPLOADGEN_VAT_HUB_V1 -- อยู่ในการ์ดย่อยของ VAT Control: Esc = กลับหน้า 3 การ์ดก่อน
+        if (activeFolder.key === 'vat' && vatSub) { setVatSub(null); return; }
         setActiveFolder(null);
         fetchData();
       }
     };
     window.addEventListener('keydown', fn);
     return () => window.removeEventListener('keydown', fn);
-  }, [activeFolder, fetchData]);
+  }, [activeFolder, fetchData, vatSub]);
 
   // ── Support & Feedback: ดึงรายการกระทู้ (Endpoint 1.8) ──
   const fetchSupportThreads = useCallback(async () => {
@@ -7508,6 +7598,96 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     setRequesting(prev => ({ ...prev, [folder.key]: false }));
   };
 
+  // MARKER_UPLOADGEN_FOLDER_KEYNAV_V1 -- Document Center: ลูกศรขึ้น/ลง เลื่อนเลือกการ์ด (ค่าเริ่มต้น = AP Manual) | Enter เปิดการ์ดที่เลือก
+  const [kbIdx, setKbIdx] = useState(0);
+  useEffect(() => {
+    if (activeFolder || activeTab !== 'folders') return undefined;
+    const fn = (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+      const t = e.target; const tag = t && t.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+      if (document.querySelector('[role="dialog"], .modal, [data-modal]')) return;
+      const n = DOC_FOLDERS.length;
+      if (e.key === 'Enter') {
+        const f = DOC_FOLDERS[Math.min(kbIdx, n - 1)];
+        if (f && canAccess(f)) { e.preventDefault(); setActiveFolder(f); }
+        return;
+      }
+      e.preventDefault();
+      setKbIdx((i) => (e.key === 'ArrowDown' ? Math.min(n - 1, i + 1) : Math.max(0, i - 1)));
+    };
+    window.addEventListener('keydown', fn);
+    return () => window.removeEventListener('keydown', fn);
+  }); // ไม่ใส่ deps: canAccess/kbIdx เปลี่ยนทุก Render -- เบามาก
+  useEffect(() => { if (!activeFolder) setKbIdx(0); }, [activeFolder]);
+
+  // MARKER_UPLOADGEN_VAT_RESULTS_EXPLORER_V1 -- VAT Control = ที่เก็บ Reconcile Results (Esc: ปิดเมนู/Dialog ก่อน, ไม่มีอะไรเปิด = Back ตาม Effect เดิม)
+  // MARKER_UPLOADGEN_SP_CLONE_V1 -- Z_Report Reconcile = Clone จาก SharePoint (SpCloneExplorer) | 'legacy' = Explorer เดิมที่เก็บไฟล์ใน Backend
+  if (activeFolder && activeFolder.key === 'vat' && vatSub === 'recon') {
+    return (
+      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
+        <SpCloneExplorer onBack={() => setVatSub(null)} onOpenLegacy={() => setVatSub('legacy')} />
+      </div>
+    );
+  }
+  if (activeFolder && activeFolder.key === 'vat' && vatSub === 'legacy') {
+    return (
+      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
+        <ReconcileResultsExplorer onBack={() => setVatSub('recon')} />
+      </div>
+    );
+  }
+  // MARKER_UPLOADGEN_VAT_HUB_V1 -- VAT Detail = ที่เก็บไฟล์จริงที่ Backend (FolderDetail เดิม)
+  if (activeFolder && activeFolder.key === 'vat' && vatSub === 'detail') {
+    return (
+      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
+        <FolderDetail folder={activeFolder} onBack={() => setVatSub(null)} userName={userName} currentUser={currentUser} canDelete={true} isOwner={isOwner} isAdmin={isAdmin} isEditor={isEditor} />
+      </div>
+    );
+  }
+  // MARKER_UPLOADGEN_VAT_HUB_V1 -- หน้าแรกด้านใน VAT Control: 3 การ์ด (Z_Report Reconcile | Z_Upload เร็วๆ นี้ | VAT Detail)
+  if (activeFolder && activeFolder.key === 'vat') {
+    const hubRow = (o) => (
+      <div key={o.title} onClick={o.disabled ? undefined : o.onClick}
+        style={{ background:'white', border: o.disabled ? '0.5px dashed #ddd' : '0.5px solid #e8e8e8', borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px', cursor: o.disabled ? 'default' : 'pointer', opacity: o.disabled ? 0.55 : 1 }}>
+        <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:o.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>{o.icon}</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c', marginBottom:'2px' }}>{o.title}</div>
+          <div style={{ fontSize:'11px', color:'#888' }}>{o.desc}</div>
+        </div>
+        <span style={{ fontSize:'11px', padding:'3px 10px', borderRadius:'99px', background:o.pillBg, color:o.pillColor, flexShrink:0 }}>{o.pill}</span>
+        <button disabled={o.disabled} onClick={(e)=>{ e.stopPropagation(); o.onClick && o.onClick(); }} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor: o.disabled ? 'default' : 'pointer', flexShrink:0 }}>Detail</button>
+        <span style={{ color:'#999' }}>›</span>
+      </div>
+    );
+    return (
+      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
+        {/* MARKER_UPLOADGEN_VAT_HUB_HEADER_V1 -- หัวแบบหน้า Home: eyebrow + ชื่อ (accent เขียว) + วันที่/ผู้ใช้/Role | Step bar มีปุ่มย้อนกลับ */}
+        <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 24px 12px',background:'#fff' }}>
+          <div style={{ borderLeft:'4px solid #2fb58a',paddingLeft:'12px' }}>
+            <div style={{ fontSize:'10.5px',letterSpacing:'.14em',color:'#2fb58a',fontWeight:700,textTransform:'uppercase' }}>Document Center</div>
+            <div style={{ fontSize:'24px',fontWeight:800,color:'#14284b',lineHeight:1.2,marginTop:'2px' }}>Document Center - <span style={{ color:'#2fb58a' }}>VatController</span></div>
+            <div style={{ fontSize:'12px',color:'#6b778c',marginTop:'2px' }}>เลือกแหล่งไฟล์ของ VAT Controller</div>
+          </div>
+          <div style={{ textAlign:'right',fontSize:'12.5px',color:'#4b5a73' }}>
+            <div>{(() => { try { return new Date().toLocaleDateString('th-TH',{ weekday:'long',day:'numeric',month:'long',year:'numeric' }); } catch (_) { return ''; } })()}</div>
+            <div style={{ marginTop:'4px' }}><span style={{ color:'#6b778c',marginRight:'4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize:'11px',background:'#e3f6ec',color:'#14935a',borderRadius:'99px',padding:'2px 10px',fontWeight:700 }}>{isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer'}</span></div>
+          </div>
+        </div>
+        <div style={{ display:'flex',alignItems:'center',gap:'6px',padding:'8px 24px 12px',background:'#fff',borderBottom:'1px solid #edebe9',flexWrap:'wrap' }}>
+          <span onClick={()=>{ setVatSub(null); setActiveFolder(null); fetchData(); }} title="กลับไป Document Center" style={{ display:'inline-flex',alignItems:'center',gap:'6px',border:'1px solid #0f6cbd',background:'#fff',color:'#0f6cbd',fontWeight:600,borderRadius:'99px',padding:'5px 14px',fontSize:'13px',cursor:'pointer' }}>← Document Center</span>
+          <span style={{ color:'#b3bccb' }}>›</span>
+          <span style={{ display:'inline-flex',alignItems:'center',gap:'8px',border:'1px solid #14284b',background:'#14284b',color:'#fff',fontWeight:600,borderRadius:'99px',padding:'5px 14px 5px 6px',fontSize:'13px' }}><span style={{ width:'20px',height:'20px',borderRadius:'50%',background:'#2fb58a',color:'#fff',fontSize:'11px',display:'inline-flex',alignItems:'center',justifyContent:'center' }}>1</span>VAT Control</span>
+        </div>
+        <div style={{ padding:'16px 20px', display:'flex', flexDirection:'column', gap:'10px', overflowY:'auto' }}>
+          {hubRow({ title:'Z_Report Reconcile', icon:'📤', bg:'#E8F5E9', desc:'Clone จาก SharePoint · รายงาน Reconcile · เปิดผ่าน Browser · โยนไฟล์แล้วส่งไป SharePoint (ไม่เก็บไฟล์จริงในระบบ)', pill:'☁ SharePoint', pillBg:'#E3F2FD', pillColor:'#0C447C', onClick:()=>setVatSub('recon') })}
+          {hubRow({ title:'Z_Upload (Z_AllSystemUpload)', icon:'📤', bg:'#FFF3E0', desc:'Clone จาก SharePoint · ไฟล์ Upload เข้าระบบ (อนาคต)', pill:'เร็วๆ นี้', pillBg:'#eee', pillColor:'#888', disabled:true })}
+          {hubRow({ title:'VAT Detail', icon:'🗂', bg:'#E8F0FE', desc:'เก็บไฟล์จริงที่ Backend เช่น ไฟล์ประชุม, ใบกำกับภาษี, รายงาน PP30 (อนาคต)', pill:'เร็วๆ นี้', pillBg:'#eee', pillColor:'#888', disabled:true })} {/* MARKER_UPLOADGEN_VATDETAIL_SOON_V1 -- ปิดไว้ก่อน (เดิมเปิดหน้ารายการ AP ที่ไม่เกี่ยวกับ VAT) */}
+        </div>
+      </div>
+    );
+  }
+
   // MARKER_DOCUMENTCENTER_COMING_SOON_V1
   // ── เฉพาะ AP Manual (folder.key==='ap') ที่มี Feature จริง — Module อื่นยังไม่เคยถูกสร้าง ──
   // ── ไม่เกี่ยวกับ Permission (canAccess) เลย — แค่ตัดสินว่า "เข้าไปแล้วเจออะไร" ──
@@ -7548,10 +7728,30 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
   }
 
   if (loading) {
+    // MARKER_DOCCENTER_SKELETON_CACHE_V1 -- วาดโครงหน้า (แท็บ + การ์ดโมดูล) ทันที เฉพาะตัวเลข batch เป็นแถบ shimmer แทนข้อความ "กำลังโหลด"
     return (
-      <div style={{ padding:'20px' }}>
-        <h2 style={{ fontSize:'16px', fontWeight:'600', marginBottom:'16px' }}>📁 Document Center</h2>
-        <div style={{ color:'#888', fontSize:'13px' }}>กำลังโหลด...</div>
+      <div style={{ padding:'20px', position:'relative' }}>
+        <style>{`@keyframes dcShimmer{0%{background-position:-300px 0}100%{background-position:300px 0}}.dc-sk{background:linear-gradient(90deg,#eceff1 25%,#f6f8f9 37%,#eceff1 63%);background-size:600px 100%;animation:dcShimmer 1.3s infinite linear}@media (prefers-reduced-motion: reduce){.dc-sk{animation:none}}`}</style>
+        <div style={{ display:'flex', gap:'4px', borderBottom:'1px solid #eee', marginBottom:'16px' }}>
+          <span style={{ padding:'8px 4px', marginRight:'20px', fontSize:'14px', fontWeight:'600', color:'#1a3a5c', borderBottom:'2px solid #1a3a5c' }}>Document Center</span>
+          <span style={{ padding:'8px 4px', fontSize:'14px', color:'#888', borderBottom:'2px solid transparent' }}>Setup - Tools</span>
+          <span style={{ padding:'8px 4px', marginLeft:'20px', fontSize:'14px', color:'#888', borderBottom:'2px solid transparent' }}>Support & Feedback</span>
+        </div>
+        <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+          {DOC_FOLDERS.map(folder => (
+            <div key={folder.key} style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px' }}>
+              <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:folder.color, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>{folder.icon}</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c', marginBottom:'2px' }}>{folder.label}</div>
+                <div style={{ fontSize:'11px', color:'#888' }}>{folder.desc}</div>
+              </div>
+              <span className="dc-sk" style={{ width:'92px', height:'22px', borderRadius:'20px', flexShrink:0 }} />
+              {folder.docTypes && <span style={{ width:'52px', height:'22px', flexShrink:0 }} />}
+              <span style={{ minWidth:'80px', flexShrink:0 }} />
+              <span style={{ fontSize:'16px', color:'#ddd', flexShrink:0 }}>›</span>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -7661,8 +7861,9 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 
       {activeTab==='folders' && (
       <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
-        {DOC_FOLDERS.map(folder => {
+        {DOC_FOLDERS.map((folder, fIdx) => {
           const accessible = canAccess(folder);
+          const kbSel = fIdx === kbIdx; // MARKER_UPLOADGEN_FOLDER_KEYNAV_V1
           const count = fileCounts[folder.key] ?? 0;
           const reqStatus = getRequestStatus(folder.key);
           const isRequesting = requesting[folder.key];
@@ -7670,9 +7871,9 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
           return (
             <div key={folder.key}
               onClick={() => accessible && setActiveFolder(folder)}
-              style={{ background:'white', border:`0.5px solid ${accessible?'#e8e8e8':'#f0f0f0'}`, borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px', cursor: accessible?'pointer':'default', opacity: accessible?1:0.6, transition:'border-color 0.15s' }}
-              onMouseEnter={e => { if (accessible) e.currentTarget.style.borderColor='#1a3a5c'; }}
-              onMouseLeave={e => { if (accessible) e.currentTarget.style.borderColor=accessible?'#e8e8e8':'#f0f0f0'; }}>
+              ref={kbSel ? ((el) => { if (el && el.scrollIntoView) el.scrollIntoView({ block:'nearest' }); }) : undefined}
+              style={{ background:'white', border: kbSel ? '1.5px solid #1a3a5c' : `0.5px solid ${accessible?'#e8e8e8':'#f0f0f0'}`, boxShadow: kbSel ? '0 0 0 3px rgba(26,58,92,.12)' : 'none', borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px', cursor: accessible?'pointer':'default', opacity: accessible?1:0.6, transition:'border-color 0.15s' }}
+              onMouseEnter={e => { setKbIdx(fIdx); }}>
 
               <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:accessible?folder.color:'#f5f5f5', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>
                 {accessible ? folder.icon : '🔒'}
@@ -7731,16 +7932,41 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c', marginBottom:'2px' }}>Outlook Handler</div>
             <div style={{ fontSize:'11px', color:'#888' }}>เครื่องมือเปิด Outlook Draft อัตโนมัติ ติดตั้งครั้งเดียวใช้ได้ทุกเมนู</div>
+            {olInfo && (<div style={{ fontSize:'10.5px', color:'#6b7b8c', marginTop:'3px' }}>
+              ล่าสุด v{olInfo.latest} · ปล่อยเมื่อ {fmtSpTime(olInfo.releasedAt)}
+              {olInfo.machines && olInfo.machines.length > 0
+                ? <> · เครื่องคุณ v{olInfo.machines[0].version} (ใช้งานล่าสุด {fmtSpTime(olInfo.machines[0].reported_at)}) {olInfo.machines[0].version < olInfo.latest ? <b style={{ color:'#c0392b' }}>● ควร Update</b> : <b style={{ color:'#1e8449' }}>● ล่าสุดแล้ว</b>}</>
+                : <> · ยังไม่พบข้อมูลเครื่องคุณ (Update แล้วกดเปิด Outlook Draft หนึ่งครั้ง)</>}
+            </div>)}
           </div>
           <button onClick={()=>downloadOutlookHandler(true)} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#1a3a5c', cursor:'pointer', flexShrink:0 }}>⬇ Download</button>
           <button onClick={()=>downloadOutlookHandler(false)} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer', flexShrink:0 }}>↻ Update</button>
           <button onClick={()=>setShowHandlerDetail(true)} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer', flexShrink:0 }}>Detail</button>
         </div>
-        {Array.from({length:9}).map((_,i) => (
+        {/* MARKER_UPLOADGEN_SP_HANDLER_CARD_V1 */}
+        <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'8px', padding:'12px 16px', display: canSpHandler ? 'flex' : 'none', alignItems:'center', gap:'14px' }}>
+          <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:'#E8F5E9', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>📤</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c', marginBottom:'2px' }}>SharePoint Handler - <span style={{ color:'#2fb58a' }}>VatController</span></div>
+            <div style={{ fontSize:'11px', color:'#888' }}>ส่งไฟล์รายงานภาษีไปเก็บที่ SharePoint ด้วยปุ่ม Confirm (สร้างโฟลเดอร์ BU / เดือนให้อัตโนมัติ) ติดตั้งครั้งเดียวต่อเครื่อง</div>
+            {spInfo && (
+              <div style={{ fontSize:'10.5px', color:'#6b7b8c', marginTop:'3px' }}>
+                ล่าสุด v{spInfo.latest} · ปล่อยเมื่อ {fmtSpTime(spInfo.releasedAt)}
+                {spInfo.machines && spInfo.machines.length > 0
+                  ? <> · เครื่องคุณ v{spInfo.machines[0].version} (อัปเดต/ใช้งานล่าสุด {fmtSpTime(spInfo.machines[0].reported_at)}) {spInfo.machines[0].version < spInfo.latest ? <b style={{ color:'#c0392b' }}>● ควร Update</b> : <b style={{ color:'#2e7d32' }}>● ล่าสุดแล้ว</b>}</>
+                  : <> · ยังไม่พบข้อมูลเครื่องคุณ (ติดตั้ง/อัปเดต Handler แล้วใช้งานหนึ่งครั้ง)</>}
+              </div>
+            )}
+          </div>
+          <button onClick={()=>downloadSpHandler(true)} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#1a3a5c', cursor:'pointer', flexShrink:0 }}>⬇ Download</button>
+          <button onClick={()=>downloadSpHandler(false)} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer', flexShrink:0 }}>↻ Update</button>
+          <button onClick={()=>setShowSpDetail(true)} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor:'pointer', flexShrink:0 }}>Detail</button>
+        </div>
+        {Array.from({length:8}).map((_,i) => (
           <div key={'setup-placeholder-'+i} style={{ background:'white', border:'0.5px dashed #ddd', borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px', opacity:0.5 }}>
             <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:'#f5f5f5', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>🧩</div>
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:'14px', fontWeight:'500', color:'#aaa', marginBottom:'2px' }}>เครื่องมือใหม่ {i+2}</div>
+              <div style={{ fontSize:'14px', fontWeight:'500', color:'#aaa', marginBottom:'2px' }}>เครื่องมือใหม่ {i+3}</div>
               <div style={{ fontSize:'11px', color:'#bbb' }}>Coming soon</div>
             </div>
           </div>
@@ -8384,6 +8610,56 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         </div>
       )}
 
+      {/* MARKER_UPLOADGEN_SP_HANDLER_CARD_V1 */}
+      {showSpDetail && (
+        <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div style={{ background:'white', borderRadius:'12px', width:'640px', maxWidth:'90vw', maxHeight:'85vh', overflowY:'auto', padding:'28px' }}>
+            <div style={{ fontSize:'18px', fontWeight:'600', color:'#1a3a5c', marginBottom:'4px' }}>📤 SharePoint Handler - <span style={{ color:'#2fb58a' }}>VatController</span></div>
+            <div style={{ fontSize:'13px', color:'#888', marginBottom:'20px' }}>ส่งไฟล์รายงานภาษีไปเก็บที่ SharePoint — ติดตั้งครั้งเดียวต่อเครื่อง</div>
+
+            <div style={{ background:'#f7f9fb', borderRadius:'8px', padding:'12px 16px', marginBottom:'20px' }}>
+              <div style={{ fontSize:'13px', fontWeight:'600', color:'#1a3a5c', marginBottom:'6px' }}>ไฟล์นี้มีไว้ทำอะไร?</div>
+              <div style={{ fontSize:'13px', color:'#555', lineHeight:'1.7' }}>เป็น "ตัวกลาง" ที่ย้ายไฟล์รายงานภาษีที่ดาวน์โหลดจาก Link3ase ไปวางในโฟลเดอร์ SharePoint ที่ซิงก์ผ่าน OneDrive ตามรูปแบบ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'Z_Report Reconcile\\<รหัส BU>\\<YYYY.MM>\\<ชื่อไฟล์>'}</code> โดยสร้างโฟลเดอร์เดือนให้เองถ้ายังไม่มี จากนั้น OneDrive จะซิงก์ขึ้น SharePoint ให้อัตโนมัติ (ไม่ใช้ Token และ Backend ไม่ต้องต่ออินเทอร์เน็ต)</div>
+            </div>
+
+            <div style={{ fontSize:'14px', fontWeight:'600', color:'#1a3a5c', marginBottom:'10px' }}>⬇ ติดตั้งครั้งแรก</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'8px', marginBottom:'20px' }}>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>1</span><span style={{ fontSize:'13px', color:'#444' }}>กดปุ่ม <b>Download</b> ด้านบน จะได้ไฟล์ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'fastapn-sp-handler.zip'}</code></span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>2</span><span style={{ fontSize:'13px', color:'#444' }}>แตกไฟล์ zip (คลิกขวา → Extract All)</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>3</span><span style={{ fontSize:'13px', color:'#444' }}>ดับเบิลคลิก <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'setup-fastapn-sp.bat'}</code> (ไม่ต้อง Run as Administrator)</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>4</span><span style={{ fontSize:'13px', color:'#444' }}>Setup จะหาโฟลเดอร์ <b>Z_Report Reconcile</b> และ <b>Z_AllSystemUpload</b> จาก OneDrive ในเครื่องให้อัตโนมัติ (ที่ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'...\\OneDrive - Central Group\\VAT Controller\\My System\\'}</code>) ไม่ต้องเลือกเอง ถ้าไม่พบ Z_Report Reconcile จะเปิดหน้าต่างให้เลือก (ต้องเป็นโฟลเดอร์ชื่อนี้เท่านั้น) ถ้าไม่พบ Z_AllSystemUpload จะข้ามไป</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>5</span><span style={{ fontSize:'13px', color:'#444' }}>รอจนขึ้น "ติดตั้งสำเร็จ!" แล้วกด Enter ปิดหน้าต่าง</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>6</span><span style={{ fontSize:'13px', color:'#444' }}>ตั้งค่า Browser (Chrome/Edge) → Settings → Downloads → <b>ปิด</b> "Ask where to save each file before downloading" เพื่อให้ไฟล์ลงโฟลเดอร์ Downloads อัตโนมัติ</span></div>
+            </div>
+
+            <div style={{ fontSize:'14px', fontWeight:'600', color:'#1a3a5c', marginBottom:'10px' }}>📤 วิธีใช้งาน</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'8px', marginBottom:'20px' }}>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>1</span><span style={{ fontSize:'13px', color:'#444' }}>ไปที่ <b>Input VAT Recon</b> → ตาราง "ที่เก็บไฟล์รายงานภาษี" ด้านล่าง (หรือกด <b>Export + ส่ง SharePoint</b> ในหน้าต่าง Reconcile Report)</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>2</span><span style={{ fontSize:'13px', color:'#444' }}>กดปุ่ม <b>ส่ง</b> ในคอลัมน์ SharePoint ของไฟล์นั้น → ตรวจชื่อไฟล์และโฟลเดอร์ปลายทางในหน้าต่างยืนยัน</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>3</span><span style={{ fontSize:'13px', color:'#444' }}>กด <b>Confirm ส่ง</b> → Browser จะดาวน์โหลดไฟล์ แล้ว Handler ย้ายไปโฟลเดอร์ BU/เดือนให้ (ครั้งแรก Browser อาจถามว่าจะเปิดแอปไหม ให้กด เปิด และติ๊ก "อนุญาตเสมอ")</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#E6F1FB', color:'#1a3a5c', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>4</span><span style={{ fontSize:'13px', color:'#444' }}>เมื่อมีแจ้งเตือน Windows "ส่งไป SharePoint" แปลว่าวางไฟล์ในโฟลเดอร์แล้ว รอ OneDrive ซิงก์ขึ้น SharePoint (ดูไอคอน ✓ สีเขียวที่ไฟล์) แล้วดูรายการที่ส่งแล้วได้ที่ Document Center → Reconcile Results (คอลัมน์ SharePoint กด เปิด ↗)</span></div>
+            </div>
+
+            <div style={{ fontSize:'12px', color:'#888', lineHeight:'1.7', marginBottom:'16px' }}>
+              💡 ถ้าส่งไฟล์ชื่อเดิมซ้ำ ไฟล์ใน SharePoint จะถูกทับ (SharePoint เก็บ Version History ให้ย้อนกลับได้)<br/>
+              💡 ชื่อไฟล์ต้องเป็นรูปแบบ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'เลขBU_BU_Account_MON-YY.xlsx'}</code> ระบบจึงจะอ่านรหัส BU และเดือนได้ ถ้าอ่านไม่ได้จะไม่ส่ง<br/>
+              💡 ถ้าโฟลเดอร์ Downloads ไม่ใช่ค่าเริ่มต้น แก้ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'downloadsDir'}</code> ใน <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'D:\\apps\\fastapn-sp-config.json'}</code><br/>
+              💡 ถ้าเกิดปัญหา ดู Log ที่ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'D:\\apps\\fastapn-sp.log'}</code>
+            </div>
+
+            <div style={{ fontSize:'14px', fontWeight:'600', color:'#1a3a5c', marginBottom:'10px' }}>↻ ติดตั้งไปแล้ว — อยากได้เวอร์ชันล่าสุด</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'8px', marginBottom:'8px' }}>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#f0f0f0', color:'#888', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>1</span><span style={{ fontSize:'13px', color:'#444' }}>กดปุ่ม <b>Update</b> จะได้ไฟล์ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'fastapn-sp.ps1'}</code> เวอร์ชันล่าสุด</span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#f0f0f0', color:'#888', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>2</span><span style={{ fontSize:'13px', color:'#444' }}>นำไปวางทับที่ <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'D:\\apps\\fastapn-sp.ps1'}</code></span></div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}><span style={{ width:'20px', height:'20px', borderRadius:'50%', background:'#f0f0f0', color:'#888', fontSize:'11px', fontWeight:'600', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>3</span><span style={{ fontSize:'13px', color:'#444' }}>ถ้าเคยติดตั้งแล้วและใช้เฉพาะ Z_Report Reconcile ไม่ต้องรัน setup ใหม่ (ค่าเดิมใช้ต่อได้) แต่ถ้าจะใช้ Z_AllSystemUpload ให้รัน <code style={{background:'#f0f0f0',padding:'1px 5px',borderRadius:'3px'}}>{'setup-fastapn-sp.bat'}</code> ใหม่เพื่อเลือกโฟลเดอร์เพิ่ม</span></div>
+            </div>
+            <div style={{ display:'flex', justifyContent:'flex-end', marginTop:'16px' }}>
+              <button onClick={()=>setShowSpDetail(false)} style={{ fontSize:'13px', padding:'8px 16px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#1a3a5c', cursor:'pointer' }}>← Back</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showHandlerDetail && (
         <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
           <div style={{ background:'white', borderRadius:'12px', width:'600px', maxWidth:'90vw', maxHeight:'85vh', overflowY:'auto', padding:'28px' }}>
@@ -8425,4 +8701,4 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 export default DocumentCenter;
 // MARKER_SUPPORT_LIST_FULLHEIGHT_V1
 
-// MARKER_SUPPORT_SEARCH_NARROW_V1
+// MARKER_SUPPORT_SEARCH_NARROW_V1

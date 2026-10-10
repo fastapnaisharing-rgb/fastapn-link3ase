@@ -7,6 +7,7 @@ import { confirmDialog } from "../confirmDialog"; // MARKER_TIMELINE_DEFAULTS_CO
 import { useRealtimeRefresh } from "../useRealtimeRefresh"; // MARKER_TIMELINE_REALTIME_PROGRESS_V1
 import ReactDOM from "react-dom"; // MARKER_TIMELINE_REQUEST_ID_HISTORY_V1
 import { apiFetch } from "../api"; // MARKER_TIMELINE_PERIOD_DEADLINE_FROM_VAT_PERIOD_V1
+import VatReconcileSystem from "./VatReconcileSystem"; // MARKER_TIMELINE_UPLOAD_DROP_V1 -- โยนไฟล์ผ่าน Timeline เข้ากระบวนการอัปโหลดปกติ (Scope ตามการ์ด)
 
 // MARKER_TIMELINE_PAGE_PROTOTYPE_V1
 // Timeline ปิดภาษี (VAT Controller > Reconcile > Timeline)
@@ -736,7 +737,7 @@ function ZoneHeader({ badge, title, state, children }) {
   );
 }
 
-function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onStepClear, onMode, onItemEnable, onVatEnable, onVatId, onVatCommit, onVatStatus, onReqId, onReqToggle, onVatPick, onReqCommit, onReqPick, onRptSet, onRptNote, onRptNoteDel, onBuClose, onReset, onDefaultsSet, userName, prepBy }) {
+function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onStepClear, onMode, onItemEnable, onVatEnable, onVatId, onVatCommit, onVatStatus, onReqId, onReqToggle, onVatPick, onReqCommit, onReqPick, onRptSet, onRptNote, onRptNoteDel, onBuClose, onReset, onDefaultsSet, userName, prepBy, reconPeriod, onGoRecon, onRidDone }) {
   // หน้า BU ทำทีละ Zone: ตอนนี้มีเฉพาะ Zone "เตรียมข้อมูล" (ซ้าย PP36/CPN/AP01-5/Pop M/Deposit Clearing, ขวา 46119)
   const LEFT = ["PP36", "CPN", "AP01-5", "Pop M", "Deposit Clearing"];
   const pg = buProgress(u);
@@ -751,6 +752,97 @@ function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onSte
   const initials = (prepBy || "").split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
   const [files, setFiles] = React.useState({});
+  // MARKER_TIMELINE_GO_RECON_V1 -- ปุ่ม "ไป Reconcile": กดแล้วไปหน้า Input Vat Rec. พร้อมเลือก Period / BU / Account ให้ -- กดได้เมื่อการ์ด Enable และมีข้อมูลใน DB จริง (ดึงจาก /vat-reconcile/dashboard/status)
+  const [rst, setRst] = React.useState([]);
+  const [dbOk, setDbOk] = React.useState(false); // true เมื่อดึงสถานะจาก DB สำเร็จแล้วเท่านั้น (กันเคลียร์ Request ID ผิดตอนโหลดไม่ได้)
+  React.useEffect(() => {
+    const rp = reconPeriod; // งวดปัจจุบันของ Timeline (ตามหัวหน้า) -- ไม่มี = ไม่ตรวจ
+    if (!rp) { setRst([]); setDbOk(false); return; }
+    let dead = false;
+    const token = sessionStorage.getItem("fastapn_token");
+    const base = process.env.REACT_APP_API_URL || "http://10.101.87.126:4000/api";
+    fetch(`${base}/vat-reconcile/dashboard/status?period=${encodeURIComponent(rp)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => r.json().catch(() => ({})))
+      .then((d) => { if (!dead) { setRst(Array.isArray(d.rows) ? d.rows : []); setDbOk(Array.isArray(d.rows)); } })
+      .catch(() => { if (!dead) { setRst([]); setDbOk(false); } });
+    return () => { dead = true; };
+  }, [reconPeriod, u.bu, files]);
+  const curP = reconPeriod || "";
+  // ตรวจข้อมูลจริงใน DB (BU + Account + ชนิดข้อมูล) ของงวดปัจจุบัน -> ใช้ทั้งขึ้นข้อความบนการ์ดและเปิดปุ่ม Goto
+  const dbHit = (kind, group, tt) => {
+    if (kind === "none") return null;
+    const has = (r) => (kind === "tb" ? r.tb_active : kind === "s100" ? r.simple_100_active : kind === "savg" ? r.simple_avg_active : r.input_summary_active);
+    // tt = Tax Type ของการ์ด Input Summary (N/A/F/T/M) -> ถ้า Backend ส่ง tax_types มา ต้องมี Tax Type นั้นจริงในข้อมูล (MARKER_TIMELINE_STATUS_TAX_TYPES_V1)
+    const ttOk = (r) => !tt || !Array.isArray(r.tax_types) || !r.tax_types.length || r.tax_types.includes(tt);
+    return rst.filter((r) => r.label === u.bu && (!group || r.group === group || r.account === group) && ttOk(r)).find(has) || null; // group = Expense | Asset | เลข Account (เช่น 11610751 ของการ์ด M)
+  };
+  const dbLine = (kind, group, tt) => { const h = dbHit(kind, group, tt); return h ? `มีข้อมูลในระบบ · งวด ${curP}${h.ready ? " · พร้อม Reconcile" : ""}` : null; };
+  React.useEffect(() => { // MARKER_TIMELINE_RID_CLEAR_ON_DATA_V1 -- ตรวจข้อมูลปัจจุบันใน DB: การ์ดไหนมีข้อมูลแล้ว แต่ยังมี Request ID ค้างในช่อง -> เก็บลง History แล้วเคลียร์ช่อง
+    if (!dbOk || closed || !onRidDone || !curP) return;
+    for (let i = 4; i <= 8; i++) {
+      const cd = u.vat && u.vat.cards ? u.vat.cards[i] : null;
+      if (cd && cd.on && cd.v && dbHit(i === 4 ? "tb" : (i === 5 || i === 7) ? "s100" : "savg", i === 4 ? null : i <= 6 ? "Expense" : "Asset")) onRidDone(i);
+    }
+    ["N", "T", "A", "F", "M"].forEach((k) => {
+      const v = u.req && u.req["Input Summary"] ? u.req["Input Summary"][k] : "";
+      if (v && v !== "X" && dbHit("is", k === "N" || k === "A" ? "Expense" : k === "F" || k === "T" ? "Asset" : "11610751", k)) onRidDone("S" + k);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rst, dbOk]);
+  const reconBtn = (kind, group, on, tt) => {
+    const row = dbHit(kind, group, tt);
+    if (kind === "tb") { // TB = บอกสถานะเท่านั้น (จุดเขียว = มีข้อมูลในระบบ / จุดแดง = ยังไม่มี) ไม่มีปุ่ม Goto
+      const ok = !!on && !!row;
+      return <span title={!on ? "การ์ดนี้ Disable" : ok ? "มีข้อมูล TB ในระบบ (งวดปัจจุบัน)" : "ยังไม่มีข้อมูล TB ในระบบ (งวดปัจจุบัน)"} aria-label={ok ? "มีข้อมูล" : "ไม่มีข้อมูล"} style={{ marginLeft: "auto", flex: "none", width: 12, height: 12, borderRadius: "50%", background: !on ? "#C9C6BA" : ok ? "#3B6D11" : "#CF222E", boxShadow: "0 0 0 3px " + (!on ? "#C9C6BA33" : ok ? "#3B6D1133" : "#CF222E33"), alignSelf: "center", marginRight: 8 }} />;
+    }
+    const can = !!on && !!row && !!curP && !!onGoRecon;
+    const tip = !on ? "การ์ดนี้ Disable" : kind === "none" ? "ยังไม่รองรับการ์ดนี้" : !row ? "ยังไม่มีข้อมูลในระบบ (งวดปัจจุบัน)" : "ไปหน้า Reconcile (เลือก Period / BU / Account ให้)";
+    return (
+      <button type="button" disabled={!can} title={tip} aria-label="ไป Reconcile"
+        onClick={() => can && onGoRecon({ period: curP, bu: u.bu, account: row.account })}
+        style={{ marginLeft: "auto", flex: "none", width: 28, height: 28, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 8, cursor: can ? "pointer" : "not-allowed", border: can ? "1px solid #3B6D11" : "1px solid #D9D6CB", background: can ? "#3B6D11" : "#F1F0EB", color: can ? "#fff" : "#b5b8bd" }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+      </button>
+    );
+  };
+  // MARKER_TIMELINE_UPLOAD_DROP_V1 -- ลากไฟล์วาง/เลือกไฟล์ที่ปุ่ม Upload File ของการ์ด TB / Simple / Input Summary -> เข้ากระบวนการอัปโหลดปกติ (Preview > Confirm > Commit) โดยรู้ Report Type จากการ์ด
+  const [upl, setUpl] = React.useState(null); // { key, file, scope:{ type, simple?, label } }
+  const UPL_SCOPE = { 4: { type: "tb", label: "Trial Balance" }, 5: { type: "simple", simple: "100", label: "Expense 100%" }, 6: { type: "simple", simple: "avg", label: "Expense AVG" }, 7: { type: "simple", simple: "100", label: "Asset 100%" }, 8: { type: "simple", simple: "avg", label: "Asset AVG" } };
+  const uplFileRef = React.useRef(null);
+  // ดักประเภทไฟล์ก่อนเข้ากระบวนการ: แต่ละการ์ด (Template) รับเฉพาะนามสกุล/ชื่อไฟล์ที่กำหนด
+  const checkAccept = (file, scope) => {
+    const name = String((file && file.name) || "");
+    const ext = (name.split(".").pop() || "").toLowerCase();
+    if (scope.type === "simple") {
+      if (ext !== "xlsx") return `${scope.label} รับเฉพาะไฟล์ .xlsx (Simple Report) — ไฟล์ที่โยนเป็น .${ext || "?"}`;
+      const m = /Simple[ _]+Report[ _]+Vat[ _]+(100|AVG)/i.exec(name);
+      if (!m) return `ชื่อไฟล์ไม่ใช่ Simple Report (ต้องมี Simple_Report_Vat_100 หรือ Simple_Report_Vat_AVG) — ${name}`;
+      if (scope.simple && m[1].toLowerCase() !== String(scope.simple).toLowerCase()) return `ไฟล์นี้เป็น Simple ${m[1].toUpperCase()} แต่ช่อง ${scope.label} รับเฉพาะ Simple ${String(scope.simple).toUpperCase() === "100" ? "100%" : "AVG"}`;
+      return "";
+    }
+    if (!["out", "txt", "tsv", "xlsx"].includes(ext)) return `${scope.label} รับเฉพาะไฟล์ .out / .txt / .xlsx (หรือ Paste text) — ไฟล์ที่โยนเป็น .${ext || "?"}`;
+    return "";
+  };
+  const UPL_HINT = { tb: "TB: ไฟล์ดิบ .out จาก GLCRC064 (หรือ .xlsx ที่ตัดแล้ว)", input_summary: "Input Summary: ไฟล์ดิบ .out จาก APCRC201 (หรือ .xlsx ที่ Confirm แล้ว)", simple: "Simple: ไฟล์ .xlsx ชื่อมี Simple_Report_Vat_100 หรือ _AVG" };
+  const openUplPopup = (key, scope) => { if (closed || !scope) return; setUpl({ key, scope, file: null, tab: "file", err: "" }); };
+  const openUpl = (key, file, scope) => { if (closed || !file || !scope) return; const err = checkAccept(file, scope); setUpl(err ? { key, scope, file: null, tab: "file", err } : { key, scope, file, tab: "file", err: "" }); };
+  const uplDnD = (key, scope) => ({
+    onDragOver: (e) => { if (!closed) e.preventDefault(); },
+    onDrop: (e) => { e.preventDefault(); e.stopPropagation(); const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) openUpl(key, f, scope); },
+    // วางข้อความที่ Copy จาก Excel / Notepad (Ctrl+V) -- ชี้เมาส์ที่ปุ่มแล้ว Ctrl+V | ใช้ Logic เดียวกับ Paste ในหน้า Upload File
+    tabIndex: 0,
+    onMouseEnter: (e) => { try { if (!closed) e.currentTarget.focus({ preventScroll: true }); } catch (_) {} },
+    onPaste: (e) => {
+      if (closed) return;
+      const text = e.clipboardData && e.clipboardData.getData ? e.clipboardData.getData("text/plain") : "";
+      const cf = e.clipboardData && e.clipboardData.files && e.clipboardData.files[0];
+      if (text && text.trim()) {
+        e.preventDefault();
+        const isTsv = text.includes("\t");
+        openUpl(key, new File([new Blob([text], { type: "text/plain" })], isTsv ? "pasted-excel.tsv" : "pasted-data.out", { type: "text/plain" }), scope);
+      } else if (cf) { e.preventDefault(); openUpl(key, cf, scope); }
+    },
+  });
   // Reset ต้องยืนยันด้วยรหัส 6 หลัก (สุ่มโชว์ + พิมพ์ยืนยัน) รูปแบบเดียวกับ Setup Rule ใน IEController
   const [rstCode, setRstCode] = React.useState("");
   const [rstInput, setRstInput] = React.useState("");
@@ -810,6 +902,7 @@ function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onSte
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Chip v={cl} />
                     <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: 0.4, color: "#7b8794" }}>{VAT_CARDS[i].g}</span>
+                    {i >= 4 && reconBtn(i === 4 ? "tb" : (i === 5 || i === 7) ? "s100" : "savg", i === 4 ? null : i <= 6 ? "Expense" : "Asset", c.on)}
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: ink, minHeight: 36 }}>{VAT_CARDS[i].name}</div>
                   <EnableToggle full on={c.on} disabled={closed} onChange={(v) => onVatEnable(i, v)} />
@@ -830,13 +923,12 @@ function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onSte
 </div>
                       <div style={{ fontSize: 11, color: "#7b8794", textAlign: "center" }}>{filled && c.by ? c.by : "ยังไม่ได้กรอก"}</div>
                       {i >= 4 && (
-                        <label style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 34, borderRadius: 9, border: files[i] ? "1px solid #CFE5B0" : "1px dashed #1a3a5c", background: files[i] ? "#EEF6E4" : "#F7F9FC", color: files[i] ? "#27500A" : "#1a3a5c", fontSize: 12, fontWeight: 600, cursor: closed ? "default" : "pointer", overflow: "hidden", padding: "0 8px", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                          <input type="file" disabled={closed} style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; setFiles((p) => ({ ...p, [i]: f ? { name: f.name, at: stampNow(), by: userName || "คุณ" } : null })); }} />
-                          {files[i] ? files[i].name : "Upload File"}
-                        </label>
+                        <div role="button" onClick={() => openUplPopup(i, UPL_SCOPE[i])} {...uplDnD(i, UPL_SCOPE[i])} title="คลิกเพื่อเปิดหน้าอัปโหลด (โยนไฟล์ / วาง Text) · ลากไฟล์มาวางที่ปุ่มได้เลย" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 34, borderRadius: 9, border: files[i] ? "1px solid #CFE5B0" : "1px dashed #1a3a5c", background: files[i] ? "#EEF6E4" : "#F7F9FC", color: files[i] ? "#27500A" : "#1a3a5c", fontSize: 12, fontWeight: 600, cursor: closed ? "default" : "pointer", overflow: "hidden", padding: "0 8px", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                                                    {files[i] ? files[i].name : "Upload File"}
+                        </div>
                       )}
                       {i >= 4 && (
-                        <div style={{ fontSize: 11, color: "#7b8794", textAlign: "center" }}>{files[i] ? `อัปโหลด ${files[i].at} · ${files[i].by}` : "ยังไม่ได้อัปโหลด"}</div>
+                        (() => { const dl = files[i] ? null : dbLine(i === 4 ? "tb" : (i === 5 || i === 7) ? "s100" : "savg", i === 4 ? null : i <= 6 ? "Expense" : "Asset"); return <div style={{ fontSize: 11, color: dl ? "#3B6D11" : "#7b8794", fontWeight: dl ? 600 : 400, textAlign: "center" }}>{files[i] ? `อัปโหลด ${files[i].at} · ${files[i].by}` : (dl || "ยังไม่ได้อัปโหลด")}</div>; })()
                       )}
                     </>
                   ) : (
@@ -962,6 +1054,7 @@ function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onSte
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Chip v={cl} />
             <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: 0.4, color: "#7b8794" }}>INPUT SUMMARY</span>
+            {reconBtn("is", k === "N" || k === "A" ? "Expense" : k === "F" || k === "T" ? "Asset" : "11610751", on, k)}
           </div>
           <div style={{ fontSize: 14, fontWeight: 600, color: ink, minHeight: 36 }}>Input Summary - {k}</div>
           <EnableToggle full on={on} disabled={closed} onChange={(e) => onReqToggle("Input Summary", k, e)} />
@@ -984,12 +1077,11 @@ function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onSte
           )}
           {on && <div style={{ fontSize: 11, color: "#7b8794", textAlign: "center" }}>{filled ? "บันทึกแล้ว" : "ยังไม่ได้กรอก"}</div>}
           {on && (
-            <label style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 34, borderRadius: 9, border: files["S" + k] ? "1px solid #CFE5B0" : "1px dashed #1a3a5c", background: files["S" + k] ? "#EEF6E4" : "#F7F9FC", color: files["S" + k] ? "#27500A" : "#1a3a5c", fontSize: 12, fontWeight: 600, cursor: closed ? "default" : "pointer", overflow: "hidden", padding: "0 8px", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-              <input type="file" disabled={closed} style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; setFiles((p) => ({ ...p, ["S" + k]: f ? { name: f.name, at: stampNow(), by: userName || "คุณ" } : null })); }} />
-              {files["S" + k] ? files["S" + k].name : "Upload File"}
-            </label>
+            <div role="button" onClick={() => openUplPopup("S" + k, { type: "input_summary", taxType: k, label: "Input Summary - " + k })} {...uplDnD("S" + k, { type: "input_summary", taxType: k, label: "Input Summary - " + k })} title="คลิกเพื่อเปิดหน้าอัปโหลด (โยนไฟล์ / วาง Text) · ลากไฟล์มาวางที่ปุ่มได้เลย" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 34, borderRadius: 9, border: files["S" + k] ? "1px solid #CFE5B0" : "1px dashed #1a3a5c", background: files["S" + k] ? "#EEF6E4" : "#F7F9FC", color: files["S" + k] ? "#27500A" : "#1a3a5c", fontSize: 12, fontWeight: 600, cursor: closed ? "default" : "pointer", overflow: "hidden", padding: "0 8px", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                            {files["S" + k] ? files["S" + k].name : "Upload File"}
+            </div>
           )}
-          {on && <div style={{ fontSize: 11, color: "#7b8794", textAlign: "center" }}>{files["S" + k] ? `อัปโหลด ${files["S" + k].at} · ${files["S" + k].by}` : "ยังไม่ได้อัปโหลด"}</div>}
+          {on && (() => { const dl = files["S" + k] ? null : dbLine("is", k === "N" || k === "A" ? "Expense" : k === "F" || k === "T" ? "Asset" : "11610751", k); return <div style={{ fontSize: 11, color: dl ? "#3B6D11" : "#7b8794", fontWeight: dl ? 600 : 400, textAlign: "center" }}>{files["S" + k] ? `อัปโหลด ${files["S" + k].at} · ${files["S" + k].by}` : (dl || "ยังไม่ได้อัปโหลด")}</div>; })()}
         </div>
       </div>
     );
@@ -1278,6 +1370,69 @@ function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onSte
         </div>
       </div>
 
+      {upl && ReactDOM.createPortal( // MARKER_TIMELINE_UPLOAD_DROP_V1 -- Popup อัปโหลด: แท็บ "โยนไฟล์" (ลากวาง/คลิกเปิด Browser) | "วาง Text" -- ดักชนิดไฟล์ตามการ์ด (Template) ก่อนเข้ากระบวนการอัปโหลดปกติ
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 12, width: upl.file ? "min(1280px, 96vw)" : "min(900px, 96vw)", minHeight: upl.file ? undefined : "min(560px, 80vh)", maxHeight: "94vh", overflow: "auto", boxShadow: "0 16px 48px rgba(0,0,0,.3)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", borderBottom: "1px solid #E3E5EA", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>Upload · {upl.scope.label} · BU {u.bu}</div>
+              <button type="button" onClick={() => setUpl(null)} style={{ border: "1px solid #d0d7de", background: "#fff", borderRadius: 6, padding: "4px 12px", fontSize: 13, cursor: "pointer" }}>ปิด</button>
+            </div>
+            {!upl.file ? (
+              <div style={{ padding: 16 }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                  {[["file", "โยนไฟล์"], ["text", "วาง Text"]].map(([k2, t2]) => (
+                    <button key={k2} type="button" onClick={() => setUpl((d) => ({ ...d, tab: k2, err: "" }))} style={{ padding: "6px 16px", fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: "pointer", border: upl.tab === k2 ? "1px solid #27500A" : "1px solid #d0d7de", background: upl.tab === k2 ? "#EAF3DE" : "#fff", color: upl.tab === k2 ? "#27500A" : "#57606a" }}>{t2}</button>
+                  ))}
+                </div>
+                {upl.tab === "file" ? (
+                  <div
+                    role="button" tabIndex={0}
+                    onClick={() => uplFileRef.current && uplFileRef.current.click()}
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.background = "#EEF6E4"; }}
+                    onDragLeave={(e) => { e.currentTarget.style.background = "#F7F9FC"; }}
+                    onDrop={(e) => { e.preventDefault(); e.currentTarget.style.background = "#F7F9FC"; const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) openUpl(upl.key, f, upl.scope); }}
+                    style={{ border: "2px dashed #1a3a5c", borderRadius: 12, background: "#F7F9FC", padding: "120px 16px", textAlign: "center", cursor: "pointer", color: C.navy }}
+                  >
+                    <div style={{ fontSize: 15, fontWeight: 600 }}>ลากไฟล์มาวางที่นี่</div>
+                    <div style={{ fontSize: 12.5, color: "#57606a", marginTop: 4 }}>หรือคลิกเพื่อเลือกไฟล์จากเครื่อง (Browse)</div>
+                    <input ref={uplFileRef} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) openUpl(upl.key, f, upl.scope); }} />
+                  </div>
+                ) : upl.scope.type === "simple" ? (
+                  <div style={{ border: "1px dashed #C9C8C0", borderRadius: 10, padding: "28px 16px", textAlign: "center", fontSize: 13, color: "#7b8794" }}>Simple Report เป็นไฟล์ .xlsx — ไม่รองรับการวาง Text ให้ใช้แท็บ "โยนไฟล์"</div>
+                ) : (
+                  <textarea
+                    autoFocus rows={16}
+                    placeholder="วางข้อมูลที่ Copy จาก Excel / Notepad ที่นี่ (Ctrl+V) — ระบบตรวจรูปแบบและแสดง Preview ให้อัตโนมัติ"
+                    onPaste={(e) => { const t = e.clipboardData && e.clipboardData.getData ? e.clipboardData.getData("text/plain") : ""; if (t && t.trim()) { e.preventDefault(); const isTsv = t.includes("\t"); openUpl(upl.key, new File([new Blob([t], { type: "text/plain" })], isTsv ? "pasted-excel.tsv" : "pasted-data.out", { type: "text/plain" }), upl.scope); } }}
+                    style={{ width: "100%", boxSizing: "border-box", fontSize: 13, padding: 10, border: "1px solid #d0d7de", borderRadius: 8, resize: "vertical", fontFamily: "monospace" }}
+                  />
+                )}
+                <div style={{ fontSize: 11.5, color: "#7b8794", marginTop: 8 }}>ช่องนี้รับ: {UPL_HINT[upl.scope.type]}</div>
+                {upl.err && <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "#FCEBEB", color: "#791F1F", fontSize: 12.5 }}>{upl.err}</div>}
+              </div>
+            ) : (
+              <div style={{ padding: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, fontSize: 12.5, color: "#57606a" }}>
+                  <span>ไฟล์: <b>{upl.file.name}</b></span>
+                  <button type="button" onClick={() => setUpl((d) => ({ ...d, file: null, err: "" }))} style={{ border: "1px solid #d0d7de", background: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 12, cursor: "pointer" }}>เปลี่ยนไฟล์</button>
+                </div>
+                <VatReconcileSystem
+                  key={upl.file.name + "|" + upl.file.size + "|" + upl.file.lastModified}
+                  initialFile={upl.file}
+                  expectedType={upl.scope.type}
+                  expectedSimple={upl.scope.simple || null}
+                  expectedBu={u.bu}
+                  expectedBuNum={String(u.code || "").split("-")[3] || null}
+                  expectedLabel={upl.scope.label}
+                  expectedTaxType={["N", "A", "F", "T", "M"].includes(String(upl.scope.taxType || "").toUpperCase()) ? upl.scope.taxType : null}
+                  onCommitSuccess={() => { setFiles((p) => ({ ...p, [upl.key]: { name: upl.file.name, at: stampNow(), by: userName || "คุณ" } })); if (onRidDone) onRidDone(upl.key); }}
+                />
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
       {/* Zone 3: Report (First Draft | Final Draft) */}
       <div style={{ marginTop: 16, borderRadius: 16, background: "#F4F3EF", overflow: "hidden", border: "none", boxShadow: "none" }}>
         <ZoneHeader badge="F" title="Final Step : Reconcile Vat Report" state={z3State} />
@@ -1830,7 +1985,7 @@ function EmailReportModal({ bus, tab, period, userName, onClose }) {
   );
 }
 
-export default function TimelinePage() {
+export default function TimelinePage({ onNavigate }) {
   const { userName } = useAuth();
   const { isAdmin } = useUserRole();
   const [showCfg, setShowCfg] = React.useState(false);
@@ -1901,6 +2056,9 @@ export default function TimelinePage() {
     return () => { off = true; };
   }, [reload]);
   const closed = false; // Dashboard นี้ไม่มีการปิด Period
+  // MARKER_TIMELINE_CURRENT_PERIOD_KEY_V1 -- แถวใน timeline_progress อ้างตาม Current Period (เดิม Hard-code 2026-09) | ยังไม่รู้ Period = "" (ยังไม่โหลดความคืบหน้า)
+  const curYm = period.loading ? "" : (period.periodYm ? String(period.periodYm).slice(0, 7) : PERIOD_YM);
+  const prevYmOf = (ym) => { const m = /^(\d{4})-(\d{2})$/.exec(ym || ""); if (!m) return ""; const d = new Date(Number(m[1]), Number(m[2]) - 2, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
   // ── บันทึกความคืบหน้าลง DB (ตาราง timeline_progress: 1 แถวต่อ Period + BU) ──
   const savedRef = React.useRef({}); // bu -> JSON ที่บันทึก/โหลดล่าสุด
   const rowIdRef = React.useRef({}); // bu -> id แถวใน DB
@@ -1908,18 +2066,23 @@ export default function TimelinePage() {
   const [saveMsg, setSaveMsg] = React.useState("");
   const busKeys = bus.map((b) => b.bu).join("|");
   React.useEffect(() => {
-    if (!busKeys) return undefined;
+    if (!busKeys || !curYm) return undefined;
     let off = false;
     (async () => {
-      const [r, sc] = await Promise.all([db.from("timeline_progress").select("*").eq("period_ym", PERIOD_YM), db.from("tax_close_bu_config").select("*").eq("config_key", "scope")]); /* MARKER_TIMELINE_SCOPE_DEFAULTS_CONFIG_V1 */
+      const [r, sc] = await Promise.all([db.from("timeline_progress").select("*").eq("period_ym", curYm), db.from("tax_close_bu_config").select("*").eq("config_key", "scope")]); /* MARKER_TIMELINE_SCOPE_DEFAULTS_CONFIG_V1 */
       if (off) return;
       const scopeRows = sc && !sc.error && Array.isArray(sc.data) ? sc.data : [];
       if (r.error) { setSaveMsg("โหลดความคืบหน้าไม่สำเร็จ (ตรวจว่า Deploy Backend/ตาราง timeline_progress แล้ว)"); setLoadedProg(false); return; }
       const rows = Array.isArray(r.data) ? r.data : [];
       rows.forEach((x) => { rowIdRef.current[x.bu] = x.id; });
+      // Period ใหม่ (ยังไม่มีแถว) -> คัดลอกเฉพาะ Request ID History (rhist) จาก Period ก่อนหน้า | Note / Request ID / Finish เริ่มว่าง
+      let prevRows = [];
+      if (rows.length < busRef.current.length) { try { const pr = await db.from("timeline_progress").select("*").eq("period_ym", prevYmOf(curYm)); if (pr && !pr.error && Array.isArray(pr.data)) prevRows = pr.data; } catch (e) { /* ไม่มี = เริ่มว่าง */ } }
+      if (off) return;
       setBus((prev) => prev.map((b) => {
         const row = rows.find((x) => x.bu === b.bu);
-        let m = row && row.state && typeof row.state === "object" ? mergeProg(b, row.state) : b;
+        const pRow = !row ? prevRows.find((x) => x.bu === b.bu) : null;
+        let m = row && row.state && typeof row.state === "object" ? mergeProg(b, row.state) : (pRow && pRow.state && typeof pRow.state === "object" && pRow.state.rhist ? mergeProg(b, { rhist: pRow.state.rhist }) : b);
         const sr = scopeRows.find((x) => String(x.bu_code) === String(b.bu));
         if (sr && typeof sr.enabled === "boolean") m = { ...m, inScope: sr.enabled, why: sr.enabled ? "" : "Inactive" };
         savedRef.current[b.bu] = JSON.stringify(pickProg(m));
@@ -1929,7 +2092,7 @@ export default function TimelinePage() {
       setLoadedProg(true);
     })();
     return () => { off = true; };
-  }, [busKeys, userName]);
+  }, [busKeys, userName, curYm]);
   React.useEffect(() => {
     if (!loadedProg) return undefined;
     const tm = setTimeout(async () => {
@@ -1941,22 +2104,22 @@ export default function TimelinePage() {
         let res;
         if (rowIdRef.current[b.bu]) res = await db.from("timeline_progress").update(payload).eq("id", rowIdRef.current[b.bu]);
         else {
-          res = await db.from("timeline_progress").insert({ period_ym: PERIOD_YM, bu: b.bu, ...payload });
-          if (!res.error) { const q = await db.from("timeline_progress").select("*").eq("period_ym", PERIOD_YM).eq("bu", b.bu); const row = Array.isArray(q.data) ? q.data[0] : null; if (row) rowIdRef.current[b.bu] = row.id; }
+          res = await db.from("timeline_progress").insert({ period_ym: curYm, bu: b.bu, ...payload });
+          if (!res.error) { const q = await db.from("timeline_progress").select("*").eq("period_ym", curYm).eq("bu", b.bu); const row = Array.isArray(q.data) ? q.data[0] : null; if (row) rowIdRef.current[b.bu] = row.id; }
         }
         if (res.error) setSaveMsg("บันทึกความคืบหน้าไม่สำเร็จ: " + (res.error.message || res.error));
         else { savedRef.current[b.bu] = js; setSaveMsg(""); savedBus.push(b.bu); }
       }
-      if (savedBus.length) broadcastWs("timeline_progress_updated", { period_ym: PERIOD_YM, bus: savedBus, by: userName || "" }); // Realtime: แจ้งเครื่องอื่นให้ดึงข้อมูลใหม่
+      if (savedBus.length) broadcastWs("timeline_progress_updated", { period_ym: curYm, bus: savedBus, by: userName || "" }); // Realtime: แจ้งเครื่องอื่นให้ดึงข้อมูลใหม่
     }, 600);
     return () => clearTimeout(tm);
-  }, [bus, loadedProg, userName]);
+  }, [bus, loadedProg, userName, curYm]);
   // MARKER_TIMELINE_REALTIME_PROGRESS_V1 -- รับ Event แล้วดึง timeline_progress ใหม่ (+ Poll สำรองทุก 60 วิ) · BU ที่เรามีแก้ค้างยังไม่บันทึกจะไม่ถูกทับ
   const busRef = React.useRef(bus);
   busRef.current = bus;
   const refreshProgress = React.useCallback(async () => {
     if (!loadedProg) return;
-    const r = await db.from("timeline_progress").select("*").eq("period_ym", PERIOD_YM);
+    const r = await db.from("timeline_progress").select("*").eq("period_ym", curYm);
     if (!r || r.error || !Array.isArray(r.data)) return;
     const updates = {};
     const sc = await db.from("tax_close_bu_config").select("*").eq("config_key", "scope"); // MARKER_TIMELINE_SCOPE_SYNC_V1 -- Active/Inactive ตาม DB เสมอ (กันเด้งกลับ)
@@ -1975,13 +2138,22 @@ export default function TimelinePage() {
       updates[b.bu] = { ...m, inScope: b.inScope, why: b.why };
     });
     if (Object.keys(updates).length || Object.keys(scopeChg).length) setBus((prev) => prev.map((b) => { let n = updates[b.bu] || b; if (b.bu in scopeChg) n = { ...n, inScope: scopeChg[b.bu], why: scopeChg[b.bu] ? "" : "Inactive" }; return n; }));
-  }, [loadedProg]);
+  }, [loadedProg, curYm]);
   React.useEffect(() => { if (loadedProg) refreshProgress(); }, [loadedProg, busKeys]); // eslint-disable-line react-hooks/exhaustive-deps
   useRealtimeRefresh(["timeline_progress_updated"], refreshProgress, 60000);
   const [filter, setFilter] = React.useState("all"); // all | pending | confirm
   const [tab, setTab] = React.useState("mine"); // mine = งานของฉัน | all = ทั้งหมด (Owner/Admin)
   const tabEff = isAdmin ? tab : "mine";
   const [cur, setCur] = React.useState(-1);
+  React.useEffect(() => { // MARKER_RECON_GO_TIMELINE_V1 -- มาจากปุ่ม Timeline ในหน้า Reconcile -> เปิดหน้า BU นั้นให้เลย
+    if (!bus.length) return;
+    let j = null;
+    try { j = JSON.parse(sessionStorage.getItem("timeline_jump") || "null"); } catch (e) {}
+    if (!j || !j.bu || Date.now() - (j.t || 0) > 60000) return;
+    try { sessionStorage.removeItem("timeline_jump"); } catch (e) {}
+    const ix = bus.findIndex((x) => x.bu === j.bu);
+    if (ix >= 0) setCur(ix);
+  }, [bus]);
   const rootRef = React.useRef(null);
   // Lobby: ล็อกกล่องแม่ที่เลื่อนได้ (main-scroll ของแอป) ไม่ให้เลื่อนทั้งหน้า -- ให้เลื่อนเฉพาะแถวในตาราง
   React.useEffect(() => {
@@ -2059,6 +2231,19 @@ export default function TimelinePage() {
     const changed = !!c.v && lastRid(bus[cur], `vat:${i}`) !== String(c.v);
     mutate(cur, (x) => { const cd = x.vat.cards[i]; if (!cd.v) cd.by = ""; else if (changed || !cd.by) cd.by = `${who} · ${stampNow()}`; pushRid(x, `vat:${i}`, cd.v); });
     if (changed) log(cur, `Closing Vat › ${VAT_CARDS[i].name}: บันทึก Request ID ${c.v}`);
+  };
+  const onRidDone = (key) => { // MARKER_TIMELINE_RID_CLEAR_ON_DATA_V1 -- ข้อมูลเข้า DB แล้ว -> เก็บ Request ID ลง History แล้วเคลียร์ช่อง (ช่องเก็บเฉพาะค่าที่ยัง "ค้าง")
+    const b = bus[cur];
+    if (!b) return;
+    const isSum = typeof key === "string" && key.startsWith("S");
+    const k = isSum ? key.slice(1) : null;
+    const val = isSum ? (b.req && b.req["Input Summary"] ? b.req["Input Summary"][k] : "") : (b.vat && b.vat.cards[key] ? b.vat.cards[key].v : "");
+    if (!val || val === "X") return;
+    mutate(cur, (x) => {
+      if (isSum) { pushRid(x, `req:Input Summary:${k}`, x.req["Input Summary"][k]); x.req["Input Summary"][k] = ""; }
+      else { const cd = x.vat.cards[key]; pushRid(x, `vat:${key}`, cd.v); cd.v = ""; cd.by = ""; }
+    });
+    log(cur, `Request ID › ${isSum ? "Input Summary " + k : VAT_CARDS[key].name}: ข้อมูลเข้าระบบแล้ว เคลียร์ช่อง (เก็บ ${val} ไว้ใน History)`);
   };
   const onVatPick = (i, v) => {
     mutate(cur, (x) => { x.vat.cards[i].v = String(v); x.vat.cards[i].by = `${who} · ${stampNow()}`; pushRid(x, `vat:${i}`, v); });
@@ -2246,6 +2431,9 @@ export default function TimelinePage() {
           onStepClear={onStepClear}
           onItemEnable={onItemEnable}
           prepBy={bus[cur].prep || src.bound || "-"}
+          reconPeriod={period && period.periodYm ? String(period.periodYm).slice(0, 7) : ""}
+          onRidDone={onRidDone}
+          onGoRecon={onNavigate ? (j) => { try { sessionStorage.setItem("recon_jump", JSON.stringify({ ...j, t: Date.now() })); } catch (e) {} onNavigate("vat-input-rec"); } : null}
           onMode={onMode}
           onBind={onBind}
           onId={onId}

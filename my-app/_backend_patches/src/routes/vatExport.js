@@ -561,8 +561,19 @@ router.get("/backup", async (req, res) => {
     const type = String(req.query.type || "popvat");
     const tbl = { popvat: "vat_upload_popvatdraft", simple: "vat_simpleinputdraft", adi: "vat_adi_transferdraft" }[type];
     if (!tbl) return res.status(400).json({ error: "type ไม่ถูกต้อง" });
+    // MARKER_VATEXPORT_BACKUP_SEARCH_TAXINV_V14 -- ?q= ค้นทุก Field (ค่าอย่างเดียว ไม่รวมชื่อ Column) ของรายการใน Backup เช่น Tax Invoice / Vendor Tax Invoice / Invoice / GRT / Supplier -> คืนเฉพาะ Batch ที่เจอ + match_count
+    const q = String(req.query.q || "").trim();
+    const params = [];
+    let hitSel = "FALSE AS _hit";
+    let having = "";
+    if (q) {
+      params.push(`%${q.replace(/[\\%_]/g, "\\$&")}%`);
+      hitSel = `EXISTS (SELECT 1 FROM jsonb_each_text(to_jsonb(x) - 'id' - 'status' - 'draft_id' - 'created_at' - 'updated_at' - 'finished_at' - 'expire_at' - 'batch_id' - 'bu') e WHERE e.value ILIKE $1) AS _hit`;
+      having = "HAVING COUNT(*) FILTER (WHERE _hit) > 0";
+    }
     const { rows } = await pool.query(
       `SELECT bu, batch_id,
+              COUNT(*) FILTER (WHERE _hit)::int AS match_count,
               MIN(NULLIF(period, '')) AS period,
               MIN(NULLIF(to_jsonb(t)->>'receive_date', '')) AS receive_from,
               MAX(NULLIF(to_jsonb(t)->>'receive_date', '')) AS receive_to,
@@ -570,11 +581,12 @@ router.get("/backup", async (req, res) => {
               MIN(created_at) AS upload_at,
               MIN(finished_at) AS finished_at,
               MIN(expire_at) AS expire_at
-       FROM ${tbl} t
-       WHERE status = '${BACKUP_STATUS[type]}' AND batch_id IS NOT NULL
+       FROM (SELECT x.*, ${hitSel} FROM ${tbl} x WHERE x.status = '${BACKUP_STATUS[type]}' AND x.batch_id IS NOT NULL) t
        GROUP BY bu, batch_id
+       ${having}
        ORDER BY MIN(finished_at) DESC NULLS LAST, batch_id DESC
-       LIMIT 500`
+       LIMIT 500`,
+      params
     );
     const batchIds = rows.map((r) => r.batch_id);
     let filesByBatch = {};

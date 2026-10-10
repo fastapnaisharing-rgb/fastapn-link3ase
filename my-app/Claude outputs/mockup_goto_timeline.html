@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup ไปที่ Timeline BU</title>
+<style>
+:root{--bg:#f4f3ef;--card:#fff;--ink:#1f2933;--mut:#7b8794;--navy:#1a3a5c;--line:#e3e5ea;--ok:#3b6d11;--okbg:#eaf3de;--warn:#854f0b;--warnbg:#faeeda;--hl:#fff6d6}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1d22;--card:#262a31;--ink:#e6e8eb;--mut:#9aa3ad;--navy:#9cc0ee;--line:#3a3f48;--ok:#9bd16a;--okbg:#2b3a1e;--warn:#f0b866;--warnbg:#3b2d17;--hl:#4a3f17}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,"Noto Sans Thai",sans-serif;padding:16px}
+h1{font-size:17px;margin:0 0 4px}p.s{margin:0 0 16px;color:var(--mut);font-size:13px}
+.step{margin-bottom:22px}.lab{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:999px;background:var(--okbg);color:var(--ok);margin-bottom:8px}
+.lab.n{background:var(--warnbg);color:var(--warn)}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:13px}th{background:#eaf2fb;color:#24292f;font-weight:600;padding:8px 10px;text-align:center}
+@media (prefers-color-scheme:dark){th{background:#2f3a48;color:var(--ink)}}
+td{padding:8px 10px;text-align:center;border-top:1px solid var(--line)}
+.ib{display:inline-flex;align-items:center;padding:4px 8px;border-radius:6px;border:1px solid;background:var(--card);cursor:pointer;margin:0 2px}
+.ib.tl{border-color:var(--navy);color:var(--navy);outline:2px solid #e0a030;outline-offset:2px}.ib.dl{border-color:#0969da;background:#0969da;color:#fff}.ib.del{border-color:#cf222e;color:#cf222e}
+.arrow{text-align:center;color:var(--mut);font-size:13px;margin:8px 0}
+.bu{padding:12px}.bh{display:flex;align-items:center;gap:10px;margin-bottom:10px}.pill{font-size:11px;padding:2px 9px;border-radius:999px;background:var(--okbg);color:var(--ok);font-weight:600}
+.zone{border-radius:12px;background:var(--bg);padding:10px;margin-top:8px}.zt{font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
+.c{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px;font-size:12px}
+.c.hl{background:var(--hl);border-color:#e0a030;box-shadow:0 0 0 2px #e0a03055}
+.c b{display:block;margin-bottom:4px}.fin{display:block;text-align:center;padding:6px;border-radius:8px;background:var(--okbg);color:var(--ok);font-weight:600}
+.pend{display:block;text-align:center;padding:6px;border-radius:8px;background:var(--warnbg);color:var(--warn);font-weight:600}
+.banner{background:var(--warnbg);color:var(--warn);font-size:12px;padding:6px 10px;border-radius:8px;margin-bottom:8px}
+ul{margin:8px 0 0 18px;padding:0;font-size:13px;color:var(--mut)}
+</style></head><body>
+<h1>จุดที่ 3: Input → Timeline (ไอคอนปฏิทินในช่อง Action)</h1>
+<p class="s">ซ้าย–ขวาคือขั้นตอนเรียงลงมา | แบบที่ 1 = ที่ทำไว้แล้ว | แบบที่ 2 = ข้อเสนอเพิ่ม (ยังไม่ได้ทำ)</p>
+
+<div class="step"><span class="lab">ขั้น 1 · หน้า Input Vat Rec. ตารางไฟล์</span>
+<div class="box"><table><tr><th>BU</th><th>Filename</th><th>Report Type</th><th>Status</th><th>Action</th></tr>
+<tr><td><b>BTM</b></td><td>3218_BTM_11610752_SEP-26.xlsx</td><td>Input Reconcile · 11610752</td><td>Release</td>
+<td><span class="ib tl" title="ไป Timeline ของ BU BTM"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h18v16H3zM3 10h18M8 3v4M16 3v4M8 14h3"/></svg></span><span class="ib dl">⬇</span><span class="ib del">🗑</span></td></tr></table></div>
+<ul><li>ไอคอนปฏิทิน (วงสีส้ม) อยู่หน้าปุ่ม Download / ลบ</li><li>ชี้เมาส์: "ไป Timeline ของ BU BTM"</li></ul></div>
+
+<div class="arrow">▼ กดไอคอน → ระบบจำ BU = BTM แล้วสลับไปเมนู Timeline</div>
+
+<div class="step"><span class="lab">ขั้น 2 · แบบที่ 1 (ทำแล้ว) เปิดหน้า BU ของ BTM</span>
+<div class="box bu"><div class="bh"><b>BTM</b><span class="pill">Timeline · รอบปัจจุบันของหน้า</span></div>
+<div class="zone"><div class="zt">TRIAL BALANCE / SIMPLE / INPUT SUMMARY (การ์ด Upload)</div><div class="grid"><div class="c"><b>Input Summary - N</b><span class="pend">ยังไม่ได้อัปโหลด</span></div><div class="c"><b>Expense 100%</b><span class="pend">ยังไม่ได้อัปโหลด</span></div></div></div>
+<div class="zone"><div class="zt">FINAL STEP : RECONCILE VAT REPORT</div><div class="grid"><div class="c"><b>First Draft · N · Input</b><span class="fin">Finish</span></div><div class="c"><b>Final Draft · N · Input</b><span class="pend">Pending</span></div></div></div></div>
+<ul><li>เปิดหน้า BU ให้ แต่หน้าอยู่บนสุด ต้องเลื่อนลงหาโซน Final Step เอง</li><li>Period ใช้ตามที่ Timeline ตั้งไว้ ไม่ปรับตามงวดของไฟล์</li></ul></div>
+
+<div class="step"><span class="lab n">ขั้น 2 · แบบที่ 2 (ข้อเสนอ) เลื่อนไป + ไฮไลต์ช่องที่เกี่ยวข้อง</span>
+<div class="box bu"><div class="bh"><b>BTM</b><span class="pill">Timeline · SEP-26</span></div>
+<div class="banner">มาจากไฟล์ 3218_BTM_11610752_SEP-26.xlsx → ไฮไลต์ช่อง Input N (หัว 100%)</div>
+<div class="zone"><div class="zt">FINAL STEP : RECONCILE VAT REPORT (เลื่อนมาที่นี่ให้อัตโนมัติ)</div><div class="grid"><div class="c hl"><b>First Draft · N · Input</b><span class="fin">Finish</span></div><div class="c hl"><b>Final Draft · N · Input</b><span class="pend">Pending</span></div></div></div></div>
+<ul><li>เลื่อนลงโซน Final Step เอง และไฮไลต์ช่อง First/Final Draft ของ Tax Code ที่ตรงกับ Account (752 → N หรือ A ตามหัว BU)</li><li>แถบด้านบนบอกที่มาของไฟล์ และสลับ Period ตามงวดไฟล์</li><li>ไฮไลต์หายเองใน 5 วินาที</li></ul></div>
+</body></html>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup ตรวจ Input N ในหัว %</title>
+<style>
+  :root{--bg:#eef1f5;--card:#fff;--ink:#1f2328;--mute:#656d76;--line:#e6e9ed;--blue:#0969da;--blue-soft:#ddf0ff;--green:#1a7f37;--green-soft:#e6f4ea;--amber:#9a6700;--amber-soft:#fff4d6;--gray:#f3f4f6}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:"Sarabun","Noto Sans Thai",system-ui,sans-serif;color:var(--ink);padding:22px 14px 48px}
+  h3{max-width:820px;margin:0 auto 10px;font-size:14px;color:var(--mute);font-weight:600}
+  .tabs{display:flex;gap:8px;max-width:820px;margin:0 auto 16px;flex-wrap:wrap}
+  .tabs button{border:1px solid #cfd6de;background:#fff;border-radius:999px;padding:7px 16px;font:inherit;font-size:13px;cursor:pointer;color:var(--mute)}
+  .tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .view{display:none}.view.on{display:block}
+  /* dashboard strip */
+  .panel{max-width:820px;margin:0 auto;background:var(--card);border-radius:16px;box-shadow:0 8px 30px rgba(20,30,50,.12);overflow:hidden}
+  .ph{padding:14px 20px;border-bottom:1px solid var(--line);font-weight:600;font-size:14px}
+  .row{display:grid;grid-template-columns:90px 1fr auto;gap:14px;align-items:center;padding:12px 20px;border-bottom:1px solid #f0f2f5;font-size:14px}
+  .row:last-child{border-bottom:0}
+  .dots{display:flex;gap:6px}.dot{width:11px;height:11px;border-radius:50%;background:#2da44e}.dot.off{background:#d0d7de}
+  .badge{display:inline-flex;align-items:center;gap:6px;background:var(--amber-soft);color:var(--amber);border:1px solid #f0d78a;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .badge:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--amber)}
+  .exp{border:1px solid #cfd6de;background:#fff;border-radius:8px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
+  .exp.warn{border-color:#f0d78a;background:var(--amber-soft);color:var(--amber)}
+  .muted{color:var(--mute);font-size:12px}
+  /* modal */
+  .modal{width:820px;max-width:100%;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 12px 40px rgba(20,30,50,.2);overflow:hidden}
+  .head{display:flex;justify-content:space-between;align-items:center;padding:18px 24px;border-bottom:1px solid var(--line)}
+  .head h2{margin:0;font-size:16px}
+  .x{border:0;background:none;font-size:18px;color:var(--mute)}
+  .body{padding:18px 24px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .chip{font-size:13px;padding:5px 12px;border-radius:999px;background:var(--gray)}
+  .chip.t{background:var(--blue-soft);color:var(--blue);font-weight:600}
+  .why{background:var(--amber-soft);border-radius:12px;padding:12px 14px;font-size:13px;color:#5c4400;margin-bottom:14px;line-height:1.55}
+  .tw{border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:320px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{position:sticky;top:0;background:#f7f8fa;text-align:left;font-size:12px;color:var(--mute);padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:9px 12px;border-bottom:1px solid #f0f2f5;vertical-align:middle}
+  tr:last-child td{border-bottom:0}
+  .n{text-align:right;font-variant-numeric:tabular-nums}
+  .seg{display:inline-flex;border:1px solid #cfd6de;border-radius:9px;overflow:hidden}
+  .seg button{border:0;background:#fff;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;color:var(--mute);white-space:nowrap}
+  .seg button+button{border-left:1px solid #cfd6de}
+  .seg button.a.on{background:var(--blue);color:#fff}
+  .seg button.h.on{background:var(--green);color:#fff}
+  .res{font-size:12px;color:var(--mute)} .res b{color:var(--ink)}
+  .bulk{display:flex;gap:8px;align-items:center;margin-bottom:10px;font-size:13px;color:var(--mute);flex-wrap:wrap}
+  .bulk button{border:1px solid #cfd6de;background:#fff;border-radius:8px;padding:5px 12px;font:inherit;font-size:12px;cursor:pointer}
+  .sum{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+  .sc{background:var(--gray);border-radius:12px;padding:10px 14px}.sc small{display:block;font-size:12px;color:var(--mute)}.sc strong{font-size:18px}
+  .foot{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 24px;border-top:1px solid var(--line);background:#fafbfc}
+  .btn{font:inherit;font-size:14px;border-radius:10px;padding:9px 18px;border:1px solid #cfd6de;background:#fff;cursor:pointer}
+  .btn.p{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+  .btn.p:disabled{background:#a9c7ee;border-color:#a9c7ee;cursor:not-allowed}
+  .note{max-width:820px;margin:14px auto 0;font-size:12px;color:var(--mute);text-align:center}
+  @media(max-width:640px){.row{grid-template-columns:1fr}.sum{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <button id="t1" class="on" onclick="v(1)">1. ที่ Dashboard (ป้ายเตือน)</button>
+  <button id="t2" onclick="v(2)">2. หน้าตรวจ Input N (Popup)</button>
+  <button id="t3" onclick="v(3)">3. กรณีไม่มี Input N</button>
+</div>
+
+<!-- 1 -->
+<div class="view on" id="v1">
+  <h3>Reconcile Dashboard — BU หัว % ที่มี Input N รอตรวจ</h3>
+  <div class="panel">
+    <div class="ph">Reconcile · Period 2026-09</div>
+    <div class="row"><b>0402 CFW</b><span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i><i class="dot off"></i></span><span style="display:flex;gap:8px;align-items:center"><span class="badge" onclick="v(2)">มี Input N รอตรวจ 3 สาขา</span><button class="exp warn" onclick="v(2)">Export Reconcile</button></span></div>
+    <div class="row"><b>0568 MPS</b><span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot off"></i><i class="dot off"></i></span><span style="display:flex;gap:8px;align-items:center"><span class="muted">ไม่มีรายการรอตรวจ</span><button class="exp">Export Reconcile</button></span></div>
+  </div>
+  <p class="note">กดป้ายสีเหลือง หรือกด Export ของ BU นั้น → เปิดหน้าตรวจ Input N · BU ที่ไม่มี Input N ปุ่ม Export ทำงานตรงๆ เหมือนเดิม</p>
+</div>
+
+<!-- 2 -->
+<div class="view" id="v2">
+  <div class="modal">
+    <div class="head"><h2>ตรวจ Input N ใน BU หัว %</h2><button class="x">✕</button></div>
+    <div class="body">
+      <div class="chips"><span class="chip t">0402 · CFW</span><span class="chip">Period <b>2026-09</b></span><span class="chip">หัว % <b>59.53%</b></span><span class="chip">พบ Input N <b id="cnt">3</b> สาขา</span></div>
+      <div class="why">BU นี้เคลมแบบหัว % แต่พบข้อมูล Tax Type <b>N</b> — อาจบันทึก Tax Type ผิด หรืออาจเป็นรายการที่ยื่น 100% จริง กรุณาเลือกให้แต่ละสาขาก่อน Export (ระบบจะไม่ใส่ช่องใดให้เอง)</div>
+
+      <div class="bulk">ตั้งทั้งหมด:
+        <button onclick="setAll('A')">เปลี่ยนเป็น Tax Type A ทั้งหมด</button>
+        <button onclick="setAll('H')">คงเป็น N = 100% ทั้งหมด</button>
+      </div>
+
+      <div class="tw"><table>
+        <thead><tr><th>สาขา</th><th class="n">จำนวนใบ</th><th class="n">ภาษีซื้อที่ชำระ</th><th>ให้ทำอย่างไร</th><th>ผลที่ได้</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+
+      <div class="sum">
+        <div class="sc"><small>ตัดสินใจแล้ว</small><strong id="s1">0 / 3</strong></div>
+        <div class="sc"><small>เข้าหัว % (เปลี่ยนเป็น A)</small><strong id="s2">0.00</strong></div>
+        <div class="sc"><small>ช่อง 100% (คง N)</small><strong id="s3">0.00</strong></div>
+      </div>
+    </div>
+    <div class="foot">
+      <span class="muted" id="hint">เลือกให้ครบทุกสาขาจึงจะ Export ได้</span>
+      <div style="display:flex;gap:8px"><button class="btn">ยกเลิก</button><button class="btn p" id="go" disabled>บันทึกการเลือก แล้ว Export</button></div>
+    </div>
+  </div>
+  <p class="note">การเลือกจะถูกจดจำ — Report คงเดิมตามที่เลือกจนกว่าผู้ใช้จะกลับมาแก้เอง</p>
+</div>
+
+<!-- 3 -->
+<div class="view" id="v3">
+  <h3>BU ที่ไม่มี Input N</h3>
+  <div class="panel">
+    <div class="ph">Reconcile · Period 2026-09</div>
+    <div class="row"><b>0402 CFW</b><span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i><i class="dot off"></i></span><span style="display:flex;gap:8px;align-items:center"><span class="muted">ไม่มีรายการรอตรวจ</span><button class="exp">Export Reconcile</button></span></div>
+  </div>
+  <p class="note">ไม่มีป้าย ไม่มี Popup · กด Export แล้วได้ไฟล์ทันที (ช่อง 100% มาจาก Simple 100 ถ้ามี ไม่มีก็เป็น 0)</p>
+</div>
+
+<script>
+const data=[{b:"0402H1",c:4,v:18420.50},{b:"0402W2",c:2,v:6310.00},{b:"0402Y1",c:1,v:1250.75}];
+const pick={};
+const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+function v(k){[1,2,3].forEach(i=>{document.getElementById('v'+i).classList.toggle('on',i===k);document.getElementById('t'+i).classList.toggle('on',i===k)});}
+function set(b,x){pick[b]=x;draw();}
+function setAll(x){data.forEach(d=>pick[d.b]=x);draw();}
+function draw(){
+  let done=0,a=0,h=0;
+  document.getElementById('rows').innerHTML=data.map(d=>{
+    const p=pick[d.b];if(p)done++;
+    if(p==='A')a+=d.v;if(p==='H')h+=d.v;
+    const res=!p?'<span class="res">— ยังไม่เลือก</span>':p==='A'?`<span class="res">ใช้สิทธิ์ <b>${fmt(d.v*0.5953)}</b> (59.53%)</span>`:`<span class="res">ใช้สิทธิ์ <b>${fmt(d.v)}</b> (100%)</span>`;
+    return `<tr><td><b>${d.b}</b></td><td class="n">${d.c}</td><td class="n">${fmt(d.v)}</td>
+      <td><span class="seg"><button class="a ${p==='A'?'on':''}" onclick="set('${d.b}','A')">เปลี่ยนเป็น Tax Type A</button><button class="h ${p==='H'?'on':''}" onclick="set('${d.b}','H')">คงเป็น N = 100%</button></span></td><td>${res}</td></tr>`;
+  }).join('');
+  document.getElementById('s1').textContent=done+' / '+data.length;
+  document.getElementById('s2').textContent=fmt(a);document.getElementById('s3').textContent=fmt(h);
+  const ok=done===data.length;document.getElementById('go').disabled=!ok;
+  document.getElementById('hint').textContent=ok?'พร้อม Export':'เลือกให้ครบทุกสาขาจึงจะ Export ได้';
+}
+draw();
+</script>
+</body>
+</html>

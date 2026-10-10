@@ -185,7 +185,16 @@ export async function checkAndCleanupFileStorage() {
        AND created_at < NOW() - INTERVAL '48 hours'`
   );
 
-  const toDelete = [...toDeleteApproved, ...toDeleteInvoiceRegister, ...toDeleteOther, ...toDeleteApExportImages, ...toDeleteIeMacroLogic];
+  // MARKER_FILESTORAGE_VATMAIL_RETENTION_3DAYS_V1
+  // ── vat-mail (ไฟล์แนบ Auto Mail / Config Email): ปกติลบทันทีหลังผู้ใช้ยืนยันหลังเปิด Draft ──
+  // ── ถ้าไม่มีใครลบ (ปิดหน้าเว็บก่อนกดยืนยัน ฯลฯ) ให้ลบทิ้งเองหลัง 3 วัน นับจาก created_at ──
+  const { rows: toDeleteVatMail } = await pool.query(
+    `SELECT id, file_path FROM file_storage
+     WHERE module = 'vat-mail'
+       AND created_at < NOW() - INTERVAL '3 days'`
+  );
+
+  const toDelete = [...toDeleteApproved, ...toDeleteInvoiceRegister, ...toDeleteOther, ...toDeleteApExportImages, ...toDeleteIeMacroLogic, ...toDeleteVatMail];
 
   for (const row of toDelete) {
     try {

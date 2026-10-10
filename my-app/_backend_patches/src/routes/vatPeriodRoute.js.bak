@@ -175,6 +175,38 @@ router.post("/close", async (req, res) => {
     }
     const now = new Date();
 
+    // MARKER_VATPERIOD_CLOSE_AUTO_FREEZE_V1 -- ก่อนเลื่อนงวด: เปลี่ยน Draft ของงวดที่กำลังปิดเป็น Final ทุก BU (Draft ตาม Live มาตลอดแล้ว) -- หลังปิด Draft หยุด และเริ่มนับหน้าต่างอัปเดต 20/30 วัน
+    // ใช้ SAVEPOINT ต่อ BU -- ถ้า Freeze พลาดต้องไม่ทำให้การปิด Period ล้ม (แจ้งผลใน activity_log + Response)
+    const freezeSummary = { frozen: 0, unchanged: 0, cleared: 0, skipped: 0, errors: [] };
+    try {
+      // MARKER_VATPERIOD_CLOSE_FREEZE_CLEARED_BU_V1 -- รายชื่อ BU ที่ต้อง Freeze = company_list (ทุก BU) + BU ที่มีใน Live + BU ที่มี Draft ค้าง
+      // กัน BU ที่เคลียร์หมดก่อนปิดเดือน (Live ว่าง) หลุดรอบ -- ฟังก์ชัน Finalize จะย้าย Draft ค้างไป History แล้วถือเดือนนั้นเป็นศูนย์
+      // งวดของแต่ละ BU = fn_vat_effective_period_month (BU โหมด prev ถือเดือนก่อนหน้างวดระบบ) -- Final ตามงวดของ BU เอง
+      const { rows: freezeBus } = await client.query(
+        `SELECT b.bu, fn_vat_effective_period_month(b.bu) AS period_month
+           FROM (SELECT bu FROM company_list WHERE bu IS NOT NULL AND btrim(bu) <> ''
+                 UNION SELECT bu FROM vat_summary_live
+                 UNION SELECT bu FROM vat_summary_frozen WHERE freeze_status = 'draft') b
+          WHERE fn_vat_effective_period_month(b.bu) IS NOT NULL
+          ORDER BY b.bu`);
+      for (const { bu: fbu, period_month: fper } of freezeBus) {
+        try {
+          await client.query("SAVEPOINT closefreeze_sp");
+          const fr = await client.query(`SELECT fn_freeze_vat_finalize($1, $2, $3, 'auto-close') AS r`, [fper, fbu, username]);
+          const act = fr.rows[0] && fr.rows[0].r && fr.rows[0].r.action;
+          if (act === "frozen") freezeSummary.frozen++; else if (act === "unchanged") freezeSummary.unchanged++; else if (act === "cleared") freezeSummary.cleared++; else freezeSummary.skipped++;
+          await client.query("RELEASE SAVEPOINT closefreeze_sp");
+        } catch (e) {
+          try { await client.query("ROLLBACK TO SAVEPOINT closefreeze_sp"); } catch (e2) { /* ignore */ }
+          console.error("POST /vat/period/close auto freeze error:", fbu, e.message);
+          freezeSummary.errors.push({ bu: fbu, error: e.message });
+        }
+      }
+    } catch (e) {
+      console.error("POST /vat/period/close auto freeze list error:", e.message);
+      freezeSummary.errors.push({ bu: "*", error: e.message });
+    }
+
     await setSetting("vat_period_month", closingMonthStr, username, client);
     await setSetting("vat_period_current_status", "open", username, client);
     await setSetting("vat_period_closed_by", username, username, client);
@@ -275,7 +307,7 @@ router.post("/close", async (req, res) => {
     await client.query(
       `INSERT INTO activity_log (username, module, action, detail, created_at)
        VALUES ($1, 'VAT', 'CLOSE_PERIOD', $2, NOW())`,
-      [logUsername, JSON.stringify({ closed_month: closingMonthStr, bu_reset_count: rowCount, pv_backup_rows: pvBackupCount, over_before: cntBefore, over_after: cntAfter, integrity_ok: integrityOk })]
+      [logUsername, JSON.stringify({ closed_month: closingMonthStr, bu_reset_count: rowCount, pv_backup_rows: pvBackupCount, freeze: freezeSummary, over_before: cntBefore, over_after: cntAfter, integrity_ok: integrityOk })]
     );
 
     await client.query(
@@ -304,6 +336,7 @@ router.post("/close", async (req, res) => {
       closed_month: closingMonthStr,
       bu_reset_count: rowCount,
       closed_by: username,
+      freeze: freezeSummary,
       integrity: { ok: integrityOk, before: cntBefore, after: cntAfter },
     });
   } catch (err) {

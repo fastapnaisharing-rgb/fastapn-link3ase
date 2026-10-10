@@ -100,6 +100,7 @@ function notifModule(n) {
   // MARKER_HOMEPAGE_RENAME_FEEDBACK_MODULE_V1
   // ── Support & Feedback ทุกรายการรวมเป็น Tag เดียว ไม่แยกตาม menu_source อีกต่อไป ──
   if (n.category === 'support-feedback') return 'SUP';
+  if (n.category === 'sp-handler') return 'VAT';
   return 'AP'; // batch_notifications ทั้งหมด = AP โดยนัย
 }
 
@@ -135,6 +136,7 @@ const QUEUE_STATUS_CONFIG = {
 const QUEUE_SOURCE_CONFIG = {
   ap_ocr:   { label: 'AP OCR',          color: '#BF360C', bg: '#FFF3E0' },
   docenter: { label: 'Document Center', color: '#0D47A1', bg: '#E3F2FD' },
+  vat_controller: { label: 'VAT AR_Collection', color: '#1B5E20', bg: '#E8F5E9' }, // MARKER_HOMEPAGE_CENTRALQUEUE_VAT_V1
 };
 function queueFmtTime(ts) {
   if (!ts) return '-';
@@ -192,7 +194,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     const hoursSince = (Date.now() - new Date(thread.resolved_at).getTime()) / (1000 * 60 * 60);
     return hoursSince < 72; // 3 วัน
   };
-  const { userName, userRole, currentUser } = useAuth();
+  const { userName, userRole, currentUser, userPermissions } = useAuth();
   const today = useMemo(() => getTodayThai(), []);
   const displayName = userName || currentUser?.email || '-';
   const roleStyle = ROLE_STYLE[userRole] || ROLE_STYLE.Viewer;
@@ -282,14 +284,55 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const [notifications, setNotifications] = useState([]);
   // MARKER_HOMEPAGE_NOTIF_FILTER_PILLS_V1
   const [notifFilter, setNotifFilter] = useState('All');
+  // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- แจ้งเตือน SharePoint Handler เวอร์ชันเก่า (ปักหมุดใน Notification card ไม่หายจนกว่าจะ Update | เฉพาะคนที่เข้า VAT Controller ได้)
+  const canVatHandler = !!(isOwner || userPermissions?.['VAT']);
+  const [spHandlerNotice, setSpHandlerNotice] = useState(null);
+  const [spToastHidden, setSpToastHidden] = useState(false);
+  useEffect(() => {
+    if (!canVatHandler) { setSpHandlerNotice(null); return undefined; }
+    let stop = false;
+    const load = async () => {
+      try {
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        const token = sessionStorage.getItem('fastapn_token');
+        const res = await fetch(`${apiBase}/api/file-storage/sp-handler/my-status`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (stop) return;
+        // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V2 -- กด Update แล้วซ่อนทันที (ไม่ต้องรอ Handler รายงานกลับ) ถ้า 24 ชม. แล้วเซิร์ฟเวอร์ยังบอกว่าเก่า ค่อยแสดงใหม่
+        let hideUntil = 0;
+        try { const u = JSON.parse(localStorage.getItem('fastapn_sp_updated') || 'null'); if (u && Number(u.v) >= Number(d?.latest || 0)) hideUntil = Number(u.at || 0) + 24 * 3600 * 1000; } catch (_) { /* เงียบ */ }
+        const stillOld = d && Array.isArray(d.outdated) && d.outdated.length > 0 && Date.now() > hideUntil;
+        setSpHandlerNotice(stillOld ? { ...d, daysSinceRelease: Math.max(0, Number(d.daysSinceRelease) || 0) } : null);
+      } catch (_) { /* เงียบ */ }
+    };
+    load();
+    const iv = setInterval(load, 5 * 60 * 1000);
+    return () => { stop = true; clearInterval(iv); };
+  }, [canVatHandler]);
+  const spToastSnoozed = (() => { try { return Number(localStorage.getItem('fastapn_sp_toast_snooze') || 0) > Date.now(); } catch (_) { return false; } })();
+  const runSpHandlerUpdate = () => {
+    try {
+      const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token') || '';
+      window.location.href = `fastapn-sp://update?v=${spHandlerNotice?.latest || ''}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`;
+      // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V2 -- จำว่าสั่งอัปเดตแล้ว + ซ่อน Notice ทันที (Toast ด้วย)
+      try { localStorage.setItem('fastapn_sp_updated', JSON.stringify({ v: Number(spHandlerNotice?.latest || 0), at: Date.now() })); } catch (_) { /* เงียบ */ }
+      setSpHandlerNotice(null);
+    } catch (_) {}
+  };
   // MARKER_HOMEPAGE_NOTIF_MEASURE_ROWS_V1
   // ── วัดความสูงแถวจริงแทนเดาตัวเลข ให้เห็น 5 แถวเป๊ะไม่ว่า Font จริงจะสูงแค่ไหน ──
   const notifListRef = useRef(null);
   const [notifMaxHeight, setNotifMaxHeight] = useState(274);
-  const filteredNotif = useMemo(
-    () => (notifFilter === 'All' ? notifications : notifications.filter(n => notifModule(n) === notifFilter)),
-    [notifications, notifFilter]
-  );
+  const filteredNotif = useMemo(() => {
+    const base = notifFilter === 'All' ? notifications : notifications.filter(n => notifModule(n) === notifFilter);
+    // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- ปักหมุดบนสุด (หมวด All / VAT)
+    if (spHandlerNotice && (notifFilter === 'All' || notifFilter === 'VAT')) {
+      return [{ id: '__sp_handler__', category: 'sp-handler', created_at: spHandlerNotice.releasedAt }, ...base];
+    }
+    return base;
+  }, [notifications, notifFilter, spHandlerNotice]);
   useEffect(() => {
     const el = notifListRef.current;
     if (!el) return;
@@ -835,6 +878,19 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                     {filteredNotif.map(n => {
                       const mod = notifModule(n);
                       const modMeta = NOTIF_MODULE_META[mod];
+                      if (n.category === 'sp-handler') {
+                        const o = spHandlerNotice.outdated[0];
+                        return (
+                          <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #f3c98b', borderRadius: '10px', background: '#FFF6E8', flexShrink: 0 }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#FAEEDA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>⚠️</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: '12px', fontWeight: '500', color: '#8a4a00', margin: '0 0 1px' }}>SharePoint Handler เวอร์ชันเก่า</p>
+                              <p style={{ fontSize: '11px', color: '#777', margin: 0 }}>เครื่องคุณใช้ v{o.version} (ล่าสุด v{spHandlerNotice.latest}) · ปล่อยมา {spHandlerNotice.daysSinceRelease} วัน</p>
+                            </div>
+                            <button onClick={runSpHandlerUpdate} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>Update ตอนนี้</button>
+                          </div>
+                        );
+                      }
                       if (n.category === 'support-feedback') {
                         const isResolvedNotif = n.action_type === 'resolved';
                         return (
@@ -911,10 +967,26 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
           })()}
         </div>
 
+        {/* MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- Toast ขวาล่าง เมื่อเกิน 7 วันยังไม่ Update (ปิดได้ 1 วัน แต่รายการใน Notification ยังอยู่) */}
+        {spHandlerNotice && spHandlerNotice.daysSinceRelease >= 7 && !spToastHidden && !spToastSnoozed && (
+          <div style={{ position: 'fixed', right: '20px', bottom: '20px', zIndex: 10020, width: '320px', background: '#fff', border: '1px solid #f3c98b', borderLeft: '4px solid #E24B4A', borderRadius: '10px', boxShadow: '0 6px 24px rgba(0,0,0,0.18)', padding: '12px 14px' }}>
+            <p style={{ fontSize: '13px', fontWeight: '600', color: '#791F1F', margin: '0 0 4px' }}>⚠️ SharePoint Handler ยังไม่ได้ Update</p>
+            <p style={{ fontSize: '11px', color: '#666', margin: '0 0 10px' }}>v{spHandlerNotice.outdated[0].version} → v{spHandlerNotice.latest} · ปล่อยมาแล้ว {spHandlerNotice.daysSinceRelease} วัน</p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => { try { localStorage.setItem('fastapn_sp_toast_snooze', String(Date.now() + 86400000)); } catch (_) {} setSpToastHidden(true); }} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#666', cursor: 'pointer' }}>เตือนพรุ่งนี้</button>
+              <button onClick={runSpHandlerUpdate} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer' }}>Update ตอนนี้</button>
+            </div>
+          </div>
+        )}
+
         {/* ── A3: OCR Queue Monitor ── */}
         {(() => {
+          // MARKER_HOMEPAGE_MINIMONITOR_NO_DONE_FALLBACK_V1
+          // -- ใช้ activeQ อย่างเดียว ไม่ Fallback ไปที่ queueItems (เดิม Fallback --
+          // -- ทำให้งาน done/error โผล่กลับมาโชว์ตอนคิวว่างพอดี -- เสร็จแล้วต้อง --
+          // -- ดีดออกจริงๆ ไม่ใช่โผล่มาใหม่ตอนไม่มีงาน Active) --------------------
           const activeQ = queueItems.filter(it => ['pending','ocring','processing','waiting_ap'].includes(it.status));
-          const previewQ = activeQ.length > 0 ? activeQ.slice(0, QUEUE_PREVIEW) : queueItems.slice(0, QUEUE_PREVIEW);
+          const previewQ = activeQ.slice(0, QUEUE_PREVIEW);
           const apBusy  = queueItems.some(it => it.source === 'ap_ocr' && ['pending','processing'].includes(it.status));
           return (
             <div style={{ background: 'white', borderRadius: '12px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -952,6 +1024,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                           <span style={{ fontSize: '9px', padding: '1px 4px', borderRadius: '3px', background: st.bg, color: st.color, fontWeight: '500' }}>{st.label}</span>
                           <span style={{ fontSize: '9px', color: '#aaa' }}>{queueFmtTime(item.created_at)}</span>
                         </div>
+                        {item.source === 'vat_controller' && item.error_msg && <div style={{ fontSize: '9.5px', color: '#666', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.error_msg}>{item.error_msg}</div>}
                       </div>
                       {isOwner && ['pending','waiting_ap'].includes(item.status) && item.source === 'docenter' && (
                         <button onClick={() => handleQueueBoost(item)} title="ลัดคิว" style={{ width: '20px', height: '20px', borderRadius: '4px', border: '0.5px solid #1a3a5c', background: '#f0f6ff', color: '#1a3a5c', fontSize: '10px', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>↑</button>
@@ -959,9 +1032,10 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                     </div>
                   );
                 })}
-                {queueItems.length > QUEUE_PREVIEW && (
+                {/* MARKER_HOMEPAGE_MINIMONITOR_NO_DONE_FALLBACK_V1 -- นับจาก activeQ ไม่ใช่ queueItems (กันนับรวม Done/Error ที่ไม่ใช่คิวจริง) */}
+                {activeQ.length > QUEUE_PREVIEW && (
                   <div style={{ padding: '5px 12px', textAlign: 'center', fontSize: '10px', color: '#888', borderTop: '0.5px solid #f5f5f5', cursor: 'pointer', background: '#fafafa' }} onClick={() => setQueueModal(true)}>
-                    และอีก {queueItems.length - QUEUE_PREVIEW} รายการ
+                    และอีก {activeQ.length - QUEUE_PREVIEW} รายการ
                   </div>
                 )}
               </div>
@@ -980,7 +1054,8 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
             { key:'i_pro',         label:'I-Pro Interface' },
           ];
           const getMenuCount = (key) => {
-            if (key === 'docenter') return queueItems.filter(q => ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
+            if (key === 'docenter') return queueItems.filter(q => q.source !== 'vat_controller' && ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
+            if (key === 'vat_controller') return queueItems.filter(q => q.source === 'vat_controller' && ['pending','processing'].includes(q.status)).length; // MARKER_HOMEPAGE_CENTRALQUEUE_VAT_V1
             return 0;
           };
           const activeCount = queueItems.filter(q => ['pending','ocring','processing','waiting_ap'].includes(q.status)).length;
@@ -1040,7 +1115,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                         <div style={{textAlign:'center',padding:'40px',color:'#aaa',fontSize:'12px'}}><div style={{fontSize:'28px',marginBottom:'8px'}}>✅</div>ไม่มีงานในคิว</div>
                       ):displayed.map((item,qi)=>{
                         const st=getStatusTag(item.status);
-                        const src=item.source==='ap_ocr'?{label:'AP Controller',bg:'#EEF0F2',color:'#546E7A'}:{label:'Document Center',bg:'#EDF5F4',color:'#4E8079'};
+                        const src=item.source==='ap_ocr'?{label:'AP Controller',bg:'#EEF0F2',color:'#546E7A'}:item.source==='vat_controller'?{label:'VAT Controller',bg:'#E8F5E9',color:'#1B5E20'}:{label:'Document Center',bg:'#EDF5F4',color:'#4E8079'};
                         const pos=item.queue_position||(qi+1);
                         const isOcring=['ocring','processing'].includes(item.status);
                         return (
@@ -1055,6 +1130,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                                 <span style={{fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:src.bg,color:src.color}}>{src.label}</span>
                                 <span style={{fontSize:'9px',padding:'1px 5px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color}}>{st.label}</span>
                               </div>
+                              {item.source==='vat_controller'&&item.error_msg&&<div style={{fontSize:'9.5px',color:['error','failed'].includes(item.status)?'#B71C1C':'#666',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={item.error_msg}>{item.error_msg}</div>}
                               {isOcring&&<div style={{height:'3px',borderRadius:'2px',background:'#dce8fb',overflow:'hidden',marginTop:'4px'}}><div style={{height:'100%',borderRadius:'2px',background:'#1a3a5c',animation:'ocrShimmer 1.5s ease-in-out infinite'}}/></div>}
                             </div>
                             <div><span style={{fontSize:'9px',padding:'1px 6px',borderRadius:'3px',fontWeight:'500',background:st.bg,color:st.color,whiteSpace:'nowrap'}}>{st.label}</span></div>

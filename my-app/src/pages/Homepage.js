@@ -100,6 +100,7 @@ function notifModule(n) {
   // MARKER_HOMEPAGE_RENAME_FEEDBACK_MODULE_V1
   // ── Support & Feedback ทุกรายการรวมเป็น Tag เดียว ไม่แยกตาม menu_source อีกต่อไป ──
   if (n.category === 'support-feedback') return 'SUP';
+  if (n.category === 'sp-handler') return 'VAT';
   return 'AP'; // batch_notifications ทั้งหมด = AP โดยนัย
 }
 
@@ -193,7 +194,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     const hoursSince = (Date.now() - new Date(thread.resolved_at).getTime()) / (1000 * 60 * 60);
     return hoursSince < 72; // 3 วัน
   };
-  const { userName, userRole, currentUser } = useAuth();
+  const { userName, userRole, currentUser, userPermissions } = useAuth();
   const today = useMemo(() => getTodayThai(), []);
   const displayName = userName || currentUser?.email || '-';
   const roleStyle = ROLE_STYLE[userRole] || ROLE_STYLE.Viewer;
@@ -283,14 +284,91 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const [notifications, setNotifications] = useState([]);
   // MARKER_HOMEPAGE_NOTIF_FILTER_PILLS_V1
   const [notifFilter, setNotifFilter] = useState('All');
+  // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- แจ้งเตือน SharePoint Handler เวอร์ชันเก่า (ปักหมุดใน Notification card ไม่หายจนกว่าจะ Update | เฉพาะคนที่เข้า VAT Controller ได้)
+  const canVatHandler = !!(isOwner || userPermissions?.['VAT']);
+  const [spHandlerNotice, setSpHandlerNotice] = useState(null);
+  const [spToastHidden, setSpToastHidden] = useState(false);
+  const spReloadRef = useRef(null);
+  const [spInstallOpen, setSpInstallOpen] = useState(false);
+  const [spInstallMsg, setSpInstallMsg] = useState('');
+  const [spInstallBusy, setSpInstallBusy] = useState(false);
+  useEffect(() => {
+    if (!canVatHandler) { setSpHandlerNotice(null); return undefined; }
+    let stop = false;
+    const load = async () => {
+      try {
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        const token = sessionStorage.getItem('fastapn_token');
+        const res = await fetch(`${apiBase}/api/file-storage/sp-handler/my-status`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (stop) return;
+        // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V2 -- กด Update แล้วซ่อนทันที (ไม่ต้องรอ Handler รายงานกลับ) ถ้า 24 ชม. แล้วเซิร์ฟเวอร์ยังบอกว่าเก่า ค่อยแสดงใหม่
+        let hideUntil = 0;
+        try { const u = JSON.parse(localStorage.getItem('fastapn_sp_updated') || 'null'); if (u && Number(u.v) >= Number(d?.latest || 0)) hideUntil = Number(u.at || 0) + 24 * 3600 * 1000; } catch (_) { /* เงียบ */ }
+        const stillOld = d && Array.isArray(d.outdated) && d.outdated.length > 0 && Date.now() > hideUntil;
+        // MARKER_HOMEPAGE_SP_HANDLER_MISSING_V1 -- Backend ไม่เคยได้รับรายงานจากผู้ใช้นี้เลย (installed=false) = ยังไม่พบการติดตั้ง -> การ์ดให้ติดตั้ง (หายเองเมื่อ Handler รายงานครั้งแรก)
+        if (d && d.installed === false) { setSpHandlerNotice({ ...d, kind: 'missing', daysSinceRelease: 0 }); return; }
+        setSpHandlerNotice(stillOld ? { ...d, kind: 'outdated', daysSinceRelease: Math.max(0, Number(d.daysSinceRelease) || 0) } : null);
+      } catch (_) { /* เงียบ */ }
+    };
+    spReloadRef.current = load;
+    load();
+    const iv = setInterval(load, 5 * 60 * 1000);
+    return () => { stop = true; clearInterval(iv); spReloadRef.current = null; };
+  }, [canVatHandler]);
+  const spToastSnoozed = (() => { try { return Number(localStorage.getItem('fastapn_sp_toast_snooze') || 0) > Date.now(); } catch (_) { return false; } })();
+  const runSpHandlerUpdate = () => {
+    try {
+      const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token') || '';
+      window.location.href = `fastapn-sp://update?v=${spHandlerNotice?.latest || ''}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`;
+      // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V2 -- จำว่าสั่งอัปเดตแล้ว + ซ่อน Notice ทันที (Toast ด้วย)
+      try { localStorage.setItem('fastapn_sp_updated', JSON.stringify({ v: Number(spHandlerNotice?.latest || 0), at: Date.now() })); } catch (_) { /* เงียบ */ }
+      setSpHandlerNotice(null);
+    } catch (_) {}
+  };
+  // MARKER_HOMEPAGE_SP_HANDLER_INSTALL_V1 -- ดาวน์โหลดชุดติดตั้ง (ต้อง Login: ใช้ Token ใน Header) + เปิด Popup ขั้นตอน | ตรวจสอบ = สั่ง Handler รายงานเวอร์ชัน แล้วโหลดสถานะใหม่
+  const downloadSpInstaller = async () => {
+    setSpInstallBusy(true); setSpInstallMsg('');
+    try {
+      const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token') || '';
+      const res = await fetch(`${apiRoot}/api/file-storage/sp-handler`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'fastapn-sp-handler.zip'; a.style.display = 'none';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      setSpInstallMsg('ดาวน์โหลดแล้ว: fastapn-sp-handler.zip (ดูในโฟลเดอร์ Downloads)');
+    } catch (e) { setSpInstallMsg('ดาวน์โหลดไม่สำเร็จ: ' + (e.message || e)); }
+    finally { setSpInstallBusy(false); }
+  };
+  const openSpInstall = () => { setSpInstallOpen(true); downloadSpInstaller(); };
+  const verifySpHandler = () => {
+    try {
+      const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token') || '';
+      window.location.href = `fastapn-sp://update?v=${spHandlerNotice?.latest || 1}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`;
+    } catch (_) {}
+    setSpInstallMsg('กำลังตรวจสอบ... (ถ้าเบราว์เซอร์ถามให้เปิดแอป ให้กดอนุญาต)');
+    [6000, 14000].forEach((ms) => setTimeout(() => { try { if (spReloadRef.current) spReloadRef.current(); } catch (_) {} }, ms));
+    setTimeout(() => setSpInstallMsg((m) => (m.startsWith('กำลังตรวจสอบ') ? 'ยังไม่พบรายงานจาก Handler — ตรวจว่าติดตั้งแล้ว (ขั้นตอนที่ 2) แล้วกดตรวจสอบอีกครั้ง' : m)), 16000);
+  };
   // MARKER_HOMEPAGE_NOTIF_MEASURE_ROWS_V1
   // ── วัดความสูงแถวจริงแทนเดาตัวเลข ให้เห็น 5 แถวเป๊ะไม่ว่า Font จริงจะสูงแค่ไหน ──
   const notifListRef = useRef(null);
   const [notifMaxHeight, setNotifMaxHeight] = useState(274);
-  const filteredNotif = useMemo(
-    () => (notifFilter === 'All' ? notifications : notifications.filter(n => notifModule(n) === notifFilter)),
-    [notifications, notifFilter]
-  );
+  const filteredNotif = useMemo(() => {
+    const base = notifFilter === 'All' ? notifications : notifications.filter(n => notifModule(n) === notifFilter);
+    // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- ปักหมุดบนสุด (หมวด All / VAT)
+    if (spHandlerNotice && (notifFilter === 'All' || notifFilter === 'VAT')) {
+      return [{ id: '__sp_handler__', category: 'sp-handler', created_at: spHandlerNotice.releasedAt }, ...base];
+    }
+    return base;
+  }, [notifications, notifFilter, spHandlerNotice]);
   useEffect(() => {
     const el = notifListRef.current;
     if (!el) return;
@@ -836,6 +914,31 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                     {filteredNotif.map(n => {
                       const mod = notifModule(n);
                       const modMeta = NOTIF_MODULE_META[mod];
+                      if (n.category === 'sp-handler' && spHandlerNotice?.kind === 'missing') {
+                        return (
+                          <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #f3c98b', borderRadius: '10px', background: '#FFF6E8', flexShrink: 0 }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#FAEEDA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🧩</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: '12px', fontWeight: '500', color: '#8a4a00', margin: '0 0 1px' }}>ยังไม่ได้ติดตั้ง SharePoint Handler</p>
+                              <p style={{ fontSize: '11px', color: '#777', margin: 0 }}>จำเป็นสำหรับส่งไฟล์ไป SharePoint และเปิดหน้า Z_Report Reconcile</p>
+                            </div>
+                            <button onClick={openSpInstall} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>ติดตั้งเลย</button>
+                          </div>
+                        );
+                      }
+                      if (n.category === 'sp-handler') {
+                        const o = spHandlerNotice.outdated[0];
+                        return (
+                          <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #f3c98b', borderRadius: '10px', background: '#FFF6E8', flexShrink: 0 }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#FAEEDA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>⚠️</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: '12px', fontWeight: '500', color: '#8a4a00', margin: '0 0 1px' }}>SharePoint Handler เวอร์ชันเก่า</p>
+                              <p style={{ fontSize: '11px', color: '#777', margin: 0 }}>เครื่องคุณใช้ v{o.version} (ล่าสุด v{spHandlerNotice.latest}) · ปล่อยมา {spHandlerNotice.daysSinceRelease} วัน</p>
+                            </div>
+                            <button onClick={runSpHandlerUpdate} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>Update ตอนนี้</button>
+                          </div>
+                        );
+                      }
                       if (n.category === 'support-feedback') {
                         const isResolvedNotif = n.action_type === 'resolved';
                         return (
@@ -911,6 +1014,42 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
             );
           })()}
         </div>
+
+        {/* MARKER_HOMEPAGE_SP_HANDLER_INSTALL_V1 -- Popup ขั้นตอนติดตั้ง SharePoint Handler */}
+        {spInstallOpen && (
+          <div onClick={() => setSpInstallOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10030, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: '460px', maxWidth: '92vw', background: '#fff', borderRadius: '12px', boxShadow: '0 12px 40px rgba(0,0,0,0.25)', padding: '18px 20px' }}>
+              <p style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c', margin: '0 0 4px' }}>ติดตั้ง SharePoint Handler</p>
+              <p style={{ fontSize: '11px', color: '#777', margin: '0 0 12px' }}>ทำครั้งเดียวต่อเครื่อง ไม่ต้องใช้สิทธิ์ Admin หลังจากนี้จะอัปเดตเองอัตโนมัติ</p>
+              <ol style={{ fontSize: '12px', color: '#333', margin: '0 0 12px', paddingLeft: '18px', lineHeight: 1.7 }}>
+                <li>เปิดไฟล์ <b>fastapn-sp-handler.zip</b> ที่เพิ่งโหลด (อยู่ในโฟลเดอร์ Downloads) แล้ว <b>แตก zip</b></li>
+                <li>ดับเบิลคลิก <b>setup-fastapn-sp.bat</b> รอจนขึ้นคำว่า "สำเร็จ"</li>
+                <li>กลับมาที่หน้านี้ กด <b>ฉันติดตั้งแล้ว ตรวจสอบ</b> (ถ้าเบราว์เซอร์ถามให้เปิดแอป ให้กดอนุญาต)</li>
+              </ol>
+              <div style={{ fontSize: '11px', color: '#8a4a00', background: '#FFF6E8', border: '0.5px solid #f3c98b', borderRadius: '8px', padding: '8px 10px', margin: '0 0 12px', lineHeight: 1.6 }}>
+                ก่อนติดตั้ง: ต้องซิงก์โฟลเดอร์ <b>Z_Report Reconcile</b> จาก SharePoint ลงเครื่องด้วย OneDrive ไว้แล้ว (ถ้าไม่พบ สคริปต์จะให้เลือกโฟลเดอร์เอง) และ Chrome/Edge ต้องปิด "Ask where to save each file"
+              </div>
+              {spInstallMsg && <p style={{ fontSize: '11px', color: spInstallMsg.startsWith('ดาวน์โหลดไม่สำเร็จ') || spInstallMsg.startsWith('ยังไม่พบ') ? '#A32D2D' : '#0F6E56', margin: '0 0 10px' }}>{spInstallMsg}</p>}
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button onClick={downloadSpInstaller} disabled={spInstallBusy} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>{spInstallBusy ? 'กำลังโหลด...' : 'ดาวน์โหลดอีกครั้ง'}</button>
+                <button onClick={verifySpHandler} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer' }}>ฉันติดตั้งแล้ว ตรวจสอบ</button>
+                <button onClick={() => setSpInstallOpen(false)} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>ปิด</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- Toast ขวาล่าง เมื่อเกิน 7 วันยังไม่ Update (ปิดได้ 1 วัน แต่รายการใน Notification ยังอยู่) */}
+        {spHandlerNotice && spHandlerNotice.kind !== 'missing' && spHandlerNotice.daysSinceRelease >= 7 && !spToastHidden && !spToastSnoozed && (
+          <div style={{ position: 'fixed', right: '20px', bottom: '20px', zIndex: 10020, width: '320px', background: '#fff', border: '1px solid #f3c98b', borderLeft: '4px solid #E24B4A', borderRadius: '10px', boxShadow: '0 6px 24px rgba(0,0,0,0.18)', padding: '12px 14px' }}>
+            <p style={{ fontSize: '13px', fontWeight: '600', color: '#791F1F', margin: '0 0 4px' }}>⚠️ SharePoint Handler ยังไม่ได้ Update</p>
+            <p style={{ fontSize: '11px', color: '#666', margin: '0 0 10px' }}>v{spHandlerNotice.outdated[0].version} → v{spHandlerNotice.latest} · ปล่อยมาแล้ว {spHandlerNotice.daysSinceRelease} วัน</p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => { try { localStorage.setItem('fastapn_sp_toast_snooze', String(Date.now() + 86400000)); } catch (_) {} setSpToastHidden(true); }} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#666', cursor: 'pointer' }}>เตือนพรุ่งนี้</button>
+              <button onClick={runSpHandlerUpdate} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer' }}>Update ตอนนี้</button>
+            </div>
+          </div>
+        )}
 
         {/* ── A3: OCR Queue Monitor ── */}
         {(() => {

@@ -10,7 +10,7 @@ import authRouter from "./routes/auth.js";
 import { attachAppRole } from "./middleware/attachRole.js";
 import { checkPermission } from "./middleware/checkPermission.js"; // MARKER_APP_REPLACE_BU_PERMISSION_FIX_V1
 import { createTableRouter } from "./routes/genericTable.js";
-import { pool } from "./db.js";
+import { pool, getUsernameByEmail } from "./db.js";
 import apPeriodRouter, { checkAutoCloseRequest, checkAndSyncPeriodStatus } from "./routes/apPeriod.js";
 import vatPeriodRouter from "./routes/vatPeriodRoute.js";
 import { purgeExpiredTaxClosePeriods } from "./routes/taxClosePeriod.js"; // MARKER_TAXCLOSE_LIFECYCLE_V1
@@ -74,6 +74,88 @@ app.use(cors({
 }));
 // MARKER_EXPRESS_JSON_LIMIT_25MB_V1
 app.use(express.json({ limit: '150mb' })); // MARKER_EXPRESS_JSON_LIMIT_150MB_V1 -- ขยายจาก 25MB (รองรับ PDF/รูปขนาดใหญ่ Base64 พองขึ้น ~33%) // ???????? Default 100KB -> 25MB (?????????? Excel ??????? Base64)
+
+// MARKER_APP_MENU_ENTER_ACTIVITY_V1 -- Activity เก็บเฉพาะ Action สำคัญ: เข้าระบบ (LOGIN เดิม) / เข้าเมนู (MENU_ENTER เมื่อ Heartbeat เปลี่ยนเมนู) / ออกระบบ (LOGOUT จาก WS Presence) -- ไม่เก็บทุก API
+const lastMenuByUser = new Map();
+const MENU_MIN_STAY_SEC = Number(process.env.MENU_MIN_STAY_SEC) || 10; // MARKER_APP_MENU_ENTER_MIN_STAY_V2 -- นับเข้าเมนูทันที แต่ถ้าอยู่ไม่เกิน 10 วิ แล้วออก = ลบรายการนั้นทิ้ง (ไม่นับ)
+function logActivity(username, action, moduleName, at) { // คืน Promise<id> (null ถ้าไม่สำเร็จ)
+  if (!username) return Promise.resolve(null);
+  return pool.query("INSERT INTO activity_log (username, user_email, action, module, created_at) VALUES ($1, NULL, $2, $3, COALESCE($4::timestamptz, NOW())) RETURNING id", [username, action, moduleName ? String(moduleName).slice(0, 60) : null, at ? new Date(at).toISOString() : null])
+    .then((r) => r.rows[0]?.id ?? null)
+    .catch(async (e) => {
+      if (e.code === "42703") { // ไม่มี Column id -> บันทึกแบบไม่คืน id (ไม่รองรับการลบรายการคลิกผ่าน)
+        try { await pool.query("INSERT INTO activity_log (username, user_email, action, module, created_at) VALUES ($1, NULL, $2, $3, COALESCE($4::timestamptz, NOW()))", [username, action, moduleName ? String(moduleName).slice(0, 60) : null, at ? new Date(at).toISOString() : null]); } catch (e2) { console.error("[activity] log error:", e2.message); }
+        return null;
+      }
+      console.error("[activity] log error:", e.message); return null;
+    });
+}
+// MARKER_APP_DELETE_ACTIVITY_V1 -- Delete เป็น Action สำคัญ: บันทึกทุกการลบที่สำเร็จ (DELETE) ต่อ User (ข้ามงานเก็บกวาด Session/Notification/Log)
+const DELETE_ACTIVITY_SKIP = [/menu_active_sessions/, /ap_active_sessions/, /ie_active_sessions/, /activity_log/, /notifications/, /recycle_bin/, /\/vat-reconcile\/dashboard\/report-files/];
+const deleteActivityUserCache = new Map();
+app.use((req, res, next) => {
+  if (req.method !== "DELETE") return next();
+  res.on("finish", () => {
+    (async () => {
+      try {
+        if (res.statusCode >= 400 || !req.user?.email) return;
+        const p = String(req.originalUrl || "").split("?")[0];
+        if (!p.startsWith("/api/") || DELETE_ACTIVITY_SKIP.some((r) => r.test(p))) return;
+        let username = req.user.username || deleteActivityUserCache.get(req.user.email);
+        if (!username) { username = await getUsernameByEmail(req.user.email); if (username) deleteActivityUserCache.set(req.user.email, username); }
+        if (!username) return;
+        logActivity(username, ("DELETE " + p.replace(/\/\d+(?=\/|$)/g, "/:id")).slice(0, 200), (p.split("/")[2] || "").slice(0, 60));
+      } catch (e) { console.error("[activity] delete log error:", e.message); }
+    })();
+  });
+  next();
+});
+app.use("/api/menu_active_sessions", (req, res, next) => {
+  if (!["POST", "PUT", "PATCH"].includes(req.method)) return next();
+  res.on("finish", () => {
+    try {
+      if (res.statusCode >= 400) return;
+      const b = Array.isArray(req.body) ? req.body[0] : req.body;
+      const user = b && (b.user_name || b.session_id);
+      const menu = b && b.menu_id;
+      if (!user || !menu) return;
+      const cur = lastMenuByUser.get(user);
+      const now = Date.now();
+      if (cur && cur.menu === menu) return; // Heartbeat ซ้ำเมนูเดิม ไม่นับซ้ำ
+      if (cur && now - cur.since <= MENU_MIN_STAY_SEC * 1000 && cur.idPromise) { // เมนูก่อนหน้าอยู่ไม่เกิน 10 วิ = คลิกผ่าน -> ลบรายการทิ้ง
+        cur.idPromise.then((id) => { if (id) pool.query("DELETE FROM activity_log WHERE id = $1", [id]).catch(() => {}); });
+      }
+      const entry = { menu, since: now, idPromise: null };
+      entry.idPromise = logActivity(user, "MENU_ENTER", menu);
+      lastMenuByUser.set(user, entry);
+    } catch (e) { console.error("[activity] menu enter error:", e.message); }
+  });
+  next();
+});
+
+// MARKER_APP_GZIP_JSON_V1 -- gzip response JSON ของ GET (>1KB) เมื่อ Client รองรับ: ลดขนาดข้อมูลที่ส่งผ่านเครือข่ายมาก (rows/attachments ก้อนใหญ่)
+import zlib from "zlib";
+app.use((req, res, next) => {
+  if (req.method !== "GET") return next();
+  if (!/\bgzip\b/.test(String(req.headers["accept-encoding"] || ""))) return next();
+  const origJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.headersSent) return origJson(body);
+    let str;
+    try { str = JSON.stringify(body); } catch (e) { return origJson(body); }
+    if (typeof str !== "string" || str.length < 1024) return origJson(body);
+    zlib.gzip(Buffer.from(str, "utf8"), { level: 5 }, (err, buf) => {
+      if (err || res.headersSent) return origJson(body);
+      res.set("Content-Type", "application/json; charset=utf-8");
+      res.set("Content-Encoding", "gzip");
+      res.set("Vary", "Accept-Encoding");
+      res.set("Content-Length", String(buf.length));
+      res.end(buf);
+    });
+    return res;
+  };
+  next();
+});
 
 const SERVER_START = Date.now();
 
@@ -791,7 +873,7 @@ async function syncDraftStatusForBu(runner, bu) {
          AND r.invoice_ref = n.invoice_ref
          AND r.supplier_code = n.supplier_code
          AND n.status = 'accept_with_condition'
-         AND r.aging_label != 'Accept'
+         AND r.aging_label IS DISTINCT FROM 'Accept' -- MARKER_APP_SYNC_ACCEPT_NULL_SAFE_V1 -- เดิม != 'Accept' ข้ามแถวที่ aging_label เป็น NULL (NULL != x = NULL) ทำให้ Note ของใบที่ไม่มีวันชำระเงินไม่ถูกเปลี่ยนเป็น Accept
          AND r.status NOT IN ('type_a', 'type_b', 'type_f') -- MARKER_APP_TYPE_ABF_STATUS_V1
          AND r.bu = $1
        RETURNING r.id`,
@@ -853,7 +935,9 @@ app.use("/api/vat_summary_frozen_dashboard", createTableRouter("vat_summary_froz
 // MARKER_APP_VAT_FREEZE_API_V1 -- หน้า Freeze: สถานะต่อ BU / สั่ง Freeze Final / ประวัติ
 //   กฎ: งวดเปิด = Draft ตาม Live อัตโนมัติ (DB: fn_freeze_vat_sync_draft เรียกจาก fn_recompute_vat_summary_for_bu) | ปิด Period = Final (fn_freeze_vat_finalize)
 //   หลังปิด: <=20 วัน grace, 21-30 วัน confirm, >30 วัน locked (fn_vat_freeze_window)
-app.get("/api/vat_freeze/status", checkPermission("vat_summary_frozen", "read"), async (req, res) => {
+// MARKER_APP_VAT_FREEZE_OWNER_ONLY_V15 -- หน้า Freeze (status/history/run) เข้าได้เฉพาะ Owner (late_update ที่หน้าอัปโหลดเรียกใช้ ไม่ผูกกับหน้านี้ จึงไม่จำกัด)
+const requireOwnerFreeze = (req, res, next) => (String(req.user?.appRole || "").toLowerCase() === "owner" ? next() : res.status(403).json({ error: "เฉพาะ Owner เท่านั้น" }));
+app.get("/api/vat_freeze/status", requireOwnerFreeze, checkPermission("vat_summary_frozen", "read"), async (req, res) => {
   try {
     const pr = await pool.query(`SELECT period_month FROM (SELECT period_month FROM vat_summary_live UNION SELECT period_month FROM vat_summary_frozen) x WHERE period_month IS NOT NULL ORDER BY 1 DESC`);
     const periods = pr.rows.map((r) => r.period_month);
@@ -888,7 +972,7 @@ app.get("/api/vat_freeze/status", checkPermission("vat_summary_frozen", "read"),
   }
 });
 
-app.get("/api/vat_freeze/history", checkPermission("vat_summary_frozen", "read"), async (req, res) => {
+app.get("/api/vat_freeze/history", requireOwnerFreeze, checkPermission("vat_summary_frozen", "read"), async (req, res) => {
   try {
     const { period, bu } = req.query;
     if (!period) return res.status(400).json({ error: "period is required" });
@@ -969,7 +1053,7 @@ app.post("/api/vat_freeze/late_update", checkPermission("vat_watchlist_report", 
 // POST /api/vat_freeze/run  body: { period, bus?: string[], force?: boolean, confirm?: boolean }
 //   Freeze Final ด้วยมือ (ปกติระบบทำเองตอนปิด Period) | bus ว่าง = ทุก BU ของงวดนั้น | force = ทำใหม่แม้ยอดเท่าเดิม | confirm = ยืนยันกรณี 21-30 วันหลังปิด
 //   DB บังคับกฎให้: locked (>30 วัน) ปฏิเสธทุกกรณี และ Freeze ได้เฉพาะงวดปัจจุบันของ BU
-app.post("/api/vat_freeze/run", checkPermission("vat_watchlist_report", "write"), async (req, res) => {
+app.post("/api/vat_freeze/run", requireOwnerFreeze, checkPermission("vat_watchlist_report", "write"), async (req, res) => {
   try {
     const { period, bus, force, confirm } = req.body || {};
     if (!period) return res.status(400).json({ error: "period is required" });
@@ -992,6 +1076,49 @@ app.post("/api/vat_freeze/run", checkPermission("vat_watchlist_report", "write")
     res.json({ ok: true, period, total: results.length, frozen: count("frozen"), unchanged: count("unchanged"), locked: count("locked"), needs_confirm: count("needs_confirm"), errors: count("error"), results });
   } catch (err) {
     console.error("POST /api/vat_freeze/run error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_APP_VAT_FREEZE_REFRESH_BU_V1 -- POST /api/vat_freeze/refresh_bu  body: { bu }
+//   Note/Check Return เปลี่ยน Unrealized (Accept) -> Freeze ซ้ำเฉพาะ BU นั้น ให้ยอด Unrealized ใน Freeze เป็นปัจจุบันที่สุด
+//   ทำเฉพาะงวดล่าสุดของ BU ที่ Freeze เป็น "final" แล้วเท่านั้น (งวดที่ยังเปิด = Draft ตาม Live เองอยู่แล้ว ห้าม Final ก่อนเวลา)
+//   กฎเวลา (<=20 วัน / 21-30 ต้องยืนยัน / >30 ล็อก) ให้ fn_freeze_vat_finalize ตัดสิน -- ไม่ส่ง confirm จึงไม่ Freeze ทับช่วง 21-30 วันเอง
+//   ไม่จำกัดเฉพาะ Owner (เรียกจากหน้า Note/Check Return ของผู้ใช้ทั่วไป) แต่ต้องมีสิทธิ์เขียน vat_watchlist_report
+app.post("/api/vat_freeze/refresh_bu", checkPermission("vat_watchlist_report", "write"), async (req, res) => {
+  try {
+    const bu = String((req.body && req.body.bu) || "").trim();
+    if (!bu) return res.status(400).json({ error: "bu is required" });
+    const pr = await pool.query("SELECT max(period_month) AS p FROM vat_summary_live WHERE bu = $1", [bu]);
+    const period = pr.rows[0] && pr.rows[0].p;
+    if (!period) return res.json({ ok: true, bu, action: "skipped_no_period" });
+    const fz = await pool.query(
+      "SELECT freeze_status FROM vat_summary_frozen WHERE bu = $1 AND period_month = $2 ORDER BY freeze_version DESC LIMIT 1",
+      [bu, String(period)]
+    );
+    const user = (req.user && req.user.email) || "system";
+    // MARKER_APP_VAT_FREEZE_REFRESH_BU_PREV_V1 -- งวดที่ปิดล่าสุด (เดือนก่อนงวดปัจจุบัน) ที่ Freeze เป็น Final แล้ว:
+    //   Note ที่บันทึกหลังปิด -> ย้าย Realized -> Unrealized ใน Final งวดนั้น (fn_vat_restate_unrealized; กรอบ 20/30 วันตัดสินใน DB)
+    const pm = /^(\d{4})-(\d{2})$/.exec(String(period));
+    let previous = null;
+    if (pm) {
+      const d = new Date(Date.UTC(Number(pm[1]), Number(pm[2]) - 2, 1));
+      const prevPeriod = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+      try {
+        const rq = await pool.query("SELECT fn_vat_restate_unrealized($1, $2, $3, false) AS r", [prevPeriod, bu, user]);
+        previous = rq.rows[0].r;
+      } catch (e2) {
+        console.error("fn_vat_restate_unrealized error:", e2.message);
+        previous = { action: "error", period: prevPeriod };
+      }
+    }
+    if (!fz.rows[0] || String(fz.rows[0].freeze_status).toLowerCase() !== "final") {
+      return res.json({ ok: true, bu, period, action: "skipped_not_final", previous });
+    }
+    const q = await pool.query("SELECT fn_freeze_vat_finalize($1, $2, $3, 'manual', true, false) AS r", [String(period), bu, user]);
+    res.json({ ok: true, bu, period, ...q.rows[0].r, previous });
+  } catch (err) {
+    console.error("POST /api/vat_freeze/refresh_bu error:", err.message);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -1467,6 +1594,8 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
           SELECT draft_id, username, bu, fill_started_at, created_at, batch_id, 1 AS line_count FROM vat_adi_transferdraft
           UNION ALL
           SELECT draft_id, username, bu, fill_started_at, created_at, batch_id, line_count FROM vat_transaction_archive
+          UNION ALL
+          SELECT 'RECON-' || id::text AS draft_id, owner_username AS username, bu, fill_started_at, created_at, NULL AS batch_id, 1 AS line_count FROM file_storage WHERE module = 'vat-reconcile-report' AND COALESCE(is_draft, false) = false /* MARKER_VATRECONCILE_FIRST_DRAFT_SERIAL_V1 -- First Draft ไม่นับเป็น Job */ -- MARKER_VATRECONCILE_USER_TRANSACTION_V1 -- Reconcile Report: Save (Export) 1 ครั้ง = 1 Job, เริ่มนับจากเลือก Period (fill_started_at)
         ) vat_all
         WHERE username = $1
           AND draft_id IS NOT NULL AND draft_id <> ''
@@ -1537,7 +1666,45 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
           : null,
       } : { start_time: null, end_time: null, count: 0, avg_gap_minutes: null };
 
-      return res.json({ granularity: "daily", from, to, summary, transactions: rows });
+      // MARKER_VATRECONCILE_ACTIVITY_TS_V1 -- แสดง Timestamp การทำงานในหน้า Reconcile (เลือก Period / ตรวจสอบ Expired / Save / Confirm / Release / ส่ง SharePoint) เป็นแถวเพิ่ม
+      // -- แสดงอย่างเดียว ไม่คำนวณ: sub_items = 0, ไม่มี Per Trans / Gap, ไม่รวมใน summary / จำนวน Transaction | Invoice No. / Module / Batch ไม่มี = null
+      let tsRows = [];
+      try {
+        const tsq = await pool.query(
+          `SELECT id, event, bu, account, period, file_id, note, (created_at AT TIME ZONE 'Asia/Bangkok') AS ts
+             FROM vat_reconcile_activity_ts
+            WHERE username = $1
+              AND (CASE EXTRACT(DOW FROM (created_at AT TIME ZONE 'Asia/Bangkok'))
+                     WHEN 6 THEN ((created_at AT TIME ZONE 'Asia/Bangkok')::date + 2)
+                     WHEN 0 THEN ((created_at AT TIME ZONE 'Asia/Bangkok')::date + 1)
+                     ELSE (created_at AT TIME ZONE 'Asia/Bangkok')::date END) = $2::date
+            ORDER BY created_at ASC LIMIT 2000`, [username, from]);
+        tsRows = tsq.rows.map((t) => ({
+          grp_key: "TS-" + t.id, module: null, ts: t.ts, ts_real: t.ts, start_ts: t.ts, end_ts: t.ts,
+          has_fill_start: false, is_after_hours: false, is_weekend_source: false, sub_items: 0, per_trans_minutes: null,
+          bu: t.bu || null, invoice_no: null, batch_id: null, vendor_name: null, gap_minutes: null,
+          is_timestamp: true, event: t.event, account: t.account || null, period: t.period || null, note: t.note || null,
+        }));
+      } catch (e) { if (e.code !== "42P01") console.error("[user_transactions] activity ts error:", e.message); }
+      try { // Timestamp จาก activity_log (ทุก Action ที่บันทึกไว้) -- แสดงอย่างเดียว
+        const alq = await pool.query(
+          `SELECT id, action, module, (created_at AT TIME ZONE 'Asia/Bangkok') AS ts
+             FROM activity_log
+            WHERE username = $1 AND action NOT ILIKE '%OCR%'
+              AND (CASE EXTRACT(DOW FROM (created_at AT TIME ZONE 'Asia/Bangkok'))
+                     WHEN 6 THEN ((created_at AT TIME ZONE 'Asia/Bangkok')::date + 2)
+                     WHEN 0 THEN ((created_at AT TIME ZONE 'Asia/Bangkok')::date + 1)
+                     ELSE (created_at AT TIME ZONE 'Asia/Bangkok')::date END) = $2::date
+            ORDER BY created_at ASC LIMIT 2000`, [username, from]);
+        for (const t of alq.rows) tsRows.push({
+          grp_key: "AL-" + t.id, module: null, ts: t.ts, ts_real: t.ts, start_ts: t.ts, end_ts: t.ts,
+          has_fill_start: false, is_after_hours: false, is_weekend_source: false, sub_items: 0, per_trans_minutes: null,
+          bu: null, invoice_no: null, batch_id: null, vendor_name: null, gap_minutes: null,
+          is_timestamp: true, event: t.action, module_src: t.module || null, account: null, period: null,
+        });
+      } catch (e) { console.error("[user_transactions] activity_log ts error:", e.message); }
+      const merged = rows.concat(tsRows).sort((x, y) => new Date(x.ts) - new Date(y.ts));
+      return res.json({ granularity: "daily", from, to, summary, transactions: merged });
     }
 
     const { rows } = await pool.query(
@@ -1788,6 +1955,8 @@ const server = app.listen(port, "0.0.0.0", () => {
     try {
       await pool.query(`DELETE FROM menu_active_sessions WHERE session_id = $1`, [u]);
     } catch (e) { console.error('[WS presence] cleanup menu_active_sessions error:', e.message); }
+    lastMenuByUser.delete(u);
+    logActivity(u, "LOGOUT", "AUTH"); // MARKER_APP_MENU_ENTER_ACTIVITY_V1
     wsBroadcast('team_status_updated', { username: u, online: false }); // ให้ Home/Sidebar Refresh รายชื่อทีม
     announcePresence(u, 'logout');
   }
@@ -1810,6 +1979,7 @@ const server = app.listen(port, "0.0.0.0", () => {
         presenceGrace.delete(ws.username);
       } else if (!hasOtherConn(ws)) {
         wsBroadcast('team_status_updated', { username: ws.username }); // ให้ Home/Sidebar Refresh รายชื่อทีม
+        lastMenuByUser.delete(ws.username); // Login ใหม่ -> Heartbeat แรกนับเป็นเข้าเมนู
         announcePresence(ws.username, 'login');
       }
     }

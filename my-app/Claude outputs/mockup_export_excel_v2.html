@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Export Excel</title>
+<style>
+body{font-family:Tahoma,Arial,sans-serif;font-size:12px;margin:16px;color:#222;background:#fff}
+h3{margin:0 0 4px;font-size:14px} p{margin:0 0 10px;color:#666}
+.wrap{overflow:auto;border:1px solid #ccc}
+table{border-collapse:collapse;min-width:1900px}
+th,td{border:1px solid #d4d4d4;padding:4px 8px;white-space:nowrap}
+th{background:#1a3a5c;color:#fff;text-align:left}
+th.d{background:#2f6f4f}
+td.n{text-align:right}
+tr.m td.f{background:#e4edf7}
+tr.u td.d{color:#991b1b}
+.gap td{border:none;height:8px;background:#fff}
+.note{margin-top:10px;color:#555;line-height:1.7}
+.tag{display:inline-block;background:#e4edf7;padding:1px 6px;border-radius:4px}
+.tag2{display:inline-block;background:#e5f3ea;padding:1px 6px;border-radius:4px}
+</style></head><body>
+<h3>Mockup Excel ที่จะ Export (Tab Matched / Match with Condition) — Sheet เดียว</h3>
+<p>1 แถว = 1 รายการ Detail (Invoice) · ข้อมูลด้านหน้าของ Check Return ซ้ำในทุกแถว → กรอง / Pivot / SUMIFS ได้ทันที</p>
+<div class="wrap"><table>
+<thead><tr>
+<th>BU</th><th>เลขที่เช็ค</th><th>Supplier</th><th>Invoice</th><th>มูลค่าสินค้า</th><th>เงินภาษี</th><th>APN-RETURN CHQ</th><th>WHT ที่ใกล้เคียง</th><th>ยอดที่คำนวณได้ (เฉพาะ Matched)</th><th>Diff (Matched − APN-RETURN CHQ)</th><th>Diff (รวมทุกบรรทัด Detail − APN-RETURN CHQ)</th><th>Invoice Num</th><th>Remark</th>
+<th class="d">Invoice No.</th><th class="d">Status</th><th class="d">Old Payment</th><th class="d">Old Payment Date</th><th class="d">New Payment</th><th class="d">New Payment Date</th><th class="d">มูลค่าสินค้า (Detail)</th><th class="d">เงินภาษี (Detail)</th><th class="d">ยอดสุทธิ @ Rate</th>
+</tr></thead>
+<tbody>
+<tr><td class="f">CDS</td><td class="f">110349174</td><td class="f">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="f n">4</td><td class="f n">9,964.02</td><td class="f n">697.48</td><td class="f n">11,162.62</td><td class="f">ไม่หัก</td><td class="f n">10,661.50</td><td class="f n" style="color:#991b1b">-501.12</td><td class="f n" style="color:#991b1b">+325.08</td><td class="f">110349174</td><td class="f">ขาดยอด 501.12 บาท…</td>
+<td class="d">CLIV1504019</td><td class="d">Matched</td><td class="d">110349174</td><td class="d">09 Jul 15</td><td class="d">16184-EFT</td><td class="d">02 Jul 23</td><td class="d n">1,776.03</td><td class="d n">124.32</td><td class="d n">1,900.35</td></tr>
+<tr><td class="f">CDS</td><td class="f">110349174</td><td class="f">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="f n">4</td><td class="f n">9,964.02</td><td class="f n">697.48</td><td class="f n">11,162.62</td><td class="f">ไม่หัก</td><td class="f n">10,661.50</td><td class="f n" style="color:#991b1b">-501.12</td><td class="f n" style="color:#991b1b">+325.08</td><td class="f">110349174</td><td class="f">ขาดยอด 501.12 บาท…</td>
+<td class="d">CLIV1503004</td><td class="d">Matched</td><td class="d">110349174</td><td class="d">09 Jul 15</td><td class="d">16184-EFT</td><td class="d">02 Jul 23</td><td class="d n">4,596.96</td><td class="d n">321.79</td><td class="d n">4,918.75</td></tr>
+<tr class="u"><td class="f">CDS</td><td class="f">110349174</td><td class="f">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="f n">4</td><td class="f n">9,964.02</td><td class="f n">697.48</td><td class="f n">11,162.62</td><td class="f">ไม่หัก</td><td class="f n">10,661.50</td><td class="f n" style="color:#991b1b">-501.12</td><td class="f n" style="color:#991b1b">+325.08</td><td class="f">110349174</td><td class="f">ขาดยอด 501.12 บาท…</td>
+<td class="d">LPIV 1503005</td><td class="d">Unmatch</td><td class="d">110349174</td><td class="d">09 Jul 15</td><td class="d">—</td><td class="d">—</td><td class="d n">195.42</td><td class="d n">13.68</td><td class="d n">209.10</td></tr>
+<tr><td class="f">CDS</td><td class="f">110349174</td><td class="f">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="f n">4</td><td class="f n">9,964.02</td><td class="f n">697.48</td><td class="f n">11,162.62</td><td class="f">ไม่หัก</td><td class="f n">10,661.50</td><td class="f n" style="color:#991b1b">-501.12</td><td class="f n" style="color:#991b1b">+325.08</td><td class="f">110349174</td><td class="f">ขาดยอด 501.12 บาท…</td><td class="d">CEIV1504006</td><td class="d">Matched</td><td class="d">110349174</td><td class="d">09 Jul 15</td><td class="d">16184-EFT</td><td class="d">02 Jul 23</td><td class="d n">2,213.41</td><td class="d n">154.94</td><td class="d n">2,368.35</td></tr><tr><td class="f">CDS</td><td class="f">110349174</td><td class="f">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="f n">4</td><td class="f n">9,964.02</td><td class="f n">697.48</td><td class="f n">11,162.62</td><td class="f">ไม่หัก</td><td class="f n">10,661.50</td><td class="f n" style="color:#991b1b">-501.12</td><td class="f n" style="color:#991b1b">+325.08</td><td class="f">110349174</td><td class="f">ขาดยอด 501.12 บาท…</td><td class="d">CEIV1503006</td><td class="d">Matched</td><td class="d">110349174</td><td class="d">09 Jul 15</td><td class="d">16184-EFT</td><td class="d">02 Jul 23</td><td class="d n">1,377.62</td><td class="d n">96.43</td><td class="d n">1,474.05</td></tr><tr class="u"><td class="f">CDS</td><td class="f">110349174</td><td class="f">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="f n">4</td><td class="f n">9,964.02</td><td class="f n">697.48</td><td class="f n">11,162.62</td><td class="f">ไม่หัก</td><td class="f n">10,661.50</td><td class="f n" style="color:#991b1b">-501.12</td><td class="f n" style="color:#991b1b">+325.08</td><td class="f">110349174</td><td class="f">ขาดยอด 501.12 บาท…</td><td class="d">LPIV 1504005</td><td class="d">Unmatch</td><td class="d">110349174</td><td class="d">09 Jul 15</td><td class="d">—</td><td class="d">—</td><td class="d n">368.13</td><td class="d n">25.77</td><td class="d n">393.90</td></tr><tr class="u"><td class="f">CDS</td><td class="f">110349174</td><td class="f">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="f n">4</td><td class="f n">9,964.02</td><td class="f n">697.48</td><td class="f n">11,162.62</td><td class="f">ไม่หัก</td><td class="f n">10,661.50</td><td class="f n" style="color:#991b1b">-501.12</td><td class="f n" style="color:#991b1b">+325.08</td><td class="f">110349174</td><td class="f">ขาดยอด 501.12 บาท…</td><td class="d">LPIV 1504017</td><td class="d">Unmatch</td><td class="d">110349174</td><td class="d">09 Jul 15</td><td class="d">—</td><td class="d">—</td><td class="d n">208.60</td><td class="d n">14.60</td><td class="d n">223.20</td></tr><tr class="gap"><td colspan="22"></td></tr>
+<tr><td class="f">CDS</td><td class="f">110347749</td><td class="f">N-109501 PROPERTY CARE</td><td class="f n">1</td><td class="f n">9,000.00</td><td class="f n">630.00</td><td class="f n">9,357.00</td><td class="f">ไม่หัก</td><td class="f n">9,360.00</td><td class="f n">+3.00</td><td class="f n">+3.00</td><td class="f">110347749</td><td class="f">…</td>
+<td class="d">PC-0001</td><td class="d">Matched</td><td class="d">110347749</td><td class="d">…</td><td class="d">…</td><td class="d">…</td><td class="d n">9,000.00</td><td class="d n">630.00</td><td class="d n">9,630.00</td></tr>
+</tbody></table></div>
+<div class="note"><b>ตัวอย่างใบ 110349174:</b> Incomplete ที่ Match แล้ว 4 บรรทัด (1,900.35 + 4,918.75 + 2,368.35 + 1,474.05) = 10,661.50 เทียบ APN-RETURN CHQ 11,162.62 → <b>Diff = −501.12</b> · ถ้ารวมอีก 3 บรรทัดที่จ่ายจบไปแล้ว (209.10 + 393.90 + 223.20) = 11,487.70 → <b>Diff = +325.08</b><br>
+<span class="tag">สีฟ้า</span> = ข้อมูลด้านหน้า (ของ Check Return) ซ้ำทุกแถว &nbsp; <span class="tag2">สีเขียว</span> = Detail รายบรรทัด Invoice<br>
+แถวที่ Status = Unmatch ตัวอักษรฝั่ง Detail เป็นสีแดง · มี Filter หัวตารางและตรึงแถวบน · ตัวเลขเป็นตัวเลขจริง ใช้คำนวณได้<br>
+Tab Unmatch: ตารางแบนเหมือนหน้าจอ (ไม่มี Detail)
+</div>
+</body></html>

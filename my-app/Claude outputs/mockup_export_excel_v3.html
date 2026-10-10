@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Export Excel v3</title>
+<style>
+body{font-family:Tahoma,Arial,sans-serif;font-size:12px;margin:16px;color:#222;background:#fff}
+h3{margin:0 0 4px;font-size:14px} p{margin:0 0 10px;color:#666}
+.wrap{overflow:auto;border:1px solid #ccc}
+table{border-collapse:collapse;min-width:1250px}
+th,td{border:1px solid #d4d4d4;padding:4px 8px;white-space:nowrap}
+th{background:#1a3a5c;color:#fff;text-align:left}
+th.g{background:#2f6f4f;text-align:center}
+th.g2{background:#8a5a00;text-align:center}
+th.g3{background:#7a1f1f;text-align:center}
+td.n{text-align:right}
+td.chq{background:#fff7e0;vertical-align:middle;font-weight:600}
+tr.tot td{background:#eef2f7;font-weight:700}
+.red{color:#991b1b;font-weight:700}
+.note{margin-top:10px;color:#555;line-height:1.8}
+</style></head><body>
+<h3>Mockup v3 — 1 ใบ Check Return = 1 บล็อก (ฝั่ง Check Return อยู่ 1 บรรทัด / ฝั่ง Incomplete ที่ Match เป็นหลายแถว)</h3>
+<p>ตัวอย่างใบ 110349174 · Incomplete 4 บรรทัดที่ Match แล้ว</p>
+<div class="wrap"><table>
+<thead>
+<tr><th colspan="7" class="g">Incomplete (ที่ Match แล้ว)</th><th colspan="5" class="g2">APN-RETURN CHQ (Check Return)</th><th colspan="2" class="g3">Diff</th></tr>
+<tr>
+<th>BU</th><th>Invoice No.</th><th>Old Payment / วันที่</th><th>New Payment / วันที่</th><th>มูลค่าสินค้า</th><th>เงินภาษี</th><th>ยอดสุทธิ @ ไม่หัก</th>
+<th>เลขที่เช็ค</th><th>Supplier</th><th>WHT</th><th>APN-RETURN CHQ</th><th>Remark</th>
+<th>ยอดรวม Matched − APN-RETURN CHQ</th><th>สถานะ</th>
+</tr></thead>
+<tbody>
+<tr><td>CDS</td><td>CLIV1504019</td><td>110349174 · 09 Jul 15</td><td>16184-EFT · 02 Jul 23</td><td class="n">1,776.03</td><td class="n">124.32</td><td class="n">1,900.35</td>
+<td class="chq" rowspan="4">110349174</td><td class="chq" rowspan="4">N-123319 เดลิเวอรี่ ฮีโร่</td><td class="chq" rowspan="4">ไม่หัก</td><td class="chq n" rowspan="4">11,162.62</td><td class="chq" rowspan="4">ขาดยอด 501.12 บาท…</td>
+<td class="n red" rowspan="4">−501.12</td><td rowspan="4">Match with Condition</td></tr>
+<tr><td>CDS</td><td>CLIV1503004</td><td>110349174 · 09 Jul 15</td><td>16184-EFT · 02 Jul 23</td><td class="n">4,596.96</td><td class="n">321.79</td><td class="n">4,918.75</td></tr>
+<tr><td>CDS</td><td>CEIV1504006</td><td>110349174 · 09 Jul 15</td><td>16184-EFT · 02 Jul 23</td><td class="n">2,213.41</td><td class="n">154.94</td><td class="n">2,368.35</td></tr>
+<tr><td>CDS</td><td>CEIV1503006</td><td>110349174 · 09 Jul 15</td><td>16184-EFT · 02 Jul 23</td><td class="n">1,377.62</td><td class="n">96.43</td><td class="n">1,474.05</td></tr>
+<tr class="tot"><td colspan="4" style="text-align:right">รวม 4 บรรทัด</td><td class="n">9,964.02</td><td class="n">697.48</td><td class="n">10,661.50</td><td colspan="5"></td><td class="n red">−501.12</td><td></td></tr>
+</tbody></table></div>
+<div class="note">
+• <b>ฝั่ง Check Return (สีเหลือง)</b> ขึ้นแค่ 1 บรรทัด (ช่องรวมกัน) ไม่ซ้ำทุกแถว<br>
+• <b>ฝั่ง Incomplete</b> แตกเป็นแถวตามจำนวนบรรทัดที่ Match (ที่นี่ 4 บรรทัด) แล้วมีแถวรวมท้ายบล็อก<br>
+• <b>Diff</b> = ยอดรวมสุทธิของ Incomplete ที่ Match − ยอด APN-RETURN CHQ = 10,661.50 − 11,162.62 = <b>−501.12</b> (ตรงกับ "ขาดยอด 501.12")<br>
+• ถ้ามีบรรทัดที่จ่ายจบไปแล้วเพิ่ม (Unmatch 3 บรรทัด) จะต่อท้ายในบล็อกเดียวกัน เป็นตัวอักษรแดง และแสดง Diff รวมทั้ง 7 บรรทัด (+325.08) เพิ่มอีก 1 คอลัมน์
+</div>
+</body></html>

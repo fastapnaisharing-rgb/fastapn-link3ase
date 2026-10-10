@@ -35,7 +35,7 @@ export async function getCurrentCpu() {
 
   _cpuInFlight = new Promise((resolve) => {
     const cmd = `powershell -Command "(Get-Counter '\\Processor(_Total)\\% Processor Time' -SampleInterval 1 -MaxSamples 3 | Select-Object -ExpandProperty CounterSamples | Measure-Object -Property CookedValue -Average).Average"`;
-    exec(cmd, { encoding: "utf8", timeout: 8000 }, (err, stdout) => {
+    exec(cmd, { windowsHide: true, encoding: "utf8", timeout: 8000 }, (err, stdout) => {
       let pct = 0;
       if (err) {
         console.error("getCurrentCpu error:", err.message);
@@ -65,7 +65,7 @@ async function getTopProcesses(limit = 10) {
 
   const p = new Promise((resolve) => {
     const cmd = `powershell -Command "Get-Process | Sort-Object WS -Descending | Select-Object -First ${limit} Name, Id, CPU, SessionId, @{Name='RAM';Expression={[math]::Round($_.WS/1MB,1)}}, @{Name='StartTime';Expression={if($_.StartTime){$_.StartTime.ToString('o')}else{''}}} | ConvertTo-Json"`;
-    exec(cmd, { encoding: "utf8", timeout: 10000 }, (err, stdout) => {
+    exec(cmd, { windowsHide: true, encoding: "utf8", timeout: 10000 }, (err, stdout) => {
       let result = [];
       if (err) {
         console.error("getTopProcesses error:", err.message);
@@ -100,7 +100,7 @@ async function getPerCoreCpu() {
   _perCoreInFlight = new Promise((resolve) => {
     // ดึง Total + Per Core ใน call เดียว → ค่า Total และ Per Core sync กันแน่นอน
     const cmd = `powershell -Command "Get-Counter '\\Processor(*)\\% Processor Time' -SampleInterval 1 -MaxSamples 1 | Select-Object -ExpandProperty CounterSamples | Select-Object InstanceName, CookedValue | ConvertTo-Json"`;
-    exec(cmd, { encoding: "utf8", timeout: 8000 }, (err, stdout) => {
+    exec(cmd, { windowsHide: true, encoding: "utf8", timeout: 8000 }, (err, stdout) => {
       let cores = [];
       let totalPct = 0;
       if (err) {
@@ -145,7 +145,7 @@ async function getTopProcessesByCpu(limit = 8) {
 
   const p = new Promise((resolve) => {
     const cmd = `powershell -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First ${limit} Name, Id, CPU | ConvertTo-Json"`;
-    exec(cmd, { encoding: "utf8", timeout: 10000 }, (err, stdout) => {
+    exec(cmd, { windowsHide: true, encoding: "utf8", timeout: 10000 }, (err, stdout) => {
       let result = [];
       if (err) {
         console.error("getTopProcessesByCpu error:", err.message);
@@ -179,7 +179,7 @@ async function getOrphanPowerShell() {
 
   _orphanInFlight = new Promise((resolve) => {
     const cmd = `powershell -Command "Get-Process -Name powershell -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq 0 } | Select-Object Id, CPU, @{Name='StartTime';Expression={$_.StartTime.ToString('o')}}, @{Name='RAM';Expression={[math]::Round($_.WS/1MB,1)}} | ConvertTo-Json"`;
-    exec(cmd, { encoding: "utf8", timeout: 10000 }, (err, stdout) => {
+    exec(cmd, { windowsHide: true, encoding: "utf8", timeout: 10000 }, (err, stdout) => {
       let result = [];
       if (err) {
         console.error("getOrphanPowerShell error:", err.message);
@@ -212,7 +212,7 @@ async function getBackendRam() {
 
   _backendRamInFlight = new Promise((resolve) => {
     const cmd = `powershell -Command "Get-Process -Name node -ErrorAction SilentlyContinue | Measure-Object WS -Sum | Select-Object -ExpandProperty Sum"`;
-    exec(cmd, { encoding: "utf8", timeout: 5000 }, (err, stdout) => {
+    exec(cmd, { windowsHide: true, encoding: "utf8", timeout: 5000 }, (err, stdout) => {
       let mb = 0;
       if (err) {
         console.error("getBackendRam error:", err.message);
@@ -232,7 +232,7 @@ async function getBackendRam() {
 // ── เช็คว่า PID นี้ยังมีอยู่จริงในระบบไหม (ใช้ Verify หลัง Stop-Process) ──
 function isProcessAlive(pid) {
   try {
-    const out = execSync(`powershell -Command "if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { 'ALIVE' } else { 'DEAD' }"`, { encoding: "utf8", timeout: 5000 });
+    const out = execSync(`powershell -Command "if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { 'ALIVE' } else { 'DEAD' }"`, { windowsHide: true, encoding: "utf8", timeout: 5000 });
     return out.trim() === "ALIVE";
   } catch (err) {
     return false;
@@ -246,7 +246,7 @@ function killProcessesBatch(pids) {
   if (!pids.length) return;
   const idList = pids.join(',');
   try {
-    execSync(`powershell -Command "Stop-Process -Id ${idList} -Force -ErrorAction SilentlyContinue"`, { timeout: 15000 });
+    execSync(`powershell -Command "Stop-Process -Id ${idList} -Force -ErrorAction SilentlyContinue"`, { windowsHide: true, timeout: 15000 });
   } catch (err) {
     console.error('killProcessesBatch error:', err.message);
   }
@@ -259,7 +259,7 @@ function throttleProcessesBatch(pids) {
   if (!pids.length) return;
   const idList = pids.join(',');
   try {
-    execSync(`powershell -Command "Get-Process -Id ${idList} -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'Idle' }"`, { timeout: 15000 });
+    execSync(`powershell -Command "Get-Process -Id ${idList} -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'Idle' }"`, { windowsHide: true, timeout: 15000 });
   } catch (err) {
     console.error('throttleProcessesBatch error:', err.message);
   }
@@ -270,7 +270,7 @@ function getAliveProcessIds(pids) {
   if (!pids.length) return new Set();
   const idList = pids.join(',');
   try {
-    const out = execSync(`powershell -Command "Get-Process -Id ${idList} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"`, { encoding: "utf8", timeout: 10000 });
+    const out = execSync(`powershell -Command "Get-Process -Id ${idList} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"`, { windowsHide: true, encoding: "utf8", timeout: 10000 });
     const alive = out.split(/\r?\n/).map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
     return new Set(alive);
   } catch (err) {
@@ -1157,7 +1157,7 @@ async function getProcessesPerCore() {
         `Select-Object Name,Id,@{N='CPU';E={[math]::Round($_.CPU,1)}}; ` +
       `$cores = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors; ` +
       `[PSCustomObject]@{procs=$procs;cores=$cores} | ConvertTo-Json -Depth 3"`;
-    exec(cmd, { encoding: "utf8", timeout: 10000 }, (err, stdout) => {
+    exec(cmd, { windowsHide: true, encoding: "utf8", timeout: 10000 }, (err, stdout) => {
       let result = [];
       if (!err && stdout && stdout.trim()) {
         try {

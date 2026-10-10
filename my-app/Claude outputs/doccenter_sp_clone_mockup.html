@@ -1,0 +1,40 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>Mockup Document Center</title>
+<style>
+body{font-family:Segoe UI,Tahoma,sans-serif;background:#f4f5f7;margin:0;padding:24px;color:#1a3a5c}
+h3{margin:0 0 4px}.sub{font-size:12px;color:#888;margin-bottom:14px}
+.bar{background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:14px}
+.boxes{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
+.box{background:#fff;border:1px solid #e3e3e3;border-radius:10px;padding:16px;min-height:120px}
+.box.on{border-color:#2e7d32;box-shadow:0 0 0 2px #e8f5e9}.box.future{border-style:dashed;opacity:.6}
+.t{font-weight:600;font-size:14px}.d{font-size:11px;color:#777;margin:4px 0 10px}
+.tag{font-size:10px;padding:2px 8px;border-radius:99px;background:#EAF3DE;color:#27500A}.tag.g{background:#eee;color:#888}
+.list{background:#fff;border:1px solid #e3e3e3;border-radius:10px}
+.r{display:grid;grid-template-columns:1fr 160px 120px 160px;padding:9px 14px;font-size:12px;border-top:1px solid #f0f0f0;align-items:center}
+.r.h{border-top:0;color:#888;font-size:11px}
+.drop{margin-top:12px;border:2px dashed #b8c7d9;border-radius:10px;padding:16px;text-align:center;font-size:12px;color:#6b7b8c;background:#fafcff}
+.ok{color:#2e7d32}.wait{color:#c77700}
+</style>
+<style>
+.row{background:#fff;border:1px solid #e8e8e8;border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:14px;margin-bottom:8px}
+.ic{width:42px;height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px}
+.row .t{font-size:14px}.row .d{margin:2px 0 0}.pill{font-size:11px;padding:3px 10px;border-radius:99px}
+.btn{font-size:11px;padding:4px 12px;border:1px solid #d0d0d0;border-radius:6px;background:#fff;margin-left:auto}
+.dim{opacity:.55;border-style:dashed}
+</style>
+<h3>① Document Center › VAT Control (หน้าแรกด้านใน)</h3>
+<div class="sub">ใช้การ์ดแบบเดียวกับหน้า Document Center เดิม · 3 รายการ</div>
+<div class="row"><div class="ic" style="background:#E8F5E9">📤</div><div style="flex:1"><div class="t">Z_Report Reconcile</div><div class="d">Clone จาก SharePoint · รายงาน Reconcile · เปิดผ่าน Browser · โยนไฟล์แล้วส่งไป SharePoint</div></div><span class="pill" style="background:#E3F2FD;color:#0C447C">☁ SharePoint</span><span class="btn">Detail</span><span>›</span></div>
+<div class="row dim"><div class="ic" style="background:#FFF3E0">📤</div><div style="flex:1"><div class="t">Z_Upload (Z_AllSystemUpload)</div><div class="d">Clone จาก SharePoint · ไฟล์ Upload เข้าระบบ (อนาคต)</div></div><span class="pill" style="background:#eee;color:#888">เร็วๆ นี้</span><span class="btn">Detail</span><span>›</span></div>
+<div class="row"><div class="ic" style="background:#E8F0FE">🗂</div><div style="flex:1"><div class="t">VAT Detail</div><div class="d">เก็บไฟล์จริงที่ Backend เช่น ไฟล์ประชุม, ใบกำกับภาษี, รายงาน PP30 (ของเดิม)</div></div><span class="pill" style="background:#EAF3DE;color:#27500A">🖥 Backend · 0 batch</span><span class="btn">Detail</span><span>›</span></div>
+<div style="height:18px"></div>
+<h3>② เข้า Z_Report Reconcile</h3>
+<div class="sub">โครงสร้างโฟลเดอร์ = SharePoint · ไม่เก็บไฟล์จริง</div>
+<div class="bar">🏠 Document Center › Z_Report Reconcile › 2026.09 &nbsp; <span style="color:#888">· Cache เมื่อ 8 ต.ค. 22:50 ↻ Refresh</span></div>
+<div class="list">
+ <div class="r h"><div>Name</div><div>Date modified</div><div>Size</div><div>SharePoint</div></div>
+ <div class="r"><div>📄 0560_Input_VAT_Recon_2026.09.xlsx</div><div>8/10/2026 22:10</div><div>212 KB</div><div><span class="ok">● อยู่ใน SharePoint</span> · เปิด ↗</div></div>
+ <div class="r"><div>📄 0562_Input_VAT_Recon_2026.09.xlsx</div><div>8/10/2026 22:12</div><div>180 KB</div><div><span class="ok">● อยู่ใน SharePoint</span> · เปิด ↗</div></div>
+ <div class="r"><div>📄 0563_Input_VAT_Recon_2026.09.xlsx</div><div>—</div><div>—</div><div><span class="wait">● กำลังส่ง…</span></div></div>
+</div>
+<div class="drop">⬇ ลาก/วางไฟล์ที่นี่ → ส่งไปโฟลเดอร์ <b>Z_Report Reconcile / 2026.09</b> ใน SharePoint (ไม่เก็บไฟล์จริงในระบบ) · ไม่มี Handler = แจ้งเตือนให้ติดตั้ง</div>
+</html>

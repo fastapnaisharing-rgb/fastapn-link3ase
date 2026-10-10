@@ -46,7 +46,7 @@ if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
 // ----------------------------------------------------------------
 function splitPdf(pdfPath, outputDir, dpi = OCR_DPI) {
     return new Promise((resolve, reject) => {
-        const proc = spawn(PYTHON_EXE, [PDF_SPLIT_SCRIPT, pdfPath, outputDir, String(dpi)]);
+        const proc = spawn(PYTHON_EXE, [PDF_SPLIT_SCRIPT, pdfPath, outputDir, String(dpi)], { windowsHide: true }); // MARKER_WINDOWS_HIDE
         let stdout = '';
         let stderr = '';
 

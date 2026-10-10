@@ -778,8 +778,29 @@ export async function checkAutoCloseIERequest() {
   }
 }
 
+// MARKER_PERIOD_REOPEN_DEADLINE7_V1
+// ── Reopen ได้ถึง "Deadline + 7 วัน" ของงวดที่ปิด (ไม่ใช่ 7 วันหลังกดปิด) ──
+// Deadline = วันทำการ (จันทร์-ศุกร์) ที่ 2 ของเดือนถัดจากเดือนที่ปิด (สูตรเดียวกับ Deadline ของ AP/IE) -- เวลาไทย
+// เลยวันที่ 7 หลัง Deadline (สิ้นวัน) แล้ว Reopen ไม่ได้ และปิดซ้ำไม่ได้ (Guard เดือน + Lock) จนกว่าจะถึง Deadline ของงวดถัดไป
+function reopenWindowEnd(closedMonthStr) {
+  const [cy, cm] = String(closedMonthStr).split("-").map(Number); // cm = 1-12 (เดือนที่ปิด)
+  const d = new Date(cy, cm, 1); // วันที่ 1 ของเดือนถัดไป
+  let cnt = 0;
+  while (true) {
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) { cnt++; if (cnt === 2) break; }
+    d.setDate(d.getDate() + 1);
+  }
+  d.setDate(d.getDate() + 8); // Deadline + 7 วัน (ถึงสิ้นวัน) = 00:00 ของวันที่ +8
+  return d;
+}
+function isReopenWindowExpired(closedMonthStr) {
+  const bkkNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  return bkkNow >= reopenWindowEnd(closedMonthStr);
+}
+
 // POST /api/ie/period/reopen -- Owner only, ยกเลิกการปิด Period ล่าสุด
-// ใช้ได้ภายใน 7 วันหลัง Close เท่านั้น (Pattern เดียวกับ Self-Override)
+// ใช้ได้ถึง Deadline + 7 วัน ของงวดที่ปิด เท่านั้น (MARKER_PERIOD_REOPEN_DEADLINE7_V1) (Pattern เดียวกับ Self-Override)
 // เก็บเลขที่วิ่งไปแล้วช่วงเปิดผิดพลาดไว้ที่ ie_grt_ov/ie_grn_ov ไม่ทิ้ง -- พอปิดจริง
 // รอบหน้าจะดึงกลับมาต่อเอง (Pattern เดียวกับ /close ด้านบน: ie_grt = ie_grt_ov)
 router.post("/reopen", async (req, res) => {
@@ -809,11 +830,10 @@ router.post("/reopen", async (req, res) => {
         return res.status(409).json({ error: "ไม่พบประวัติการปิด Period ล่าสุด" });
       }
 
-      const closedAt = new Date(s.ie_period_closed_at);
-      const daysSinceClosed = Math.floor((Date.now() - closedAt.getTime()) / (1000 * 60 * 60 * 24));
-      if (daysSinceClosed > 7) {
+      // MARKER_PERIOD_REOPEN_DEADLINE7_V1 -- Reopen ได้ถึง Deadline + 7 วัน ของงวดที่ปิด (ie_period_month = เดือนที่เพิ่งปิด)
+      if (isReopenWindowExpired(s.ie_period_month)) {
         await client.query("ROLLBACK");
-        return res.status(403).json({ error: "เกิน 7 วันหลัง Close แล้ว ไม่สามารถ Reopen ได้อีก" });
+        return res.status(403).json({ error: "เกิน Deadline + 7 วัน แล้ว ไม่สามารถ Reopen ได้อีก (ปิดซ้ำไม่ได้จนกว่าจะถึง Deadline ถัดไป)" });
       }
 
       const [y, m] = s.ie_period_month.split("-").map(Number);

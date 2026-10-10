@@ -1683,8 +1683,12 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   const listRef  = useRef(null);
   const [favUpdating, setFavUpdating] = useState(null); // code ที่กำลัง update
   // MARKER_MASTERDATA_REALTIME_V1 -- คนอื่นแก้ Item Code ที่ไหนก็ตาม Refetch ให้เห็นสด
+  // MARKER_ITEMCODE_RESULTS_REFRESH_V1 -- results เป็น State ค้นจาก Server: ต้อง Refetch เองหลัง Save/Delete/Event
+  const [resultsTick, setResultsTick] = useState(0);
+  const bumpResults = () => setResultsTick(t => t + 1);
   useRealtimeRefresh(['itemcode_list_updated'], () => {
     if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode realtime] fetchCollection background error:', e));
+    bumpResults();
   });
 
   const isReadOnly = view === 'view';
@@ -1765,7 +1769,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       }
     }, 300);
     return () => { clearTimeout(t); controller.abort(); };
-  }, [show, query, bu, bookFilter, sourceModule, vendorTaxId, allBu, canEdit]);
+  }, [show, query, bu, bookFilter, sourceModule, vendorTaxId, allBu, canEdit, resultsTick]);
 
 
 
@@ -1804,6 +1808,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode handleSave] fetchCollection background error:', e));
       try { broadcastWs('itemcode_list_updated', {}); } catch (e) { console.error('[broadcast itemcode_list_updated]', e); }
+      bumpResults();
       setView('search'); setForm(emptyForm); setViewTarget(null);
     } catch (e) {
       console.error('[ItemCode handleSave failed]', e);
@@ -1820,6 +1825,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode handleDelete] fetchCollection background error:', e));
       try { broadcastWs('itemcode_list_updated', {}); } catch (e) { console.error('[broadcast itemcode_list_updated]', e); }
+      bumpResults();
     } catch (e) { confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 

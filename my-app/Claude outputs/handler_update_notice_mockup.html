@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;font-family:system-ui,'Sarabun',sans-serif;background:#f4f5f7;color:#334155;font-size:13px}
+.wrap{max-width:980px;margin:0 auto;padding:18px;position:relative;min-height:560px}
+h4{margin:14px 0 8px;font-size:13px}
+.card{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:14px 16px}
+.banner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fffbea;border:1px solid #f0d58a;color:#7a5a00;border-radius:10px;padding:9px 12px;margin-bottom:10px}
+.banner b{color:#5b4300}
+.btn{border:1px solid #0969da;background:#fff;color:#0969da;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer}
+.btn.pri{background:#0969da;color:#fff}
+.btn.g{border-color:#d0d7de;color:#57606a}
+.toast{position:absolute;right:18px;bottom:18px;width:320px;background:#fff;border:1px solid #f1a9a9;border-left:5px solid #cf222e;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:12px 14px}
+.toast .t{font-weight:700;color:#a30d16;display:flex;justify-content:space-between}
+.toast .d{margin:6px 0 10px;color:#475569;line-height:1.5}
+.x{cursor:pointer;color:#888}
+.row{display:flex;gap:8px}
+.mut{color:#6b7280;font-size:12px}
+.ph{height:150px;border:1px dashed #cbd5e1;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#94a3b8}
+</style></head><body><div class="wrap">
+<h4>1) ทันทีที่เวอร์ชันของผู้ใช้ต่ำกว่าล่าสุด — แถบบนหน้า Home (เหนือการ์ด Notification)</h4>
+<div class="banner">⚠ <span><b>SharePoint Handler</b> ของคุณเป็น <b>v1</b> ต่ำกว่าเวอร์ชันล่าสุด <b>v2</b> (ออกเมื่อ 8 ต.ค. 22:50) · ออกมาแล้ว 2 วัน</span>
+<span style="flex:1"></span><button class="btn pri">Update ตอนนี้</button><button class="btn">Setup - Tools</button><button class="btn g">ปิดไว้ 1 วัน</button></div>
+<div class="ph">การ์ด Notification / OCR Queue / ทีม (ของเดิม)</div>
+
+<h4 style="margin-top:22px">2) เกิน 7 วันแล้วยังไม่อัปเดต — Toast เด้งมุมขวาล่าง (ตรงกรอบแดงที่คุณชี้)</h4>
+<div class="card" style="height:300px;position:relative">
+ <span class="mut">หน้า Home (จำลอง)</span>
+ <div class="toast">
+  <div class="t"><span>⚠ Handler ยังไม่ได้อัปเดต</span><span class="x">✕</span></div>
+  <div class="d">SharePoint Handler ของคุณยังเป็น <b>v1</b> ผ่านมา <b>8 วัน</b> แล้วตั้งแต่ปล่อย v2<br>ปุ่มส่ง/เปิด/ลบไฟล์ SharePoint อาจใช้ไม่ได้</div>
+  <div class="row"><button class="btn pri">Update ตอนนี้</button><button class="btn g">เตือนพรุ่งนี้</button></div>
+ </div>
+</div>
+<p class="mut">กติกา: นับ 7 วันจาก "วันที่ปล่อยเวอร์ชันใหม่" · Toast ขึ้นตอนเปิด Home/Login · กด "เตือนพรุ่งนี้" ซ่อน 1 วัน · หายทันทีเมื่อ Handler รายงานเวอร์ชันใหม่</p>
+</div></body></html>

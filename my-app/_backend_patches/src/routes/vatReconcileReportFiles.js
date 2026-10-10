@@ -3,7 +3,144 @@ import ExcelJS from "exceljs";
 import fs from "fs";
 import path from "path";
 import { pool, getUsernameByEmail } from "../db.js";
-import { buildOriginalWorkbook } from "./vatReconcileOriginalWorkbook.js"; // MARKER_VATRECONCILE_ORIGINAL_WORKBOOK_V1
+import { buildOriginalWorkbook, buildPctWorkbook, writeSimpleOriginalSheet, simpleRowsToGroups } from "./vatReconcileOriginalWorkbook.js"; // MARKER_VATRECONCILE_ORIGINAL_WORKBOOK_V1
+
+// MARKER_VATRECONCILE_REPORT_CONFIRM_V1 -- Confirm ไฟล์รายงานก่อน Download / ส่ง SharePoint (Export ใหม่ทับไฟล์เดิม = ต้อง Confirm ใหม่)
+pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS confirmed_at timestamptz").catch((e) => console.error("[migrate file_storage.confirmed_at]", e.message));
+pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS input_expire_at timestamptz").catch((e) => console.error("[migrate file_storage.input_expire_at]", e.message));
+pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS is_draft boolean NOT NULL DEFAULT false").catch((e) => console.error("[migrate file_storage.is_draft]", e.message)); // MARKER_VATRECONCILE_FIRST_DRAFT_V1 -- First Draft = เก็บไฟล์ใน Backend เป็น Draft (ไม่ Confirm/Download/ส่ง SharePoint ได้)
+pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS draft_serial text").catch((e) => console.error("[migrate file_storage.draft_serial]", e.message)); // MARKER_VATRECONCILE_FIRST_DRAFT_SERIAL_V1 -- Draft = แถวแยก (Serial FD-BU-Account-YYYYMM-nnn) | Final เก็บ Serial ของ Draft ไว้ในคอลัมน์นี้
+pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS draft_note text").catch((e) => console.error("[migrate file_storage.draft_note]", e.message)); // Note ของไฟล์ Draft
+const INPUT_KEEP_DAYS = Number(process.env.RECON_INPUT_KEEP_DAYS) || 60; // MARKER_VATRECONCILE_INPUT_EXPIRE_V1 -- Confirm = เริ่มนับวันหมดอายุของ Input (ยังไม่มีงานลบอัตโนมัติ)
+pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS fill_started_at timestamp").catch((e) => console.error("[migrate file_storage.fill_started_at]", e.message)); // MARKER_VATRECONCILE_USER_TRANSACTION_V1 -- เวลาเริ่มงาน (เลือก Period) -> 1 Save = 1 Job ในหน้า User Transaction
+pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS confirmed_by text").catch((e) => console.error("[migrate file_storage.confirmed_by]", e.message));
+
+// MARKER_VATRECONCILE_ACTIVITY_TS_V1 -- Timestamp การทำงานของ User ในหน้า Reconcile (งานที่นับเป็น Transaction ไม่ได้): PERIOD_SELECT, EXPIRED_REVIEWED, SAVE, CONFIRM, RELEASE, SP_SENT
+pool.query(`CREATE TABLE IF NOT EXISTS vat_reconcile_activity_ts (
+  id bigserial PRIMARY KEY, username text, event text NOT NULL, bu text, account text, period text, file_id text, created_at timestamptz NOT NULL DEFAULT NOW())`)
+  .then(() => pool.query("CREATE INDEX IF NOT EXISTS idx_vrats_user_time ON vat_reconcile_activity_ts (username, created_at)"))
+  .catch((e) => console.error("[migrate vat_reconcile_activity_ts]", e.message));
+pool.query("ALTER TABLE vat_reconcile_activity_ts ADD COLUMN IF NOT EXISTS note text").catch((e) => console.error("[migrate vat_reconcile_activity_ts.note]", e.message)); // MARKER_VATRECONCILE_DRAFT_NOTE_TS_V1
+function logActivityTs(username, event, { bu = null, account = null, period = null, fileId = null, note = null } = {}) {
+  pool.query("INSERT INTO vat_reconcile_activity_ts (username, event, bu, account, period, file_id, note) VALUES ($1,$2,$3,$4,$5,$6,$7)", [username || null, event, bu, account, period, fileId, note])
+    .catch((e) => console.error("[activity-ts] insert error:", e.message));
+}
+const ACTIVITY_TS_CLIENT_EVENTS = new Set(["PERIOD_SELECT", "EXPIRED_REVIEWED"]);
+const refParts = (refId) => { const [account, period] = String(refId || "").split("|"); return { account: account || null, period: period || null }; };
+
+// MARKER_VATRECONCILE_TIMELINE_SYNC_V1 -- Backend อัปเดต Timeline (timeline_progress) เอง เมื่อ Draft / Note / Confirm / Release / Delete ไฟล์รายงาน
+//   First Draft -> ช่อง First Draft Input = D | Note Draft -> Note ช่อง First Draft | Confirm -> Final + First = D | Release -> Final = P (First = P ถ้าไม่มี Draft ค้ำ) | Delete -> ย้อนทั้งหมด
+//   Tax Code ที่ Finish = Tax Type ที่มีข้อมูลจริงของ BU+Account+Period (751->M, 752->N/A, 755->T/F) เฉพาะช่องที่ Enable | ไม่มีแถว Timeline ของ Period นั้น (งวดย้อนหลัง) = ข้ามเงียบๆ
+const TL_DEFAULT_CODES = { "11610751": ["M"], "11610752": ["N", "A"], "11610755": ["T", "F"] };
+async function tlCodesFor(bu, account, period) {
+  let accCodes = TL_DEFAULT_CODES[String(account)] || [];
+  try {
+    const m = await pool.query(`SELECT tax_type FROM recon_tax_type_map WHERE account = $1 AND enabled IS TRUE`, [String(account)]);
+    if (m.rows.length) accCodes = m.rows.map((r) => String(r.tax_type).toUpperCase());
+  } catch (e) { /* ยังไม่มีตาราง -> ใช้ค่า Default */ }
+  if (!accCodes.length) return [];
+  try {
+    const c = await pool.query(`SELECT split_part("COMPANY CODE", '-', 3) AS nb FROM company_list WHERE bu = $1 AND deleted IS NOT TRUE LIMIT 1`, [bu]);
+    const nb = c.rows[0]?.nb;
+    if (nb) {
+      const d = await pool.query(
+        `SELECT DISTINCT tt FROM (
+           SELECT upper(btrim(tax_type)) AS tt FROM vat_reconcile_input_summary WHERE bu = $1 AND period = $2 AND reconcile_account = $3
+           UNION ALL
+           SELECT upper(btrim(tax_type_code)) AS tt FROM vat_reconcile_simple_header WHERE bu = $1 AND period = $2 AND reconcile_account = $3
+         ) x WHERE tt IS NOT NULL`,
+        [nb, period, String(account)]
+      );
+      const have = d.rows.map((r) => r.tt).filter((t) => accCodes.includes(t));
+      if (have.length) return have;
+    }
+  } catch (e) { console.error("[timeline-sync] tlCodesFor:", e.message); }
+  return accCodes; // ไม่มีข้อมูลให้ตัดสิน -> ทุกรหัสของ Account (ช่อง X/ND ถูกข้ามอยู่แล้ว)
+}
+async function tlLoad(bu, period) {
+  const q = await pool.query(`SELECT id, state FROM timeline_progress WHERE period_ym = $1 AND bu = $2 LIMIT 1`, [period, bu]);
+  const row = q.rows[0];
+  if (!row) return null;
+  let st = row.state;
+  if (typeof st === "string") { try { st = JSON.parse(st); } catch (e) { return null; } }
+  if (!st || typeof st !== "object" || !st.rpt || !st.rpt.first) return null;
+  return { id: row.id, st: JSON.parse(JSON.stringify(st)) };
+}
+async function tlSave(row, st, by, bu, period) {
+  await pool.query(`UPDATE timeline_progress SET state = $1, updated_by = $2, updated_at = NOW() WHERE id = $3`, [JSON.stringify(st), by || "", row.id]);
+  try {
+    if (global._wss) {
+      const msg = JSON.stringify({ event: "timeline_progress_updated", period_ym: period, bus: [bu], by: by || "" });
+      global._wss.clients.forEach((c) => { if (c.readyState === 1) c.send(msg); });
+    }
+  } catch (e) { /* ไม่กระทบงานหลัก */ }
+}
+async function tlSyncFirstDraft({ bu, account, period, finish, finishFinal, note, by }) {
+  try {
+    if (!bu || !account || !period) return;
+    const row = await tlLoad(bu, period);
+    if (!row) return;
+    const codes = await tlCodesFor(bu, account, period);
+    const st = row.st; let changed = false;
+    codes.forEach((c) => {
+      const cell = st.rpt.first[c];
+      if (!cell || cell.inp === "X") return;
+      if ((finish || finishFinal) && cell.inp === "P") { cell.inp = "D"; changed = true; }
+      if (finishFinal) {
+        const fc = st.rpt.final && st.rpt.final[c];
+        if (fc && fc.inp === "P") { fc.inp = "D"; changed = true; }
+      }
+      const t = String(note || "").trim();
+      if (t) {
+        const key = `first:${c}:inp`;
+        const arr = Array.isArray(st.rnotes && st.rnotes[key]) ? st.rnotes[key] : [];
+        if (!arr.length || arr[0].text !== t) { st.rnotes = { ...(st.rnotes || {}), [key]: [{ text: t, by: by || "", at: new Date().toISOString() }, ...arr].slice(0, 100) }; changed = true; }
+      }
+    });
+    if (changed) await tlSave(row, st, by, bu, period);
+  } catch (e) { console.error("[timeline-sync] first draft:", e.message); }
+}
+async function tlSyncRevert({ bu, account, period, wasDraft, remainDraft, remainFinal, note, by, releaseOnly }) {
+  try {
+    if (!bu || !account || !period) return;
+    const row = await tlLoad(bu, period);
+    if (!row) return;
+    const codes = await tlCodesFor(bu, account, period);
+    const st = row.st; let changed = false;
+    codes.forEach((c) => {
+      const fi = st.rpt.first[c]; const fn = st.rpt.final && st.rpt.final[c];
+      if (!fi) return;
+      if (releaseOnly) {
+        if (fn && fn.inp === "D") { fn.inp = "P"; changed = true; }
+        if (!remainDraft && fi.inp === "D") { fi.inp = "P"; changed = true; }
+        return;
+      }
+      if (wasDraft) {
+        if (!remainDraft && !remainFinal && fi.inp === "D") { fi.inp = "P"; changed = true; }
+        const t = String(note || "").trim(); const key = `first:${c}:inp`;
+        const arr = Array.isArray(st.rnotes && st.rnotes[key]) ? st.rnotes[key] : [];
+        if (t && !remainDraft && arr.some((n) => n && n.text === t)) {
+          const next = arr.filter((n) => !(n && n.text === t)); const rn = { ...(st.rnotes || {}) };
+          if (next.length) rn[key] = next; else delete rn[key];
+          st.rnotes = rn; changed = true;
+        }
+      } else if (!remainFinal) {
+        if (fn && fn.inp === "D") { fn.inp = "P"; changed = true; }
+        if (!remainDraft && fi.inp === "D") { fi.inp = "P"; changed = true; }
+      }
+    });
+    if (changed) await tlSave(row, st, by, bu, period);
+  } catch (e) { console.error("[timeline-sync] revert:", e.message); }
+}
+// ไฟล์ที่เหลือของ BU+Account+Period (ไม่นับ excludeId) -> { remainDraft, remainFinal }
+async function tlRemain(bu, refId, excludeId) {
+  const refBase = String(refId || "").split("|").slice(0, 2).join("|");
+  const q = await pool.query(
+    `SELECT COALESCE(is_draft,false) AS d, COUNT(*)::int AS n FROM file_storage WHERE module=$1 AND bu=$2 AND (ref_id=$3 OR ref_id LIKE $4) AND id <> $5 GROUP BY 1`,
+    [REPORT_FILE_MODULE, bu, refBase, refBase + "|%", excludeId]
+  );
+  return { remainDraft: q.rows.some((r) => r.d && r.n > 0), remainFinal: q.rows.some((r) => !r.d && r.n > 0) };
+}
 
 // MARKER_VATRECONCILE_REPORT_FILES_V1 -- ไฟล์นี้แยก Source ออกจาก vatReconcile.js (mount ผ่าน router.use ใน vatReconcile.js)
 /**
@@ -21,6 +158,20 @@ const REPORT_STORAGE_ROOT = process.env.FILE_STORAGE_ROOT || "C:\\apps\\fastapn-
 // MARKER_VATRECONCILE_EXPORT_FILENAME_V1 -- ชื่อไฟล์ตาม Pattern ไฟล์ Reconcile จริง: {เลข BU}_{BU}_{Account}_{MON-YY}.xlsx เช่น 3218_BTM_11610752_NOV-25.xlsx
 const REPORT_MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 const reportMonYY = (period) => { const [y, mo] = String(period).split("-"); return `${REPORT_MONTHS[(Number(mo) || 1) - 1]}-${String(y).slice(-2)}`; };
+
+// MARKER_VATRECONCILE_SP_SENT_V1 -- บันทึกว่าไฟล์ถูกส่งไป SharePoint แล้ว (Handler ย้ายไฟล์เข้า OneDrive ที่ฝั่งเครื่องผู้ใช้)
+// ปลายทาง: {SP_REPORT_BASE}/{เลข BU}/{YYYY.MM}/{ชื่อไฟล์}?web=1 -- เลข BU + เดือน อ่านจากชื่อไฟล์ {เลข BU}_{BU}_{Account}_{MON-YY}.xlsx (อ่านไม่ได้ = ไม่บันทึก)
+// สำเนาบน Server เก็บ 30 วันหลังส่ง แล้ว Cron (fileStorage.js) ลบเฉพาะไฟล์ เก็บ Row ไว้แสดงลิงก์ SharePoint
+const SP_REPORT_BASE = process.env.SP_REPORT_BASE || "https://centralgroup.sharepoint.com/sites/FAST/AP%20Non%20Merchandise/VAT%20Controller/My%20System/Z_Report%20Reconcile";
+function parseSpTarget(fileName) {
+  const m = /^(\d{3,6})_.+_([A-Za-z]{3})-(\d{2})\.xlsx$/.exec(String(fileName || ""));
+  if (!m) return null;
+  const mi = REPORT_MONTHS.indexOf(m[2].toUpperCase());
+  if (mi < 0) return null;
+  const buCode = m[1], period = `20${m[3]}.${String(mi + 1).padStart(2, "0")}`;
+  const url = `${SP_REPORT_BASE}/${encodeURIComponent(buCode)}/${period}/${encodeURIComponent(fileName)}?web=1`;
+  return { buCode, period, url };
+}
 
 // เรียก Handler ของ reconcile-report ภายใน (ไม่ผ่าน HTTP) -- คืน {status, body}
 function makeReconInvoke(reconcileReportHandler) {
@@ -99,31 +250,11 @@ function addSourceSheets(wb, rep) {
   trows.push({ values: ["Total", "", "", "", r2((src.tb || []).reduce((s, t) => s + (Number(t.ending_balance) || 0), 0))], bold: true });
   addTable("TB", ["Branch", "CPC", "SubAcc", "Description", "Ending Balance"], trows, [12, 10, 12, 36, 18], [5]);
 
-  // Simple (ถ้ามี)
+  // Simple (ถ้ามี) -- MARKER_VATRECONCILE_SIMPLE_REPORT_FORMAT_BACK_V21: Layout ตามไฟล์ Simple_Report_Vat ต้นฉบับ
   const sim = src.simple || [];
   if (sim.length) {
-    const sh = ["Branch", "Type", "Receive Date", "Running No", "Tax Invoice Date", "Tax Invoice No", "Vendor Name", "Tax ID", "Branch", "Item Detail",
-      "Paid Amount", "Paid VAT", "Claim Amount", "Claim VAT", "Claim %"];
-    const srows = [];
-    const byB = new Map();
-    sim.forEach((d) => { if (!byB.has(d.branch)) byB.set(d.branch, []); byB.get(d.branch).push(d); });
-    [...byB.keys()].sort().forEach((b) => { // MARKER_VATRECONCILE_SIMPLE_SUM_FORMULA_BACK_V8
-      const list = byB.get(b);
-      const firstR = srows.length + 2;
-      list.forEach((d) => srows.push({ values: [d.branch, d.simple_type, d.receive_date, d.running_no, d.tax_invoice_date, d.tax_invoice_no, d.vendor_name, d.tax_id, d.branch_field, d.item_detail,
-        d.paid_amount, d.paid_vat, d.claimed_amount, d.claimed_vat, d.claim_percent != null ? r2(Number(d.claim_percent) * 100) : ""] }));
-      const sum = (k) => r2(list.reduce((s, d) => s + (Number(d[k]) || 0), 0));
-      const lastR = srows.length + 1;
-      const fm = (L, k) => ({ formula: `SUBTOTAL(9,${L}${firstR}:${L}${lastR})`, result: sum(k) });
-      srows.push({ values: [`${b} รวมสาขา`, "", "", "", "", "", "", "", "", "", fm("K", "paid_amount"), fm("L", "paid_vat"), fm("M", "claimed_amount"), fm("N", "claimed_vat"), ""], bold: true });
-    });
-    {
-      const lastAll = srows.length + 1;
-      const gs = (k) => r2(sim.reduce((s, d) => s + (Number(d[k]) || 0), 0));
-      const gm = (L, k) => ({ formula: `SUBTOTAL(9,${L}2:${L}${lastAll})`, result: gs(k) });
-      srows.push({ values: ["รวมสุทธิ", "", "", "", "", "", "", "", "", "", gm("K", "paid_amount"), gm("L", "paid_vat"), gm("M", "claimed_amount"), gm("N", "claimed_vat"), ""], bold: true });
-    }
-    addTable(isAvg ? "Simple AVG" : "Simple Excel BU", sh, srows, [14, 8, 12, 10, 14, 18, 36, 16, 8, 30, 15, 15, 15, 15, 10], [11, 12, 13, 14]);
+    const sws = wb.addWorksheet(isAvg ? "Simple AVG" : "Simple Excel BU");
+    writeSimpleOriginalSheet(sws, simpleRowsToGroups(sim, isAvg ? "AVG" : "100"), { buCode: rep.buCode && rep.buCode.short, zoom: 70 });
   }
 }
 
@@ -175,7 +306,7 @@ const PV_BSTYLE = { thin: "1px solid", medium: "2px solid", thick: "3px solid", 
 function pvCss(cell, extra) {
   const css = [];
   const f = cell.font || {};
-  if (f.bold) css.push("font-weight:700");
+  if (f.bold || (extra && extra.bold)) css.push("font-weight:700");
   if (f.italic) css.push("font-style:italic");
   const fc = pvArgb(f.color) || (extra && extra.color);
   if (fc) css.push(`color:${fc}`);
@@ -188,12 +319,72 @@ function pvCss(cell, extra) {
   if (al.horizontal) css.push(`text-align:${al.horizontal === "centerContinuous" ? "center" : al.horizontal}`);
   if (al.vertical) css.push(`vertical-align:${al.vertical === "center" ? "middle" : al.vertical}`);
   if (al.wrapText) css.push("white-space:pre-wrap");
-  const b = cell.border || {};
+  const b = (extra && extra.border) || cell.border || {};
   for (const [k, side] of [["top", "top"], ["left", "left"], ["bottom", "bottom"], ["right", "right"]]) {
     const x = b[k];
     if (x && x.style) css.push(`border-${side}:${PV_BSTYLE[x.style] || "1px solid"} ${pvArgb(x.color) || "#000"}`);
   }
   return css.join(";");
+}
+
+// MARKER_VATRECONCILE_CF_COLORS_BACK_V13
+const PV_THEME = [0xFFFFFF, 0x000000, 0xE7E6E6, 0x44546A, 0x4472C4, 0xED7D31, 0xA5A5A5, 0xFFC000, 0x5B9BD5, 0x70AD47];
+function pvCfColor(c) {
+  if (!c) return null;
+  if (typeof c.argb === "string" && c.argb.length >= 6) return "#" + c.argb.slice(-6);
+  if (typeof c.theme === "number" && PV_THEME[c.theme] != null) {
+    const t = c.tint || 0, base = PV_THEME[c.theme];
+    const ch = [(base >> 16) & 255, (base >> 8) & 255, base & 255].map((v) => Math.max(0, Math.min(255, Math.round(t < 0 ? v * (1 + t) : v + (255 - v) * t))));
+    return "#" + ch.map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
+  return null;
+}
+function pvRange(ref) {
+  const m = /^\$?([A-Z]+)\$?(\d+)(?::\$?([A-Z]+)\$?(\d+))?$/.exec(String(ref).split(" ")[0]);
+  if (!m) return null;
+  const cn = (L) => L.split("").reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0);
+  return { c1: cn(m[1]), r1: Number(m[2]), c2: cn(m[3] || m[1]), r2: Number(m[4] || m[2]), cn };
+}
+function pvCfPlan(ws) {
+  const plan = [];
+  for (const cf of ws.conditionalFormattings || []) {
+    const rg = pvRange(cf.ref);
+    if (!rg) continue;
+    for (const rule of cf.rules || []) plan.push({ rg, rule, pr: rule.priority == null ? 9999 : rule.priority });
+  }
+  return plan.sort((a, b) => a.pr - b.pr);
+}
+function pvCfEval(plan, ws, r, c, valueOf) {
+  const out = {};
+  for (const { rg, rule } of plan) {
+    if (r < rg.r1 || r > rg.r2 || c < rg.c1 || c > rg.c2) continue;
+    const v = valueOf(r, c);
+    let hit = false;
+    const f0 = rule.formulae && rule.formulae[0];
+    if (rule.type === "cellIs") {
+      const n = Number(typeof v === "number" ? v : NaN), x = Number(f0);
+      if (Number.isFinite(n) && Number.isFinite(x)) hit = ({ lessThan: n < x, lessThanOrEqual: n <= x, greaterThan: n > x, greaterThanOrEqual: n >= x, equal: n === x, notEqual: n !== x })[rule.operator] === true;
+    } else if (rule.type === "containsText") {
+      hit = rule.text != null && String(v == null ? "" : v).toLowerCase().includes(String(rule.text).toLowerCase());
+    } else if (rule.type === "expression" && typeof f0 === "string") {
+      const m = /^\$([A-Z]+)(\d+)\s*=\s*"(.*)"$/.exec(f0.replace(/^=/, ""));
+      if (m) {
+        const rr = r - rg.r1 + Number(m[2]);
+        const vv = valueOf(rr, rg.cn(m[1]));
+        hit = String(vv == null ? "" : vv).toLowerCase() === m[3].toLowerCase();
+      }
+    }
+    if (!hit) continue;
+    const st = rule.style || {};
+    const fc = pvCfColor(st.font && st.font.color);
+    if (fc && !out.color) out.color = fc;
+    if (st.font && st.font.bold && !out.bold) out.bold = true;
+    const bg = st.fill && pvCfColor(st.fill.bgColor || st.fill.fgColor);
+    if (bg && !out.bg) out.bg = bg;
+    if (st.border && !out.border) out.border = st.border;
+    if (rule.stopIfTrue) break;
+  }
+  return out;
 }
 async function pvLoadSheets(filePath) {
   const wb = new ExcelJS.Workbook();
@@ -206,7 +397,8 @@ async function pvLoadSheets(filePath) {
     if (ws.state && ws.state !== "visible") return;
     const maxRow = Math.min(ws.rowCount || 0, PV_MAX_ROWS);
     const maxCol = Math.min(ws.columnCount || 1, PV_MAX_COLS);
-    const isRv = /^ReportVat/i.test(ws.name);
+    const cfPlan = pvCfPlan(ws);
+    const valOf = (rr, cc) => { const v = ws.getRow(rr).getCell(cc).value; return v && typeof v === "object" && !(v instanceof Date) && "formula" in v ? v.result : v && typeof v === "object" && v.richText ? v.richText.map((x) => x.text).join("") : v; };
     const cols = [], hidden = [];
     for (let c = 1; c <= maxCol; c++) {
       const col = ws.getColumn(c);
@@ -218,22 +410,35 @@ async function pvLoadSheets(filePath) {
       const pa = ws.getCell(a), pz = ws.getCell(z || a);
       return [Number(pa.row), Number(pa.col), Number(pz.row), Number(pz.col)];
     });
+    // MARKER_VATRECONCILE_PREVIEW_CENTER_CONTINUOUS_V1 -- Excel "Center Across Selection": ข้อความอยู่ Cell แรก จัดกลางข้ามช่องว่างที่ตั้งค่าเดียวกันไปทางขวา -- Preview ไม่รองรับเอง จึงแปลงเป็น Merge เฉพาะตอนแสดงผล (ไฟล์จริงไม่เปลี่ยน)
+    {
+      const mset = new Set();
+      merges.forEach(([r1, c1, r2, c2]) => { for (let rr = r1; rr <= r2; rr++) for (let cc = c1; cc <= c2; cc++) mset.add(`${rr}:${cc}`); });
+      for (let r = 1; r <= maxRow; r++) {
+        const row = ws.getRow(r);
+        for (let c = 1; c <= maxCol; c++) {
+          const cell = row.getCell(c);
+          if (!cell.alignment || cell.alignment.horizontal !== "centerContinuous" || mset.has(`${r}:${c}`)) continue;
+          if (!pvText(cell.value, cell.numFmt).t) continue;
+          let e = c;
+          while (e + 1 <= maxCol) {
+            const nx = row.getCell(e + 1);
+            if (pvText(nx.value, nx.numFmt).t || !nx.alignment || nx.alignment.horizontal !== "centerContinuous" || mset.has(`${r}:${e + 1}`)) break;
+            e++;
+          }
+          if (e > c) { merges.push([r, c, r, e]); for (let k = c; k <= e; k++) mset.add(`${r}:${k}`); c = e; }
+        }
+      }
+    }
     const rows = [];
     for (let r = 1; r <= maxRow; r++) {
       const row = ws.getRow(r);
       const cells = [];
-      const closed = isRv && r >= 9 && String((row.getCell(16).value && row.getCell(16).value.result) ?? row.getCell(16).value ?? "") === "Closed";
       for (let c = 1; c <= maxCol; c++) {
         const cell = row.getCell(c);
         const nf = cell.numFmt;
         const tx = pvText(cell.value, nf);
-        const extra = {};
-        if (isRv && r >= 9) {
-          if (tx.n && Number(cell.value && cell.value.result !== undefined ? cell.value.result : cell.value) < 0 && c >= 3 && c <= 14) extra.color = "#ff5050";
-          if (closed && c <= 16) extra.color = "#ff0000";
-          if (c === 16 && tx.t === "Active") { extra.bg = "#ccffcc"; extra.color = "#002060"; }
-          if (c === 16 && (tx.t === "Temp." || tx.t === "Relocate")) { extra.bg = "#ffffcc"; extra.color = "#002060"; }
-        }
+        const extra = pvCfEval(cfPlan, ws, r, c, valOf);
         if (tx.red && !extra.color) extra.color = "#ff0000";
         const css = pvCss(cell, extra);
         if (!tx.t && !css) continue;
@@ -245,6 +450,35 @@ async function pvLoadSheets(filePath) {
     sheets.push({ name: ws.name, cols, hidden, merges, rows, grid: v.showGridLines !== false, truncated: (ws.rowCount || 0) > PV_MAX_ROWS, totalRows: ws.rowCount || 0 });
   });
   return { sheets, styles };
+}
+
+
+// MARKER_VATRECONCILE_DYNAMIC_FORMULA_BACK_V12
+// ExcelJS ไม่รองรับ Dynamic-Array (cm="1") -- เติมเองหลังเขียนไฟล์: cell ที่เป็น <f t="array"> ได้ cm="1" + เพิ่ม xl/metadata.xml (XLDAPR) -> Excel เปิดแล้วไม่มี "@" และไม่มีปีกกา {} (เหมือนใช้ Formula2)
+async function markDynamicArrayFormulas(buf) {
+  try {
+    const { default: JSZip } = await import("jszip");
+    const zip = await JSZip.loadAsync(buf);
+    let any = false;
+    for (const name of Object.keys(zip.files)) {
+      if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) continue;
+      const xml = await zip.file(name).async("string");
+      const out = xml.replace(/<c ([^>]*?)>(<f t="array" ref="[A-Z]+\d+")/g, (m, attrs, f) => (/\bcm=/.test(attrs) ? m : (any = true, `<c ${attrs} cm="1">${f}`)));
+      if (out !== xml) zip.file(name, out);
+    }
+    if (!any) return buf;
+    zip.file("xl/metadata.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray"><metadataTypes count="1"><metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/></metadataTypes><futureMetadata name="XLDAPR" count="1"><bk><extLst><ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}"><xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext></extLst></bk></futureMetadata><cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata></metadata>`);
+    let ct = await zip.file("[Content_Types].xml").async("string");
+    if (!ct.includes("/xl/metadata.xml")) ct = ct.replace("</Types>", `<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/></Types>`);
+    zip.file("[Content_Types].xml", ct);
+    let rels = await zip.file("xl/_rels/workbook.xml.rels").async("string");
+    if (!rels.includes("sheetMetadata")) rels = rels.replace("</Relationships>", `<Relationship Id="rIdMetaDA1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.xml"/></Relationships>`);
+    zip.file("xl/_rels/workbook.xml.rels", rels);
+    return await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 9 } });
+  } catch (e) {
+    console.warn("[vatReconcile] markDynamicArrayFormulas ข้าม:", e.message);
+    return buf;
+  }
 }
 
 async function buildReconcileWorkbook(rep, bu, period) {
@@ -326,7 +560,7 @@ async function buildReconcileWorkbook(rep, bu, period) {
   const lines = [
     ["Reconcile VAT", `${rep.header.company} · ${rep.header.periodLabel}`],
     ["Account", `${rep.account}${rep.accountName ? " · " + rep.accountName : ""}`],
-    ["Template", rep.template === "avg" ? "เฉลี่ย (AVG)" : rep.template === "100_simple" ? "100% + Simple" : "100%"],
+    ["Template", rep.template === "avg" ? "เฉลี่ย (AVG)" : rep.template === "pct" ? "หัว %" : rep.template === "100_simple" ? "100% + Simple" : "100%"],
     ["Per TB", rep.cover.perTb],
     ["Per Detail", rep.cover.perDetail],
     ["Diff", rep.cover.diff],
@@ -349,6 +583,8 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
   router.post("/dashboard/report-files/export", express.json(), async (req, res) => {
     try {
       const { bu, account, period } = req.body || {};
+      const isDraft = req.body?.draft === true; // MARKER_VATRECONCILE_FIRST_DRAFT_V1
+      const fillStartedAt = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,3})?$/.test(String(req.body?.fill_started_at || "")) ? String(req.body.fill_started_at) : null; // MARKER_VATRECONCILE_USER_TRANSACTION_V1
       if (!bu || !account || !period) return res.status(400).json({ error: "ต้องระบุ bu, account, period ให้ครบ" });
       const { status, body: rep } = await reconInvoke({ bu, account, period, include: "sources" }); // MARKER_VATRECONCILE_EXPORT_SOURCES_V1
       if (status !== 200) return res.status(status).json(rep);
@@ -359,35 +595,50 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
 
       // MARKER_VATRECONCILE_ORIGINAL_WORKBOOK_V1 -- Template 100% / 100%+Simple = Layout ไฟล์ต้นฉบับ (5 ชีต + สูตร) | AVG ใช้ของเดิม
       const preparedBy = (rep.header && rep.header.preparedBy) || (req.user?.email ? await getUsernameByEmail(req.user.email) : ""); // MARKER_VATRECONCILE_PREPARED_BY_BACK_V9
-      const wb = rep.template === "avg" ? await buildReconcileWorkbook(rep, bu, period) : buildOriginalWorkbook(rep, bu, period, { preparedBy, exportDate: new Date() });
-      const buf = Buffer.from(await wb.xlsx.writeBuffer({ zip: { compression: "DEFLATE", compressionOptions: { level: 9 } } }));
+      const wb = rep.template === "avg" ? await buildReconcileWorkbook(rep, bu, period) : rep.template === "pct" ? buildPctWorkbook(rep, bu, period, { preparedBy, exportDate: new Date() }) : buildOriginalWorkbook(rep, bu, period, { preparedBy, exportDate: new Date() }); // MARKER_VATRECONCILE_PCT_WORKBOOK_V1
+      let buf = Buffer.from(await wb.xlsx.writeBuffer({ zip: { compression: "DEFLATE", compressionOptions: { level: 9 } } }));
+      if (rep.template !== "avg" && rep.template !== "pct") buf = await markDynamicArrayFormulas(buf); // MARKER_VATRECONCILE_DYNAMIC_FORMULA_BACK_V12
 
       const safe = (s) => String(s).replace(/[\\/:*?"<>|]/g, "_");
       const dir = path.join(REPORT_STORAGE_ROOT, safe(bu), safe(period), REPORT_FILE_MODULE);
       await fs.promises.mkdir(dir, { recursive: true });
-      const filePath = path.join(dir, `${safe(account)}.xlsx`);
+      const filePath = path.join(dir, `${safe(account)}${isDraft ? "_FirstDraft" : ""}.xlsx`); // MARKER_VATRECONCILE_FIRST_DRAFT_SERIAL_V1 -- Draft เก็บคนละไฟล์กับ Final
       await fs.promises.writeFile(filePath, buf);
 
       const owner = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
       const buNum = rep.buCode?.numeric || "";
       const buShortCode = rep.buCode?.short || String(bu);
-      const fileName = `${buNum ? safe(buNum) + "_" : ""}${safe(buShortCode)}_${safe(account)}_${reportMonYY(period)}.xlsx`;
+      const fileName = `${buNum ? safe(buNum) + "_" : ""}${safe(buShortCode)}_${safe(account)}_${reportMonYY(period)}${isDraft ? "_FirstDraft" : ""}.xlsx`;
       const refBase = `${account}|${period}`;
       const refId = `${refBase}|${rep.template}`; // เก็บ Template ไว้ท้าย ref_id (ไม่มี Column แยกใน file_storage)
-      const old = await pool.query(`SELECT id FROM file_storage WHERE module=$1 AND bu=$2 AND (ref_id=$3 OR ref_id LIKE $4) LIMIT 1`, [REPORT_FILE_MODULE, bu, refBase, refBase + "|%"]);
+      const old = await pool.query(`SELECT id, draft_serial FROM file_storage WHERE module=$1 AND bu=$2 AND (ref_id=$3 OR ref_id LIKE $4) AND COALESCE(is_draft,false)=$5 LIMIT 1`, [REPORT_FILE_MODULE, bu, refBase, refBase + "|%", isDraft]);
+      // MARKER_VATRECONCILE_FIRST_DRAFT_SERIAL_V1 -- Draft: ใช้ Serial เดิมของชุด BU+Account+Period (ไม่มี = สร้างใหม่) | Final: เก็บ Serial ของ Draft ที่มีอยู่ไว้ใน draft_serial
+      let draftSerial = null;
+      if (isDraft) {
+        draftSerial = old.rows[0]?.draft_serial || null;
+        if (!draftSerial) {
+          const pre = `FD-${safe(buShortCode)}-${safe(account)}-${String(period).replace(/-/g, "")}-`;
+          const nx = await pool.query(`SELECT COALESCE(MAX(SUBSTRING(draft_serial FROM '[0-9]+$')::int),0)+1 AS n FROM file_storage WHERE module=$1 AND draft_serial LIKE $2`, [REPORT_FILE_MODULE, pre + "%"]);
+          draftSerial = pre + String(nx.rows[0].n).padStart(3, "0");
+        }
+      } else {
+        const dr = await pool.query(`SELECT draft_serial FROM file_storage WHERE module=$1 AND bu=$2 AND (ref_id=$3 OR ref_id LIKE $4) AND is_draft = true LIMIT 1`, [REPORT_FILE_MODULE, bu, refBase, refBase + "|%"]);
+        draftSerial = dr.rows[0]?.draft_serial || null;
+      }
       let row;
       if (old.rows.length) {
         row = (await pool.query(
-          `UPDATE file_storage SET file_path=$1, file_name=$2, owner_username=$3, ref_id=$5, status='active', retention_days=NULL, created_at=NOW()
-            WHERE id=$4 RETURNING id, bu, ref_id, file_name, owner_username, created_at`,
-          [filePath, fileName, owner, old.rows[0].id, refId])).rows[0];
+          `UPDATE file_storage SET file_path=$1, file_name=$2, owner_username=$3, ref_id=$5, status='active', retention_days=NULL, created_at=NOW(), file_removed_at=NULL, confirmed_at=NULL, confirmed_by=NULL, input_expire_at=NULL, fill_started_at=$6, is_draft=$7, draft_serial=COALESCE($8, draft_serial)
+            WHERE id=$4 RETURNING id, bu, ref_id, file_name, owner_username, created_at, draft_serial, draft_note`,
+          [filePath, fileName, owner, old.rows[0].id, refId, fillStartedAt, isDraft, draftSerial])).rows[0];
       } else {
         row = (await pool.query(
-          `INSERT INTO file_storage (module, bu, ref_id, file_path, file_name, owner_username, status, retention_days)
-           VALUES ($1,$2,$3,$4,$5,$6,'active',NULL) RETURNING id, bu, ref_id, file_name, owner_username, created_at`,
-          [REPORT_FILE_MODULE, bu, refId, filePath, fileName, owner])).rows[0];
+          `INSERT INTO file_storage (module, bu, ref_id, file_path, file_name, owner_username, status, retention_days, fill_started_at, is_draft, draft_serial)
+           VALUES ($1,$2,$3,$4,$5,$6,'active',NULL,$7,$8,$9) RETURNING id, bu, ref_id, file_name, owner_username, created_at, draft_serial, draft_note`,
+          [REPORT_FILE_MODULE, bu, refId, filePath, fileName, owner, fillStartedAt, isDraft, draftSerial])).rows[0];
       }
-      res.json({ file: { ...row, account, period, template: rep.template, size_bytes: buf.length, replaced: old.rows.length > 0 } });
+      logActivityTs(owner, isDraft ? "FIRST_DRAFT" : "SAVE", { bu: row.bu, account, period, fileId: row.id });
+      res.json({ file: { ...row, is_draft: isDraft, account, period, template: rep.template, size_bytes: buf.length, replaced: old.rows.length > 0 } });
     } catch (err) {
       console.error("[vatReconcile] report-files export error:", err);
       res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่าง Export ไฟล์", detail: err.message });
@@ -414,19 +665,144 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
       if (bu) { params.push(bu); cond.push(`fs.bu = $${params.length}`); }
       if (period) { params.push(`%|${period}`, `%|${period}|%`); cond.push(`(fs.ref_id LIKE $${params.length - 1} OR fs.ref_id LIKE $${params.length})`); }
       const q = await pool.query(
-        `SELECT fs.id, fs.bu, fs.ref_id, fs.file_name, fs.file_path, fs.owner_username, fs.created_at FROM file_storage fs ${join}
+        `SELECT fs.id, fs.bu, fs.ref_id, fs.file_name, fs.file_path, fs.owner_username, fs.created_at, fs.sp_url, fs.sp_sent_at, fs.sp_sent_by, fs.file_removed_at, fs.confirmed_at, fs.confirmed_by, fs.is_draft, fs.draft_serial, fs.draft_note, fs.input_expire_at FROM file_storage fs ${join}
           WHERE ${cond.join(" AND ")} ORDER BY fs.created_at DESC LIMIT 300`, params);
       const files = q.rows.map((r) => {
         let size = null;
         try { size = fs.statSync(r.file_path).size; } catch (_) { /* ไฟล์หาย -> ไม่โชว์ขนาด */ }
         const [account, per, tpl] = String(r.ref_id).split("|");
         return { id: r.id, bu: r.bu, account, period: per, template: tpl || null, file_name: r.file_name,
-          size_bytes: size, created_by: r.owner_username, updated_at: r.created_at };
+          size_bytes: size, created_by: r.owner_username, updated_at: r.created_at,
+          sp_url: r.sp_url || null, sp_sent_at: r.sp_sent_at || null, sp_sent_by: r.sp_sent_by || null, file_removed_at: r.file_removed_at || null, confirmed_at: r.confirmed_at || null, is_draft: r.is_draft === true, draft_serial: r.draft_serial || null, note: r.draft_note || null, confirmed_by: r.confirmed_by || null, input_expire_at: r.input_expire_at || null }; // MARKER_VATRECONCILE_SP_SENT_V1
       });
       res.json({ files });
     } catch (err) {
       console.error("[vatReconcile] report-files list error:", err);
       res.status(500).json({ error: "โหลดรายการไฟล์ไม่สำเร็จ", detail: err.message });
+    }
+  });
+
+  // MARKER_VATRECONCILE_SP_SENT_V1 -- POST /dashboard/report-files/:id/sp-sent : Frontend เรียกหลังสั่ง Handler ส่งไฟล์แล้ว
+  // ลิงก์/เลข BU/เดือน สร้างจากชื่อไฟล์ฝั่ง Server เอง (ไม่รับ URL จาก Client) | ทำได้เฉพาะเจ้าของไฟล์ หรือ Owner/Admin
+  router.post("/dashboard/report-files/:id/sp-sent", async (req, res) => {
+    try {
+      const username = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
+      const privileged = req.user?.appRole === "Owner" || req.user?.appRole === "Admin";
+      const q = await pool.query(`SELECT id, bu, ref_id, file_name, owner_username, is_draft FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
+      if (!q.rows.length) return res.status(404).json({ error: "ไม่พบไฟล์" });
+      const rec = q.rows[0];
+      if (rec.is_draft) return res.status(409).json({ error: "ไฟล์ First Draft ส่ง SharePoint ไม่ได้" }); // MARKER_VATRECONCILE_FIRST_DRAFT_V1
+      if (!privileged && rec.owner_username !== username) return res.status(403).json({ error: "บันทึกการส่งได้เฉพาะเจ้าของไฟล์ หรือ Owner/Admin" });
+      const target = parseSpTarget(rec.file_name);
+      if (!target) return res.status(422).json({ error: "อ่านเลข BU / เดือน จากชื่อไฟล์ไม่ได้ จึงไม่บันทึกการส่ง", file_name: rec.file_name });
+      const up = await pool.query(
+        `UPDATE file_storage SET sp_url=$1, sp_sent_at=NOW(), sp_sent_by=$2 WHERE id=$3 RETURNING id, sp_url, sp_sent_at, sp_sent_by`,
+        [target.url, username, rec.id]);
+      logActivityTs(username, "SP_SENT", { bu: rec.bu, ...refParts(rec.ref_id), fileId: rec.id });
+      res.json({ ok: true, ...up.rows[0], bu_code: target.buCode, period: target.period });
+    } catch (err) {
+      console.error("[vatReconcile] report-files sp-sent error:", err);
+      res.status(500).json({ error: "บันทึกการส่ง SharePoint ไม่สำเร็จ", detail: err.message });
+    }
+  });
+
+  // MARKER_VATRECONCILE_REPORT_CONFIRM_V1 -- POST /dashboard/report-files/:id/confirm : ยืนยันว่าตรวจไฟล์แล้ว (เจ้าของไฟล์ หรือ Owner/Admin) -- ยังไม่ Confirm = Download / ส่ง SharePoint ไม่ได้
+  router.post("/dashboard/report-files/:id/confirm", async (req, res) => {
+    try {
+      const username = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
+      const privileged = req.user?.appRole === "Owner" || req.user?.appRole === "Admin";
+      const q = await pool.query(`SELECT id, bu, ref_id, owner_username, file_path, is_draft FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
+      if (!q.rows.length) return res.status(404).json({ error: "ไม่พบไฟล์" });
+      const rec = q.rows[0];
+      if (rec.is_draft) return res.status(409).json({ error: "ไฟล์นี้เป็น First Draft — Confirm ไม่ได้ ต้อง Save (เมื่อ Balance) ก่อน" }); // MARKER_VATRECONCILE_FIRST_DRAFT_V1
+      if (!privileged && rec.owner_username !== username) return res.status(403).json({ error: "Confirm ได้เฉพาะเจ้าของไฟล์ หรือ Owner/Admin" });
+      const up = await pool.query(`UPDATE file_storage SET confirmed_at=NOW(), confirmed_by=$1, input_expire_at=NOW() + ($3 || ' days')::interval WHERE id=$2 RETURNING id, confirmed_at, confirmed_by, input_expire_at`, [username, rec.id, String(INPUT_KEEP_DAYS)]);
+      // MARKER_VATRECONCILE_FIRST_DRAFT_SERIAL_V1 -- Confirm = ลบ First Draft ของชุด BU+Account+Period นี้ (ทั้งแถวและไฟล์) | Serial ยังเหลือในคอลัมน์ draft_serial ของไฟล์ Final
+      try {
+        const refBase = String(rec.ref_id).split("|").slice(0, 2).join("|");
+        const dr = await pool.query(`SELECT id, file_path FROM file_storage WHERE module=$1 AND bu=$2 AND is_draft = true AND (ref_id=$3 OR ref_id LIKE $4)`, [REPORT_FILE_MODULE, rec.bu, refBase, refBase + "|%"]);
+        for (const d of dr.rows) {
+          try { if (d.file_path && fs.existsSync(d.file_path)) fs.unlinkSync(d.file_path); } catch (e) { console.error("[vatReconcile] ลบไฟล์ Draft บน Disk ไม่สำเร็จ:", e.message); }
+          await pool.query(`DELETE FROM file_storage WHERE id=$1`, [d.id]);
+        }
+      } catch (e) { console.error("[vatReconcile] ลบ First Draft หลัง Confirm ไม่สำเร็จ:", e.message); }
+      logActivityTs(username, "CONFIRM", { bu: rec.bu, ...refParts(rec.ref_id), fileId: rec.id });
+      res.json({ ok: true, ...up.rows[0] });
+    } catch (err) {
+      console.error("[vatReconcile] report-files confirm error:", err);
+      res.status(500).json({ error: "Confirm ไม่สำเร็จ", detail: err.message });
+    }
+  });
+
+  // MARKER_VATRECONCILE_REPORT_RELEASE_V1 -- POST /dashboard/report-files/:id/release : ปุ่มเดียวกับ Confirm (สลับสถานะ) -- ยกเลิก Confirm หยุดนับวันหมดอายุ
+  router.post("/dashboard/report-files/:id/release", async (req, res) => {
+    try {
+      const username = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
+      const privileged = req.user?.appRole === "Owner" || req.user?.appRole === "Admin";
+      const q = await pool.query(`SELECT id, bu, ref_id, owner_username FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
+      if (!q.rows.length) return res.status(404).json({ error: "ไม่พบไฟล์" });
+      const rec = q.rows[0];
+      if (!privileged && rec.owner_username !== username) return res.status(403).json({ error: "Release ได้เฉพาะเจ้าของไฟล์ หรือ Owner/Admin" });
+      await pool.query(`UPDATE file_storage SET confirmed_at=NULL, confirmed_by=NULL, input_expire_at=NULL WHERE id=$1`, [rec.id]);
+      logActivityTs(username, "RELEASE", { bu: rec.bu, ...refParts(rec.ref_id), fileId: rec.id });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[vatReconcile] report-files release error:", err);
+      res.status(500).json({ error: "Release ไม่สำเร็จ", detail: err.message });
+    }
+  });
+
+  // MARKER_VATRECONCILE_ACTIVITY_TS_V1 -- POST /dashboard/activity-ts : หน้าจอส่ง Timestamp ของเหตุการณ์ที่ Server ไม่เห็นเอง (เลือก Period / ตรวจสอบ Expired แล้ว)
+  router.post("/dashboard/activity-ts", express.json(), async (req, res) => {
+    try {
+      const { event, bu, account, period } = req.body || {};
+      if (!ACTIVITY_TS_CLIENT_EVENTS.has(event)) return res.status(400).json({ error: "event ไม่ถูกต้อง" });
+      const username = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
+      const clip = (v) => (v == null ? null : String(v).slice(0, 40));
+      logActivityTs(username, event, { bu: clip(bu), account: clip(account), period: clip(period) });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: "บันทึก Timestamp ไม่สำเร็จ", detail: err.message });
+    }
+  });
+
+  // MARKER_VATRECONCILE_ACTIVITY_TS_V1 -- GET /dashboard/activity-ts?username=&from=YYYY-MM-DD&to=YYYY-MM-DD : รายการ Timestamp (แสดงอย่างเดียว ไม่คำนวณเป็น Transaction) | ดูของตัวเอง หรือ Owner/Admin ดูของคนอื่น
+  router.get("/dashboard/activity-ts", async (req, res) => {
+    try {
+      const me = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
+      const privileged = req.user?.appRole === "Owner" || req.user?.appRole === "Admin";
+      const { username, from, to } = req.query;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(from || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(to || ""))) return res.status(400).json({ error: "ต้องระบุ from, to (YYYY-MM-DD)" });
+      const target = username || me;
+      if (target !== me && !privileged) return res.status(403).json({ error: "ดูได้เฉพาะของตัวเอง หรือ Owner/Admin" });
+      const q = await pool.query(
+        `SELECT id, username, event, bu, account, period, file_id, note, created_at FROM vat_reconcile_activity_ts
+          WHERE username=$1 AND (created_at AT TIME ZONE 'Asia/Bangkok') >= $2::date AND (created_at AT TIME ZONE 'Asia/Bangkok') < ($3::date + 1)
+          ORDER BY created_at ASC LIMIT 2000`, [target, from, to]);
+      res.json({ events: q.rows });
+    } catch (err) {
+      res.status(500).json({ error: "โหลด Timestamp ไม่สำเร็จ", detail: err.message });
+    }
+  });
+
+  // MARKER_VATRECONCILE_FIRST_DRAFT_NOTE_V1 -- PUT /dashboard/report-files/:id/note  body { note } : Note ของไฟล์ First Draft (เจ้าของไฟล์ หรือ Owner/Admin)
+  router.put("/dashboard/report-files/:id/note", express.json(), async (req, res) => {
+    try {
+      const username = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
+      const privileged = req.user?.appRole === "Owner" || req.user?.appRole === "Admin";
+      const q = await pool.query(`SELECT id, owner_username, is_draft FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
+      if (!q.rows.length) return res.status(404).json({ error: "ไม่พบไฟล์" });
+      const rec = q.rows[0];
+      if (!rec.is_draft) return res.status(400).json({ error: "Note ใช้ได้เฉพาะไฟล์ First Draft" });
+      if (!privileged && rec.owner_username !== username) return res.status(403).json({ error: "แก้ Note ได้เฉพาะเจ้าของไฟล์ หรือ Owner/Admin" });
+      const note = String(req.body?.note ?? "").slice(0, 2000).trim();
+      await pool.query(`UPDATE file_storage SET draft_note=$1 WHERE id=$2`, [note || null, rec.id]);
+      const fq = await pool.query(`SELECT bu, ref_id FROM file_storage WHERE id=$1`, [rec.id]);
+      logActivityTs(username, "DRAFT_NOTE", { bu: fq.rows[0]?.bu, ...refParts(fq.rows[0]?.ref_id), fileId: rec.id, note: note || null }); // Note ผูกกับ Timeline
+      res.json({ ok: true, note: note || null });
+    } catch (err) {
+      console.error("[vatReconcile] report-files note error:", err);
+      res.status(500).json({ error: "บันทึก Note ไม่สำเร็จ", detail: err.message });
     }
   });
 
@@ -465,9 +841,11 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
 
   router.get("/dashboard/report-files/:id/download", async (req, res) => {
     try {
-      const q = await pool.query(`SELECT file_name, file_path FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
+      const q = await pool.query(`SELECT file_name, file_path, confirmed_at, is_draft FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
       if (!q.rows.length) return res.status(404).json({ error: "ไม่พบไฟล์" });
-      const { file_name, file_path } = q.rows[0];
+      const { file_name, file_path, confirmed_at } = q.rows[0];
+      if (q.rows[0].is_draft) return res.status(403).json({ error: "ไฟล์ First Draft ไม่มี Download" }); // MARKER_VATRECONCILE_FIRST_DRAFT_V1
+      if (!confirmed_at) return res.status(403).json({ error: "ยังไม่ได้ Confirm ไฟล์ — กด Confirm ก่อนจึงจะ Download ได้" }); // MARKER_VATRECONCILE_REPORT_CONFIRM_V1
       if (!fs.existsSync(file_path)) return res.status(410).json({ error: "ไฟล์บน Server ถูกลบหรือย้ายแล้ว" });
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.setHeader("Content-Disposition", `attachment; filename="${file_name}"`);
