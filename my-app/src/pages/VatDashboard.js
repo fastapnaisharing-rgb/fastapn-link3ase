@@ -399,7 +399,7 @@ export default function VatDashboard() {
   const { rows: liveRowsRaw, frozenRows, buToBase, periodMonth, loading, error, refetch } = useVatSummaryDashboard();
   // MARKER_VATDASHBOARD_FROZEN_FALLBACK_V1 -- หลังปิดงวด: BU ที่ยังไม่มี Incomplete ของงวดใหม่เข้า Live แสดงยอด Freeze (Final) ของงวดที่ปิดล่าสุด
   //   BU ที่ Live มีงวดใหม่กว่า Final แล้ว -> ใช้ Live | งวดเก่าที่มีแต่ใน Freeze ถูกเติมเข้ากราฟเทียบย้อนหลังด้วย
-  const rowsRaw = React.useMemo(() => {
+  const rowsRawAll = React.useMemo(() => {
     const frozenMax = {};
     frozenRows.forEach((r) => { if (r.bu && (!frozenMax[r.bu] || r.period_month > frozenMax[r.bu])) frozenMax[r.bu] = r.period_month; });
     // Live งวดเดียวกับ Final ล่าสุดของ BU ให้ Final เป็นตัวแทน (ยอด Freeze ตาม Note ตามเงื่อนไขที่ระบบกำหนด)
@@ -409,6 +409,23 @@ export default function VatDashboard() {
     return [...live, ...frozen];
   }, [liveRowsRaw, frozenRows]);
   const { userName, currentUser } = useAuth();
+  // MARKER_VATDASHBOARD_FOCUS_MODE_V1 -- ปุ่ม Defaults | Focus: Defaults = ทุก BU (เปิดหน้าใหม่ = Defaults เสมอ) / Focus = เฉพาะ BU ในรายการ Focus
+  // รายการ Focus เก็บต่อ User ในเบราว์เซอร์นี้ (localStorage) | Focus ว่าง = แสดงทุก BU (ยังไม่ได้เลือก)
+  const focusKey = `vatdash_focus_bus_${(currentUser && currentUser.username) || userName || "anon"}`;
+  const [viewMode, setViewMode] = React.useState("default");
+  const [focusBus, setFocusBus] = React.useState(() => { try { const v = JSON.parse(localStorage.getItem(focusKey) || "[]"); return Array.isArray(v) ? v : []; } catch (_) { return []; } });
+  const [showFocusCfg, setShowFocusCfg] = React.useState(false);
+  const [focusDraft, setFocusDraft] = React.useState([]);
+  const [focusQ, setFocusQ] = React.useState("");
+  const rowsRaw = React.useMemo(() => {
+    if (viewMode !== "focus" || focusBus.length === 0) return rowsRawAll;
+    const set = new Set(focusBus);
+    return rowsRawAll.filter((r) => set.has(r.bu));
+  }, [rowsRawAll, viewMode, focusBus]);
+  const allDashBus = React.useMemo(() => [...new Set(rowsRawAll.map((r) => r.bu).filter(Boolean))].sort(), [rowsRawAll]);
+  const openFocusCfg = () => { setFocusDraft(focusBus.filter((b) => allDashBus.includes(b))); setFocusQ(""); setShowFocusCfg(true); };
+  const saveFocusCfg = () => { setFocusBus(focusDraft); try { localStorage.setItem(focusKey, JSON.stringify(focusDraft)); } catch (_) { /* ignore */ } setShowFocusCfg(false); };
+  const chooseFocusMode = () => { setViewMode("focus"); if (focusBus.length === 0) openFocusCfg(); };
   // MARKER_VATDASHBOARD_PAYMENT_TYPE_FILTER_V1 -- หลอด Filter Bank Transfer | Cheque | Direct Debit (กรองทั้งหน้า)
   // คลิกธรรมดา = เลือกค่าเดียว (คลิกค่าที่เลือกอยู่ซ้ำ = ปลดเป็น No Filter) | Ctrl/Cmd+คลิก = เพิ่ม/เอาออกจากชุดที่เลือก
   // ถ้าเลือกหลายค่าอยู่แล้วคลิกธรรมดาที่ค่าที่เลือกอยู่ = ปลดหมด | ไม่เลือกเลย = ทุกค่า
@@ -1659,6 +1676,14 @@ export default function VatDashboard() {
                 </div>
                 {(userName || currentUser?.username) && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px" }}>
+                    {/* MARKER_VATDASHBOARD_FOCUS_MODE_V1 -- ปุ่ม Defaults | Focus (Focus = มีไอคอน Config นำหน้า) */}
+                    <div title="Defaults = ทุก BU | Focus = เฉพาะ BU ที่เลือกไว้" style={{ display: "flex", alignItems: "center", border: "0.5px solid #d0d5dd", borderRadius: "14px", padding: "2px", background: "#f0f0f0", marginRight: "4px" }}>
+                      <button type="button" onClick={() => setViewMode("default")} style={{ padding: "3px 10px", fontSize: "10px", fontWeight: 600, borderRadius: "12px", border: "none", cursor: "pointer", background: viewMode === "default" ? "#1a3a5c" : "transparent", color: viewMode === "default" ? "white" : "#777" }}>Defaults</button>
+                      <button type="button" onClick={chooseFocusMode} style={{ display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, borderRadius: "12px", border: "none", cursor: "pointer", background: viewMode === "focus" ? "#0f7a6b" : "transparent", color: viewMode === "focus" ? "white" : "#777" }}>
+                        {viewMode === "focus" && <span role="button" tabIndex={0} title="Config รายการ BU ที่ Focus" onClick={(e) => { e.stopPropagation(); openFocusCfg(); }} style={{ fontSize: "12px", lineHeight: 1, cursor: "pointer" }}>⚙</span>}
+                        Focus{viewMode === "focus" && focusBus.length > 0 ? ` (${focusBus.length})` : ""}
+                      </button>
+                    </div>
                     <span style={{ fontSize: "12px", color: "#555" }}>{userName || currentUser?.username}</span>
                     {currentUser?.appRole && (
                       <span style={{ fontSize: "10px", fontWeight: 600, padding: "1px 8px", borderRadius: "10px", background: "#e8f4f1", color: "#0f7a6b" }}>
@@ -1815,8 +1840,8 @@ export default function VatDashboard() {
                         donutCumulative += dash;
                         return el;
                       })}
-                      <text x="90" y="86" textAnchor="middle" fontSize="19" fontWeight="700" fill="#1a3a5c">
-                        {formatCompact(categoryBreakdown.total)}
+                      <text x="90" y="86" textAnchor="middle" fontSize="13" fontWeight="700" fill="#1a3a5c">
+                        {formatFull(categoryBreakdown.total)}
                       </text>
                       <text x="90" y="104" textAnchor="middle" fontSize="10" fill="#999">
                         ยอด VAT คงค้าง
@@ -2203,6 +2228,50 @@ export default function VatDashboard() {
           MARKER_ZONEF_ALLBU_POPUP_PREVIEW_V1 — คลิกแถวแล้วไม่ปิด Popup ออกมาข้างนอก แต่ขยายพื้นที่
           ด้านข้างขึ้นมาแทน (Donut ด้านบน + Preview Graph ด้านล่าง) ความสูง Popup คงที่ 86vh เสมอ
           ไม่ลดตามข้อมูล (height Fix ไม่ใช่ auto) */}
+      {showFocusCfg && (() => { // MARKER_VATDASHBOARD_FOCUS_MODE_V1 -- ซ้าย = รายการ Focus | ขวา = BU ทั้งหมดใน Dashboard (กด Add เข้ามาที่ Focus)
+        const q = focusQ.trim().toLowerCase();
+        const rightList = allDashBus.filter((b) => !focusDraft.includes(b) && (!q || b.toLowerCase().includes(q) || String(buToBase[b] || "").toLowerCase().includes(q)));
+        const colBox = { flex: 1, minWidth: 0, border: "0.5px solid #e3e3e3", borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" };
+        const colHd = { padding: "8px 12px", background: "#f5f7fa", fontSize: "12px", fontWeight: 600, color: "#555", display: "flex", justifyContent: "space-between", alignItems: "center" };
+        const itemRow = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "5px 12px", fontSize: "12px", borderTop: "0.5px solid #f0f0f0" };
+        const miniBtn = (bg, bd, fg) => ({ padding: "2px 10px", fontSize: "11px", borderRadius: "6px", border: `0.5px solid ${bd}`, background: bg, color: fg, cursor: "pointer" });
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1300 }} onClick={() => setShowFocusCfg(false)}>
+            <div style={{ width: "min(820px, 94vw)", height: "min(560px, 88vh)", background: "#fff", borderRadius: "12px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "0.5px solid #e8e8e8" }}>
+                <div style={{ fontSize: "15px", fontWeight: 500 }}>Focus BU <span style={{ color: "#888", fontWeight: 400, fontSize: "12px" }}>· เลือก BU ที่ต้องการดูใน Dashboard</span></div>
+                <button type="button" onClick={() => setShowFocusCfg(false)} style={{ border: "none", background: "#f1f1f1", borderRadius: "50%", width: "28px", height: "28px", cursor: "pointer" }}>×</button>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: "flex", gap: "12px", padding: "14px 20px" }}>
+                <div style={colBox}>
+                  <div style={colHd}><span>Focus ({focusDraft.length})</span>{focusDraft.length > 0 && <button type="button" onClick={() => setFocusDraft([])} style={miniBtn("#fff", "#ef9a9a", "#c62828")}>ล้างทั้งหมด</button>}</div>
+                  <div style={{ flex: 1, overflowY: "auto" }}>
+                    {focusDraft.length === 0 && <div style={{ padding: "16px", textAlign: "center", fontSize: "12px", color: "#999" }}>ยังไม่มี BU ใน Focus — กด Add จากรายการทางขวา</div>}
+                    {focusDraft.map((b) => (
+                      <div key={b} style={itemRow}><span><b>{b}</b>{buToBase[b] ? <span style={{ color: "#999", marginLeft: "6px", fontSize: "11px" }}>{buToBase[b]}</span> : null}</span><button type="button" onClick={() => setFocusDraft((d) => d.filter((x) => x !== b))} style={miniBtn("#fff", "#ef9a9a", "#c62828")}>Remove</button></div>
+                    ))}
+                  </div>
+                </div>
+                <div style={colBox}>
+                  <div style={colHd}><span>BU ทั้งหมดใน Dashboard ({rightList.length})</span>{rightList.length > 0 && <button type="button" onClick={() => setFocusDraft((d) => [...d, ...rightList])} style={miniBtn("#e3f2fd", "#90caf9", "#1565c0")}>Add ทั้งหมด</button>}</div>
+                  <div style={{ padding: "6px 10px", borderBottom: "0.5px solid #f0f0f0" }}><input value={focusQ} onChange={(e) => setFocusQ(e.target.value)} placeholder="ค้นหา BU / Base" style={{ width: "100%", boxSizing: "border-box", padding: "5px 8px", fontSize: "12px", border: "0.5px solid #ccc", borderRadius: "6px" }} /></div>
+                  <div style={{ flex: 1, overflowY: "auto" }}>
+                    {rightList.length === 0 && <div style={{ padding: "16px", textAlign: "center", fontSize: "12px", color: "#999" }}>ไม่มี BU ที่เหลือให้เพิ่ม</div>}
+                    {rightList.map((b) => (
+                      <div key={b} style={itemRow}><span><b>{b}</b>{buToBase[b] ? <span style={{ color: "#999", marginLeft: "6px", fontSize: "11px" }}>{buToBase[b]}</span> : null}</span><button type="button" onClick={() => setFocusDraft((d) => [...d, b])} style={miniBtn("#e8f5e9", "#a5d6a7", "#2e7d32")}>Add</button></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "8px", padding: "12px 20px", borderTop: "0.5px solid #e8e8e8" }}>
+                <span style={{ flex: 1, fontSize: "11px", color: "#999" }}>เก็บไว้ในเบราว์เซอร์นี้ · ถ้า Focus ว่างจะแสดงทุก BU</span>
+                <button type="button" onClick={() => setShowFocusCfg(false)} style={{ padding: "6px 16px", fontSize: "13px", border: "0.5px solid #ccc", borderRadius: "8px", background: "#fff", cursor: "pointer" }}>ยกเลิก</button>
+                <button type="button" onClick={saveFocusCfg} style={{ padding: "6px 16px", fontSize: "13px", border: "none", borderRadius: "8px", background: "#0f7a6b", color: "#fff", cursor: "pointer" }}>บันทึก</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {showAllBuPopup && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100 }}
@@ -2433,8 +2502,8 @@ export default function VatDashboard() {
           <title> ของ Browser ที่ใช้ก่อนหน้านี้ — ใช้ร่วมกันทั้ง Donut หลัก (Zone B) และ Donut ใน
           Popup Preview */}
       {donutTooltip && (() => {
-        const estW = 170;
-        const estH = 80;
+        const estW = 230;
+        const estH = 80 + 18 * (categoryBreakdown.list.length + 2);
         const overflowsRight = donutTooltip.x + 14 + estW > window.innerWidth;
         const left = overflowsRight
           ? Math.max(8, donutTooltip.x - estW - 14)
@@ -2463,6 +2532,19 @@ export default function VatDashboard() {
             </div>
             <div style={{ fontSize: "14px", fontWeight: 700 }}>{formatFull(donutTooltip.amount)}</div>
             <div style={{ fontSize: "11px", color: "#b8c4d0", marginTop: "2px" }}>{donutTooltip.pct.toFixed(1)}% ของยอดรวม</div>
+            {/* MARKER_DONUT_TOOLTIP_ALL_TYPES_TOTAL_V1 -- แสดงทุก Type + ยอดรวม (ยอดเต็ม ปัดเฉพาะสตางค์) */}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.2)", marginTop: "6px", paddingTop: "6px" }}>
+              {categoryBreakdown.list.map((c) => (
+                <div key={c.key} style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: c.key === donutTooltip.key ? 700 : 400, opacity: c.key === donutTooltip.key ? 1 : 0.85 }}>
+                  <span style={{ width: "7px", height: "7px", borderRadius: "2px", background: breakdownColorOf(c.key), display: "inline-block", flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>{breakdownLabelOf(c.key)}</span>
+                  <span style={{ marginLeft: "10px" }}>{formatFull(c.amount)}</span>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", borderTop: "1px solid rgba(255,255,255,0.2)", marginTop: "4px", paddingTop: "4px", fontWeight: 700 }}>
+                <span>รวม</span><span>{formatFull(categoryBreakdown.total)}</span>
+              </div>
+            </div>
           </div>
         );
       })()}

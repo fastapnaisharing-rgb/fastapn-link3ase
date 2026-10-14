@@ -231,7 +231,20 @@ function addSourceSheets(wb, rep) {
     }
     return { values: vals, red };
   });
-  addTable(isAvg ? "A-Detail" : "Detail", dh, drows, [10, 12, 14, 14, 18, 36, 16, 8, 8, 30, 15, 15, 15, 15, 14, 18, 12], [11, 12, 13, 14, 15, 16]);
+  // MARKER_VATRECONCILE_PCT_N_A_DETAIL_SHEETS_V1 -- Template หัว % (ตามมาโคร A_ReconcileAcc): IP-Detail = Tax N/F (ใช้สิทธิ์ 100%) · A-Detail = Tax A (ใช้สิทธิ์ตาม %)
+  const widths = [10, 12, 14, 14, 18, 36, 16, 8, 8, 30, 15, 15, 15, 15, 14, 18, 12];
+  if (rep.template === "pct") {
+    const mk = (d) => [d.branch, d.receive_date, d.grt_no, d.tax_invoice_date, d.tax_invoice_no, d.vendor_name, d.tax_id, d.ho, d.branch_field, d.item_detail,
+      d.paid_amount, d.paid_vat, d.claimed100_amount, d.claimed100_vat, d.calculate_tax];
+    const all = src.detail || [];
+    const aRows = all.filter((d) => !["N", "F"].includes(String(d.tax_type))).map((d) => ({ values: mk(d), red: 0 }));
+    const nRows = all.filter((d) => ["N", "F"].includes(String(d.tax_type))).map((d) => ({ values: mk(d), red: 0 }));
+    const h2 = dh.slice(0, 15);
+    addTable("A-Detail", h2, aRows, widths, [11, 12, 13, 14, 15]);
+    if (nRows.length) addTable("IP-Detail", h2, nRows, widths, [11, 12, 13, 14, 15]);
+  } else {
+    addTable(isAvg ? "A-Detail" : "Detail", dh, drows, widths, [11, 12, 13, 14, 15, 16]);
+  }
 
   // Pivot (100%)
   if (!isAvg) {
@@ -386,6 +399,7 @@ function pvCfEval(plan, ws, r, c, valueOf) {
   }
   return out;
 }
+export { pvLoadSheets }; // MARKER_APRECONCILE_REPORT_V1 -- ให้ AP Recon ใช้ Parser Preview ตัวเดียวกับ Input
 async function pvLoadSheets(filePath) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);

@@ -130,6 +130,41 @@ function serializeValue(val) {
   return val;
 }
 
+// MARKER_GENERICTABLE_RECYCLE_KEY_V1 -- Recycle Bin: ให้ source_key เป็น "ชื่อที่คนอ่านรู้เรื่อง" แทน UUID
+// (ลองทีละฟิลด์ตามลำดับ ตัวแรกที่มีค่าถูกใช้ | ไม่มีฟิลด์ไหนมีค่า -> ใช้ id เหมือนเดิม | ไม่กระทบ source_id ที่ใช้ Restore)
+const RECYCLE_KEY_COLUMNS = {
+  bucket_list: ["invoice_no"],
+  batch_list: ["batch_id"],
+  batch_notifications: ["title", "batch_id"],
+  supplier_list: ["Name", "THAI COMPANY NAME"],
+  itemcode_list: ["description", "Name"],
+  vendor_category: ["Name"],
+  account_list: ["Account_Name", "Name"],
+  cpc_list: ["Name", "description"],
+  sub_acc_list: ["Name", "description"],
+  company_list: ["TAX ID", "THAI COMPANY NAME"],
+  branch_list: ["Branch Code", "Name"],
+  sm_code_list: ["sm_code", "code", "Name"],
+  contract_list: ["contract_no", "contract_name", "name"],
+  account_cpc_rules: ["account_name", "account", "Account"],
+  item_description_favorites: ["description"],
+  access_requests: ["username", "user_name", "email"],
+  user_roles: ["username", "email"],
+  vat_watchlist_notes: ["supplier_code", "supplier_name"],
+  vat_watchlist_related_person: ["supplier_code", "name"],
+  vat_mail_config: ["bu", "name"],
+  vat_watchlist_bu_group_range: ["bu", "group_name"],
+};
+// ตารางข้อมูลระบบอัตโนมัติ (Heartbeat/Session) -- ลบแล้วไม่ต้องเก็บเข้า Recycle Bin
+const RECYCLE_SKIP_TABLES = new Set(["menu_active_sessions", "ap_active_sessions", "ie_active_sessions"]);
+// สร้าง SQL Expression สำหรับ source_key + พารามิเตอร์ที่ต้องต่อท้าย (เริ่มที่ $startIdx)
+function recycleKeyExpr(tableName, idCol, startIdx) {
+  const cols = RECYCLE_KEY_COLUMNS[tableName] || [];
+  const parts = cols.map((_, i) => `NULLIF(to_jsonb(moved.*)->>$${startIdx + i}::text, '')`);
+  parts.push(`moved.${idCol}::text`);
+  return { sql: `LEFT(COALESCE(${parts.join(", ")}), 200)`, params: cols };
+}
+
 export function createTableRouter(tableName, { idColumn = "id" } = {}) {
   if (!tablePermissions[tableName]) {
     throw new Error(`Table "${tableName}" ไม่มีอยู่ใน tablePermissions`);
@@ -155,8 +190,17 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
       // ── มาเป็น Query Param เลยด้วย — แก้พร้อมกันทั้ง 2 ฝั่ง) ทำให้ตารางที่มี Column ใหญ่ (เช่น JSONB เก็บ ──
       // ── ข้อมูลทั้งชุด) โดนดึงมาเต็มทุกครั้งแม้หน้า List จะใช้แค่ไม่กี่ Column — ตอนนี้ถ้าระบุ select มา จะ ──
       // ── SELECT เฉพาะ Column ที่ขอ (ผ่าน quoteIdent กัน SQL Injection เหมือน Column อื่นในไฟล์นี้) ──────────
-      const { order, limit, offset, count, search, search_cols, search_mode, distinct, aging_buckets, distinct_group, aging_bucket_counts, aging_bucket_group_by, sum_col, aging_bucket_sum_col, aging_month_bucket_counts, aging_month_bucket_group_by, aging_month_bucket_sum_col, select, ...filters } = req.query; // MARKER_GENERICTABLE_SEARCH_MODE_AND_TERMS_V1 -- เพิ่ม search_mode // MARKER_GENERICTABLE_AGING_BUCKET_GROUPBY_V1 // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2 // MARKER_GENERICTABLE_AGING_MONTH_BUCKET_V3
+      const { order, limit, offset, count, search, search_cols, search_mode, distinct, aging_buckets, distinct_group, aging_bucket_counts, aging_bucket_group_by, sum_col, aging_bucket_sum_col, aging_month_bucket_counts, aging_month_bucket_group_by, aging_month_bucket_sum_col, expired_incl_accept, select, ...filters } = req.query; // MARKER_GENERICTABLE_SEARCH_MODE_AND_TERMS_V1 -- เพิ่ม search_mode // MARKER_GENERICTABLE_AGING_BUCKET_GROUPBY_V1 // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2 // MARKER_GENERICTABLE_AGING_MONTH_BUCKET_V3
       const conditions = [];
+      // MARKER_GENERICTABLE_EXPIRED_INCL_ACCEPT_V1 -- opt-in (expired_incl_accept=true): Expired รวมแถว Accept (Unrealized, Aging ว่าง) ให้ตรงกับ VAT Dashboard + คืนยอด unrealized / unrealized_cr (Check Return) / unrealized_issue แยกไว้ทำ Tooltip -- ไม่ส่ง = พฤติกรรมเดิมทุกประการ
+      const expInclAccept = String(expired_incl_accept) === "true";
+      const __acceptNull = `${quoteIdent("aging_label")} = 'Accept' AND ${quoteIdent("aging_months")} IS NULL`;
+      const EXPIRED_COND = expInclAccept ? `(${quoteIdent("aging_months")} > 6 OR (${__acceptNull}))` : `${quoteIdent("aging_months")} > 6`;
+      const UNREALIZED_KEYS = expInclAccept ? {
+        unrealized: `(${__acceptNull})`,
+        unrealized_cr: `(${__acceptNull} AND ${quoteIdent("remark")} ILIKE '%check return%')`,
+        unrealized_issue: `(${__acceptNull} AND ${quoteIdent("remark")} ILIKE '%issue%')`,
+      } : {};
       const SOFT_DELETE_TABLES = [
           'itemcode_list', 'supplier_list', 'vendor_category',
           'ap_code_list', 'sm_code_list'
@@ -247,7 +291,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
       // MARKER_GENERICTABLE_AGING_BUCKETS_V1 -- Aging หลาย Bucket พร้อมกันแบบ OR
       if (aging_buckets) {
         const AGING_BUCKET_SQL = {
-          expired: `${quoteIdent("aging_months")} > 6`,
+          expired: EXPIRED_COND,
           "6-5": `${quoteIdent("aging_months")} BETWEEN 5 AND 6`,
           "6": `${quoteIdent("aging_months")} = 6`, // MARKER_GENERICTABLE_AGING_6_5_SPLIT_V1 -- กรองแยก 6 / 5
           "5": `${quoteIdent("aging_months")} = 5`,
@@ -313,7 +357,8 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
           '5': `${quoteIdent("aging_months")} = 5`,
           '6': `${quoteIdent("aging_months")} = 6`,
           '0': `${quoteIdent("aging_months")} = 0`, // MARKER_GENERICTABLE_AGING_MONTH_BUCKET_ADD_ZERO_V4 -- เดิมไม่มี Bucket 0 ทำให้ยอดรวมใน Tooltip น้อยกว่ายอดจริง (ยอดจริงรวม Aging 0 ด้วยเสมอ)
-          expired: `${quoteIdent("aging_months")} > 6`,
+          expired: EXPIRED_COND,
+          ...UNREALIZED_KEYS,
         };
         const baseWhereMonth = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
         const monthValueExpr = aging_month_bucket_sum_col ? `COALESCE(${quoteIdent(aging_month_bucket_sum_col)}, 0)` : `1`;
@@ -345,12 +390,13 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
 
       if (aging_bucket_counts === "true") { // MARKER_GENERICTABLE_AGING_BUCKET_COUNTS_SINGLE_SCAN_V1 -- เปลี่ยนจาก 6 Subquery Scan แยก เป็น Query เดียว (Conditional Aggregation) สแกนตารางครั้งเดียว
         const AGING_BUCKET_SQL = {
-          expired: `${quoteIdent("aging_months")} > 6`,
+          expired: EXPIRED_COND,
           "6-5": `${quoteIdent("aging_months")} BETWEEN 5 AND 6`,
           "4-3": `${quoteIdent("aging_months")} BETWEEN 3 AND 4`,
           "2-1": `${quoteIdent("aging_months")} BETWEEN 1 AND 2`,
           "0": `${quoteIdent("aging_months")} = 0`,
           uncount: `${quoteIdent("aging_months")} IS NULL`, // MARKER_GENERICTABLE_AGING_UNCOUNT_V1
+          ...UNREALIZED_KEYS,
         };
         const baseWhere = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
         // MARKER_GENERICTABLE_AGING_BUCKET_SUM_V2 -- ถ้ามี aging_bucket_sum_col มา ใช้ SUM(Column นั้น) แทนการนับ 1 (Count) เดิม
@@ -627,7 +673,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
   // MARKER_GENERICTABLE_HARD_DELETE_BYPASS_V1
   router.delete("/:id", checkPermission(tableName, "write"), async (req, res, next) => {
     try {
-      if (tableName === "recycle_bin" || req.query.hard === "true") {
+      if (tableName === "recycle_bin" || req.query.hard === "true" || RECYCLE_SKIP_TABLES.has(tableName)) {
         const { rowCount } = await pool.query(
           `DELETE FROM ${table} WHERE ${idCol} = $1`,
           [req.params.id]
@@ -636,6 +682,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
         return res.status(204).send();
       }
       const deletedBy = req.user?.username || req.user?.email || "unknown";
+      const keyX = recycleKeyExpr(tableName, idCol, 4); // MARKER_GENERICTABLE_RECYCLE_KEY_V1
       const { rows } = await pool.query(
         `WITH moved AS (
            DELETE FROM ${table} WHERE ${idCol} = $1
@@ -645,10 +692,10 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
          SELECT $2,
                 CASE WHEN moved.${idCol}::text ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
                      THEN moved.${idCol}::text::uuid ELSE NULL END,
-                moved.${idCol}::text, to_jsonb(moved.*), $3, NOW()
+                ${keyX.sql}, to_jsonb(moved.*), $3, NOW()
          FROM moved
          RETURNING id`,
-        [req.params.id, tableName, deletedBy]
+        [req.params.id, tableName, deletedBy, ...keyX.params]
       );
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       res.status(204).send();
@@ -688,7 +735,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
         });
       }
 
-      if (tableName === "recycle_bin" || req.query.hard === "true") {
+      if (tableName === "recycle_bin" || req.query.hard === "true" || RECYCLE_SKIP_TABLES.has(tableName)) {
         const { rowCount } = await pool.query(
           `DELETE FROM ${table} WHERE ${conditions.join(" AND ")}`,
           values
@@ -699,6 +746,8 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
       const tableNameIdx = idx;
       const deletedByIdx = idx + 1;
       values.push(tableName, deletedBy);
+      const keyX = recycleKeyExpr(tableName, idCol, deletedByIdx + 1); // MARKER_GENERICTABLE_RECYCLE_KEY_V1
+      values.push(...keyX.params);
       const { rows } = await pool.query(
         `WITH moved AS (
            DELETE FROM ${table} WHERE ${conditions.join(" AND ")}
@@ -708,7 +757,7 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
          SELECT $${tableNameIdx},
                 CASE WHEN moved.${idCol}::text ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
                      THEN moved.${idCol}::text::uuid ELSE NULL END,
-                moved.${idCol}::text, to_jsonb(moved.*), $${deletedByIdx}, NOW()
+                ${keyX.sql}, to_jsonb(moved.*), $${deletedByIdx}, NOW()
          FROM moved
          RETURNING id`,
         values

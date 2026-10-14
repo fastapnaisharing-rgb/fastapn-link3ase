@@ -1,0 +1,61 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ตัวอย่างไอคอนไฟล์แนบ</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--ink:#14284b;--mut:#6b778c;--line:#d6dbe4;--accent:#14284b;--green:#2fb58a}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1726;--card:#18233a;--ink:#e8eefc;--mut:#9aa8c2;--line:#2c3a56;--accent:#5dcaa5;--green:#5dcaa5}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,"Noto Sans Thai",sans-serif;padding:20px 16px}
+h1{font-size:18px;margin:0 0 4px}p.sub{margin:0 0 16px;color:var(--mut);font-size:13px}
+h2{font-size:13px;margin:22px 0 8px;color:var(--mut);letter-spacing:.04em}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.card .n{font-size:12px;font-weight:700}.card .d{font-size:11px;color:var(--mut);text-align:center}
+.cell{display:flex;gap:14px;align-items:center;justify-content:center;min-height:44px}
+.btn{position:relative;width:30px;height:30px;border-radius:6px;border:.5px solid var(--line);background:var(--card);display:inline-flex;align-items:center;justify-content:center;font-size:14px;padding:0;color:var(--ink)}
+.btn.big{width:34px;height:34px;border-radius:8px}
+.btn.flat{border:0;background:transparent}
+.btn.solid{background:var(--accent);color:#fff;border-color:var(--accent)}
+.badge{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--accent);color:var(--bg);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
+.btn.solid .badge{background:#fff;color:var(--accent)}
+svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.row{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.row table{width:100%;border-collapse:collapse;font-size:12px}
+.row th{background:#14284b;color:#fff;text-align:left;padding:8px 10px;font-weight:600}
+.row td{padding:9px 10px;border-top:1px solid var(--line)}
+.row td.c{text-align:center}
+</style></head><body>
+<h1>ตัวอย่างไอคอนไฟล์แนบ (เกี่ยวกับรูป)</h1>
+<p class="sub">ทุกแบบมีตัวเลขจำนวนไฟล์ที่มุมขวาบนเหมือนกัน ตัวอย่างนี้ใช้ตัวเลข 3</p>
+
+<h2>แบบเส้น (SVG) — คมชัดทุกเครื่อง</h2>
+<div class="grid">
+<div class="card"><div class="cell"><span class="btn"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span class="badge">3</span></span></div><div class="n">1. คลิปหนีบ</div><div class="d">ไอคอนไฟล์แนบมาตรฐาน (ตัวเดียวกับหัวตาราง)</div></div>
+<div class="card"><div class="cell"><span class="btn"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span class="badge">3</span></span></div><div class="n">2. รูปภาพ</div><div class="d">กรอบรูป ภูเขา ดวงอาทิตย์</div></div>
+<div class="card"><div class="cell"><span class="btn"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="14" height="14" rx="2"/><path d="M3 15V5a2 2 0 0 1 2-2h10"/><circle cx="12" cy="12" r="1.2"/><path d="M21 17l-4-4-6 6"/></svg><span class="badge">3</span></span></div><div class="n">3. หลายรูปซ้อนกัน</div><div class="d">สื่อว่ามีหลายภาพ</div></div>
+<div class="card"><div class="cell"><span class="btn"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span class="badge">3</span></span></div><div class="n">4. กล้อง</div><div class="d">เหมาะถ้าส่วนใหญ่ถ่ายรูปมาแนบ</div></div>
+<div class="card"><div class="cell"><span class="btn"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><circle cx="10" cy="13" r="1.4"/><path d="M18 18l-3-3-5 5"/></svg><span class="badge">3</span></span></div><div class="n">5. ไฟล์รูป</div><div class="d">กระดาษพับมุมที่มีรูปอยู่ข้างใน</div></div>
+<div class="card"><div class="cell"><span class="btn"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg><span class="badge">3</span></span></div><div class="n">6. เอกสาร</div><div class="d">ไฟล์ทั่วไป (PDF/เอกสาร)</div></div>
+</div>
+
+<h2>แบบอีโมจิ — หน้าตาต่างกันตามเครื่อง/ระบบปฏิบัติการ</h2>
+<div class="grid">
+<div class="card"><div class="cell"><span class="btn">📎<span class="badge">3</span></span></div><div class="n">7. 📎</div><div class="d">แบบที่ใช้อยู่ตอนนี้</div></div>
+<div class="card"><div class="cell"><span class="btn">🖼️<span class="badge">3</span></span></div><div class="n">8. 🖼️</div><div class="d">กรอบรูป</div></div>
+<div class="card"><div class="cell"><span class="btn">📷<span class="badge">3</span></span></div><div class="n">9. 📷</div><div class="d">กล้อง</div></div>
+<div class="card"><div class="cell"><span class="btn">🗂️<span class="badge">3</span></span></div><div class="n">10. 🗂️</div><div class="d">แฟ้มเอกสาร</div></div>
+</div>
+
+<h2>แบบรูปทรงปุ่ม (ใช้กับไอคอนแบบเส้นข้อไหนก็ได้)</h2>
+<div class="grid">
+<div class="card"><div class="cell"><span class="btn"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span class="badge">3</span></span></div><div class="n">A. ปุ่มขอบบาง</div><div class="d">แบบที่ใช้อยู่</div></div>
+<div class="card"><div class="cell"><span class="btn flat"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span class="badge">3</span></span></div><div class="n">B. ไม่มีกรอบ</div><div class="d">เบา สะอาด</div></div>
+<div class="card"><div class="cell"><span class="btn solid big"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span class="badge">3</span></span></div><div class="n">C. ปุ่มทึบ ใหญ่ขึ้น</div><div class="d">เห็นชัด กดง่าย</div></div>
+</div>
+
+<h2>ตัวอย่างในตารางจริง (แถวที่ไม่มีไฟล์แนบแสดงเป็น "-")</h2>
+<div class="row"><table>
+<tr><th>Filename / Serial Code</th><th>Total</th><th style="text-align:center">Attachment</th></tr>
+<tr><td>LKS_Invoice Register_APN01-260818.1535</td><td>795,261.95</td><td class="c"><span style="color:#aaa">-</span></td></tr>
+<tr><td>LKS_Invoice Register_APN01-260818.1533</td><td>4,362,005.76</td><td class="c"><span class="btn"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span class="badge">1</span></span></td></tr>
+<tr><td>LKS_Invoice Register_APN01-260817.1441</td><td>442,680.00</td><td class="c"><span class="btn"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span class="badge">3</span></span></td></tr>
+</table></div>
+</body></html>

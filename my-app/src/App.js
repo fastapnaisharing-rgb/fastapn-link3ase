@@ -30,6 +30,8 @@ import BatchChatDrawer from './pages/BatchChatDrawer';
 import FilePreviewPopup from './FilePreviewPopup';
 import { confirmDialog } from './confirmDialog';
 import ConfirmDialogHost from './ConfirmDialogHost';
+import { DOC_FOLDER_LABELS } from './docFolderConfig'; // MARKER_DOCFOLDER_CONFIG_V1
+import { apiFetch } from './api'; // MARKER_MENU_PERMISSION_CONFIG_V1
 import { ALL_FUNCTION_MENUS, AP_CONTROLLER_MENU, VAT_CONTROLLER_MENU, IE_CONTROLLER_MENU, GL_FUNCTIONAL_MENU } from './menuConfig'; // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT // MARKER_GL_FUNCTIONAL_MENU_APP_V1
 
 const API = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
@@ -211,7 +213,7 @@ const BellIcon = () => (
   </svg>
 );
 
-const DOC_FOLDER_LABELS = { ap: 'AP Manual', vat: 'VAT Control', ie: 'I-Expense', gl: 'GL Report', ipro: 'I-Pro Interface' };
+// MARKER_DOCFOLDER_CONFIG_V1 -- ป้ายชื่อกล่องมาจาก docFolderConfig.js
 
 // MARKER_APP_SUPPORT_BELL_UPGRADE_V1
 // ── สีเดียวกับ SEVERITY_META ใน Homepage.js / SEVERITY_LEVELS ใน UploadGen.js ──
@@ -732,8 +734,8 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
                   // ── คลิก Notification ที่ "จัดการแล้ว" (แค่แจ้งเพื่อทราบ) -> หายทันที ──────
                   // ── รวม batch_review ด้วย (Confirm แล้วว่าเลิก Goto Batch -- แค่รับทราบก็พอ) ──
                   <div key={req.id}
-                    onClick={() => onDismissHandled?.(req)}
-                    title="คลิกเพื่อปิดการแจ้งเตือนนี้"
+                    onClick={() => { if (req.request_type === 'signup' && isOwner) onGoAccess?.(); onDismissHandled?.(req); }} // MARKER_BELL_SIGNUP_GOTO_USERS_V1 -- คลิกแจ้งเตือนสมัครใหม่ = ไปหน้า User Management
+                    title={req.request_type === 'signup' && isOwner ? 'คลิกเพื่อไปหน้า User Management และปิดการแจ้งเตือนนี้' : 'คลิกเพื่อปิดการแจ้งเตือนนี้'}
                     style={{ padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0', cursor: 'pointer' }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                       <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#f5f5f5', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '500', flexShrink: 0 }}>{initial}</div>
@@ -774,7 +776,13 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
                         <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{n.title}</span>
                       </div>
                       <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>{n.message}</div>
-                      <div style={{ fontSize: '11px', color: '#aaa', marginBottom: n.category === 'AP_PERIOD_REQUEST' && (isOwner || isAdmin) ? '8px' : '0' }}>{formatTime(n.created_at)}</div>
+                      <div style={{ fontSize: '11px', color: '#aaa', marginBottom: (n.category === 'AP_PERIOD_REQUEST' || n.category === 'VAT_ROUND_CONFIRM') && (isOwner || isAdmin) ? '8px' : '0' }}>{formatTime(n.created_at)}</div>
+                      {n.category === 'VAT_ROUND_CONFIRM' && (isOwner || isAdmin) && ( /* MARKER_VATWATCHLIST_CONFIRM_90PCT_V1 */
+                        <button onClick={async (e) => { e.stopPropagation(); try { await apiFetch('/vat_watchlist_round/confirm', { method: 'POST', body: JSON.stringify({}) }); onMarkApNotifRead(n.id); } catch (err) { window.alert((err && err.message) || 'Confirm ไม่สำเร็จ'); } }}
+                          style={{ fontSize: '12px', padding: '6px 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontWeight: '500', cursor: 'pointer' }}>
+                          Confirm ว่า Data ครบแล้ว
+                        </button>
+                      )}
                       {n.category === 'AP_PERIOD_REQUEST' && (isOwner || isAdmin) && (
                         <button onClick={(e) => { e.stopPropagation(); onClosePeriod(n.id); }}
                           style={{ fontSize: '12px', padding: '6px 16px', borderRadius: '6px', border: 'none', background: '#791F1F', color: 'white', fontWeight: '500', cursor: 'pointer' }}>
@@ -1305,6 +1313,7 @@ function MainApp() {
   const [viewChatBatchId, setViewChatBatchId] = useState(null); // Batch ID สำหรับดู Chat อย่างเดียว
   const [previewFile, setPreviewFile] = useState(null); // { fileId, fileName }
   const [apNotifications, setApNotifications] = useState([]);
+  const [vatRoundToastHidden, setVatRoundToastHidden] = useState(() => new Set()); // MARKER_VATWATCHLIST_CONFIRM_90PCT_V1 -- Toast มุมขวาล่าง: Confirm รอบ VAT Watchlist (ปิดได้ ไม่ขึ้นซ้ำ id เดิม)
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
   const [incomingBatch, setIncomingBatch] = useState(null); // ✅ batch transfer notification
   const [toast, setToast] = useState(null); // { type: 'success' | 'warning' | 'error', message }
@@ -1352,6 +1361,8 @@ function MainApp() {
     return () => clearTimeout(tm);
   }, [currentUser]);
   const hasAnyDocAccess = Object.values(userPermissions?.docAccess || {}).some(v => v === true);
+  // MARKER_NEWUSER_NO_MASTER_RESOURCE_V1 -- ผู้ใช้ที่สมัครใหม่ (Viewer สิทธิ์ No ทุกโมดูล) เห็นแค่ Home | Master Data ต้องมีสิทธิ์โมดูลอย่างน้อย 1 อย่าง | Resource Center ต้องมี Doc Access
+  const hasAnyModulePerm = isOwner || ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'].some(k => userPermissions?.[k] === true);
 
   // ── Reset pendingHistoryTab ทันทีหลัง Consume (กันบังคับ Inbox ซ้ำตอน Navigate ปกติ) ──
   useEffect(() => {
@@ -1377,9 +1388,41 @@ function MainApp() {
   const isGLActive     = GL_PAGES.includes(activePage);
   // MARKER_GL_GENERIC_PERMISSION_V1 — GL Functional เป็น Central Operation รวมหลาย Permission,
   // เลยเช็คทีละ Item ตาม requiredPermissions ใน menuConfig.js แทนเช็คที่ Module รวม
+  // MARKER_VAT_VIEWER_WATCHLIST_ONLY_V1 -- Viewer เข้า VAT Controller ได้เฉพาะ VAT Watchlist Ops.
+  // MARKER_MENU_MIN_ROLE_V1 -- Permission ขั้นต่ำต่อเมนู (ตาราง menu_min_role ตั้งที่ Access Panel) | ไม่เคยตั้ง: Watchlist + Dashboard = Viewer, เมนูอื่น = Editor
+  const [minRoleMap, setMinRoleMap] = useState({});
+  useEffect(() => {
+    let dead = false;
+    const load = () => apiFetch('/menu_min_role').then(r => { if (dead || !Array.isArray(r)) return; const m = {}; r.forEach(x => { m[x.menu_id] = x.min_role; }); setMinRoleMap(m); }).catch(() => {});
+    load();
+    const unsub = subscribeWs(['menu_min_role_updated'], load);
+    return () => { dead = true; if (typeof unsub === 'function') unsub(); };
+  }, []);
+  const ROLE_RANK = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+  const menuMinRoleOk = (menuId) => {
+    if (isOwner) return true;
+    const grant = userPermissions?.menuGrants?.[menuId]; // MARKER_MENU_USER_GRANT_V1 -- สิทธิ์รายบุคคล: true = เข้าได้แม้ Role ต่ำกว่าขั้นต่ำ | false = ห้ามเข้า
+    if (grant === true) return true;
+    if (grant === false) return false;
+    const need = minRoleMap[menuId] || (['vat-watchlist-ops', 'vat-dashboard'].includes(menuId) ? 'Viewer' : 'Editor'); // ไม่เคยตั้ง = Editor ขึ้นไป (Viewer ไม่เห็นเมนู)
+    return (ROLE_RANK[String(userRole || '').toLowerCase()] ?? 0) >= (ROLE_RANK[String(need).toLowerCase()] ?? 1);
+  };
   const hasAnyPermission = (reqPerms) => isOwner || (Array.isArray(reqPerms) && reqPerms.some(p => userPermissions?.[p]));
+  // MARKER_MENU_PERMISSION_CONFIG_V1 -- สิทธิ์ที่เข้าเมนูได้ ตั้งจาก User Management > GL Access (ตาราง menu_permission_config) | ไม่เคยตั้ง/โหลดไม่ได้ = ใช้ค่า requiredPermissions ใน menuConfig.js
+  const [menuPermMap, setMenuPermMap] = useState({});
+  const itemPerms = (it) => (it && menuPermMap[it.id]) || (it && it.requiredPermissions);
+  useEffect(() => {
+    let dead = false;
+    const load = () => apiFetch('/ap-reconcile/menu-permissions').then(r => { if (!dead && r && r.menus) setMenuPermMap(r.menus); }).catch(() => {});
+    load();
+    const unsub = subscribeWs(['menu_permission_updated'], load);
+    return () => { dead = true; if (typeof unsub === 'function') unsub(); };
+  }, []);
   const GL_ALL_ITEMS = GL_FUNCTIONAL_MENU.groups.flatMap(g => g.items);
-  const canAccessGLModule = GL_ALL_ITEMS.some(it => hasAnyPermission(it.requiredPermissions));
+  // MARKER_GL_REPORT_OVERRIDE_V1 -- Override รายคน (Access Panel > Document Access > GL Report) ปิดสิทธิ์ = docAccess.gl เป็น false -> ซ่อนเมนู + เข้าหน้าไม่ได้ (Backend ก็ปฏิเสธด้วย)
+  const glOverrideOk = isOwner || userPermissions?.docAccess?.gl !== false;
+  const glItemOk = (it) => glOverrideOk && menuMinRoleOk(it.id) && hasAnyPermission(itemPerms(it)); // MARKER_MENU_MIN_ROLE_V1
+  const canAccessGLModule = GL_ALL_ITEMS.some(it => glItemOk(it));
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
@@ -1562,6 +1605,8 @@ function MainApp() {
       const myUsernameLower = (userName || currentUser?.email || '').trim().toLowerCase();
       setRequests(all.filter(r => {
         if (r.request_type === 'batch_transfer') return false;
+        // MARKER_APP_SIGNUP_BELL_OWNER_ADMIN_ONLY_V1 -- Signup ค้าง pending ให้เห็น/นับเลขแดงเฉพาะ Owner/Admin
+        if (r.request_type === 'signup' && !(isOwner || isAdmin)) return false;
         if (r.request_type === 'batch_review') {
           return String(r.target_username || '').trim().toLowerCase() === myUsernameLower;
         }
@@ -2004,6 +2049,7 @@ function MainApp() {
     if (maintKey && maintenanceMenus.includes(maintKey) && !isOwner) {
       return <MaintenancePage />;
     }
+    if (!menuMinRoleOk(activePage)) return <NoAccessPage />; // MARKER_MENU_MIN_ROLE_V1 -- Permission ขั้นต่ำต่อเมนู (ทุกโมดูล)
     switch (activePage) {
       // AP Controller
     case 'ap-gr':
@@ -2061,7 +2107,7 @@ function MainApp() {
       // Functions (placeholder)
       // MARKER_APP_VAT_ROUTING_RESTRUCTURE_V2 — 12 เมนู ตามโครงสร้างใหม่ (OPERATION/RECONCILE/RESULTS/BACKUP)
       case 'vat-dashboard': // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1 -- แยกออกจาก VatController.js
-        return (isOwner || userPermissions?.['VAT'])
+        return (menuMinRoleOk('vat-dashboard') && (isOwner || userPermissions?.['VAT']))
           ? <VatDashboard />
           : <NoAccessPage />;
       case 'vat-freeze': // MARKER_APP_VAT_FREEZE_PAGE_V1 MARKER_APP_VAT_FREEZE_OWNER_ONLY_V15 -- Owner เท่านั้น
@@ -2079,7 +2125,7 @@ function MainApp() {
       case 'vat-monthly-report':
       case 'vat-backup-transaction':
       case 'vat-backup-tax-invoice':
-        return (isOwner || userPermissions?.['VAT'])
+        return ((isOwner || userPermissions?.['VAT']) && menuMinRoleOk(activePage))
           ? <VatController
               activeSubTab={activePage}
               onSubTabChange={sub => setActivePage(sub)}
@@ -2088,7 +2134,7 @@ function MainApp() {
           : <NoAccessPage />;
       case 'gl-ap-recon': { // MARKER_GL_GENERIC_PERMISSION_V1
         const glApReconItem = GL_ALL_ITEMS.find(it => it.id === 'gl-ap-recon');
-        return hasAnyPermission(glApReconItem?.requiredPermissions)
+        return glItemOk(glApReconItem)
           ? <GLFunctionalController
               activeSubTab={activePage}
               onSubTabChange={sub => setActivePage(sub)}
@@ -2099,11 +2145,11 @@ function MainApp() {
       case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
 
       // Master Data
-      case 'bu-info':         return <BusinessUnit activeSubTab="info"        onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
-      case 'bu-branch':       return <BusinessUnit activeSubTab="branch"      onSubTabChange={sub => setActivePage(`bu-${sub}`)} />;
-      case 'coa-costcenter':  return <ChartOfAccounts activeSubTab="costcenter"  onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'coa-account':     return <ChartOfAccounts activeSubTab="account"     onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
-      case 'coa-subaccount':  return <ChartOfAccounts activeSubTab="subaccount"  onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} />;
+      case 'bu-info':         return hasAnyModulePerm ? <BusinessUnit activeSubTab="info"        onSubTabChange={sub => setActivePage(`bu-${sub}`)} /> : <NoAccessPage />;
+      case 'bu-branch':       return hasAnyModulePerm ? <BusinessUnit activeSubTab="branch"      onSubTabChange={sub => setActivePage(`bu-${sub}`)} /> : <NoAccessPage />;
+      case 'coa-costcenter':  return hasAnyModulePerm ? <ChartOfAccounts activeSubTab="costcenter"  onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
+      case 'coa-account':     return hasAnyModulePerm ? <ChartOfAccounts activeSubTab="account"     onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
+      case 'coa-subaccount':  return hasAnyModulePerm ? <ChartOfAccounts activeSubTab="subaccount"  onSubTabChange={sub => setActivePage(`coa-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'vendor-apcode':   return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
         ? <VendorMaster activeSubTab="apcode"   onSubTabChange={sub => setActivePage(`vendor-${sub}`)} flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
       case 'vendor-smcode':   return (isEditor && (userPermissions?.['VAT'] || userPermissions?.['Manual']))
@@ -2119,7 +2165,7 @@ function MainApp() {
           flyoutOpen={openMenu === 'master'} /> : <NoAccessPage />;
         
       
-      case 'itemcode':        return <ItemCodeList />;
+      case 'itemcode':        return hasAnyModulePerm ? <ItemCodeList /> : <NoAccessPage />;
 
       case 'upload':
       return (isOwner || hasAnyDocAccess)
@@ -2232,13 +2278,13 @@ function MainApp() {
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
 
             {/* Master Data — flyout trigger */}
-            <div onClick={handleMasterEnter} title={!sidebarExpanded ? 'Master Data' : ''}
+            {hasAnyModulePerm && <div onClick={handleMasterEnter} title={!sidebarExpanded ? 'Master Data' : ''}
               style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '11px' : '16px', fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase', borderLeft: isMasterActive || openMenu === 'master' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'master' ? 'rgba(93,202,165,0.12)' : isMasterActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isMasterActive || openMenu === 'master' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
               {sidebarExpanded ? <><span>📦 Master Data</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>📦</span>}
-            </div>
+            </div>}
 
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-            {navItem('upload', '📁', 'Resource Center')}
+            {(isOwner || hasAnyDocAccess) && navItem('upload', '📁', 'Resource Center')}
           </nav>
 
           {/* Bottom */}
@@ -2315,7 +2361,7 @@ function MainApp() {
                 <React.Fragment key={g.label}>
                   {gi > 0 && fpDiv()}
                   {fpGroup(g.icon, g.label)}
-                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
+                  {g.items.filter(it => menuMinRoleOk(it.id)).map(it => fpSub(it.id, it.icon, it.label))}
                 </React.Fragment>
               ))}
             </div>
@@ -2331,11 +2377,11 @@ function MainApp() {
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {/* MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — Loop จาก menuConfig.js (VAT_CONTROLLER_MENU.groups) */}
-              {VAT_CONTROLLER_MENU.groups.map((g, gi) => (
+              {VAT_CONTROLLER_MENU.groups.filter(g => g.items.some(it => (it.id !== 'vat-freeze' || isOwner) && menuMinRoleOk(it.id))).map((g, gi) => (
                 <React.Fragment key={g.label}>
                   {gi > 0 && fpDiv()}
                   {fpGroup(g.icon, g.label)}
-                  {g.items.filter(it => it.id !== 'vat-freeze' || isOwner).map(it => fpSub(it.id, it.icon, it.label))} {/* MARKER_APP_VAT_FREEZE_OWNER_ONLY_V15 -- ซ่อนเมนู Freeze จากคนที่ไม่ใช่ Owner */}
+                  {g.items.filter(it => (it.id !== 'vat-freeze' || isOwner) && menuMinRoleOk(it.id)).map(it => fpSub(it.id, it.icon, it.label))} {/* MARKER_APP_VAT_FREEZE_OWNER_ONLY_V15 -- ซ่อนเมนู Freeze จากคนที่ไม่ใช่ Owner */}
                 </React.Fragment>
               ))}
             </div>
@@ -2355,7 +2401,7 @@ function MainApp() {
                 <React.Fragment key={g.label}>
                   {gi > 0 && fpDiv()}
                   {fpGroup(g.icon, g.label)}
-                  {g.items.map(it => fpSub(it.id, it.icon, it.label))}
+                  {g.items.filter(it => menuMinRoleOk(it.id)).map(it => fpSub(it.id, it.icon, it.label))}
                 </React.Fragment>
               ))}
             </div>
@@ -2371,7 +2417,7 @@ function MainApp() {
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {GL_FUNCTIONAL_MENU.groups.map((g, gi) => { // MARKER_GL_GENERIC_PERMISSION_V1
-                const visibleItems = g.items.filter(it => hasAnyPermission(it.requiredPermissions));
+                const visibleItems = g.items.filter(it => glItemOk(it));
                 if (visibleItems.length === 0) return null;
                 return (
                   <React.Fragment key={g.label}>
@@ -2419,6 +2465,22 @@ function MainApp() {
       <div className="main-scroll" style={{ flex: 1, overflow: activePage === 'upload' ? 'hidden' : 'auto', background: '#f5f5f5', minWidth: 0, marginLeft: flyoutOpen ? '164px' : '0', transition: 'margin-left 0.2s ease', display: activePage === 'upload' ? 'flex' : 'block', flexDirection: 'column' }}>
         {renderPage()}
       </div>
+
+      {(isOwner || isAdmin) && (() => { // MARKER_VATWATCHLIST_CONFIRM_90PCT_V1 -- Toast มุมขวาล่าง
+        const tn = (apNotifications || []).find((n) => n.category === 'VAT_ROUND_CONFIRM' && !vatRoundToastHidden.has(n.id));
+        if (!tn) return null;
+        return (
+          <div style={{ position: 'fixed', right: 20, bottom: 20, zIndex: 4000, width: 340, background: '#fff', border: '1px solid #d0d7de', borderLeft: '4px solid #1a3a5c', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.22)', padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: '#1a3a5c' }}>{tn.title}</div>
+              <button onClick={() => setVatRoundToastHidden((p) => new Set([...p, tn.id]))} style={{ border: 'none', background: 'none', fontSize: 16, lineHeight: 1, cursor: 'pointer', color: '#57606a' }}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: '#57606a', margin: '6px 0 10px' }}>{tn.message}</div>
+            <button onClick={async () => { try { await apiFetch('/vat_watchlist_round/confirm', { method: 'POST', body: JSON.stringify({}) }); setVatRoundToastHidden((p) => new Set([...p, tn.id])); handleMarkApNotifRead(tn.id); } catch (err) { window.alert((err && err.message) || 'Confirm ไม่สำเร็จ'); } }}
+              style={{ fontSize: 12, padding: '7px 16px', borderRadius: 6, border: 'none', background: '#1a3a5c', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Confirm ว่า Data ครบแล้ว</button>
+          </div>
+        );
+      })()}
 
       {showBell && (
         <BellModal

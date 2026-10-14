@@ -183,9 +183,28 @@ async function loadLookups(rows) {
     const b = String(r.branch || "").trim();
     const br = branchByCode[b] || branchByCode[cleanBranch(b)] || {};
     const bi = buInfoByBu[String(r.bu || "").trim()] || {};
-    return { name: bi.name || "", taxId: pickCol(br, "BU-TaxID", "BU-Tax ID") || bi.taxId || "", branch: pickCol(br, "BU-Branch") };
+    return { name: bi.name || "", taxId: pickCol(br, "BU-TaxID", "BU-Tax ID") || bi.taxId || "", branch: pickCol(br, "BU-Branch"), brandBu: pickCol(br, "BU") }; // MARKER_VATMAILEXPORT_BU_BY_BRANCHLIST_V1 -- brandBu = branch_list."BU" (เช่น 502xxx = KFC)
   };
   return { buInfoByBu, rowInfo };
+}
+
+// MARKER_VATMAILEXPORT_BU_BY_BRANCHLIST_V1 -- Group Range (vat_watchlist_bu_group_range) ใช้เป็นตัวสำรอง: ตัด A/T/F -> อ่าน N ตำแหน่ง -> Range แคบสุดชนะ (ตรรกะเดียวกับ Frontend matchVatWatchlistBuGroup)
+async function loadBuGroupRanges() {
+  try { const { rows } = await pool.query(`SELECT * FROM vat_watchlist_bu_group_range`); return rows; } catch { return []; }
+}
+function matchBuGroup(branch, ranges) {
+  if (!branch || !Array.isArray(ranges) || ranges.length === 0) return "";
+  const clean = String(branch).trim().replace(/^[ATF]/i, "");
+  let best = ""; let bestSpan = Infinity;
+  for (const r of ranges) {
+    const key = r.prefix_length ? clean.slice(0, Number(r.prefix_length)) : clean;
+    if (r.exclude_start && r.exclude_end && key >= String(r.exclude_start) && key <= String(r.exclude_end)) continue;
+    if (key >= String(r.range_start) && key <= String(r.range_end)) {
+      const span = (Number(r.range_end) || 0) - (Number(r.range_start) || 0);
+      if (span < bestSpan) { bestSpan = span; best = r.group_name || ""; }
+    }
+  }
+  return best;
 }
 
 // ── {BU_LIST}: 1 แถวต่อ 1 BU = ชื่อบริษัทไทย, Tax ID ของ BU, ช่วงเดือนที่ตัดชำระ (Min-Max payment_date) ──
@@ -226,6 +245,9 @@ async function generateMails(cfg, ctx, username, preview) {
     r._person = matchRelatedPerson(r, rl);
   });
   const lk = await loadLookups(rows);
+  // MARKER_VATMAILEXPORT_BU_BY_BRANCHLIST_V1 -- _buDisp = BU ที่แสดงใน Raw/Pivot: branch_list."BU" (Branch Code) -> Group Range -> BU เดิมของแถว (r.bu ยังใช้หาอีเมล/Related Person ตามเดิม)
+  const buRanges = await loadBuGroupRanges();
+  rows.forEach((r) => { r._buDisp = lk.rowInfo(r).brandBu || matchBuGroup(r.branch, buRanges) || r.bu; });
 
   const todayStr = new Date().toLocaleDateString("en-GB");
   const baseVars = { BU: scope.label, DATE: todayStr, "ชื่อผู้รับ": rules.recipient_name || "" };

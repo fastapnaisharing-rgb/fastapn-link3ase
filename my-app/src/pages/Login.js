@@ -174,7 +174,7 @@ function Login() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
-      setSuccess('ส่งคำขอสำเร็จแล้วครับ รอ Owner Approve ก่อน Login ได้เลย');
+      setSuccess('สมัครสำเร็จแล้วครับ Login ได้เลย (สิทธิ์ Viewer) หากต้องการสิทธิ์เพิ่มให้แจ้ง Owner'); // MARKER_AUTH_SIGNUP_AUTO_VIEWER_V1
       setSignupForm({ username: '', email: '', password: '', confirmPassword: '' });
       setMode('login');
     } catch (err) {

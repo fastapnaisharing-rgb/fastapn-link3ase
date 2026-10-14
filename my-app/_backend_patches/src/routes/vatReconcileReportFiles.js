@@ -8,10 +8,11 @@ import { buildOriginalWorkbook, buildPctWorkbook, writeSimpleOriginalSheet, simp
 // MARKER_VATRECONCILE_REPORT_CONFIRM_V1 -- Confirm ไฟล์รายงานก่อน Download / ส่ง SharePoint (Export ใหม่ทับไฟล์เดิม = ต้อง Confirm ใหม่)
 pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS confirmed_at timestamptz").catch((e) => console.error("[migrate file_storage.confirmed_at]", e.message));
 pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS input_expire_at timestamptz").catch((e) => console.error("[migrate file_storage.input_expire_at]", e.message));
+pool.query("UPDATE file_storage SET input_expire_at = confirmed_at + interval '30 days' WHERE module = 'vat-reconcile-report' AND confirmed_at IS NOT NULL AND input_expire_at > confirmed_at + interval '30 days'").catch((e) => console.error("[migrate input_expire_at 30d]", e.message)); // MARKER_VATRECONCILE_EXPIRE_TOGETHER_V1 -- แถวเดิมที่ตั้งไว้ 60 วัน -> 30 วัน
 pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS is_draft boolean NOT NULL DEFAULT false").catch((e) => console.error("[migrate file_storage.is_draft]", e.message)); // MARKER_VATRECONCILE_FIRST_DRAFT_V1 -- First Draft = เก็บไฟล์ใน Backend เป็น Draft (ไม่ Confirm/Download/ส่ง SharePoint ได้)
 pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS draft_serial text").catch((e) => console.error("[migrate file_storage.draft_serial]", e.message)); // MARKER_VATRECONCILE_FIRST_DRAFT_SERIAL_V1 -- Draft = แถวแยก (Serial FD-BU-Account-YYYYMM-nnn) | Final เก็บ Serial ของ Draft ไว้ในคอลัมน์นี้
 pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS draft_note text").catch((e) => console.error("[migrate file_storage.draft_note]", e.message)); // Note ของไฟล์ Draft
-const INPUT_KEEP_DAYS = Number(process.env.RECON_INPUT_KEEP_DAYS) || 60; // MARKER_VATRECONCILE_INPUT_EXPIRE_V1 -- Confirm = เริ่มนับวันหมดอายุของ Input (ยังไม่มีงานลบอัตโนมัติ)
+const INPUT_KEEP_DAYS = Number(process.env.RECON_INPUT_KEEP_DAYS) || 30; // MARKER_VATRECONCILE_INPUT_EXPIRE_V1 MARKER_VATRECONCILE_EXPIRE_TOGETHER_V1 -- ไฟล์ + Input หมดอายุพร้อมกัน 30 วัน -- Confirm = เริ่มนับวันหมดอายุของ Input (ยังไม่มีงานลบอัตโนมัติ)
 pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS fill_started_at timestamp").catch((e) => console.error("[migrate file_storage.fill_started_at]", e.message)); // MARKER_VATRECONCILE_USER_TRANSACTION_V1 -- เวลาเริ่มงาน (เลือก Period) -> 1 Save = 1 Job ในหน้า User Transaction
 pool.query("ALTER TABLE file_storage ADD COLUMN IF NOT EXISTS confirmed_by text").catch((e) => console.error("[migrate file_storage.confirmed_by]", e.message));
 
@@ -231,7 +232,20 @@ function addSourceSheets(wb, rep) {
     }
     return { values: vals, red };
   });
-  addTable(isAvg ? "A-Detail" : "Detail", dh, drows, [10, 12, 14, 14, 18, 36, 16, 8, 8, 30, 15, 15, 15, 15, 14, 18, 12], [11, 12, 13, 14, 15, 16]);
+  // MARKER_VATRECONCILE_PCT_N_A_DETAIL_SHEETS_V1 -- Template หัว % (ตามมาโคร A_ReconcileAcc): IP-Detail = Tax N/F (ใช้สิทธิ์ 100%) · A-Detail = Tax A (ใช้สิทธิ์ตาม %)
+  const widths = [10, 12, 14, 14, 18, 36, 16, 8, 8, 30, 15, 15, 15, 15, 14, 18, 12];
+  if (rep.template === "pct") {
+    const mk = (d) => [d.branch, d.receive_date, d.grt_no, d.tax_invoice_date, d.tax_invoice_no, d.vendor_name, d.tax_id, d.ho, d.branch_field, d.item_detail,
+      d.paid_amount, d.paid_vat, d.claimed100_amount, d.claimed100_vat, d.calculate_tax];
+    const all = src.detail || [];
+    const aRows = all.filter((d) => !["N", "F"].includes(String(d.tax_type))).map((d) => ({ values: mk(d), red: 0 }));
+    const nRows = all.filter((d) => ["N", "F"].includes(String(d.tax_type))).map((d) => ({ values: mk(d), red: 0 }));
+    const h2 = dh.slice(0, 15);
+    addTable("A-Detail", h2, aRows, widths, [11, 12, 13, 14, 15]);
+    if (nRows.length) addTable("IP-Detail", h2, nRows, widths, [11, 12, 13, 14, 15]);
+  } else {
+    addTable(isAvg ? "A-Detail" : "Detail", dh, drows, widths, [11, 12, 13, 14, 15, 16]);
+  }
 
   // Pivot (100%)
   if (!isAvg) {
@@ -262,7 +276,7 @@ function addSourceSheets(wb, rep) {
 // MARKER_VATRECONCILE_FILE_PREVIEW_BACK_V10
 const PV_MAX_ROWS = 3000, PV_MAX_COLS = 40;
 const PV_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function pvArgb(c) { return c && typeof c.argb === "string" && c.argb.length >= 6 ? "#" + c.argb.slice(-6) : null; }
+function pvArgb(c) { return pvCfColor(c); } // MARKER_APRECONCILE_REPORT_V1 -- รองรับสีแบบ Theme (เช่น ตัวอักษรหัวตารางสีขาว theme:0) ด้วย | สี argb ทำงานเหมือนเดิม
 function pvFmtNum(n, nf) {
   if (!nf || nf === "General") return Number.isInteger(n) ? String(n) : String(+n.toFixed(10));
   if (nf === "@") return String(n);
@@ -308,7 +322,7 @@ function pvCss(cell, extra) {
   const f = cell.font || {};
   if (f.bold || (extra && extra.bold)) css.push("font-weight:700");
   if (f.italic) css.push("font-style:italic");
-  const fc = pvArgb(f.color) || (extra && extra.color);
+  const fc = (extra && extra.fmtRed) ? "#ff0000" : (pvArgb(f.color) || (extra && extra.color));
   if (fc) css.push(`color:${fc}`);
   if (f.size) css.push(`font-size:${Math.round(f.size * 1.2 * 10) / 10}px`);
   if (f.name) css.push(`font-family:"${f.name}",Tahoma,sans-serif`);
@@ -386,16 +400,21 @@ function pvCfEval(plan, ws, r, c, valueOf) {
   }
   return out;
 }
-async function pvLoadSheets(filePath) {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
+export { pvLoadSheets }; // MARKER_APRECONCILE_REPORT_V1 -- ให้ AP Recon ใช้ Parser Preview ตัวเดียวกับ Input
+async function pvLoadSheets(filePath, preloadedWb, opts = {}) { // MARKER_APRECONCILE_PAGED_V1 -- opts: {pagedAbove, firstRows} = ชีตใหญ่ส่งเฉพาะแถวแรก (paged) | {onlySheet,rowFrom,rowTo} = ขอเฉพาะช่วงแถวของชีตเดียว | ไม่ส่ง opts = พฤติกรรมเดิม (ตัด 3,000 แถว) // MARKER_APRECONCILE_REPORT_V1 -- preloadedWb: ส่ง Workbook ในหน่วยความจำมาได้ (ไม่ต้องเขียน/อ่านไฟล์)
+  const wb = preloadedWb || new ExcelJS.Workbook();
+  if (!preloadedWb) await wb.xlsx.readFile(filePath);
   const styles = [""];
   const styleIdx = new Map([["", 0]]);
   const sid = (css) => { if (!styleIdx.has(css)) { styleIdx.set(css, styles.length); styles.push(css); } return styleIdx.get(css); };
   const sheets = [];
   wb.eachSheet((ws) => {
     if (ws.state && ws.state !== "visible") return;
-    const maxRow = Math.min(ws.rowCount || 0, PV_MAX_ROWS);
+    if (opts.onlySheet && ws.name !== opts.onlySheet) return;
+    const totalRows = ws.rowCount || 0;
+    const paged = !opts.rowTo && !!opts.pagedAbove && totalRows > opts.pagedAbove;
+    const rFrom = opts.rowFrom || 1;
+    const maxRow = opts.rowTo ? Math.min(totalRows, opts.rowTo) : paged ? Math.min(totalRows, opts.firstRows || 400) : Math.min(totalRows, PV_MAX_ROWS);
     const maxCol = Math.min(ws.columnCount || 1, PV_MAX_COLS);
     const cfPlan = pvCfPlan(ws);
     const valOf = (rr, cc) => { const v = ws.getRow(rr).getCell(cc).value; return v && typeof v === "object" && !(v instanceof Date) && "formula" in v ? v.result : v && typeof v === "object" && v.richText ? v.richText.map((x) => x.text).join("") : v; };
@@ -414,7 +433,7 @@ async function pvLoadSheets(filePath) {
     {
       const mset = new Set();
       merges.forEach(([r1, c1, r2, c2]) => { for (let rr = r1; rr <= r2; rr++) for (let cc = c1; cc <= c2; cc++) mset.add(`${rr}:${cc}`); });
-      for (let r = 1; r <= maxRow; r++) {
+      for (let r = rFrom; r <= maxRow; r++) {
         const row = ws.getRow(r);
         for (let c = 1; c <= maxCol; c++) {
           const cell = row.getCell(c);
@@ -431,7 +450,7 @@ async function pvLoadSheets(filePath) {
       }
     }
     const rows = [];
-    for (let r = 1; r <= maxRow; r++) {
+    for (let r = rFrom; r <= maxRow; r++) {
       const row = ws.getRow(r);
       const cells = [];
       for (let c = 1; c <= maxCol; c++) {
@@ -439,7 +458,7 @@ async function pvLoadSheets(filePath) {
         const nf = cell.numFmt;
         const tx = pvText(cell.value, nf);
         const extra = pvCfEval(cfPlan, ws, r, c, valOf);
-        if (tx.red && !extra.color) extra.color = "#ff0000";
+        if (tx.red && !extra.color) extra.fmtRed = true; // MARKER_APRECONCILE_NEG_RED_PREVIEW_V1 -- Format [Red] ชนะสีตัวอักษรของ Cell (เหมือน Excel) | Conditional Format ที่ตั้งสีไว้ยังมาก่อน
         const css = pvCss(cell, extra);
         if (!tx.t && !css) continue;
         cells.push([c, tx.t, sid(css), tx.n ? 1 : 0]);
@@ -447,7 +466,7 @@ async function pvLoadSheets(filePath) {
       rows.push({ r, h: row.height ? Math.round(row.height * 1.333) : 0, cells });
     }
     const v = (ws.views && ws.views[0]) || {};
-    sheets.push({ name: ws.name, cols, hidden, merges, rows, grid: v.showGridLines !== false, truncated: (ws.rowCount || 0) > PV_MAX_ROWS, totalRows: ws.rowCount || 0 });
+    sheets.push({ name: ws.name, cols, hidden, merges, rows, grid: v.showGridLines !== false, truncated: !paged && !opts.rowTo && totalRows > PV_MAX_ROWS, paged, totalRows });
   });
   return { sheets, styles };
 }
@@ -638,6 +657,7 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
           [REPORT_FILE_MODULE, bu, refId, filePath, fileName, owner, fillStartedAt, isDraft, draftSerial])).rows[0];
       }
       logActivityTs(owner, isDraft ? "FIRST_DRAFT" : "SAVE", { bu: row.bu, account, period, fileId: row.id });
+      if (isDraft) await tlSyncFirstDraft({ bu: row.bu, account, period, finish: true, by: owner }); // Timeline: First Draft Input Finish
       res.json({ file: { ...row, is_draft: isDraft, account, period, template: rep.template, size_bytes: buf.length, replaced: old.rows.length > 0 } });
     } catch (err) {
       console.error("[vatReconcile] report-files export error:", err);
@@ -727,6 +747,7 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
         }
       } catch (e) { console.error("[vatReconcile] ลบ First Draft หลัง Confirm ไม่สำเร็จ:", e.message); }
       logActivityTs(username, "CONFIRM", { bu: rec.bu, ...refParts(rec.ref_id), fileId: rec.id });
+      await tlSyncFirstDraft({ bu: rec.bu, ...refParts(rec.ref_id), finishFinal: true, by: username }); // Timeline: Final + First = Finish
       res.json({ ok: true, ...up.rows[0] });
     } catch (err) {
       console.error("[vatReconcile] report-files confirm error:", err);
@@ -745,6 +766,7 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
       if (!privileged && rec.owner_username !== username) return res.status(403).json({ error: "Release ได้เฉพาะเจ้าของไฟล์ หรือ Owner/Admin" });
       await pool.query(`UPDATE file_storage SET confirmed_at=NULL, confirmed_by=NULL, input_expire_at=NULL WHERE id=$1`, [rec.id]);
       logActivityTs(username, "RELEASE", { bu: rec.bu, ...refParts(rec.ref_id), fileId: rec.id });
+      { const rm = await tlRemain(rec.bu, rec.ref_id, rec.id); await tlSyncRevert({ bu: rec.bu, ...refParts(rec.ref_id), releaseOnly: true, remainDraft: rm.remainDraft, by: username }); } // Timeline: Final -> Pending
       res.json({ ok: true });
     } catch (err) {
       console.error("[vatReconcile] report-files release error:", err);
@@ -799,6 +821,7 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
       await pool.query(`UPDATE file_storage SET draft_note=$1 WHERE id=$2`, [note || null, rec.id]);
       const fq = await pool.query(`SELECT bu, ref_id FROM file_storage WHERE id=$1`, [rec.id]);
       logActivityTs(username, "DRAFT_NOTE", { bu: fq.rows[0]?.bu, ...refParts(fq.rows[0]?.ref_id), fileId: rec.id, note: note || null }); // Note ผูกกับ Timeline
+      if (note && fq.rows[0]) await tlSyncFirstDraft({ bu: fq.rows[0].bu, ...refParts(fq.rows[0].ref_id), note, by: username }); // Timeline: Note ช่อง First Draft
       res.json({ ok: true, note: note || null });
     } catch (err) {
       console.error("[vatReconcile] report-files note error:", err);
@@ -812,12 +835,13 @@ export default function createReportFilesRouter({ reconcileReportHandler }) {
       const username = req.user?.email ? await getUsernameByEmail(req.user.email) : "system";
       const appRole = req.user?.appRole || "";
       const privileged = appRole === "Owner" || appRole === "Admin";
-      const q = await pool.query(`SELECT id, file_path, owner_username FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
+      const q = await pool.query(`SELECT id, bu, ref_id, is_draft, draft_note, file_path, owner_username FROM file_storage WHERE id=$1 AND module=$2`, [req.params.id, REPORT_FILE_MODULE]);
       if (!q.rows.length) return res.status(404).json({ error: "ไม่พบไฟล์" });
       const rec = q.rows[0];
       if (!privileged && rec.owner_username !== username) return res.status(403).json({ error: "ลบได้เฉพาะเจ้าของไฟล์ หรือ Owner/Admin" });
       try { if (fs.existsSync(rec.file_path)) fs.unlinkSync(rec.file_path); } catch (e) { console.error("[vatReconcile] ลบไฟล์บน Disk ไม่สำเร็จ:", e.message); }
       await pool.query(`DELETE FROM file_storage WHERE id=$1`, [rec.id]);
+      { const rm = await tlRemain(rec.bu, rec.ref_id, rec.id); await tlSyncRevert({ bu: rec.bu, ...refParts(rec.ref_id), wasDraft: !!rec.is_draft, remainDraft: rm.remainDraft, remainFinal: rm.remainFinal, note: rec.draft_note, by: username }); } // Timeline: ย้อนกลับ (Rollback)
       res.json({ ok: true });
     } catch (err) {
       console.error("[vatReconcile] report-files delete error:", err);

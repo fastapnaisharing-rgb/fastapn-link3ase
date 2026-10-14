@@ -112,7 +112,7 @@ export async function buildBuWorkbook({ rows, period, buLabel, generatedBy, extr
   const rawData = rows.map((r) => withExtra(r, [
     r.doc_date == null ? null : String(r.doc_date), r.doc_no == null ? null : String(r.doc_no), r.site || null, r.pay_group || null, r.branch || null, r.tax_type || null,
     dash(r.invoice_ref), dash(r.supplier_code), dash(r.vendor_name), r.bus_type || null, dateOnly(r.payment_date), dateOnly(r.check_date), dash(r.check_no), r.receive_doc_no || null,
-    num(r.exp_amount), num(r.exp_vat), dash(r.bu), `aging ${r.aging_months} month`, r.period || null, r._taxGroup, r._person || "ไม่ระบุ", r.ap_batch_name || null,
+    num(r.exp_amount), num(r.exp_vat), dash(r._buDisp || r.bu), `aging ${r.aging_months} month`, r.period || null, r._taxGroup, r._person || "ไม่ระบุ", r.ap_batch_name || null,
   ]));
   styleHeaderSample(raw.addRow(rawHead));
   rawData.forEach((r) => raw.addRow(r));

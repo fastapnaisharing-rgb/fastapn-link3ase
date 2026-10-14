@@ -92,7 +92,7 @@ export default function ConfirmDialogHost() {
           </div>
         )}
 
-        <div style={{ fontSize: '13.5px', color: '#333', lineHeight: 1.65, marginBottom: '22px', whiteSpace: 'pre-line' }}>
+        <div style={{ fontSize: '13.5px', color: '#333', lineHeight: 1.65, marginBottom: '22px', whiteSpace: 'pre-line', maxHeight: 'calc(1.65em * 20)', overflowY: 'auto', paddingRight: '6px' }}> {/* MARKER_CONFIRMDIALOGHOST_MAX20LINES_V1 -- แสดงสูงสุด 20 บรรทัด เกินนี้ Scroll ในกล่องข้อความ (ปุ่ม ตกลง/ยกเลิก ไม่หลุดจอ) */}
           {dialog.message}
         </div>
 

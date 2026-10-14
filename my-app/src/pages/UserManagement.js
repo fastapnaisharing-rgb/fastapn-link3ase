@@ -5,6 +5,7 @@
   import { useUserRole } from '../contexts/useUserRole';
   import DeployMonitor, { RAMDashboardTab, CPUDashboardTab } from './DeployMonitor'; // MARKER_USERMANAGEMENT_CPU_DASHBOARD_TAB
   import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
+  import { DOC_FOLDERS, folderPermOk, folderPermLabel, PERM_TO_FOLDER } from '../docFolderConfig'; // MARKER_DOCFOLDER_CONFIG_V1
   import { broadcastWs, subscribeWs } from '../wsManager';
   import { confirmDialog } from '../confirmDialog';
 
@@ -27,7 +28,23 @@
     branch_list: 'Branch', company_list: 'Company',
     // MARKER_USERMANAGEMENT_RECYCLEBIN_SUMMARY_V2
     batch_list: 'Batch', batch_notifications: 'Batch Noti', bucket_list: 'Invoice',
+    // MARKER_RECYCLEBIN_SOURCE_GROUP_V1 -- ตารางระบบ/สิทธิ์ (ชื่อที่คนอ่านออก)
+    user_roles: 'ผู้ใช้', access_requests: 'คำขอสิทธิ์/สมัครใช้งาน', menu_user_grant: 'สิทธิ์รายบุคคล', menu_access_override: 'Override เมนู', menu_min_role: 'Permission ขั้นต่ำ',
+    vat_mail_sent_log: 'ประวัติส่งเมล VAT',
+    contract_list: 'สัญญา (Contract)', account_cpc_rules: 'กฎ Account → CPC', item_description_favorites: 'รายการโปรด Description', sm_code_list: 'SM Code',
+    vat_watchlist_notes: 'Watchlist — บันทึก', vat_watchlist_related_person: 'Watchlist — ผู้เกี่ยวข้อง', vat_mail_config: 'ตั้งค่าเมล VAT', vat_watchlist_bu_group_range: 'Watchlist — ช่วง BU Group',
+    menu_active_sessions: 'สถานะการใช้เมนู', ap_active_sessions: 'สถานะใช้งาน AP', ie_active_sessions: 'สถานะใช้งาน IE',
   };
+  // MARKER_RECYCLEBIN_SOURCE_GROUP_V1 -- แบ่งกลุ่ม "ข้อมูลมาจากส่วนไหนของระบบ" (หน้าตา/ป้ายเท่านั้น) | ตารางที่ไม่อยู่ในรายการ -> กลุ่ม "อื่นๆ"
+  const RECYCLE_SOURCE_GROUPS = [
+    { key: 'ap', label: 'AP', icon: '🧾', bg: '#e9ecf8', fg: '#3f4fa8', tables: ['bucket_list', 'batch_list', 'batch_notifications', 'contract_list', 'account_cpc_rules', 'item_description_favorites'] },
+    { key: 'vat', label: 'VAT', icon: '📄', bg: '#e8f6ee', fg: '#1d7a4a', tables: ['vat_watchlist_notes', 'vat_watchlist_related_person', 'vat_mail_config', 'vat_watchlist_bu_group_range', 'vat_mail_sent_log'] },
+    { key: 'master', label: 'Master Data', icon: '🗂️', bg: '#e6f0fd', fg: '#1f5fbf', tables: ['itemcode_list', 'supplier_list', 'vendor_category', 'account_list', 'cpc_list', 'sub_acc_list', 'branch_list', 'company_list', 'sm_code_list'] },
+    { key: 'users', label: 'ผู้ใช้ / สิทธิ์', icon: '🔑', bg: '#fff3dc', fg: '#9a5b00', tables: ['user_roles', 'access_requests', 'menu_user_grant', 'menu_access_override', 'menu_min_role'] },
+    { key: 'system', label: 'ข้อมูลระบบ (อัตโนมัติ)', icon: '⚙️', bg: '#f1f3f7', fg: '#6b7a90', tables: ['menu_active_sessions', 'ap_active_sessions', 'ie_active_sessions'] },
+  ];
+  const RECYCLE_GROUP_OTHER = { key: 'other', label: 'อื่นๆ', icon: '📦', bg: '#f5f5f5', fg: '#777', tables: [] };
+  const recycleGroupOf = (table) => RECYCLE_SOURCE_GROUPS.find(g => g.tables.includes(table)) || RECYCLE_GROUP_OTHER;
 
   // MARKER_USERMANAGEMENT_RECYCLEBIN_SUMMARY_V2
   // ── Config-driven: กำหนด "สูตรสรุปข้อมูล" ของแต่ละ Table ไว้ที่เดียว ────────
@@ -42,7 +59,7 @@
         .filter(Boolean).join(' · ');
     },
     batch_notifications: (d) => d.title || d.batch_id,
-    bucket_list: (d) => d.description,
+    bucket_list: (d) => [d.invoice_no && `Invoice No ${d.invoice_no}`, d.bu && `BU ${d.bu}`, d.vendor_name].filter(Boolean).join(' · ') || d.description, // MARKER_RECYCLEBIN_INVOICE_SUMMARY_V1
     company_list: (d) => d['THAI COMPANY NAME'] || d.Name,
     account_list: (d) => d['Account_Name'] || d.Name,
     itemcode_list: (d) => d.description || d.Name,
@@ -51,24 +68,26 @@
     cpc_list: (d) => d.Name || d.description,
     sub_acc_list: (d) => d.Name || d.description,
     branch_list: (d) => d['Branch Code'] || d.Name,
+    user_roles: (d) => [d.username || d.email, d.role && `Role ${d.role}`].filter(Boolean).join(' · '),
+    access_requests: (d) => [d.username || d.user_name || d.email, d.type || d.request_type, d.status].filter(Boolean).join(' · '),
+    menu_active_sessions: (d) => [d.user_name || d.session_id, d.menu_id && `เมนู ${d.menu_id}`].filter(Boolean).join(' · '),
+    ap_active_sessions: (d) => [d.user_name || d.session_id, d.menu_id && `เมนู ${d.menu_id}`].filter(Boolean).join(' · '),
+    ie_active_sessions: (d) => [d.user_name || d.session_id, d.menu_id && `เมนู ${d.menu_id}`].filter(Boolean).join(' · '),
+    vat_mail_sent_log: (d) => [d.supplier_code, d.sent_by].filter(Boolean).join(' · '),
   };
   const summarizeRecycleBinData = (item) => {
     const d = item.data || {};
     const summarizer = RECYCLE_BIN_SUMMARIZERS[item.source_table];
     const result = summarizer ? summarizer(d) : null;
-    return result || JSON.stringify(d).slice(0, 60) + '...';
+    if (result) return result;
+    // MARKER_RECYCLEBIN_SOURCE_GROUP_V1 -- ไม่มีสูตรเฉพาะ -> แสดง "ชื่อฟิลด์: ค่า" 3 ตัวแรกที่เป็นข้อความ/ตัวเลข แทน JSON ดิบ
+    const pairs = Object.entries(d).filter(([, v]) => v !== null && v !== '' && typeof v !== 'object').slice(0, 3).map(([k, v]) => `${k}: ${String(v).slice(0, 24)}`);
+    return pairs.length ? pairs.join(' · ') : JSON.stringify(d).slice(0, 60) + '...';
   };
 
   const HARD_DELETE_TABLES = [];
   
-  const DOC_FOLDERS = [
-    // MARKER_DOCFOLDER_PERMKEY_FIX_V1
-    { key: 'ap',   label: 'AP Manual',      icon: '🧾', permKey: 'Manual', color: '#E6F1FB', textColor: '#0C447C' },
-    { key: 'vat',  label: 'VAT Control',    icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A' },
-    { key: 'ie',   label: 'I-Expense',      icon: '💸', permKey: 'IE',    color: '#FAEEDA', textColor: '#633806' },
-    { key: 'gl',   label: 'GL Report',      icon: '📊', permKey: 'GL',    color: '#EEEDFE', textColor: '#3C3489' },
-    { key: 'ipro', label: 'I-Pro Interface',icon: '🔗', permKey: 'I-Pro', color: '#FAECE7', textColor: '#712B13' },
-  ];
+  // MARKER_DOCFOLDER_CONFIG_V1 -- รายการกล่องมาจาก docFolderConfig.js (เพิ่มกล่องใหม่ที่ไฟล์นั้น แล้วที่นี่สร้างให้เอง)
 
   const IconTrash = () => ( 
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -106,6 +125,34 @@
   // ── FUNCTION_MENU_LIST ย้ายไป import MAINTENANCE_MENU_GROUPS จาก ────────
   // ── ../menuConfig แทนแล้ว (data-driven, sync กับ Flyout ใน App.js) ──────
 
+// MARKER_MIN_ROLE_SWITCH_V1 -- ตัวเลือก Permission ขั้นต่ำ แบบ Segmented (Viewer | Editor | Admin)
+const MIN_ROLE_STYLE = {
+  Viewer: { bg: '#e6f4ea', fg: '#1e7a3a', bd: '#9fd3ad', hint: 'ทุก Role เข้าได้' },
+  Editor: { bg: '#e7f0fd', fg: '#1a5fb4', bd: '#a9c6f2', hint: 'Editor ขึ้นไป' },
+  Admin:  { bg: '#fdf1dc', fg: '#9a5b00', bd: '#efc98a', hint: 'Admin ขึ้นไป' },
+};
+const MENU_ACCENTS = ['#2e9e63', '#3b7ddd', '#e0a030', '#5c6bc0', '#e05a5a']; // MARKER_ACCESS_REDESIGN_V1 -- สีแถบข้างการ์ด (หน้าตาเท่านั้น)
+const menuAccent = (k) => { let h = 0; for (const c of String(k)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return MENU_ACCENTS[h % MENU_ACCENTS.length]; };
+function MinRoleSwitch({ value, onChange, disabled }) {
+  return (
+    <div onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+      title={disabled ? 'เฉพาะ Owner เปลี่ยนได้' : 'Role ขั้นต่ำที่เข้าเมนูนี้ได้ (Owner เข้าได้เสมอ)'}
+      style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '10px' }}>
+      <span style={{ fontSize: '11px', color: '#8a94a6', whiteSpace: 'nowrap' }}>Permission ขั้นต่ำ</span>
+      <div style={{ display: 'inline-flex', padding: '3px', background: '#f1f4f9', borderRadius: '999px', border: 'none', opacity: disabled ? 0.7 : 1 }}>
+        {['Viewer', 'Editor', 'Admin'].map((r) => {
+          const on = value === r; const c = MIN_ROLE_STYLE[r];
+          return (
+            <button key={r} type="button" disabled={disabled} onClick={() => { if (!on) onChange(r); }} title={c.hint}
+              style={{ padding: '5px 14px', fontSize: '12px', fontWeight: on ? 700 : 500, borderRadius: '999px', border: on ? `1px solid ${c.bd}` : '1px solid transparent', background: on ? c.bg : 'transparent', color: on ? c.fg : '#7b8496', cursor: disabled ? 'not-allowed' : (on ? 'default' : 'pointer'), transition: 'all .15s' }}>
+              {r}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
   function MaintenanceSection({ currentUser, userName }) {
     const [fullMaintenance, setFullMaintenance] = useState(false);
     const [maintenanceMsg, setMaintenanceMsg] = useState('ระบบปิดปรับปรุงชั่วคราว กรุณารอสักครู่');
@@ -216,15 +263,15 @@
 
     const ToggleSwitch = ({ value, onChange, color }) => (
       <div onClick={() => onChange(!value)}
-        style={{ width: '44px', height: '24px', borderRadius: '12px', background: value ? (color || '#0F6E56') : '#ccc', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}>
-        <div style={{ width: '18px', height: '18px', background: 'white', borderRadius: '50%', position: 'absolute', top: '3px', left: value ? '23px' : '3px', transition: 'left 0.2s' }} />
+        style={{ width: '46px', height: '26px', borderRadius: '13px', background: value ? (color || '#0F6E56') : '#d5d9e0', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0, boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.12)' }}>
+        <div style={{ width: '20px', height: '20px', background: 'white', borderRadius: '50%', position: 'absolute', top: '3px', left: value ? '23px' : '3px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
       </div>
     );
 
     return (
       <div style={{ marginBottom: '16px' }}>
-        <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', marginBottom: '8px' }}>🔧 System Maintenance</div>
-        <div style={{ background: fullMaintenance ? '#FCEBEB' : scheduledAt ? '#FFF8E1' : 'white', border: `0.5px solid ${fullMaintenance ? '#f7c1c1' : scheduledAt ? '#ffc107' : '#e8e8e8'}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}> {/* MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- เพิ่มสถานะที่ 3 "scheduled" (สีเหลือง) ระหว่าง off/closed */}
+        <div style={{ fontSize: '11px', fontWeight: '700', color: '#5b6b82', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: '10px' }}>🔧 System Maintenance</div>
+        <div style={{ background: fullMaintenance ? '#FCEBEB' : scheduledAt ? '#FFF8E1' : 'white', border: `0.5px solid ${fullMaintenance ? '#f7c1c1' : scheduledAt ? '#ffc107' : '#e8e8e8'}`, borderRadius: '14px', padding: '16px 20px', marginBottom: '12px', boxShadow: '0 1px 3px rgba(20,40,80,0.06)' }}> {/* MARKER_MAINT_REDESIGN_V1 */} {/* MARKER_USERMANAGEMENT_MAINTENANCE_COUNTDOWN_V1 -- เพิ่มสถานะที่ 3 "scheduled" (สีเหลือง) ระหว่าง off/closed */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: '13px', fontWeight: '500', color: fullMaintenance ? '#791F1F' : scheduledAt ? '#856404' : '#1a3a5c', marginBottom: '2px' }}>
@@ -251,9 +298,9 @@
             </div>
           )}
         </div>
-        <div style={{ background: 'white', border: '0.5px solid #e8e8e8', borderRadius: '8px', padding: '12px 16px', marginBottom: '8px' }}>
-          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c', marginBottom: '2px' }}>⚙️ Selective Maintenance</div>
-          <div style={{ fontSize: '11px', color: maintenanceMenus.length > 0 ? '#856404' : '#888', marginBottom: '12px' }}>
+        <div style={{ background: 'white', border: '0.5px solid #e6e9f0', borderRadius: '14px', padding: '18px 20px', marginBottom: '12px', boxShadow: '0 1px 3px rgba(20,40,80,0.06)' }}>
+          <div style={{ fontSize: '15px', fontWeight: '700', color: '#1a3a5c', marginBottom: '3px' }}>⚙️ Selective Maintenance</div>
+          <div style={{ fontSize: '12px', color: maintenanceMenus.length > 0 ? '#9a6a00' : '#8a94a6', marginBottom: '16px' }}>
             {maintenanceMenus.length > 0 ? `ปิดอยู่ ${maintenanceMenus.length} รายการ` : 'ปิดทั้งเมนูหรือเฉพาะเมนูย่อยก็ได้ — คนอื่นยังใช้งานส่วนที่เหลือได้ปกติ'}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -261,10 +308,10 @@
               const hasMultiple = group.items.length > 1;
               const allClosed = group.items.every(it => maintenanceMenus.includes(it.id));
               return (
-                <div key={group.id} style={{ border: `0.5px solid ${allClosed ? '#ffc107' : '#e8eaf0'}`, borderRadius: '8px', overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', background: allClosed ? '#fffdf0' : '#f8f9fa' }}>
+                <div key={group.id} style={{ border: `1px solid ${allClosed ? '#f3c969' : '#e6e9f0'}`, borderRadius: '12px', overflow: 'hidden', boxShadow: '0 1px 2px rgba(20,40,80,0.04)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 16px', background: allClosed ? 'linear-gradient(90deg,#fff8e1,#fffdf3)' : 'linear-gradient(90deg,#f3f6fb,#fafbfd)', borderBottom: '1px solid #eef1f6' }}>
                     <span style={{ fontSize: '15px' }}>{group.icon}</span>
-                    <span style={{ fontSize: '12px', fontWeight: '500', flex: 1, color: '#1a3a5c' }}>{group.label}</span>
+                    <span style={{ fontSize: '13px', fontWeight: '700', flex: 1, color: '#1a3a5c' }}>{group.label}</span>
                     {(() => {
                       const groupActive = group.items.reduce((s, it) => s + (activeCounts[it.id] || 0), 0);
                       return groupActive > 0 ? (
@@ -282,13 +329,13 @@
                         const isOff = maintenanceMenus.includes(it.id);
                         return (
                           <div key={it.id} onClick={() => handleItemToggle(it.id)}
-                            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 12px 6px 20px', cursor: 'pointer', background: isOff ? '#fffdf0' : 'transparent' }}
-                            onMouseEnter={e => { if (!isOff) e.currentTarget.style.background = '#f8f9fa'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = isOff ? '#fffdf0' : 'transparent'; }}>
-                            <div style={{ width: '14px', height: '14px', borderRadius: '4px', border: `1.5px solid ${isOff ? '#e74c3c' : '#ddd'}`, background: isOff ? '#e74c3c' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                              {isOff && <span style={{ color: 'white', fontSize: '10px', lineHeight: 1 }}>✓</span>}
+                            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 16px 8px 24px', cursor: 'pointer', background: isOff ? '#fffbea' : 'transparent', borderBottom: '1px solid #f4f6fa', transition: 'background .15s' }}
+                            onMouseEnter={e => { if (!isOff) e.currentTarget.style.background = '#f6f9ff'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = isOff ? '#fffbea' : 'transparent'; }}>
+                            <div style={{ width: '18px', height: '18px', borderRadius: '6px', border: `1.5px solid ${isOff ? '#e0573d' : '#cfd5df'}`, background: isOff ? '#e0573d' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: isOff ? '0 1px 2px rgba(224,87,61,0.35)' : 'none' }}>
+                              {isOff && <span style={{ color: 'white', fontSize: '12px', lineHeight: 1, fontWeight: 700 }}>✓</span>}
                             </div>
-                            <span style={{ fontSize: '12px', color: isOff ? '#888' : '#333', textDecoration: isOff ? 'line-through' : 'none', flex: 1 }}>{it.icon} {it.label}</span>
+                            <span style={{ fontSize: '13px', color: isOff ? '#9aa1ad' : '#2b3445', textDecoration: isOff ? 'line-through' : 'none', flex: 1 }}>{it.icon} {it.label}</span>
                             {activeCounts[it.id] > 0 && (
                               <span style={{ fontSize: '10px', background: '#FFF3CD', color: '#856404', padding: '1px 7px', borderRadius: '20px', whiteSpace: 'nowrap' }}>👥 {activeCounts[it.id]}</span>
                             )}
@@ -344,14 +391,40 @@
   function AccessControlTab({ users, currentUser, userName, isOwner, userRole, userPermissions, onLabelChange }) {
     const [overrides, setOverrides] = useState([]);
     const [openFolder, setOpenFolder] = useState(null);
+    const [openGlSub, setOpenGlSub] = useState(null); // MARKER_GL_REPORT_SUBBOX_OPEN_V1 -- กล่องด้านในของ GL Report กดเข้าดู Permission/รายชื่อได้ทุกกล่อง
+    const [openGlPerm, setOpenGlPerm] = useState(null); // MARKER_GL_REPORT_PERM_LINES_V1 -- แถว Permission เป็นบรรทัดๆ กดเปิดแล้วค่อยเห็นรายชื่อ
     const [saving, setSaving] = useState(false);
     const [pendingChanges, setPendingChanges] = useState({});
     // ── Sub-tab: Document Access (Owner เท่านั้น) / AP Manual Panel (Owner + Admin ที่มี Permission Manual) ──
     const [subTab, setSubTab] = useState(isOwner ? 'document' : 'apmanual');
     // MARKER_MENUACCESS_STATE_V2
     const [menuOverrides, setMenuOverrides] = useState([]);
+    const [menuPermMap, setMenuPermMap] = useState({}); // MARKER_MENU_PERMISSION_CONFIG_V1 -- { 'gl-ap-recon': ['Manual','IE','I-Pro'] } สิทธิ์ที่เข้าเมนูได้
     const [selectedMenuUserId, setSelectedMenuUserId] = useState('');
     const [menuSaving, setMenuSaving] = useState(false);
+    // MARKER_MENU_MIN_ROLE_V1 -- สิทธิ์ขั้นต่ำ (Role) ต่อเมนู: Viewer = ทุก Role เข้าได้ | Editor = Editor ขึ้นไป | Admin = Admin ขึ้นไป (Owner ตั้งได้เท่านั้น)
+    const [minRoles, setMinRoles] = useState({});
+    // MARKER_MENU_USER_GRANT_V1 -- ให้สิทธิ์/ปลดสิทธิ์รายบุคคลต่อเมนู (ตาราง menu_user_grant) | granted=true เข้าเมนูได้แม้ Role ต่ำกว่าขั้นต่ำ | granted=false ห้ามเข้า | ไม่มีแถว = ตามขั้นต่ำ
+    const [menuGrants, setMenuGrants] = useState([]);
+    const fetchMenuGrants = async () => { try { const r = await apiFetch('/menu_user_grant'); setMenuGrants(Array.isArray(r) ? r : []); } catch (err) { console.error('fetchMenuGrants error:', err); } };
+    const grantOf = (userId, menuId) => { const g = menuGrants.find(x => x.user_id === userId && x.menu_id === menuId); return g ? !!g.granted : undefined; };
+    const handleGrant = async (userId, menuId, granted) => {
+      setMenuGrants(prev => [...prev.filter(x => !(x.user_id === userId && x.menu_id === menuId)), { user_id: userId, menu_id: menuId, granted }]);
+      try {
+        await apiFetch('/menu_user_grant/upsert?onConflict=user_id,menu_id', { method: 'POST', body: JSON.stringify({ user_id: userId, menu_id: menuId, granted, updated_by: userName || '' }) });
+        broadcastWs('menu_user_grant_updated', { user_id: userId, menu_id: menuId });
+      } catch (err) { console.error('handleGrant error:', err); fetchMenuGrants(); }
+    };
+    const fetchMinRoles = async () => {
+      try { const r = await apiFetch('/menu_min_role'); const m = {}; (Array.isArray(r) ? r : []).forEach(x => { m[x.menu_id] = x.min_role; }); setMinRoles(m); } catch (err) { console.error('fetchMinRoles error:', err); }
+    };
+    const handleMinRoleChange = async (menuId, role) => {
+      setMinRoles(prev => ({ ...prev, [menuId]: role }));
+      try {
+        await apiFetch('/menu_min_role/upsert?onConflict=menu_id', { method: 'POST', body: JSON.stringify({ menu_id: menuId, min_role: role, updated_by: userName || '' }) });
+        broadcastWs('menu_min_role_updated', { menu_id: menuId });
+      } catch (err) { console.error('handleMinRoleChange error:', err); fetchMinRoles(); }
+    };
     const [openMenuGroup, setOpenMenuGroup] = useState(null);
 
     // ── 5 Tab ต่อโมดูล — groupId ต้องตรงกับ id ใน MAINTENANCE_MENU_GROUPS ──
@@ -383,7 +456,7 @@
     // MARKER_DOCACCESS_PERMISSION_FILTER_V8
     // ── Document Access: Owner เห็นทุก Folder / Admin เห็นเฉพาะ Folder ที่มี Permission ──
     const visibleDocFolders = DOC_FOLDERS.filter(f =>
-      isOwner || (userRole === 'Admin' && !!userPermissions?.[f.permKey])
+      isOwner || (userRole === 'Admin' && folderPermOk(userPermissions, f))
     );
     // Owner ปรับ User ได้ทุกคนที่มี Permission โมดูลนี้ (รวม Admin)
     // Admin ปรับได้เฉพาะคนที่มี Permission โมดูลนี้ + ไม่ใช่ Admin
@@ -413,7 +486,31 @@
       }
     };
 
-    useEffect(() => { fetchOverrides(); fetchMenuOverrides(); }, []);
+    const fetchMenuPerms = async () => {
+      try {
+        const r = await apiFetch('/ap-reconcile/menu-permissions');
+        setMenuPermMap((r && r.menus) || {});
+      } catch (err) { console.error('fetchMenuPerms error:', err); }
+    };
+    useEffect(() => { fetchOverrides(); fetchMenuOverrides(); fetchMenuPerms(); fetchMinRoles(); fetchMenuGrants(); }, []);
+
+    // MARKER_MENU_PERMISSION_CONFIG_V1 -- GL Access: ตั้ง "สิทธิ์ไหนเข้าเมนูได้" เป็นรายสิทธิ์ (ไม่ใช่รายชื่อ User) | เปิดไว้ = ผู้ใช้ที่มีสิทธิ์นั้นเข้าเมนูได้
+    const GL_PERM_ORDER = ['Manual', 'IE', 'I-Pro', 'VAT', 'GL', 'Function'];
+    const handleMenuPermToggle = async (menuKey, permKey, value) => {
+      const before = menuPermMap[menuKey] || [];
+      const next = value ? [...new Set([...before, permKey])] : before.filter(k => k !== permKey);
+      setMenuPermMap(prev => ({ ...prev, [menuKey]: next }));
+      setMenuSaving(true);
+      try {
+        await apiFetch('/ap-reconcile/menu-permissions', { method: 'PUT', body: JSON.stringify({ menu_key: menuKey, perm_key: permKey, allowed: value }) });
+        broadcastWs('menu_permission_updated', { menu_key: menuKey });
+        broadcastWs('doc_access_updated', { folder_key: 'gl' }); // MARKER_GL_REPORT_FOLLOWS_GL_ACCESS_V1 -- กล่อง GL Report ตามสิทธิ์ GL Access อัตโนมัติ
+      } catch (err) {
+        console.error('handleMenuPermToggle error:', err);
+        window.alert(err?.message || 'บันทึกไม่สำเร็จ');
+        fetchMenuPerms();
+      } finally { setMenuSaving(false); }
+    };
 
 
 
@@ -426,7 +523,11 @@
       }
 
       // Admin และ role อื่น — ใช้ permission + override ปกติ
-      const baseAccess = user.permissions?.[folder?.permKey] ?? false;
+      // MARKER_GL_REPORT_OVERRIDE_V1 -- กล่อง GL: สิทธิ์ตั้งต้น = Permission ที่เปิดไว้ใน GL Access (menu_permission_config) แล้ว Override รายคนทับได้
+      const glPermList = menuPermMap['gl-ap-recon'] || ['Manual', 'IE', 'I-Pro'];
+      const baseAccess = folderKey === 'gl'
+        ? glPermList.some(k => !!user.permissions?.[k])
+        : folderPermOk(user.permissions, folder); // MARKER_DOCFOLDER_GL_BY_PERMISSION_V1
 
       const override = overrides.find(
         o => o.user_id === user.id && o.folder_key === folderKey
@@ -550,8 +651,12 @@
     const nonOwnerUsers = users.filter(u => u.role !== 'Owner');
 
     return (
-      <div>
-        <div style={{ display: 'flex', gap: '4px', borderBottom: '2px solid #e8e8e8', paddingTop: '8px', position: 'sticky', top: 0, background: 'white', zIndex: 5 }}>
+      // MARKER_SYSTEMCONSOLE_FIXED_HEIGHT_V1 -- ใช้แพทเทิร์นเดียวกับ Recycle Bin / Activity Log: ความสูงคงที่ = จอ - Header หลัก - Padding แล้วเลื่อนเฉพาะเนื้อหาด้านใน (หัว Tab ไม่เลื่อน)
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--console-header-height, 180px) - 40px)' }}>
+                <style>{`.bo-hide-scrollbar, .bo-hide-scrollbar * { scrollbar-width: none; -ms-overflow-style: none; } .bo-hide-scrollbar::-webkit-scrollbar, .bo-hide-scrollbar *::-webkit-scrollbar { display: none; width: 0; height: 0; }`}</style>
+        {/* MARKER_SYSTEMCONSOLE_STICKY_HEADER_V1 -- Access Panel / Period Panel + Tab ชั้น 2 ตรึงต่อจาก Header หลัก (ตรึงตั้งแต่เส้นนี้ขึ้นไป) */}
+        <div style={{ flexShrink: 0, background: 'white' }}>
+        <div style={{ display: 'flex', gap: '4px', borderBottom: '2px solid #e8e8e8', paddingTop: '8px' }}>
           {(isOwner || visibleAccessTabs.length > 0) && (
             <button onClick={() => setSubTab(isOwner ? 'document' : (visibleAccessTabs[0]?.id || ''))}
               style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: ACCESS_PANEL_TABS.includes(subTab)?'#1a3a5c':'#888', fontSize: '13px', fontWeight: ACCESS_PANEL_TABS.includes(subTab)?'500':'400', cursor: 'pointer', borderBottom: ACCESS_PANEL_TABS.includes(subTab)?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
@@ -566,22 +671,23 @@
 
         {/* MARKER_ACCESSPANEL_INNERTABS_V3 — Tab ชั้น 2 โผล่เมื่ออยู่ในกลุ่ม Access Panel */}
         {ACCESS_PANEL_TABS.includes(subTab) && (
-          <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid #f0f0f0', padding: '8px 0 0 16px', background: '#fafafa', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid #e9edf4', padding: '10px 16px', background: '#f4f6fb', flexWrap: 'wrap' }}> {/* MARKER_ACCESS_REDESIGN_V1 */}
             {(isOwner || visibleDocFolders.length > 0) && (
               <button onClick={() => setSubTab('document')}
-                style={{ padding: '6px 12px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab==='document'?'#1a3a5c':'#999', fontSize: '12px', fontWeight: subTab==='document'?'500':'400', cursor: 'pointer', borderBottom: subTab==='document'?'2px solid #1a3a5c':'2px solid transparent' }}>
+                style={{ padding: '6px 16px', background: subTab==='document' ? 'white' : 'transparent', color: subTab==='document' ? '#1a3a5c' : '#8a94a6', fontSize: '12.5px', fontWeight: subTab==='document' ? 700 : 500, cursor: 'pointer', borderRadius: '999px', border: subTab==='document' ? '1px solid #d6e2f5' : '1px solid transparent', boxShadow: subTab==='document' ? '0 1px 3px rgba(20,40,80,0.10)' : 'none', transition: 'all .15s' }}>
                 Document Access
               </button>
             )}
             {visibleAccessTabs.map(tab => (
               <button key={tab.id} onClick={() => setSubTab(tab.id)}
-                style={{ padding: '6px 12px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: subTab===tab.id?'#1a3a5c':'#999', fontSize: '12px', fontWeight: subTab===tab.id?'500':'400', cursor: 'pointer', borderBottom: subTab===tab.id?'2px solid #1a3a5c':'2px solid transparent' }}>
+                style={{ padding: '6px 16px', background: subTab===tab.id ? 'white' : 'transparent', color: subTab===tab.id ? '#1a3a5c' : '#8a94a6', fontSize: '12.5px', fontWeight: subTab===tab.id ? 700 : 500, cursor: 'pointer', borderRadius: '999px', border: subTab===tab.id ? '1px solid #d6e2f5' : '1px solid transparent', boxShadow: subTab===tab.id ? '0 1px 3px rgba(20,40,80,0.10)' : 'none', transition: 'all .15s' }}>
                 {tab.label}
               </button>
             ))}
           </div>
         )}
-        <div style={{ paddingTop: '16px' }}>
+        </div>
+        <div style={{ paddingTop: '16px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
 
         {subTab === 'apmanual' && <SystemSettingsTab isOwner={isOwner} isAdmin={!isOwner} userName={userName} userRole={userRole} userPermissions={userPermissions} onLabelChange={onLabelChange} />}
 
@@ -589,6 +695,62 @@
           if (subTab !== tab.id) return null;
           const group = MAINTENANCE_MENU_GROUPS.find(g => g.id === tab.groupId);
           if (!group) return null;
+          if (tab.id === 'access-gl') { // MARKER_MENU_PERMISSION_CONFIG_V1 -- GL Access = รายการสิทธิ์ (Permission) ต่อเมนู แทนรายชื่อ User
+            return (
+              <div key={tab.id}>
+                <div style={{ fontSize: '12px', fontWeight: '500', color: '#1a3a5c', margin: '12px 0 8px' }}>{group.icon} {tab.label}</div>
+                <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px' }}>
+                  เลือกว่า "สิทธิ์ไหน" เข้าเมนูนี้ได้ — เปิดไว้ = ผู้ใช้ที่มีสิทธิ์นั้นเข้าได้ (มีสิทธิ์ใดสิทธิ์หนึ่งที่เปิดอยู่ก็เข้าได้) · กด ⚙️ เพื่อตั้งค่า
+                </div>
+                {group.items.map(item => {
+                  const itemKey = `${tab.id}_${item.id}`;
+                  const isOpen = openMenuGroup === itemKey;
+                  const allowedPerms = menuPermMap[item.id] || item.requiredPermissions || [];
+                  const eligibleUsers = users.filter(u => u.role !== 'Owner' && allowedPerms.some(k => !!u.permissions?.[k]));
+                  return (
+                    <div key={item.id} style={{ marginBottom: '8px' }}>
+                      <div onDoubleClick={() => setOpenMenuGroup(isOpen ? null : itemKey)} title="ดับเบิลคลิกเพื่อเปิด/ปิด" style={{ userSelect: 'none', background: 'white', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#e8e8e8'}`, borderLeft: `4px solid ${menuAccent(item.id)}`, borderRadius: isOpen ? '14px 14px 0 0' : '14px', boxShadow: '0 1px 3px rgba(20,40,80,0.06)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: group.color || '#eee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{item.icon}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{item.label}</div>
+                          <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
+                            เข้าได้ด้วยสิทธิ์ {allowedPerms.length ? allowedPerms.join(' · ') : '—'} · ผู้ใช้ที่เข้าได้ {eligibleUsers.length} คน
+                          </div>
+                        </div>
+                        <MinRoleSwitch value={minRoles[item.id] || (['vat-watchlist-ops', 'vat-dashboard'].includes(item.id) ? 'Viewer' : 'Editor')} disabled={!isOwner} onChange={(r) => handleMinRoleChange(item.id, r)} />
+                        <button onClick={() => setOpenMenuGroup(isOpen ? null : itemKey)}
+                          style={{ padding: '7px 14px', borderRadius: '10px', border: `1px solid ${isOpen ? '#1a3a5c' : '#d9dfeb'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#4a5b73', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          ⚙️ {isOpen ? 'ปิด' : 'ตั้งค่า'}
+                        </button>
+                      </div>
+                      {isOpen && (
+                        <div style={{ background: 'white', border: '0.5px solid #1a3a5c', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '14px 16px' }}>
+                          {GL_PERM_ORDER.map(permKey => {
+                            const on = allowedPerms.includes(permKey);
+                            const holders = users.filter(u => u.role !== 'Owner' && !!u.permissions?.[permKey]).length;
+                            return (
+                              <div key={permKey} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: '0.5px solid #f0f0f0' }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: '13px', fontWeight: '500', color: on ? '#27500A' : '#555' }}>{permKey}</div>
+                                  <div style={{ fontSize: '10.5px', color: '#888' }}>มีสิทธิ์นี้ {holders} คน</div>
+                                </div>
+                                <Toggle value={on} onChange={(v) => handleMenuPermToggle(item.id, permKey, v)} />
+                              </div>
+                            );
+                          })}
+                          <div style={{ paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', color: '#888' }}>{menuSaving ? '💾 กำลังบันทึก...' : '💡 Toggle เปิด/ปิด — บันทึกทันที · Owner เข้าได้เสมอ'}</span>
+                            <button onClick={() => setOpenMenuGroup(null)}
+                              style={{ padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ปิด</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          }
           const targetUsers = targetUsersFor(tab.permKey);
           return (
             <div key={tab.id}>
@@ -600,20 +762,25 @@
               {group.items.map(item => {
                 const itemKey = `${tab.id}_${item.id}`;
                 const isOpen = openMenuGroup === itemKey;
-                const canEditUsers = targetUsers.filter(u => getEffectiveMenu(u, item.id, tab.permKey).canEdit);
-                const viewOnlyUsers = targetUsers.filter(u => !getEffectiveMenu(u, item.id, tab.permKey).canEdit);
+                const hasAccessNow = (u) => grantOf(u.id, item.id) === true || (grantOf(u.id, item.id) !== false && getEffectiveMenu(u, item.id, tab.permKey).canEdit); // MARKER_MENU_USER_GRANT_V1
+                const canEditUsers = targetUsers.filter(u => hasAccessNow(u));
+                const viewOnlyUsers = targetUsers.filter(u => !hasAccessNow(u));
                 return (
                   <div key={item.id} style={{ marginBottom: '8px' }}>
-                    <div style={{ background: 'white', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#e8e8e8'}`, borderRadius: isOpen ? '8px 8px 0 0' : '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ width: '38px', height: '38px', borderRadius: '8px', background: group.color || '#eee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{item.icon}</div>
+                    <div onDoubleClick={() => setOpenMenuGroup(isOpen ? null : itemKey)} title="ดับเบิลคลิกเพื่อเปิด/ปิด" style={{ userSelect: 'none', background: 'white', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#e8e8e8'}`, borderLeft: `4px solid ${menuAccent(item.id)}`, borderRadius: isOpen ? '14px 14px 0 0' : '14px', boxShadow: '0 1px 3px rgba(20,40,80,0.06)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                      <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: group.color || '#eee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{item.icon}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{item.label}</div>
+                        <div style={{ fontSize: '14px', fontWeight: '600', color: '#1a3a5c' }}>{item.label}</div>
                         <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
-                          เข้าถึงได้ {canEditUsers.length} คน · ไม่มีสิทธิ์ {viewOnlyUsers.length} คน
+                          <span style={{ fontSize: '11px', padding: '2px 9px', borderRadius: '20px', background: '#e8f6ee', color: '#1d7a4a', marginRight: '6px' }}>✓ เข้าถึงได้ {canEditUsers.length} คน</span>
+                          <span style={{ fontSize: '11px', padding: '2px 9px', borderRadius: '20px', background: '#f1f3f7', color: '#7a8699' }}>ไม่มีสิทธิ์ {viewOnlyUsers.length} คน</span>
                         </div>
                       </div>
+                      {(
+                        <MinRoleSwitch value={minRoles[item.id] || (['vat-watchlist-ops', 'vat-dashboard'].includes(item.id) ? 'Viewer' : 'Editor')} disabled={!isOwner} onChange={(r) => handleMinRoleChange(item.id, r)} />
+                      )}
                       <button onClick={() => setOpenMenuGroup(isOpen ? null : itemKey)}
-                        style={{ padding: '5px 10px', borderRadius: '6px', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#ddd'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#555', fontSize: '12px', cursor: 'pointer' }}>
+                        style={{ padding: '7px 14px', borderRadius: '10px', border: `1px solid ${isOpen ? '#1a3a5c' : '#d9dfeb'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#4a5b73', fontSize: '12.5px', cursor: 'pointer' }}>
                         ⚙️ {isOpen ? 'ปิด' : 'ตั้งค่า'}
                       </button>
                     </div>
@@ -632,8 +799,12 @@
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontSize: '12px', fontWeight: '500', color: '#333' }}>{u.username || u.email}</div>
-                                    <div style={{ fontSize: '10px', color: '#888' }}>{u.role}</div>
+                                    <div style={{ fontSize: '10px', color: '#888' }}>{u.role}{grantOf(u.id, item.id) === true ? ' · ให้สิทธิ์รายบุคคล' : ''}</div>
                                   </div>
+                                  {u.role !== 'Owner' && (
+                                    <button onClick={() => handleGrant(u.id, item.id, false)} title="ปลดสิทธิ์: ห้ามเข้าเมนูนี้"
+                                      style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '6px', border: '0.5px solid #e3b4b4', background: '#fff5f5', color: '#a33', cursor: 'pointer' }}>ปลดสิทธิ์</button>
+                                  )}
                                   <span onClick={() => handleMenuToggle(u.id, item.id, 'is_visible', !eff.visible)}
                                     title={eff.visible ? 'มองเห็น (คลิกเพื่อซ่อน)' : 'ซ่อนอยู่ (คลิกเพื่อให้มองเห็น)'}
                                     style={{ fontSize: '16px', cursor: 'pointer', opacity: eff.visible ? 1 : 0.3, textDecoration: eff.visible ? 'none' : 'line-through', userSelect: 'none' }}>
@@ -657,8 +828,10 @@
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontSize: '12px', fontWeight: '500', color: '#555' }}>{u.username || u.email}</div>
-                                    <div style={{ fontSize: '10px', color: '#888' }}>{u.role}</div>
+                                    <div style={{ fontSize: '10px', color: '#888' }}>{u.role}{grantOf(u.id, item.id) === false ? ' · ปลดสิทธิ์แล้ว' : ''}</div>
                                   </div>
+                                  <button onClick={() => handleGrant(u.id, item.id, true)} title="ให้สิทธิ์: เข้าเมนูนี้ได้ แม้ Role ต่ำกว่าขั้นต่ำ"
+                                    style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '6px', border: '0.5px solid #9ccf9c', background: '#f2fbf2', color: '#256b25', cursor: 'pointer' }}>ให้สิทธิ์</button>
                                   <span onClick={() => handleMenuToggle(u.id, item.id, 'is_visible', !eff.visible)}
                                     title={eff.visible ? 'มองเห็น (คลิกเพื่อซ่อน)' : 'ซ่อนอยู่ (คลิกเพื่อให้มองเห็น)'}
                                     style={{ fontSize: '16px', cursor: 'pointer', opacity: eff.visible ? 1 : 0.3, textDecoration: eff.visible ? 'none' : 'line-through', userSelect: 'none' }}>
@@ -695,25 +868,131 @@
         {visibleDocFolders.map(folder => {
           const isOpen = openFolder === folder.key;
           const docTargetUsers = isOwner ? nonOwnerUsers : nonOwnerUsers.filter(u => u.role !== 'Admin');
-          const canAccess = docTargetUsers.filter(u => getPendingValue(u.id, folder.key));
-          const noAccess = docTargetUsers.filter(u => !getPendingValue(u.id, folder.key));
+          // MARKER_GL_REPORT_FOLLOWS_GL_ACCESS_V1 -- กล่อง GL Report = Central: ใครมีสิทธิ์ที่เปิดไว้ใน GL Access เข้าได้ทั้งหมดอัตโนมัติ (ไม่ตั้งรายคน)
+          const isGlAuto = folder.key === 'gl';
+          const glAllowedPerms = menuPermMap['gl-ap-recon'] || ['Manual', 'IE', 'I-Pro'];
+          const glHolds = (u) => glAllowedPerms.some(k => !!u.permissions?.[k]);
+          const canAccess = docTargetUsers.filter(u => (isGlAuto ? glHolds(u) || getEffective(u, 'gl').hasOverride : true) && getPendingValue(u.id, folder.key)); // MARKER_GL_REPORT_OVERRIDE_V1
+          const noAccess = docTargetUsers.filter(u => !getPendingValue(u.id, folder.key) && (!isGlAuto || glHolds(u)));
           const hasPending = hasPendingForFolder(folder.key);
           return (
             <div key={folder.key} style={{ marginBottom: '8px' }}>
-              <div style={{ background: 'white', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#e8e8e8'}`, borderRadius: isOpen ? '8px 8px 0 0' : '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '38px', height: '38px', borderRadius: '8px', background: folder.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{folder.icon}</div>
+              <div onDoubleClick={() => setOpenFolder(isOpen ? null : folder.key)} title="ดับเบิลคลิกเพื่อเปิด/ปิด" style={{ userSelect: 'none', background: 'white', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#e8e8e8'}`, borderLeft: `4px solid ${menuAccent(folder.key)}`, borderRadius: isOpen ? '14px 14px 0 0' : '14px', boxShadow: '0 1px 3px rgba(20,40,80,0.06)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: folder.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{folder.icon}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{folder.label}</div>
                   <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
-                    เข้าถึงได้ {canAccess.length} คน · ไม่มีสิทธิ์ {noAccess.length} คน
+                    {isGlAuto ? `ตามสิทธิ์ ${glAllowedPerms.length ? glAllowedPerms.join(' · ') : '—'} (ตั้งที่ GL Access) · ` : ''}เข้าถึงได้ {canAccess.length} คน · ไม่มีสิทธิ์ {noAccess.length} คน
                   </div>
                 </div>
+                <MinRoleSwitch value={minRoles['doc-' + folder.key] || 'Viewer'} disabled={!isOwner} onChange={(r) => handleMinRoleChange('doc-' + folder.key, r)} /> {/* MARKER_MIN_ROLE_SWITCH_V1 -- Document Access: ขั้นต่ำต่อโฟลเดอร์ (บังคับที่ Backend getDocAccess) */}
                 <button onClick={() => setOpenFolder(isOpen ? null : folder.key)}
-                  style={{ padding: '5px 10px', borderRadius: '6px', border: `0.5px solid ${isOpen ? '#1a3a5c' : '#ddd'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#555', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  style={{ padding: '7px 14px', borderRadius: '10px', border: `1px solid ${isOpen ? '#1a3a5c' : '#d9dfeb'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#4a5b73', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   ⚙️ {isOpen ? 'ปิด' : 'ตั้งค่า'}
                 </button>
               </div>
-              {isOpen && (
+              {isOpen && isGlAuto && (
+                <div style={{ background: 'white', border: '0.5px solid #1a3a5c', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '14px 16px' }}>
+                  <div style={{ fontSize: '12px', color: '#555', background: '#f8f9fa', padding: '8px 12px', borderRadius: '6px', marginBottom: '10px' }}>
+                    GL Report เป็นกล่อง Central — ใครมีสิทธิ์ที่เปิดไว้ใน <b>GL Access</b> เข้าได้อัตโนมัติ (ไม่ต้องตั้งรายคน) · ปรับสิทธิ์ที่ Access Panel &gt; GL Access
+                  </div>
+                  {/* MARKER_GL_REPORT_SHAREPOINT_PERM_BOX_V2 -- GL Report > กล่องด้านใน (ดึงจาก docFolderConfig.js subBoxes ชุดเดียวกับ Document Center) > Permission | กล่องที่ empty แสดงจางๆ รอไว้ | ดูอย่างเดียว */}
+                  {(folder.subBoxes || []).map(sb => {
+                    const subOpen = openGlSub === sb.key;
+                    return (
+                    <div key={sb.key} style={{ border: `0.5px solid ${subOpen ? '#1a3a5c' : '#e0e6ee'}`, borderRadius: '8px', marginBottom: '10px', overflow: 'hidden', background: 'white' }}>
+                      <div onClick={() => setOpenGlSub(subOpen ? null : sb.key)} style={{ background: subOpen ? '#eef3fa' : '#f9fbfd', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                        <div style={{ width: '30px', height: '30px', borderRadius: '6px', background: sb.bg || '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>{sb.icon}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{sb.title}</div>
+                          <div style={{ fontSize: '11px', color: '#888' }}>{sb.empty ? 'Coming soon' : (sb.desc || '')} · เข้าถึงได้ {canAccess.length} คน</div>
+                        </div>
+                        {sb.pill && <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', background: sb.pillBg || '#eee', color: '#0C447C', whiteSpace: 'nowrap' }}>{sb.pill}</span>}
+                        <span style={{ fontSize: '12px', color: '#888' }}>{subOpen ? '▾' : '›'}</span>
+                      </div>
+                      {subOpen && ['Manual', 'IE', 'I-Pro', 'VAT', 'GL', 'Function'].filter(k => isOwner || !!userPermissions?.[k]).map(k => {
+                        const holders = docTargetUsers.filter(u => !!u.permissions?.[k]);
+                        const permOn = glAllowedPerms.includes(k);
+                        const onList = holders.filter(u => getPendingValue(u.id, 'gl'));
+                        const offList = holders.filter(u => !getPendingValue(u.id, 'gl'));
+                        const pKey = `${sb.key}|${k}`;
+                        const pOpen = openGlPerm === pKey;
+                        const userRow = (u, on) => {
+                          const { hasOverride } = getEffective(u, 'gl');
+                          const isPending = pendingChanges[`${u.id}_gl`] !== undefined;
+                          return (
+                            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '0.5px solid #f0f0f0' }}>
+                              <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: on ? '#EAF3DE' : '#f5f5f5', color: on ? '#27500A' : '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0 }}>
+                                {(u.username || u.email || '?')[0].toUpperCase()}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '12px', fontWeight: '500', color: on ? '#333' : '#555' }}>{u.username || u.email}</div>
+                                <div style={{ fontSize: '10px', color: '#888' }}>
+                                  {u.role} · {folderPermLabel(u.permissions, { permKeys: glAllowedPerms })}
+                                  {(hasOverride || isPending) && <span style={{ marginLeft: '4px', color: on ? '#0F6E56' : '#e74c3c' }}>override</span>}
+                                </div>
+                              </div>
+                              {/* MARKER_GL_REPORT_EYE_V1 -- 👁️ มองเห็น (menu_access_override.is_visible ของเมนู gl-ap-recon) เหมือนแท็บ AP/VAT/IE Access */}
+                              {(() => { const eff = getEffectiveMenu(u, 'gl-ap-recon', k); return (
+                                <span onClick={() => handleMenuToggle(u.id, 'gl-ap-recon', 'is_visible', !eff.visible)}
+                                  title={eff.visible ? 'มองเห็น (คลิกเพื่อซ่อน)' : 'ซ่อนอยู่ (คลิกเพื่อให้มองเห็น)'}
+                                  style={{ fontSize: '16px', cursor: 'pointer', opacity: eff.visible ? 1 : 0.3, textDecoration: eff.visible ? 'none' : 'line-through', userSelect: 'none' }}>
+                                  👁️
+                                </span>
+                              ); })()}
+                              {permOn && <Toggle value={on} onChange={(v) => handleToggle(u.id, 'gl', v)} />}
+                            </div>
+                          );
+                        };
+                        return (
+                          <div key={k} style={{ borderTop: '0.5px solid #f0f0f0' }}>
+                            <div onClick={() => setOpenGlPerm(pOpen ? null : pKey)} style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', background: pOpen ? '#f7faf4' : 'white' }}>
+                              <span style={{ fontSize: '12px', color: '#888', width: '12px' }}>{pOpen ? '▾' : '›'}</span>
+                              <span style={{ flex: 1, fontSize: '13px', fontWeight: '500', color: permOn ? '#1a3a5c' : '#aaa' }}>{k}</span>
+                              <span style={{ fontSize: '11px', color: '#888' }}>{holders.length} คน</span>
+                              <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', background: permOn ? '#EAF3DE' : '#f0f0f0', color: permOn ? '#27500A' : '#999', whiteSpace: 'nowrap' }}>{permOn ? 'เข้าได้' : 'ไม่ได้เปิดใน GL Access'}</span>
+                            </div>
+                            {pOpen && (
+                              <div style={{ padding: '6px 16px 12px 34px' }}>
+                                {!permOn && <div style={{ fontSize: '11px', color: '#999', marginBottom: '6px' }}>Permission นี้ยังไม่ได้เปิดใน GL Access — ดูรายชื่ออย่างเดียว ปรับสวิตช์ไม่ได้</div>}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                  <div>
+                                    <div style={{ fontSize: '11px', fontWeight: '500', color: '#27500A', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '6px' }}>✅ เข้าถึงได้</div>
+                                    {onList.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มี</div>}
+                                    {onList.map(u => userRow(u, true))}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '11px', fontWeight: '500', color: '#791F1F', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '6px' }}>🚫 ไม่มีสิทธิ์</div>
+                                    {offList.length === 0 && <div style={{ fontSize: '12px', color: '#aaa' }}>ไม่มี</div>}
+                                    {offList.map(u => userRow(u, false))}
+                                  </div>
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#888', marginTop: '8px' }}>{saving ? '💾 กำลังบันทึก...' : '💡 Toggle เปิด/ปิด — บันทึกทันที · ค่า Override เป็นค่าเดียวต่อคน (มีผลกับ GL Report ทั้งหมด) · Owner เข้าได้เสมอ'}</div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    );
+                  })}
+                  {noAccess.length > 0 && (
+                    <>
+                      <div style={{ fontSize: '11px', fontWeight: '500', color: '#791F1F', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '6px' }}>🚫 ไม่มีสิทธิ์ ({noAccess.length})</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+                        {noAccess.map(u => (
+                          <span key={u.id} style={{ fontSize: '12px', padding: '3px 10px', borderRadius: '12px', background: '#f5f5f5', color: '#777' }}>{u.username || u.email}</span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <div style={{ borderTop: '0.5px solid #f0f0f0', paddingTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button onClick={() => setOpenFolder(null)}
+                      style={{ padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ปิด</button>
+                  </div>
+                </div>
+              )}
+              {isOpen && !isGlAuto && (
                 <div style={{ background: 'white', border: '0.5px solid #1a3a5c', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '14px 16px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '12px' }}>
                     <div>
@@ -730,7 +1009,7 @@
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: '12px', fontWeight: '500', color: '#333' }}>{u.username || u.email}</div>
                               <div style={{ fontSize: '10px', color: '#888' }}>
-                                {u.role} · {folder.permKey}={u.permissions?.[folder.permKey] ? 'Yes' : 'No'}
+                                {u.role} · {folderPermLabel(u.permissions, folder)}
                                 {(hasOverride || isPending) && <span style={{ marginLeft: '4px', color: '#0F6E56' }}>override</span>}
                               </div>
                             </div>
@@ -753,7 +1032,7 @@
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: '12px', fontWeight: '500', color: '#555' }}>{u.username || u.email}</div>
                               <div style={{ fontSize: '10px', color: '#888' }}>
-                                {u.role} · {folder.permKey}={u.permissions?.[folder.permKey] ? 'Yes' : 'No'}
+                                {u.role} · {folderPermLabel(u.permissions, folder)}
                                 {(hasOverride || isPending) && <span style={{ marginLeft: '4px', color: '#e74c3c' }}>override</span>}
                               </div>
                             </div>
@@ -794,6 +1073,7 @@
     const [toDate, setToDate] = useState('');
     const [viewItem, setViewItem] = useState(null);
     const [confirmDelete, setConfirmDelete] = useState(null);
+    const [confirmRestore, setConfirmRestore] = useState(null); // MARKER_RECYCLEBIN_RESTORE_CONFIRM_V1
     const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -1086,7 +1366,14 @@
           
           <select value={filterTable} onChange={e => setFilterTable(e.target.value)} style={S.filterSelect}>
             <option value="">Table ทั้งหมด</option>
-            {Object.entries(TABLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {[...RECYCLE_SOURCE_GROUPS, RECYCLE_GROUP_OTHER].map(g => {
+              const ks = Object.keys(TABLE_LABELS).filter(k => recycleGroupOf(k).key === g.key);
+              return ks.length ? (
+                <optgroup key={g.key} label={`${g.icon} ${g.label}`}>
+                  {ks.map(k => <option key={k} value={k}>{TABLE_LABELS[k]}</option>)}
+                </optgroup>
+              ) : null;
+            })}
           </select>
           <select value={filterBy} onChange={e => setFilterBy(e.target.value)} style={S.filterSelect}>
             <option value="">ลบโดย ทั้งหมด</option>
@@ -1116,7 +1403,7 @@
                       onChange={toggleSelectAll}
                     />
                 </th>
-                <th style={{ ...S.th, width: '110px' }}>Table</th>
+                <th style={{ ...S.th, width: '170px' }}>ต้นทางข้อมูล</th>
                 <th style={{ ...S.th, width: '130px' }}>Key</th>
                 <th style={S.th}>ข้อมูลหลัก</th>
                 <th style={{ ...S.th, width: '100px' }}>ลบโดย</th>
@@ -1135,7 +1422,14 @@
                     <td style={S.tdCenter}>
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(item.id)} />
                     </td>
-                    <td style={S.td}><span style={{ background: '#f0f0f0', color: '#555', fontSize: '10px', padding: '2px 8px', borderRadius: '20px' }}>{label}</span></td>
+                    <td style={S.td}>
+                      {(() => { const g = recycleGroupOf(item.source_table); return (
+                        <div>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: g.bg, color: g.fg, fontSize: '11px', fontWeight: 600, padding: '2px 9px', borderRadius: '20px' }}>{g.icon} {g.label}</span>
+                          <div style={{ fontSize: '11px', color: '#555', marginTop: '3px' }}>{label}</div>
+                        </div>
+                      ); })()}
+                    </td>
                     <td style={{ ...S.td, fontFamily: 'monospace', fontSize: '11px' }}>{item.source_key || '-'}</td>
                     <td style={{ ...S.td, color: '#666', fontSize: '11px', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {summarizeRecycleBinData(item)}
@@ -1145,7 +1439,7 @@
                     <td style={S.tdCenter}>
                       <div style={{ display: 'inline-flex', gap: '4px' }}>
                         <button onClick={() => setViewItem(item)} style={S.btn('#f5f5f5','#555','#ddd')}>🔍 ดู</button>
-                        <button onClick={() => handleRestore(item)} disabled={loading} style={S.btn('#EAF3DE','#27500A','#97C459')}>↩</button>
+                        <button onClick={() => setConfirmRestore(item)} disabled={loading} title="กู้คืน" style={S.btn('#EAF3DE','#27500A','#97C459')}>↩</button>
                         <button onClick={() => setConfirmDelete(item)} disabled={loading} style={S.btn('#FCEBEB','#791F1F','#f7c1c1')}>🗑️</button>
                       </div>
                     </td>
@@ -1186,7 +1480,7 @@
           <div style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
             <div style={{ background:'white', borderRadius:'10px', padding:'20px', width:'480px', maxHeight:'80vh', display:'flex', flexDirection:'column' }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px' }}>
-                <h3 style={{ fontSize:'14px', margin:0 }}>🔍 {TABLE_LABELS[viewItem.source_table]} — {viewItem.source_key}</h3>
+                <h3 style={{ fontSize:'14px', margin:0 }}>🔍 {recycleGroupOf(viewItem.source_table).label} › {TABLE_LABELS[viewItem.source_table] || viewItem.source_table} — {viewItem.source_key}</h3>
                 <button onClick={() => setViewItem(null)} style={{ background:'none', border:'none', cursor:'pointer', fontSize:'18px', color:'#888' }}>×</button>
               </div>
               <div style={{ overflowY:'auto', flex:1, background:'#f8f9fa', borderRadius:'6px', padding:'12px' }}>
@@ -1204,6 +1498,24 @@
             </div>
           </div>
         )}
+
+        {confirmRestore && (() => { const g = recycleGroupOf(confirmRestore.source_table); return (
+          <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
+            <div style={{ background:'white', borderRadius:'12px', padding:'20px', width:'440px' }}>
+              <h3 style={{ fontSize:'15px', margin:'0 0 12px' }}>↩ ยืนยันการกู้คืน</h3>
+              <div style={{ background:'#f8f9fa', borderRadius:'8px', padding:'12px', fontSize:'12.5px', lineHeight:1.7 }}>
+                <div><span style={{ background:g.bg, color:g.fg, fontWeight:600, fontSize:'11px', padding:'2px 9px', borderRadius:'20px' }}>{g.icon} {g.label}</span> <span style={{ color:'#555' }}>› {TABLE_LABELS[confirmRestore.source_table] || confirmRestore.source_table}</span></div>
+                <div><b>{summarizeRecycleBinData(confirmRestore)}</b></div>
+                <div style={{ color:'#888', fontSize:'11.5px' }}>รหัส: {confirmRestore.source_key || '-'} · ลบโดย {confirmRestore.deleted_by || '-'} · {formatDate(confirmRestore.deleted_at)}</div>
+              </div>
+              <div style={{ fontSize:'12px', color:'#666', margin:'10px 0' }}>ข้อมูลนี้จะถูกนำกลับไปอยู่ในส่วน <b>{g.label}</b> เหมือนเดิม</div>
+              <div style={{ display:'flex', gap:'8px', justifyContent:'flex-end' }}>
+                <button onClick={() => setConfirmRestore(null)} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#f0f0f0', color:'#555', fontSize:'13px' }}>ยกเลิก</button>
+                <button onClick={() => { const it = confirmRestore; setConfirmRestore(null); handleRestore(it); }} style={{ padding:'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', background:'#27500A', color:'white', fontSize:'13px', fontWeight:500 }}>↩ กู้คืน</button>
+              </div>
+            </div>
+          </div>
+        ); })()}
 
         {confirmDelete && (
           <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
@@ -1258,7 +1570,6 @@
     );
   }
 
-  const FOLDER_PERM_MAP = { ap: 'Manual', vat: 'VAT', ie: 'IE', gl: 'GL', ipro: 'I-Pro' };
 
   function ActivityLogTab({ currentUserRole, currentUserPermissions }) {
     const [logs, setLogs] = useState([]);
@@ -1283,6 +1594,9 @@
       login: { label: 'Login', bg: '#EAF3DE', color: '#27500A', icon: '🔑' },
       logout: { label: 'Logout', bg: '#f5f5f5', color: '#555', icon: '🚪' },
       LOGIN: { label: 'Login', bg: '#EAF3DE', color: '#27500A', icon: '🔑' },
+      LOGOUT: { label: 'ออกจากระบบ', bg: '#fff3dc', color: '#9a5b00', icon: '🚪' }, // MARKER_ACTIVITYLOG_REDESIGN_V1
+      MENU_ENTER: { label: 'เข้าเมนู', bg: '#E6F1FB', color: '#1f5fbf', icon: '📂' },
+      AUTO_CLEAN_JUNK: { label: 'ระบบอัตโนมัติ', bg: '#f1f3f7', color: '#6b7a90', icon: '⚙️' },
       BATCH_SEND: { label: 'Batch Send', bg: '#E6F1FB', color: '#0C447C', icon: '📤' },
       BATCH_ACCEPT: { label: 'Batch Accept', bg: '#EAF3DE', color: '#27500A', icon: '✅' },
       BATCH_REJECT: { label: 'Batch Reject', bg: '#FCEBEB', color: '#791F1F', icon: '❌' },
@@ -1301,8 +1615,8 @@
       if (['login', 'logout', 'maintenance_on', 'maintenance_off'].includes(log.action)) return true;
       const folderKey = log.detail?.folder;
       if (folderKey) {
-        const permKey = FOLDER_PERM_MAP[folderKey];
-        return permKey ? (currentUserPermissions?.[permKey] === true) : false;
+        const logFolder = DOC_FOLDERS.find(f => f.key === folderKey);
+        return logFolder ? folderPermOk(currentUserPermissions, logFolder) : false;
       }
       return true;
     };
@@ -1372,15 +1686,16 @@
 
     useEffect(() => { fetchTotalCount(); }, [filterAction, filterUser, fromDate, toDate]);
 
-    // Patch 95: Auto-refresh ทุก 20 วิ — เฉพาะตอนอยู่หน้า 1 เท่านั้น (กัน
-    // รบกวนคนที่กำลังดูหน้าเก่าอยู่ ถ้า Poll ทับตอนอยู่หน้า 3 จะงงว่าทำไม
-    // ข้อมูลเปลี่ยนกะทันหัน)
+    // MARKER_ACTIVITYLOG_EVENT_REFRESH_V1 -- เปลี่ยนจาก Polling ทุก 20 วิ เป็นรอรับ Event 'activity_log_updated' จาก Backend
+    // (Backend ส่งไม่เกินทุก 3 วิ) -- ดึงข้อมูลใหม่เฉพาะตอนอยู่หน้า 1 | เก็บ Polling รอบยาว 5 นาทีเป็นตัวสำรองเผื่อสัญญาณหลุด
+    const pageRef = React.useRef(page);
+    useEffect(() => { pageRef.current = page; }, [page]);
     useEffect(() => {
-      const timer = setInterval(() => {
-        if (page === 1) fetchLogs(1, pageSize);
-      }, 20000);
-      return () => clearInterval(timer);
-    }, [page, pageSize, filterAction, filterUser, fromDate, toDate]);
+      const refresh = () => { if (pageRef.current === 1) fetchLogs(1, pageSize); };
+      const unsubscribe = subscribeWs(['activity_log_updated'], refresh);
+      const timer = setInterval(refresh, 300000);
+      return () => { if (typeof unsubscribe === 'function') unsubscribe(); clearInterval(timer); };
+    }, [pageSize, filterAction, filterUser, fromDate, toDate]);
 
     const userOptions = userOptionsList;
     const filtered = logs.filter(canSeeLog);
@@ -1392,15 +1707,15 @@
     };
 
     const S = {
-      th: { background: '#1a3a5c', color: 'white', padding: '9px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2 },
-      td: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' },
-      filterSelect: { padding: '5px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white' },
+      th: { background: '#1a3a5c', color: 'white', padding: '11px 14px', textAlign: 'left', fontSize: '11.5px', fontWeight: '600', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2 },
+      td: { padding: '9px 14px', borderBottom: '1px solid #f0f2f7', fontSize: '12px', verticalAlign: 'middle' },
+      filterSelect: { padding: '7px 12px', borderRadius: '10px', border: '1px solid #d9dfeb', fontSize: '12px', background: 'white', color: '#4a5b73' },
     };
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--console-header-height, 180px) - 40px)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 8px', flexWrap: 'wrap', borderBottom: '0.5px solid #f0f0f0', marginBottom: '0', flexShrink: 0 }}>
-          <span style={{ fontSize: '12px', color: '#888' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 8px', flexWrap: 'wrap', marginBottom: '0', flexShrink: 0 }}>
+          <span style={{ fontSize: '12px', color: '#6b7a90' }}>
             {filtered.length} รายการ (หน้านี้){totalCount !== null ? ` · ทั้งหมด ${totalCount.toLocaleString()} รายการ` : ''}
           </span>
           <select value={filterAction} onChange={e => { setFilterAction(e.target.value); setPage(1); }} style={S.filterSelect}>
@@ -1426,10 +1741,10 @@
             <button onClick={() => { setFilterAction(''); setFilterUser(''); setFromDate(''); setToDate(''); setPage(1); }}
               style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>✕ ล้าง</button>
           )}
-          <button onClick={() => fetchLogs()} style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: 'white', color: '#555', marginLeft: 'auto' }}>🔄 Refresh</button>
+          <button onClick={() => fetchLogs()} style={{ padding: '7px 14px', borderRadius: '10px', border: '1px solid #d9dfeb', fontSize: '12.5px', cursor: 'pointer', background: 'white', color: '#4a5b73', marginLeft: 'auto' }}>🔄 Refresh</button>
           {!isOwner && <span style={{ fontSize: '11px', color: '#888', background: '#f8f9fa', padding: '3px 8px', borderRadius: '20px' }}>📋 แสดงเฉพาะ Log ที่คุณมีสิทธิ์</span>}
         </div>
-        <div style={{ overflowX: 'auto', overflowY: 'auto', flex: 1, border: '0.5px solid #e8e8e8', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'auto', flex: 1, border: '1px solid #e6eaf2', borderRadius: '14px 14px 0 0', boxShadow: '0 1px 3px rgba(20,40,80,0.06)', marginTop: '10px' }}> {/* MARKER_ACTIVITYLOG_REDESIGN_V1 */}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '700px' }}>
             <thead>
               <tr>
@@ -1446,21 +1761,25 @@
               {!loading && filtered.length === 0 && <tr><td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ยังไม่มี Activity Log ครับ</td></tr>}
               {!loading && filtered.map(log => {
                 const actionInfo = ACTION_LABELS[log.action] || { label: log.action, bg: '#f5f5f5', color: '#555', icon: '📝' };
+                const rowBg = (filtered.indexOf(log) % 2 === 1) ? '#fafbfd' : 'white';
                 return (
-                  <tr key={log.id} style={{ background: 'white' }}
-                    onMouseEnter={e => e.currentTarget.style.background = '#f8fbff'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'white'}>
+                  <tr key={log.id} style={{ background: rowBg }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#f1f6ff'}
+                    onMouseLeave={e => e.currentTarget.style.background = rowBg}>
                     <td style={{ ...S.td, color: '#888', fontSize: '11px' }}>{formatDate(log.created_at)}</td>
                     <td style={S.td}>
-                      <div style={{ fontWeight: '500', color: '#1a3a5c' }}>{log.username || '—'}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', color: '#1a3a5c' }}>
+                        <span style={{ width: '24px', height: '24px', borderRadius: '50%', background: '#e6f0fd', color: '#1f5fbf', fontSize: '11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{(log.username || '?')[0].toUpperCase()}</span>
+                        {log.username || '—'}
+                      </div>
                     </td>
                     <td style={S.td}>
                       {log.module ? (
-                        <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: '#e8f0fb', color: '#0C447C', fontWeight: '500' }}>{log.module}</span>
+                        <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: '#f1f3f7', color: '#5b6b82' }}>{log.module}</span>
                       ) : <span style={{ color: '#ccc' }}>—</span>}
                     </td>
                     <td style={S.td}>
-                      <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: actionInfo.bg, color: actionInfo.color, fontWeight: '500', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: '11.5px', padding: '2px 10px', borderRadius: '20px', background: actionInfo.bg, color: actionInfo.color, fontWeight: '600', whiteSpace: 'nowrap' }}>
                         {actionInfo.icon} {actionInfo.label}
                       </span>
                     </td>
@@ -1471,7 +1790,7 @@
                           const unit = log.module === 'BACKEND_OPS' ? 'process' : 'invoices';
                           return `${d.count} ${unit}${d.note ? ` · "${d.note}"` : ''}`;
                         }
-                        return log.target || '—';
+                        return log.target || log.action || '—'; // MARKER_ACTIVITYLOG_REDESIGN_V1 -- ไม่มีรายละเอียด -> แสดงชื่อ Action เดิมไว้ให้ตามหาได้
                       })()}
                     </td>
                     <td style={S.td}>
@@ -2635,14 +2954,19 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       if (!headerRef.current || typeof ResizeObserver === 'undefined') return;
       const el = headerRef.current;
       let rafId = null;
-      const update = () => document.documentElement.style.setProperty('--console-header-height', `${el.offsetHeight}px`);
+      // MARKER_SYSTEMCONSOLE_HEADER_BOTTOM_V1 -- เก็บตำแหน่งขอบล่างของ Header จริงด้วย (Backend Ops ใช้วางพื้นที่เนื้อหาใต้ Header ไม่ Hard-code 88px แล้ว)
+      const update = () => {
+        document.documentElement.style.setProperty('--console-header-height', `${el.offsetHeight}px`);
+        document.documentElement.style.setProperty('--console-header-bottom', `${Math.round(el.getBoundingClientRect().bottom)}px`);
+      };
       update();
       const ro = new ResizeObserver(() => {
         if (rafId) cancelAnimationFrame(rafId);
         rafId = requestAnimationFrame(update);
       });
       ro.observe(el);
-      return () => { if (rafId) cancelAnimationFrame(rafId); ro.disconnect(); };
+      window.addEventListener('resize', update);
+      return () => { if (rafId) cancelAnimationFrame(rafId); ro.disconnect(); window.removeEventListener('resize', update); };
     }, []);
     return (
       <div style={S.container}>
@@ -2688,14 +3012,28 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       if (!headerRef.current || typeof ResizeObserver === 'undefined') return;
       const el = headerRef.current;
       let rafId = null;
-      const update = () => document.documentElement.style.setProperty('--console-header-height', `${el.offsetHeight}px`);
+      // MARKER_SYSTEMCONSOLE_HEADER_BOTTOM_V1 -- เก็บตำแหน่งขอบล่างของ Header จริงด้วย (Backend Ops ใช้วางพื้นที่เนื้อหาใต้ Header ไม่ Hard-code 88px แล้ว)
+      const update = () => {
+        document.documentElement.style.setProperty('--console-header-height', `${el.offsetHeight}px`);
+        document.documentElement.style.setProperty('--console-header-bottom', `${Math.round(el.getBoundingClientRect().bottom)}px`);
+      };
       update();
       const ro = new ResizeObserver(() => {
         if (rafId) cancelAnimationFrame(rafId);
         rafId = requestAnimationFrame(update);
       });
       ro.observe(el);
-      return () => { if (rafId) cancelAnimationFrame(rafId); ro.disconnect(); };
+      window.addEventListener('resize', update);
+      return () => { if (rafId) cancelAnimationFrame(rafId); ro.disconnect(); window.removeEventListener('resize', update); };
+    }, []);
+
+    // MARKER_SYSTEMCONSOLE_NO_OUTER_SCROLL_V1 -- ไม่ใช้ Scroll หน้านอกสุด (ทุก Tab เลื่อนในกรอบตัวเอง) ปิดเฉพาะตอนอยู่ใน System Console แล้วคืนค่าเมื่อออก
+    useEffect(() => {
+      const el = document.querySelector('.main-scroll');
+      if (!el) return undefined;
+      const prev = el.style.overflow;
+      el.style.overflow = 'hidden';
+      return () => { el.style.overflow = prev; };
     }, []);
 
     const [users, setUsers] = useState([]);
@@ -2780,8 +3118,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       container: { padding: '20px' },
       topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
       btn: { padding: '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', marginLeft: '8px' },
-      th: { background: '#1a3a5c', color: 'white', padding: '10px 12px', textAlign: 'center', fontWeight: '500', whiteSpace: 'nowrap' },
-      thLeft: { background: '#1a3a5c', color: 'white', padding: '10px 12px', textAlign: 'left', fontWeight: '500' },
+      th: { background: '#1a3a5c', color: 'white', padding: '10px 12px', textAlign: 'center', fontWeight: '500', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2 },
+      thLeft: { background: '#1a3a5c', color: 'white', padding: '10px 12px', textAlign: 'left', fontWeight: '500', position: 'sticky', top: 0, zIndex: 2 },
       td: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center', verticalAlign: 'middle' },
       tdLeft: { padding: '8px 12px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'left', verticalAlign: 'middle' },
       yes: { background: '#EAF3DE', color: '#27500A', padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', border: 'none', cursor: 'pointer', width: '52px' },
@@ -2810,9 +3148,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       return <AdminView currentUser={currentUser} userName={userName} userRole={userRole} userPermissions={userPermissions} users={users} S={S} />;
     }
 
-    const saveUser = async (user) => {
+    const saveUser = async (user, opts = {}) => {
       const { error } = await db.from('user_roles').update({ role: user.role, permissions: user.permissions, system_prefix: user.system_prefix || null, updated_by: currentUser?.email }).eq('id', user.id);
       if (error) { setError('บันทึกไม่สำเร็จ: ' + error.message); return; }
+      // MARKER_USERMANAGEMENT_SIGNUP_APPROVE_ON_ROLE_V1 -- ปรับ Role/Permission = Approve คำขอ Signup ที่ค้าง pending ของ User คนนี้
+      // (ไม่นับการแก้ System Prefix อย่างเดียว -> opts.approveSignup === false)
+      if (opts.approveSignup !== false) {
+        try {
+          const { data: pend } = await db.from('access_requests').select('id').eq('ref_user_id', user.id).eq('request_type', 'signup').eq('status', 'pending');
+          if (Array.isArray(pend) && pend.length > 0) {
+            for (const r of pend) {
+              await db.from('access_requests').update({ status: 'approved', handled_by: userName || currentUser?.email || '', handled_at: new Date().toISOString() }).eq('id', r.id);
+            }
+            broadcastWs('access_request_new', { signup_approved_by_role: true, user_id: user.id }); // ให้กระดิ่งของ Owner/Admin ทุกคน Refresh
+          }
+        } catch (e) { console.error('[signup approve on role]', e); }
+      }
       setSavedId(user.id);
       setTimeout(() => setSavedId(null), 2000);
     };
@@ -2821,7 +3172,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const handlePrefixInput = (id, value) => {
       setUsers(prev => prev.map(u => u.id === id ? { ...u, system_prefix: value.toUpperCase() } : u));
     };
-    const handlePrefixBlur = (user) => { saveUser(user); };
+    const handlePrefixBlur = (user) => { saveUser(user, { approveSignup: false }); };
 
     const handleRoleChange = (id, newRole) => {
       setUsers(prev => {
@@ -2841,7 +3192,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     // MARKER_PERMISSION_ACCESS_AUTOSYNC_V1
     // ── แม็พ Permission Key -> Folder Key (กลับด้านจาก FOLDER_PERM_MAP) ──────
     // ── ใช้ตอน Auto-Sync Permission=Yes -> เปิด doc_access_override ให้เลย ────
-    const PERM_TO_FOLDER = { Manual: 'ap', VAT: 'vat', IE: 'ie', GL: 'gl', 'I-Pro': 'ipro' };
+    // PERM_TO_FOLDER มาจาก docFolderConfig.js (ไม่รวมกล่อง GL Report ที่เข้าได้ตามสิทธิ์ Manual | IE | I-Pro อยู่แล้ว)
     const handlePermissionChange = (id, perm, value) => {
       setUsers(prev => { const updated = prev.map(u => u.id !== id ? u : { ...u, permissions: { ...(u.permissions||{}), [perm]: value } }); saveUser(updated.find(u => u.id === id)); return updated; });
       // MARKER_USERMANAGEMENT_PERMISSION_BROADCAST_V1
@@ -2899,12 +3250,49 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const roleBg = { Owner: '#EAF3DE', Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5' };
 
     return (
-      <div style={S.container}>
-        <div ref={headerRef}>
-          <div style={S.topbar}>
-            <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>⚙️ {consoleTitle}</h2>
-            {tab === 'users' && <button style={{ ...S.btn, background: '#1a3a5c', color: 'white' }} onClick={() => { setShowForm(true); setError(''); }}>+ Add User</button>}
+      <div className="bo-hide-scrollbar" style={S.container}>
+        {/* MARKER_SYSTEMCONSOLE_STICKY_HEADER_V1 -- ตรึงหัวหน้า (ชื่อ + Tab หลัก) ไว้บนสุด เลื่อนเฉพาะเนื้อหาด้านล่าง */}
+        <div ref={headerRef} style={{ position: 'sticky', top: 0, zIndex: 20, background: 'white' }}>
+          {/* MARKER_SYSTEMCONSOLE_HEADER_STYLE_V2 -- หัวแบบเดียวกับ Document Center: แถบเขียวซ้าย + eyebrow + ชื่อใหญ่ (ส่วนหลังเป็นสีเขียว) + บรรทัดย่อย | ขวา: วันที่ + ผู้ใช้ + Role (+ ปุ่ม Add User) */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '16px 4px 12px', background: '#fff', flexWrap: 'wrap' }}>
+            <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+              <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>System Console</div>
+              <div style={{ fontSize: '24px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>System Console - <span style={{ color: '#2fb58a' }}>{TAB_LABELS[tab] || ''}</span></div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+                <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+                <div style={{ marginTop: '4px' }}>
+                  <span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || currentUser?.email || ''}</span>
+                  <span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{isOwner ? 'Owner' : (userRole || '')}</span>
+                </div>
+              </div>
+            </div>
           </div>
+          {/* MARKER_SYSTEMCONSOLE_STEPS_V1 -- แถบ Step แบบเดียวกับ Document Center: [← กลับ] › ① ขั้น 1 › ② ขั้น 2 ... | ขั้นสุดท้ายเป็นสีกรมท่า | ซ้ายสุดกลับไปหน้าแรกของ System Console (Users) */}
+          {(() => {
+            const stepLabels = [TAB_LABELS[tab] || '', ...((tab === 'access' && subLabel) ? subLabel.split(' - ') : [])].filter(Boolean);
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', padding: '8px 4px 12px', background: '#fff', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                  <span onClick={() => setTab('users')} title="กลับไปหน้าแรกของ System Console" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', border: '1px solid #0f6cbd', background: '#fff', color: '#0f6cbd', fontWeight: 600, borderRadius: '99px', padding: '5px 14px', fontSize: '13px', cursor: 'pointer' }}>← System Console</span>
+                  {stepLabels.map((lb, i) => {
+                    const last = i === stepLabels.length - 1;
+                    return (
+                      <React.Fragment key={i}>
+                        <span style={{ color: '#b3bccb' }}>›</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', border: `1px solid ${last ? '#14284b' : '#c8d3e3'}`, background: last ? '#14284b' : '#fff', color: last ? '#fff' : '#4b5a73', fontWeight: 600, borderRadius: '99px', padding: '5px 14px 5px 6px', fontSize: '13px' }}>
+                          <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: last ? '#2fb58a' : '#dfe6f1', color: last ? '#fff' : '#4b5a73', fontSize: '11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                          {lb}
+                        </span>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                {tab === 'users' && <button style={{ ...S.btn, marginLeft: 0, background: '#14284b', color: 'white', borderRadius: '99px', padding: '8px 18px', fontWeight: 600 }} onClick={() => { setShowForm(true); setError(''); }}>+ Add User</button>}
+              </div>
+            );
+          })()}
 
           {error && <div style={{ background: '#FCEBEB', color: '#791F1F', padding: '10px 12px', borderRadius: '8px', fontSize: '12px', marginBottom: '12px' }}>{error}</div>}
 
@@ -2929,8 +3317,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
         </div>
 
         {tab === 'users' && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 6px', flexWrap: 'wrap' }}>
+          // MARKER_SYSTEMCONSOLE_FIXED_HEIGHT_V1 -- Users: ตรึง Header + ช่องค้นหา + หัวตาราง เลื่อนเฉพาะแถวผู้ใช้
+          <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--console-header-height, 180px) - 40px)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 6px', flexWrap: 'wrap', flexShrink: 0 }}>
               <input placeholder="Search username, email..." value={userSearch} onChange={e => setUserSearch(e.target.value)}
                 style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: '220px' }} />
               <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
@@ -2948,7 +3337,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
               <span style={{ fontSize: '12px', color: '#888' }}>{filteredUsers.length} / {users.length} คน</span>
               <span style={{ fontSize: '11px', color: '#aaa' }}>📈 = มี Transaction Dashboard (Permission Manual หรือ IE)</span> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1 */}
             </div>
-            <div style={{ background: 'white', borderRadius: '0 0 8px 8px', overflow: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
+            <div style={{ background: 'white', borderRadius: '0 0 8px 8px', flex: 1, minHeight: 0, overflow: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '900px' }}>
                 <thead>
                   <tr>
@@ -3026,30 +3415,32 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
         {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} isOwner={isOwner} userRole={userRole} userPermissions={userPermissions} onLabelChange={setSubLabel} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} initialTableFilter={initialTableFilter} />} {/* MARKER_USERMANAGEMENT_INITIAL_RECYCLEBIN_V1 */}
-        {tab === 'settings' && isOwner && <SystemSettingsPageTab currentUser={currentUser} userName={userName} />}
-        {tab === 'deploy' && isOwner && (() => { document.body.style.overflow = 'hidden'; return null; })()}
-        {tab !== 'deploy' && (() => { document.body.style.overflow = ''; return null; })()}
+        {tab === 'settings' && isOwner && (
+          /* MARKER_SYSTEMSETTINGS_FROZEN_HEADER_V1 -- Header+แถบ Tab ตรึง เลื่อนเฉพาะเนื้อหา (แพทเทิร์นเดียวกับ Recycle Bin) */
+          <div style={{ height: 'calc(100vh - var(--console-header-height, 180px) - 40px)', overflowY: 'auto' }}>
+            <SystemSettingsPageTab currentUser={currentUser} userName={userName} />
+          </div>
+        )}
+        {(() => { if (document.body.style.overflow === 'hidden') document.body.style.overflow = ''; return null; })()} {/* เคลียร์ค่า Overflow เดิมที่เคยตั้งไว้สำหรับ Backend Ops แบบ fixed */}
         {tab === 'deploy' && isOwner && (
-          <div style={{ position: 'fixed', top: '88px', left: '220px', right: 0, bottom: 0, zIndex: 10, overflow: 'hidden', background: 'white', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', gap: '4px', padding: '0 20px', borderBottom: '2px solid #e8e8e8', flexShrink: 0, position: 'relative', zIndex: 2, background: 'white' }}>
-              <button onClick={() => setBackendOpsSubTab('deploy')}
-                style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: backendOpsSubTab==='deploy'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: backendOpsSubTab==='deploy'?'500':'400', cursor: 'pointer', borderBottom: backendOpsSubTab==='deploy'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
-                Deploy Monitor
-              </button>
-              <button onClick={() => setBackendOpsSubTab('ram')}
-                style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: backendOpsSubTab==='ram'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: backendOpsSubTab==='ram'?'500':'400', cursor: 'pointer', borderBottom: backendOpsSubTab==='ram'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
-                RAM Dashboard
-              </button>
-              <button onClick={() => setBackendOpsSubTab('cpu')}
-                style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: backendOpsSubTab==='cpu'?'#1a3a5c':'#888', fontSize: '13px', fontWeight: backendOpsSubTab==='cpu'?'500':'400', cursor: 'pointer', borderBottom: backendOpsSubTab==='cpu'?'2px solid #1a3a5c':'2px solid transparent', marginBottom: '-2px' }}>
-                CPU Dashboard
-              </button>
+          /* MARKER_BACKENDOPS_INFLOW_V1 -- ไม่ใช้ position:fixed แล้ว (เคยทับ Header) ใช้แพทเทิร์นเดียวกับ Recycle Bin: ความสูง = จอ - Header - Padding */
+          <div className="bo-hide-scrollbar" style={{ height: 'calc(100vh - var(--console-header-height, 180px) - 64px)', overflow: 'hidden', background: 'white', display: 'flex', flexDirection: 'column', border: '0.5px solid #e8e8e8', borderRadius: '8px' }}>
+            {/* MARKER_BACKENDOPS_HIDE_SCROLLBAR_V1 -- ซ่อนแถบ Scroll แต่ยังเลื่อนด้วยล้อเมาส์/ทัชได้ */}
+            <style>{`.bo-hide-scrollbar, .bo-hide-scrollbar * { scrollbar-width: none; -ms-overflow-style: none; } .bo-hide-scrollbar::-webkit-scrollbar, .bo-hide-scrollbar *::-webkit-scrollbar { display: none; width: 0; height: 0; }`}</style>
+            {/* MARKER_BACKENDOPS_SUBTABS_BACK_V1 -- เป็นฟีเจอร์ภายในหน้า Backend Ops เอง (ไม่ใช่หน้าหลักแบบ Document Center) จึงกลับมาอยู่ในกรอบเนื้อหาเหมือนเดิม */}
+            <div style={{ display: 'flex', gap: '4px', padding: '0 20px', borderBottom: '2px solid #e8e8e8', flexShrink: 0, background: 'white' }}>
+              {[['deploy', 'Deploy Monitor'], ['ram', 'RAM Dashboard'], ['cpu', 'CPU Dashboard']].map(([k, lb]) => (
+                <button key={k} onClick={() => setBackendOpsSubTab(k)}
+                  style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: backendOpsSubTab === k ? '#1a3a5c' : '#888', fontSize: '13px', fontWeight: backendOpsSubTab === k ? '500' : '400', cursor: 'pointer', borderBottom: backendOpsSubTab === k ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px' }}>
+                  {lb}
+                </button>
+              ))}
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
               {/* MARKER_USERMANAGEMENT_KEEPMOUNTED_TABS -- เก็บ Component ไว้ Mount ตลอด ใช้ display:none ซ่อนแทน กันข้อมูลหายตอนสลับ Tab */}
               <div style={{ display: backendOpsSubTab === 'deploy' ? 'block' : 'none', height: '100%' }}><DeployMonitor inline /></div>
-              <div style={{ display: backendOpsSubTab === 'ram' ? 'block' : 'none', height: '100%', overflowY: 'auto' }}><RAMDashboardTab /></div>
-              <div style={{ display: backendOpsSubTab === 'cpu' ? 'block' : 'none', height: '100%', overflowY: 'auto' }}><CPUDashboardTab /></div>
+              <div style={{ display: backendOpsSubTab === 'ram' ? 'block' : 'none', height: '100%', overflow: 'hidden' }}><RAMDashboardTab /></div>
+              <div style={{ display: backendOpsSubTab === 'cpu' ? 'block' : 'none', height: '100%', overflow: 'hidden' }}><CPUDashboardTab /></div>
             </div>
           </div>
         )}

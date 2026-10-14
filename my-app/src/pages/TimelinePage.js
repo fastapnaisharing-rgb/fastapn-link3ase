@@ -1815,6 +1815,117 @@ function ConfigModal({ me, isAdmin, who, onClose }) {
   );
 }
 
+// MARKER_TIMELINE_BUCKET_REPORT_V1 -- Bucket Report: รวมไฟล์ Report Input ที่ Confirm แล้ว (เก็บใน Backend รอส่ง) · My Job = เฉพาะของตัวเอง · All Job = ทุกคน (ดูอย่างเดียว) | ดึงจาก /vat-reconcile/dashboard/report-files (ไม่ต้องมี Table ใหม่)
+const BUCKET_API = (process.env.REACT_APP_API_URL || "http://10.101.87.126:4000/api");
+const bucketAuth = () => { const t = sessionStorage.getItem("fastapn_token"); return t ? { Authorization: "Bearer " + t } : {}; };
+async function bucketFetchFiles(scope) {
+  const res = await fetch(BUCKET_API + "/vat-reconcile/dashboard/report-files?scope=" + encodeURIComponent(scope), { headers: bucketAuth() });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || "โหลดรายการไม่สำเร็จ (HTTP " + res.status + ")");
+  return (Array.isArray(d.files) ? d.files : []).filter((f) => f.confirmed_at && !f.is_draft && !f.file_removed_at); // เก็บใน Bucket (รวมที่ส่งแล้ว) จนกว่า Backend จะลบไฟล์ (file_removed_at) แล้วจึงหายไปเอง
+}
+const bucketFmtDt = (v) => { if (!v) return "-"; const d = new Date(v); if (isNaN(d)) return "-"; const p = (n) => String(n).padStart(2, "0"); return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear() + " " + p(d.getHours()) + ":" + p(d.getMinutes()); };
+const bucketFmtSize = (n) => (n == null ? "-" : n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+// MARKER_TIMELINE_BUCKET_EXPIRE_V1 -- วันหมดอายุ = Backend ลบไฟล์บน Disk 30 วันหลังส่ง SharePoint (ต้องผ่าน 30 วันนับจากวันสร้างไฟล์ด้วย ตรงกับงานล้างใน fileStorage.js) | ยังไม่ส่ง = ไม่หมดอายุ
+const BUCKET_KEEP_DAYS = 30;
+function bucketExpireOf(f) {
+  if (f.input_expire_at) { const x = new Date(f.input_expire_at); if (!isNaN(x.getTime())) return x; } // ไฟล์ + Input หมดอายุพร้อมกัน (Confirm + 30 วัน)
+  if (!f.sp_sent_at) return null;
+  const a = new Date(f.sp_sent_at).getTime(), b = f.updated_at ? new Date(f.updated_at).getTime() : 0;
+  if (isNaN(a)) return null;
+  return new Date(Math.max(a, isNaN(b) ? 0 : b) + BUCKET_KEEP_DAYS * 86400000);
+}
+const BUCKET_SP_BASE = "https://centralgroup.sharepoint.com/sites/FAST/AP%20Non%20Merchandise/VAT%20Controller/My%20System/Z_Report%20Reconcile";
+function bucketOpenSp(fileName) { // โครงสร้างเดียวกับ Handler: {BASE}/{เลข BU}/{YYYY.MM}
+  const m = /^(\d{3,6})_.+_([A-Za-z]{3})-(\d{2})\.xlsx$/.exec(String(fileName || ""));
+  const mi = m ? ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"].indexOf(m[2].toUpperCase()) : -1;
+  if (!m || mi < 0) return false;
+  window.open(BUCKET_SP_BASE + "/" + encodeURIComponent(m[1]) + "/20" + m[3] + "." + String(mi + 1).padStart(2, "0"), "_blank", "noopener");
+  return true;
+}
+function BucketReportModal({ tab, onClose, onLoaded }) {
+  const [files, setFiles] = React.useState(null);
+  const [err, setErr] = React.useState("");
+  const [sub, setSub] = React.useState("pending");
+  const [q, setQ] = React.useState("");
+  React.useEffect(() => {
+    let off = false;
+    bucketFetchFiles(tab).then((r) => { if (!off) { setFiles(r); if (onLoaded) onLoaded(r); } }).catch((e) => { if (!off) { setErr(e.message || "โหลดไม่สำเร็จ"); setFiles([]); } });
+    return () => { off = true; };
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    const k = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [onClose]);
+  const all = files || [];
+  const nPending = all.filter((f) => !f.sp_sent_at).length;
+  const nSent = all.length - nPending;
+  const kw = q.trim().toLowerCase();
+  const shown = all.filter((f) => (sub === "all" ? true : sub === "sent" ? !!f.sp_sent_at : !f.sp_sent_at) && (!kw || String(f.bu).toLowerCase().includes(kw) || String(f.file_name).toLowerCase().includes(kw)));
+  const download = async (f) => {
+    try {
+      const res = await fetch(BUCKET_API + "/vat-reconcile/dashboard/report-files/" + f.id + "/download", { headers: bucketAuth() });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || "ดาวน์โหลดไม่สำเร็จ (HTTP " + res.status + ")"); }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a"); a.href = url; a.download = f.file_name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) { setErr(e.message || "ดาวน์โหลดไม่สำเร็จ"); }
+  };
+  const pill = (k, t, n) => (
+    <button key={k} type="button" onClick={() => setSub(k)} style={{ padding: "5px 14px", fontSize: 12, fontWeight: 600, borderRadius: 99, cursor: "pointer", border: "1px solid " + (sub === k ? C.navy : "#d6dde8"), background: sub === k ? C.navy : "#fff", color: sub === k ? "#fff" : "#616e7c" }}>{t} {n}</button>
+  );
+  const th = { padding: "8px 10px", textAlign: "left", fontSize: 12, fontWeight: 600, color: "#fff", background: C.navy, position: "sticky", top: 0 };
+  const td = { padding: "9px 10px", fontSize: 12.5, borderBottom: "1px solid #eef0f3", verticalAlign: "middle" };
+  return ReactDOM.createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,30,50,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: 980, maxWidth: "96vw", maxHeight: "90vh", background: "#fff", borderRadius: 14, boxShadow: "0 12px 40px rgba(15,30,50,0.28)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #e8eaf0" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>Bucket Report · Report Input ที่ Confirm แล้ว {tab === "all" ? "(All Job · ดูอย่างเดียว)" : "(My Job)"}</div>
+            <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>เก็บใน Backend รอส่ง · ส่งแล้วยังอยู่ใน Bucket จนกว่า Backend จะล้างไฟล์ (30 วันหลังส่ง SharePoint)</div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="ปิด" style={{ marginLeft: "auto", border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#616e7c" }}>✕</button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 18px" }}>
+          {pill("pending", "รอส่ง", nPending)}{pill("sent", "ส่งแล้ว", nSent)}{pill("all", "ทั้งหมด", all.length)}
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา BU / ชื่อไฟล์…" style={{ marginLeft: "auto", width: 220, height: 30, padding: "0 10px", fontSize: 12, border: "1px solid #d0d7de", borderRadius: 7, boxSizing: "border-box" }} />
+        </div>
+        {err && <div style={{ margin: "0 18px 8px", fontSize: 12.5, color: "#B42318" }}>{err}</div>}
+        <div style={{ overflow: "auto", flex: 1, minHeight: 160, padding: "0 18px 16px" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+            <thead><tr><th style={th}>BU</th><th style={th}>Account</th><th style={th}>ไฟล์</th><th style={th}>Confirm โดย / เมื่อ</th><th style={th}>สถานะ</th><th style={th}>Expired Date</th><th style={{ ...th, textAlign: "center" }}>Action</th></tr></thead>
+            <tbody>
+              {files === null && <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "#999" }}>กำลังโหลด…</td></tr>}
+              {files !== null && shown.length === 0 && <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "#999", padding: 30 }}>ไม่มีรายการ</td></tr>}
+              {shown.map((f) => (
+                <tr key={f.id}>
+                  <td style={td}><b>{f.bu}</b></td>
+                  <td style={td}>{f.account || "-"}</td>
+                  <td style={td}>{f.file_name}<div style={{ fontSize: 11, color: "#999" }}>{f.file_removed_at ? "ไฟล์หมดอายุ (ลบจาก Backend แล้ว)" : bucketFmtSize(f.size_bytes)}</div></td>
+                  <td style={td}>{f.confirmed_by || f.created_by || "-"}<div style={{ fontSize: 11, color: "#999" }}>{bucketFmtDt(f.confirmed_at)}</div></td>
+                  <td style={td}>{f.sp_sent_at
+                    ? <span style={{ background: "#e4f3ef", color: "#0f6e56", padding: "2px 10px", borderRadius: 99, fontSize: 12 }}>ส่งแล้ว {bucketFmtDt(f.sp_sent_at)}</span>
+                    : <span style={{ background: "#fff3dc", color: "#854f0b", padding: "2px 10px", borderRadius: 99, fontSize: 12 }}>รอส่ง</span>}</td>
+                  {(() => {
+                    const ex = bucketExpireOf(f);
+                    if (!ex) return <td style={{ ...td, color: "#999" }}>ยังไม่ส่ง<div style={{ fontSize: 11 }}>ยังไม่เริ่มนับ</div></td>;
+                    const left = Math.ceil((ex.getTime() - Date.now()) / 86400000);
+                    return <td style={td}>{bucketFmtDt(ex).slice(0, 10)}<div style={{ fontSize: 11, color: "#616e7c" }}>{left > 0 ? "อีก " + left + " วัน" : "ครบกำหนดแล้ว (รอ Backend ล้าง)"}</div></td>;
+                  })()}
+                  <td style={{ ...td, textAlign: "center", whiteSpace: "nowrap" }}>
+                    <button type="button" disabled={!!f.file_removed_at} onClick={() => download(f)} style={{ ...btn, color: "#0b6a8f", borderColor: "#0b6a8f", opacity: f.file_removed_at ? 0.4 : 1, cursor: f.file_removed_at ? "not-allowed" : "pointer" }}>⬇ ดาวน์โหลด</button>{" "}
+                    <button type="button" onClick={() => { if (!bucketOpenSp(f.file_name)) setErr("อ่านเลข BU / เดือน จากชื่อไฟล์ไม่ได้ จึงเปิดโฟลเดอร์ SharePoint ไม่ได้"); }} style={{ ...btn, color: "#0f6e56", borderColor: "#2fb58a" }}>📁 SharePoint</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>, document.body);
+}
+
 // MARKER_TIMELINE_EMAIL_REPORT_V1 -- ปุ่ม Email Report: เปิด Outlook Draft พร้อมตารางสถานะ (Final Draft > Incomplete) · My Job = เฉพาะ BU ของฉัน (ไม่มีคอลัมน์ Prepare by, จำค่าไว้ที่ user_roles.timeline_mail_cfg) · All Job = ทุก BU ที่ Viewer เห็น (มี Prepare by, ไม่บันทึกค่า)
 const MAIL_DEFAULT = { to: "FAST TAX Staff Group", cc: "FAST TAX Manager; FAST APN Vat Controller; FAST AP Non Merchandise Manager; FASTAPN Mailbox", greeting: "เรียน เจ้าหน้าที่ Tax", name: "" };
 const MAIL_TAX_GROUPS = [["11610752", ["N", "A"]], ["11610755", ["T", "F"]]];
@@ -1990,6 +2101,8 @@ export default function TimelinePage({ onNavigate }) {
   const { isAdmin } = useUserRole();
   const [showCfg, setShowCfg] = React.useState(false);
   const [showMail, setShowMail] = React.useState(false); // MARKER_TIMELINE_EMAIL_REPORT_V1
+  const [showBucket, setShowBucket] = React.useState(false); // MARKER_TIMELINE_BUCKET_REPORT_V1
+  const [bucketCount, setBucketCount] = React.useState(null); // จำนวนไฟล์ Confirm แล้วที่ยังรอส่ง (ตาม My Job / All Job ที่เลือก)
   const [bus, setBus] = React.useState([]);
   const [src, setSrc] = React.useState({ loading: true, error: "", bound: "" });
   const [reload, setReload] = React.useState(0);
@@ -2143,6 +2256,9 @@ export default function TimelinePage({ onNavigate }) {
   useRealtimeRefresh(["timeline_progress_updated"], refreshProgress, 60000);
   const [filter, setFilter] = React.useState("all"); // all | pending | confirm
   const [tab, setTab] = React.useState("mine"); // mine = งานของฉัน | all = ทั้งหมด (Owner/Admin)
+  const bucketScope = (isAdmin ? tab : "mine");
+  const loadBucketCount = React.useCallback(() => { bucketFetchFiles(bucketScope).then((r) => setBucketCount(r.filter((f) => !f.sp_sent_at).length)).catch(() => setBucketCount(null)); }, [bucketScope]);
+  React.useEffect(() => { loadBucketCount(); }, [loadBucketCount]);
   const tabEff = isAdmin ? tab : "mine";
   const [cur, setCur] = React.useState(-1);
   React.useEffect(() => { // MARKER_RECON_GO_TIMELINE_V1 -- มาจากปุ่ม Timeline ในหน้า Reconcile -> เปิดหน้า BU นั้นให้เลย
@@ -2374,6 +2490,7 @@ export default function TimelinePage({ onNavigate }) {
           <button type="button" onClick={() => setShowInc(true)} title="เลือก User ที่ต้องการดูใน Tab นี้" style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: C.navy, fontWeight: 600 }}>เลือก User ({(inc || []).length})</button>
         )}
         <button type="button" onClick={() => setShowMail(true)} title="เปิด Outlook Draft แจ้งปิดภาษีซื้อ" style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: C.navy, fontWeight: 600 }}>✉ Email Report</button>
+        <button type="button" onClick={() => setShowBucket(true)} title="รายการ Report Input ที่ Confirm แล้ว (เก็บใน Backend รอส่ง)" style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: "#0f6e56", borderColor: "#2fb58a", background: "#e8f7f1", fontWeight: 700 }}>🗂 Bucket Report{bucketCount ? <span style={{ background: "#2fb58a", color: "#fff", borderRadius: 99, padding: "1px 8px", marginLeft: 6, fontSize: 11 }}>{bucketCount}</span> : null}</button>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span>สถานะ</span>
@@ -2391,6 +2508,7 @@ export default function TimelinePage({ onNavigate }) {
     <div ref={rootRef} className="tl-hide-scroll" style={{ padding: "12px 16px", height: "100vh", display: cur < 0 ? "flex" : "block", flexDirection: "column", overflowY: cur < 0 ? "hidden" : "auto", overscrollBehavior: "contain", boxSizing: "border-box", background: "#F4F3EF" }}>
       {saveMsg && <div style={{ flex: "none", marginBottom: 8, padding: "6px 12px", borderRadius: 8, background: "#FCEBEB", color: "#791F1F", fontSize: 12 }}>{saveMsg}</div>}
       {showInc && <IncludeModal opts={userOpts} sel={inc || []} onSave={saveInc} onClose={() => setShowInc(false)} />}
+      {showBucket && <BucketReportModal tab={tabEff} onClose={() => { setShowBucket(false); loadBucketCount(); }} onLoaded={(r) => setBucketCount(r.filter((f) => !f.sp_sent_at).length)} />}
       {showMail && <EmailReportModal bus={bus} tab={tabEff} period={period} userName={userName} onClose={() => setShowMail(false)} />}
       {showCfg && <ConfigModal me={userName} isAdmin={isAdmin} who={who} onClose={() => { setShowCfg(false); setReload((n) => n + 1); }} />}
 

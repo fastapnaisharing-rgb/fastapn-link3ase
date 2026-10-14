@@ -20,3 +20,5 @@
 ข้อกำหนดของ Browser: ต้องปิด "Ask where to save each file" (Chrome/Edge > Settings > Downloads)
 ตั้งค่า: D:\\apps\\fastapn-sp-config.json  (dests = โฟลเดอร์ปลายทางแต่ละชนิด recon / upload, downloadsDir = ระบุเองถ้า Downloads ไม่ใช่ค่าเริ่มต้น)
 Log: D:\\apps\\fastapn-sp.log
+
+v7: ไม่มีหน้าต่าง cmd/PowerShell เด้งอีก (เปิดผ่าน D:\\apps\\fastapn-run-hidden.vbs) -- รัน setup-fastapn-sp.bat ใหม่ 1 ครั้ง หรือรอให้ Handler อัปเดตตัวเอง (เครื่องที่เป็น v6 จะปรับ Registry ให้เองในการใช้งานครั้งถัดไป)

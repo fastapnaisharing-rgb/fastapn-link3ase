@@ -40,7 +40,14 @@ function FileIcon({ name, dir, size = 20 }) {
   );
 }
 
-export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
+export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, title, backLabel }) {
+  // MARKER_SPC_PARAM_DEST_V1 -- ใช้ซ้ำได้หลายกล่อง: VAT Control (recon/vat) | GL Report > Account Payable (ap/gl)
+  const DEST = dest || 'recon';
+  const MENU = menu || 'vat';
+  const MY = MENU === 'gl'; // MARKER_SPC_MY_FOLDERS_V1 -- GL Report: ปุ่ม "My Folders" (เลือกโฟลเดอร์ของตัวเอง ทุกคนใช้ได้) แทน Folder Manage ของ Owner
+  const PAGE_TITLE = title || 'VatController';
+  const BACK_LABEL = backLabel || 'VAT Control';
+  const ROOT_LABEL = DEST === 'ap' ? 'Z_Report Reconcile - Account Payable' : 'Z_Report Reconcile';
   const { userName, currentUser, userRole } = useAuth();   // MARKER_SPC_RESOURCE_HEADER_V1
   const { isOwner } = useUserRole();
   const [syncing, setSyncing] = useState(false);
@@ -53,6 +60,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
   const [meta, setMeta] = useState(null);
   const [webBase, setWebBase] = useState('');
   const [loading, setLoading] = useState(true);
+  const [handlerChecked, setHandlerChecked] = useState(false); // MARKER_SPC_BLOCK_NO_HANDLER_V1 -- เช็กสถานะ Handler ของเครื่องนี้เสร็จแล้วหรือยัง
   const [handlerVer, setHandlerVer] = useState(null); // null=ไม่เคยรายงาน | เลขเวอร์ชันสูงสุดของเครื่องฉัน
   const [msg, setMsg] = useState('');
   const [q, setQ] = useState('');
@@ -94,7 +102,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
       const res = await fetch(`${API_ROOT}/api/file-storage/sp-handler/my-status`, { headers: authHeaders() });
       const d = await res.json();
       const v = Array.isArray(d.machines) && d.machines.length ? Math.max(...d.machines.map((m) => Number(m.version) || 0)) : null;
-      setHandlerVer(v); return v;
+      setHandlerVer(v); setHandlerChecked(true); return v;
     } catch (_) { setHandlerVer(null); return null; }
   }, []);
 
@@ -124,12 +132,12 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
     setMsg('กำลังสแกนโฟลเดอร์ SharePoint ที่ซิงก์ในเครื่อง… (ถ้ามีหน้าต่างถามให้เปิดโปรแกรม ให้กดอนุญาต)'); triggerList('');
     await sleep(6000); await load(); const v = await checkHandler();
     setSyncing(false); if (!v) setSyncErr(true);
-    setMsg(v ? '' : 'ยังไม่ได้รับข้อมูลจาก Handler — ตรวจว่าติดตั้ง SharePoint Handler แล้ว (Setup - Tools › Download) และโฟลเดอร์ Z_Report Reconcile ซิงก์ในเครื่อง · ดู Log ที่ D:\\apps\\fastapn-sp.log');
+    setMsg(v ? '' : 'ยังไม่ได้รับข้อมูลจาก Handler — ตรวจว่าติดตั้ง SharePoint Handler แล้ว (Setup - Tools › Download) และโฟลเดอร์ ' + ROOT_LABEL + ' ซิงก์ในเครื่อง · ดู Log ที่ D:\\apps\\fastapn-sp.log');
   };
 
   const enter = (it) => { setQ(''); setParts(it.path.split('/')); };
   // MARKER_SPC_FOLDER_MANAGE_V1 -- Owner เท่านั้น: เลือกโฟลเดอร์หลักที่เมนูนี้ (VAT Controller) ให้เห็น (whitelist) | โฟลเดอร์ย่อยที่ไม่มีไฟล์ Backend ซ่อนให้เอง
-  const fmUrl = `${API_ROOT}/api/file-storage/sp-handler/folder-whitelist`;
+  const fmUrl = `${API_ROOT}/api/file-storage/sp-handler/${MY ? 'my-folders' : 'folder-whitelist'}`;
   const openFm = async () => {
     setFm({ loading: true, all: [], on: [], q: '', f: 'all', configured: false, saving: false, err: '' });
     try {
@@ -147,7 +155,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
       const r = await fetch(fmUrl, { method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ dest: DEST, menu: MENU, folders: fm.on, known: fm.all.map((x) => x.name) }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-      const n = fm.on.length; setFm(null); setQ(''); setParts([]); setMsg(`บันทึกแล้ว — VAT Controller แสดง ${n} โฟลเดอร์หลัก`);
+      const n = fm.on.length; setFm(null); setQ(''); setParts([]); setMsg(`บันทึกแล้ว — ${PAGE_TITLE} แสดง ${n} โฟลเดอร์หลัก`);
       setTimeout(() => { if (loadRef.current) loadRef.current(); }, 0);
     } catch (e) { setFm((m) => (m ? { ...m, saving: false, err: String((e && e.message) || e) } : m)); }
   };
@@ -335,11 +343,22 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
   const syncPal = { g: ['#e3f6ec', '#14935a', '#22c55e'], y: ['#fff6dc', '#8a5a00', '#f5b400'], r: ['#fdecec', '#b42318', '#e5484d'] }[syncCls];
   const syncTxt = syncCls === 'y' ? 'กำลัง Sync' : syncCls === 'r' ? (syncErr ? 'Sync ไม่สำเร็จ' : 'ยังไม่เคย Sync') : 'Synced';
   const syncDet = syncCls === 'g' ? `· ${fmtTime(meta.synced_at)}${meta.synced_by ? ' โดย ' + meta.synced_by : ''}` : syncCls === 'r' && handlerVer === null ? '· ไม่พบ SharePoint Handler' : syncCls === 'y' ? '· กำลังสแกนโฟลเดอร์' : '';
-  const steps = [{ label: 'Z_Report Reconcile', to: [] }, ...parts.map((pp, i) => ({ label: pp, to: parts.slice(0, i + 1) }))];
+  const steps = [{ label: ROOT_LABEL, to: [] }, ...parts.map((pp, i) => ({ label: pp, to: parts.slice(0, i + 1) }))];
   if (searching) steps.push({ label: `ค้นหา "${q.trim()}"`, search: true });
   const todayTh = (() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })();
   const capSt = { fontSize: 10, letterSpacing: '.14em', color: '#6b778c', fontWeight: 700 };
 
+  // MARKER_SPC_BLOCK_NO_HANDLER_V1 -- เครื่องที่ไม่มี SharePoint Handler (ตามเครื่องนี้) เข้าใช้งานหน้านี้ไม่ได้ ต้องมี Permission + Handler คู่กัน
+  if (handlerChecked && !handlerVer) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, height: '100%', background: '#fff', fontFamily: '"Segoe UI", Tahoma, sans-serif', color: '#323130', padding: 24, textAlign: 'center' }}>
+        <div style={{ fontSize: 40 }}>🔒</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: '#8a4a00', marginTop: 8 }}>เครื่องนี้ยังไม่ได้ติดตั้ง SharePoint Handler</div>
+        <div style={{ fontSize: 13, color: '#605e5c', marginTop: 6, maxWidth: 520 }}>ต้องมี SharePoint Handler (fastapn-sp://) ในเครื่องนี้ก่อนจึงจะเข้าหน้านี้ได้ — ติดตั้งที่ Resource Center &gt; Setup - Tools แล้วกด "ตรวจสอบอีกครั้ง"</div>
+        <button type="button" onClick={async () => { launch(`fastapn-sp://update?v=${NEED_V}&api=${encodeURIComponent(API_ROOT)}&token=${encodeURIComponent(tok())}`); await sleep(6000); await checkHandler(); }} style={{ marginTop: 14, border: 'none', background: '#8a4a00', color: '#fff', borderRadius: 18, padding: '8px 20px', cursor: 'pointer', fontSize: 13 }}>ตรวจสอบอีกครั้ง</button>
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden', background: '#fff', fontFamily: '"Segoe UI", Tahoma, sans-serif', color: '#323130' }}
       onDragOver={(e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) { e.preventDefault(); setDrag(true); } }}
@@ -349,8 +368,8 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px 12px', background: '#fff' }}>
         <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: 12 }}>
           <div style={{ fontSize: 10.5, letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>Resource Center</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: 2 }}>SharePoint - <span style={{ color: '#2fb58a' }}>VatController</span></div>
-          <div style={{ fontSize: 12, color: '#6b778c', marginTop: 2 }}>Z_Report Reconcile · โครงสร้างเดียวกับ SharePoint · ไม่เก็บไฟล์จริงในระบบ</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: 2 }}>SharePoint - <span style={{ color: '#2fb58a' }}>{PAGE_TITLE}</span></div>
+          <div style={{ fontSize: 12, color: '#6b778c', marginTop: 2 }}>{ROOT_LABEL} · โครงสร้างเดียวกับ SharePoint · ไม่เก็บไฟล์จริงในระบบ</div>
           <div title={syncCls === 'r' ? 'กด ↻ รีเฟรช เพื่อสั่งสแกนใหม่' : ''} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 11, borderRadius: 99, padding: '3px 10px', background: syncPal[0], color: syncPal[1] }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: syncPal[2], boxShadow: `0 0 0 3px ${syncPal[2]}33`, opacity: syncCls === 'y' ? 0.6 : 1 }} />
             <span style={{ fontWeight: 600 }}>{syncTxt}</span><span style={{ color: '#6b778c' }}>{syncDet}</span>
@@ -365,8 +384,8 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 24px 12px', background: '#fff', borderBottom: '1px solid #edebe9' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
           {/* MARKER_SPC_BACK_VATCONTROL_V1 -- ปุ่มย้อนกลับ VAT Control อยู่หน้าสุดของ Step bar */}
-          <span onClick={() => onBack && onBack()} title="กลับไปหน้า VAT Control"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #0f6cbd', background: '#fff', color: '#0f6cbd', fontWeight: 600, borderRadius: 99, padding: '5px 14px', fontSize: 13, cursor: 'pointer' }}>← ⌂ VAT Control</span>
+          <span onClick={() => onBack && onBack()} title={`กลับไปหน้า ${BACK_LABEL}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #0f6cbd', background: '#fff', color: '#0f6cbd', fontWeight: 600, borderRadius: 99, padding: '5px 14px', fontSize: 13, cursor: 'pointer' }}>← ⌂ {BACK_LABEL}</span>
           <span style={{ color: '#b3bccb' }}>›</span>
           {steps.map((st, i) => {
             const cur = i === steps.length - 1;
@@ -397,13 +416,13 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
         {cmdB('↻ รีเฟรช', refresh, true)}
         {handlerVer && handlerVer < NEED_V && cmdB('⚙ Update Handler', triggerUpdate, true, '#8a4a00')}
         <div style={{ flex: 1 }} />
-        {isOwner && (
-          <button onClick={openFm} title="เลือกโฟลเดอร์หลักที่ VAT Controller จะเห็น (เฉพาะ Owner)" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #1b3358', background: '#fff', color: '#1b3358', borderRadius: 8, padding: '5px 12px', fontWeight: 600, fontSize: 12, cursor: 'pointer', marginRight: 8 }}>
-            ⚙ Folder Manage <span style={{ fontSize: 9.5, background: '#e3f6ec', color: '#14935a', borderRadius: 99, padding: '1px 7px', fontWeight: 700 }}>OWNER</span>
+        {(isOwner || MY) && (
+          <button onClick={openFm} title={MY ? 'เลือกโฟลเดอร์หลักที่ต้องการแสดง (เฉพาะของคุณ)' : `เลือกโฟลเดอร์หลักที่ ${PAGE_TITLE} จะเห็น (เฉพาะ Owner)`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #1b3358', background: '#fff', color: '#1b3358', borderRadius: 8, padding: '5px 12px', fontWeight: 600, fontSize: 12, cursor: 'pointer', marginRight: 8 }}>
+            {MY ? '⭐ My Folders' : <>⚙ Folder Manage <span style={{ fontSize: 9.5, background: '#e3f6ec', color: '#14935a', borderRadius: 99, padding: '1px 7px', fontWeight: 700 }}>OWNER</span></>}
           </button>
         )}
         {onOpenLegacy && <div onClick={onOpenLegacy} style={{ fontSize: 11, color: '#8a8886', cursor: 'pointer', padding: '4px 8px' }}>ดูของเดิม (Backend)</div>}
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 ค้นหาใน Z_Report Reconcile (ทุกชั้น)" style={{ fontSize: 13.5, padding: '7px 11px', border: '1px solid #d2d0ce', borderRadius: 4, width: 290 }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`🔍 ค้นหาใน ${ROOT_LABEL} (ทุกชั้น)`} style={{ fontSize: 13.5, padding: '7px 11px', border: '1px solid #d2d0ce', borderRadius: 4, width: 290 }} />
         <input ref={fileInput} type="file" multiple style={{ display: 'none' }} onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; putFiles(fs); }} />
       </div>
       {!handlerVer && (
@@ -480,7 +499,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
         <div onMouseDown={() => setDlg(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 10050, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div onMouseDown={(e) => e.stopPropagation()} style={{ width: 380, background: '#fff', borderRadius: 8, boxShadow: '0 10px 32px rgba(0,0,0,0.25)', padding: '16px 18px' }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{dlg.type === 'mkdir' ? 'โฟลเดอร์ใหม่' : 'เปลี่ยนชื่อ'}</div>
-            <div style={{ fontSize: 11, color: '#605e5c', marginBottom: 10 }}>{dlg.type === 'mkdir' ? `สร้างใน: Z_Report Reconcile${dlg.parent ? ' › ' + dlg.parent.split('/').join(' › ') : ''}` : `ชื่อเดิม: ${dlg.it.name}`}</div>
+            <div style={{ fontSize: 11, color: '#605e5c', marginBottom: 10 }}>{dlg.type === 'mkdir' ? `สร้างใน: ${ROOT_LABEL}${dlg.parent ? ' › ' + dlg.parent.split('/').join(' › ') : ''}` : `ชื่อเดิม: ${dlg.it.name}`}</div>
             <input autoFocus value={dlg.value} onChange={(e) => setDlg({ ...dlg, value: e.target.value })}
               onFocus={(e) => { if (dlg.type === 'rename') { const n = dlg.it.name; const dot = dlg.it.dir ? -1 : n.lastIndexOf('.'); e.target.setSelectionRange(0, dot > 0 ? dot : n.length); } }}
               onKeyDown={(e) => { if (e.key === 'Enter') submitDlg(); else if (e.key === 'Escape') { e.stopPropagation(); setDlg(null); } }}
@@ -498,7 +517,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
           <div onMouseDown={(e) => e.stopPropagation()} style={{ width: 460, maxWidth: '92vw', background: '#fff', borderRadius: 8, boxShadow: '0 10px 32px rgba(0,0,0,0.25)', padding: '16px 18px' }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>ย้าย {mv.paths.length} รายการไปที่…</div>
             <div style={{ fontSize: 12, color: '#605e5c', marginBottom: 8, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ color: '#0f6cbd', cursor: 'pointer' }} onClick={() => setMv({ ...mv, loc: [], loading: true })}>Z_Report Reconcile</span>
+              <span style={{ color: '#0f6cbd', cursor: 'pointer' }} onClick={() => setMv({ ...mv, loc: [], loading: true })}>{ROOT_LABEL}</span>
               {mv.loc.map((c, i) => (<React.Fragment key={i}><span>›</span><span style={{ color: '#0f6cbd', cursor: 'pointer' }} onClick={() => setMv({ ...mv, loc: mv.loc.slice(0, i + 1), loading: true })}>{c}</span></React.Fragment>))}
             </div>
             <div style={{ border: '1px solid #edebe9', borderRadius: 4, height: 260, overflowY: 'auto' }}>
@@ -525,12 +544,12 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy }) {
             <div onMouseDown={(e) => e.stopPropagation()} style={{ width: 720, maxWidth: '100%', maxHeight: '92vh', background: '#fff', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid #e5e9f0', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: 12, flex: 1 }}>
-                  <div style={{ fontSize: 10.5, letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>VAT Controller · Resource Center</div>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: '#14284b' }}>Folder Manage</div>
+                  <div style={{ fontSize: 10.5, letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>{PAGE_TITLE} · Resource Center</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: '#14284b' }}>{MY ? 'My Folders' : 'Folder Manage'}</div>
                   <div style={{ fontSize: 12, color: '#6b778c', marginTop: 3 }}>เลือกโฟลเดอร์หลักที่ต้องการให้แสดงในเมนูนี้ · โฟลเดอร์ย่อย (แบรนด์/เดือน) ที่ไม่มีไฟล์จะซ่อนอัตโนมัติ</div>
                   <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 11, background: '#f6f8fb', borderRadius: 99, padding: '3px 10px', color: '#4b5a73' }}>ใช้ร่วมกันทุกคน</span>
-                    <span style={{ fontSize: 11, background: '#f6f8fb', borderRadius: 99, padding: '3px 10px', color: '#4b5a73' }}>แก้ไขได้เฉพาะ Owner</span>
+                    <span style={{ fontSize: 11, background: '#f6f8fb', borderRadius: 99, padding: '3px 10px', color: '#4b5a73' }}>{MY ? 'เฉพาะของคุณ' : 'ใช้ร่วมกันทุกคน'}</span>
+                    <span style={{ fontSize: 11, background: '#f6f8fb', borderRadius: 99, padding: '3px 10px', color: '#4b5a73' }}>{MY ? 'ระบบกรองตามสิทธิ์ให้ก่อน คุณเลือกซ่อน/แสดงได้' : 'แก้ไขได้เฉพาะ Owner'}</span>
                     {!fm.configured && !fm.loading && <span style={{ fontSize: 11, background: '#fff6dc', borderRadius: 99, padding: '3px 10px', color: '#8a5a00' }}>ยังไม่เคยตั้งค่า — ตอนนี้แสดงทุกโฟลเดอร์</span>}
                   </div>
                 </div>

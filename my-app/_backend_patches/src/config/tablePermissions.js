@@ -241,6 +241,21 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_MENU_USER_GRANT_V1 -- ให้สิทธิ์/ปลดสิทธิ์รายบุคคลต่อเมนู: Admin/Owner อ่าน+เขียน
+  menu_user_grant: {
+    read: { roles: ["Admin", "Owner", "admin", "owner"] },
+    write: { roles: ["Admin", "Owner", "admin", "owner"] },
+  },
+  // MARKER_TABLEPERMISSIONS_MENU_MIN_ROLE_V1 -- Permission ขั้นต่ำต่อเมนู: ทุกคนอ่านได้ | เขียนได้เฉพาะ Owner
+  menu_min_role: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "owner"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_MAIL_SENT_LOG_V1
+  vat_mail_sent_log: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   // MARKER_TABLEPERMISSIONS_VAT_WATCHLIST_NOTES_V1
   vat_watchlist_notes: {
     read: { publicRead: true },

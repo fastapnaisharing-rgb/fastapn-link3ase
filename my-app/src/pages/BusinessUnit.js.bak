@@ -62,6 +62,133 @@ function StatusDropdown({ value, onChange, options, style }) {
   );
 }
 
+// MARKER_DATEFIELD_BE_COMPARE_V1 -- ช่องวันที่แบบพิมพ์ได้ + ปฏิทินที่ทำเอง: ระดับปีโชว์เลข พ.ศ. กำกับข้าง ค.ศ. (เลขเปรียบเทียบเฉยๆ ไม่มีผลกับค่า) ค่าที่ส่งออกยังเป็น ISO YYYY-MM-DD (ค.ศ.) เหมือน <input type="date"> เดิม
+function DateFieldBE({ value, onChange, disabled, style }) {
+  // MARKER_BUSINESSUNIT_DATEFIELD_NATIVE_LOOK_BE_V1 -- ปฏิทินหน้าตาเหมือนของ Browser (วัน: ลูกศร ↑↓ + Clear/Today ; เดือน/ปี: รายการปีแถบเทา กางเดือนใต้ปีที่เลือก) แต่แสดงเลข พ.ศ. ข้างทุกปี ; ค่าที่เก็บเป็น ค.ศ. (YYYY-MM-DD) เหมือนเดิม
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const parseIso = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null; };
+  const toDisp = (v) => { const p = parseIso(v); return p ? `${pad2(p.m + 1)}/${pad2(p.d)}/${p.y}` : ''; };
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MONF = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const [text, setText] = useState(toDisp(value));
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState('day'); // 'day' | 'ym'
+  const [vy, setVy] = useState(new Date().getFullYear());
+  const [vm, setVm] = useState(new Date().getMonth());
+  const [ey, setEy] = useState(new Date().getFullYear()); // ปีที่กางเดือนอยู่ในมุมมอง ym
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const wrapRef = useRef(null);
+  const popRef = useRef(null);
+  useEffect(() => { setText(toDisp(value)); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const h = (e) => {
+      if (wrapRef.current && wrapRef.current.contains(e.target)) return;
+      if (popRef.current && popRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  useEffect(() => {
+    if (!open || view !== 'ym' || !popRef.current) return;
+    const box = popRef.current.querySelector('[data-ylist="1"]');
+    const el = popRef.current.querySelector('[data-ey="1"]');
+    if (box && el) box.scrollTop = el.offsetTop;
+  }, [open, view]);
+  const sel = parseIso(value);
+  const commit = (raw) => {
+    const t = String(raw || '').trim();
+    if (!t) { onChange(''); return; }
+    const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t);
+    if (m) {
+      const mo = +m[1], d = +m[2], y = +m[3];
+      const dt = new Date(y, mo - 1, d);
+      if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) { onChange(`${y}-${pad2(mo)}-${pad2(d)}`); return; }
+    }
+    setText(toDisp(value)); // อ่านไม่ออก -> คืนค่าเดิม
+  };
+  const openPop = () => {
+    if (disabled) return;
+    if (!open && wrapRef.current) {
+      const r = wrapRef.current.getBoundingClientRect();
+      setPos({ top: Math.min(r.bottom + 2, window.innerHeight - 330), left: Math.max(8, Math.min(r.right - 250, window.innerWidth - 260)) });
+      const p = sel || { y: new Date().getFullYear(), m: new Date().getMonth() };
+      setVy(p.y); setVm(p.m); setEy(p.y); setView('day');
+    }
+    setOpen((o) => !o);
+  };
+  const first = new Date(vy, vm, 1).getDay();
+  const dim = new Date(vy, vm + 1, 0).getDate();
+  const prevDim = new Date(vy, vm, 0).getDate();
+  const trailing = Math.max(0, 42 - first - dim);
+  const prevMonth = () => { if (vm === 0) { setVm(11); setVy(vy - 1); } else setVm(vm - 1); };
+  const nextMonth = () => { if (vm === 11) { setVm(0); setVy(vy + 1); } else setVm(vm + 1); };
+  const hdBtn = { border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: 700, color: '#1a3a5c', padding: '2px 4px' };
+  const arrBtn = { border: 'none', background: 'none', cursor: 'pointer', fontSize: '17px', color: '#333', padding: '0 8px', lineHeight: 1 };
+  const selCell = { background: '#6e6e6e', color: '#fff', fontWeight: 700, border: '2px solid #111' };
+  const years = [];
+  for (let y = 1950; y <= 2100; y++) years.push(y);
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
+      <input type="text" disabled={disabled} value={text} placeholder="mm/dd/yyyy" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} style={{ ...style, paddingRight: '26px' }} />
+      <span onClick={openPop} style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', cursor: disabled ? 'default' : 'pointer', fontSize: '14px', opacity: disabled ? 0.4 : 1 }}>{'📅'}</span>
+      {open && ReactDOM.createPortal(
+        <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: '240px', background: 'white', border: '0.5px solid #ddd', borderRadius: '8px', boxShadow: '0 6px 18px rgba(0,0,0,0.22)', zIndex: 99999, padding: '8px', fontSize: '13px', color: '#222' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '6px' }}>
+            <button type="button" style={hdBtn} onClick={() => { if (view === 'day') { setEy(vy); setView('ym'); } else { setView('day'); } }}>
+              {MONF[vm]} {vy} <span style={{ color: '#999', fontWeight: 400, fontSize: '11px' }}>({vy + 543})</span> {'▾'}
+            </button>
+            {view === 'day' && (
+              <span>
+                <button type="button" style={arrBtn} onClick={prevMonth}>{'↑'}</button>
+                <button type="button" style={arrBtn} onClick={nextMonth}>{'↓'}</button>
+              </span>
+            )}
+          </div>
+          {view === 'day' && (
+            <React.Fragment>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px', textAlign: 'center' }}>
+                {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((w) => <div key={w} style={{ fontSize: '12px', fontWeight: 700, color: '#222', padding: '4px 0' }}>{w}</div>)}
+                {Array.from({ length: first }, (_, i) => <div key={'o' + i} style={{ padding: '6px 0', color: '#8a8a8a' }}>{prevDim - first + 1 + i}</div>)}
+                {Array.from({ length: dim }, (_, i) => {
+                  const d = i + 1;
+                  const on = sel && sel.y === vy && sel.m === vm && sel.d === d;
+                  return <div key={d} onClick={() => { onChange(`${vy}-${pad2(vm + 1)}-${pad2(d)}`); setOpen(false); }} style={{ padding: '6px 0', borderRadius: '4px', cursor: 'pointer', boxSizing: 'border-box', ...(on ? selCell : { border: '2px solid transparent' }) }} onMouseEnter={(e) => { if (!on) e.currentTarget.style.background = '#eef3fb'; }} onMouseLeave={(e) => { if (!on) e.currentTarget.style.background = 'transparent'; }}>{d}</div>;
+                })}
+                {Array.from({ length: trailing }, (_, i) => <div key={'t' + i} style={{ padding: '6px 0', color: '#8a8a8a' }}>{i + 1}</div>)}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 4px 2px' }}>
+                <button type="button" style={{ border: 'none', background: 'none', color: '#1a73e8', cursor: 'pointer', fontSize: '13px' }} onClick={() => { onChange(''); setOpen(false); }}>Clear</button>
+                <button type="button" style={{ border: 'none', background: 'none', color: '#1a73e8', cursor: 'pointer', fontSize: '13px' }} onClick={() => { const t = new Date(); onChange(`${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`); setOpen(false); }}>Today</button>
+              </div>
+            </React.Fragment>
+          )}
+          {view === 'ym' && (
+            <div data-ylist="1" style={{ position: 'relative', maxHeight: '250px', overflowY: 'auto' }}>
+              {years.map((y) => (
+                <div key={y}>
+                  <div {...(y === ey ? { 'data-ey': '1' } : {})} onClick={() => setEy(y)} style={{ display: 'flex', alignItems: 'baseline', background: '#ececec', padding: '5px 10px', cursor: 'pointer', fontSize: '13px' }}>
+                    <span>{y}</span><span style={{ marginLeft: '14px', fontSize: '12px', color: '#777' }}>{y + 543}</span>
+                  </div>
+                  {y === ey && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '2px', padding: '6px 2px' }}>
+                      {MON.map((m, i) => {
+                        const on = sel && sel.y === y && sel.m === i;
+                        return <div key={m} onClick={() => { setVy(y); setVm(i); setView('day'); }} style={{ padding: '9px 0', textAlign: 'center', borderRadius: '4px', cursor: 'pointer', boxSizing: 'border-box', ...(on ? selCell : { border: '2px solid transparent' }) }} onMouseEnter={(e) => { if (!on) e.currentTarget.style.background = '#eef3fb'; }} onMouseLeave={(e) => { if (!on) e.currentTarget.style.background = 'transparent'; }}>{m}</div>;
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 // MARKER_BUSINESSUNIT_FIX_INFOCELL_STYLE_V1
 function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_COMBOBOX_PORTAL_FIX_V1
   const [open, setOpen] = useState(false);
@@ -106,6 +233,8 @@ function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_C
       if (open && highlight >= 0 && filtered[highlight]) { e.preventDefault(); selectOption(filtered[highlight]); }
     } else if (e.key === 'Escape') {
       setOpen(false); setHighlight(-1);
+    } else if (e.key === 'Tab') { // MARKER_COMBOBOX_TAB_CLOSE_V1 -- Tab ออกจากช่อง = ปิด Dropdown
+      setOpen(false); setHighlight(-1);
     }
   };
   return (
@@ -122,6 +251,54 @@ function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_C
             <div key={i} onMouseDown={() => selectOption(opt)}
               onMouseEnter={() => setHighlight(i)}
               style={{ padding: '7px 10px', fontSize: '12px', cursor: 'pointer', borderBottom: '0.5px solid #f5f5f5', background: i === highlight ? '#f0f7ff' : 'white' }}>{opt}</div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+// MARKER_FIXEDSELECT_KEYBOARD_V1 -- Dropdown เลือกได้เฉพาะรายการ (ไม่พิมพ์เอง) : Tab เข้า = เปิด, ArrowUp/Down เลื่อน, Enter เลือก, Esc ปิด, Tab ออก/คลิกนอก = ปิด (ไม่เปลี่ยนค่า)
+function FixedSelect({ value, onChange, options, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const ref = useRef(null);
+  const listRef = useRef(null);
+  const items = ['', ...options]; // '' = ไม่ระบุ
+  const openDropdown = () => {
+    if (ref.current) { const r = ref.current.getBoundingClientRect(); setPos({ top: r.bottom + 2, left: r.left, width: r.width }); }
+    setHighlight(Math.max(0, items.indexOf(value || '')));
+    setOpen(true);
+  };
+  const closeDropdown = () => { setOpen(false); setHighlight(-1); };
+  const pick = (v) => { onChange(v); closeDropdown(); };
+  useEffect(() => {
+    const h = (e) => {
+      if (ref.current && ref.current.contains(e.target)) return;
+      if (listRef.current && listRef.current.contains(e.target)) return;
+      closeDropdown();
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) openDropdown(); else setHighlight(h => Math.min(h + 1, items.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); if (!open) openDropdown(); else setHighlight(h => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (open && highlight >= 0) pick(items[highlight]); else openDropdown(); }
+    else if (e.key === 'Escape') { if (open) { e.preventDefault(); e.stopPropagation(); closeDropdown(); } }
+    else if (e.key === 'Tab') { closeDropdown(); }
+  };
+  return (
+    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+      <input readOnly value={value || ''} placeholder={placeholder || ''} onFocus={openDropdown} onClick={() => { if (!open) openDropdown(); }} onKeyDown={onKeyDown} onBlur={closeDropdown}
+        style={{ height: '28px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: 'center', cursor: 'pointer', caretColor: 'transparent' }} />
+      {open && ReactDOM.createPortal(
+        <div ref={listRef} onMouseDown={(e) => e.preventDefault()} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 99999, maxHeight: '180px', overflowY: 'auto' }}>
+          {items.map((opt, i) => (
+            <div key={i} onMouseDown={() => pick(opt)} onMouseEnter={() => setHighlight(i)}
+              style={{ padding: '7px 10px', fontSize: '12px', cursor: 'pointer', borderBottom: '0.5px solid #f5f5f5', color: opt ? '#1a3a5c' : '#aaa', background: i === highlight ? '#f0f7ff' : 'white' }}>{opt || '— ไม่ระบุ —'}</div>
           ))}
         </div>,
         document.body
@@ -154,19 +331,19 @@ function ExportDropdown({ onExportSelected, onExportAll, selectedCount, isMobile
   );
 }
 
-function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile }) {
+function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, keyField, allFields, isMobile, showAll }) { // MARKER_IMPORT_PREVIEW_SHOW_ALL_V1 -- showAll = แสดงทุกช่อง (Branch)
   if (!show) return null;
   const summary = previewRows.reduce((acc, r) => { acc[r._status] = (acc[r._status] || 0) + 1; return acc; }, {});
   const confirmCount = previewRows.filter(r => r._status === 'new' || r._status === 'update').length;
   const statusTag = (s) => {
-    const map = { new: { label: '➕ New', bg: '#EAF3DE', color: '#27500A' }, update: { label: '🔄 Update', bg: '#e8f0fb', color: '#1a3a5c' }, nochange: { label: '✅ No Change', bg: '#f5f5f5', color: '#666' }, duplicate: { label: '⚠️ Duplicate', bg: '#FFF3CD', color: '#856404' } };
+    const map = { new: { label: '➕ New', bg: '#EAF3DE', color: '#27500A' }, update: { label: '🔄 Update', bg: '#e8f0fb', color: '#1a3a5c' }, nochange: { label: '✅ No Change', bg: '#f5f5f5', color: '#666' }, duplicate: { label: '⚠️ Duplicate', bg: '#FFF3CD', color: '#856404' }, invalid: { label: '⛔ ไม่ผ่าน', bg: '#FCEBEB', color: '#791F1F' } };
     const m = map[s] || { label: s, bg: '#eee', color: '#333' };
     return <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: '500', background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>{m.label}</span>;
   };
-  const displayFields = allFields.filter(f => !['updated_by', 'updated_at'].includes(f)).slice(0, 5);
+  const displayFields = showAll ? allFields.filter(f => !['updated_by', 'updated_at'].includes(f)) : allFields.filter(f => !['updated_by', 'updated_at'].includes(f)).slice(0, 5);
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-      <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ background: 'white', borderRadius: '10px', padding: '20px', width: isMobile ? '95vw' : '90vw', maxWidth: showAll ? '1700px' : '1100px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <h3 style={{ fontSize: '15px', margin: 0 }}>📋 Preview ข้อมูลที่จะ Import</h3>
           <span style={{ fontSize: '12px', color: '#0F6E56', fontWeight: '500' }}>{previewRows.length} รายการในไฟล์</span>
@@ -175,7 +352,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
           ℹ️ ระบบตรวจสอบจาก <strong style={{ margin: '0 3px' }}>{keyField}</strong>
         </div>
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          {[['new','➕ New','#EAF3DE','#27500A'],['update','🔄 Update','#e8f0fb','#1a3a5c'],['nochange','✅ No Change','#f5f5f5','#666'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404']].map(([key,label,bg,color]) => (
+          {[['new','➕ New','#EAF3DE','#27500A'],['update','🔄 Update','#e8f0fb','#1a3a5c'],['nochange','✅ No Change','#f5f5f5','#666'],['duplicate','⚠️ Duplicate','#FFF3CD','#856404'],['invalid','⛔ ไม่ผ่าน','#FCEBEB','#791F1F']].map(([key,label,bg,color]) => (
             summary[key] ? <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '500', background: bg, color }}>{label} <strong>{summary[key]}</strong></span> : null
           ))}
         </div>
@@ -188,11 +365,11 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
             </tr></thead>
             <tbody>
               {previewRows.map((row, i) => {
-                const rowBg = { new: '#f9fffe', update: '#f5f8ff', nochange: 'white', duplicate: '#fffdf0' }[row._status] || 'white';
+                const rowBg = { new: '#f9fffe', update: '#f5f8ff', nochange: 'white', duplicate: '#fffdf0', invalid: '#fff5f5' }[row._status] || 'white';
                 return (
                   <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0' }}>{statusTag(row._status)}</td>
-                    {displayFields.map(f => <td key={f} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(row[f] ?? '') || '-'}</td>)}
+                    {displayFields.map(f => <td key={f} title={String(row[f] ?? '')} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: showAll ? '260px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', background: (row._missingKeys || []).includes(f) ? '#FCEBEB' : undefined, color: String(row[f] ?? '').trim() ? undefined : '#bbb' }}>{String(row[f] ?? '') || '-'}</td>)}
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>
                       {row._status === 'update' && row._changes?.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -206,6 +383,7 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                           ))}
                         </div>
                       ) : row._status === 'new' ? <span style={{ fontSize: '10px', color: '#888' }}>เพิ่มใหม่</span>
+                        : row._status === 'invalid' ? <span style={{ fontSize: '10px', color: '#791F1F', fontWeight: '500' }}>ขาด: {(row._missing || []).join(', ')} — ไม่ถูก Import</span>
                         : row._status === 'duplicate' ? <span style={{ fontSize: '10px', color: '#856404' }}>{keyField} ซ้ำในไฟล์</span>
                         : <span style={{ fontSize: '10px', color: '#aaa' }}>ข้อมูลเหมือนเดิม</span>}
                     </td>
@@ -367,7 +545,7 @@ function VatWatchlistBuGroupRangeSection({ currentBu }) {
           </select>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '8px 0', fontSize: '12px', fontWeight: '500', background: saving ? '#ccc' : '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
+          <button type="button" onClick={handleSave} disabled={saving || !formRangeInput.trim()} style={{ flex: 1, padding: '8px 0', fontSize: '12px', fontWeight: '500', background: (saving || !formRangeInput.trim()) ? '#ccc' : '#1a3a5c', color: 'white', border: 'none', borderRadius: '6px', cursor: (saving || !formRangeInput.trim()) ? 'not-allowed' : 'pointer' }}> {/* MARKER_BUSINESSUNIT_GROUPRANGE_BTN_DISABLE_EMPTY_V1 -- Range ว่าง = ปุ่ม Disable */}
             {editingId ? 'บันทึก' : '+ เพิ่ม'}
           </button>
           {editingId && (
@@ -379,6 +557,77 @@ function VatWatchlistBuGroupRangeSection({ currentBu }) {
   );
 }
 
+// MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- เก็บเฉพาะที่อยู่ไทย: ตัดบรรทัดที่ไม่มีตัวอักษรไทย (อังกฤษ) และตัดบรรทัดแรก (ชื่อบริษัท/สาขา) เมื่อมีบรรทัดไทย >= 2 ; ข้อความบรรทัดเดียวคงเดิม
+const cleanBranchAddress = (v) => {
+  const raw = String(v == null ? '' : v).trim();
+  if (!/[\r\n]/.test(raw)) return raw;
+  const lines = raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const thai = lines.filter((l) => /[\u0E00-\u0E7F]/.test(l));
+  if (thai.length === 0) return raw;
+  return (thai.length >= 2 ? thai.slice(1) : thai).join(' ');
+};
+// MARKER_BRANCH_PCT_FROM_COMPANY_V1 -- % ของสาขา = VAT % ของบริษัทใน Company List (จับคู่ด้วย TAX ID = BU-TaxID); ไม่เจอบริษัท = 100 ; ไม่มี BU-TaxID = ว่าง
+let BRANCH_COMPANY_LIST = [];
+const branchCompanyPct = (taxId) => {
+  const t = String(taxId || '').trim();
+  if (!t) return '';
+  const c = BRANCH_COMPANY_LIST.find((i) => String(i['TAX ID'] || '').trim() === t);
+  const v = c ? String(c['VAT %'] == null ? '' : c['VAT %']).trim() : '';
+  return v || '100';
+};
+// MARKER_BRANCH_FILL_FROM_COMPANY_V1 -- เติมสาขาจาก Company List ตาม BU (เฉพาะช่องที่ว่าง): BU-TaxID <- TAX ID ; % <- VAT % (ไม่มี = 100) ; Simple Company <- Segment3-English Company Name
+const branchFillFromCompany = (f) => {
+  const bu = String(f['bu'] || '').trim().toLowerCase();
+  if (!bu) return f;
+  const c = BRANCH_COMPANY_LIST.find((i) => String(i['bu'] || '').trim().toLowerCase() === bu);
+  if (!c) return f;
+  const blank = (v) => !String(v == null ? '' : v).trim();
+  const n = { ...f };
+  if (blank(n['BU-TaxID']) && !blank(c['TAX ID'])) n['BU-TaxID'] = String(c['TAX ID']).trim();
+  if (blank(n['%'])) { const p = branchCompanyPct(n['BU-TaxID']); if (p) n['%'] = p; }
+  const seg = String(c['SEGMENT3'] || '').trim(); const eng = String(c['ENGLISH COMPANY NAME'] || '').trim();
+  if (blank(n['Simple Company']) && seg && eng) n['Simple Company'] = `${seg}-${eng}`;
+  return n;
+};
+// MARKER_BRANCH_IMPORT_AUTOFILL_V1 -- Import Template: เติมช่องที่ว่างให้อัตโนมัติ (เฉพาะ Branch Code ใหม่ ไม่แตะสาขาที่มีใน DB แล้ว)
+//   BU-Branch -> Pad 5 หลัก ; Branch Direct = bu-BU Branch ; Simple Brand Code = BranchCode-Company ; Simple Company -> จาก Head Office (รหัสตัด 2 ตัวท้าย+"01") หรือสาขาที่ Company ตรงกัน
+const autofillBranchImportRows = (rows, existing) => {
+  const blank = (v) => !String(v == null ? '' : v).trim();
+  const have = new Set((existing || []).map((b) => String(b['Branch Code'] || '').trim()));
+  const pool = [...(existing || []), ...rows];
+  const norm = (x) => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return rows.map((r) => {
+    const code = String(r['Branch Code'] || '').trim();
+    if (!code || have.has(code)) return r;
+    const n = { ...r };
+    if (blank(n['status'])) n['status'] = 'Active'; // MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1
+    Object.assign(n, branchFillFromCompany(n)); // MARKER_BRANCH_FILL_FROM_COMPANY_V1
+    if (!blank(n['BU-Branch'])) n['BU-Branch'] = String(n['BU-Branch']).trim().padStart(5, '0');
+    const bu = String(n['bu'] || '').trim();
+    if (blank(n['Branch Direct']) && bu && !blank(n['BU-Branch'])) n['Branch Direct'] = `${bu}-${n['BU-Branch']}`;
+    const comp = String(n['Company for Show in Report Display'] || '').trim();
+    if (blank(n['Simple Brand Code']) && comp) n['Simple Brand Code'] = `${code}-${comp}`;
+    if (blank(n['Simple Company'])) {
+      const ho = code.length >= 3 ? code.slice(0, -2) + '01' : '';
+      const m = pool.find((b) => ho && String(b['Branch Code'] || '').trim() === ho && !blank(b['Simple Company']))
+        || pool.find((b) => comp && norm(b['Company for Show in Report Display']) === norm(comp) && !blank(b['Simple Company']));
+      if (m) n['Simple Company'] = m['Simple Company'];
+    }
+    if (blank(n['%']) && !blank(n['BU-TaxID'])) n['%'] = branchCompanyPct(n['BU-TaxID']);
+    return n;
+  });
+};
+// MARKER_BRANCH_IMPORT_MIN_REQUIRED_V1 -- Import สาขาใหม่: ต้องมีช่องขั้นต่ำครบ (หลังระบบเติมให้แล้ว) ไม่ครบ = ไม่ผ่าน (ไม่ถูก Import) และบอกว่าขาดอะไร
+const BRANCH_IMPORT_REQUIRED = [['Branch Code', 'Branch Code'], ['status', 'Status'], ['Company for Show in Report Display', 'Company for Report'], ['Simple Company', 'Simple Company'], ['bu', 'BU'], ['Group-P', 'Group-P'], ['BU-TaxID', 'BU Tax ID'], ['BU-Branch', 'BU Branch']];
+const markInvalidNewBranchRows = (rows) => rows.map((r) => {
+  if (r._status !== 'new') return r;
+  const has = (k) => String(r[k] == null ? '' : r[k]).trim() !== '';
+  const missK = BRANCH_IMPORT_REQUIRED.filter(([k]) => !has(k));
+  const miss = missK.map(([, l]) => l); const keys = missK.map(([k]) => k);
+  if (String(r['status'] || '').trim() === 'Closed' && !has('Inactive Date')) { miss.push('Inactive Date (Closed)'); keys.push('Inactive Date'); }
+  if (String(r['status'] || '').trim() === 'Relocate' && !has('Branch Allocate')) { miss.push('Branch Allocate (Relocate)'); keys.push('Branch Allocate'); }
+  return miss.length ? { ...r, _status: 'invalid', _missing: miss, _missingKeys: keys } : r;
+});
 function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'info');
   const { currentUser, userName, userPermissions } = useAuth();  // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
@@ -456,7 +705,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const INFO_FIELDS = ['bu','THAI COMPANY NAME','ENGLISH COMPANY NAME','bu_code_name','system_bank','TAX ID','PREPARE BY','DEPARTMENT','COMPANY CODE','VAT %','Last Rate (%)','BOOK','SEGMENT3','AP GRT Control','updated_by','updated_at'];
   const INFO_KEY = 'TAX ID';
-  const INFO_COMBO = ['bu','DEPARTMENT','BOOK','AP GRT Control'];
+  const INFO_COMBO = ['DEPARTMENT','AP GRT Control']; // MARKER_BUSINESSUNIT_INFO_BU_BOOK_PLAIN_INPUT_V1 -- BU / Book เป็นช่องพิมพ์ธรรมดา (เอา Dropdown ออก)
   // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
   const INFO_EDIT = [
     ['bu','BU'],['THAI COMPANY NAME','Thai Company Name'],['ENGLISH COMPANY NAME','English Company Name'],
@@ -503,14 +752,30 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   // ✅ Tax Type ComboBox Option List — ค่าใหม่ที่พิมพ์จะถูกเพิ่มเข้า List นี้ (Session เดียว ไม่เก็บ DB)
   const [taxTypeOptions, setTaxTypeOptions] = useState(['A,T', 'N,T', 'No Type', 'All Type']);
 
+  useEffect(() => { fetchCollection('CompanyList').then((l) => { if (Array.isArray(l)) BRANCH_COMPANY_LIST = l; }).catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const un = subscribeWs(['company_list_updated'], () => { fetchCollection('CompanyList', true).then((l) => { if (Array.isArray(l)) BRANCH_COMPANY_LIST = l; }).catch(() => {}); }); return () => { try { un && un(); } catch (e) { /* ignore */ } }; }, []); // eslint-disable-line react-hooks/exhaustive-deps -- MARKER_BRANCH_FILL_FROM_COMPANY_V1 รับ Broadcast ตอน Company เปลี่ยน
+  // MARKER_BUSINESSUNIT_BUCODENAME_BLUE_AUTO_V1 -- BU Code Name = Field ฟ้า (ระบบสร้างให้) = "Segment3 - English Company Name" ทันทีที่มี Segment3 ; ว่าง Segment3 = ว่าง ; ถ้าผู้ใช้แก้เองแล้วระบบไม่ทับ ; CHR/CHN ไม่ Auto
+  const buCodeAutoRef = useRef('');
+  useEffect(() => {
+    const seg = String(infoForm['SEGMENT3'] || '').trim();
+    const eng = String(infoForm['ENGLISH COMPANY NAME'] || '').trim();
+    const cur = String(infoForm['bu_code_name'] || '').trim();
+    if (['CHR', 'CHN'].includes(String(infoForm['bu'] || '').trim())) return;
+    if (!seg) { if (cur && cur === buCodeAutoRef.current) { buCodeAutoRef.current = ''; setInfoForm(f => ({ ...f, bu_code_name: '' })); } return; }
+    const next = [seg, eng].filter(Boolean).join(' - ');
+    if (!cur || cur === buCodeAutoRef.current) { buCodeAutoRef.current = next; if (cur !== next) setInfoForm(f => ({ ...f, bu_code_name: next })); }
+  }, [infoForm['SEGMENT3'], infoForm['ENGLISH COMPANY NAME'], infoForm['bu']]); // eslint-disable-line react-hooks/exhaustive-deps
+  // MARKER_BUSINESSUNIT_INFO_YELLOW_REQUIRED_V1 -- Company Info: Field เหลือง = บังคับกรอก (BU / Tax ID / Company Code / Book / Thai / English / VAT %)
+  const INFO_REQUIRED_KEYS = ['bu', 'TAX ID', 'COMPANY CODE', 'BOOK', 'THAI COMPANY NAME', 'ENGLISH COMPANY NAME', 'VAT %', 'SEGMENT3', 'base'];
+  const INFO_REQUIRED_LABEL = { 'bu': 'BU', 'TAX ID': 'Tax ID', 'COMPANY CODE': 'Company Code', 'BOOK': 'Book', 'THAI COMPANY NAME': 'Thai Company Name', 'ENGLISH COMPANY NAME': 'English Company Name', 'VAT %': 'VAT %', 'SEGMENT3': 'Segment3', 'base': 'Base' };
   const BRANCH_FIELDS = ['Branch Code','Branch Direct','Branch Allocate','BU Code','Company for Show in Report Display','Simple Company','BU-TaxID','BU-Branch','Simple Brand Code','%','DB(%)','cpc','Branch Address','Group-P','bu','status','Inactive Date','updated_by','updated_at'];
   const BRANCH_KEY = 'Branch Code';
   // MARKER_BUSINESSUNIT_REMOVE_COMBO_MATCH_APCONTROLLER_V1 -- ตรงกับ APController.js (เอา ComboBox ออกหมด)
   const BRANCH_COMBO = [];
   // ── Pattern เดียวกับ APController.js (BRANCH_REQUIRED_KEYS/BRANCH_FIELD_COLOR) ──
-  const BRANCH_REQUIRED_KEYS = ['Branch Code','status','Company for Show in Report Display','bu','Group-P','BU-TaxID','BU-Branch'];
+  const BRANCH_REQUIRED_KEYS = ['Branch Code','status','Company for Show in Report Display','Simple Company','bu','Group-P','BU-TaxID','BU-Branch']; // MARKER_BRANCH_SIMPLE_COMPANY_REQUIRED_V1
   const BRANCH_FIELD_COLOR = {
-    'Branch Code': '#FCF3D5', 'status': '#FCF3D5', 'Company for Show in Report Display': '#FCF3D5',
+    'Branch Code': '#FCF3D5', 'status': '#FCF3D5', 'Company for Show in Report Display': '#FCF3D5', 'Simple Company': '#FCF3D5',
     'bu': '#FCF3D5', 'Group-P': '#FCF3D5', 'BU-TaxID': '#FCF3D5', 'BU-Branch': '#FCF3D5',
     '%': '#DCEAF1', 'Branch Direct': '#DCEAF1',
   };
@@ -682,6 +947,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const handleInfoSave = async () => {
     try {
+      const missInfo = INFO_REQUIRED_KEYS.filter(k => !String(infoForm[k] == null ? '' : infoForm[k]).trim()); // MARKER_BUSINESSUNIT_INFO_YELLOW_REQUIRED_V1
+      if (missInfo.length) { confirmDialog.alert('กรุณากรอก ' + missInfo.map(k => INFO_REQUIRED_LABEL[k]).join(', '), { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
       const originalItem = infoItems.find(i => i.id === infoEditId);
       // MARKER_BUSINESSUNIT_VAT_RATE_EDIT_PERMISSION_V1 — กันซ้ำตอน Save (เผื่อ UI ถูกข้ามมาได้)
       if (infoEditId && originalItem && !(isOwner || isAdmin)) {
@@ -799,7 +1066,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       }
       setShowInfoPreview(false); setInfoPreviewRows([]);
       await fetchInfo(true);
-      alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
+      await confirmDialog.alert(`เพิ่มใหม่ ${newRows.length} รายการ\nอัปเดต ${updateRows.length} รายการ`, { variant: 'success', title: 'Import สำเร็จ' }); // MARKER_IMPORT_SUCCESS_DIALOG_V1
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setInfoImporting(false);
   };
@@ -818,7 +1085,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleBranchDetailSave = async () => {
     const err = validateBranchForm(branchDetailForm);
     if (err) { confirmDialog.alert(err, { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
-    const data = { ...branchDetailForm, ...metaFields };
+    const data = { ...branchDetailForm, 'Branch Address': cleanBranchAddress(branchDetailForm['Branch Address']), ...metaFields }; // MARKER_BRANCH_ADDRESS_THAI_ONLY_V1
     const { data: updated, error } = await db.from('branch_list').update(data).eq('id', branchDetailItem.id).select().single();
     if (error) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + error.message, { variant: 'danger' }); return; }
     setBranches(prev => prev.map(b => b.id === branchDetailItem.id ? { ...b, ...updated } : b));
@@ -832,7 +1099,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     if (err) { confirmDialog.alert(err, { variant: 'danger', title: 'กรอกข้อมูลไม่ครบ' }); return; }
     const dupBranch = branches.find(b => String(b['Branch Code'] || '').trim() === String(branchNewForm['Branch Code'] || '').trim());
     if (dupBranch) { confirmDialog.alert(`Branch Code "${branchNewForm['Branch Code']}" มีอยู่แล้วในระบบ`, { variant: 'danger', title: 'ซ้ำในระบบ' }); return; }
-    const { data: inserted, error } = await db.from('branch_list').insert([{ ...branchNewForm, ...metaFields }]).select().single();
+    const { data: inserted, error } = await db.from('branch_list').insert([{ ...branchNewForm, 'Branch Address': cleanBranchAddress(branchNewForm['Branch Address']), ...metaFields }]).select().single();
     if (error) { confirmDialog.alert('บันทึกไม่สำเร็จ: ' + error.message, { variant: 'danger' }); return; }
     setBranches(prev => [...prev, inserted]);
     setShowBranchNew(false); setBranchNewForm({});
@@ -976,7 +1243,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleBranchFileChange = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = (evt) => { const wb = XLSX.read(evt.target.result, { type: 'binary' }); const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }); setBranchPreviewRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS)); setShowBranchPreview(true); };
+    reader.onload = async (evt) => { try { const cl = await fetchCollection('CompanyList'); if (Array.isArray(cl)) BRANCH_COMPANY_LIST = cl; } catch (e) { /* ใช้ค่าเดิม */ } const wb = XLSX.read(evt.target.result, { type: 'binary' }); let rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }).filter((r) => String(r[BRANCH_KEY] || '').trim()).map((r) => ({ ...r, 'Branch Address': cleanBranchAddress(r['Branch Address']) })); rawRows = autofillBranchImportRows(rawRows, branches); /* MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- ข้ามแถวที่ไม่มี Branch Code (แถวอังกฤษที่ต่อใต้) */ setBranchPreviewRows(markInvalidNewBranchRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS))); setShowBranchPreview(true); };
     reader.readAsBinaryString(file); e.target.value = '';
   };
 
@@ -1009,7 +1276,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       }
       setShowBranchPreview(false); setBranchPreviewRows([]);
       await fetchBranch(true);
-      alert(`✅ Import สำเร็จ — New: ${newRows.length} / Update: ${updateRows.length}`);
+      { const skipped = branchPreviewRows.filter(r => r._status === 'invalid').length; await confirmDialog.alert(`เพิ่มใหม่ ${newRows.length} รายการ\nอัปเดต ${updateRows.length} รายการ` + (skipped > 0 ? `\nไม่ผ่านเงื่อนไขขั้นต่ำ ${skipped} รายการ (ไม่ถูกนำเข้า)` : ''), { variant: 'success', title: 'Import สำเร็จ' }); } // MARKER_IMPORT_SUCCESS_DIALOG_V1
     } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
     setBranchImporting(false);
   };
@@ -1134,6 +1401,15 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     };
     // MARKER_BUSINESSUNIT_PORT_BLUR_AUTOFILL_DUP_V1
     // ── Port จาก APController.js: Auto-Fill จาก Head Office Lookup ──────────
+    const withCompanyFill = (h) => () => { // MARKER_BRANCH_FILL_FROM_COMPANY_V1
+      if (h) h();
+      setForm(f => branchFillFromCompany(f));
+      const buV = String(form['bu'] || '').trim().toLowerCase();
+      if (buV && !BRANCH_COMPANY_LIST.some(i => String(i['bu'] || '').trim().toLowerCase() === buV)) {
+        fetchCollection('CompanyList', true).then((l) => { if (Array.isArray(l)) { BRANCH_COMPANY_LIST = l; setForm(f => branchFillFromCompany(f)); } }).catch(() => {});
+      }
+    };
+    const handleTaxIdBlur = () => setForm(f => (String(f['%'] || '').trim() ? f : { ...f, '%': branchCompanyPct(f['BU-TaxID']) })); // MARKER_BRANCH_PCT_FROM_COMPANY_V1
     const handleBranchCodeBlur = () => {
       const code = String(form['Branch Code'] || '').trim();
       if (code.length < 3) return;
@@ -1145,7 +1421,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         'bu': String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || ''),
         'Group-P': String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || ''),
         'BU-TaxID': String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || ''),
-        '%': String(f['%'] || '').trim() ? f['%'] : (match['%'] || ''),
+        '%': String(f['%'] || '').trim() ? f['%'] : (branchCompanyPct(String(f['BU-TaxID'] || '').trim() || match['BU-TaxID']) || match['%'] || ''),
         'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || ''),
       }));
     };
@@ -1162,7 +1438,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
           next['bu'] = String(f['bu'] || '').trim() ? f['bu'] : (match['bu'] || '');
           next['Group-P'] = String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || '');
           next['BU-TaxID'] = String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || '');
-          next['%'] = String(f['%'] || '').trim() ? f['%'] : (match['%'] || '');
+          next['%'] = String(f['%'] || '').trim() ? f['%'] : (branchCompanyPct(String(f['BU-TaxID'] || '').trim() || match['BU-TaxID']) || match['%'] || '');
           next['Simple Company'] = String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || '');
         }
         if (!String(f['Simple Brand Code'] || '').trim() && branchCodeVal && rawName) {
@@ -1185,7 +1461,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       const branchCode = (cols[1] || '').trim();
       const company = (cols[2] || '').trim();
       const buBranchRaw = (cols[5] || '').trim();
-      const address = (cols[6] || '').trim();
+      const address = cleanBranchAddress(cols[6] || '');
       // MARKER_BRANCHPASTE_PREVIEW_POPUP_V1
       // ── เปิด Popup Preview ให้แก้ไขได้ก่อน แทนที่จะ setForm เข้าฟอร์มตรงๆ ──────
       setBranchPastePreview({
@@ -1220,7 +1496,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                   <div style={valueCellStyle}>
                     {editMode ? (
                       key === 'Inactive Date' ? (
-                        <input type="date" disabled={isDisabled} value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={inputBare} />
+                        <DateFieldBE disabled={isDisabled} value={form[key] || ''} onChange={v => { setForm({ ...form, [key]: v }); setError(''); }} style={inputBare} />
                       ) : key === 'Branch Address' ? (
                         <textarea value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} style={{ ...inputBare, height: '36px', resize: 'vertical' }} />
                       ) : key === 'status' ? (
@@ -1230,7 +1506,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                       ) : BRANCH_COMBO.includes(key) ? (
                         <ComboBox value={form[key] || ''} onChange={val => { setForm({ ...form, [key]: val }); setError(''); }} options={getBranchOptions(key)} placeholder={`เลือก ${label}`} />
                       ) : (
-                        <input value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} onBlur={key === 'BU-Branch' ? handleBuBranchBlur : key === 'Branch Code' ? handleBranchCodeBlur : key === 'Company for Show in Report Display' ? handleCompanyBlur : undefined} onPaste={key === 'Branch Code' ? handlePasteBranchRow : undefined} style={inputBare} />
+                        <input value={form[key] || ''} onChange={e => { setForm({ ...form, [key]: e.target.value }); setError(''); }} onBlur={(['bu', 'Branch Code', 'Company for Show in Report Display'].includes(key) ? withCompanyFill : (h) => h)(key === 'BU-Branch' ? handleBuBranchBlur : key === 'BU-TaxID' ? handleTaxIdBlur : key === 'Branch Code' ? handleBranchCodeBlur : key === 'Company for Show in Report Display' ? handleCompanyBlur : undefined)} onPaste={key === 'Branch Code' ? handlePasteBranchRow : undefined} style={inputBare} />
                       )
                     ) : (
                       <span style={{ ...inputBare, color: '#333' }}>{key === 'status' ? statusBadge(form[key]) : (form[key] || '-')}</span>
@@ -1259,15 +1535,15 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     [['THAI COMPANY NAME','Thai Company Name']],
     [['ENGLISH COMPANY NAME','English Company Name']],
     // MARKER_BUSINESSUNIT_ADD_BASE_FIELD_V20
+    [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)']], // MARKER_BUSINESSUNIT_INFO_ROW_SWAP_V1
     [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
-    [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)']],
     [['SEGMENT3','Segment3'],['base','Base']],
   ] : [
     [['bu','BU'],['TAX ID','Tax ID'],['COMPANY CODE','Company Code'],['BOOK','Book']],
     [['THAI COMPANY NAME','Thai Company Name']],
     [['ENGLISH COMPANY NAME','English Company Name']],
+    [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],['SEGMENT3','Segment3'],['base','Base']], // MARKER_BUSINESSUNIT_INFO_ROW_SWAP_V1
     [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
-    [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],['SEGMENT3','Segment3'],['base','Base']],
   ];
 
   const renderInfoFormFields = () => {
@@ -1287,28 +1563,30 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       ) : key === 'bu_code_name' ? (
         <input style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }}
           value={infoForm[key]||''}
-          placeholder={`${infoForm['SEGMENT3']||'Segment3'} - ${infoForm['ENGLISH COMPANY NAME']||'English Company Name'}`}
+          placeholder={(infoForm['SEGMENT3']||'').trim() ? `${infoForm['SEGMENT3'].trim()} - ${infoForm['ENGLISH COMPANY NAME']||'English Company Name'}` : 'กรอก Segment3 ก่อน'} /* MARKER_BUSINESSUNIT_BUCODENAME_NEED_SEGMENT3_V1 */
           onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}
           onBlur={e=>{
             if(!e.target.value.trim()){
               const seg=(infoForm['SEGMENT3']||'').trim();
               const eng=(infoForm['ENGLISH COMPANY NAME']||'').trim();
-              if(seg||eng) setInfoForm(f=>({...f,[key]:[seg,eng].filter(Boolean).join(' - ')}));
+              if(seg) setInfoForm(f=>({...f,[key]:[seg,eng].filter(Boolean).join(' - ')})); // ขึ้นเฉพาะเมื่อกรอก Segment3 แล้ว
             }
           }}
         />
+      ) : key === 'base' ? ( // MARKER_BUSINESSUNIT_BASE_DROPDOWN_V1 -- Base: เลือกได้เฉพาะ CRC / RBS / CDG / CHR Base
+        <FixedSelect value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={['CRC Base','RBS Base','CDG Base','CHR Base']} placeholder="เลือก Base" />
       ) : INFO_COMBO.includes(key) ? (
         <ComboBox value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`เลือก ${label}`} bare/>
       ) : (
         // MARKER_BUSINESSUNIT_IE_DEPARTMENT_DEFAULT_V1 — IE Department ว่างเปล่า -> โชว์ "I-Expense" แทน
-        <input style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }} value={infoForm[key] || (key === 'IE Department' ? 'I-Expense' : '')} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/>
+        <input style={{ height:'28px', padding:'0 8px', fontSize:'12px', border:'none', outline:'none', background:'transparent', color:'#1a3a5c', width:'100%', boxSizing:'border-box', textAlign:'center' }} value={infoForm[key] || (key === 'IE Department' ? 'I-Expense' : '')} placeholder={{ 'SEGMENT3': 'XXXX', 'COMPANY CODE': 'X-XX-XXXX-' }[key] || ''} onChange={e=>setInfoForm({...infoForm,[key]:e.target.value})}/> /* MARKER_BUSINESSUNIT_INFO_HINT_SEGMENT3_COMPANYCODE_V1 */
       )
     );
 
     const renderRowBox = (fields) => (
       <div style={{ ...boxWrap, display:'grid', gridTemplateColumns:`repeat(${fields.length}, 1fr)` }}>
-        {fields.map(([key,label], i) => <div key={key+'_h'} style={headCell(i===fields.length-1)}>{label}</div>)}
-        {fields.map(([key,label], i) => <div key={key+'_i'} style={inputCell(i===fields.length-1)}>{renderFieldInput(key,label)}</div>)}
+        {fields.map(([key,label], i) => <div key={key+'_h'} style={headCell(i===fields.length-1)}>{label}{INFO_REQUIRED_KEYS.includes(key) && <span style={{ color:'#e24b4a' }}> *</span>}</div>)}
+        {fields.map(([key,label], i) => <div key={key+'_i'} style={{ ...inputCell(i===fields.length-1), ...(key==='bu_code_name' ? { background:'#DCEAF1' } : INFO_REQUIRED_KEYS.includes(key) ? { background:'#FCF3D5' } : {}) }}>{renderFieldInput(key,label)}</div>)}
       </div>
     );
 
@@ -1553,7 +1831,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleBranchDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
               <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => branchFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
               <input ref={branchFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleBranchFileChange} />
-              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowBranchNew(true); setBranchNewForm(Object.fromEntries(BRANCH_EDIT.map(([k]) => [k, '']))); setBranchNewError(''); }}>+ New</button>
+              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowBranchNew(true); setBranchNewForm(Object.fromEntries(BRANCH_EDIT.map(([k]) => [k, k === 'status' ? 'Active' : '']))); setBranchNewError(''); /* MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1 */ }}>+ New</button>
             </>}
           </div>
         )}
@@ -1757,7 +2035,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                   'Branch Code': p.branchCode || p.currentForm['Branch Code'],
                   'Company for Show in Report Display': p.company || p.currentForm['Company for Show in Report Display'],
                   'BU-Branch': buBranchPadded,
-                  'Branch Address': p.address || p.currentForm['Branch Address'],
+                  'Branch Address': cleanBranchAddress(p.address) || p.currentForm['Branch Address'],
                   'Branch Direct': (buVal && buBranchPadded) ? `${buVal}-${buBranchPadded}` : p.currentForm['Branch Direct'],
                 });
                 setBranchPastePreview(null);
@@ -1877,7 +2155,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       )}
 
       <ImportPreviewModal show={showInfoPreview} onClose={()=>{setShowInfoPreview(false);setInfoPreviewRows([]);}} onConfirm={handleInfoConfirmImport} importing={infoImporting} previewRows={infoPreviewRows} keyField={INFO_KEY} allFields={INFO_FIELDS} isMobile={isMobile}/>
-      <ImportPreviewModal show={showBranchPreview} onClose={()=>{setShowBranchPreview(false);setBranchPreviewRows([]);}} onConfirm={handleBranchConfirmImport} importing={branchImporting} previewRows={branchPreviewRows} keyField={BRANCH_KEY} allFields={BRANCH_FIELDS} isMobile={isMobile}/>
+      <ImportPreviewModal show={showBranchPreview} onClose={()=>{setShowBranchPreview(false);setBranchPreviewRows([]);}} onConfirm={handleBranchConfirmImport} importing={branchImporting} previewRows={branchPreviewRows} keyField={BRANCH_KEY} allFields={BRANCH_FIELDS} isMobile={isMobile} showAll/>
     </div>
   );
 }

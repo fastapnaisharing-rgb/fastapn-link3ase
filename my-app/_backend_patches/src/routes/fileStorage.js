@@ -6,6 +6,8 @@ import path from "path";
 import { createRequire } from "module";
 import sharp from "sharp";
 import { SP_HANDLER_FILES, SP_HANDLER_VERSION, SP_HANDLER_RELEASED_AT } from "./spHandlerAssets.js"; // MARKER_SP_HANDLER_ROUTES_V1
+import { glAllowedPerms, glAccessFor } from "./menuPermissions.js"; // MARKER_MENU_PERMISSION_CONFIG_BACKEND_V1
+import { ensureApExpireColumns } from "./apReconcileExpire.js"; // MARKER_APRECONCILE_EXPIRE_V1
 
 // ── ใช้ไฟล์ Vendor แทน npm install (Server เข้า registry.npmjs.org ไม่ได้) ──
 // ── โหลดมาจาก https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js ──
@@ -234,7 +236,7 @@ export async function checkAndCleanupFileStorage() {
     await pool.query(`UPDATE file_storage SET file_removed_at = NOW() WHERE id = ANY($1::uuid[])`, [purgedIds]);
   }
 
-  // MARKER_SP_SENT_RETENTION_V1 -- vat-reconcile-report ที่กดส่ง SharePoint แล้ว: ลบเฉพาะ "ไฟล์บน Disk" หลัง 30 วัน นับจาก sp_sent_at
+  // MARKER_SP_SENT_RETENTION_V1 MARKER_VATRECONCILE_EXPIRE_TOGETHER_V1 (ไฟล์ + Input หมดอายุพร้อมกัน = input_expire_at = Confirm + 30 วัน) -- vat-reconcile-report ที่กดส่ง SharePoint แล้ว: ลบเฉพาะ "ไฟล์บน Disk" หลัง 30 วัน นับจาก sp_sent_at
   // เก็บ Row ไว้ (ไว้แสดงลิงก์ SharePoint ในหน้า Reconcile Results) โดยตั้ง file_removed_at | ไฟล์ที่ไม่เคยส่ง (sp_sent_at IS NULL) ไม่แตะเลย (ยังถาวรเหมือนเดิม)
   // created_at ต้องเกิน 30 วันด้วย -- กรณี Export ซ้ำหลังส่ง (created_at ถูกรีเซ็ต) จะไม่ลบไฟล์เวอร์ชันใหม่ก่อนเวลา
   const { rows: toPurgeSpSent } = await pool.query(
@@ -242,8 +244,8 @@ export async function checkAndCleanupFileStorage() {
      WHERE module = 'vat-reconcile-report'
        AND sp_sent_at IS NOT NULL
        AND file_removed_at IS NULL
-       AND sp_sent_at < NOW() - INTERVAL '30 days'
-       AND created_at < NOW() - INTERVAL '30 days'`
+       AND input_expire_at IS NOT NULL
+       AND input_expire_at < NOW()`
   );
   for (const row of toPurgeSpSent) {
     try {
@@ -747,13 +749,29 @@ router.get("/outlook-handler/my-status", async (req, res) => {
 });
 
 // MARKER_SP_HANDLER_VAT_ONLY_V1 -- SharePoint Handler ใช้ได้เฉพาะ Owner หรือผู้มีสิทธิ์ VAT (กฎเดียวกับหน้า Home) กันคนที่ไม่เกี่ยวข้องโหลด/Update/ส่งข้อมูลมั่ว
-const spCanUse = (req) => ((req.user && req.user.appRole) === "Owner") || !!(req.user && req.user.permissions && req.user.permissions.VAT);
-const spDeny = (res) => res.status(403).json({ error: "เฉพาะ Owner หรือผู้มีสิทธิ์ VAT" });
+// MARKER_SP_HANDLER_AP_PERMS_V2 -- ใช้ได้เมื่อ: Owner | เข้ากล่อง VAT ใน Document Access ได้ (สิทธิ์ VAT + Override รายคน) | มีสิทธิ์ที่เปิดไว้ใน GL Access (ค่าเริ่มต้น Manual | IE | I-Pro) -- ฝั่ง AP Recon ส่งไฟล์เข้า SharePoint ด้วย Handler เดียวกัน
+const spCanUse = async (req) => {
+  const u = req.user || {};
+  if (u.appRole === "Owner") return true;
+  const p = u.permissions || {};
+  try {
+    let vatOk = !!p.VAT;
+    const r = await pool.query("SELECT id FROM user_roles WHERE email = $1 LIMIT 1", [u.email]);
+    const uid = r.rows[0] && r.rows[0].id;
+    if (uid) {
+      const o = await pool.query("SELECT allowed FROM doc_access_override WHERE user_id = $1 AND folder_key = 'vat'", [uid]);
+      if (o.rows.length) vatOk = !!o.rows[0].allowed;
+    }
+    if (vatOk) return true;
+    return await glAccessFor(u); // MARKER_GL_REPORT_OVERRIDE_V1 -- Override รายคนของ GL + Permission ใน GL Access
+  } catch (_) { return false; }
+};
+const spDeny = (res) => res.status(403).json({ error: "เฉพาะ Owner / ผู้ที่เข้า VAT Control (Document Access) ได้ / ผู้มีสิทธิ์ที่เปิดไว้ใน GL Access" });
 
 // -- GET /api/file-storage/sp-handler --  // MARKER_SP_HANDLER_ROUTES_V1
 // ชุดติดตั้ง FastAPN SharePoint Handler (zip) -- ผ่าน verifyAuthLocal ปกติ (ต้อง Login) ไม่มี Endpoint Public
 router.get("/sp-handler", async (req, res) => {
-  if (!spCanUse(req)) return spDeny(res);
+  if (!(await spCanUse(req))) return spDeny(res);
   try {
     const zip = new JSZip();
     for (const [name, b64] of Object.entries(SP_HANDLER_FILES)) zip.file(name, Buffer.from(b64, "base64"));
@@ -771,20 +789,26 @@ router.get("/sp-handler/version", (req, res) => { res.json({ version: SP_HANDLER
 pool.query(`CREATE TABLE IF NOT EXISTS tool_handler_status (
   username text NOT NULL, tool text NOT NULL, machine text NOT NULL, version int NOT NULL,
   first_reported_at timestamptz NOT NULL DEFAULT now(), reported_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (username, tool, machine))`).catch((e) => console.error("[migrate tool_handler_status]:", e.message));
+  PRIMARY KEY (username, tool, machine))`).then(() => pool.query(`ALTER TABLE tool_handler_status ADD COLUMN IF NOT EXISTS ip text`)).catch((e) => console.error("[migrate tool_handler_status]:", e.message));
+// MARKER_SP_HANDLER_PER_MACHINE_V1 -- IP ของเครื่องที่เรียก (ใช้จับคู่เครื่องที่ Handler รายงาน กับเครื่องที่เปิดเว็บอยู่)
+function spClientIp(req) {
+  const xf = String((req.headers && req.headers["x-forwarded-for"]) || "").split(",")[0].trim();
+  const raw = xf || req.ip || (req.socket && req.socket.remoteAddress) || "";
+  return String(raw).replace(/^::ffff:/, "").trim();
+}
 
 // POST /api/file-storage/sp-handler/report  body: { version, machine }
 router.post("/sp-handler/report", async (req, res) => {
-  if (!spCanUse(req)) return spDeny(res);
+  if (!(await spCanUse(req))) return spDeny(res);
   try {
     const username = await getUsernameByEmail(req.user.email);
     const version = parseInt(req.body && req.body.version, 10);
     const machine = String((req.body && req.body.machine) || "").slice(0, 64).trim() || "?";
     if (!username || !Number.isFinite(version) || version < 1) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
     await pool.query(
-      `INSERT INTO tool_handler_status (username, tool, machine, version) VALUES ($1,'sp',$2,$3)
-       ON CONFLICT (username, tool, machine) DO UPDATE SET version = EXCLUDED.version, reported_at = now()`,
-      [username, machine, version]
+      `INSERT INTO tool_handler_status (username, tool, machine, version, ip) VALUES ($1,'sp',$2,$3,$4)
+       ON CONFLICT (username, tool, machine) DO UPDATE SET version = EXCLUDED.version, ip = EXCLUDED.ip, reported_at = now()`,
+      [username, machine, version, spClientIp(req)]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -798,12 +822,12 @@ pool.query(`CREATE TABLE IF NOT EXISTS sp_tree_meta (
   dest text PRIMARY KEY, synced_at timestamptz NOT NULL DEFAULT now(), synced_by text, machine text, total int NOT NULL DEFAULT 0)`).catch((e) => console.error("[migrate sp_tree_meta]:", e.message));
 
 // ลิงก์ฐานของ SharePoint (ไว้เปิด Excel Online) ตั้งใน .env: SP_WEB_BASE_RECON / SP_WEB_BASE_UPLOAD = URL โฟลเดอร์นั้นบน SharePoint (ไม่ต้องมี / ท้าย)
-const SP_DESTS = ["recon", "upload"];
-const spWebBase = (dest) => String((dest === "upload" ? process.env.SP_WEB_BASE_UPLOAD : process.env.SP_WEB_BASE_RECON) || "").replace(/\/+$/, "");
+const SP_DESTS = ["recon", "upload", "ap"]; // MARKER_SP_HANDLER_DEST_AP_V1 -- ap = Z_Report Reconcile - Account Payable (GL Report)
+const spWebBase = (dest) => String((dest === "upload" ? process.env.SP_WEB_BASE_UPLOAD : dest === "ap" ? process.env.SP_WEB_BASE_AP : process.env.SP_WEB_BASE_RECON) || "").replace(/\/+$/, "");
 
 // POST /api/file-storage/sp-handler/tree  body: { dest, machine, syncId, done, total, items:[{path,dir,size,mtime}] } (ส่งเป็นชุดๆ)
 router.post("/sp-handler/tree", async (req, res) => {
-  if (!spCanUse(req)) return spDeny(res);
+  if (!(await spCanUse(req))) return spDeny(res);
   try {
     const username = await getUsernameByEmail(req.user.email);
     const b = req.body || {};
@@ -843,12 +867,89 @@ pool.query(`CREATE TABLE IF NOT EXISTS sp_folder_whitelist_cfg (
   dest text NOT NULL, menu text NOT NULL, updated_by text, updated_at timestamptz NOT NULL DEFAULT now(), known jsonb NOT NULL DEFAULT '[]'::jsonb,
   PRIMARY KEY (dest, menu))`).catch((e) => console.error("[migrate sp_folder_whitelist_cfg]:", e.message));
 const SP_MENU_RE = /^[a-z0-9_-]{1,32}$/;
+// MARKER_SP_GL_AP_ACCOUNT_FILTER_V1 -- GL Report > Account Payable Report: แสดงเฉพาะไฟล์ที่ "ชื่อไฟล์" มีเลข Account ใน 6 ตัวนี้ | โฟลเดอร์ที่ไม่มีไฟล์ตรงเลย = ว่าง = ซ่อนเอง
+const GL_AP_ACCTS = ["21930052", "21930054", "21930084", "21930085", "21930100", "21930220"];
+// MARKER_SP_GL_AP_ACCOUNT_BY_PERM_V1 -- Account ที่เห็นขึ้นกับ Permission: IE = 21930100, 21930220 | Manual, I-Pro = 21930052, 21930054, 21930084, 21930085 | หลายสิทธิ์ = รวมกัน | Owner (หรือเข้าด้วย Override รายคนโดยไม่มีสิทธิ์ 3 ตัวนี้) = ครบทั้ง 6
+const GL_ACCT_BY_PERM = { IE: ["21930100", "21930220"], Manual: ["21930052", "21930054", "21930084", "21930085"], "I-Pro": ["21930052", "21930054", "21930084", "21930085"] };
+const glAcctsFor = (u) => {
+  if (!u || u.appRole === "Owner") return GL_AP_ACCTS;
+  const p = u.permissions || {}; const s = new Set();
+  for (const k of Object.keys(GL_ACCT_BY_PERM)) if (p[k] === true) GL_ACCT_BY_PERM[k].forEach((a) => s.add(a));
+  return s.size ? GL_AP_ACCTS.filter((a) => s.has(a)) : GL_AP_ACCTS;
+};
+const glSql = (accts) => `(substring(path from '[^/]*$') ~ '(${accts.join("|")})')`; // accts มาจากค่าคงที่ใน Backend เท่านั้น
+const glFileOk = (p, accts) => { const n = String(p).split("/").pop(); return accts.some((a) => n.includes(a)); };
+// MARKER_SP_GL_AUTO_VISIBLE_V1 -- GL Report: โฟลเดอร์หลัก "เปิด/ปิดอัตโนมัติ" ตามข้อมูลจริง -- ไม่มีไฟล์ตรงเงื่อนไข (ทุกชั้น) = ปิดเอง | มีไฟล์ = เปิดเอง (รวมโฟลเดอร์ใหม่ที่ Owner ยังไม่เคยติ๊ก) | ที่ Owner ปิดไว้เองยังคงปิด
+async function spGlHasTop(dest, accts) {
+  const h = await pool.query(`SELECT DISTINCT split_part(path,'/',1) AS child FROM sp_tree_cache WHERE dest=$1 AND is_dir=false AND position('/' in path)>0 AND ${glSql(accts)}`, [dest]);
+  return new Set(h.rows.map((x) => x.child));
+}
+async function spGlVisibleTop(dest, wl, accts) {
+  const d = await pool.query(`SELECT path FROM sp_tree_cache WHERE dest=$1 AND is_dir=true AND position('/' in path)=0`, [dest]);
+  const has = await spGlHasTop(dest, accts); const known = new Set(wl.known);
+  const vis = new Set();
+  for (const r of d.rows) if (has.has(r.path) && (!wl.configured || wl.folders.has(r.path) || !known.has(r.path))) vis.add(r.path);
+  return vis;
+}
 async function spGetWhitelist(dest, menu) {
   const c = await pool.query(`SELECT known, updated_at FROM sp_folder_whitelist_cfg WHERE dest=$1 AND menu=$2`, [dest, menu]);
   if (!c.rows.length) return { configured: false, folders: new Set(), known: [] };
   const r = await pool.query(`SELECT folder FROM sp_folder_whitelist WHERE dest=$1 AND menu=$2`, [dest, menu]);
   return { configured: true, folders: new Set(r.rows.map((x) => x.folder)), known: Array.isArray(c.rows[0].known) ? c.rows[0].known : [] };
 }
+
+// MARKER_SP_MY_FOLDERS_V1 -- GL Report > Account Payable Report: "My Folders" = เลือกโฟลเดอร์หลักที่จะแสดง "เฉพาะของตัวเอง" (แยกรายคน) | ระบบกรองตามสิทธิ์/Account/โฟลเดอร์ว่างก่อน 1 ขั้น แล้ว User เลือกซ่อน/แสดงจากที่เหลือ | ไม่ใช้ Folder Manage ของ Owner กับเมนู gl
+pool.query(`CREATE TABLE IF NOT EXISTS sp_user_folders (
+  dest text NOT NULL, menu text NOT NULL, username text NOT NULL, folder text NOT NULL, PRIMARY KEY (dest, menu, username, folder))`).catch((e) => console.error("[migrate sp_user_folders]:", e.message));
+pool.query(`CREATE TABLE IF NOT EXISTS sp_user_folders_cfg (
+  dest text NOT NULL, menu text NOT NULL, username text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(), known jsonb NOT NULL DEFAULT '[]'::jsonb,
+  PRIMARY KEY (dest, menu, username))`).catch((e) => console.error("[migrate sp_user_folders_cfg]:", e.message));
+async function spGetUserFolders(dest, menu, username) {
+  const c = await pool.query(`SELECT known FROM sp_user_folders_cfg WHERE dest=$1 AND menu=$2 AND username=$3`, [dest, menu, username]);
+  if (!c.rows.length) return { configured: false, folders: new Set(), known: [] };
+  const r = await pool.query(`SELECT folder FROM sp_user_folders WHERE dest=$1 AND menu=$2 AND username=$3`, [dest, menu, username]);
+  return { configured: true, folders: new Set(r.rows.map((x) => x.folder)), known: Array.isArray(c.rows[0].known) ? c.rows[0].known : [] };
+}
+// GET /api/file-storage/sp-handler/my-folders?dest=recon&menu=gl -> { configured, folders (แสดงอยู่), all:[{name,mtime,hasData,isNew}] } เฉพาะโฟลเดอร์ที่ผ่านตัวกรองสิทธิ์/Account แล้ว
+router.get("/sp-handler/my-folders", async (req, res) => {
+  try {
+    if (!(await spCanUse(req))) return spDeny(res);
+    const dest = String(req.query.dest || "recon"); const menu = String(req.query.menu || "");
+    if (!SP_DESTS.includes(dest) || menu !== "gl") return res.status(400).json({ error: "พารามิเตอร์ไม่ถูกต้อง" });
+    const username = await getUsernameByEmail(req.user.email);
+    const wl = await spGetUserFolders(dest, menu, username);
+    const accts = glAcctsFor(req.user);
+    const gh = await spGlHasTop(dest, accts);
+    const dirs = await pool.query(`SELECT path, mtime FROM sp_tree_cache WHERE dest=$1 AND is_dir=true AND position('/' in path)=0 ORDER BY path`, [dest]);
+    const knownSet = new Set(wl.known);
+    const all = dirs.rows.filter((x) => gh.has(x.path)).map((x) => ({ name: x.path, mtime: x.mtime, hasData: true, isNew: wl.configured && !knownSet.has(x.path) }));
+    all.sort((a, b) => a.name.localeCompare(b.name, "th", { numeric: true, sensitivity: "base" }));
+    const vis = await spGlVisibleTop(dest, wl, accts);
+    res.json({ configured: wl.configured, folders: Array.from(vis), all });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// PUT /api/file-storage/sp-handler/my-folders  body: { dest, menu:'gl', folders:[ที่เลือกแสดง], known:[โฟลเดอร์ทั้งหมดตอนบันทึก] }
+router.put("/sp-handler/my-folders", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!(await spCanUse(req))) return spDeny(res);
+    const b = req.body || {}; const dest = String(b.dest || ""); const menu = String(b.menu || "");
+    if (!SP_DESTS.includes(dest) || menu !== "gl" || !Array.isArray(b.folders)) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
+    const okName = (n) => typeof n === "string" && n && n.length < 200 && !n.includes("/") && !n.includes("\\") && !n.includes("..");
+    const folders = Array.from(new Set(b.folders.filter(okName))).slice(0, 1000);
+    const known = Array.isArray(b.known) ? Array.from(new Set(b.known.filter(okName))).slice(0, 2000) : [];
+    const username = await getUsernameByEmail(req.user.email);
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM sp_user_folders WHERE dest=$1 AND menu=$2 AND username=$3`, [dest, menu, username]);
+    if (folders.length) await client.query(`INSERT INTO sp_user_folders (dest, menu, username, folder) SELECT $1::text, $2::text, $3::text, unnest($4::text[])`, [dest, menu, username, folders]);
+    await client.query(
+      `INSERT INTO sp_user_folders_cfg (dest, menu, username, updated_at, known) VALUES ($1,$2,$3,now(),$4::jsonb)
+       ON CONFLICT (dest, menu, username) DO UPDATE SET updated_at=now(), known=EXCLUDED.known`, [dest, menu, username, JSON.stringify(known)]);
+    await client.query("COMMIT");
+    res.json({ ok: true, count: folders.length });
+  } catch (err) { try { await client.query("ROLLBACK"); } catch (_) {} res.status(500).json({ error: err.message }); }
+  finally { client.release(); }
+});
 
 // GET /api/file-storage/sp-handler/folder-whitelist?dest=recon&menu=vat  (Owner) -> { configured, folders, all:[{name,mtime,hasData,isNew}] }
 router.get("/sp-handler/folder-whitelist", async (req, res) => {
@@ -862,6 +963,13 @@ router.get("/sp-handler/folder-whitelist", async (req, res) => {
     const hasSet = new Set(has.rows.map((x) => x.child)); const knownSet = new Set(wl.known);
     const all = dirs.rows.map((x) => ({ name: x.path, mtime: x.mtime, hasData: hasSet.has(x.path), isNew: wl.configured && !knownSet.has(x.path) }));
     all.sort((a, b) => a.name.localeCompare(b.name, "th", { numeric: true, sensitivity: "base" }));
+    if (menu === "gl") { // MARKER_SP_GL_AUTOHIDE_EMPTY_MANAGE_V1 -- GL: Folder Manage ไม่แสดงโฟลเดอร์ว่าง (ไม่มีไฟล์ตรง 6 Account) + สถานะเปิด/ปิดอัตโนมัติ
+      const accts = glAcctsFor(req.user);
+      const gh = await spGlHasTop(dest, accts);
+      for (let i = all.length - 1; i >= 0; i--) { if (!gh.has(all[i].name)) all.splice(i, 1); else all[i].hasData = true; }
+      const vis = await spGlVisibleTop(dest, wl, accts);
+      return res.json({ configured: wl.configured, folders: Array.from(vis), all });
+    }
     res.json({ configured: wl.configured, folders: Array.from(wl.folders), all });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -966,22 +1074,30 @@ router.get("/sp-handler/tree", async (req, res) => {
     const esc = (x) => x.replace(/[\\%_]/g, "\\$&");
     // MARKER_SP_FOLDER_WHITELIST_V1 -- ส่ง &menu=vat มา = กรองตาม Folder Manage (whitelist โฟลเดอร์หลัก) + ซ่อนโฟลเดอร์ย่อยที่ไม่มีไฟล์ | ไม่ส่ง menu = ไม่กรอง (เช่น หน้าต่างย้าย)
     const menu = SP_MENU_RE.test(String(req.query.menu || "")) ? String(req.query.menu) : "";
-    const wl = menu ? await spGetWhitelist(dest, menu) : null;
+    const wl = menu === "gl" ? await spGetUserFolders(dest, menu, await getUsernameByEmail(req.user.email)) : (menu ? await spGetWhitelist(dest, menu) : null); // MARKER_SP_MY_FOLDERS_V1 -- gl = เลือกเองรายคน | เมนูอื่น = Folder Manage ของ Owner
     const wlOn = !!(wl && wl.configured);
+    const glAccts = menu === "gl" ? glAcctsFor(req.user) : null;
+    const glVis = menu === "gl" ? await spGlVisibleTop(dest, wl, glAccts) : null; // MARKER_SP_GL_AUTO_VISIBLE_V1
     let rows;
     if (q) {
       ({ rows } = await pool.query(`SELECT path,is_dir,size,mtime FROM sp_tree_cache WHERE dest=$1 AND path ILIKE $2 ORDER BY is_dir DESC, path LIMIT 300`, [dest, "%" + esc(q) + "%"]));
-      if (wlOn) rows = rows.filter((x) => wl.folders.has(x.path.split("/")[0]));
+      if (glVis) rows = rows.filter((x) => !x.is_dir && glFileOk(x.path, glAccts) && glVis.has(x.path.split("/")[0]));
+      else if (wlOn) rows = rows.filter((x) => wl.folders.has(x.path.split("/")[0]));
     } else {
       const prefix = path ? path + "/" : "";
       const r = await pool.query(`SELECT path,is_dir,size,mtime FROM sp_tree_cache WHERE dest=$1 AND path LIKE $2 ORDER BY is_dir DESC, path`, [dest, esc(prefix) + "%"]);
       rows = r.rows.filter((x) => !x.path.slice(prefix.length).includes("/"));
-      if (wlOn && !path) rows = rows.filter((x) => !x.is_dir || wl.folders.has(x.path));
-      if (wlOn && path && !wl.folders.has(path.split("/")[0])) rows = [];
+      if (glVis) {
+        if (path && !glVis.has(path.split("/")[0])) rows = [];
+        else rows = rows.filter((x) => (x.is_dir ? (path ? true : glVis.has(x.path)) : glFileOk(x.path, glAccts)));
+      } else {
+        if (wlOn && !path) rows = rows.filter((x) => !x.is_dir || wl.folders.has(x.path));
+        if (wlOn && path && !wl.folders.has(path.split("/")[0])) rows = [];
+      }
       if (menu && path) {
         const hr = await pool.query(
           `SELECT DISTINCT split_part(substr(path, $3), '/', 1) AS child FROM sp_tree_cache
-           WHERE dest=$1 AND is_dir=false AND path LIKE $2 AND position('/' in substr(path, $3)) > 0`, [dest, esc(prefix) + "%", prefix.length + 1]);
+           WHERE dest=$1 AND is_dir=false AND path LIKE $2 AND position('/' in substr(path, $3)) > 0${menu === "gl" ? " AND " + glSql(glAccts) : ""}`, [dest, esc(prefix) + "%", prefix.length + 1]);
         const hasSet = new Set(hr.rows.map((x) => x.child));
         rows = rows.filter((x) => !x.is_dir || hasSet.has(x.path.slice(prefix.length)));
       }
@@ -996,17 +1112,21 @@ router.get("/sp-handler/my-status", async (req, res) => {
   try {
     const username = await getUsernameByEmail(req.user.email);
     const { rows } = await pool.query(
-      `SELECT machine, version, reported_at FROM tool_handler_status WHERE username=$1 AND tool='sp' ORDER BY reported_at DESC`, [username]);
-    const outdated = rows.filter((r) => r.version < SP_HANDLER_VERSION);
+      `SELECT machine, version, reported_at, ip FROM tool_handler_status WHERE username=$1 AND tool='sp' ORDER BY reported_at DESC`, [username]);
+    // MARKER_SP_HANDLER_PER_MACHINE_V1 -- เช็กตามเครื่องที่เปิดเว็บ: เอาเฉพาะรายงานที่ IP ตรงกับผู้เรียก (ไม่ใช่ทุกเครื่องของบัญชี) | ไม่รู้ IP = ใช้ทั้งบัญชีแบบเดิม
+    const clientIp = spClientIp(req);
+    const allRows = rows;
+    const mine = clientIp ? allRows.filter((r) => r.ip && r.ip === clientIp) : allRows;
+    const outdated = mine.filter((r) => r.version < SP_HANDLER_VERSION);
     const daysSinceRelease = Math.max(0, Math.floor((Date.now() - new Date(SP_HANDLER_RELEASED_AT).getTime()) / 86400000));
     // MARKER_SP_HANDLER_INSTALLED_V1 -- installed=false เมื่อ Backend ไม่เคยได้รับรายงานจากผู้ใช้นี้เลย (Home ใช้แจ้งให้ติดตั้ง Handler)
-    res.json({ latest: SP_HANDLER_VERSION, releasedAt: SP_HANDLER_RELEASED_AT, daysSinceRelease, machines: rows, outdated, installed: rows.length > 0 });
+    res.json({ latest: SP_HANDLER_VERSION, releasedAt: SP_HANDLER_RELEASED_AT, daysSinceRelease, machines: mine, allMachines: allRows, clientIp, outdated, installed: allRows.length > 0 }); // MARKER_SP_HANDLER_INSTALLED_USER_LEVEL_V1 -- ผู้ใช้เคยมีเครื่องใดรายงานแล้ว = ติดตั้งแล้ว (ไม่ผูก IP) | outdated ยังเช็กตามเครื่อง
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // -- GET /api/file-storage/sp-handler/ps1-only -- (ปุ่ม Update: ได้เฉพาะ .ps1 เวอร์ชันล่าสุด)
 router.get("/sp-handler/ps1-only", async (req, res) => {
-  if (!spCanUse(req)) return spDeny(res);
+  if (!(await spCanUse(req))) return spDeny(res);
   try {
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="fastapn-sp.ps1"');
@@ -1304,36 +1424,51 @@ router.get("/:id/download-ie-macrologic", async (req, res) => {
 // ── module = 'ap-reconcile' (แยกขาดจาก 'ap-export' เดิมที่ใช้กับ Batch อื่น และ
 // ── แยกขาดจาก 'ie-macrologic' ของ IE) ──
 router.get("/ap-reconcile-jobs", async (req, res) => {
+  // MARKER_FILESTORAGE_APRECONCILE_LIST_V3 -- My Job = ไฟล์ของตัวเอง (ทั้งที่ Confirm แล้วและยังไม่ Confirm) | All Job = ดูอย่างเดียว เห็นเฉพาะไฟล์ที่ Confirm แล้ว
+  //   Owner เห็นทุกคน | Admin เห็นเฉพาะไฟล์ของ User ที่มีสิทธิ์ Manual | IE | I-Pro อย่างใดอย่างหนึ่ง (ตรงกับสิทธิ์เข้าหน้า AP Recon) | Role อื่นที่ขอ all -> ได้ My Job
   const username = await getUsernameByEmail(req.user.email);
   const appRole = req.user.appRole || "";
   const isOwner = appRole === "Owner";
   const isAdmin = appRole === "Admin";
   const wantsAll = req.query.scope === "all";
+  // MARKER_APRECONCILE_EXPIRE_V1 -- Item Expired Date: expire_at (Confirm + 30 วัน) | expire_lines = จำนวนแถวข้อมูล AP ที่จะถูกลบ (นับสดจาก ap_cutting_staging จนกว่าจะลบ) | expire_purged = ลบแล้ว
+  const COLS = "fs.id, fs.bu, fs.file_name, fs.ref_id, fs.owner_username, fs.created_at, fs.confirmed_at, fs.confirmed_by, fs.expire_at, fs.expire_purged, CASE WHEN fs.expire_at IS NOT NULL AND fs.expire_purged IS NOT TRUE THEN (SELECT COUNT(*)::int FROM ap_cutting_staging s WHERE s.branch_cpc_key = fs.bu AND s.period = split_part(fs.ref_id, '|', 2) AND s.gl_account = split_part(fs.ref_id, '|', 1)) ELSE fs.expire_lines END AS expire_lines";
 
   try {
+    await ensureApExpireColumns();
     let rows;
     if (wantsAll && isOwner) {
       ({ rows } = await pool.query(
-        `SELECT id, bu, file_name, ref_id, owner_username, created_at
-         FROM file_storage WHERE module = 'ap-reconcile' ORDER BY created_at DESC`
+        `SELECT ${COLS} FROM file_storage fs
+         WHERE fs.module = 'ap-reconcile' AND fs.confirmed_at IS NOT NULL ORDER BY fs.created_at DESC`
       ));
     } else if (wantsAll && isAdmin) {
-      // Admin เห็นเฉพาะไฟล์ของ User ที่มี Permission "Manual" (AP) เหมือนกัน (ไม่ใช่ทุกคนในระบบ)
       ({ rows } = await pool.query(
-        `SELECT fs.id, fs.bu, fs.file_name, fs.ref_id, fs.owner_username, fs.created_at
-         FROM file_storage fs
+        `SELECT ${COLS} FROM file_storage fs
          JOIN user_roles ur ON ur.username = fs.owner_username
-         WHERE fs.module = 'ap-reconcile' AND (ur.permissions->>'Manual')::boolean IS TRUE
-         ORDER BY fs.created_at DESC`
+         WHERE fs.module = 'ap-reconcile' AND fs.confirmed_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM unnest($1::text[]) k WHERE (ur.permissions->>k)::boolean IS TRUE)
+         ORDER BY fs.created_at DESC`,
+        [await glAllowedPerms()] // MARKER_MENU_PERMISSION_CONFIG_BACKEND_V1 -- สิทธิ์ตาม GL Access
       ));
     } else {
+      // MARKER_APRECONCILE_JOB_WATCH_V1 -- My Job = ไฟล์ของตัวเอง + ไฟล์ของ BU ที่ผู้ใช้เลือกดู (แยก AP | IE ตามเลขบัญชีใน ref_id) ไม่ว่าใคร Generate | watched = true -> ดูอย่างเดียว
+      await pool.query(`CREATE TABLE IF NOT EXISTS ap_job_bu_watch (username text NOT NULL, kind text NOT NULL, bu text NOT NULL, created_at timestamptz NOT NULL DEFAULT NOW(), PRIMARY KEY (username, kind, bu))`);
       ({ rows } = await pool.query(
-        `SELECT id, bu, file_name, ref_id, owner_username, created_at
-         FROM file_storage WHERE module = 'ap-reconcile' AND owner_username = $1 ORDER BY created_at DESC`,
+        `SELECT ${COLS}, (fs.owner_username <> $1) AS watched FROM file_storage fs
+         WHERE fs.module = 'ap-reconcile'
+           AND (fs.owner_username = $1
+                OR EXISTS (SELECT 1 FROM ap_job_bu_watch w WHERE w.username = $1 AND w.bu = fs.bu
+                           AND w.kind = CASE WHEN split_part(fs.ref_id, '|', 1) IN ('21930100','21930220') THEN 'ie' ELSE 'ap' END))
+         ORDER BY fs.created_at DESC`,
         [username]
       ));
     }
-    res.json(rows);
+    // ref_id ของไฟล์ AP Recon = "{account}|{YYYY-MM}|ap"
+    res.json(rows.map((r) => {
+      const [account, period] = String(r.ref_id || "").split("|");
+      return { ...r, account: account || null, period: period || null };
+    }));
   } catch (err) {
     console.error("GET /file-storage/ap-reconcile-jobs error:", err.message);
     res.status(500).json({ error: "Internal server error" });

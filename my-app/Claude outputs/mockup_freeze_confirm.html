@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Freeze Confirm</title>
+<style>
+:root{--navy:#14284b;--green:#2fb58a;--line:#e5e9f0;--soft:#f4f6f9;--text:#222;--amber:#a65f00;--amberbg:#fff6e5}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",Tahoma,sans-serif;background:#d9dee6;color:var(--text);padding:24px;display:flex;flex-wrap:wrap;gap:28px;justify-content:center}
+.stage{position:relative;width:480px;min-height:470px;background:rgba(20,40,75,.45);border-radius:12px;display:flex;align-items:center;justify-content:center;padding:20px}
+.cap{width:100%;text-align:center;font-size:12px;color:#556;margin:0 0 8px}
+.col{display:flex;flex-direction:column;align-items:center}
+.modal{width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+.head{background:var(--navy);color:#fff;padding:16px 20px;display:flex;gap:12px;align-items:center}
+.ico{width:38px;height:38px;border-radius:50%;background:rgba(47,181,138,.2);display:flex;align-items:center;justify-content:center;flex:none}
+.head h3{margin:0;font-size:16px}
+.head small{opacity:.75;font-size:12px}
+.body{padding:18px 20px}
+.flow{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.ver{flex:1;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--soft)}
+.ver.new{border-color:var(--green);background:#eafaf4}
+.ver b{display:block;font-size:12px;color:#6b7785;font-weight:600}
+.ver span{font-size:18px;font-weight:700}
+.ver em{display:block;font-style:normal;font-size:11.5px;color:#6b7785;margin-top:2px}
+.arrow{color:var(--green);font-size:20px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}
+td{padding:7px 0;border-bottom:1px dashed var(--line)}
+td:last-child{text-align:right;font-weight:600}
+.diff{color:var(--amber)}
+.note{font-size:12.5px;color:#556;background:var(--soft);border-radius:8px;padding:9px 12px;margin-bottom:6px}
+.warn{background:var(--amberbg);color:var(--amber);border:1px solid #f3d9a4}
+.foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--line);background:#fafbfc}
+button{font-family:inherit;font-size:13.5px;padding:9px 18px;border-radius:9px;cursor:pointer;border:1px solid var(--line);background:#fff;color:#445}
+button.ok{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:600}
+button.ok:hover{background:#0e1d38}
+.chip{display:inline-block;background:rgba(255,255,255,.14);border-radius:999px;padding:2px 10px;font-size:11.5px;margin-left:6px}
+</style></head><body>
+
+<div class="col"><p class="cap"><b>แบบที่ 1</b> — Freeze ซ้ำ รายตัว (BU เดียว)</p>
+<div class="stage"><div class="modal">
+  <div class="head"><div class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.9 6l14.2 12M19.1 6L4.9 18"/></svg></div>
+    <div><h3>Freeze Final ซ้ำ <span class="chip">CRG</span></h3><small>งวด 2026-09 · ปิดมาแล้ว 2.3 วัน</small></div></div>
+  <div class="body">
+    <div class="flow">
+      <div class="ver"><b>เวอร์ชันปัจจุบัน</b><span>v1</span><em>08-10-2026 16:41</em></div>
+      <div class="arrow">→</div>
+      <div class="ver new"><b>เวอร์ชันใหม่</b><span>v2</span><em>ตามยอด Live ตอนนี้</em></div>
+    </div>
+    <table>
+      <tr><td>Total Expired (Freeze v1)</td><td>54,220.33</td></tr>
+      <tr><td>Total Expired (Live)</td><td class="diff">54,220.33</td></tr>
+      <tr><td>สถานะเทียบ Live</td><td class="diff">Live เปลี่ยนหลัง Final</td></tr>
+    </table>
+    <div class="note">เวอร์ชันเดิม (v1) ยังเก็บไว้ในประวัติ ย้อนดูได้ทุกเมื่อ</div>
+  </div>
+  <div class="foot"><button>ยกเลิก</button><button class="ok">ยืนยัน Freeze ซ้ำ</button></div>
+</div></div></div>
+
+<div class="col"><p class="cap"><b>แบบที่ 2</b> — งวดปิดเกิน 20 วัน (ต้องยืนยัน)</p>
+<div class="stage"><div class="modal">
+  <div class="head" style="background:#7a4a00"><div class="ico" style="background:rgba(255,255,255,.18)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffd37a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg></div>
+    <div><h3>ยืนยันอัปเดต Freeze <span class="chip">ทุก BU</span></h3><small>งวด 2026-08 · ปิดมาแล้ว 24 วัน</small></div></div>
+  <div class="body">
+    <div class="note warn" style="margin-bottom:12px">งวดนี้ปิดเกิน 20 วัน (ไม่เกิน 30 วัน) การอัปเดตจะสร้างเวอร์ชันใหม่และบันทึกว่าแก้ไขหลังพ้นช่วงปกติ</div>
+    <table>
+      <tr><td>จำนวน BU ที่จะ Freeze ซ้ำ</td><td>73</td></tr>
+      <tr><td>BU ที่ Live ต่างจาก Final</td><td class="diff">4</td></tr>
+      <tr><td>เวอร์ชันเดิม</td><td>เก็บไว้ในประวัติ</td></tr>
+    </table>
+  </div>
+  <div class="foot"><button>ยกเลิก</button><button class="ok" style="background:#7a4a00;border-color:#7a4a00">ยืนยันอัปเดต</button></div>
+</div></div></div>
+
+</body></html>

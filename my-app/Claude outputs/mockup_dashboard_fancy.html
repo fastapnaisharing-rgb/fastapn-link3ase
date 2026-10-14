@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Dashboard ลูกเล่น</title>
+<style>
+:root{--bg:#eef2f8;--card:#fff;--line:#e4e9f1;--ink:#1f2d3d;--mute:#7b8798;--blue:#1f5fbf;--blue2:#4f8ef0;--soft:#eaf2ff;--ok:#1a9a52;--oksoft:#e3f6ea;--na:#b4bcc8}
+@media (prefers-color-scheme:dark){:root{--bg:#10151c;--card:#171e28;--line:#2a3442;--ink:#e6ebf2;--mute:#97a3b4;--blue:#5c9bff;--blue2:#3a73d1;--soft:#17294a;--ok:#3fb950;--oksoft:#12301c;--na:#566275}}
+*{box-sizing:border-box}body{margin:0;padding:20px;background:var(--bg);color:var(--ink);font:13px "Segoe UI",Tahoma,sans-serif}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 4px 18px rgba(20,40,80,.07);max-width:1040px;overflow:hidden}
+.top{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;background:linear-gradient(90deg,#173f7d,#2f6bc4);color:#fff}
+.top b{font-size:14px}.top span{opacity:.85;font-size:12px}
+.wrap{overflow:auto;padding:6px 10px 12px}
+table{width:100%;border-collapse:separate;border-spacing:0 6px;min-width:760px}
+th{font-size:11.5px;color:var(--mute);font-weight:700;padding:6px 4px;text-align:center;white-space:nowrap;cursor:pointer;transition:.15s}
+th small{display:block;font-weight:600;font-size:10px;color:var(--na)}
+th:hover,th.hc{color:var(--blue)}
+th.grp{border-left:2px dashed var(--line)}
+td{padding:9px 6px;text-align:center;background:var(--card);border-top:1px solid var(--line);border-bottom:1px solid var(--line);transition:background .15s,transform .15s;position:relative}
+td:first-child{border-left:1px solid var(--line);border-radius:12px 0 0 12px;text-align:left;padding-left:14px;font-weight:700;min-width:150px}
+td:last-child{border-right:1px solid var(--line);border-radius:0 12px 12px 0;min-width:90px}
+tr.row:hover td{background:var(--soft)}tr.row.sel td{background:var(--soft);border-color:var(--blue2)}
+td.hc{background:var(--soft)}
+.bu{display:flex;align-items:center;gap:10px}
+.av{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;color:#fff;font-weight:800;font-size:11px;background:linear-gradient(135deg,var(--blue),var(--blue2))}
+.bu small{display:block;color:var(--mute);font-weight:500;font-size:11px}
+.cell{display:flex;flex-direction:column;align-items:center;gap:4px}
+.tb{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px}
+.tb.y{background:var(--oksoft);color:var(--ok)}.tb.n{color:var(--na);border:1px dashed var(--line)}
+.tb.y::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(26,154,82,.18)}
+.n1{font-weight:800;color:var(--blue);font-variant-numeric:tabular-nums}
+.bar{width:54px;height:5px;border-radius:5px;background:var(--line);overflow:hidden}.bar i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--blue2),var(--blue))}
+.nd{color:var(--na);font-size:10.5px;font-style:italic}
+.ring{--p:50;width:38px;height:38px;border-radius:50%;margin:auto;display:grid;place-items:center;font-size:10.5px;font-weight:800;background:conic-gradient(var(--ok) calc(var(--p)*1%),var(--line) 0)}
+.ring span{width:28px;height:28px;border-radius:50%;background:var(--card);display:grid;place-items:center}
+tr.tot td{background:transparent;border:0;font-weight:800;color:var(--mute);font-size:12px}
+tr.tot td:first-child{border:0}
+.leg{display:flex;gap:16px;flex-wrap:wrap;padding:10px 18px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;align-items:center}
+.hint{padding:8px 18px;color:var(--mute);font-size:12px;background:var(--bg)}
+</style></head><body>
+<div class="card">
+ <div class="top"><b>Dashboard · Account Payable Recon.</b><span id="info">Period 2026-09 · เลื่อนเมาส์ / คลิกแถว-หัวคอลัมน์ได้</span></div>
+ <div class="wrap"><table id="t"></table></div>
+ <div class="leg"><span><span class="tb y">TB</span> มี TB แล้ว</span><span><span class="tb n">TB</span> ยังไม่มี</span><span>แถบใต้ตัวเลข = สัดส่วนเทียบ BU ที่มากสุดของบัญชีนั้น</span><span>วงกลมท้ายแถว = % บัญชีที่ AP มีข้อมูล</span></div>
+ <div class="hint">ตัวเลขทั้งหมดเป็นข้อมูลสมมติเพื่อดูแบบ</div>
+</div>
+<script>
+const accts=[['21930052','Trade Payable'],['21930054','Trade Payable 2'],['21930084','Cancel Cheque'],['21930085','Cancel Cheque 2'],['21930100','Other Payable'],['21930220','AP Misc']];
+// [tb, ap]
+const rows=[
+ ['MPS','Book MPS',[[1,24],[1,88],[0,0],[0,0],[1,0],[0,0]]],
+ ['TOP','Book TOP',[[1,3120],[1,5944],[0,0],[0,0],[0,0],[0,0]]],
+ ['CFM','Book CFM',[[0,0],[0,0],[0,0],[0,0],[0,0],[0,0]]]
+];
+const max=accts.map((_,j)=>Math.max(1,...rows.map(r=>r[2][j][1])));
+let h='<thead><tr><th style="text-align:left;padding-left:14px">BU</th>'+accts.map((a,j)=>`<th data-c="${j}" class="${j==4?'grp':''}">${a[0]}<small>${a[1]}</small></th>`).join('')+'<th>พร้อม</th></tr></thead><tbody>';
+rows.forEach((r,i)=>{
+ const ready=r[2].filter(c=>c[1]>0).length,p=Math.round(ready/6*100);
+ h+=`<tr class="row" data-r="${i}"><td><div class="bu"><div class="av">${r[0].slice(0,2)}</div><div>${r[0]}<small>${r[1]}</small></div></div></td>`;
+ r[2].forEach((c,j)=>{
+  h+=`<td data-c="${j}" class="${j==4?'grp':''}">`;
+  if(!c[0]&&!c[1]) h+='<span class="nd">No Data</span>';
+  else h+=`<div class="cell"><span class="tb ${c[0]?'y':'n'}">TB</span>`+(c[1]?`<span class="n1">${c[1].toLocaleString()}</span><div class="bar"><i style="width:${Math.max(6,c[1]/max[j]*100)}%"></i></div>`:'<span class="nd">AP No Data</span>')+'</div>';
+  h+='</td>';
+ });
+ h+=`<td><div class="ring" style="--p:${p}"><span>${p}%</span></div></td></tr>`;
+});
+h+='<tr class="tot"><td>รวมแถว AP</td>'+accts.map((_,j)=>`<td>${rows.reduce((s,r)=>s+r[2][j][1],0).toLocaleString()||'–'}</td>`).join('')+'<td></td></tr></tbody>';
+const t=document.getElementById('t');t.innerHTML=h;
+let selR=null;
+t.addEventListener('mouseover',e=>{const c=e.target.closest('[data-c]');t.querySelectorAll('.hc').forEach(x=>x.classList.remove('hc'));if(c)t.querySelectorAll(`[data-c="${c.dataset.c}"]`).forEach(x=>x.classList.add('hc'))});
+t.addEventListener('mouseleave',()=>t.querySelectorAll('.hc').forEach(x=>x.classList.remove('hc')));
+t.addEventListener('click',e=>{const r=e.target.closest('tr.row');if(!r)return;t.querySelectorAll('tr.sel').forEach(x=>x.classList.remove('sel'));if(selR===r.dataset.r){selR=null;return}selR=r.dataset.r;r.classList.add('sel')});
+</script>
+</body></html>

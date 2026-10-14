@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Config CC</title>
+<style>
+:root{--bg:#eef1f5;--card:#fff;--ink:#222;--mute:#888;--line:#e3e3e3;--navy:#1a3a5c;--blue:#1565c0;--blueBg:#e3f2fd;--purple:#6a1b9a;--purpleBg:#f3e5f5;--dis:#f0f2f5;--ok:#2e7d32}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1e232b;--ink:#e8eaee;--mute:#9aa3b0;--line:#323946;--navy:#5b8ccc;--blue:#90caf9;--blueBg:#1c2d42;--purple:#ce93d8;--purpleBg:#2d1f33;--dis:#2a303a;--ok:#81c784}}
+*{box-sizing:border-box}body{margin:0;padding:20px 16px;background:var(--bg);color:var(--ink);font-family:Tahoma,'Segoe UI',sans-serif;font-size:13px}
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+h2{font-size:13px;margin:0 0 6px;color:var(--mute);font-weight:600}
+.modal{background:var(--card);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.18);overflow:hidden}
+.hd{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);font-size:15px}
+.hd small{color:var(--mute);font-size:12px}
+.x{width:28px;height:28px;border-radius:50%;background:var(--dis);display:grid;place-items:center}
+.bd{padding:14px 20px}
+.row{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px}
+.lb{width:70px;font-size:12px;font-weight:600;flex-shrink:0;padding-top:8px}
+input.dis{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--dis);color:var(--mute);cursor:not-allowed;font:inherit}
+textarea{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;resize:vertical}
+.hint{font-size:11px;color:var(--mute);margin:0 0 0 78px}
+.btns{display:flex;gap:8px;margin:10px 0 0 78px;align-items:center}
+.b{padding:6px 18px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:12px}
+.b.p{background:var(--navy);border-color:var(--navy);color:#fff}
+.t{border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:6px}
+.tr{display:grid;grid-template-columns:90px 60px 1fr 74px;gap:8px;padding:7px 10px;font-size:12px;align-items:center;border-top:1px solid var(--line)}
+.tr.h{background:var(--dis);font-weight:600;border-top:0;color:var(--mute);font-size:11px}
+.use{padding:3px 8px;border:1px solid var(--blue);border-radius:6px;background:var(--blueBg);color:var(--blue);font-size:11px;text-align:center}
+.sec{display:flex;justify-content:space-between;margin:18px 0 0;font-weight:600;font-size:12px}
+.sec span{font-weight:400;color:var(--mute);font-size:11px}
+.btn-cc{display:inline-block;padding:7px 12px;border:1px solid #ce93d8;border-radius:8px;background:var(--purpleBg);color:var(--purple);width:168px;text-align:center}
+.btn-x{display:inline-block;padding:7px 12px;border:1px solid #ffcc80;border-radius:8px;background:#fff3e0;color:#e65100;width:168px;text-align:center}
+.bar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+code{background:var(--dis);padding:2px 6px;border-radius:5px;font-size:12px}
+.flow{padding:14px 20px;line-height:1.9}
+.chip{display:inline-block;padding:1px 8px;border-radius:10px;border:1px solid var(--line);font-size:12px;margin:1px}
+.chip.d{background:var(--dis);color:var(--mute)}
+.chip.u{background:var(--blueBg);color:var(--blue);border-color:var(--blue)}
+</style></head><body><div class="wrap">
+
+<div><h2>1) ปุ่มบนหน้า BU</h2>
+<div class="modal"><div class="bd bar"><span class="btn-cc">Config CC</span><span class="btn-x">Export</span></div></div></div>
+
+<div><h2>2) Popup Config CC</h2>
+<div class="modal">
+ <div class="hd"><div>Config CC <small>· BU REV · lekam</small></div><div class="x">×</div></div>
+ <div class="bd">
+  <div class="row"><div class="lb">Defaults</div><input class="dis" disabled value="fastapnvatcontroller@central.co.th"></div>
+  <div class="row"><div class="lb">CC เพิ่ม</div><textarea rows="2" placeholder="เช่น boss@company.co.th; team@company.co.th">boss@central.co.th; acc.team@central.co.th</textarea></div>
+  <div class="hint">BU REV · คั่นหลายอีเมลด้วย ; หรือ , · ใช้ในเมลผ่าน <b>{Config_CC}</b></div>
+  <div class="btns"><span class="b p">บันทึก</span><span class="b">ล้างค่า</span><span style="color:var(--ok);font-size:12px">บันทึกแล้ว</span></div>
+  <div class="sec">ตัวอย่างของ User อื่น (BU REV)</div>
+  <div class="t">
+   <div class="tr h"><div>User</div><div>BU</div><div>CC</div><div></div></div>
+   <div class="tr"><div>sitanrada</div><div>REV</div><div>fastapnvatcontroller@central.co.th; head.ap@central.co.th</div><div class="use">ใช้ค่านี้</div></div>
+   <div class="tr"><div>nid</div><div>REV</div><div>fastapnvatcontroller@central.co.th; nid.acc@central.co.th</div><div class="use">ใช้ค่านี้</div></div>
+  </div>
+ </div>
+</div></div>
+
+<div><h2>3) ลำดับ CC ที่ได้จริง และสิ่งที่บันทึกลง DB</h2>
+<div class="modal flow">
+ <div><b>ตอนบันทึก (ตาราง <code>vat_mail_cc_config</code>)</b> : Defaults นำหน้าเสมอ<br>
+ <span class="chip d">fastapnvatcontroller@central.co.th</span><span class="chip u">boss@central.co.th</span><span class="chip u">acc.team@central.co.th</span></div>
+ <div style="margin-top:8px"><b>ตอนสร้างเมล</b> : Defaults → CC ของ User ที่กดสร้าง → CC อื่นใน Config Mail (ตัดซ้ำ)<br>
+ <span class="chip d">fastapnvatcontroller@central.co.th</span><span class="chip u">boss@central.co.th</span><span class="chip u">acc.team@central.co.th</span><span class="chip">owner@bu.co.th</span></div>
+ <div style="margin-top:8px"><b>ถ้า User ไม่ได้ตั้ง CC เพิ่ม</b> : ไม่มีแถวใน DB<br>
+ <span class="chip d">fastapnvatcontroller@central.co.th</span> <span style="color:var(--mute)">(CC แค่ Defaults)</span></div>
+</div></div>
+
+</div></body></html>

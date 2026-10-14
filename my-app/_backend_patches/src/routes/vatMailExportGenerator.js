@@ -88,7 +88,7 @@ function styleHeaderSample(row) { // ตามไฟล์ตัวอย่า�
 }
 
 // ── Workbook ส่งถึง BU: ชีท Pivot (PivotTable จริง) + Raw + Aging Summary ──
-export async function buildBuWorkbook({ rows, period, buLabel, generatedBy, extraCols, rawCols }) { // MARKER_VATMAILEXPORT_SUPPLIER_EXTRACOLS_V1 -- extraCols = { head:[...], values:(row)=>[...] } คอลัมน์เพิ่มต่อท้ายชีท Raw (ไม่กระทบ Index ของ Pivot/SUMIF)
+export async function buildBuWorkbook({ rows, period, buLabel, generatedBy, extraCols, rawCols, rawOnly }) { // MARKER_VATMAILEXPORT_SUPPLIER_EXTRACOLS_V1 -- extraCols = { head:[...], values:(row)=>[...] } คอลัมน์เพิ่มต่อท้ายชีท Raw (ไม่กระทบ Index ของ Pivot/SUMIF)
   const wb = new ExcelJS.Workbook();
   wb.creator = generatedBy || "Link3ase";
 
@@ -134,10 +134,12 @@ export async function buildBuWorkbook({ rows, period, buLabel, generatedBy, extr
   });
   [18, 18, 18].forEach((w, i) => { ag.getColumn(i + 1).width = w; });
 
+  // MARKER_VATMAILEXPORT_SUPPLIER_RAWONLY_V1 -- rawOnly=true (ถึง Supplier / By Vendor): ไฟล์แนบมีเฉพาะชีท ICP_Report_BU (ตัด Incompleted_Pivot และ Aging Summary ออก ไม่ใส่ PivotTable)
+  if (rawOnly) { wb.removeWorksheet(pv.id); wb.removeWorksheet(ag.id); }
   wb.views = [{ activeTab: 0 }];
   let buf = Buffer.from(await wb.xlsx.writeBuffer());
   let pivotOk = true;
-  try {
+  if (!rawOnly) try {
     // Row: Related Persons > ชื่อผู้ค้า > Supplier Code > BU > เลขที่เช็ค > ชำระเงิน > ใบแจ้งหนี้ | Filter: Tax Group | Values: Sum มูลค่าสินค้า, เงินภาษี
     buf = await injectPivot(buf, {
       header: rawHead, rows: rawData, dataSheet: "ICP_Report_BU", hostSheetFile: "sheet1.xml",

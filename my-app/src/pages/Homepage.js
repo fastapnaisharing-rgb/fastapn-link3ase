@@ -285,11 +285,12 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   // MARKER_HOMEPAGE_NOTIF_FILTER_PILLS_V1
   const [notifFilter, setNotifFilter] = useState('All');
   // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- แจ้งเตือน SharePoint Handler เวอร์ชันเก่า (ปักหมุดใน Notification card ไม่หายจนกว่าจะ Update | เฉพาะคนที่เข้า VAT Controller ได้)
-  const canVatHandler = !!(isOwner || userPermissions?.['VAT']);
+  const canVatHandler = !!(isOwner || userPermissions?.docAccess?.vat || userPermissions?.docAccess?.gl); // MARKER_SP_HANDLER_AP_PERMS_V2 -- ตาม Document Access ของ VAT + สิทธิ์ที่เปิดไว้ใน GL Access (docAccess.gl คำนวณที่ Backend)
   const [spHandlerNotice, setSpHandlerNotice] = useState(null);
   const [spToastHidden, setSpToastHidden] = useState(false);
   const spReloadRef = useRef(null);
   const [spInstallOpen, setSpInstallOpen] = useState(false);
+  const spVerifyRef = useRef(null); // MARKER_HOMEPAGE_SP_HANDLER_AUTOVERIFY_V1
   const [spInstallMsg, setSpInstallMsg] = useState('');
   const [spInstallBusy, setSpInstallBusy] = useState(false);
   useEffect(() => {
@@ -308,7 +309,17 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
         try { const u = JSON.parse(localStorage.getItem('fastapn_sp_updated') || 'null'); if (u && Number(u.v) >= Number(d?.latest || 0)) hideUntil = Number(u.at || 0) + 24 * 3600 * 1000; } catch (_) { /* เงียบ */ }
         const stillOld = d && Array.isArray(d.outdated) && d.outdated.length > 0 && Date.now() > hideUntil;
         // MARKER_HOMEPAGE_SP_HANDLER_MISSING_V1 -- Backend ไม่เคยได้รับรายงานจากผู้ใช้นี้เลย (installed=false) = ยังไม่พบการติดตั้ง -> การ์ดให้ติดตั้ง (หายเองเมื่อ Handler รายงานครั้งแรก)
-        if (d && d.installed === false) { setSpHandlerNotice({ ...d, kind: 'missing', daysSinceRelease: 0 }); return; }
+        if (d && d.installed === false) {
+          setSpHandlerNotice({ ...d, kind: 'missing', daysSinceRelease: 0 });
+          // MARKER_HOMEPAGE_SP_HANDLER_AUTOVERIFY_V1 -- เครื่องที่ติดตั้งไว้แล้วแต่ Backend ยังไม่เคยได้รับรายงาน (Handler รายงานเฉพาะตอนได้รับคำสั่งที่มี api+token) -> สั่งตรวจเงียบๆ 1 ครั้ง/Session แล้วโหลดสถานะใหม่
+          try {
+            if (!sessionStorage.getItem('fastapn_sp_autoverify')) {
+              sessionStorage.setItem('fastapn_sp_autoverify', '1');
+              setTimeout(() => { try { if (spVerifyRef.current) spVerifyRef.current(true); } catch (_) {} }, 1500);
+            }
+          } catch (_) { /* เงียบ */ }
+          return;
+        }
         setSpHandlerNotice(stillOld ? { ...d, kind: 'outdated', daysSinceRelease: Math.max(0, Number(d.daysSinceRelease) || 0) } : null);
       } catch (_) { /* เงียบ */ }
     };
@@ -347,16 +358,18 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     finally { setSpInstallBusy(false); }
   };
   const openSpInstall = () => { setSpInstallOpen(true); downloadSpInstaller(); };
-  const verifySpHandler = () => {
+  const verifySpHandler = (silent) => {
     try {
       const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const token = sessionStorage.getItem('fastapn_token') || '';
       window.location.href = `fastapn-sp://update?v=${spHandlerNotice?.latest || 1}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`;
     } catch (_) {}
+    if (silent === true) { [5000, 12000].forEach((ms) => setTimeout(() => { try { if (spReloadRef.current) spReloadRef.current(); } catch (_) {} }, ms)); return; }
     setSpInstallMsg('กำลังตรวจสอบ... (ถ้าเบราว์เซอร์ถามให้เปิดแอป ให้กดอนุญาต)');
     [6000, 14000].forEach((ms) => setTimeout(() => { try { if (spReloadRef.current) spReloadRef.current(); } catch (_) {} }, ms));
     setTimeout(() => setSpInstallMsg((m) => (m.startsWith('กำลังตรวจสอบ') ? 'ยังไม่พบรายงานจาก Handler — ตรวจว่าติดตั้งแล้ว (ขั้นตอนที่ 2) แล้วกดตรวจสอบอีกครั้ง' : m)), 16000);
   };
+  spVerifyRef.current = verifySpHandler; // MARKER_HOMEPAGE_SP_HANDLER_AUTOVERIFY_V1
   // MARKER_HOMEPAGE_NOTIF_MEASURE_ROWS_V1
   // ── วัดความสูงแถวจริงแทนเดาตัวเลข ให้เห็น 5 แถวเป๊ะไม่ว่า Font จริงจะสูงแค่ไหน ──
   const notifListRef = useRef(null);
@@ -364,7 +377,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const filteredNotif = useMemo(() => {
     const base = notifFilter === 'All' ? notifications : notifications.filter(n => notifModule(n) === notifFilter);
     // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- ปักหมุดบนสุด (หมวด All / VAT)
-    if (spHandlerNotice && (notifFilter === 'All' || notifFilter === 'VAT')) {
+    if (spHandlerNotice && (notifFilter === 'All' || notifFilter === 'VAT' || notifFilter === 'GL')) { // MARKER_SP_HANDLER_AP_PERMS_V2 -- ปักใต้หมวด GL ด้วย
       return [{ id: '__sp_handler__', category: 'sp-handler', created_at: spHandlerNotice.releasedAt }, ...base];
     }
     return base;
@@ -923,6 +936,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                               <p style={{ fontSize: '11px', color: '#777', margin: 0 }}>จำเป็นสำหรับส่งไฟล์ไป SharePoint และเปิดหน้า Z_Report Reconcile</p>
                             </div>
                             <button onClick={openSpInstall} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>ติดตั้งเลย</button>
+                            <button onClick={() => verifySpHandler(true)} title="เครื่องนี้ติดตั้งแล้ว? ให้ระบบตรวจสอบอีกครั้ง" style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #8a4a00', background: '#fff', color: '#8a4a00', cursor: 'pointer', flexShrink: 0 }}>ตรวจสอบ</button>
                           </div>
                         );
                       }
@@ -1032,15 +1046,15 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
               {spInstallMsg && <p style={{ fontSize: '11px', color: spInstallMsg.startsWith('ดาวน์โหลดไม่สำเร็จ') || spInstallMsg.startsWith('ยังไม่พบ') ? '#A32D2D' : '#0F6E56', margin: '0 0 10px' }}>{spInstallMsg}</p>}
               <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                 <button onClick={downloadSpInstaller} disabled={spInstallBusy} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>{spInstallBusy ? 'กำลังโหลด...' : 'ดาวน์โหลดอีกครั้ง'}</button>
-                <button onClick={verifySpHandler} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer' }}>ฉันติดตั้งแล้ว ตรวจสอบ</button>
+                <button onClick={() => verifySpHandler()} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer' }}>ฉันติดตั้งแล้ว ตรวจสอบ</button>
                 <button onClick={() => setSpInstallOpen(false)} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>ปิด</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- Toast ขวาล่าง เมื่อเกิน 7 วันยังไม่ Update (ปิดได้ 1 วัน แต่รายการใน Notification ยังอยู่) */}
-        {spHandlerNotice && spHandlerNotice.kind !== 'missing' && spHandlerNotice.daysSinceRelease >= 7 && !spToastHidden && !spToastSnoozed && (
+        {/* MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- Toast ขวาล่าง ทันทีที่มีเวอร์ชันใหม่และยังไม่ Update (MARKER_HOMEPAGE_SP_TOAST_IMMEDIATE_V1 -- เดิมรอ 7 วัน) (ปิดได้ 1 วัน แต่รายการใน Notification ยังอยู่) */}
+        {spHandlerNotice && spHandlerNotice.kind !== 'missing' && !spToastHidden && !spToastSnoozed && (
           <div style={{ position: 'fixed', right: '20px', bottom: '20px', zIndex: 10020, width: '320px', background: '#fff', border: '1px solid #f3c98b', borderLeft: '4px solid #E24B4A', borderRadius: '10px', boxShadow: '0 6px 24px rgba(0,0,0,0.18)', padding: '12px 14px' }}>
             <p style={{ fontSize: '13px', fontWeight: '600', color: '#791F1F', margin: '0 0 4px' }}>⚠️ SharePoint Handler ยังไม่ได้ Update</p>
             <p style={{ fontSize: '11px', color: '#666', margin: '0 0 10px' }}>v{spHandlerNotice.outdated[0].version} → v{spHandlerNotice.latest} · ปล่อยมาแล้ว {spHandlerNotice.daysSinceRelease} วัน</p>

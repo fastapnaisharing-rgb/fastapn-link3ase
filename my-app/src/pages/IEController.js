@@ -9975,37 +9975,44 @@ const btnOutline = { padding: '5px 12px', background: 'white', color: '#555', bo
 const bdgGreen   = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#EAF3DE', color: '#27500A' };
 
 // ── StepBar ───────────────────────────────────────────────────────────────────
-function StepBar({ step, onGo, extraStep = null }) {
+// MARKER_IECONTROLLER_HEADER_V1 -- แถบขั้นตอนแบบป้ายทรงมน (เหมือน AP Controller) + ช่อง right ชิดขวา (Prefix / Account-CPC Rules / Recycle Bin) + extraStep (Simple Preview)
+function StepBar({ step, onGo, right, extraStep = null }) {
   const steps = [{ n: 1, label: 'Batch setup' }, { n: 2, label: 'Invoice entry' }, { n: 3, label: 'Batch Preview' }];
   return (
-    <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '0 18px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-      {steps.map((s, i) => {
-        const isDone = s.n < step, isActive = s.n === step && !(extraStep?.active);
-        return (
-          <React.Fragment key={s.n}>
-            {i > 0 && <span style={{ color: '#ccc', margin: '0 12px', fontSize: '14px', userSelect: 'none' }}>›</span>}
-            <div onClick={() => { if (s.n < step) onGo(s.n); else if (s.n === step && extraStep?.active && extraStep?.onBackClick) extraStep.onBackClick(); }}
-              style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 0', cursor: (s.n < step || (s.n === step && extraStep?.active)) ? 'pointer' : 'default' }}>
-              <div style={{ width: '21px', height: '21px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0, background: isDone ? '#EAF3DE' : isActive ? '#1a3a5c' : 'transparent', border: isDone ? '1.5px solid #97C459' : isActive ? '1.5px solid #1a3a5c' : '1.5px solid #ddd', color: isDone ? '#27500A' : isActive ? 'white' : '#888' }}>
-                {isDone ? '✓' : s.n}
+    <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '6px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        {steps.map((s, i) => {
+          const isDone = s.n < step, isActive = s.n === step && !(extraStep?.active);
+          return (
+            <React.Fragment key={s.n}>
+              {i > 0 && <span style={{ color: '#b3bccb', fontSize: '14px', userSelect: 'none' }}>›</span>}
+              <div onClick={() => { if (s.n < step) onGo(s.n); else if (s.n === step && extraStep?.active && extraStep?.onBackClick) extraStep.onBackClick(); }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '4px 14px 4px 5px', borderRadius: '99px', cursor: (s.n < step || (s.n === step && extraStep?.active)) ? 'pointer' : 'default',
+                  background: isActive ? '#14284b' : '#fff', border: isActive ? '1px solid #14284b' : isDone ? '1px solid #97C459' : '1px solid #d6dde8' }}>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 600, flexShrink: 0,
+                  background: isActive ? '#2fb58a' : isDone ? '#EAF3DE' : '#eef1f5', color: isActive ? '#fff' : isDone ? '#27500A' : '#6b778c' }}>
+                  {isDone ? '✓' : s.n}
+                </span>
+                <span style={{ fontSize: '13px', fontWeight: isActive ? 600 : 500, color: isActive ? '#fff' : isDone ? '#27500A' : '#6b778c' }}>{s.label}</span>
               </div>
-              <span style={{ fontSize: '12px', fontWeight: isActive ? '500' : '400', color: isActive ? '#1a3a5c' : '#888' }}>{s.label}</span>
+            </React.Fragment>
+          );
+        })}
+        {/* MARKER_BATCHPREVIEW_MAIN_TAB_V1 -- Step 4 Simple Preview (เฉพาะตอนอยู่ Step 3) กดสลับ Tab Batch/Simple ได้ */}
+        {extraStep && (
+          <React.Fragment>
+            <span style={{ color: '#b3bccb', fontSize: '14px', userSelect: 'none' }}>›</span>
+            <div onClick={extraStep.onClick}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '4px 14px 4px 5px', borderRadius: '99px', cursor: 'pointer',
+                background: extraStep.active ? '#14284b' : '#fff', border: extraStep.active ? '1px solid #14284b' : '1px solid #d6dde8' }}>
+              <span style={{ width: '20px', height: '20px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 600, flexShrink: 0,
+                background: extraStep.active ? '#2fb58a' : '#eef1f5', color: extraStep.active ? '#fff' : '#6b778c' }}>4</span>
+              <span style={{ fontSize: '13px', fontWeight: extraStep.active ? 600 : 500, color: extraStep.active ? '#fff' : '#6b778c' }}>{extraStep.label}</span>
             </div>
           </React.Fragment>
-        );
-      })}
-      {/* MARKER_BATCHPREVIEW_MAIN_TAB_V1 -- Step 4 Simple Preview (เฉพาะตอนอยู่ Step 3 เท่านั้น) กดสลับ Tab Batch/Simple ได้ */}
-      {extraStep && (
-        <React.Fragment>
-          <span style={{ color: '#ccc', margin: '0 12px', fontSize: '14px', userSelect: 'none' }}>›</span>
-          <div onClick={extraStep.onClick} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 0', cursor: 'pointer' }}>
-            <div style={{ width: '21px', height: '21px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0, background: extraStep.active ? '#1a3a5c' : 'transparent', border: extraStep.active ? '1.5px solid #1a3a5c' : '1.5px solid #ddd', color: extraStep.active ? 'white' : '#888' }}>
-              4
-            </div>
-            <span style={{ fontSize: '12px', fontWeight: extraStep.active ? '500' : '400', color: extraStep.active ? '#1a3a5c' : '#888' }}>{extraStep.label}</span>
-          </div>
-        </React.Fragment>
-      )}
+        )}
+      </div>
+      {right && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>{right}</div>}
     </div>
   );
 }
@@ -17460,6 +17467,62 @@ function SendToModal({ show, onClose, onSend, selectedCount, totalAmount, curren
   );
 }
 
+
+// MARKER_CONTROLLER_PAGE_HEADER_V1 -- หัวหน้าแบบเดียวกับ AP Controller / IE Manual (eyebrow + ชื่อใหญ่ + OPEN (วันที่) / DEADLINE + วันที่ / ผู้ใช้ / Role) ใช้ร่วมกับหน้า Invoice History / Batch Control
+function ControllerPageHeader({ kind = 'ap', eyebrow, title, accent, subtitle, userName = '', currentUser = null, flush = '' }) {
+  const { getCached, fetchCollection } = useDataCache();
+  const { isOwner, isAdmin, isEditor } = useUserRole();
+  React.useEffect(() => { try { if (!getCached('CompanyList') && fetchCollection) fetchCollection('CompanyList').catch(() => {}); } catch (_) { /* ไม่มี Cache -> ข้าม */ } }, []); // eslint-disable-line
+  const infoItems = getCached('CompanyList') || [];
+  const modeK = kind === 'ie' ? 'ie_period_mode' : 'ap_period_mode';
+  const monK = kind === 'ie' ? 'ie_bu_period_month' : 'ap_bu_period_month';
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmtD = (x) => `${String(x.getDate()).padStart(2, '0')}-${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+  const period = (() => {
+    const rep = infoItems.find((i) => i[modeK] !== 'prev' && i[monK]) || infoItems.find((i) => i[monK]) || null;
+    if (!rep) return null;
+    const [yy, mm] = String(rep[monK]).split('-').map(Number);
+    if (!yy || !mm) return null;
+    const nextBiz2 = (start) => { let d = new Date(start), cnt = 0, out = null; while (cnt < 2) { const wd = d.getDay(); if (wd !== 0 && wd !== 6) { cnt += 1; if (cnt === 2) out = new Date(d); } if (cnt < 2) d.setDate(d.getDate() + 1); } return out; };
+    const prevDl = nextBiz2(new Date(yy, mm, 1));
+    const openDate = new Date(prevDl); openDate.setDate(openDate.getDate() + 1);
+    const dl = nextBiz2(new Date(yy, mm + 1, 1));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const daysLeft = Math.round((dl - today) / 86400000);
+    const tone = daysLeft < 0 ? { line: '#e24b4a', text: '#a32d2d' } : daysLeft <= 7 ? { line: '#ba7517', text: '#854f0b' } : { line: '#2fb58a', text: '#14935a' };
+    const left = daysLeft < 0 ? `เกิน ${-daysLeft} วัน` : daysLeft === 0 ? 'วันนี้' : `อีก ${daysLeft} วัน`;
+    return { openDate, dl, tone, left };
+  })();
+  const lab = { fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 };
+  return (
+    <div style={{ background: 'white', padding: '14px 20px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, borderBottom: '0.5px solid #e5e5e0', margin: flush }}>
+      <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+        <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>{eyebrow}</div>
+        <div style={{ fontSize: '22px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>{title}{accent ? <span style={{ color: '#2fb58a' }}>{accent}</span> : null}</div>
+        {subtitle ? <div style={{ fontSize: '12px', color: '#6b778c', marginTop: '2px' }}>{subtitle}</div> : null}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {period && (
+          <div style={{ display: 'flex', gap: '18px' }}>
+            <div style={{ borderLeft: '3px solid #14284b', paddingLeft: '8px' }}>
+              <div style={lab}>{kind === 'ie' ? 'OPEN IE' : 'OPEN AP'}</div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(period.openDate)}</div>
+            </div>
+            <div style={{ borderLeft: `3px solid ${period.tone.line}`, paddingLeft: '8px' }}>
+              <div style={lab}>DEADLINE</div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(period.dl)} <span style={{ fontSize: '12px', fontWeight: 600, color: period.tone.text }}>{period.left}</span></div>
+            </div>
+          </div>
+        )}
+        <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+          <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+          <div style={{ marginTop: '4px' }}><span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer'}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Invoice History — สำหรับหน้า "Draft List" (เปลี่ยนเป็น Invoice History) ──
 // ── ดึงจาก bucket_list (status='done') กรองตาม Receive Date + My/All ──────────
 export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false, isAdmin = false }) {
@@ -18121,9 +18184,28 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   };
 
   return (
-    <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-        <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: '#1a3a5c' }}>📄 Invoice History</h2>
+    <div style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
+      {/* MARKER_CONTROLLER_PAGE_HEADER_V1 */}
+      <ControllerPageHeader kind="ie" eyebrow="I-Expense" title="I-Expense - " accent="Invoice History" subtitle="รายการ Invoice ที่ Export ออกจากระบบแล้ว" userName={userName} currentUser={currentUser} flush="0 -18px 14px" />
+
+
+      {/* ── แถว: Tab เท่านั้น ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px', flexShrink: 0 }}>
+          <button onClick={() => setMainTab('myjob')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'myjob' ? '#fff' : 'transparent', color: mainTab === 'myjob' ? '#14284b' : '#555', boxShadow: mainTab === 'myjob' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>👤 My Job</button>
+          <button onClick={() => setMainTab('myhistory')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'myhistory' ? '#fff' : 'transparent', color: mainTab === 'myhistory' ? '#14284b' : '#555', boxShadow: mainTab === 'myhistory' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>🕓 My History</button>
+          {canSeeAll && (
+            <button onClick={() => setMainTab('invoicehistory')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'invoicehistory' ? '#fff' : 'transparent', color: mainTab === 'invoicehistory' ? '#14284b' : '#555', boxShadow: mainTab === 'invoicehistory' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>👥 Invoice History</button>
+          )}
+        </div>
+        {/* MARKER_INVOICEHISTORY_SIMPLE_TAB_INLINE_V1 -- ย้าย Tab Invoice/Simple มาระนาบเดียวกับ My Job/My History/Invoice History */}
+        <div style={{ display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px', flexShrink: 0 }}>
+          {[['invoice', 'Invoice'], ['simple', 'Simple']].map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setHistoryTabView(key)}
+              style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: historyTabView === key ? '#fff' : 'transparent', color: historyTabView === key ? '#14284b' : '#555', boxShadow: historyTabView === key ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>{label}</button>
+          ))}
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex' }}> {/* MARKER_INVOICEHISTORY_IMPORT_SAME_ROW_V1 */}
         {/* MARKER_APCONTROLLER_IMPORT_BUTTON_FIX_V1 */}
         {isOwner && mainTab === 'invoicehistory' && (
           <button onClick={() => document.getElementById('legacyImportFileInput').click()}
@@ -18133,24 +18215,6 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         )}
         <input id="legacyImportFileInput" type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
           onChange={e => { handleImportFileSelect(e.target.files?.[0]); e.target.value = ''; }} />
-      </div>
-      <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px' }}>รายการ Invoice ที่ Export ออกจากระบบแล้ว</div>
-
-      {/* ── แถว: Tab เท่านั้น ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
-          <button onClick={() => setMainTab('myjob')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', background: mainTab === 'myjob' ? '#1a3a5c' : 'white', color: mainTab === 'myjob' ? 'white' : '#555', cursor: 'pointer' }}>👤 My Job</button>
-          <button onClick={() => setMainTab('myhistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'myhistory' ? '#1a3a5c' : 'white', color: mainTab === 'myhistory' ? 'white' : '#555', cursor: 'pointer' }}>🕓 My History</button>
-          {canSeeAll && (
-            <button onClick={() => setMainTab('invoicehistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'invoicehistory' ? '#1a3a5c' : 'white', color: mainTab === 'invoicehistory' ? 'white' : '#555', cursor: 'pointer' }}>👥 Invoice History</button>
-          )}
-        </div>
-        {/* MARKER_INVOICEHISTORY_SIMPLE_TAB_INLINE_V1 -- ย้าย Tab Invoice/Simple มาระนาบเดียวกับ My Job/My History/Invoice History */}
-        <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
-          {[['invoice', 'Invoice'], ['simple', 'Simple']].map(([key, label]) => (
-            <button key={key} type="button" onClick={() => setHistoryTabView(key)}
-              style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: historyTabView === key ? '#1a3a5c' : 'white', color: historyTabView === key ? 'white' : '#888', cursor: 'pointer' }}>{label}</button>
-          ))}
         </div>
       </div>
 
@@ -18168,15 +18232,15 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', width: '260px', flexShrink: 0 }} />
+          <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff', width: '260px', flexShrink: 0 }} />
           <span style={{ fontSize: '12px', color: '#888' }}>Receive Date</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff' }} />
           <span style={{ fontSize: '12px', color: '#888' }}>ถึง</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff' }} />
           {/* MARKER_INVOICEHISTORY_MODULE_FILTER_DROPDOWN_V1 */}
           <span style={{ fontSize: '12px', color: '#888' }}>Module</span>
           <select value={moduleFilter} onChange={e => setModuleFilter(e.target.value)}
-            style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', cursor: 'pointer' }}>
+            style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff', cursor: 'pointer' }}>
             <option value="ALL">ทั้งหมด</option>
             <option value="AP">AP</option>
             <option value="IE">IE</option>
@@ -18211,7 +18275,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       </div>
 
       {historyTabView === 'invoice' && (
-      <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
+      <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: '12px', background: '#fff' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
             {(() => {
@@ -18233,7 +18297,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             })()}
           </colgroup>
           <thead>
-            <tr style={{ background: '#f8f9fa' }}>
+            <tr style={{ background: '#e8f0fb' }}>
               {canSeeAll && (
                 <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0' }}>
                   <input type="checkbox"
@@ -18247,7 +18311,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 </th>
               )}
               {['Batch name', 'Invoice', 'Vendor', 'BU', 'Receive date', 'Amount', 'Vat', 'Total', 'Action', 'Exported at', ...(mainTab === 'invoicehistory' ? ['Created by'] : [])].map(h => (
-                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 700, color: '#1a3a5c', borderBottom: '1px solid #d6e2f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -18265,7 +18329,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 return (
                   <React.Fragment key={g.batch_id || g.items[0]?.id}>
                     {/* ── Batch header — คลิกเพื่อกาง/หด, Action = Restore/Download/Delete ทั้ง Batch ── */}
-                    <tr style={{ background: '#eef4fb', cursor: 'pointer', borderBottom: '0.5px solid #d5e3f5' }}
+                    <tr style={{ background: '#f7faff', cursor: 'pointer', borderBottom: '1px solid #eef0f3' }}
                       onClick={() => setExpandedBatches(prev => { const next = new Set(prev); next.has(g.batch_id) ? next.delete(g.batch_id) : next.add(g.batch_id); return next; })}>
                       {canSeeAll && (
                         <td style={{ padding: '8px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -18288,7 +18352,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                       </td>
                       <td style={{ padding: '8px 10px' }}></td>
                       <td style={{ padding: '8px 10px' }}></td>
-                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{g.bu || '-'}</span></td>
+                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#eef3fb', color: '#1a3a5c', borderRadius: '99px', padding: '2px 10px', fontSize: '11.5px', fontWeight: '700' }}>{g.bu || '-'}</span></td>
                       <td style={{ padding: '8px 10px' }}>{fmtD(rd)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalAmount)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalVat)}</td>
@@ -18385,7 +18449,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
       {/* MARKER_INVOICEHISTORY_SIMPLE_TAB_V1 -- ตาราง Simple Draft จัดกลุ่มตาม Batch เหมือนฝั่ง Invoice */}
       {/* MARKER_INVOICEHISTORY_SIMPLE_INVOICE_PARITY_V1 -- ปรับให้เป็น Flat Table + Checkbox + Bulk Action เหมือน Tab Invoice เป๊ะ (ใช้ selectedRows/handleRestoreSelected/handleDeleteHistorySelected ชุดเดียวกัน เพราะ draft_id = bucket_list.id อยู่แล้ว) */}
       {historyTabView === 'simple' && (
-      <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
+      <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: '12px', background: '#fff' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
             {(() => {
@@ -18406,7 +18470,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             })()}
           </colgroup>
           <thead>
-            <tr style={{ background: '#f8f9fa' }}>
+            <tr style={{ background: '#e8f0fb' }}>
               {canSeeAll && (
                 <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0' }}>
                   <input type="checkbox"
@@ -18420,7 +18484,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 </th>
               )}
               {['Batch name', 'Tax Invoice Number', 'Supplier Name', 'BU', 'Receive date', 'Amount (Ex VAT)', 'VAT Amount', 'Total', 'Action', 'Exported at'].map(h => (
-                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount (Ex VAT)', 'VAT Amount', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount (Ex VAT)', 'VAT Amount', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 700, color: '#1a3a5c', borderBottom: '1px solid #d6e2f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -18440,7 +18504,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 const groupTotal = groupTotalExVat + groupTotalVat;
                 return (
                   <React.Fragment key={g.batch_id}>
-                    <tr style={{ background: '#eef4fb', cursor: 'pointer', borderBottom: '0.5px solid #d5e3f5' }}
+                    <tr style={{ background: '#f7faff', cursor: 'pointer', borderBottom: '1px solid #eef0f3' }}
                       onClick={() => setExpandedBatches(prev => { const next = new Set(prev); next.has(g.batch_id) ? next.delete(g.batch_id) : next.add(g.batch_id); return next; })}>
                       {canSeeAll && (
                         <td style={{ padding: '8px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -18454,7 +18518,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                       </td>
                       <td style={{ padding: '8px 10px' }}></td>
                       <td style={{ padding: '8px 10px' }}></td>
-                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{g.bu || '-'}</span></td>
+                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#eef3fb', color: '#1a3a5c', borderRadius: '99px', padding: '2px 10px', fontSize: '11.5px', fontWeight: '700' }}>{g.bu || '-'}</span></td>
                       <td style={{ padding: '8px 10px' }}></td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(groupTotalExVat)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(groupTotalVat)}</td>
@@ -18666,7 +18730,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             {Array.isArray(viewingInvoice.lines) && viewingInvoice.lines.length > 0 && (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '14px' }}>
                 <thead>
-                  <tr style={{ background: '#f8f9fa' }}>
+                  <tr style={{ background: '#e8f0fb' }}>
                     {['Description', 'Amount', 'Vat', 'WHT', 'Total'].map(h => (
                       <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Description' ? 'left' : 'right', color: '#888', fontWeight: 500, borderBottom: '0.5px solid #e8eaf0' }}>{h}</th>
                     ))}
@@ -20252,7 +20316,7 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
   // -- Bug: isInvoicePopupOwner/isInvoicePopupAdmin ถูก declare อยู่ scope ของ --
   // -- InvoiceDetailPopup เท่านั้น แต่ isAccountCpcAdmin (ใน IEController)  --
   // -- เรียกใช้ตัวแปรนี้ข้าม scope มา -> ReferenceError. แก้โดย declare ในนี้เอง --
-  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin } = useUserRole();
+  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin, isEditor: isInvoicePopupEditor } = useUserRole();
   // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ie_grt, ie_grn }
 
@@ -20539,31 +20603,61 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
-      <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-        <span style={{ fontSize: '17px' }}>💸</span>
-        <div>
-          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>I-Expense</div>
-          <div style={{ fontSize: '11px', color: '#aaa' }}>I-Expense Invoice Management</div>
+      {/* MARKER_IECONTROLLER_HEADER_V1 -- หัวแบบเดียวกับ Document Center: eyebrow + ชื่อ + วันที่/ผู้ใช้/Role (ปุ่มเครื่องมือย้ายไปอยู่แถว Step ชิดขวา) */}
+      <div style={{ background: 'white', padding: '14px 20px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+          <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>I-Expense</div>
+          <div style={{ fontSize: '22px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>I-Expense - <span style={{ color: '#2fb58a' }}>IE Manual</span></div>
+          <div style={{ fontSize: '12px', color: '#6b778c', marginTop: '2px' }}>I-Expense Invoice Management</div>
         </div>
-        <button onClick={() => { setPrefixInput(systemPrefix); setShowPrefixModal(true); }}
-          style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-          <span>🏷️ Prefix: <strong>{systemPrefix || '—'}</strong></span>
-          <span style={{ fontSize: '10px' }}>✎</span>
-        </button>
-        {/* MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- ปุ่มจัดการ Account/CPC Rules ทั้งหมด */}
-        <button onClick={() => setShowAccountCpcManage(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-          🔗 Account/CPC Rules
-        </button>
-        {/* MARKER_IE_RECYCLEBIN_POPUP_V1 -- ปุ่มเปิด Recycle Bin -- Owner/Admin เท่านั้น (เหมือน AP) */}
-        {(isInvoicePopupOwner || isInvoicePopupAdmin) && (
-          <button onClick={() => setShowInvoiceRecycleBin(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-            🗑️ Recycle Bin (Invoice)
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {/* MARKER_IECONTROLLER_PERIOD_DEADLINE_V1 -- Open IE (Period) + Deadline ในหัวหน้า | คิดจาก CompanyList ชุดเดียวกับ BatchSetup (Current = เดือนถัดจาก ie_bu_period_month, Deadline = 2 วันทำการหลังสิ้นเดือน Current) | รูปแบบวันที่ Oct-26 / 03-Nov-26 */}
+          {(() => {
+            const rep = infoItems.find(i => i.ie_period_mode !== 'prev' && i.ie_bu_period_month) || infoItems.find(i => i.ie_bu_period_month) || null;
+            if (!rep) return null;
+            const [yy, mm] = String(rep.ie_bu_period_month).split('-').map(Number);
+            if (!yy || !mm) return null;
+            const curMonth = new Date(yy, mm, 1);
+            // MARKER_IECONTROLLER_OPEN_DATE_V1 -- วันที่เปิด Period = วันถัดจาก Deadline ของ Period ก่อนหน้า (2 วันทำการหลังสิ้นเดือน M-1) — สูตรเดียวกับ Current period ใน System Console > Period Panel
+            let od = new Date(yy, mm, 1), ocnt = 0, prevDl = null;
+            while (ocnt < 2) {
+              const wd = od.getDay();
+              if (wd !== 0 && wd !== 6) { ocnt++; if (ocnt === 2) prevDl = new Date(od); }
+              if (ocnt < 2) od.setDate(od.getDate() + 1);
+            }
+            const openDate = new Date(prevDl); openDate.setDate(openDate.getDate() + 1);
+            let d = new Date(yy, mm + 1, 1), cnt = 0, dl = null;
+            while (cnt < 2) {
+              const wd = d.getDay();
+              if (wd !== 0 && wd !== 6) { cnt++; if (cnt === 2) dl = new Date(d); }
+              if (cnt < 2) d.setDate(d.getDate() + 1);
+            }
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const daysLeft = Math.round((dl - today) / 86400000);
+            const tone = daysLeft < 0 ? { line: '#e24b4a', text: '#a32d2d' } : daysLeft <= 7 ? { line: '#ba7517', text: '#854f0b' } : { line: '#2fb58a', text: '#14935a' };
+            const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const fmtM = (x) => `${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+            const fmtD = (x) => `${String(x.getDate()).padStart(2, '0')}-${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+            const left = daysLeft < 0 ? `เกิน ${-daysLeft} วัน` : daysLeft === 0 ? 'วันนี้' : `อีก ${daysLeft} วัน`;
+            return (
+              <div style={{ display: 'flex', gap: '18px' }}>
+                <div style={{ borderLeft: '3px solid #14284b', paddingLeft: '8px' }}>
+                  <div style={{ fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 }}>OPEN IE</div>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(openDate)}</div>
+                </div>
+                <div style={{ borderLeft: `3px solid ${tone.line}`, paddingLeft: '8px' }}>
+                  <div style={{ fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 }}>DEADLINE</div>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(dl)} <span style={{ fontSize: '12px', fontWeight: 600, color: tone.text }}>{left}</span></div>
+                </div>
+              </div>
+            );
+          })()}
+          <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+            <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+            <div style={{ marginTop: '4px' }}><span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{isInvoicePopupOwner ? 'Owner' : isInvoicePopupAdmin ? 'Admin' : isInvoicePopupEditor ? 'Editor' : 'Viewer'}</span></div>
+          </div>
+        </div>
       </div>
-
       {showAccountCpcManage && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onMouseDown={e => { if (e.target === e.currentTarget) setShowAccountCpcManage(false); }}>
@@ -20715,7 +20809,26 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
           </div>
         </div>
       )}
-      <StepBar step={step} onGo={setStep} extraStep={step === 3 ? { label: 'Simple Preview', active: batchPreviewMainTab === 'simple', onClick: () => setBatchPreviewMainTab('simple'), onBackClick: () => setBatchPreviewMainTab('batch') } : null} />
+      <StepBar step={step} onGo={setStep} extraStep={step === 3 ? { label: 'Simple Preview', active: batchPreviewMainTab === 'simple', onClick: () => setBatchPreviewMainTab('simple'), onBackClick: () => setBatchPreviewMainTab('batch') } : null} right={(
+        <>
+          <button onClick={() => { setPrefixInput(systemPrefix); setShowPrefixModal(true); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z"/></svg><span>Prefix: <strong>{systemPrefix || '—'}</strong></span><span style={{ fontSize: '10px', color: '#6b778c' }}>✎</span>
+          </button>
+          {/* MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- ปุ่มจัดการ Account/CPC Rules ทั้งหมด */}
+          <button onClick={() => setShowAccountCpcManage(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5"/></svg>Account/CPC Rules
+          </button>
+          {/* MARKER_IE_RECYCLEBIN_POPUP_V1 -- Popup เปิดตรงในหน้านี้เลย -- Owner/Admin เท่านั้น */}
+          {(isInvoicePopupOwner || isInvoicePopupAdmin) && (
+            <button onClick={() => setShowInvoiceRecycleBin(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></svg>Recycle Bin (Invoice)
+            </button>
+          )}
+        </>
+      )} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* MARKER_APCONTROLLER_BATCHSETUP_NO_UNMOUNT_V1 */}
         {/* ── ซ่อนด้วย CSS แทน Unmount กัน BU/Receive Date/Due Date/GRT-GRN Preview ── */}

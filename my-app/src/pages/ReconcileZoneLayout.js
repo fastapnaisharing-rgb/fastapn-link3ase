@@ -1,5 +1,11 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import VatReconcileSystem from './VatReconcileSystem';
+import { confirmDialog } from '../confirmDialog'; // MARKER_DASHBOARD_AP_CLEAR_V1
+import { subscribeWs, broadcastWs } from '../wsManager';
+import ApReportPreview, { ApGroupPreview, prefetchApPreview } from './ApReportPreview'; // MARKER_APRECONCILE_REPORT_V1
+
+const AP_API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
+const apAuth = () => { const t = sessionStorage.getItem('fastapn_token'); return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }; };
 
 // ══════════════════════════════════════════════════════════════════════════
 // ReconcileZoneLayout.js — Shared Component สำหรับหน้า Reconcile ทุกโมดูล
@@ -67,6 +73,37 @@ function StatusBadge({ label, ready, display }) {
   );
 }
 
+// MARKER_RECONCILEZONE_DASH_DOTS_V1 -- ช่อง Dashboard เป็นจุดเขียว (มีข้อมูล) / จุดเทา (No Data) เหมือนหน้า Input (StatusDot ใน VatReconcileDashboard.js)
+// คลิกจุด -> กล่อง Tooltip บอกจำนวนที่จับได้ (MARKER_RECONCILEZONE_DOT_TOOLTIP_V1)
+function DashDot({ active, title, onTip, onOpen, onMenu, badge }) { // MARKER_RECONCILEZONE_DETAIL_BADGE_V1 -- badge = ตัว D เล็กมุมบนขวา (มี Detail of Overhead)
+  const lastClickRef = useRef(0);
+  // MARKER_RECONCILEZONE_DOT_HITAREA_V1 -- พื้นที่กดใหญ่ขึ้น (34x28 px) รอบจุด 10px เพื่อให้คลิก / ดับเบิลคลิก / คลิกขวา ติดง่าย
+  return (
+    <span
+      title={title}
+      // MARKER_RECONCILEZONE_DBLCLICK_PREVIEW_V1 -- นับ 2 คลิกซ้อนใน 500ms เอง (ไม่พึ่ง dblclick ของ Browser ที่หลุดง่ายเมื่อหน้า Re-render) | หรือกดปุ่ม "เปิด Preview" ใน Tooltip
+      onClick={(e) => {
+        const now = Date.now();
+        if (active && onOpen && now - lastClickRef.current < 500) { lastClickRef.current = 0; e.stopPropagation(); onOpen(); return; }
+        lastClickRef.current = now;
+        if (onTip) onTip(e);
+      }}
+      onContextMenu={active && onMenu ? onMenu : undefined}
+      aria-label={active ? 'Active' : 'Inactive'}
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 28, cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }}
+    >
+      <span style={{
+        display: 'block', width: 10, height: 10, borderRadius: '50%', pointerEvents: 'none',
+        background: active ? 'radial-gradient(circle at 30% 30%, #4ac26b, #1a7f37)' : '#e1e4e8',
+        boxShadow: active ? '0 0 6px rgba(26,127,55,0.5)' : 'none',
+      }} />
+      {badge ? (
+        <span style={{ position: 'absolute', top: 1, right: 3, width: 12, height: 12, borderRadius: '50%', background: '#0969da', color: '#fff', fontSize: 8, lineHeight: '12px', fontWeight: 900, textAlign: 'center', pointerEvents: 'none', boxShadow: '0 0 0 1.5px #fff' }}>D</span>
+      ) : null}
+    </span>
+  );
+}
+
 function AcctCell({ cell }) {
   const count = cell?.count;
   const hasAp = count != null;
@@ -87,16 +124,58 @@ function AcctCell({ cell }) {
   );
 }
 
-function FieldLabelBox({ label }) {
+function FieldLabelBox({ label, onClick, pill }) { // MARKER_RECONCILEZONE_BOOK_PILL_V1 -- pill = { value, options, onPick, placeholder } แคปซูล "เลือก ▾" ที่กล่อง Label -- MARKER_RECONCILEZONE_PILL_THEME_V1 สไตล์เดียวกับ Dropdown ของ Control Zone (ขอบ #d0d7de · มุม 8 · ตัวอักษร 13)
+  const [pop, setPop] = useState(null);
+  const [hover, setHover] = useState(null);
   return (
-    <div style={{
+    <div onClick={onClick} title={onClick ? 'คลิกเพื่อสลับ BU ⇄ Book' : undefined} style={{
+      cursor: onClick ? 'pointer' : undefined, userSelect: onClick ? 'none' : undefined,
       flex: '0 0 42%', background: FIELD_GRAD, border: '1px solid #d0d7de', borderRadius: 8,
-      padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '8px 10px 8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
     }}>
       <span style={{ color: '#334155', fontWeight: 600, fontSize: 12 }}>{label}</span>
-      <span style={{ color: '#334155', fontWeight: 600 }}>›</span>
+      {pill ? (
+        <>
+          <span
+            onClick={(e) => { e.stopPropagation(); const rc = e.currentTarget.getBoundingClientRect(); setPop(pop ? null : { x: rc.left, y: rc.bottom + 4, w: Math.max(rc.width, 120) }); }}
+            title="กดเพื่อเลือก"
+            style={{
+              flex: '0 0 auto', minWidth: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, cursor: 'pointer', // MARKER_RECONCILEZONE_PILL_COMPACT_V1 แคบลง + พื้นโปร่งให้กลืนกับกล่อง Label
+              background: 'transparent', width: 64, boxSizing: 'border-box', color: pill.value ? '#1f4e8c' : '#57606a', border: `1px solid ${pill.value ? '#2f6fd0' : '#b9c6dc'}`,
+              borderRadius: 999, padding: '2px 8px', fontSize: 12, fontWeight: pill.value ? 700 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}
+          >{pill.value || pill.placeholder}</span>
+          {pop && (
+            <>
+              <div onClick={(e) => { e.stopPropagation(); setPop(null); }} style={{ position: 'fixed', inset: 0, zIndex: 1099 }} />
+              <div onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', left: pop.x, top: pop.y, zIndex: 1100, minWidth: pop.w, background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+                <div style={{ maxHeight: 170, overflowY: 'auto' }}>
+                  {[{ v: '', t: '-' }, ...pill.options.map((o) => ({ v: o, t: o }))].map((o) => (
+                    <div key={o.v || '-'} onMouseEnter={() => setHover(o.v)} onMouseLeave={() => setHover(null)} onClick={() => { pill.onPick(o.v); setPop(null); }}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', fontSize: 13, cursor: 'pointer', color: o.v ? '#24292f' : '#8c959f', background: pill.value === o.v && o.v ? '#e3ecfb' : (hover === o.v ? '#f3f6fc' : '#fff'), fontWeight: pill.value === o.v && o.v ? 600 : 400 }}>
+                      <span>{o.t}</span>{pill.value === o.v && o.v ? <span style={{ color: '#2f6fd0', fontSize: 12 }}>✓</span> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      ) : null}
+      <span style={{ color: '#334155', fontWeight: 600 }}>{onClick ? '⇄' : '›'}</span>
     </div>
   );
+}
+
+// MARKER_PERIOD_LABEL_MMMYY_V1 — แสดง Period ใน Dropdown เป็น MMM-YY (เช่น 2026-09 -> Sep-26)
+// เปลี่ยนเฉพาะ Label ที่แสดง ค่า value ยังเป็น YYYY-MM เหมือนเดิม (ใช้ส่ง Backend / เทียบ Period)
+const PERIOD_MMM = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function formatPeriodMMMYY(p) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(p || ''));
+  if (!m) return p;
+  const mi = parseInt(m[2], 10) - 1;
+  if (mi < 0 || mi > 11) return p;
+  return `${PERIOD_MMM[mi]}-${m[1].slice(2)}`;
 }
 
 // MARKER_PERIOD_FIELD_DEFAULT_BLANK_V2 — Field "PERIOD" กลับมามี Option ว่าง "-" เป็น Default
@@ -104,10 +183,10 @@ function FieldLabelBox({ label }) {
 // เจอตอน V1 แล้วจริงๆ ที่ GLFunctionalController.js — พอ Period ว่าง จะ Clear buRows ทิ้งด้วย
 // (ไม่ใช่แค่ Skip การ Fetch เหมือนเดิมที่ทำให้ตาราง Bug ค้าง Rows ของ Period ก่อนหน้าไว้)
 // allowBlank ใช้เฉพาะ Field ที่ยอมให้ไม่เลือกอะไรได้ (ตอนนี้คือ PERIOD เท่านั้น)
-function ReconcileFieldRow({ label, value, onChange, options, formatLabel, allowBlank = false }) {
+function ReconcileFieldRow({ label, value, onChange, options, formatLabel, allowBlank = false, onLabelClick, pill }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-      <FieldLabelBox label={label} />
+      <FieldLabelBox label={label} onClick={onLabelClick} pill={pill} />
       <select value={value} onChange={e => onChange(e.target.value)} style={{
         flex: 1, background: '#fff', color: '#24292f', border: '1px solid #d0d7de', borderRadius: 8,
         padding: '9px 10px', fontSize: 13, cursor: 'pointer',
@@ -164,7 +243,7 @@ function describeAccountSelection(selection, accountGroups) {
 }
 
 // Combobox (input + datalist แบบ Browser เอง) สำหรับ Business Unit — พิมพ์กรองได้ ไม่ใช่แค่เลือกจาก List ยาวๆ
-function ReconcileCombobox({ label, value, onChange, options }) {
+function ReconcileCombobox({ label, value, onChange, options, onLabelClick, pill }) { // MARKER_RECONCILEZONE_BOOK_PILL_BU_V1 -- pill = เลือก BOOK ที่กล่อง Label แล้ว Dropdown ขวาเลือก BU ของ Book นั้น
   const [isOpen, setIsOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
   const wrapperRef = useRef(null);
@@ -186,7 +265,7 @@ function ReconcileCombobox({ label, value, onChange, options }) {
 
   return (
     <div ref={wrapperRef} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, position: 'relative' }}>
-      <FieldLabelBox label={label} />
+      <FieldLabelBox label={label} onClick={onLabelClick} pill={pill} />
       <div style={{ flex: 1, position: 'relative' }}>
         <input
           value={value}
@@ -197,7 +276,8 @@ function ReconcileCombobox({ label, value, onChange, options }) {
         />
         <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#57606a', fontSize: 11 }}>▼</span>
         {isOpen && filtered.length > 0 && (
-          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 20, background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: 160, overflowY: 'auto' }}>
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 20, background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: 170, overflowY: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none' }} className="rzc-noscroll"> {/* MARKER_CONTROLZONE_BU_5ROWS_HIDESCROLL_V1 -- 5 แถวแล้ว Scroll (ซ่อนแถบ Scroll) */}
+            <style>{'.rzc-noscroll::-webkit-scrollbar{display:none}'}</style>
             {filtered.map(opt => (
               <div key={opt} onMouseDown={() => handlePick(opt)} style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', color: '#24292f' }}>
                 {opt}
@@ -223,7 +303,7 @@ function ReconcileCombobox({ label, value, onChange, options }) {
 // แบบคร่าวๆ และซ่อน Icon แยก Account ถ้าไม่รู้ (โชว์ปุ่ม Download เดียวแทน)
 function deriveJobDisplay(job) {
   const name = job.fileName || job.file_name || '';
-  const reportLabel = /IE ?Reconcile/i.test(name) ? 'IE Reconcile' : /AP ?Reconcile/i.test(name) ? 'AP Reconcile' : job.reportLabel || '—';
+  const reportLabel = job.account ? `AP Recon · ${job.account}` : /IE ?Reconcile/i.test(name) ? 'IE Reconcile' : /AP ?Reconcile/i.test(name) ? 'AP Reconcile' : job.reportLabel || '—';
   return {
     id: job.id,
     bu: job.bu,
@@ -232,97 +312,276 @@ function deriveJobDisplay(job) {
     accounts: job.accounts || null,
     generatedBy: job.generatedBy || job.owner_username || '—',
     expireDate: job.expireDate || '—',
+    watched: job.watched === true, // MARKER_APRECONCILE_JOB_WATCH_V1
+    expireAt: job.expire_at || null, expireLines: Number.isFinite(job.expire_lines) ? job.expire_lines : null, expirePurged: !!job.expire_purged, // MARKER_APRECONCILE_AP_EXPIRE_V1
+    account: job.account || null, // MARKER_APRECONCILE_REPORT_CONFIRM_V1
+    confirmedAt: job.confirmed_at || null,
+    confirmedBy: job.confirmed_by || null,
   };
 }
 
-function FileStorageZone({ jobs = [], scope = 'mine', onScopeChange, loading = false, onDownload, onPreview }) {
+// MARKER_APRECONCILE_JOBGROUP_V1 -- My Job / All Job: รวมไฟล์ของการ Export ครั้งเดียว (BU + Period เดียวกัน) เป็น "1 แถว"
+// ชื่อชุด = {เลขBU}-{BU}-21930XXX-{MON-YY} | Action = ไอคอน Excel รายไฟล์ (เขียว = มีข้อมูล / แดง = No Data) ครบ 6 ช่องคงที่
+// (52 54 84 85 + 100 220 ที่ยังไม่มีรายงาน = ไอคอนเปล่า เพื่อให้ Layout เท่ากันทุกแถว) + Download ทุกไฟล์ + ลบทั้งชุด
+// Status = ปุ่ม Confirm <-> Release ปุ่มเดียวต่อชุด (Confirm/Release ทุกไฟล์ในชุดพร้อมกัน)
+// MARKER_APRECONCILE_JOB_MAX4_V1 -- 1 แถว = สูงสุด 4 ช่อง: งาน AP = 52 54 84 85 | งาน IE = 100 220 + ช่องว่าง 2 ช่อง (Layout เท่ากัน) | AP กับ IE แยกเป็นคนละแถว
+const JOB_SLOTS_AP = [
+  { acct: '21930052', label: '52' }, { acct: '21930054', label: '54' }, { acct: '21930084', label: '84' }, { acct: '21930085', label: '85' },
+];
+const JOB_SLOTS_IE = [
+  { acct: '21930100', label: '100' }, { acct: '21930220', label: '220' }, { acct: 'blank1', label: '' }, { acct: 'blank2', label: '' },
+];
+const IE_ACCTS = ['21930100', '21930220'];
+function parseJobFile(name) {
+  const m = /^(\d{3,6})[_-](.+?)[_-](\d{8})[_-]([A-Za-z]{3}-\d{2})(?: No Data)?\.xlsx$/i.exec(String(name || ''));
+  if (!m) return null;
+  return { pre: m[1], bu: m[2], acct: m[3], per: m[4].toUpperCase(), noData: /No Data\.xlsx$/i.test(String(name)) };
+}
+function groupJobs(list) {
+  const map = new Map(); const out = [];
+  list.forEach((j) => {
+    const pf = parseJobFile(j.fileName);
+    const isIe = !!pf && IE_ACCTS.includes(pf.acct);
+    const key = pf ? `${pf.pre}|${pf.bu}|${pf.per}|${isIe ? 'ie' : 'ap'}` : `single|${j.id}`;
+    let g = map.get(key);
+    if (!g) {
+      g = { key, title: pf ? `${pf.pre}-${pf.bu}-21930XXX-${pf.per}` : j.fileName, bu: j.bu, reportLabel: pf ? (isIe ? 'IE Reconcile' : 'AP Reconcile') : j.reportLabel, isIe, generatedBy: j.generatedBy, expireDate: j.expireDate, expireAt: null, expireLines: null, expirePurged: false, files: [] };
+      map.set(key, g); out.push(g);
+    }
+    if (j.expireAt && (!g.expireAt || j.expireAt < g.expireAt)) g.expireAt = j.expireAt; // MARKER_APRECONCILE_AP_EXPIRE_V1 -- ชุดนี้หมดอายุเมื่อไฟล์แรกหมด | Line = ผลรวมทุกไฟล์
+    if (j.expireLines != null) g.expireLines = (g.expireLines || 0) + j.expireLines;
+    if (j.expirePurged) g.expirePurged = true;
+    g.files.push({ ...j, pf });
+  });
+  return out;
+}
+const XL_ICON = (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M9 12l5 6M14 12l-5 6" />
+  </svg>
+);
+const JOB_BTN = { width: 38, height: 44, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 1, padding: '3px 0', flexShrink: 0, boxSizing: 'border-box', background: '#fff' };
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function FileStorageZone({ jobs = [], scope = 'mine', onScopeChange, loading = false, onDownload, onPreview, onGroupConfirm, onGroupDelete, spMissing = false, spReason = 'handler', spDestPath = '', spChecking = false, onSpCheckFolder, onSpDownload, onSpRecheck }) { // MARKER_APRECONCILE_SP_SETTING_V1 -- ไม่มี SharePoint Handler = ปุ่ม Confirm/Release กดไม่ได้ + ปุ่ม SharePoint - Setting
+  const [spSetOpen, setSpSetOpen] = useState(false);
   const visibleJobs = jobs.map(deriveJobDisplay);
+  const groups = useMemo(() => groupJobs(visibleJobs), [jobs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [pvOpen, setPvOpen] = useState(null); // key ของชุดที่เปิดเมนูเลือกไฟล์ Preview
+  const [dlBusy, setDlBusy] = useState(null);
+  // My Job = Preview + Status + Action | All Job = ดูอย่างเดียว (Preview + Status) -- เห็นเฉพาะไฟล์ที่ Confirm แล้ว
+  const mineView = scope === 'mine';
+  const headers = mineView ? ['BU', 'Filename', 'Report Type', 'Generated By', 'Item Expired Date', 'Preview', 'Status', 'Action', 'Sharedrive'] : ['BU', 'Filename', 'Report Type', 'Generated By', 'Item Expired Date', 'Preview', 'Status', 'Action', 'Sharedrive']; // MARKER_APRECONCILE_GOTO_SP_V1 -- คอลัมน์ Go to = เปิดโฟลเดอร์ SharePoint (ที่ซิงก์ไว้) ของชุดนี้
+  const SP_BASE_URL = 'https://centralgroup.sharepoint.com/sites/FAST/AP%20Non%20Merchandise/VAT%20Controller/My%20System/Z_Report%20Reconcile';
+  const openSpFolder = (g) => { // MARKER_APRECONCILE_GOTO_SP_V1 -- เปิดโฟลเดอร์ SharePoint ผ่าน URL: {BASE}/{BU}/{YYYY.MM}
+    const m = /^(\d{3,6})_.+_([A-Za-z]{3})-(\d{2})(?: No Data)?\.xlsx$/i.exec(String((g.files[0] && g.files[0].fileName) || ''));
+    const mi = m ? ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'].indexOf(m[2].toUpperCase()) : -1;
+    if (!m || mi < 0) { window.alert('อ่านเลข BU / เดือน จากชื่อไฟล์ไม่ได้'); return; }
+    window.open(`${SP_BASE_URL}/${encodeURIComponent(m[1])}/20${m[3]}.${String(mi + 1).padStart(2, '0')}`, '_blank', 'noopener');
+  };
+  const fmtConfirm = (d) => { try { return new Date(d).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
+  const downloadAll = async (g) => {
+    setDlBusy(g.key);
+    try { for (const f of g.files) { await onDownload(f.id, 'all', f.fileName); await sleepMs(500); } } finally { setDlBusy(null); }
+  };
 
   return (
-    // MARKER_ZONE_LAYOUT_FILL_TO_BOTTOM_GAP20_V1 — Root ของ Zone นี้เป็น flex:1 (ยืดเต็มพื้นที่
-    // ที่เหลือของหน้าจนสุดขอบล่าง เว้น Gap 20px ตาม Parent) + flexDirection column เพื่อให้ Toolbar
-    // (My Job/All Job) อยู่คงที่ด้านบน แล้วให้ "พื้นที่ Table" ด้านล่าง Scroll ภายในตัวเองถ้าเนื้อหาเกิน
+    // MARKER_ZONE_LAYOUT_FILL_TO_BOTTOM_GAP20_V1 — Root ของ Zone นี้เป็น flex:1 (ยืดเต็มพื้นที่ที่เหลือของหน้า)
     <div style={{ marginTop: 16, border: '0.5px solid #ddd', borderRadius: 12, background: '#fff', overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderBottom: '0.5px solid #ddd', background: '#f7f7f7', flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: 6 }}>
-          {['mine', 'all'].map(s => (
-            <button key={s} type="button" onClick={() => onScopeChange && onScopeChange(s)} style={{
+          {['mine', 'all'].map(sc => (
+            <button key={sc} type="button" onClick={() => onScopeChange && onScopeChange(sc)} style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '5px 14px', fontSize: 12, fontWeight: 600, borderRadius: 20, cursor: 'pointer',
-              border: `1px solid ${scope === s ? '#1e2a3a' : '#d0d7de'}`,
-              background: scope === s ? '#1e2a3a' : '#fff', color: scope === s ? '#fff' : '#57606a',
+              border: `1px solid ${scope === sc ? '#1e2a3a' : '#d0d7de'}`,
+              background: scope === sc ? '#1e2a3a' : '#fff', color: scope === sc ? '#fff' : '#57606a',
             }}>
-              <span aria-hidden="true">{s === 'mine' ? '👤' : '👥'}</span>
-              {s === 'mine' ? 'My Job' : 'All Job'}
+              <span aria-hidden="true">{sc === 'mine' ? '👤' : '👥'}</span>
+              {sc === 'mine' ? 'My Job' : 'All Job'}
             </button>
           ))}
           <span style={{ fontSize: 12, color: '#8b95a1', alignSelf: 'center', marginLeft: 4 }}>
-            {loading ? 'กำลังโหลด…' : `${visibleJobs.length} ไฟล์`}
+            {loading ? 'กำลังโหลด…' : `${groups.length} งาน · ${visibleJobs.length} ไฟล์${groups.some((x) => x.expireLines != null) ? ` · ${groups.reduce((t, x) => t + (x.expireLines || 0), 0).toLocaleString('en-US')} Line (รอหมดอายุ)` : ''}`}
           </span>
         </div>
+        {spMissing && (
+          <button type="button" onClick={() => setSpSetOpen(true)} title={spReason === 'folder' ? 'ไม่พบโฟลเดอร์ปลายทาง SharePoint ในเครื่องนี้ — คลิกเพื่อดูวิธีตั้งค่า' : 'ยังไม่พบ SharePoint Handler บนเครื่องนี้ — คลิกเพื่อดูวิธีตั้งค่า'}
+            style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 14px', fontSize: 12, fontWeight: 700, borderRadius: 8, border: '1px solid #cf222e', background: '#fff5f5', color: '#cf222e', cursor: 'pointer' }}>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+            SharePoint - Setting
+          </button>
+        )}
       </div>
+      {spSetOpen && (
+        <div onClick={() => setSpSetOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', zIndex: 10030, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: '92vw', background: '#fff', borderRadius: 12, padding: '18px 20px', boxShadow: '0 10px 40px rgba(0,0,0,.25)' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#791F1F', marginBottom: 8 }}>{spReason === 'folder' ? '⚠️ ไม่พบโฟลเดอร์ปลายทาง SharePoint ในเครื่องนี้' : '⚠️ ยังไม่พบ SharePoint Handler บนเครื่องนี้'}</div>
+            <div style={{ fontSize: 12.5, color: '#444', lineHeight: 1.6 }}>
+              {spReason === 'folder'
+                ? <>Handler ติดตั้งแล้ว แต่หาโฟลเดอร์ <b>Z_Report Reconcile</b> ที่ซิงก์ OneDrive ในเครื่องนี้ไม่เจอ จึง Confirm/Release ไม่ได้
+                    <ol style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                      <li>ใน SharePoint เลือกโฟลเดอร์ VAT Controller &gt; My System &gt; Z_Report Reconcile แล้วกด “Sync” (ซิงก์ลงเครื่อง)</li>
+                      <li>รอ OneDrive ซิงก์เสร็จ แล้วกด “ตรวจสอบโฟลเดอร์ปลายทาง”</li>
+                    </ol></>
+                : <>ต้องติดตั้ง Handler (fastapn-sp) ก่อน จึงจะ Confirm เพื่อส่งไฟล์ AP Recon เข้า SharePoint และ Release เพื่อลบไฟล์ออกจาก SharePoint ได้
+                    <ol style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                      <li>กด “ดาวน์โหลดตัวติดตั้ง” ด้านล่าง แตกไฟล์ที่ D:\apps แล้วรัน setup-fastapn-sp.bat (หรือติดตั้งที่ Home &gt; Notification)</li>
+                      <li>ซิงก์โฟลเดอร์ <b>Z_Report Reconcile</b> จาก SharePoint ลง OneDrive ในเครื่อง</li>
+                      <li>กลับมากด “ตรวจสอบอีกครั้ง” / “ตรวจสอบโฟลเดอร์ปลายทาง”</li>
+                    </ol></>}
+              {spDestPath ? <div style={{ marginTop: 8, fontSize: 11.5, color: '#57606a', wordBreak: 'break-all' }}>ตรวจล่าสุดเจอที่: {spDestPath}</div> : null}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+              <button type="button" onClick={() => setSpSetOpen(false)} style={{ padding: '6px 14px', fontSize: 12, borderRadius: 6, border: '1px solid #d0d7de', background: '#fff', cursor: 'pointer' }}>ปิด</button>
+              {onSpDownload && <button type="button" onClick={() => onSpDownload()} style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: '1px solid #0b6a8f', background: '#fff', color: '#0b6a8f', cursor: 'pointer' }}>ดาวน์โหลดตัวติดตั้ง</button>}
+              <button type="button" disabled={spChecking} onClick={() => { onSpRecheck && onSpRecheck(); }} style={{ padding: '6px 14px', fontSize: 12, borderRadius: 6, border: '1px solid #d0d7de', background: '#fff', cursor: 'pointer' }}>ตรวจสอบอีกครั้ง</button>
+              <button type="button" disabled={spChecking} onClick={() => { onSpCheckFolder && onSpCheckFolder(); }} style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: 'none', background: '#14284b', color: '#fff', cursor: spChecking ? 'wait' : 'pointer', opacity: spChecking ? 0.6 : 1 }}>{spChecking ? 'กำลังตรวจสอบ…' : 'ตรวจสอบโฟลเดอร์ปลายทาง'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* MARKER_FILESTORAGEZONE_FIXED_HEIGHT_HEADER_V1 — Header ของตาราง (BU/Filename/...)
-          ต้องค้างอยู่เสมอไม่ว่าจะมีไฟล์หรือไม่ (ไม่ใช่หายไปทั้ง Table ตอน Rows ว่างแบบก่อนหน้า)
-          MARKER_ZONE_LAYOUT_FILL_TO_BOTTOM_GAP20_V1 — เปลี่ยนจาก minHeight คงที่ 420 เป็น flex:1
-          ให้ Table Area ยืดเต็มพื้นที่ที่เหลือของ Zone จริง (Zone เองก็ flex:1 เต็มจออีกที) แทน */}
+      {/* MARKER_FILESTORAGEZONE_FIXED_HEIGHT_HEADER_V1 — Header ของตารางต้องค้างอยู่เสมอ */}
       <div style={{ padding: 0, overflowX: 'auto', overflowY: 'auto', flex: 1, minHeight: 0 }}>
         <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'separate', borderSpacing: 0, minWidth: 720 }}>
           <thead>
             <tr style={{ background: FIELD_GRAD }}>
-              {['BU', 'Filename', 'Report Type', 'Generated By', 'Expire Date', 'Preview', 'Download'].map(h => (
+              {headers.map(h => (
                 <th key={h} style={{ textAlign: h === 'Filename' ? 'left' : 'center', padding: '8px 10px', color: '#334155', fontWeight: 700, fontSize: 11.5, boxShadow: `0 1px 0 ${BORDER}` }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {visibleJobs.length === 0 ? (
+            {groups.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ padding: '48px 16px', textAlign: 'center', color: '#8b95a1', fontSize: 13 }}>
-                  {loading ? 'กำลังโหลด…' : 'ยังไม่มีไฟล์ที่ Generate ไว้'}
+                <td colSpan={headers.length} style={{ padding: '48px 16px', textAlign: 'center', color: '#8b95a1', fontSize: 13 }}>
+                  {loading ? 'กำลังโหลด…' : (mineView ? 'ยังไม่มีไฟล์ที่ Generate ไว้' : 'ยังไม่มีไฟล์ที่ Confirm แล้ว')}
                 </td>
               </tr>
-            ) : visibleJobs.map((j, i) => (
-                <tr key={j.fileName + i} style={{ borderBottom: '0.5px solid #eee', background: i % 2 === 0 ? '#fff' : '#fafbfc' }}>
-                  <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700 }}>{j.bu}</td>
-                  <td style={{ padding: '8px 10px' }}>{j.fileName}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>{j.reportLabel}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>{j.generatedBy}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>{j.expireDate}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <button type="button" title="Preview" onClick={() => onPreview && onPreview(j)} style={{
-                      padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6,
-                      border: '1px solid #d0d7de', background: '#fff', color: '#57606a', cursor: 'pointer',
-                    }}>Preview</button>
+            ) : groups.map((g, i) => {
+              const roGroup = g.files.length > 0 && g.files.every((f) => f.watched); // MARKER_APRECONCILE_JOB_WATCH_V1 -- ไฟล์ของ BU ที่เลือกดู (คนอื่น Generate) = ดูอย่างเดียว
+              const rowMine = mineView && !roGroup;
+              const nConf = g.files.filter((f) => f.confirmedAt).length;
+              const allConf = nConf === g.files.length; const noneConf = nConf === 0;
+              const conf0 = g.files.find((f) => f.confirmedAt);
+              const stColor = allConf ? '#1a7f37' : noneConf ? '#6b7280' : '#b26a00';
+              const stBg = allConf ? '#e6f4ea' : noneConf ? '#f3f4f6' : '#fff4de';
+              const stTip = allConf ? `Confirmed${conf0 ? ` · ${conf0.confirmedBy || ''} · ${fmtConfirm(conf0.confirmedAt)}` : ''}${rowMine ? ' — คลิกเพื่อ Release (ยกเลิก Confirm ทั้งชุด)' : ''}`
+                : noneConf ? (rowMine ? 'รอ Confirm — คลิกเพื่อ Confirm ทั้งชุด (ตรวจไฟล์เรียบร้อยแล้ว)' : 'รอ Confirm') : `Confirm แล้ว ${nConf}/${g.files.length} ไฟล์${rowMine ? ' — คลิกเพื่อ Confirm ที่เหลือ' : ''}`;
+              return (
+                <tr key={g.key} style={{ borderBottom: '0.5px solid #eee', background: i % 2 === 0 ? '#fff' : '#fafbfc' }}>
+                  <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700 }}>{g.bu}</td>
+                  <td style={{ padding: '8px 10px', fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontWeight: 600 }}>{g.title}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>{g.reportLabel}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>{g.generatedBy}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center', lineHeight: 1.35 }}>{/* MARKER_APRECONCILE_AP_EXPIRE_V1 */}
+                    {g.expireAt ? (() => { // รูปแบบ XXX / dd-mmm-yy = จำนวน Line ที่จะหมดอายุ / วันหมดอายุ
+                      const d = new Date(g.expireAt);
+                      const ds = `${String(d.getDate()).padStart(2, '0')}-${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+                      return <span style={{ fontWeight: 600, color: g.expirePurged ? '#9a6700' : undefined }} title="จำนวน Line ข้อมูล AP ที่จะถูกลบ / วันหมดอายุ (Detail/DT ไม่ถูกลบ)">{g.expirePurged ? 'ลบแล้ว' : (g.expireLines || 0).toLocaleString('en-US')} / {ds}</span>;
+                    })() : (g.expireDate || '—')}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center', position: 'relative' }}>
+                    <button type="button" title="View (อ่านอย่างเดียว)" onClick={() => { setPvOpen(null); onPreview && onPreview({ files: g.files, title: g.title }); }} style={{ ...JOB_BTN, border: '1px solid #d0d7de', color: '#57606a', cursor: 'pointer' }}>
+                      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                    </button>
+                    {pvOpen === g.key && (
+                      <div style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', zIndex: 30, background: '#fff', border: '0.5px solid #d0d7de', borderRadius: 8, boxShadow: '0 6px 18px rgba(20,40,75,.18)', padding: 6, minWidth: 250, textAlign: 'left' }}>
+                        {g.files.map((f) => (
+                          <div key={f.id} onClick={() => { setPvOpen(null); onPreview && onPreview(f); }} title={f.fileName}
+                            style={{ padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 11.5, color: f.pf && f.pf.noData ? '#cf222e' : '#1a7f37', fontWeight: 600, whiteSpace: 'nowrap' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = '#f3f6fb'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                            {f.pf ? f.pf.acct : f.account || ''} · {f.fileName}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <div style={{ display: 'inline-flex', gap: 4 }}>
-                      {j.accounts && j.accounts.length > 0 ? (
-                        <>
-                          {j.accounts.map(code => (
-                            <button key={code} type="button" title={`Download ${code}`} onClick={() => onDownload && onDownload(j.id, code)} style={{
-                              padding: '3px 7px', fontSize: 11, fontWeight: 700, borderRadius: 6,
-                              border: '1px solid #d0d7de', background: '#fff', color: '#0969da', cursor: 'pointer',
-                            }}>{code}</button>
-                          ))}
-                          <button type="button" title="Download All" onClick={() => onDownload && onDownload(j.id, 'all')} style={{
-                            padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6,
-                            border: '1px solid #0969da', background: '#0969da', color: '#fff', cursor: 'pointer',
-                          }}>All</button>
-                        </>
-                      ) : (
-                        <button type="button" title="Download" onClick={() => onDownload && onDownload(j.id, 'all')} style={{
-                          padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6,
-                          border: '1px solid #0969da', background: '#0969da', color: '#fff', cursor: 'pointer',
-                        }}>Download</button>
-                      )}
-                    </div>
+                    <button type="button" title={spMissing && rowMine ? 'ยังไม่พบ SharePoint Handler — ติดตั้ง/ตั้งค่าที่ปุ่ม SharePoint - Setting ก่อนจึงจะ Confirm / Release ได้' : stTip} disabled={spMissing && rowMine}
+                      onClick={() => { if (rowMine && !spMissing && onGroupConfirm) onGroupConfirm(g.files.filter((f) => !f.watched), !allConf); }}
+                      style={rowMine
+                        // MARKER_APRECONCILE_CONFIRM_RELEASE_BTN_V1 -- My Job: ปุ่มเดียวสลับ Confirm <-> Release (Confirm ครบทั้งชุด = ปุ่ม Release สีส้ม | ยังไม่ครบ = ปุ่ม Confirm สีเขียว)
+                        ? { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, height: JOB_BTN.height, boxSizing: 'border-box', padding: '0 16px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: spMissing ? 'not-allowed' : 'pointer', opacity: spMissing ? 0.45 : 1, filter: spMissing ? 'grayscale(1)' : 'none', // MARKER_APRECONCILE_CONFIRM_BTN_HEIGHT_V1 -- สูงเท่าไอคอน Action (JOB_BTN)
+ ...(allConf ? { border: '1px solid #d98a00', background: '#fff8e6', color: '#9a6700' } : { border: '1px solid #1a7f37', background: '#1a7f37', color: '#fff' }) }
+                        : { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, border: 0, background: stBg, color: stColor, cursor: 'default' }}>
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        {rowMine && allConf ? <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></> : (allConf ? <path d="M20 6L9 17l-5-5" /> : <><circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" /></>)}
+                      </svg>
+                      {rowMine ? (allConf ? 'Release' : (noneConf ? 'Confirm' : `Confirm (${nConf}/${g.files.length})`)) : (allConf ? 'Confirmed' : noneConf ? 'Confirm' : `${nConf}/${g.files.length}`)}
+                    </button>
+                  </td>
+                  {(
+                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                      <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        {(g.isIe ? JOB_SLOTS_IE : JOB_SLOTS_AP).map((sl) => {
+                          const f = g.files.find((x) => (x.pf ? x.pf.acct : x.account) === sl.acct);
+                          if (!f) {
+                            return <span key={sl.acct} title={sl.label ? 'ยังไม่มีรายงาน' : ''} style={{ ...JOB_BTN, border: '1px dashed #d0d7de', background: 'transparent' }} />;
+                          }
+                          const nd = !!(f.pf && f.pf.noData); const col = nd ? '#cf222e' : '#1a7f37';
+                          return (
+                            <button key={sl.acct} type="button" disabled={!f.confirmedAt}
+                              title={f.confirmedAt ? `${f.fileName}${nd ? ' (No Data)' : ''} — คลิกเพื่อ Download` : `${f.fileName} — ต้อง Confirm ก่อนจึงจะ Download ได้`}
+                              onClick={() => onDownload && onDownload(f.id, 'all', f.fileName)}
+                              style={{ ...JOB_BTN, border: `1px solid ${col}`, color: col, background: nd ? 'rgba(207,34,46,.07)' : 'rgba(26,127,55,.07)', cursor: f.confirmedAt ? 'pointer' : 'not-allowed', opacity: f.confirmedAt ? 1 : 0.55 }}>
+                              {XL_ICON}<small style={{ fontSize: 9.5, fontWeight: 700, lineHeight: 1 }}>{sl.label}</small>
+                            </button>
+                          );
+                        })}
+                        <span style={{ width: 1, height: 22, background: '#e5e9f0', margin: '0 4px' }} />
+                        <button type="button" disabled={!allConf || dlBusy === g.key} title={allConf ? `Download ทุกไฟล์ (${g.files.length})` : 'ต้อง Confirm ทุกไฟล์ในชุดก่อนจึงจะ Download ได้'}
+                          onClick={() => downloadAll(g)}
+                          style={{ ...JOB_BTN, border: '1px solid #14284b', background: '#14284b', color: '#fff', cursor: allConf ? 'pointer' : 'not-allowed', opacity: allConf ? 1 : 0.4 }}>
+                          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
+                        </button>
+                        {/* MARKER_APRECONCILE_REPORT_DELETE_V1 -- ลบทั้งชุด (ถามยืนยันครั้งเดียว) | All Job ไม่มีปุ่มลบ */}
+                        {rowMine && <button type="button" title={`ลบทั้งชุด (${g.files.length} ไฟล์)`} onClick={() => onGroupDelete && onGroupDelete(g.files.filter((f) => !f.watched))}
+                          style={{ ...JOB_BTN, border: '1px solid #cf222e', color: '#cf222e', cursor: 'pointer' }}>
+                          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /></svg>
+                        </button>}
+                      </div>
+                    </td>
+                  )}
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>{/* MARKER_APRECONCILE_GOTO_SP_V1 */}
+                    <button type="button" disabled={!allConf} onClick={() => openSpFolder(g)}
+                      title={allConf ? 'เปิดโฟลเดอร์ใน SharePoint' : 'ต้อง Confirm ทุกไฟล์ในชุดก่อน (ไฟล์ถึงจะถูกส่งเข้า SharePoint)'}
+                      style={{ ...JOB_BTN, width: 38, height: 44, padding: 0, border: '1px solid #0b6a8f', color: '#0b6a8f', cursor: allConf ? 'pointer' : 'not-allowed', opacity: allConf ? 1 : 0.35 }}>
+                      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="14.5" cy="8" r="5" fill="#0b6a8f" /><circle cx="8.5" cy="14" r="5" fill="#2fa4c7" opacity="0.9" /><circle cx="15.5" cy="17.5" r="4" fill="#7fd0e6" opacity="0.9" /></svg>
+                    </button>
                   </td>
                 </tr>
-              ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// MARKER_APSETTING_NAME_COMBO_V1 -- ช่องพิมพ์ + Dropdown กว้างเท่าช่อง แสดง 5 แถวแล้ว Scroll (เปิดมาแสดงครบ กรองเมื่อพิมพ์)
+function ApNameCombo({ value, onChange, options, disabled, bg }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState(false);
+  const q = String(value || '').trim().toLowerCase();
+  const list = (options || []).filter((o) => !typed || !q || o.toLowerCase().includes(q));
+  return (
+    <div style={{ position: 'relative', marginBottom: 12 }}>
+      <input value={value} disabled={disabled} onClick={(e) => e.stopPropagation()} onFocus={() => { setTyped(false); setOpen(true); }} onBlur={() => setOpen(false)}
+        onChange={(e) => { setTyped(true); setOpen(true); onChange(e.target.value); }} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+        style={{ width: '100%', boxSizing: 'border-box', padding: '8px 28px 8px 10px', fontSize: 13, border: '1px solid #d0d7de', borderRadius: 8, background: bg }} />
+      <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#57606a', fontSize: 11 }}>▼</span>
+      {open && !disabled && list.length > 0 && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 20, background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 170, overflowY: 'auto' }}>
+          {list.map((o) => (
+            <div key={o} onMouseDown={(e) => { e.preventDefault(); setTyped(false); setOpen(false); onChange(o); }}
+              style={{ padding: '7px 12px', fontSize: 13, cursor: 'pointer', color: '#24292f', background: o === value ? '#eaf2ff' : '#fff' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#f3f6fb'; }} onMouseLeave={(e) => { e.currentTarget.style.background = o === value ? '#eaf2ff' : '#fff'; }}>{o}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -337,16 +596,42 @@ export default function ReconcileZoneLayout({
   fileJobsScope = 'mine',
   onFileJobsScopeChange,
   onFileDownload,
+  onFileConfirm, // MARKER_APRECONCILE_REPORT_CONFIRM_V1
+  onFileDelete, // MARKER_APRECONCILE_REPORT_DELETE_V1
+  onGroupConfirm, // MARKER_APRECONCILE_JOBGROUP_V1
+  onGroupDelete, // MARKER_APRECONCILE_JOBGROUP_V1
+  spMissing = false, spReason = 'handler', spDestPath = '', spChecking = false, onSpCheckFolder, onSpDownload, onSpRecheck, // MARKER_APRECONCILE_SP_SETTING_V1
+  onExported,
+  onDashboardChanged, // MARKER_DASHBOARD_AP_CLEAR_V1
+  onJobWatchChanged, // MARKER_APRECONCILE_JOB_WATCH_V1 -- เลือก BU ที่อยากเห็นใน My Job เสร็จ -> ให้หน้าแม่โหลดรายการไฟล์ใหม่
 }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [ccBusinessUnit, setCcBusinessUnit] = useState('');
   const [ccAccountSelection, setCcAccountSelection] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+  // MARKER_APRECONCILE_REPORT_V1 -- สวิตช์ BU | Book: เลือก Book แล้วดึง BU ที่อยู่ใน Book นั้น | Export ทั้ง Book = วนทีละ BU กดครั้งเดียว
+  const [ccMode, setCcMode] = useState('bu');
+  const [ccBook, setCcBook] = useState('');
+  const [books, setBooks] = useState([]);
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState(null);
   const [previewFileJob, setPreviewFileJob] = useState(null); // Preview จากแถวไฟล์ใน File Storage Zone (คนละอันกับ Preview ของ Control Zone)
 
   const flatAccounts = useMemo(() => accountGroups.flatMap(g => g.accounts.map(a => ({ ...a, groupKey: g.key }))), [accountGroups]);
-  const businessUnitOptions = useMemo(() => buRows.map(r => r.bu).sort(), [buRows]);
-  const canAct = !!ccBusinessUnit && !!ccAccountSelection;
+  // MARKER_CONTROLZONE_BU_ALL_LIST_V1 -- รายการ BU ใน Dropdown = BU ทั้งหมดจาก company_list (รวม BU ที่ยังไม่มีข้อมูลใน Dashboard)
+  const [allBuNames, setAllBuNames] = useState([]);
+  useEffect(() => {
+    let dead = false;
+    fetch(`${AP_API_BASE}/ap-reconcile/report/ap-setting/bus`, { headers: apAuth() })
+      .then((r) => r.json().catch(() => ({}))).then((j) => { if (!dead && Array.isArray(j.bus)) setAllBuNames(j.bus.map((x) => x.bu).filter(Boolean)); }).catch(() => {});
+    return () => { dead = true; };
+  }, []);
+  const dashboardBuNames = useMemo(() => buRows.map(r => r.bu), [buRows]);
+  // MARKER_CONTROLZONE_BU_ONLY_WITH_DATA_V1 -- เลือก Period แล้ว Dropdown BU แสดงเฉพาะ BU ที่มีข้อมูลใน Period นั้น (มี AP/TB อย่างน้อย 1 Account) | ยังไม่เลือก Period = แสดงทุก BU เหมือนเดิม
+  const businessUnitOptions = useMemo(() => {
+    if (period) return [...new Set(buRows.filter((r) => Object.values(r.cells || {}).some((c) => c && Number(c.count) > 0)).map((r) => r.bu))].sort();
+    return [...new Set([...buRows.map(r => r.bu), ...allBuNames])].sort();
+  }, [buRows, allBuNames, period]);
   const selectionInfo = useMemo(() => describeAccountSelection(ccAccountSelection, accountGroups), [ccAccountSelection, accountGroups]);
   // MARKER_DASHBOARD_CONTROLZONE_LINK_V1 — เชื่อม Dashboard กับ Reconcile Control Zone
   // 2 ทาง: (1) คลิกแถว BU / Header Account ในตาราง → Set ค่าใน Control Zone ให้เลย
@@ -357,15 +642,258 @@ export default function ReconcileZoneLayout({
   // ให้ Scroll ตารางไปหาให้อัตโนมัติ — กันปัญหา "เลือกแล้วดูเหมือนไม่มีอะไรเกิดขึ้น" เพราะแถว
   // ที่ Highlight อยู่นอก Viewport ของพื้นที่ Scroll ตาราง
   const rowRefs = useRef({});
+  const [dotTip, setDotTip] = useState(null); // MARKER_RECONCILEZONE_DOT_TOOLTIP_V1
+  useEffect(() => {
+    if (!dotTip) return undefined;
+    const close = () => setDotTip(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); };
+  }, [dotTip]);
+  const showDotTip = (e, bu, account, kind, on, text) => {
+    e.stopPropagation();
+    const rc = e.currentTarget.getBoundingClientRect();
+    // MARKER_RECONCILEZONE_DOT_TOOLTIP_V2 -- Tooltip บอกทั้ง TB กี่บรรทัด และ AP (Account) กี่บรรทัด
+    const cell = buRows.find((r) => r.bu === bu)?.cells?.[account];
+    const tbT = cell?.tbActive ? `TB: ${cell.tbCount != null ? Number(cell.tbCount).toLocaleString() + ' บรรทัด' : 'พบแล้ว'}` : 'TB: ไม่มีข้อมูล';
+    const apT = cell?.count != null ? `AP: ${Number(cell.count).toLocaleString()} บรรทัด` : 'AP: ไม่มีข้อมูล';
+    setDotTip({ x: rc.left + rc.width / 2, y: rc.bottom + 6, bu, account, kind, on, text: tbT, lines: [{ k: 'ap', t: apT, on: cell?.count != null }, { k: 'dt', t: cell?.jvCount > 0 ? `Detail: ${Number(cell.jvCount).toLocaleString()} บรรทัด` : 'Detail: ไม่มีข้อมูล', on: cell?.jvCount > 0 }, { k: 'h', t: 'คลิก 2 ครั้งที่จุด = Preview', on: false }] });
+  };
+  // MARKER_DASHBOARD_AP_CLEAR_V1 -- คลิกขวาจุด AP > ล้างข้อมูล (ลบ ap_cutting_staging ของ BU+Account+Period จริงใน DB)
+  const [apMenu, setApMenu] = useState(null);
+  useEffect(() => {
+    if (!apMenu) return undefined;
+    const close = () => setApMenu(null);
+    window.addEventListener('click', close); window.addEventListener('scroll', close, true); window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); window.removeEventListener('keydown', close); };
+  }, [apMenu]);
+  const openApMenu = (e, bu, account) => { e.preventDefault(); e.stopPropagation(); setDotTip(null); setApMenu({ x: e.clientX, y: e.clientY, bu, account }); };
+  const handleClearAp = async (m) => {
+    setApMenu(null);
+    const cnt = buRows.find((r) => r.bu === m.bu)?.cells?.[m.account]?.count;
+    const ok = await confirmDialog.confirm(`ล้างข้อมูล AP ของ BU ${m.bu} · Account ${m.account} · Period ${period} ?\n${cnt != null ? `ลบ ${Number(cnt).toLocaleString()} บรรทัด ` : ''}ออกจากฐานข้อมูลจริง กู้คืนไม่ได้ (ต้องอัปโหลดใหม่)\nไฟล์ที่ Export ไปแล้วไม่ถูกลบ`, { title: 'ล้างข้อมูล AP', confirmText: 'ล้างข้อมูล', cancelText: 'ยกเลิก', variant: 'danger' });
+    if (!ok) return;
+    try {
+      const q = new URLSearchParams({ bu: m.bu, account: m.account, period });
+      const res = await fetch(`${AP_API_BASE}/ap-reconcile/dashboard/ap-data?${q.toString()}`, { method: 'DELETE', headers: apAuth() });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.error || `ล้างข้อมูลไม่สำเร็จ (HTTP ${res.status})`);
+      try { broadcastWs('ap_reconcile_data_changed', { bu: m.bu, account: m.account, period }); } catch (_) { /* ไม่มี WS -> ข้าม */ }
+      if (onDashboardChanged) onDashboardChanged();
+      confirmDialog.alert(`ล้างข้อมูล AP สำเร็จ\nBU ${m.bu} · Account ${m.account} · Period ${period}\nลบทั้งหมด ${Number(d.deleted) || 0} บรรทัด`, { title: 'ล้างข้อมูลสำเร็จ', variant: 'success' });
+    } catch (err) { confirmDialog.alert(err?.message || 'ล้างข้อมูลไม่สำเร็จ', { title: 'ล้างข้อมูลไม่สำเร็จ', variant: 'danger' }); }
+  };
+  // MARKER_DASHBOARD_DETAIL_OPERATION_V1 -- คลิกขวาจุด AP > Detail Operation: หน้ากากดู/จัดการ Detail of Overhead (ap_detailoverhead) | Detail ถูก Include สะสมเข้ามาเรื่อยๆ จึงต้องมีที่ให้เลือกล้างรายการที่กลับรายการกัน/ไม่ต้องการ
+  //   ไม่ Auto Clear (ต้องติ๊กเลือกเอง) | ลบจริงใน DB | ยืนยัน 2 ชั้น | Backend ตรวจซ้ำว่าแถวยังตรงกับที่เห็น
+  const [detailOp, setDetailOp] = useState(null); // null | { bu, account, period, loading, rows, total, sel:Set, q, err, busy }
+  const loadDetailOp = async (bu, account) => {
+    setDetailOp({ bu, account, period, loading: true, rows: [], total: 0, sel: new Set(), q: '', err: null, busy: false });
+    try {
+      const qs = new URLSearchParams({ bu, account, period });
+      const res = await fetch(`${AP_API_BASE}/ap-reconcile/dashboard/detail?${qs.toString()}`, { headers: apAuth() });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.error || `ดึง Detail ไม่สำเร็จ (HTTP ${res.status})`);
+      setDetailOp((p) => (p && p.bu === bu && p.account === account ? { ...p, loading: false, rows: Array.isArray(d.rows) ? d.rows : [], total: Number(d.total) || 0 } : p));
+    } catch (err) { setDetailOp((p) => (p ? { ...p, loading: false, err: err?.message || 'ดึง Detail ไม่สำเร็จ' } : p)); }
+  };
+  const openDetailOp = (m) => { setApMenu(null); loadDetailOp(m.bu, m.account); };
+  const detailRevPairs = useMemo(() => { // คู่ที่น่าจะกลับรายการกัน: Branch+CostCenter+SubAcc เดียวกัน ยอดเท่ากันแต่ติดลบ/บวก (แค่ช่วยเลือก ไม่ลบเอง)
+    const out = new Set();
+    if (!detailOp || !detailOp.rows.length) return out;
+    const pos = new Map(); const neg = new Map();
+    detailOp.rows.forEach((r, i) => {
+      const amt = Math.round((Number(r.amount) || 0) * 100);
+      if (!amt) return;
+      const k = `${r.branch_code}|${r.cost_center}|${r.sub_account_code}|${Math.abs(amt)}`;
+      const m = amt > 0 ? pos : neg;
+      if (!m.has(k)) m.set(k, []); m.get(k).push(i);
+    });
+    for (const [k, pl] of pos) { const nl = neg.get(k); if (!nl) continue; for (let j = 0; j < Math.min(pl.length, nl.length); j++) { out.add(pl[j]); out.add(nl[j]); } }
+    return out;
+  }, [detailOp]);
+  const handleDeleteDetailOp = async () => {
+    const d = detailOp; if (!d || !d.sel.size || d.busy) return;
+    const picked = d.rows.filter((_, i) => d.sel.has(i));
+    const sum = picked.reduce((t, r) => t + (Number(r.amount) || 0), 0);
+    const fmt = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const ok1 = await confirmDialog.confirm(`ลบ Detail ${picked.length.toLocaleString()} แถว (ยอดรวม ${fmt(sum)})\nBU ${d.bu} · Account ${d.account} · Period ${d.period}\nลบออกจากฐานข้อมูลจริง กู้คืนไม่ได้`, { title: 'ยืนยันลบ Detail (1/2)', confirmText: 'ถัดไป', cancelText: 'ยกเลิก', variant: 'danger' });
+    if (!ok1) return;
+    const ok2 = await confirmDialog.confirm(`ยืนยันอีกครั้ง: ลบ ${picked.length.toLocaleString()} แถว จริงหรือไม่?\nระบบจะตรวจซ้ำว่าข้อมูลยังตรงกับที่เห็น ถ้ามีการเปลี่ยนแปลงจะไม่ลบอะไรเลย`, { title: 'ยืนยันลบ Detail (2/2)', confirmText: 'ลบจริง', cancelText: 'ยกเลิก', variant: 'danger' });
+    if (!ok2) return;
+    setDetailOp((p) => (p ? { ...p, busy: true, err: null } : p));
+    try {
+      const res = await fetch(`${AP_API_BASE}/ap-reconcile/dashboard/detail/delete`, { method: 'POST', headers: apAuth(), body: JSON.stringify({ bu: d.bu, account: d.account, period: d.period, items: picked.map((r) => ({ rid: r.rid, hash: r.hash })) }) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out?.error || `ลบไม่สำเร็จ (HTTP ${res.status})`);
+      try { broadcastWs('ap_reconcile_data_changed', { bu: d.bu, account: d.account, period: d.period }); } catch (_) { /* ข้าม */ }
+      if (onDashboardChanged) onDashboardChanged();
+      confirmDialog.alert(`ลบ Detail สำเร็จ ${Number(out.deleted) || 0} แถว`, { title: 'ลบสำเร็จ', variant: 'success' });
+      loadDetailOp(d.bu, d.account);
+    } catch (err) { setDetailOp((p) => (p ? { ...p, busy: false, err: err?.message || 'ลบไม่สำเร็จ' } : p)); }
+  };
+  // MARKER_APRECONCILE_AP_SETTING_UI_V1 -- เฟือง AP Setting: ตั้งค่า Prepare by / Department ราย BU (เลือก BU ไว้แล้วดึงค่ามาเลย | ไม่ได้เลือก = พิมพ์ BU แล้ว Auto Match)
+  const [apSet, setApSet] = useState(null); // null | { bu, prepareBy, department, loading, saving, msg, matched }
+  const [apSetBus, setApSetBus] = useState([]);
+  const [apSetOpts, setApSetOpts] = useState({ prepare: [], department: [] }); // MARKER_APSETTING_NAME_COMBO_V1
+  // MARKER_APRECONCILE_JOB_WATCH_V1 -- ไอคอน View: เลือก BU (แยกแท็บ AP | IE) ที่ต้องการเห็นไฟล์ใน My Job ไม่ว่าใครเป็นคน Generate
+  const [watchOpen, setWatchOpen] = useState(false);
+  const [watchData, setWatchData] = useState(null); // { ap:[], ie:[], bus:[{bu,code}] }
+  const [watchKind, setWatchKind] = useState('ap');
+  const [watchSel, setWatchSel] = useState({ ap: [], ie: [] });
+  const [watchQ, setWatchQ] = useState('');
+  const [watchBusy, setWatchBusy] = useState(false);
+  const [watchErr, setWatchErr] = useState('');
+  const openWatch = async () => {
+    setWatchOpen(true); setWatchErr(''); setWatchQ('');
+    try {
+      const r = await fetch(`${AP_API_BASE}/ap-reconcile/job-watch`, { headers: apAuth() });
+      const d = await r.json(); if (!r.ok) throw new Error(d?.error || `HTTP ${r.status}`);
+      setWatchData(d); setWatchSel({ ap: d.ap || [], ie: d.ie || [] });
+    } catch (e) { setWatchErr(e.message || 'โหลดรายการ BU ไม่สำเร็จ'); }
+  };
+  const saveWatch = async () => {
+    setWatchBusy(true); setWatchErr('');
+    try {
+      for (const kind of ['ap', 'ie']) {
+        const r = await fetch(`${AP_API_BASE}/ap-reconcile/job-watch`, { method: 'PUT', headers: apAuth(), body: JSON.stringify({ kind, bus: watchSel[kind] }) });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d?.error || `HTTP ${r.status}`); }
+      }
+      setWatchOpen(false); if (onJobWatchChanged) onJobWatchChanged();
+    } catch (e) { setWatchErr(e.message || 'บันทึกไม่สำเร็จ'); } finally { setWatchBusy(false); }
+  };
+  const [apSetOpen, setApSetOpen] = useState(false); // เปิด/ปิด Dropdown BU ของ AP Setting (กว้างเท่าช่อง)
+  const apSetRef = useRef(null); // อ่านค่า kind ล่าสุดใน loadApSet
+  useEffect(() => { apSetRef.current = apSet; }, [apSet]);
+  const loadApSet = async (buText, kindOverride) => {
+    const t = String(buText || '').trim();
+    const hit = apSetBus.find((x) => x.bu.toLowerCase() === t.toLowerCase() || (x.code && x.code === t));
+    const kindNow = kindOverride || (apSetRef.current && apSetRef.current.kind) || 'ap';
+    if (!hit) { setApSet((p) => (p ? { ...p, bu: buText, matched: null, msg: null } : p)); return; }
+    setApSet((p) => (p ? { ...p, bu: hit.bu, matched: hit.bu, loading: true, msg: null } : p));
+    try {
+      const res = await fetch(`${AP_API_BASE}/ap-reconcile/report/ap-setting?bu=${encodeURIComponent(hit.bu)}&kind=${kindNow}`, { headers: apAuth() });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `โหลดไม่สำเร็จ (HTTP ${res.status})`);
+      setApSet((p) => (p ? { ...p, loading: false, prepareBy: j.prepareBy || '', department: j.department || '', msg: j.columnsFound === false ? { ok: false, text: `ไม่พบคอลัมน์ ${kindNow === 'ie' ? 'IE' : 'AP'} Prepare By / Department ใน Master Data${j.nearColumns && j.nearColumns.length ? ` (คอลัมน์ใกล้เคียง: ${j.nearColumns.join(', ')})` : ''}` } : null } : p));
+    } catch (err) { setApSet((p) => (p ? { ...p, loading: false, msg: { ok: false, text: err?.message || 'โหลดไม่สำเร็จ' } } : p)); }
+  };
+  const openApSet = async () => {
+    const kind0 = selIsIe ? 'ie' : 'ap'; // เลือก IE Reconcile ไว้ = IE Setting | นอกนั้น = AP Setting
+    setApSet({ kind: kind0, bu: ccBusinessUnit || '', prepareBy: '', department: '', loading: false, saving: false, msg: null, matched: null });
+    let list = apSetBus;
+    if (!list.length || !apSetOpts.prepare.length) {
+      try {
+        const res = await fetch(`${AP_API_BASE}/ap-reconcile/report/ap-setting/bus`, { headers: apAuth() });
+        const j = await res.json().catch(() => ({}));
+        list = Array.isArray(j.bus) ? j.bus : []; setApSetBus(list); setApSetOpts({ prepare: Array.isArray(j.prepareOptions) ? j.prepareOptions : [], department: Array.isArray(j.departmentOptions) ? j.departmentOptions : [] });
+      } catch (_) { /* ไม่ได้รายชื่อ -> พิมพ์เองไม่ Auto Match */ }
+    }
+    if (ccBusinessUnit) {
+      const hit = list.find((x) => x.bu.toLowerCase() === ccBusinessUnit.toLowerCase());
+      if (hit) {
+        setApSet((p) => (p ? { ...p, matched: hit.bu, loading: true } : p));
+        try {
+          const res = await fetch(`${AP_API_BASE}/ap-reconcile/report/ap-setting?bu=${encodeURIComponent(hit.bu)}&kind=${kind0}`, { headers: apAuth() });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(j?.error || `โหลดไม่สำเร็จ (HTTP ${res.status})`);
+          setApSet((p) => (p ? { ...p, loading: false, prepareBy: j.prepareBy || '', department: j.department || '', msg: j.columnsFound === false ? { ok: false, text: `ไม่พบคอลัมน์ ${kind0 === 'ie' ? 'IE' : 'AP'} Prepare By / Department ใน Master Data${j.nearColumns && j.nearColumns.length ? ` (คอลัมน์ใกล้เคียง: ${j.nearColumns.join(', ')})` : ''}` } : null } : p));
+        } catch (err) { setApSet((p) => (p ? { ...p, loading: false, msg: { ok: false, text: err?.message || 'โหลดไม่สำเร็จ' } } : p)); }
+      }
+    }
+  };
+  const saveApSet = async () => {
+    if (!apSet || !apSet.matched) return;
+    setApSet((p) => ({ ...p, saving: true, msg: null }));
+    try {
+      const res = await fetch(`${AP_API_BASE}/ap-reconcile/report/ap-setting`, { method: 'PUT', headers: apAuth(), body: JSON.stringify({ bu: apSet.matched, kind: apSet.kind || 'ap', prepareBy: apSet.prepareBy, department: apSet.department }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `บันทึกไม่สำเร็จ (HTTP ${res.status})`);
+      // บันทึกแล้ว: Master Data (company_list) อัปเดตจาก Backend แล้ว -> แจ้งทุกเครื่อง/ทุกหน้าให้โหลดใหม่ + รีเฟรช Dashboard หน้านี้ (MARKER_APRECONCILE_AP_SETTING_BROADCAST_V1)
+      try { broadcastWs('company_list_changed', { bu: apSet.matched, kind: apSet.kind || 'ap', source: 'ap-setting' }); } catch (_) { /* ไม่มี WS -> ข้าม */ }
+      if (onDashboardChanged) onDashboardChanged();
+      setApSet((p) => ({ ...p, saving: false, msg: { ok: true, text: `บันทึกแล้ว และอัปเดต ${apSet.kind === 'ie' ? 'IE Setting' : 'AP Setting'} ใน Master Data ของ BU ${apSet.matched} เรียบร้อย — ใช้กับไฟล์ที่ Export ครั้งต่อไป` } }));
+    } catch (err) { setApSet((p) => ({ ...p, saving: false, msg: { ok: false, text: err?.message || 'บันทึกไม่สำเร็จ' } })); }
+  };
+  useEffect(() => { // เครื่องอื่นแก้ Master Data ของ BU เดียวกัน -> โหลดค่าในฟอร์มที่เปิดอยู่ใหม่อัตโนมัติ + รีเฟรช Dashboard
+    const unsub = subscribeWs(['company_list_changed'], (ev, parsed) => {
+      const d = (parsed && (parsed.data || parsed)) || {};
+      if (onDashboardChanged) onDashboardChanged();
+      setApSet((cur) => {
+        if (cur && cur.matched && (!d.bu || String(d.bu).toLowerCase() === String(cur.matched).toLowerCase()) && !cur.saving) {
+          fetch(`${AP_API_BASE}/ap-reconcile/report/ap-setting?bu=${encodeURIComponent(cur.matched)}&kind=${cur.kind || 'ap'}`, { headers: apAuth() })
+            .then((r) => r.json().catch(() => ({}))).then((j) => { if (j && j.bu) setApSet((p) => (p && p.matched === cur.matched ? { ...p, prepareBy: j.prepareBy || '', department: j.department || '' } : p)); })
+            .catch(() => {});
+        }
+        return cur;
+      });
+    });
+    return () => { if (typeof unsub === 'function') unsub(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [dotPreview, setDotPreview] = useState(null); // { bu, account } -- ดับเบิลคลิกจุดใน Dashboard
+  const openDotPreview = (bu, account) => { setDotTip(null); setCcBusinessUnit(bu); setCcAccountSelection(`acc:${account}`); setDotPreview({ bu, account }); };
   useEffect(() => {
     if (!ccBusinessUnit) return;
     const el = rowRefs.current[ccBusinessUnit];
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [ccBusinessUnit, buRows]);
 
-  const handlePreview = () => { if (canAct) setShowPreview(true); };
-  const handleClear = () => { setCcBusinessUnit(''); setCcAccountSelection(''); setShowPreview(false); };
-  const handleExport = () => { /* Placeholder — รอ Macro "A_Reconcile" + Template Master Reconcile ของจริง */ };
+  useEffect(() => {
+    if (ccMode !== 'book' || !period) { setBooks([]); return undefined; }
+    let dead = false;
+    fetch(`${AP_API_BASE}/ap-reconcile/report/books?period=${encodeURIComponent(period)}`, { headers: apAuth() })
+      .then((r) => r.json().catch(() => ({}))).then((j) => { if (!dead) setBooks(Array.isArray(j.books) ? j.books : []); })
+      .catch(() => { if (!dead) setBooks([]); });
+    return () => { dead = true; };
+  }, [ccMode, period]);
+  const bookOptions = useMemo(() => books.map((b) => b.book), [books]);
+  // MARKER_RECONCILEZONE_BOOK_PILL_BU_V1 -- โหมด Book: เลือก Book (แคปซูลที่กล่อง Label) แล้ว Dropdown ขวาเลือก BU ใน Book นั้น เพื่อ Preview ได้เหมือนโหมด BU
+  const bookBuOptions = useMemo(() => {
+    if (!ccBook) return businessUnitOptions;
+    const inBook = new Set((books.find((b) => b.book === ccBook)?.bus) || []);
+    return [...inBook].sort();
+  }, [ccBook, books, businessUnitOptions]);
+  // โหมด Book + เลือก Book แล้ว: ตาราง Dashboard แสดงเฉพาะ BU ที่อยู่ใน Book นั้น
+  const shownBuRows = useMemo(() => {
+    if (ccMode !== 'book' || !ccBook) return buRows;
+    const inBook = new Set((books.find((b) => b.book === ccBook)?.bus) || []);
+    return buRows.filter((r) => inBook.has(r.bu));
+  }, [ccMode, ccBook, books, buRows]);
+  // MARKER_RECONCILEZONE_SELECTED_ACCOUNTS_V1 -- Preview / Export ทำตาม Account ที่เลือก (Group IE = 100/220, Account เดียว, ไม่เลือก = กลุ่ม AP)
+  const selAccounts = useMemo(() => {
+    if (selectionInfo?.accounts?.length) return selectionInfo.accounts.map((a) => a.code);
+    const apG = accountGroups.find((g) => g.key === 'ap') || accountGroups[0];
+    return apG ? apG.accounts.map((a) => a.code) : [];
+  }, [selectionInfo, accountGroups]);
+  const selIsIe = selAccounts.length > 0 && selAccounts.every((c) => (accountGroups.find((g) => g.key === 'ie')?.accounts || []).some((a) => a.code === c));
+  const selLabel = selIsIe ? 'IE Reconcile' : (selectionInfo?.mode === 'account' ? selAccounts[0] : 'AP Reconcile');
+  const canPreview = !!ccBusinessUnit && !!period; // โหมด Book เลือก BU แล้ว Preview ได้เหมือนกัน
+  const exportWholeBook = ccMode === 'book' && !ccBusinessUnit; // โหมด Book ที่ยังไม่เลือก BU = Export ทั้ง Book
+  const canExport = !!period && !exporting && (exportWholeBook ? !!ccBook : !!ccBusinessUnit);
+  // โหลด Preview ล่วงหน้าทันทีที่เลือก BU + Period (โหมด BU) เพื่อให้กดปุ่ม Preview แล้วขึ้นเร็ว
+  useEffect(() => { if (ccBusinessUnit && period && dashboardBuNames.includes(ccBusinessUnit)) prefetchApPreview(ccBusinessUnit, period); }, [ccBusinessUnit, period, dashboardBuNames]);
+  const handlePreview = () => { if (canPreview) setShowPreview(true); };
+  const handleClear = () => { setCcBusinessUnit(''); setCcBook(''); setCcAccountSelection(''); setShowPreview(false); setExportMsg(null); };
+  const handleExport = async (acctsOverride, buOverride) => { // MARKER_RECONCILEZONE_EXPORT_ACCOUNTS_V1
+    const accts = Array.isArray(acctsOverride) ? acctsOverride : selAccounts;
+    const buSel = typeof buOverride === 'string' ? buOverride : ccBusinessUnit;
+    if (Array.isArray(acctsOverride) ? (exporting || !period) : !canExport) return;
+    setExporting(true); setExportMsg(null);
+    try {
+      const isBook = exportWholeBook && typeof buOverride !== 'string';
+      const res = await fetch(`${AP_API_BASE}/ap-reconcile/report/${isBook ? 'export-book' : 'export'}`, { method: 'POST', headers: apAuth(), body: JSON.stringify(isBook ? { book: ccBook, period, accounts: accts } : { bu: buSel, period, accounts: accts }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `Export ไม่สำเร็จ (HTTP ${res.status})`);
+      const text = isBook
+        ? `Book ${ccBook}: สำเร็จ ${j.bu_done}/${j.bu_total} BU (${j.files_total} ไฟล์)${j.failed?.length ? ` · พลาด ${j.failed.map((f) => f.bu).join(', ')}` : ''}`
+        : `Export สำเร็จ ${j.files?.length || 0} ไฟล์ (BU ${buSel})`;
+      // MARKER_APRECONCILE_NO_EXPORT_OK_MSG_V1 -- ไม่แสดงข้อความ "Export สำเร็จ" (แสดงเฉพาะกรณีมี BU พลาด / Error)
+      setExportMsg((isBook && j.failed?.length) ? { ok: false, text } : null);
+      setShowPreview(false);
+      if (onExported) onExported();
+    } catch (err) { setExportMsg({ ok: false, text: err?.message || 'Export ไม่สำเร็จ' }); }
+    finally { setExporting(false); }
+  };
 
   return (
     // MARKER_ZONE_LAYOUT_FILL_TO_BOTTOM_GAP20_V1 — เปลี่ยนเป็น Flex Column เต็มจอ (height: 100vh
@@ -373,6 +901,175 @@ export default function ReconcileZoneLayout({
     // เว้น Gap 20px เสมอ (ก่อนหน้านี้ใช้ minHeight คงที่ 420 ทำให้เหลือพื้นที่ขาวไม่เท่ากันตามความสูง
     // จอ/หน้าต่าง Browser)
     <div style={{ padding: '24px 24px 20px', boxSizing: 'border-box', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {watchOpen && (() => { // MARKER_APRECONCILE_JOB_WATCH_V1
+        const bus = (watchData && watchData.bus) || [];
+        const q = watchQ.trim().toLowerCase();
+        const list = bus.filter((b) => !q || String(b.bu).toLowerCase().includes(q) || String(b.code).toLowerCase().includes(q));
+        const sel = watchSel[watchKind] || [];
+        const toggle = (bu) => setWatchSel((p) => ({ ...p, [watchKind]: (p[watchKind] || []).includes(bu) ? p[watchKind].filter((x) => x !== bu) : [...(p[watchKind] || []), bu] }));
+        return (
+          <div onClick={() => setWatchOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 3500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, width: 440, maxWidth: '92vw', maxHeight: '84vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(0,0,0,0.25)', padding: 20 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1f2937', marginBottom: 4 }}>View — BU ที่ต้องการเห็นใน My Job</div>
+              <div style={{ fontSize: 12, color: '#57606a', marginBottom: 10 }}>BU ที่เลือกจะขึ้นใน My Job เสมอ ไม่ว่าใครเป็นคน Generate (ไฟล์ของคนอื่นดูอย่างเดียว — Confirm / Release / ลบไม่ได้)</div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                {[['ap', 'AP'], ['ie', 'IE']].map(([k, lb]) => (
+                  <button key={k} type="button" onClick={() => setWatchKind(k)} style={{ flex: 1, padding: '6px 0', fontSize: 12.5, fontWeight: 700, borderRadius: 8, cursor: 'pointer', border: `1px solid ${watchKind === k ? '#1e2a3a' : '#d0d7de'}`, background: watchKind === k ? '#1e2a3a' : '#fff', color: watchKind === k ? '#fff' : '#57606a' }}>
+                    {lb} <span style={{ opacity: 0.8, fontWeight: 600 }}>({(watchSel[k] || []).length})</span>
+                  </button>
+                ))}
+              </div>
+              <input value={watchQ} onChange={(e) => setWatchQ(e.target.value)} placeholder="ค้นหาชื่อ BU หรือเลข BU..." style={{ padding: '7px 10px', fontSize: 12.5, border: '1px solid #d0d7de', borderRadius: 8, marginBottom: 8, outline: 'none' }} />
+              <div style={{ display: 'flex', gap: 10, fontSize: 11.5, marginBottom: 6 }}>
+                <button type="button" onClick={() => setWatchSel((p) => ({ ...p, [watchKind]: [...new Set([...(p[watchKind] || []), ...list.map((b) => b.bu)])] }))} style={{ border: 'none', background: 'none', color: '#0969da', cursor: 'pointer', padding: 0 }}>เลือกทั้งหมดที่แสดง</button>
+                <button type="button" onClick={() => setWatchSel((p) => ({ ...p, [watchKind]: [] }))} style={{ border: 'none', background: 'none', color: '#cf222e', cursor: 'pointer', padding: 0 }}>ล้างที่เลือก</button>
+              </div>
+              <div style={{ flex: 1, minHeight: 120, overflowY: 'auto', border: '1px solid #eaeef2', borderRadius: 8 }}>
+                {!watchData && !watchErr && <div style={{ padding: 16, textAlign: 'center', color: '#8b95a1', fontSize: 12.5 }}>กำลังโหลด…</div>}
+                {list.map((b) => (
+                  <label key={b.bu} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', fontSize: 12.5, cursor: 'pointer', borderBottom: '0.5px solid #f1f3f5', background: sel.includes(b.bu) ? '#eef6ff' : '#fff' }}>
+                    <input type="checkbox" checked={sel.includes(b.bu)} onChange={() => toggle(b.bu)} />
+                    <span style={{ fontWeight: 700, minWidth: 48 }}>{b.bu}</span>
+                    <span style={{ color: '#8b95a1', fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>{b.code}</span>
+                  </label>
+                ))}
+                {watchData && list.length === 0 && <div style={{ padding: 16, textAlign: 'center', color: '#8b95a1', fontSize: 12.5 }}>ไม่พบ BU</div>}
+              </div>
+              {watchErr && <div style={{ color: '#cf222e', fontSize: 12, marginTop: 8 }}>{watchErr}</div>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+                <button type="button" onClick={() => setWatchOpen(false)} style={{ padding: '7px 16px', fontSize: 12.5, borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', cursor: 'pointer' }}>ยกเลิก</button>
+                <button type="button" disabled={watchBusy || !watchData} onClick={saveWatch} style={{ padding: '7px 18px', fontSize: 12.5, fontWeight: 700, borderRadius: 8, border: 'none', background: '#14284b', color: '#fff', cursor: watchBusy ? 'wait' : 'pointer', opacity: (watchBusy || !watchData) ? 0.6 : 1 }}>{watchBusy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {apSet && (
+        <div onClick={() => setApSet(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 3500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={(e) => { e.stopPropagation(); setApSetOpen(false); }} style={{ background: '#fff', borderRadius: 12, width: 420, maxWidth: '92vw', boxShadow: '0 12px 40px rgba(0,0,0,0.25)', padding: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#334155' }}>{apSet.kind === 'ie' ? 'IE Setting' : 'AP Setting'}</p>
+              <button type="button" aria-label="ปิด" onClick={() => setApSet(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#666' }}>✕</button>
+            </div>
+            <div style={{ display: 'inline-flex', border: '1px solid #d0d7de', borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+              {[['ap', 'AP Reconcile'], ['ie', 'IE Reconcile']].map(([k, lb]) => (
+                <button key={k} type="button" onClick={() => { if (apSet.kind === k) return; setApSet((p) => ({ ...p, kind: k, prepareBy: '', department: '', msg: null })); if (apSet.matched) loadApSet(apSet.matched, k); }}
+                  style={{ padding: '6px 14px', fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer', background: apSet.kind === k ? '#14284b' : '#fff', color: apSet.kind === k ? '#fff' : '#57606a' }}>{lb}</button>
+              ))}
+            </div>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: '#57606a' }}>ตั้งค่า Prepare by / Department ที่จะขึ้นในหน้า Cover ของรายงาน {apSet.kind === 'ie' ? 'IE Reconcile (21930100 / 21930220)' : 'AP Reconcile (52 / 54 / 84 / 85)'} — ราย BU</p>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 4 }}>BU {apSet.matched && <span style={{ color: '#1a7f37', fontWeight: 600 }}>✓ {apSet.matched}</span>}</label>
+            {/* MARKER_APRECONCILE_AP_SETTING_DROPDOWN_V1 -- Dropdown กว้างเท่าช่อง กรองตามที่พิมพ์ (ชื่อ BU หรือเลข BU) แทน datalist ของ Browser */}
+            <div style={{ position: 'relative', marginBottom: 12 }}>
+              <input value={apSet.bu} onClick={(e) => { e.stopPropagation(); setApSetOpen(true); }} onFocus={() => setApSetOpen(true)} onChange={(e) => { setApSetOpen(true); loadApSet(e.target.value); }} onKeyDown={(e) => { if (e.key === 'Escape') setApSetOpen(false); }} placeholder="พิมพ์ชื่อ BU หรือเลข BU เพื่อค้นหา..."
+                style={{ width: '100%', boxSizing: 'border-box', padding: '8px 28px 8px 10px', fontSize: 13, border: '1px solid #d0d7de', borderRadius: 8 }} />
+              <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#57606a', fontSize: 11 }}>▼</span>
+              {apSetOpen && (() => {
+                const q = String(apSet.bu || '').trim().toLowerCase();
+                const list = apSetBus.filter((x) => !q || x.bu.toLowerCase().includes(q) || (x.code && x.code.includes(q))).slice(0, 80);
+                return (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 20, background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 190, overflowY: 'auto' }}>
+                    {list.length === 0 && <div style={{ padding: '8px 12px', fontSize: 12, color: '#8b95a1' }}>ไม่พบ BU</div>}
+                    {list.map((x) => (
+                      <div key={x.bu} onMouseDown={(e) => { e.preventDefault(); setApSetOpen(false); loadApSet(x.bu); }}
+                        style={{ padding: '7px 12px', fontSize: 13, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 10, color: '#24292f', background: x.bu === apSet.matched ? '#eaf2ff' : '#fff' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#f3f6fb'; }} onMouseLeave={(e) => { e.currentTarget.style.background = x.bu === apSet.matched ? '#eaf2ff' : '#fff'; }}>
+                        <span style={{ fontWeight: 700 }}>{x.bu}</span><span style={{ color: '#6e7781' }}>{x.code}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 4 }}>Prepare by</label>
+            <ApNameCombo value={apSet.prepareBy} options={apSetOpts.prepare} disabled={!apSet.matched || apSet.loading} bg={apSet.matched ? '#fff' : '#f6f8fa'} onChange={(v) => setApSet((p) => ({ ...p, prepareBy: v }))} />
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 4 }}>Department</label>
+            <ApNameCombo value={apSet.department} options={apSetOpts.department} disabled={!apSet.matched || apSet.loading} bg={apSet.matched ? '#fff' : '#f6f8fa'} onChange={(v) => setApSet((p) => ({ ...p, department: v }))} />
+            {apSet.loading && <p style={{ margin: '0 0 8px', fontSize: 12, color: '#57606a' }}>กำลังโหลดค่า...</p>}
+            {!apSet.matched && apSet.bu && <p style={{ margin: '0 0 8px', fontSize: 12, color: '#9a6700' }}>ยังไม่พบ BU นี้ — พิมพ์ให้ตรงกับรายชื่อ BU</p>}
+            {apSet.msg && <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 600, color: apSet.msg.ok ? '#1a7f37' : DANGER }}>{apSet.msg.text}</p>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" onClick={() => setApSet(null)} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#334155', cursor: 'pointer' }}>ปิด</button>
+              <button type="button" disabled={!apSet.matched || apSet.saving || apSet.loading} onClick={saveApSet} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', background: !apSet.matched || apSet.loading ? '#b8bfc7' : '#1a7f37', color: '#fff', cursor: !apSet.matched || apSet.loading ? 'not-allowed' : 'pointer' }}>{apSet.saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {apMenu && (
+        <div role="menu" onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', left: apMenu.x, top: apMenu.y, zIndex: 3000, background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: 4, minWidth: 170 }}>
+          <div style={{ padding: '4px 10px', fontSize: 11, color: '#6e7781' }}>{apMenu.bu} · {apMenu.account} · AP</div>
+          <button type="button" onClick={() => handleClearAp(apMenu)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', fontSize: 13, fontWeight: 700, color: '#cf222e', background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer' }}>🗑 ล้างข้อมูล</button>
+          {(() => { const jvN = Number(buRows.find((r) => r.bu === apMenu.bu)?.cells?.[apMenu.account]?.jvCount) || 0; return ( /* MARKER_DASHBOARD_DETAIL_OPERATION_V1 */
+            <button type="button" disabled={jvN <= 0} onClick={() => openDetailOp(apMenu)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', fontSize: 13, fontWeight: 700, color: jvN > 0 ? '#0969da' : '#8c959f', background: 'none', border: 'none', borderRadius: 6, cursor: jvN > 0 ? 'pointer' : 'not-allowed' }}>🧾 Detail Operation{jvN > 0 ? ` (${jvN.toLocaleString()})` : ' (ไม่มี Detail)'}</button>
+          ); })()}
+        </div>
+      )}
+      {detailOp && (() => { // MARKER_DASHBOARD_DETAIL_OPERATION_V1 -- หน้ากาก Detail Operation
+        const d = detailOp; const needle = d.q.trim().toLowerCase();
+        const vis = d.rows.map((r, i) => ({ r, i })).filter(({ r }) => !needle || [r.branch_code, r.cost_center, r.sub_account_code, r.journal_name, r.invoice_number, r.vendor_name, r.description, r.contact_from_to, r.amount].some((v) => String(v == null ? '' : v).toLowerCase().includes(needle)));
+        const fmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const selSum = d.rows.reduce((t, r, i) => (d.sel.has(i) ? t + (Number(r.amount) || 0) : t), 0);
+        const allVisSel = vis.length > 0 && vis.every(({ i }) => d.sel.has(i));
+        const setSel = (fn) => setDetailOp((p) => { if (!p) return p; const n = new Set(p.sel); fn(n); return { ...p, sel: n }; });
+        const th = { position: 'sticky', top: 0, background: '#eef3fa', padding: '6px 8px', fontSize: 11, fontWeight: 700, textAlign: 'left', borderBottom: '1px solid #d0d7de', whiteSpace: 'nowrap' };
+        const td = { padding: '5px 8px', fontSize: 12, borderBottom: '0.5px solid #eee', verticalAlign: 'top' };
+        return (
+          <div onClick={() => { if (!d.busy) setDetailOp(null); }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 3500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, width: 'min(1180px, 94vw)', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(0,0,0,0.3)' }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: '#1a3a5c' }}>Detail Operation</div>
+                <div style={{ fontSize: 12, color: '#57606a' }}>{d.bu} · {d.account} · {d.period}</div>
+                <div style={{ fontSize: 12, color: '#57606a' }}>{d.rows.length.toLocaleString()} แถว · รวม {fmt(d.total)}</div>
+                <button type="button" disabled={d.busy} onClick={() => setDetailOp(null)} style={{ marginLeft: 'auto', border: 'none', background: 'none', fontSize: 20, cursor: 'pointer', color: '#57606a' }}>×</button>
+              </div>
+              <div style={{ padding: '10px 18px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid #f0f0f0' }}>
+                <input value={d.q} onChange={(e) => { const v = e.target.value; setDetailOp((p) => (p ? { ...p, q: v } : p)); }} placeholder="ค้นหา Branch / Sub Acc / Journal / Vendor / Description / ยอด" style={{ flex: '1 1 260px', padding: '7px 10px', fontSize: 12, border: '1px solid #d0d7de', borderRadius: 8 }} />
+                <button type="button" disabled={!detailRevPairs.size} onClick={() => setSel((n) => { n.clear(); detailRevPairs.forEach((i) => n.add(i)); })} title="แค่ติ๊กเลือกให้ ยังไม่ลบ — Branch+Cost Center+Sub Acc เดียวกัน ยอดเท่ากันแต่ติดลบ/บวก" style={{ padding: '7px 12px', fontSize: 12, fontWeight: 700, borderRadius: 8, border: '1px solid #d4a72c', background: detailRevPairs.size ? '#fff8c5' : '#f6f8fa', color: '#7d4e00', cursor: detailRevPairs.size ? 'pointer' : 'not-allowed' }}>เลือกคู่ที่น่าจะกลับรายการกัน ({detailRevPairs.size})</button>
+                <button type="button" disabled={!d.sel.size} onClick={() => setSel((n) => n.clear())} style={{ padding: '7px 12px', fontSize: 12, fontWeight: 700, borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#334155', cursor: d.sel.size ? 'pointer' : 'not-allowed' }}>ล้างที่เลือก</button>
+              </div>
+              {d.err && <div style={{ padding: '8px 18px', fontSize: 12, fontWeight: 600, color: '#cf222e' }}>{d.err}</div>}
+              <div style={{ overflow: 'auto', flex: 1 }}>
+                {d.loading ? <div style={{ padding: 30, textAlign: 'center', fontSize: 13, color: '#57606a' }}>กำลังโหลด...</div> : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr>
+                      <th style={{ ...th, width: 30 }}><input type="checkbox" checked={allVisSel} onChange={(e) => setSel((n) => { vis.forEach(({ i }) => { if (e.target.checked) n.add(i); else n.delete(i); }); })} /></th>
+                      <th style={th}>Branch</th><th style={th}>Cost Ctr</th><th style={th}>Sub Acc</th><th style={th}>วันที่</th><th style={th}>Journal</th><th style={th}>Invoice</th><th style={th}>Vendor</th><th style={th}>Description</th><th style={{ ...th, textAlign: 'right' }}>Amount</th><th style={th}>Contact</th>
+                    </tr></thead>
+                    <tbody>
+                      {vis.map(({ r, i }) => (
+                        <tr key={r.rid} onClick={() => setSel((n) => { if (n.has(i)) n.delete(i); else n.add(i); })} style={{ cursor: 'pointer', background: d.sel.has(i) ? '#ddf4ff' : (detailRevPairs.has(i) ? '#fffbe0' : 'transparent') }}>
+                          <td style={td}><input type="checkbox" readOnly checked={d.sel.has(i)} /></td>
+                          <td style={td}>{r.branch_code}</td><td style={td}>{r.cost_center}</td><td style={td}>{r.sub_account_code}</td><td style={td}>{r.tdate}</td><td style={td}>{r.journal_name}</td><td style={td}>{r.invoice_number}</td><td style={td}>{r.vendor_name}</td>
+                          <td style={{ ...td, maxWidth: 280, wordBreak: 'break-word' }}>{r.description}</td>
+                          <td style={{ ...td, textAlign: 'right', color: Number(r.amount) < 0 ? '#cf222e' : undefined, whiteSpace: 'nowrap' }}>{fmt(r.amount)}</td><td style={td}>{r.contact_from_to}</td>
+                        </tr>
+                      ))}
+                      {!vis.length && <tr><td colSpan={11} style={{ padding: 24, textAlign: 'center', fontSize: 12, color: '#8c959f' }}>ไม่มีรายการ</td></tr>}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div style={{ padding: '12px 18px', borderTop: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 12, color: '#57606a' }}>เลือก {d.sel.size.toLocaleString()} แถว · ยอดรวมที่เลือก {fmt(selSum)} · <span style={{ background: '#fffbe0', padding: '0 4px' }}>แถบเหลือง</span> = น่าจะกลับรายการกัน (ไม่ Auto Clear)</div>
+                <button type="button" disabled={d.busy} onClick={() => setDetailOp(null)} style={{ marginLeft: 'auto', padding: '8px 16px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#334155', cursor: 'pointer' }}>ปิด</button>
+                <button type="button" disabled={!d.sel.size || d.busy} onClick={handleDeleteDetailOp} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', background: !d.sel.size || d.busy ? '#b8bfc7' : '#cf222e', color: '#fff', cursor: !d.sel.size || d.busy ? 'not-allowed' : 'pointer' }}>{d.busy ? 'กำลังลบ...' : `🗑 ลบที่เลือก (${d.sel.size.toLocaleString()})`}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {dotTip && (
+        <div role="tooltip" style={{
+          position: 'fixed', left: dotTip.x, top: dotTip.y, transform: 'translateX(-50%)', zIndex: 3000,
+          background: '#24292f', color: '#fff', borderRadius: 8, padding: '7px 12px', fontSize: 12, lineHeight: 1.5,
+          boxShadow: '0 6px 18px rgba(0,0,0,0.25)', whiteSpace: 'nowrap',
+        }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ color: '#b6bcc4', fontSize: 11 }}>{dotTip.bu} · {dotTip.account} · {dotTip.kind}</div>
+          <div style={{ fontWeight: 700, color: dotTip.on ? '#4ac26b' : '#c5cad2' }}>{dotTip.text}</div>
+          {dotTip.lines && dotTip.lines.map((l) => <div key={l.k} style={{ fontSize: 11.5, color: l.on ? '#9be3b0' : '#c5cad2' }}>{l.t}</div>)}
+          {dotTip.on && <button type="button" onClick={() => openDotPreview(dotTip.bu, dotTip.account)} style={{ marginTop: 6, width: '100%', padding: '5px 10px', fontSize: 12, fontWeight: 700, borderRadius: 6, border: 'none', background: '#2f81f7', color: '#fff', cursor: 'pointer' }}>🔍 เปิด Preview</button>}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '2.3fr 1fr', gap: 16, height: '35vh', flexShrink: 0 }}>
 
         {/* โซนซ้าย: 2 Tab -- Dashboard / Upload File */}
@@ -382,7 +1079,7 @@ export default function ReconcileZoneLayout({
             <TabButton active={activeTab === 'upload'} onClick={() => setActiveTab('upload')}>Upload File</TabButton>
           </div>
 
-          <div style={{ padding: '1rem 1.25rem', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#fff' }}>
+          <div style={{ padding: activeTab === 'dashboard' ? '0 1.25rem 1rem' : '1rem 1.25rem', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#fff' }}> {/* MARKER_RECONCILE_HEADER_FLUSH_TOP_V1 -- แท็บ Dashboard: หัวคอลัมน์ติดขอบบน (เหมือน Input / Suspense) */}
             {activeTab === 'dashboard' && (
               <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
                 <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'separate', borderSpacing: 0, minWidth: 640 }}>
@@ -398,7 +1095,7 @@ export default function ReconcileZoneLayout({
                           <th key={a.code} colSpan={2} onClick={() => setCcAccountSelection(`acc:${a.code}`)} title="คลิกเพื่อเลือกใน Reconcile Control Zone" style={{
                             position: 'sticky', top: 0, zIndex: 2, background: isSelected ? '#cfe3fc' : FIELD_GRAD, textAlign: 'center', padding: '6px 6px 4px',
                             color: '#334155', fontWeight: 700, fontSize: 11.5, whiteSpace: 'nowrap', cursor: 'pointer', boxShadow: `0 1px 0 ${BORDER}`,
-                            borderLeft: (ai === 0 && gi > 0) ? `2px solid ${BORDER}` : undefined,
+                            borderLeft: (ai === 0 && gi > 0) ? `2px solid ${BORDER}` : `1px solid #d0d7de`, // MARKER_RECONCILEZONE_ACCOUNT_DIVIDER_V1 -- เส้นแบ่งทุก Account (เส้นหนา = คั่นกลุ่ม AP/IE)
                           }}>
                             <div>{a.code}</div>
                             <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 2 }}>
@@ -411,12 +1108,12 @@ export default function ReconcileZoneLayout({
                     </tr>
                   </thead>
                   <tbody>
-                    {buRows.length === 0 && (
+                    {shownBuRows.length === 0 && (
                       <tr><td colSpan={1 + flatAccounts.length * 2} style={{ padding: '24px 4px', textAlign: 'center', color: '#999' }}>
-                        {period ? 'ไม่พบข้อมูลใน Period นี้' : 'กรุณาเลือก Period ก่อน'}
+                        {period ? (ccMode === 'book' && ccBook ? `ไม่พบ BU ของ Book ${ccBook} ใน Period นี้` : 'ไม่พบข้อมูลใน Period นี้') : 'กรุณาเลือก Period ก่อน'}
                       </td></tr>
                     )}
-                    {buRows.map((r, i) => {
+                    {shownBuRows.map((r, i) => {
                       const isRowSelected = r.bu === ccBusinessUnit;
                       return (
                         <tr key={r.bu} ref={el => { rowRefs.current[r.bu] = el; }} onClick={() => setCcBusinessUnit(r.bu)} title="คลิกเพื่อเลือกใน Reconcile Control Zone" style={{
@@ -429,14 +1126,33 @@ export default function ReconcileZoneLayout({
                             const cell = r.cells?.[a.code];
                             const hasAp = cell?.count != null;
                             const cellBg = isColSelected ? '#f0f6ff' : undefined;
-                            const borderLeft = (ai === 0 && gi > 0) ? `2px solid ${BORDER}` : undefined;
+                            const borderLeft = (ai === 0 && gi > 0) ? `2px solid ${BORDER}` : `1px solid #e1e4e8`; // MARKER_RECONCILEZONE_ACCOUNT_DIVIDER_V1
+                            // MARKER_RECONCILEZONE_NODATA_BADGE_V1 -- Account ที่ไม่มีทั้ง TB และ AP = Badge แดง "No Data" ช่องเดียวคร่อม 2 คอลัมน์
+                            if (!cell?.tbActive && !hasAp) {
+                              return (
+                                <td key={a.code} colSpan={2} onClick={() => setCcAccountSelection(`acc:${a.code}`)} style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, borderLeft, verticalAlign: 'middle' }}>
+                                  <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 10.5, fontWeight: 700, background: DANGER_SOFT, color: DANGER, whiteSpace: 'nowrap' }}>No Data</span>
+                                </td>
+                              );
+                            }
+                            // MARKER_RECONCILEZONE_WAIT_BADGE_V1 -- มีข้อมูลแค่ฝั่งเดียว = Badge เหลือง "Wait AP" / "Wait TB" (ยังไม่พร้อม Reconcile) แทนจุดเขียว+เทา
+                            if (!!cell?.tbActive !== hasAp) {
+                              const waitWhat = cell?.tbActive ? 'AP' : 'TB';
+                              const haveTip = cell?.tbActive ? `TB ${cell.tbCount != null ? Number(cell.tbCount).toLocaleString() + ' บรรทัด' : 'พร้อมแล้ว'}` : `AP ${Number(cell.count).toLocaleString()} บรรทัด`;
+                              return (
+                                <td key={a.code} colSpan={2} onClick={() => setCcAccountSelection(`acc:${a.code}`)} title={`${haveTip} · ยังไม่มี ${waitWhat} (รอข้อมูลก่อน Reconcile)`} style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, borderLeft, verticalAlign: 'middle' }}>
+                                  <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 10.5, fontWeight: 700, background: '#fff8c5', color: '#9a6700', border: '1px solid #eac54f', whiteSpace: 'nowrap' }}>Wait {waitWhat}</span>
+                                </td>
+                              );
+                            }
                             return (
                               <React.Fragment key={a.code}>
-                                <td style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, borderLeft, color: cell?.tbActive ? SUCCESS : '#c5cad2', fontWeight: cell?.tbActive ? 700 : 400 }}>
-                                  {cell?.tbActive ? '✓' : '-'}
+                                {/* MARKER_RECONCILEZONE_CELL_ZONE_V1 -- ทั้ง Zone (TB+AP ของ Account นี้) = ปุ่มเดียว: ดับเบิลคลิกตรงไหนก็เปิด Preview | คลิกขวา = ล้างข้อมูล AP */}
+                                <td onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title="ดับเบิลคลิกเพื่อ Preview · คลิกขวาเพื่อล้างข้อมูล AP" style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, borderLeft, verticalAlign: 'middle', cursor: 'pointer', userSelect: 'none' }}>
+                                  <DashDot active={!!cell?.tbActive} title={cell?.tbActive ? `TB ${cell.tbCount != null ? Number(cell.tbCount).toLocaleString() + ' บรรทัด' : 'Ready'} (ดับเบิลคลิกเพื่อ Preview)` : 'TB No Data'} onOpen={() => openDotPreview(r.bu, a.code)} onTip={(e) => showDotTip(e, r.bu, a.code, 'TB', !!cell?.tbActive, cell?.tbActive ? `TB ${cell.tbCount != null ? Number(cell.tbCount).toLocaleString() + ' บรรทัด' : 'พบ TB แล้ว'} · ดับเบิลคลิก = Preview` : 'ไม่มี TB (No Data)')} />
                                 </td>
-                                <td style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, color: hasAp ? '#24292f' : '#c5cad2', fontWeight: hasAp ? 700 : 400 }}>
-                                  {hasAp ? cell.count.toLocaleString() : '-'}
+                                <td onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title="ดับเบิลคลิกเพื่อ Preview · คลิกขวาเพื่อล้างข้อมูล AP" style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, verticalAlign: 'middle', cursor: 'pointer', userSelect: 'none' }}>
+                                  <DashDot active={hasAp} badge={cell?.jvCount > 0} title={hasAp ? `AP ${cell.count.toLocaleString()} บรรทัด${cell?.jvCount > 0 ? ` · Detail ${Number(cell.jvCount).toLocaleString()} บรรทัด` : ''} (ดับเบิลคลิกเพื่อ Preview)` : 'AP No Data'} onOpen={() => openDotPreview(r.bu, a.code)} onMenu={(e) => openApMenu(e, r.bu, a.code)} onTip={(e) => showDotTip(e, r.bu, a.code, 'AP', hasAp, hasAp ? `AP ${cell.count.toLocaleString()} บรรทัด · ดับเบิลคลิก = Preview` : 'ไม่มีข้อมูล (No Data)')} />
                                 </td>
                               </React.Fragment>
                             );
@@ -453,7 +1169,7 @@ export default function ReconcileZoneLayout({
               <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
                 <VatReconcileSystem
                   apiModule="ap-reconcile" // MARKER_RECONCILEZONELAYOUT_APIMODULE_V1
-                  onCommitSuccess={() => setActiveTab('dashboard')}
+                  onCommitSuccess={() => { setActiveTab('dashboard'); if (onDashboardChanged) { onDashboardChanged(); setTimeout(() => { try { onDashboardChanged(); } catch (_) { /* ignore */ } }, 1500); } }} /* MARKER_APRECONCILE_COMMIT_REFRESH_V1 -- อัปโหลดเสร็จ = สั่ง Dashboard โหลดใหม่เองทันที (ไม่รอ WS) + ซ้ำอีกรอบหลัง 1.5 วิ */
                 />
               </div>
             )}
@@ -464,24 +1180,36 @@ export default function ReconcileZoneLayout({
         <div style={{ border: '0.5px solid #ddd', borderRadius: 12, height: '100%', background: '#fff', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '1rem 1.25rem', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div>
-              <p style={{ fontSize: 13, fontWeight: 700, color: '#334155', margin: '0 0 12px' }}>Reconcile Control Zone</p>
-              <ReconcileFieldRow label="PERIOD" value={period} onChange={onPeriodChange} options={periodOptions} allowBlank />
-              <ReconcileCombobox label="BUSINESS UNIT" value={ccBusinessUnit} onChange={setCcBusinessUnit} options={businessUnitOptions} />
-              {ccBusinessUnit && !businessUnitOptions.includes(ccBusinessUnit) && (
-                <p style={{ margin: '-6px 0 10px', fontSize: 11, color: DANGER, paddingLeft: '46%' }}>
-                  BU "{ccBusinessUnit}" ไม่มีข้อมูลใน Dashboard ของ Period นี้ (จึงไม่มีแถวให้ Sync/Highlight)
-                </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 12px' }}>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#334155', margin: 0 }}>Reconcile Control Zone</p>
+                <span style={{ display: 'inline-flex', gap: 6 }}>
+                <button type="button" onClick={openWatch} title="View — เลือก BU ที่ต้องการเห็นไฟล์ใน My Job (แยก AP | IE) ไม่ว่าใครเป็นคน Generate" aria-label="View BU"
+                  style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#576069', cursor: 'pointer', padding: 0 }}>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                </button>
+                <button type="button" onClick={openApSet} title="AP Setting — ตั้งค่า Prepare by / Department ของ BU" aria-label="AP Setting"
+                  style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#57606a', cursor: 'pointer', padding: 0 }}>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+                </button>
+                </span>
+              </div>
+              <ReconcileFieldRow label="PERIOD" value={period} onChange={onPeriodChange} options={periodOptions} formatLabel={formatPeriodMMMYY} allowBlank />
+              {ccMode === 'bu' ? (
+                <ReconcileCombobox label="BUSINESS UNIT" value={ccBusinessUnit} onChange={setCcBusinessUnit} options={businessUnitOptions} onLabelClick={() => setCcMode('book')} />
+              ) : (
+                <ReconcileCombobox label="BOOK" value={ccBusinessUnit} onChange={setCcBusinessUnit} options={bookBuOptions} onLabelClick={() => setCcMode('bu')} pill={{ value: ccBook, options: bookOptions, onPick: (b) => { setCcBook(b); setCcBusinessUnit(''); }, placeholder: 'เลือก' }} />
               )}
+              {/* MARKER_CONTROLZONE_NO_BU_NOTICE_V1 -- เอาข้อความ "BU ... ไม่มีข้อมูลใน Dashboard ของ Period นี้" ออก */}
               <AccountSelectField label="ACCOUNT" value={ccAccountSelection} onChange={setCcAccountSelection} accountGroups={accountGroups} />
             </div>
             <div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <button type="button" disabled={!canAct} onClick={handlePreview} style={{
+                <button type="button" disabled={!canPreview} title={!ccBusinessUnit ? 'เลือก BU ก่อน' : ''} onClick={handlePreview} style={{
                   flex: 1, padding: '10px', fontSize: 13, fontWeight: 700, borderRadius: 8,
-                  background: '#fff', color: canAct ? '#0969da' : '#9aa4b2',
-                  border: `1px solid ${canAct ? '#0969da' : '#d0d7de'}`, cursor: canAct ? 'pointer' : 'not-allowed',
+                  background: '#fff', color: canPreview ? '#0969da' : '#9aa4b2',
+                  border: `1px solid ${canPreview ? '#0969da' : '#d0d7de'}`, cursor: canPreview ? 'pointer' : 'not-allowed',
                 }}>
-                  Preview
+                  {`Preview ${selLabel}`}
                 </button>
                 <button type="button" onClick={handleClear} style={{
                   flex: 1, padding: '10px', fontSize: 13, fontWeight: 700, borderRadius: 8,
@@ -490,13 +1218,19 @@ export default function ReconcileZoneLayout({
                   Clear
                 </button>
               </div>
-              <button type="button" disabled={!canAct} onClick={handleExport} style={{
-                width: '100%', padding: '12px', fontSize: 14, fontWeight: 700, borderRadius: 8, border: 'none',
-                color: '#fff', cursor: canAct ? 'pointer' : 'not-allowed',
-                background: canAct ? 'linear-gradient(135deg, #2ea043, #1a7f37)' : 'linear-gradient(135deg, #b8bfc7, #9aa2ab)',
-              }}>
-                Export
-              </button>
+              {exportMsg && <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 600, color: exportMsg.ok ? '#1a7f37' : DANGER }}>{exportMsg.text}</p>}
+              {(() => {
+                const warn = false; // ผู้ใช้ยืนยัน: ไม่ต้องเตือนข้อมูลไม่ครบที่ปุ่ม Export
+                return (
+                  <button type="button" disabled={!canExport} onClick={() => handleExport()} style={{
+                    width: '100%', padding: '12px', fontSize: 14, fontWeight: 700, borderRadius: 8, border: 'none',
+                    color: '#fff', cursor: canExport ? 'pointer' : 'not-allowed',
+                    background: !canExport ? 'linear-gradient(135deg, #b8bfc7, #9aa2ab)' : (warn ? 'linear-gradient(135deg, #f0a82e, #d98a00)' : 'linear-gradient(135deg, #2ea043, #1a7f37)'),
+                  }}>
+                    {exporting ? 'กำลัง Export...' : (exportWholeBook ? 'Export ทั้ง Book' : (warn ? `Export ${selLabel} (ข้อมูลไม่ครบ)` : `Export ${selLabel}`))}
+                  </button>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -508,88 +1242,23 @@ export default function ReconcileZoneLayout({
         onScopeChange={onFileJobsScopeChange}
         loading={fileJobsLoading}
         onDownload={onFileDownload}
+        onGroupConfirm={onGroupConfirm}
+        onGroupDelete={onGroupDelete}
+        spMissing={spMissing} spReason={spReason} spDestPath={spDestPath} spChecking={spChecking} onSpCheckFolder={onSpCheckFolder} onSpDownload={onSpDownload} onSpRecheck={onSpRecheck}
         onPreview={setPreviewFileJob}
       />
 
-      {/* Preview Popup — ไฟล์จาก File Storage Zone */}
-      {previewFileJob && (
-        <div onClick={() => setPreviewFileJob(null)} style={{
-          position: 'fixed', inset: 0, background: 'rgba(15,20,25,0.45)', zIndex: 50,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-        }}>
-          <div onClick={e => e.stopPropagation()} style={{
-            background: '#fff', border: '1px solid #d0d7de', borderRadius: 12, width: '100%', maxWidth: 640,
-            maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid #eee' }}>
-              <h3 style={{ margin: 0, fontSize: 14.5, color: '#24292f' }}>Preview — {previewFileJob.fileName}</h3>
-              <button type="button" aria-label="ปิด" onClick={() => setPreviewFileJob(null)} style={{ background: 'none', border: 'none', fontSize: 16, color: '#666', cursor: 'pointer' }}>✕</button>
-            </div>
-            <div style={{ padding: 18, overflowY: 'auto', fontSize: 12.5, color: '#57606a', lineHeight: 1.7 }}>
-              <p>
-                <b>BU:</b> {previewFileJob.bu || '—'} &nbsp;·&nbsp; <b>Report Type:</b> {previewFileJob.reportLabel || '—'} &nbsp;·&nbsp; <b>Generated By:</b> {previewFileJob.generatedBy || '—'}
-              </p>
-              <p>ยังเป็น Placeholder อยู่ — รอไฟล์ Macro/Template จริงมาแสดงเนื้อหาไฟล์ที่นี่</p>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Preview Popup — ไฟล์จาก File Storage Zone (Job ที่ Export แล้ว) */}
+      {previewFileJob && <ApGroupPreview jobs={previewFileJob.files} title={previewFileJob.title} onClose={() => setPreviewFileJob(null)} />} {/* MARKER_APRECONCILE_GROUP_VIEW_V1 -- View = หน้าตาเดียวกับ Preview AP Reconcile (อ่านอย่างเดียว) */}
 
-      {/* Preview Popup — Control Zone */}
-      {showPreview && (
-        <div onClick={() => setShowPreview(false)} style={{
-          position: 'fixed', inset: 0, background: 'rgba(15,20,25,0.45)', zIndex: 50,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-        }}>
-          <div onClick={e => e.stopPropagation()} style={{
-            background: '#fff', border: '1px solid #d0d7de', borderRadius: 12, width: '100%', maxWidth: 640,
-            maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid #eee' }}>
-              <h3 style={{ margin: 0, fontSize: 14.5, color: '#24292f' }}>Preview — Master Reconcile (Report DOA)</h3>
-              <button type="button" aria-label="ปิด" onClick={() => setShowPreview(false)} style={{ background: 'none', border: 'none', fontSize: 16, color: '#666', cursor: 'pointer' }}>✕</button>
-            </div>
-            <div style={{ padding: 18, overflowY: 'auto', fontSize: 12.5, color: '#57606a', lineHeight: 1.7 }}>
-              <p>
-                <b>Period:</b> {period || '—'} &nbsp;·&nbsp; <b>BU:</b> {ccBusinessUnit || '—'} &nbsp;·&nbsp; <b>Account:</b> {selectionInfo?.label || '—'}
-              </p>
-              {/* ── ข้อมูลจริงจาก Dashboard ตาม BU/Account ที่เลือกใน Control Zone (เชื่อมกับตารางด้านบนแล้ว) ── */}
-              {selectionInfo?.accounts?.length > 0 && (
-                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', margin: '10px 0' }}>
-                  <thead>
-                    <tr style={{ background: FIELD_GRAD }}>
-                      <th style={{ textAlign: 'left', padding: '6px 8px' }}>Account</th>
-                      <th style={{ textAlign: 'center', padding: '6px 8px' }}>AP Cutting</th>
-                      <th style={{ textAlign: 'center', padding: '6px 8px' }}>TB</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectionInfo.accounts.map(a => {
-                      const cell = buRows.find(r => r.bu === ccBusinessUnit)?.cells?.[a.code];
-                      const hasAp = cell?.count != null;
-                      return (
-                        <tr key={a.code} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={{ padding: '6px 8px' }}>{a.code} — {a.label}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'center', color: hasAp ? SUCCESS : DANGER, fontWeight: 700 }}>
-                            {hasAp ? cell.count.toLocaleString() : 'No Data'}
-                          </td>
-                          <td style={{ padding: '6px 8px', textAlign: 'center', color: cell?.tbActive ? SUCCESS : DANGER, fontWeight: 700 }}>
-                            {cell?.tbActive ? 'Ready' : 'No Data'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-              <p>
-                รูปแบบตาม Master Reconcile Template — โครงสร้าง Column/การคำนวณอ้างอิงจาก Logic Macro <b>A_Reconcile</b> —
-                ยังเป็น Placeholder อยู่ รอไฟล์ Macro/Template จริงมา Validate ก่อนถึงจะแสดงผลลัพธ์จริงที่นี่ได้
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Preview Popup — Control Zone: ทุก Account ของ BU (Tab ต่อ Account + ชีตแบบ Excel) */}
+      {showPreview && canPreview && <ApReportPreview bu={ccBusinessUnit} period={period} accounts={selAccounts} onClose={() => setShowPreview(false)} onExport={() => handleExport()} exporting={exporting} />}
+
+      {/* Preview Popup — ดับเบิลคลิกจุดเขียวใน Dashboard: 1 BU + 1 Account (MARKER_RECONCILEZONE_DBLCLICK_PREVIEW_V1) */}
+      {dotPreview && period && <ApReportPreview bu={dotPreview.bu} period={period} accounts={[dotPreview.account]} onClose={() => setDotPreview(null)} onExport={async () => { await handleExport([dotPreview.account], dotPreview.bu); setDotPreview(null); }} exporting={exporting} />}
     </div>
   );
 }
+
+// MARKER_VATSUSPENSE_SHARE_CONTROL_V1 -- ให้หน้า Suspense Vat Rec. ใช้ Control Dropdown / Switch Book ชุดเดียวกับ AP
+export { FieldLabelBox, ReconcileCombobox, ReconcileFieldRow };

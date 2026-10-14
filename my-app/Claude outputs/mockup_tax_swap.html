@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup สลับ Tax A↔N / T↔F</title>
+<style>
+:root{--bg:#f4f3ef;--card:#fff;--ink:#1f2933;--mut:#7b8794;--line:#e3e5ea;--navy:#1a3a5c;--blue:#1a73e8;--full:#b42318;--fullbg:#fdecea;--pct:#1a5fb4;--pctbg:#e8f0fe;--ok:#217a3a}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1d22;--card:#262a31;--ink:#e6e8eb;--mut:#9aa3ad;--line:#3a3f48;--navy:#9cc0ee;--blue:#6aa6ff;--full:#ff8a80;--fullbg:#4a2523;--pct:#8ab4f8;--pctbg:#22304a;--ok:#6fcf8a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,"Noto Sans Thai",sans-serif;padding:16px;font-size:14px}
+h1{font-size:17px;margin:0 0 4px}p.s{margin:0 0 14px;color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+h2{font-size:14px;margin:0 0 8px;color:var(--navy)}
+.tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.tabs button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:6px 12px;font-weight:600}
+.tabs button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border:1px solid var(--line);padding:6px 8px;text-align:right;white-space:nowrap}
+th{background:var(--pctbg);color:var(--navy);text-align:center}
+td.l{text-align:left}td.c{text-align:center}
+.badge{display:inline-block;min-width:26px;padding:2px 9px;border-radius:12px;font-weight:700;font-size:12px;cursor:pointer;user-select:none;border:1px solid transparent}
+.badge.pct{background:var(--pctbg);color:var(--pct)}.badge.full{background:var(--fullbg);color:var(--full)}
+.hint{font-size:12px;color:var(--mut);margin-top:6px}
+.wrap{overflow-x:auto}
+.sheets{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.sheets{grid-template-columns:1fr}}
+.sh{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.sh h3{margin:0;padding:6px 10px;font-size:13px}
+.sh.a h3{background:var(--pctbg);color:var(--pct)}.sh.i h3{background:var(--fullbg);color:var(--full)}
+.sh table{font-size:12px}.sh .empty{padding:12px;color:var(--mut);text-align:center;font-size:12px}
+.rep th.full{background:var(--fullbg);color:var(--full)}
+.tot td{font-weight:700}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 16px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+.note{background:var(--pctbg);border-radius:8px;padding:8px 10px;font-size:12.5px;margin-top:8px}
+</style></head><body>
+<h1>สลับ Tax Type ในหน้า Detail (BU หัว %)</h1>
+<p class="s">ข้อมูลในหน้านี้เป็นตัวอย่างสมมติ ใช้ดูหลักการเท่านั้น | ดับเบิลคลิกที่ป้าย Tax ในตารางเพื่อสลับ</p>
+
+<div class="card">
+  <div class="tabs" id="acctTabs">
+    <button data-a="752" class="on">Account 11610752 · A ↔ N</button>
+    <button data-a="755">Account 11610755 · T ↔ F</button>
+  </div>
+  <div class="note" id="rule"></div>
+</div>
+
+<div class="card">
+  <h2>1) หน้า Detail ของสาขา 040203 (ดับเบิลคลิกป้าย Tax เพื่อสลับ)</h2>
+  <div class="wrap"><table id="detail"></table></div>
+  <div class="hint">สีฟ้า = คิดตาม % สาขา · สีแดง = ใช้สิทธิ์ 100% · มีกล่องถามยืนยันก่อนสลับจริง (mockup นี้ข้ามให้) · สลับได้เฉพาะคู่ใน Account เดียวกัน</div>
+</div>
+
+<div class="card">
+  <h2>2) ชีตใน Excel ที่ Export ออกมา</h2>
+  <div class="sheets">
+    <div class="sh a"><h3>A-Detail · <span id="aName"></span> (ตาม %)</h3><div id="aBody"></div></div>
+    <div class="sh i"><h3>IP-Detail · <span id="iName"></span> (100%)</h3><div id="iBody"></div></div>
+  </div>
+</div>
+
+<div class="card rep">
+  <h2>3) ผลในรายงาน Reconcile (สาขา 040203 ตัวอย่าง)</h2>
+  <div class="wrap"><table id="rep"></table></div>
+  <div class="hint">ช่อง Input-N 100% = แถวที่เป็น 100% (+ Simple 100 ถ้ามี) · ช่อง Input ใช้สิทธิ์ % = แถวที่คิดตาม % · ยอดรวมต้องเท่ากับ TB ของ Account นั้น (ปรับให้ตรง)</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var PCT=59.53, fmt=function(n){return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})};
+var cfg={'752':{pct:'A',full:'N',name:'11610752'},'755':{pct:'T',full:'F',name:'11610755'}};
+var data={
+ '752':[{inv:'IV-0001',v:'ค่าไฟฟ้า',amt:10000,t:'A'},{inv:'IV-0002',v:'ค่าน้ำ',amt:4000,t:'A'},{inv:'IV-0003',v:'ค่าเช่า',amt:25000,t:'N'}],
+ '755':[{inv:'FA-0101',v:'เครื่องทำความเย็น',amt:50000,t:'T'},{inv:'FA-0102',v:'ชั้นวางสินค้า',amt:12000,t:'T'},{inv:'FA-0103',v:'รถเข็น',amt:8000,t:'F'}]
+};
+var cur='752';
+function toast(m){var t=document.getElementById('toast');t.textContent=m;t.className='toast show';clearTimeout(toast.h);toast.h=setTimeout(function(){t.className='toast'},2800)}
+function isFull(r){return r.t===cfg[cur].full}
+function claim(r){return isFull(r)?r.amt:Math.round(r.amt*PCT)/100}
+function render(){
+  var c=cfg[cur],rows=data[cur];
+  document.getElementById('rule').innerHTML='Account '+c.name+': <b>'+c.pct+'</b> = คิดตาม % สาขา ('+PCT+'%) → ชีต A-Detail · <b>'+c.full+'</b> = ใช้สิทธิ์ 100% → ชีต IP-Detail<br>Input แยก Tax Type เข้าแต่ละ Account ตั้งแต่ตอนอัปโหลดอยู่แล้ว การสลับจึงเกิดภายใน Account เดียวกัน ไม่ดึงข้าม Account';
+  var h='<tr><th>Tax</th><th>Invoice</th><th>รายการ</th><th>มูลค่าที่ชำระ</th><th>ภาษีที่ชำระ</th><th>มูลค่าใช้สิทธิ์</th><th>ภาษีใช้สิทธิ์</th><th>Calculate Tax</th></tr>';
+  rows.forEach(function(r,i){var f=isFull(r),cl=claim(r),v=Math.round(r.amt*7)/100,cv=Math.round(cl*7)/100;
+    h+='<tr><td class="c"><span class="badge '+(f?'full':'pct')+'" data-i="'+i+'" title="ดับเบิลคลิกเพื่อเปลี่ยนเป็น '+(f?c.pct:c.full)+'">'+r.t+'</span></td><td class="l">'+r.inv+'</td><td class="l">'+r.v+'</td><td>'+fmt(r.amt)+'</td><td>'+fmt(v)+'</td><td>'+fmt(cl)+'</td><td>'+fmt(cv)+'</td><td>'+fmt(f?0:r.amt-cl)+'</td></tr>'});
+  document.getElementById('detail').innerHTML=h;
+  document.querySelectorAll('#detail .badge').forEach(function(b){b.ondblclick=function(){var r=rows[+b.dataset.i],to=isFull(r)?c.pct:c.full;r.t=to;toast('เปลี่ยน '+r.inv+' เป็น '+to+' → '+(to===c.full?'คิด 100% ไปชีต IP-Detail':'คิดตาม % ไปชีต A-Detail'));render()}});
+  document.getElementById('aName').textContent=c.pct;document.getElementById('iName').textContent=c.full;
+  function sheet(list){if(!list.length)return '<div class="empty">ไม่มีรายการ</div>';
+    return '<table><tr><th>Invoice</th><th>ที่ชำระ</th><th>ใช้สิทธิ์</th><th>Calc Tax</th></tr>'+list.map(function(r){var cl=claim(r);return '<tr><td class="l">'+r.inv+'</td><td>'+fmt(r.amt)+'</td><td>'+fmt(cl)+'</td><td>'+fmt(isFull(r)?0:r.amt-cl)+'</td></tr>'}).join('')+'</table>'}
+  document.getElementById('aBody').innerHTML=sheet(rows.filter(function(r){return !isFull(r)}));
+  document.getElementById('iBody').innerHTML=sheet(rows.filter(isFull));
+  var sf=0,sp=0,svf=0,svp=0;rows.forEach(function(r){var cl=claim(r),cv=Math.round(cl*7)/100;if(isFull(r)){sf+=cl;svf+=cv}else{sp+=cl;svp+=cv}});
+  document.getElementById('rep').innerHTML='<tr><th class="full" colspan="2">ภาษีซื้อ Input-N 100%</th><th colspan="2">ภาษีซื้อ Input ใช้สิทธิ์ '+PCT+'%</th><th colspan="2">รวมภาษีซื้อทั้งสิ้น</th></tr><tr><th>มูลค่า</th><th>ภาษี</th><th>มูลค่า</th><th>ภาษี</th><th>มูลค่า</th><th>ภาษี</th></tr><tr class="tot"><td>'+fmt(sf)+'</td><td>'+fmt(svf)+'</td><td>'+fmt(sp)+'</td><td>'+fmt(svp)+'</td><td>'+fmt(sf+sp)+'</td><td>'+fmt(svf+svp)+'</td></tr>';
+}
+document.querySelectorAll('#acctTabs button').forEach(function(b){b.onclick=function(){cur=b.dataset.a;document.querySelectorAll('#acctTabs button').forEach(function(x){x.classList.toggle('on',x===b)});render()}});
+render();
+</script></body></html>

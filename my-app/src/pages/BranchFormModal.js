@@ -11,7 +11,7 @@
 // ============================================================================
 import React from 'react';
 import { apiFetch } from '../api';
-import { broadcastWs } from '../wsManager';
+import { broadcastWs, subscribeWs } from '../wsManager';
 import { useAuth } from '../contexts/AuthContext';
 import { useDataCache } from '../contexts/DataCacheContext';
 import { confirmDialog } from '../confirmDialog';
@@ -20,12 +20,14 @@ const BF_FIELDS = [
   ['Branch Code', 'Branch Code'], ['BU Code', 'BU Code'], ['BU-Branch', 'BU Branch'], ['cpc', 'CPC'],
   ['Branch Direct', 'Branch Direct'], ['Branch Allocate', 'Branch Allocate'], ['Group-P', 'Group-P'],
   ['Company for Show in Report Display', 'Company for Report'], ['Simple Company', 'Simple Company'],
+  ['Branch Name for Report', 'ชื่อสาขา (ใช้เมื่อไม่มี Input)'], // MARKER_BRANCHFORM_NAME_FOR_REPORT_V1
   ['BU-TaxID', 'BU Tax ID'], ['Simple Brand Code', 'Simple Brand Code'], ['%', '%'], ['DB(%)', 'DB(%)'],
   ['bu', 'BU'], ['status', 'Status'], ['Inactive Date', 'Inactive Date'], ['Branch Address', 'Branch Address'],
 ];
 const BF_ROWS = [
   ['Branch Code', 'status'],
   ['Company for Show in Report Display'],
+  ['Branch Name for Report'], // MARKER_BRANCHFORM_NAME_FOR_REPORT_V1 -- ชื่อสาขาที่ใช้ในรายงาน Reconcile เมื่อสาขานั้นไม่มี Input
   ['bu', 'Group-P'],
   ['BU-TaxID', 'BU-Branch'],
   ['%', 'DB(%)'],
@@ -38,9 +40,41 @@ const BF_ROWS = [
 ];
 const BF_COLOR = {
   'Branch Code': '#FCF3D5', 'status': '#FCF3D5', 'Company for Show in Report Display': '#FCF3D5', 'bu': '#FCF3D5',
-  'Group-P': '#FCF3D5', 'BU-TaxID': '#FCF3D5', 'BU-Branch': '#FCF3D5', '%': '#DCEAF1', 'Branch Direct': '#DCEAF1',
+  'Group-P': '#FCF3D5', 'Simple Company': '#FCF3D5', 'BU-TaxID': '#FCF3D5', 'BU-Branch': '#FCF3D5', '%': '#DCEAF1', 'Branch Direct': '#DCEAF1',
 };
-const BF_REQUIRED = ['Branch Code', 'status', 'Company for Show in Report Display', 'bu', 'Group-P', 'BU-TaxID', 'BU-Branch'];
+const BF_REQUIRED = ['Branch Code', 'status', 'Company for Show in Report Display', 'Simple Company', 'bu', 'Group-P', 'BU-TaxID', 'BU-Branch']; // MARKER_BRANCH_SIMPLE_COMPANY_REQUIRED_V1
+// MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- เก็บเฉพาะที่อยู่ไทย: ตัดบรรทัดที่ไม่มีตัวอักษรไทย (อังกฤษ) และตัดบรรทัดแรก (ชื่อบริษัท/สาขา) เมื่อมีบรรทัดไทย >= 2 ; ข้อความบรรทัดเดียวคงเดิม
+const cleanBranchAddress = (v) => {
+  const raw = String(v == null ? '' : v).trim();
+  if (!/[\r\n]/.test(raw)) return raw;
+  const lines = raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const thai = lines.filter((l) => /[\u0E00-\u0E7F]/.test(l));
+  if (thai.length === 0) return raw;
+  return (thai.length >= 2 ? thai.slice(1) : thai).join(' ');
+};
+// MARKER_BRANCH_PCT_FROM_COMPANY_V1 -- % ของสาขา = VAT % ของบริษัทใน Company List (จับคู่ด้วย TAX ID = BU-TaxID); ไม่เจอบริษัท = 100 ; ไม่มี BU-TaxID = ว่าง
+let BRANCH_COMPANY_LIST = [];
+const branchCompanyPct = (taxId) => {
+  const t = String(taxId || '').trim();
+  if (!t) return '';
+  const c = BRANCH_COMPANY_LIST.find((i) => String(i['TAX ID'] || '').trim() === t);
+  const v = c ? String(c['VAT %'] == null ? '' : c['VAT %']).trim() : '';
+  return v || '100';
+};
+// MARKER_BRANCH_FILL_FROM_COMPANY_V1 -- เติมสาขาจาก Company List ตาม BU (เฉพาะช่องที่ว่าง): BU-TaxID <- TAX ID ; % <- VAT % (ไม่มี = 100) ; Simple Company <- Segment3-English Company Name
+const branchFillFromCompany = (f) => {
+  const bu = String(f['bu'] || '').trim().toLowerCase();
+  if (!bu) return f;
+  const c = BRANCH_COMPANY_LIST.find((i) => String(i['bu'] || '').trim().toLowerCase() === bu);
+  if (!c) return f;
+  const blank = (v) => !String(v == null ? '' : v).trim();
+  const n = { ...f };
+  if (blank(n['BU-TaxID']) && !blank(c['TAX ID'])) n['BU-TaxID'] = String(c['TAX ID']).trim();
+  if (blank(n['%'])) { const p = branchCompanyPct(n['BU-TaxID']); if (p) n['%'] = p; }
+  const seg = String(c['SEGMENT3'] || '').trim(); const eng = String(c['ENGLISH COMPANY NAME'] || '').trim();
+  if (blank(n['Simple Company']) && seg && eng) n['Simple Company'] = `${seg}-${eng}`;
+  return n;
+};
 const bfNorm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const bfBlank = (v) => !String(v || '').trim();
 
@@ -50,7 +84,7 @@ const bfFillFrom = (f, match) => ({
   'bu': bfBlank(f['bu']) ? (match['bu'] || '') : f['bu'],
   'Group-P': bfBlank(f['Group-P']) ? (match['Group-P'] || '') : f['Group-P'],
   'BU-TaxID': bfBlank(f['BU-TaxID']) ? (match['BU-TaxID'] || '') : f['BU-TaxID'],
-  '%': bfBlank(f['%']) ? (match['%'] || '') : f['%'],
+  '%': bfBlank(f['%']) ? (branchCompanyPct(bfBlank(f['BU-TaxID']) ? match['BU-TaxID'] : f['BU-TaxID']) || match['%'] || '') : f['%'],
   'Simple Company': bfBlank(f['Simple Company']) ? (match['Simple Company'] || '') : f['Simple Company'],
 });
 const bfHoAutofill = (f, branches) => {
@@ -77,7 +111,9 @@ const bfBuBranchPad = (f) => {
   return { ...f, 'BU-Branch': padded, 'Branch Direct': buVal ? `${buVal}-${padded}` : f['Branch Direct'] };
 };
 
-export default function BranchFormModal({ show, onClose, initialForm, onSaved }) {
+export default function BranchFormModal({ show, onClose, initialForm, onSaved, nameOptional }) {
+  // MARKER_BRANCHFORM_NAME_OPTIONAL_V1 -- nameOptional: ไม่บังคับกรอกชื่อ (Company for Show in Report Display) -- ใช้ตอนเพิ่มสาขาจากหน้า Reconcile เพราะชื่อมีอยู่ใน Input Summary แล้ว
+  const reqKeys = nameOptional ? BF_REQUIRED.filter((k) => k !== 'Company for Show in Report Display') : BF_REQUIRED;
   const { userName } = useAuth();
   const { fetchCollection, getCached } = useDataCache(); // MARKER_BRANCHFORM_USE_DATACACHE_V1 -- ใช้ BranchList ใน DataCache กลางของระบบ (โหลดไว้แล้ว / Master Data ใช้ชุดเดียวกัน) ไม่ดึงซ้ำ
   const [branches, setBranches] = React.useState([]);
@@ -90,8 +126,10 @@ export default function BranchFormModal({ show, onClose, initialForm, onSaved })
   // MARKER_BRANCHFORM_INSTANT_RENDER_V1 -- เปิดฟอร์มทันที (ไม่รอ /branch_list) แล้วค่อย Auto-fill / สลับเป็น Edit เมื่อโหลดรายการเสร็จ; ใช้ Cache ของรอบก่อนทำให้เปิดครั้งต่อไปเร็วทันที
   React.useEffect(() => {
     if (!show) { setReady(false); return undefined; }
+    fetchCollection('CompanyList').then((l) => { if (Array.isArray(l)) BRANCH_COMPANY_LIST = l; }).catch(() => {}); // MARKER_BRANCH_PCT_FROM_COMPANY_V1
+    const unCl = subscribeWs(['company_list_updated'], () => { fetchCollection('CompanyList', true).then((l) => { if (Array.isArray(l)) BRANCH_COMPANY_LIST = l; }).catch(() => {}); }); // MARKER_BRANCH_FILL_FROM_COMPANY_V1
     let alive = true;
-    const base = {}; BF_FIELDS.forEach(([k]) => { base[k] = ''; });
+    const base = {}; BF_FIELDS.forEach(([k]) => { base[k] = k === 'status' ? 'Active' : ''; }); // MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1
     const seed = { ...base, ...(initialForm || {}) };
     const code = String(seed['Branch Code'] || '').trim();
     const apply = (list, touchedByUser) => {
@@ -102,7 +140,7 @@ export default function BranchFormModal({ show, onClose, initialForm, onSaved })
       } else {
         setEditTarget(null);
         setForm((cur) => (touchedByUser && cur && Object.keys(cur).some((k) => cur[k] && cur[k] !== seed[k]))
-          ? cur : bfBuBranchPad(bfHoAutofill(seed, list)));
+          ? cur : branchFillFromCompany(bfBuBranchPad(bfHoAutofill(seed, list))));
       }
     };
     const cached = getCached('BranchList') || [];
@@ -116,7 +154,7 @@ export default function BranchFormModal({ show, onClose, initialForm, onSaved })
       setBranches(list);
       apply(list, true);
     })();
-    return () => { alive = false; };
+    return () => { alive = false; try { unCl && unCl(); } catch (e) { /* ignore */ } };
   }, [show]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!show) return null;
@@ -133,13 +171,13 @@ export default function BranchFormModal({ show, onClose, initialForm, onSaved })
       if ((cols[1] || '').trim()) next['Branch Code'] = cols[1].trim();
       if ((cols[2] || '').trim()) next['Company for Show in Report Display'] = cols[2].trim();
       if ((cols[5] || '').trim()) next['BU-Branch'] = cols[5].trim();
-      if ((cols[6] || '').trim()) next['Branch Address'] = cols[6].trim();
+      if (cleanBranchAddress(cols[6])) next['Branch Address'] = cleanBranchAddress(cols[6]);
       return bfBuBranchPad(bfCompanyAutofill(next, branches));
     });
   };
 
   const validate = () => {
-    for (const k of BF_REQUIRED) {
+    for (const k of reqKeys) {
       if (bfBlank(form[k])) { const label = (BF_FIELDS.find(([x]) => x === k) || [null, k])[1]; return `กรุณากรอก ${label}`; }
     }
     if (form['status'] === 'Closed' && !form['Inactive Date']) return 'กรุณากรอก Inactive Date เมื่อ Status เป็น Closed';
@@ -160,7 +198,7 @@ export default function BranchFormModal({ show, onClose, initialForm, onSaved })
           setSaving(false); return;
         }
       }
-      const payload = { ...form, updated_by: userName, updated_at: new Date().toISOString() };
+      const payload = { ...form, 'Branch Address': cleanBranchAddress(form['Branch Address']), updated_by: userName, updated_at: new Date().toISOString() };
       if (isEdit && editTarget?.id) await apiFetch(`/branch_list/${editTarget.id}`, { method: 'PUT', body: JSON.stringify(payload) });
       else await apiFetch('/branch_list', { method: 'POST', body: JSON.stringify(payload) });
       fetchCollection('BranchList', true).catch(() => {}); // รีเฟรช DataCache กลางให้ทุกหน้าเห็นสาขาใหม่
@@ -191,16 +229,25 @@ export default function BranchFormModal({ show, onClose, initialForm, onSaved })
                 const label = (BF_FIELDS.find(([k]) => k === key) || [null, key])[1];
                 const needInactive = key === 'Inactive Date';
                 const isDisabled = (needInactive && form['status'] !== 'Closed') || (key === 'Branch Code' && isEdit);
-                const isReq = BF_REQUIRED.includes(key) || (needInactive && form['status'] === 'Closed') || (key === 'Branch Allocate' && form['status'] === 'Relocate');
+                const isReq = reqKeys.includes(key) || (needInactive && form['status'] === 'Closed') || (key === 'Branch Allocate' && form['status'] === 'Relocate');
                 const hasErr = !!error && isReq && bfBlank(form[key]);
                 const isFullRow = rowKeys.length === 1;
                 const bg = needInactive ? '#eef1f3' : (BF_COLOR[key] || '#fff');
                 const bd = hasErr ? '1px dashed #e74c3c' : '1px dashed #2c5f7c';
                 const inputBare = { width: '100%', border: 'none', background: 'transparent', fontSize: 13, color: isDisabled ? '#999' : (BF_COLOR[key] ? '#5c5636' : '#333'), outline: 'none', padding: 0, fontFamily: 'inherit' };
-                const onBlur = key === 'BU-Branch' ? () => setForm((f) => bfBuBranchPad(f))
-                  : key === 'Branch Code' ? () => setForm((f) => bfHoAutofill(f, branches))
-                  : key === 'Company for Show in Report Display' ? () => setForm((f) => bfCompanyAutofill(f, branches))
-                  : undefined;
+                const onBlurBase = key === 'BU-Branch' ? (f) => bfBuBranchPad(f)
+                  : key === 'BU-TaxID' ? (f) => (bfBlank(f['%']) ? { ...f, '%': branchCompanyPct(f['BU-TaxID']) } : f)
+                  : key === 'Branch Code' ? (f) => bfHoAutofill(f, branches)
+                  : key === 'Company for Show in Report Display' ? (f) => bfCompanyAutofill(f, branches)
+                  : null;
+                const fillCompany = ['bu', 'Branch Code', 'Company for Show in Report Display'].includes(key); // MARKER_BRANCH_FILL_FROM_COMPANY_V1
+                const onBlur = (onBlurBase || fillCompany) ? () => {
+                  setForm((f) => { const g = onBlurBase ? onBlurBase(f) : f; return fillCompany ? branchFillFromCompany(g) : g; });
+                  const buV = String(form['bu'] || '').trim().toLowerCase();
+                  if (fillCompany && buV && !BRANCH_COMPANY_LIST.some((i) => String(i['bu'] || '').trim().toLowerCase() === buV)) {
+                    fetchCollection('CompanyList', true).then((l) => { if (Array.isArray(l)) { BRANCH_COMPANY_LIST = l; setForm((f) => branchFillFromCompany(f)); } }).catch(() => {});
+                  }
+                } : undefined;
                 return (
                   <React.Fragment key={key}>
                     <div style={{ flex: isFullRow || ki === 0 ? '0 0 160px' : '0 0 120px', border: bd, marginLeft: ki === 0 ? 0 : -1, padding: '8px 10px', display: 'flex', alignItems: key === 'Branch Address' ? 'flex-start' : 'center' }}>

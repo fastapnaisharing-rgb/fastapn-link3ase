@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Note - Waiting for Claim</title>
+<style>
+:root{--bg:#eef1f5;--card:#fff;--ink:#222;--mute:#888;--line:#e6e8ec;--navy:#1a3a5c;--head:#1a3a5c;--blue:#1565c0;--blueBg:#e3f2fd;--amber:#b45309;--amberBg:#fff7e6;--amberLine:#f3c98b;--ok:#2e7d32;--okBg:#eaf3e8;--red:#c62828;--dis:#f3f4f6}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1e232b;--ink:#e8eaee;--mute:#9aa3b0;--line:#323946;--navy:#5b8ccc;--head:#223a57;--blue:#90caf9;--blueBg:#1c2d42;--amber:#f5b25c;--amberBg:#3a2d17;--amberLine:#6a5020;--ok:#81c784;--okBg:#1f3322;--red:#ef9a9a;--dis:#2a303a}}
+*{box-sizing:border-box}body{margin:0;padding:20px 16px;background:var(--bg);color:var(--ink);font-family:Tahoma,'Segoe UI',sans-serif;font-size:13px}
+.wrap{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+h2{font-size:13px;margin:0 0 8px;color:var(--mute);font-weight:600}
+.card{background:var(--card);border-radius:12px;box-shadow:0 6px 22px rgba(0,0,0,.12);overflow:hidden}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{background:var(--head);color:#fff;font-weight:500;text-align:left;padding:9px 10px;white-space:nowrap}
+td{padding:9px 10px;border-top:1px solid var(--line);white-space:nowrap}
+td.r,th.r{text-align:right}
+.ic{width:26px;height:26px;border-radius:8px;display:inline-grid;place-items:center;font-size:13px;position:relative;cursor:pointer;border:1px solid var(--line);background:var(--dis);color:var(--mute)}
+.ic.has{background:var(--amberBg);border-color:var(--amberLine);color:var(--amber)}
+.ic.has::after{content:"";position:absolute;top:-3px;right:-3px;width:8px;height:8px;border-radius:50%;background:var(--red);border:1.5px solid var(--card)}
+.ic.acc{background:var(--okBg);border-color:#a5d6a7;color:var(--ok)}
+.tip{position:absolute;left:34px;top:-6px;width:250px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.2);padding:10px 12px;font-size:12px;color:var(--ink);z-index:5;white-space:normal;text-align:left}
+.tip b{display:block;margin-bottom:3px}.tip small{color:var(--mute)}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;background:var(--amberBg);color:var(--amber)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--mute);align-items:center}
+.hd{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);font-size:15px}
+.hd small{color:var(--mute);font-size:12px}
+.x{width:28px;height:28px;border-radius:50%;background:var(--dis);display:grid;place-items:center}
+.bd{padding:16px 20px;display:flex;flex-direction:column;gap:14px}
+.info{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:var(--dis);border-radius:10px;padding:10px 12px}
+.info div span{display:block;font-size:11px;color:var(--mute)}
+.f{display:flex;flex-direction:column;gap:5px}.f label{font-size:12px;font-weight:600}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.in{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+textarea.in{min-height:84px;font:inherit;resize:vertical}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;font-size:12px;background:var(--card)}
+.chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.acc-row{display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.sw{width:34px;height:19px;border-radius:20px;background:var(--ok);position:relative;flex-shrink:0}
+.sw::after{content:"";position:absolute;right:2px;top:2px;width:15px;height:15px;border-radius:50%;background:#fff}
+.imgs{display:flex;gap:8px;align-items:center}
+.img{width:56px;height:56px;border-radius:8px;background:var(--dis);border:1px solid var(--line);display:grid;place-items:center;color:var(--mute);font-size:11px}
+.add{width:56px;height:56px;border-radius:8px;border:1.5px dashed var(--line);display:grid;place-items:center;color:var(--mute);font-size:20px}
+.ft{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-top:1px solid var(--line)}
+.meta{font-size:11px;color:var(--mute)}
+.b{padding:7px 18px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:12px}
+.b.p{background:var(--navy);border-color:var(--navy);color:#fff}.b.d{color:var(--red);border-color:var(--red)}
+.pop{max-width:560px;margin:0 auto;width:100%}
+</style></head><body><div class="wrap">
+
+<div><h2>1) ตารางหลัก — คอลัมน์ 📝 ในแต่ละแถว (ดึง Note ของแต่ละ Line ขึ้นมาแสดง)</h2>
+<div class="card" style="overflow:visible">
+<div style="overflow:auto"><table>
+<tr><th style="width:34px"></th><th style="width:44px">📝</th><th>Action</th><th>Invoice Ref.</th><th>SellerName</th><th class="r">Vat</th><th>Status</th></tr>
+<tr><td>☐</td><td style="position:relative"><span class="ic has">📝</span><div class="tip"><b>Check Return · รอตรวจสอบ</b>ลูกค้าแจ้งว่าจะส่งใบกำกับฉบับแก้ไขภายในสัปดาห์หน้า<br><small>lekarn · 12/10/69 13:42</small></div></td><td>🗑</td><td>INC26-08-0007</td><td>บริษัท เมธา การก่อสร้าง จำกัด</td><td class="r">503,589.30</td><td><span class="badge">Wait Rate</span></td></tr>
+<tr><td>☐</td><td><span class="ic acc">📝</span></td><td>🗑</td><td>INC26-07-0007</td><td>บริษัท เมธา การก่อสร้าง จำกัด</td><td class="r">97,471.20</td><td><span class="badge">Wait Rate</span></td></tr>
+<tr><td>☐</td><td><span class="ic">📝</span></td><td>🗑</td><td>2144/107194</td><td>บริษัท คอนกรีตไลน์ จำกัด</td><td class="r">79,542.40</td><td><span class="badge">Wait Rate</span></td></tr>
+</table></div>
+<div class="legend"><span><span class="ic" style="width:20px;height:20px;font-size:11px">📝</span> ยังไม่มี Note</span><span><span class="ic has" style="width:20px;height:20px;font-size:11px">📝</span> มี Note (จุดแดง · เอาเมาส์ชี้ดูข้อความ)</span><span><span class="ic acc" style="width:20px;height:20px;font-size:11px">📝</span> Accept with condition</span><span>กดไอคอน = เปิด Popup Note</span></div>
+</div></div>
+
+<div><h2>2) Popup Note แบบเต็ม (กดไอคอนแล้วเปิด)</h2>
+<div class="card pop">
+ <div class="hd"><div>Note <small>· INC26-08-0007</small></div><div class="x">×</div></div>
+ <div class="bd">
+  <div class="info"><div><span>Invoice Ref.</span>INC26-08-0007</div><div><span>SellerName</span>บริษัท เมธา การก่อสร้าง จำกัด</div><div><span>Vat</span>503,589.30</div></div>
+  <div class="f"><label>Remark</label><div class="chips"><span class="chip on">Check Return</span><span class="chip">Check On Hand</span><span class="chip">Issue</span><span class="chip">Other</span></div></div>
+  <div class="row2"><div class="f"><label>Check No.</label><input class="in" value="4100120-EFT"></div><div class="f"><label>สถานะ</label><div class="acc-row"><span class="sw"></span><span>Accept with condition</span></div></div></div>
+  <div class="f"><label>ข้อความ Note</label><textarea class="in">ลูกค้าแจ้งว่าจะส่งใบกำกับฉบับแก้ไขภายในสัปดาห์หน้า</textarea></div>
+  <div class="f"><label>รูปแนบ</label><div class="imgs"><div class="img">รูป 1</div><div class="img">รูป 2</div><div class="add">+</div></div></div>
+ </div>
+ <div class="ft"><span class="meta">บันทึกโดย lekarn · 12/10/69 13:42</span><div style="display:flex;gap:8px"><span class="b d">ลบ Note</span><span class="b">ยกเลิก</span><span class="b p">บันทึก</span></div></div>
+</div></div>
+
+</div></body></html>

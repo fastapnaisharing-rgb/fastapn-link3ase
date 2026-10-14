@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Dashboard จุดเขียว/เทา</title>
+<style>
+body{margin:0;padding:20px;background:#f4f6fa;font:12.5px "Segoe UI",Tahoma,sans-serif;color:#24292f}
+h3{margin:20px 0 8px;font-size:14px}h3:first-child{margin-top:0}
+.box{background:#fff;border:.5px solid #ddd;border-radius:12px;overflow:auto;max-width:1000px;padding:12px 16px}
+table{width:100%;border-collapse:separate;border-spacing:0;min-width:680px}
+th{background:linear-gradient(180deg,#eef4ff,#e3ecfb);color:#334155;font-size:11.5px;font-weight:700;padding:6px;text-align:center;white-space:nowrap;box-shadow:0 1px 0 #ddd}
+th.sel{background:#cfe3fc}th.bu{text-align:left;padding:8px 10px}th.g,td.g{border-left:2px solid #ddd}
+th small{display:flex;justify-content:space-around;margin-top:2px;color:#8b95a1;font-size:10px}
+td{padding:8px 4px;text-align:center;border-bottom:.5px solid #eee}td.b{text-align:left;padding:8px 10px;font-weight:700}
+tbody tr:nth-child(even) td{background:#fafbfc}tr.rs td{background:#eaf2ff!important}tr.rs td.b{color:#0969da}
+.d{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;background:#e1e4e8}
+.d.on{background:radial-gradient(circle at 30% 30%,#4ac26b,#1a7f37);box-shadow:0 0 6px rgba(26,127,55,.5)}
+.c{margin-left:6px;font-weight:700;font-variant-numeric:tabular-nums;vertical-align:middle}
+.leg{margin-top:10px;color:#6e7781;font-size:12px;display:flex;gap:18px;align-items:center}
+</style></head><body>
+<h3>แบบ A · จุดเขียว/เทา + ตัวเลขจำนวนแถว AP ข้างจุด</h3>
+<div class="box" id="a"></div>
+<h3>แบบ B · จุดเขียว/เทาล้วน (เหมือนหน้า Input เป๊ะ) — เอาเมาส์ชี้เพื่อดูจำนวน</h3>
+<div class="box" id="b"></div>
+<script>
+const A=[['21930052'],['21930054'],['21930084'],['21930085'],['21930100'],['21930220']];
+const R=[['MPS',[[1,24],[1,88],[0,0],[0,0],[1,0],[0,0]],1],['TOP',[[1,3120],[1,5944],[0,0],[0,0],[0,0],[0,0]],0],['CFM',[[0,0],[0,0],[0,0],[0,0],[0,0],[0,0]],0]];
+function build(showNum){
+ let h='<table><thead><tr><th class="bu">BU</th>'+A.map((a,j)=>`<th colspan="2" class="${j==0?'sel':''} ${j==4?'g':''}">${a[0]}<small><span>TB</span><span>AP</span></small></th>`).join('')+'</tr></thead><tbody>';
+ R.forEach(r=>{h+=`<tr class="${r[2]?'rs':''}"><td class="b">${r[0]}</td>`;
+  r[1].forEach((c,j)=>{h+=`<td class="${j==4?'g':''}"><span class="d ${c[0]?'on':''}" title="TB ${c[0]?'Ready':'No Data'}"></span></td>`+
+   `<td><span class="d ${c[1]?'on':''}" title="${c[1]?'AP '+c[1].toLocaleString()+' แถว':'AP No Data'}"></span>${showNum&&c[1]?`<span class="c">${c[1].toLocaleString()}</span>`:''}</td>`});
+  h+='</tr>'});
+ return h+'</tbody></table><div class="leg"><span><span class="d on"></span> มีข้อมูล</span><span><span class="d"></span> ไม่มีข้อมูล (No Data)</span></div>';
+}
+document.getElementById('a').innerHTML=build(true);
+document.getElementById('b').innerHTML=build(false);
+</script>
+</body></html>

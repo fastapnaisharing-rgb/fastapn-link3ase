@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup 3 สี Dashboard</title>
+<style>
+body{margin:0;padding:20px;background:#f4f6fa;font:12.5px "Segoe UI",Tahoma,sans-serif;color:#1f2d3d}
+h3{margin:22px 0 8px;font-size:14px}h3:first-child{margin-top:0}
+.box{background:#fff;border:.5px solid #ddd;border-radius:12px;overflow:auto;max-width:1000px;padding:12px 16px}
+table{width:100%;border-collapse:separate;border-spacing:0;min-width:640px}
+th{background:var(--h);color:var(--ht);font-size:11.5px;font-weight:700;padding:6px;text-align:center;white-space:nowrap;border-bottom:1px solid var(--hb,transparent)}
+th.sel{background:var(--hs)}th.bu{text-align:left;padding:8px 10px}th.g{border-left:2px solid var(--gl)}
+th small{display:flex;justify-content:space-around;margin-top:2px;color:var(--hsub);font-size:10px}
+td{padding:8px 4px;text-align:center;border-bottom:.5px solid #eee}td.b{text-align:left;padding:8px 10px;font-weight:700}
+tbody tr:nth-child(even) td{background:var(--z)}tbody tr.rs td{background:var(--rs)}tbody tr.rs td.b{color:var(--ap)}
+td.g{border-left:2px solid var(--gb)}.ok{color:var(--ok);font-weight:700}.ap{color:var(--ap);font-weight:700}.nd{color:#b4bcc8;font-size:10px}
+.s1{--h:linear-gradient(180deg,#1f4f9a,#173f7d);--ht:#fff;--hs:linear-gradient(180deg,#2f6bc4,#2459ad);--hsub:#b9d2f5;--gl:#8fb2e6;--gb:#c9d8ee;--z:#f4f8fe;--rs:#dbe9fd;--ok:#1a7f37;--ap:#0b57d0}
+.s2{--h:linear-gradient(180deg,#eef4ff,#e3ecfb);--ht:#1f3a64;--hs:#bcd5fa;--hsub:#6b7f9e;--hb:#cfdcf2;--gl:#9db8e4;--gb:#d5e1f3;--z:#fafcff;--rs:#e3efff;--ok:#1a7f37;--ap:#0b57d0}
+.s3{--h:linear-gradient(180deg,#3a4350,#2b323d);--ht:#fff;--hs:linear-gradient(180deg,#1f8a4c,#17703c);--hsub:#aab4c2;--gl:#6b7686;--gb:#d8dde4;--z:#f7f8fa;--rs:#dff3e6;--ok:#1a7f37;--ap:#17703c}
+</style></head><body>
+<h3>แบบ 1 · น้ำเงินเข้ม (ที่แก้ในโค้ดตอนนี้)</h3>
+<div class="box s1" id="a"></div>
+<h3>แบบ 2 · ฟ้าอ่อน</h3>
+<div class="box s2" id="b"></div>
+<h3>แบบ 3 · เทาเข้ม + เขียว</h3>
+<div class="box s3" id="c"></div>
+<script>
+const T=`<table><thead><tr><th class="bu">BU</th>
+<th colspan="2" class="sel">21930052<small><span>TB</span><span>AP</span></small></th>
+<th colspan="2">21930054<small><span>TB</span><span>AP</span></small></th>
+<th colspan="2">21930084<small><span>TB</span><span>AP</span></small></th>
+<th colspan="2">21930085<small><span>TB</span><span>AP</span></small></th>
+<th colspan="2" class="g">21930100<small><span>TB</span><span>AP</span></small></th>
+<th colspan="2">21930220<small><span>TB</span><span>AP</span></small></th></tr></thead><tbody>
+<tr class="rs"><td class="b">MPS</td><td class="ok">✓</td><td class="ap">24</td><td class="ok">✓</td><td class="ap">88</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="ok g">✓</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td></tr>
+<tr><td class="b">TOP</td><td class="ok">✓</td><td class="ap">3,120</td><td class="ok">✓</td><td class="ap">5,944</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd g">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td></tr>
+<tr><td class="b">CFM</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd g">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td><td class="nd">No Data</td></tr>
+</tbody></table>`;
+['a','b','c'].forEach(i=>document.getElementById(i).innerHTML=T.replace(/class="nd g"/g,'class="nd g"').replace(/<td class="ok g">/g,'<td class="ok g">'));
+document.querySelectorAll('.box').forEach(b=>b.querySelectorAll('td.g,th.g').forEach(x=>{}));
+</script>
+</body></html>

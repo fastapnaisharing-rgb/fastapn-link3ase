@@ -1,0 +1,91 @@
+// MARKER_MENU_PERMISSION_CONFIG_BACKEND_V1
+// GL Access แบบ "ตามสิทธิ์ (Permission)" -- เก็บว่า "สิทธิ์ไหน" เข้าเมนูได้ (ตาราง menu_permission_config) แทนรายชื่อ User
+// ค่าชุดเดียวกัน (menu_key = 'gl-ap-recon') ใช้คุมทั้ง: เมนู GL Functional > Account Payable Recon., กล่อง GL Report ใน Document Center,
+// Endpoint /ap-reconcile/report/*, และสิทธิ์ SharePoint Handler ฝั่ง AP
+// ยังไม่เคยตั้งค่า = ใช้ค่าเริ่มต้น Manual | IE | I-Pro (ตรงกับ menuConfig.js requiredPermissions)
+import { pool } from "../db.js";
+
+export const GL_MENU_KEY = "gl-ap-recon";
+const DEFAULTS = { [GL_MENU_KEY]: ["Manual", "IE", "I-Pro"] };
+const PERM_WHITELIST = ["Manual", "IE", "I-Pro", "VAT", "GL", "Function"];
+
+pool.query(`CREATE TABLE IF NOT EXISTS menu_permission_config (
+  menu_key text NOT NULL, perm_key text NOT NULL, allowed boolean NOT NULL DEFAULT true,
+  updated_by text, updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (menu_key, perm_key))`)
+  .then(async () => {
+    for (const [menu, perms] of Object.entries(DEFAULTS)) {
+      const c = await pool.query("SELECT 1 FROM menu_permission_config WHERE menu_key=$1 LIMIT 1", [menu]);
+      if (!c.rows.length) {
+        for (const p of perms) {
+          await pool.query("INSERT INTO menu_permission_config (menu_key, perm_key, allowed) VALUES ($1,$2,true) ON CONFLICT DO NOTHING", [menu, p]);
+        }
+      }
+    }
+  })
+  .catch((e) => console.error("[migrate menu_permission_config]:", e.message));
+
+let cache = null; let cacheAt = 0;
+export async function loadMenuPerms() {
+  if (cache && Date.now() - cacheAt < 10000) return cache;
+  const { rows } = await pool.query("SELECT menu_key, perm_key, allowed FROM menu_permission_config");
+  const menus = {};
+  for (const r of rows) { if (!menus[r.menu_key]) menus[r.menu_key] = []; if (r.allowed) menus[r.menu_key].push(r.perm_key); }
+  cache = menus; cacheAt = Date.now();
+  return menus;
+}
+// สิทธิ์ที่เข้า GL (AP Recon) ได้ -- เมนูที่ยังไม่มีแถวในตาราง = ค่าเริ่มต้น | โหลดไม่ได้ = ค่าเริ่มต้น
+export async function glAllowedPerms() {
+  try { const m = await loadMenuPerms(); return m[GL_MENU_KEY] || DEFAULTS[GL_MENU_KEY]; } catch (_) { return DEFAULTS[GL_MENU_KEY]; }
+}
+
+// MARKER_GL_REPORT_OVERRIDE_V1 -- ผู้ใช้คนนี้เข้า GL (AP Recon / SharePoint Handler ฝั่ง AP) ได้ไหม
+// Owner = ได้เสมอ | มี Override รายคน (doc_access_override, folder_key='gl') = ใช้ค่านั้น | ไม่มี = ตาม Permission ที่เปิดไว้ใน GL Access
+export async function glAccessFor(u) {
+  if (!u) return false;
+  if (u.appRole === "Owner") return true;
+  try {
+    const r = await pool.query("SELECT id FROM user_roles WHERE email = $1 LIMIT 1", [u.email]);
+    const uid = r.rows[0] && r.rows[0].id;
+    if (uid) {
+      const o = await pool.query("SELECT allowed FROM doc_access_override WHERE user_id = $1 AND folder_key = 'gl'", [uid]);
+      if (o.rows.length) return !!o.rows[0].allowed;
+    }
+  } catch (_) { /* ไม่มี Override -> ตาม Permission */ }
+  const allowed = await glAllowedPerms();
+  const p = u.permissions || {};
+  return allowed.some((k) => p[k] === true);
+}
+
+export default function registerMenuPermissions(router) {
+  // GET /ap-reconcile/menu-permissions -> { menus: { 'gl-ap-recon': ['Manual','IE','I-Pro'] } }
+  router.get("/menu-permissions", async (req, res) => {
+    try {
+      const menus = { ...(await loadMenuPerms()) };
+      for (const [k, v] of Object.entries(DEFAULTS)) if (!menus[k]) menus[k] = [...v];
+      res.json({ menus });
+    } catch (err) { res.status(500).json({ error: "โหลดสิทธิ์เมนูไม่สำเร็จ", detail: err.message }); }
+  });
+  // PUT /ap-reconcile/menu-permissions  body { menu_key, perm_key, allowed }  (Owner / Admin)
+  router.put("/menu-permissions", async (req, res) => {
+    try {
+      const role = req.user && req.user.appRole;
+      if (role !== "Owner" && role !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+      const { menu_key, perm_key, allowed } = req.body || {};
+      if (!/^[a-z0-9-]{1,40}$/.test(String(menu_key || ""))) return res.status(400).json({ error: "menu_key ไม่ถูกต้อง" });
+      if (!PERM_WHITELIST.includes(perm_key)) return res.status(400).json({ error: "perm_key ไม่ถูกต้อง" });
+      // เมนูที่ยังไม่เคยมีแถว: Seed ค่าเริ่มต้นก่อน แล้วค่อยแก้ทีละสิทธิ์ (กันสิทธิ์อื่นหายตอน Toggle ครั้งแรก)
+      const has = await pool.query("SELECT 1 FROM menu_permission_config WHERE menu_key=$1 LIMIT 1", [menu_key]);
+      if (!has.rows.length && DEFAULTS[menu_key]) {
+        for (const p of DEFAULTS[menu_key]) await pool.query("INSERT INTO menu_permission_config (menu_key, perm_key, allowed) VALUES ($1,$2,true) ON CONFLICT DO NOTHING", [menu_key, p]);
+      }
+      await pool.query(
+        `INSERT INTO menu_permission_config (menu_key, perm_key, allowed, updated_by, updated_at) VALUES ($1,$2,$3,$4,NOW())
+         ON CONFLICT (menu_key, perm_key) DO UPDATE SET allowed=EXCLUDED.allowed, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+        [menu_key, perm_key, !!allowed, (req.user && (req.user.username || req.user.email)) || null]
+      );
+      cache = null;
+      res.json({ ok: true });
+    } catch (err) { res.status(500).json({ error: "บันทึกสิทธิ์เมนูไม่สำเร็จ", detail: err.message }); }
+  });
+}

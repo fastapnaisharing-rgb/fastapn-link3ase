@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup แท็บ แนบไฟล์ / วาง Text</title>
+<style>
+:root{--bg:#f4f3ef;--card:#fff;--ink:#1f2933;--mut:#7b8794;--navy:#1a3a5c;--line:#e3e5ea;--ok:#217a3a;--okbg:#e6f4ea;--hl:#fff6d6}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1d22;--card:#262a31;--ink:#e6e8eb;--mut:#9aa3ad;--navy:#9cc0ee;--line:#3a3f48;--ok:#6fcf8a;--okbg:#22382a;--hl:#4a3f17}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,"Noto Sans Thai",sans-serif;padding:16px}
+h1{font-size:17px;margin:0 0 4px}p.s{margin:0 0 18px;color:var(--mut);font-size:13px}
+.opt{margin-bottom:26px}.lab{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:999px;background:var(--okbg);color:var(--ok);margin-bottom:8px}
+.note{font-size:12.5px;color:var(--mut);margin:8px 0 0}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:28px 12px;text-align:center;font-size:13px}
+.drop b{display:block;font-size:14px;margin-bottom:4px}.drop small{color:var(--mut)}
+.pill{display:inline-block;background:var(--bg);border-radius:999px;padding:3px 10px;font-size:11px;color:var(--mut);margin-top:8px}
+textarea{width:100%;height:84px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);padding:8px;font:inherit;font-size:13px;resize:none}
+.pane{display:none}.pane.on{display:block}
+button.t{font:inherit;cursor:pointer;color:var(--mut);background:none;border:0}
+/* A: underline */
+.A{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.A .t{padding:9px 2px;font-size:14px;font-weight:600;border-bottom:3px solid transparent;margin-bottom:-1px}
+.A .t.on{color:var(--navy);border-color:#1a73e8}.A .t:hover{color:var(--ink)}
+/* B: segmented */
+.B{display:inline-flex;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px;margin-bottom:12px}
+.B .t{padding:7px 16px;border-radius:8px;font-size:13.5px;font-weight:600}.B .t.on{background:var(--card);color:var(--navy);box-shadow:0 1px 3px #0003}
+/* C: folder tabs */
+.C{display:flex;gap:4px;padding-left:12px;margin-bottom:-1px;position:relative;z-index:1}
+.C .t{padding:9px 18px;border:1px solid var(--line);border-bottom:0;border-radius:10px 10px 0 0;background:var(--bg);font-size:13.5px;font-weight:600}
+.C .t.on{background:var(--card);color:var(--navy);box-shadow:0 -3px 0 #1a73e8 inset}
+.Cp{border-top-left-radius:0}
+/* D: cards with description */
+.D{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}@media(max-width:560px){.D{grid-template-columns:1fr}}
+.D .t{text-align:left;padding:11px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.D .t b{display:block;font-size:14px;color:var(--ink)}.D .t span{font-size:12px}
+.D .t.on{border-color:#1a73e8;box-shadow:0 0 0 2px #1a73e855}.D .t.on b{color:var(--navy)}
+</style></head><body>
+<h1>แท็บ "แนบไฟล์ / ลากไฟล์" กับ "วาง Text จาก Excel / Notepad"</h1>
+<p class="s">กดสลับแท็บได้จริงในทุกแบบ | ตัวเนื้อหาข้างล่าง (กล่องลากไฟล์ / ช่องวางข้อความ) ใช้ของเดิม เปลี่ยนแค่ตัวสลับ</p>
+
+<div class="opt" data-g="A"><span class="lab">แบบ A · แท็บขีดเส้นใต้</span>
+<div class="panel"><div class="A"><button class="t on" data-p="f">📎 แนบไฟล์ / ลากไฟล์</button><button class="t" data-p="x">📋 วาง Text จาก Excel / Notepad</button></div>
+<div class="pane on" data-p="f"><div class="drop"><b>ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์</b><small>รองรับ TB (.out), Input Summary (.out) และ Simple Report (.xlsx)</small><br><span class="pill">หรือกด Ctrl+V เพื่อวางข้อมูลจากคลิปบอร์ดโดยตรง</span></div></div>
+<div class="pane" data-p="x"><textarea placeholder="วางข้อมูลจาก Excel / Notepad ที่นี่"></textarea></div></div>
+<p class="note">เรียบ ดูเหมือนแท็บเมนูหลัก (Dashboard / Upload File) ที่มีอยู่ ใช้พื้นที่น้อยที่สุด</p></div>
+
+<div class="opt" data-g="B"><span class="lab">แบบ B · Segmented (สวิตช์แบบแคปซูล)</span>
+<div class="panel"><div class="B"><button class="t on" data-p="f">📎 แนบไฟล์</button><button class="t" data-p="x">📋 วาง Text</button></div>
+<div class="pane on" data-p="f"><div class="drop"><b>ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์</b><small>ระบบตรวจชนิดไฟล์ให้อัตโนมัติ</small></div></div>
+<div class="pane" data-p="x"><textarea placeholder="วางข้อมูลจาก Excel / Notepad ที่นี่"></textarea></div></div>
+<p class="note">ชัดว่าเลือกได้ทีละอย่าง ชื่อสั้น เหมาะกับพื้นที่แคบ แต่ดูเป็นสวิตช์มากกว่าแท็บ</p></div>
+
+<div class="opt" data-g="C"><span class="lab">แบบ C · แท็บแบบแฟ้ม (ติดกับกรอบเนื้อหา)</span>
+<div><div class="C"><button class="t on" data-p="f">📎 แนบไฟล์ / ลากไฟล์</button><button class="t" data-p="x">📋 วาง Text จาก Excel / Notepad</button></div>
+<div class="panel Cp"><div class="pane on" data-p="f"><div class="drop"><b>ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์</b><small>รองรับ TB (.out), Input Summary (.out) และ Simple Report (.xlsx)</small></div></div>
+<div class="pane" data-p="x"><textarea placeholder="วางข้อมูลจาก Excel / Notepad ที่นี่"></textarea></div></div></div>
+<p class="note">แท็บเชื่อมกับกรอบเนื้อหา เห็นชัดว่าเนื้อหาข้างล่างเป็นของแท็บไหน</p></div>
+
+<div class="opt" data-g="D"><span class="lab">แบบ D · แท็บแบบการ์ด มีคำอธิบายใต้ชื่อ</span>
+<div class="panel"><div class="D"><button class="t on" data-p="f"><b>📎 แนบไฟล์ / ลากไฟล์</b><span>.out / .xlsx ตรวจชนิดอัตโนมัติ</span></button><button class="t" data-p="x"><b>📋 วาง Text</b><span>คัดลอกจาก Excel / Notepad แล้ววาง</span></button></div>
+<div class="pane on" data-p="f"><div class="drop"><b>ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์</b><span class="pill">หรือกด Ctrl+V เพื่อวางจากคลิปบอร์ด</span></div></div>
+<div class="pane" data-p="x"><textarea placeholder="วางข้อมูลจาก Excel / Notepad ที่นี่"></textarea></div></div>
+<p class="note">บอกชัดว่าแต่ละแท็บทำอะไร เหมาะถ้าผู้ใช้ใหม่ยังไม่คุ้น แต่สูงกว่าแบบอื่น</p></div>
+
+<script>
+document.querySelectorAll('.opt').forEach(function(o){
+  o.querySelectorAll('.t').forEach(function(b){
+    b.addEventListener('click',function(){
+      o.querySelectorAll('.t').forEach(function(x){x.classList.toggle('on',x===b)});
+      o.querySelectorAll('.pane').forEach(function(p){p.classList.toggle('on',p.dataset.p===b.dataset.p)});
+    });
+  });
+});
+</script>
+</body></html>

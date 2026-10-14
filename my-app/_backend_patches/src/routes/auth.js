@@ -2,6 +2,7 @@ import express from "express";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { pool } from "../db.js";
+import { glAllowedPerms } from "./menuPermissions.js"; // MARKER_MENU_PERMISSION_CONFIG_BACKEND_V1
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -37,13 +38,34 @@ function generateOTP() {
 // mapping เดียวกับ frontend (UserManagement.js DOC_FOLDERS)
 const FOLDER_PERM_MAP = { ap: 'VAT', vat: 'VAT', ie: 'IE', gl: 'GL', ipro: 'I-Pro' };
 
+// MARKER_MENU_USER_GRANT_V1 -- สิทธิ์รายบุคคลต่อเมนู { menu_id: true|false } ส่งให้หน้าเว็บผ่าน permissions.menuGrants
+async function getMenuGrants(userId) {
+  if (!userId) return {};
+  try {
+    const { rows } = await pool.query("SELECT menu_id, granted FROM menu_user_grant WHERE user_id = $1", [userId]);
+    const m = {}; rows.forEach((r) => { m[r.menu_id] = !!r.granted; }); return m;
+  } catch (_) { return {}; } // ตารางยังไม่ถูกสร้าง -> ไม่มี Grant
+}
 async function getDocAccess(userId, permissions) {
   const folders = Object.keys(FOLDER_PERM_MAP);
   const base = {};
   folders.forEach(key => {
     base[key] = permissions?.[FOLDER_PERM_MAP[key]] === true;
   });
-  if (!userId) return base;
+  // MARKER_MENU_PERMISSION_CONFIG_BACKEND_V1 -- กล่อง GL Report = ตามสิทธิ์ที่ตั้งใน GL Access (ไม่ใช่รายชื่อ User / ไม่ใช่ flag GL) -- ไม่ใช้ Override รายคน
+  const glByPerm = async () => { try { const a = await glAllowedPerms(); return a.some((k) => permissions?.[k] === true); } catch (_) { return base.gl; } };
+  if (!userId) { base.gl = await glByPerm(); return base; }
+  // MARKER_MIN_ROLE_SWITCH_V1 -- Permission ขั้นต่ำต่อโฟลเดอร์ (menu_min_role, menu_id = 'doc-<folder>') | Role ต่ำกว่าขั้นต่ำ = ไม่ได้ (ยกเว้นมี Override รายบุคคลด้านล่าง) | ไม่มีแถว = ไม่จำกัด
+  try {
+    const rr = await pool.query("SELECT role FROM user_roles WHERE id = $1", [userId]);
+    const rank = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+    const myRank = rank[String((rr.rows[0] && rr.rows[0].role) || "").toLowerCase()] ?? 0;
+    const { rows: mins } = await pool.query("SELECT menu_id, min_role FROM menu_min_role WHERE menu_id LIKE 'doc-%'");
+    mins.forEach((m) => {
+      const k = String(m.menu_id).slice(4);
+      if (Object.prototype.hasOwnProperty.call(base, k) && myRank < (rank[String(m.min_role).toLowerCase()] ?? 0)) base[k] = false;
+    });
+  } catch (_) { /* ตารางยังไม่ถูกสร้าง -> ไม่จำกัด */ }
   try {
     const { rows } = await pool.query(
       "SELECT folder_key, allowed FROM doc_access_override WHERE user_id = $1",
@@ -55,6 +77,9 @@ async function getDocAccess(userId, permissions) {
         result[o.folder_key] = !!o.allowed;
       }
     });
+    // MARKER_GL_REPORT_OVERRIDE_V1 -- มี Override รายคนของ GL = ใช้ค่านั้น | ไม่มี = ตาม Permission ใน GL Access
+    const glOv = rows.find(o => o.folder_key === 'gl');
+    result.gl = glOv ? !!glOv.allowed : await glByPerm();
     return result;
   } catch (err) {
     console.error("getDocAccess error:", err.message);
@@ -115,7 +140,7 @@ router.post("/login", async (req, res) => {
           email: user.email,
           username: user.username,
           role: user.role,
-          permissions: { ...(user.permissions || {}), docAccess: otpDocAccess },
+          permissions: { ...(user.permissions || {}), docAccess: otpDocAccess, menuGrants: await getMenuGrants(user.id) },
         },
       });
     }
@@ -164,7 +189,7 @@ router.post("/login", async (req, res) => {
         email: user.email,
         username: user.username,
         role: user.role,
-        permissions: { ...(user.permissions || {}), docAccess },
+        permissions: { ...(user.permissions || {}), docAccess, menuGrants: await getMenuGrants(user.id) },
       },
     });
   } catch (err) {
@@ -188,7 +213,7 @@ router.get("/me", async (req, res) => {
     const user = rows[0];
     if (!user) return res.status(404).json({ error: "User not found" });
     const docAccess = await getDocAccess(user.id, user.permissions);
-    res.json({ user: { ...user, permissions: { ...(user.permissions || {}), docAccess } } });
+    res.json({ user: { ...user, permissions: { ...(user.permissions || {}), docAccess, menuGrants: await getMenuGrants(user.id) } } });
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
@@ -323,18 +348,32 @@ router.post("/signup", async (req, res) => {
 
     const { rows } = await pool.query(
       `INSERT INTO user_roles (email, username, password_hash, role, permissions, status, updated_at)
-       VALUES ($1, $2, $3, 'Viewer', $4, 'pending', NOW())
+       VALUES ($1, $2, $3, 'Viewer', $4, 'active', NOW())
        RETURNING id`,
       [email.trim().toLowerCase(), username.trim().toLowerCase(), hash, JSON.stringify(defaultPermissions)]
     );
     const newUserId = rows[0].id;
 
     // สร้าง notification ให้ Owner
-    await pool.query(
-      `INSERT INTO access_requests (requester_id, requester_name, status, request_type, ref_user_id, created_at)
-       VALUES ($1, $2, 'pending', 'signup', $1, NOW())`,
-      [newUserId, username.trim().toLowerCase()]
-    );
+    // MARKER_AUTH_SIGNUP_PENDING_UNTIL_ROLE_V1 -- สมัครแล้วเข้าใช้งานได้ทันทีในสิทธิ์ Viewer
+    // แต่คำขอ Signup ค้างเป็น 'pending' (ขึ้นเลขแดงที่กระดิ่ง) จนกว่า Owner จะปรับ Role/Permission
+    // ให้ User คนนี้ใน User Management (ฝั่ง UserManagement.js จะเปลี่ยนเป็น approved ให้เอง)
+    const signupName = username.trim().toLowerCase();
+    const signupMsg = `${signupName} สมัครเข้าใช้งานระบบแล้ว (Viewer) — รอ Owner กำหนด Role/สิทธิ์`;
+    try {
+      await pool.query(
+        `INSERT INTO access_requests (requester_id, requester_name, status, request_type, ref_user_id, message, created_at)
+         VALUES ($1, $2, 'pending', 'signup', $1, $3, NOW())`,
+        [newUserId, signupName, signupMsg]
+      );
+    } catch (e) {
+      // ตารางไม่มีคอลัมน์ message -> บันทึกแบบไม่มีข้อความ (ไม่ให้การสมัครล้ม)
+      await pool.query(
+        `INSERT INTO access_requests (requester_id, requester_name, status, request_type, ref_user_id, created_at)
+         VALUES ($1, $2, 'pending', 'signup', $1, NOW())`,
+        [newUserId, signupName]
+      );
+    }
 
     // MARKER_AUTH_SIGNUP_BROADCAST_V1
     // ── Broadcast แบบ Real-time — Owner เห็น Signup Request ใหม่ทันที ────────
@@ -346,7 +385,7 @@ router.post("/signup", async (req, res) => {
       });
     }
 
-    res.json({ ok: true, message: "ส่งคำขอสำเร็จแล้วครับ รอ Owner Approve" });
+    res.json({ ok: true, message: "สมัครสำเร็จแล้วครับ เข้าสู่ระบบได้เลย (สิทธิ์ Viewer) หากต้องการสิทธิ์เพิ่มให้แจ้ง Owner" }); // MARKER_AUTH_SIGNUP_AUTO_VIEWER_V1
   } catch (err) {
     console.error("signup error:", err.message);
     res.status(500).json({ error: "Internal server error" });

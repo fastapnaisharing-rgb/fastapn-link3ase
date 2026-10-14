@@ -14,6 +14,8 @@ import { pool, getUsernameByEmail } from "./db.js";
 import apPeriodRouter, { checkAutoCloseRequest, checkAndSyncPeriodStatus } from "./routes/apPeriod.js";
 import vatPeriodRouter from "./routes/vatPeriodRoute.js";
 import { purgeExpiredTaxClosePeriods } from "./routes/taxClosePeriod.js"; // MARKER_TAXCLOSE_LIFECYCLE_V1
+import { purgeExpiredArCollectionBackup } from "./routes/arCollectionBackupRetention.js"; // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1
+import { purgeExpiredApReconcileLines } from "./routes/apReconcileExpire.js"; // MARKER_APRECONCILE_EXPIRE_V1
 import iePeriodRouter, { checkAutoCloseIERequest, checkAndSyncIEPeriodStatus } from "./routes/iePeriod.js";
 import systemRouter, { takeRamSnapshot, takeCpuSnapshot, autoCleanJunk, getCurrentCpu } from "./routes/system.js"; // MARKER_SYNC_GETCURRENTCPU_APP_V1
 import fileStorageRouter, { checkAndCleanupFileStorage } from "./routes/fileStorage.js";
@@ -39,6 +41,7 @@ import excelReportRouter from "./routes/excelReport.js";
 import docenterOcrRouter from "./routes/docenter_ocr_route.js";
 import batchControlRouter from "./routes/batchControl.js"; // MARKER_APP_BATCH_CONTROL_ROUTER
 import vatReconcileRouter from "./routes/vatReconcile.js"; // MARKER_APP_VAT_RECONCILE_ROUTER_V1
+import vatSuspenseRouter from "./routes/vatSuspense.js"; // MARKER_APP_VAT_SUSPENSE_ROUTER_V1
 import apReconcileRouter from "./routes/apReconcile.js"; // MARKER_APP_MOUNT_AP_RECONCILE_ROUTER_V1
 // MARKER_MOUNT_SUPPORT_ROUTER_V1
 // MARKER_MOUNT_SUPPORT_RECYCLE_CRON_V1
@@ -77,14 +80,25 @@ app.use(express.json({ limit: '150mb' })); // MARKER_EXPRESS_JSON_LIMIT_150MB_V1
 
 // MARKER_APP_MENU_ENTER_ACTIVITY_V1 -- Activity เก็บเฉพาะ Action สำคัญ: เข้าระบบ (LOGIN เดิม) / เข้าเมนู (MENU_ENTER เมื่อ Heartbeat เปลี่ยนเมนู) / ออกระบบ (LOGOUT จาก WS Presence) -- ไม่เก็บทุก API
 const lastMenuByUser = new Map();
-const MENU_MIN_STAY_SEC = Number(process.env.MENU_MIN_STAY_SEC) || 10; // MARKER_APP_MENU_ENTER_MIN_STAY_V2 -- นับเข้าเมนูทันที แต่ถ้าอยู่ไม่เกิน 10 วิ แล้วออก = ลบรายการนั้นทิ้ง (ไม่นับ)
+const MENU_MIN_STAY_SEC = Number(process.env.MENU_MIN_STAY_SEC) || 30; // MARKER_APP_MENU_ENTER_MIN_STAY_30S_V1 -- เดิม 10 วิ -> 30 วิ (ลดรายการเข้าเมนูที่คลิกผ่าน) | ตั้ง env MENU_MIN_STAY_SEC เพื่อเปลี่ยนได้ // MARKER_APP_MENU_ENTER_MIN_STAY_V2 -- นับเข้าเมนูทันที แต่ถ้าอยู่ไม่เกิน 10 วิ แล้วออก = ลบรายการนั้นทิ้ง (ไม่นับ)
+// MARKER_ACTIVITYLOG_EVENT_BROADCAST_V1 -- แจ้ง Event 'activity_log_updated' ให้หน้า Activity Log (System Console) ดึงข้อมูลใหม่เอง แทน Polling
+// Throttle: ส่งไม่เกินทุก 3 วินาที (รวมหลาย Log เป็นสัญญาณเดียว) กันหน้าเว็บดึงรัวตอนมี Log ถี่
+let _activityLogNotifyTimer = null;
+function notifyActivityLogUpdated() {
+  if (_activityLogNotifyTimer) return;
+  _activityLogNotifyTimer = setTimeout(() => {
+    _activityLogNotifyTimer = null;
+    try { wsBroadcast("activity_log_updated", {}); } catch (e) { /* ไม่ให้กระทบการบันทึก Log */ }
+  }, 3000);
+}
 function logActivity(username, action, moduleName, at) { // คืน Promise<id> (null ถ้าไม่สำเร็จ)
   if (!username) return Promise.resolve(null);
   return pool.query("INSERT INTO activity_log (username, user_email, action, module, created_at) VALUES ($1, NULL, $2, $3, COALESCE($4::timestamptz, NOW())) RETURNING id", [username, action, moduleName ? String(moduleName).slice(0, 60) : null, at ? new Date(at).toISOString() : null])
-    .then((r) => r.rows[0]?.id ?? null)
+    .then((r) => { notifyActivityLogUpdated(); return r.rows[0]?.id ?? null; })
     .catch(async (e) => {
       if (e.code === "42703") { // ไม่มี Column id -> บันทึกแบบไม่คืน id (ไม่รองรับการลบรายการคลิกผ่าน)
         try { await pool.query("INSERT INTO activity_log (username, user_email, action, module, created_at) VALUES ($1, NULL, $2, $3, COALESCE($4::timestamptz, NOW()))", [username, action, moduleName ? String(moduleName).slice(0, 60) : null, at ? new Date(at).toISOString() : null]); } catch (e2) { console.error("[activity] log error:", e2.message); }
+        notifyActivityLogUpdated();
         return null;
       }
       console.error("[activity] log error:", e.message); return null;
@@ -121,6 +135,8 @@ app.use("/api/menu_active_sessions", (req, res, next) => {
       if (!user || !menu) return;
       const cur = lastMenuByUser.get(user);
       const now = Date.now();
+      // MARKER_APP_MENU_ENTER_SKIP_HOME_V1 -- Home ที่เป็นหน้าแรกหลัง Login (ยังไม่เคยเข้าเมนูอื่น) ไม่บันทึก | กดกลับมา Home จากเมนูอื่นยังบันทึกตามปกติ
+      if (menu === "home" && !cur) { lastMenuByUser.set(user, { menu, since: now, idPromise: null }); return; }
       if (cur && cur.menu === menu) return; // Heartbeat ซ้ำเมนูเดิม ไม่นับซ้ำ
       if (cur && now - cur.since <= MENU_MIN_STAY_SEC * 1000 && cur.idPromise) { // เมนูก่อนหน้าอยู่ไม่เกิน 10 วิ = คลิกผ่าน -> ลบรายการทิ้ง
         cur.idPromise.then((id) => { if (id) pool.query("DELETE FROM activity_log WHERE id = $1", [id]).catch(() => {}); });
@@ -266,6 +282,10 @@ app.use("/api/excel", excelReportRouter);
 app.use("/api/docenter", docenterOcrRouter);
 app.use("/api/batch-control", batchControlRouter);
 app.use("/api/vat-reconcile", vatReconcileRouter); // MARKER_APP_MOUNT_VAT_RECONCILE_ROUTER_V1
+app.use("/api/vat-suspense", vatSuspenseRouter); // MARKER_APP_MOUNT_VAT_SUSPENSE_ROUTER_V1
+// MARKER_APP_AP_RECONCILE_TB_FORWARD_V1 -- หน้า AP Recon. อัปโหลด TB ผ่าน /api/ap-reconcile/tb/{preview,commit} แต่ Parser/Upsert TB อยู่ที่ vatReconcileRouter (/tb/*) ที่เดียว
+// (ตาราง vat_reconcile_tb ใช้ร่วมกัน) -> Forward ไปใช้ Logic เดิมเลย ไม่ Duplicate Code, ต้องวางก่อน apReconcileRouter
+app.use("/api/ap-reconcile/tb", (req, res, next) => { req.url = "/tb" + req.url; vatReconcileRouter(req, res, next); });
 app.use("/api/ap-reconcile", apReconcileRouter); // MARKER_APP_MOUNT_AP_RECONCILE_ROUTER_V1
 app.use("/api/support", supportRouter); // MARKER_MOUNT_SUPPORT_ROUTER_V1
 
@@ -396,6 +416,203 @@ async function checkAndCleanupUnmatchedNotes() { // MARKER_APP_NOTES_CLEANUP_UNM
   }
 }
 
+// MARKER_APP_VAT_ROUND_CONFIRM_REMINDER_V1 -- VAT Watchlist: ถึง >=95% ของ Active BU แล้ว Confirm รอบได้ | ถ้ายังไม่ Confirm และ (Update ครบ 100% หรือไม่มี Update ใหม่เกิน 60 นาที) -> แจ้งเตือน Owner/Admin ที่ Bell (1 ครั้ง/รอบ) | Confirm ผ่าน POST /api/vat_watchlist_round/confirm
+const VAT_ROUND_CONFIRM_MIN_PCT = 95;
+const VAT_ROUND_IDLE_MINUTES = 60;
+async function getVatRoundProgress() {
+  const rsq = await pool.query(`SELECT * FROM vat_watchlist_round_state ORDER BY id LIMIT 1`);
+  const rs = rsq.rows[0] || null;
+  const cq = await pool.query(`SELECT bu, "VAT %" AS vat_pct, vat_watchlist_status AS st, vat_watchlist_last_incomplete_update AS lu, vat_watchlist_incomplete_to AS it, vat_watchlist_active_touched_at AS tt FROM company_list WHERE deleted IS NOT TRUE`);
+  const twoMonthsAgo = new Date(); twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+  const isActive = (c) => { // เหมือน getVatWatchlistEffectiveStatus ฝั่ง Frontend
+    const raw = String(c.st || "").trim().toLowerCase().replace(/\s+/g, "_");
+    if (["inactive", "unclaim", "out_of_scope"].includes(raw)) return false;
+    const vp = parseFloat(c.vat_pct);
+    if (!isNaN(vp) && vp === 0) return false;
+    const a = c.lu ? new Date(c.lu).getTime() : NaN; const b = c.tt ? new Date(c.tt).getTime() : NaN;
+    const last = Math.max(isNaN(a) ? -Infinity : a, isNaN(b) ? -Infinity : b);
+    return Number.isFinite(last) && last >= twoMonthsAgo.getTime();
+  };
+  const active = cq.rows.filter(isActive);
+  const startMs = rs && rs.round_started_at ? new Date(rs.round_started_at).getTime() : NaN;
+  // MARKER_APP_VAT_ROUND_SAME_DATA_DATE_V1 -- เหมือน Frontend (isVatWatchlistUpdatedThisRound): BU ที่ Upload ก่อน Reset แต่ Last Date Incomplete เป็นวันเดียวกับข้อมูลของรอบใหม่ = นับเป็น Updated
+  //   วันที่ข้อมูลของรอบ = incomplete_to ล่าสุดของ Active BU ที่ Upload หลัง Reset จริง (ยังไม่มีใคร Upload หลัง Reset = ไม่นับเพิ่ม)
+  const dayKey = (v) => { const d = v ? new Date(v) : null; if (!d || isNaN(d.getTime())) return null; return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  let bestIt = -Infinity;
+  active.forEach((c) => { if (c.lu && Number.isFinite(startMs) && new Date(c.lu).getTime() >= startMs) { const t = c.it ? new Date(c.it).getTime() : NaN; if (Number.isFinite(t) && t > bestIt) bestIt = t; } });
+  const refDay = Number.isFinite(bestIt) && bestIt > -Infinity ? dayKey(bestIt) : null;
+  const updated = active.filter((c) => c.lu && ((Number.isFinite(startMs) && new Date(c.lu).getTime() >= startMs) || (refDay && dayKey(c.it) === refDay)));
+  const lastUpdateMs = updated.reduce((mx, c) => (Number.isFinite(startMs) && new Date(c.lu).getTime() >= startMs ? Math.max(mx, new Date(c.lu).getTime()) : mx), 0); // นับเวลา Upload ล่าสุดเฉพาะที่ Upload หลัง Reset จริง (ไม่ให้ BU ที่นับเพราะวันที่เดียวกันดัน Idle Timer)
+  const total = active.length;
+  return { rs, total, updated: updated.length, pct: total > 0 ? (updated.length / total) * 100 : 0, lastUpdateMs };
+}
+async function checkVatRoundConfirmReminder() {
+  const pr = await getVatRoundProgress();
+  const clear = () => pool.query(`DELETE FROM notifications WHERE category = 'VAT_ROUND_CONFIRM'`);
+  if (!pr.rs || pr.rs.is_confirmed || pr.pct < VAT_ROUND_CONFIRM_MIN_PCT) { await clear(); return; }
+  const allDone = pr.total > 0 && pr.updated >= pr.total; // ครบทุก BU แล้ว -> แจ้งทันที
+  if (!allDone && (!pr.lastUpdateMs || Date.now() - pr.lastUpdateMs < VAT_ROUND_IDLE_MINUTES * 60 * 1000)) return; // ยังมี Update ต่อเนื่อง -> รอ
+  const ex = await pool.query(`SELECT 1 FROM notifications WHERE category = 'VAT_ROUND_CONFIRM' AND created_at >= $1 LIMIT 1`, [pr.rs.round_started_at]);
+  if (ex.rowCount > 0) return; // แจ้งแล้วในรอบนี้
+  await clear();
+  const title = `VAT Watchlist: Update แล้ว ${pr.updated}/${pr.total} BU — รอ Confirm`;
+  const msg = `${allDone ? "Update ครบทุก BU แล้ว" : `ไม่มี Update ใหม่เกิน ${VAT_ROUND_IDLE_MINUTES} นาที`} ขณะนี้ Update แล้ว ${pr.updated} จาก ${pr.total} Active BU (${Math.round(pr.pct)}%) — Owner/Admin กรุณา Confirm ว่า Data ครบแล้ว`;
+  for (const role of ["Owner", "Admin"]) {
+    await pool.query(
+      `INSERT INTO notifications (title, message, category, action_type, target_role, created_by, read_by)
+       VALUES ($1, $2, 'VAT_ROUND_CONFIRM', 'VAT_ROUND_CONFIRM', $3, 'system (auto)', '[]'::jsonb)`, [title, msg, role]);
+  }
+}
+app.post("/api/vat_watchlist_round/confirm", async (req, res) => {
+  try {
+    const role = String(req.user?.appRole || "");
+    if (role !== "Owner" && role !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner/Admin เท่านั้น" });
+    const pr = await getVatRoundProgress();
+    if (!pr.rs) return res.status(404).json({ error: "ไม่พบสถานะรอบ (vat_watchlist_round_state)" });
+    if (pr.pct < VAT_ROUND_CONFIRM_MIN_PCT) return res.status(409).json({ error: `ต้อง Update ถึง ${VAT_ROUND_CONFIRM_MIN_PCT}% ก่อน (ตอนนี้ ${pr.updated}/${pr.total})` });
+    const who = (await getUsernameByEmail(req.user.email).catch(() => null)) || req.user.email;
+    await pool.query(`UPDATE vat_watchlist_round_state SET is_confirmed = true, confirmed_by = $1, confirmed_at = NOW() WHERE id = $2`, [who, pr.rs.id]);
+    await pool.query(`DELETE FROM notifications WHERE category = 'VAT_ROUND_CONFIRM'`);
+    wsBroadcast("vat_watchlist_round_state_updated", {});
+    res.json({ ok: true, updated: pr.updated, total: pr.total });
+  } catch (err) {
+    console.error("[vat_watchlist_round/confirm]", err);
+    res.status(500).json({ error: "Confirm ไม่สำเร็จ", detail: err.message });
+  }
+});
+
+// MARKER_APP_VAT_FREEZE_AUTO_SYNC_V1 -- ซิงค์ Report -> Freeze Final อัตโนมัติ
+//   กติกา: BU ที่งวดล่าสุดมี Final แล้วและ Live (vat_summary_live) ต่างจาก Final (เทียบ Signature ระดับแถว) และยังอยู่ในช่วง grace (<=20 วัน)
+//   -> Freeze Final ซ้ำเฉพาะ BU นั้น (fn_freeze_vat_finalize force=true) | 21-30 วัน (ต้องยืนยัน) และ >30 วัน (ล็อก) ไม่ทำเอง -> หน้า Freeze ขึ้นธงให้ Owner
+//   ตัวกระตุ้น: (1) ทุกครั้งที่เขียน /api/vat_watchlist_report/* สำเร็จ (Debounce 5 วิ) (2) ก่อน replace_bu ของงวดใหม่ (เก็บสถานะสุดท้ายของงวดเก่า) (3) ทุก 10 นาที (กันตก) (4) ปุ่ม Owner
+//   ปิดได้ด้วย Env FREEZE_AUTO_SYNC=off
+const FREEZE_SIG_EXPR = `md5(COALESCE(string_agg(concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text), '|' ORDER BY concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text)), ''))`;
+let __freezeSyncTimer = null;
+let __freezeSyncRunning = false;
+const __freezeSyncTried = new Map(); // MARKER_APP_VAT_FREEZE_NO_LOOP_GUARD_V1 -- จำ Signature Live ที่เคย Freeze แล้ว ถ้า Freeze แล้วยังต่าง (โครงสร้าง Final != Live) ห้ามวน Freeze ซ้ำจนกว่า Live จะเปลี่ยนจริง
+async function runFreezeSync(reason, opts = {}) {
+  if (__freezeSyncRunning) { scheduleFreezeSync(reason); return null; }
+  __freezeSyncRunning = true;
+  const user = opts.user || "auto-sync";
+  const busFilter = Array.isArray(opts.bus) && opts.bus.length ? opts.bus : null;
+  const out = { reason, checked: 0, synced: 0, needs_confirm: 0, locked: 0, errors: 0, results: [] };
+  try {
+    const q = await pool.query(
+      `WITH cur AS (SELECT bu, max(period_month) AS p FROM vat_summary_live GROUP BY bu),
+            live AS (SELECT l.bu, c.p AS period_month, ${FREEZE_SIG_EXPR} AS sig FROM vat_summary_live l JOIN cur c ON c.bu = l.bu AND c.p = l.period_month WHERE ($1::text[] IS NULL OR l.bu = ANY($1::text[])) GROUP BY l.bu, c.p),
+            fzv AS (SELECT bu, period_month, freeze_version, max(freeze_status) AS fs, ${FREEZE_SIG_EXPR} AS sig FROM vat_summary_frozen WHERE (bu, period_month) IN (SELECT bu, p FROM cur) GROUP BY bu, period_month, freeze_version),
+            fl AS (SELECT DISTINCT ON (bu) * FROM fzv ORDER BY bu, freeze_version DESC)
+       SELECT l.bu, l.period_month, l.sig AS live_sig FROM live l JOIN fl f ON f.bu = l.bu AND f.period_month = l.period_month
+       WHERE lower(f.fs) = 'final' AND f.sig <> l.sig ORDER BY l.bu`,
+      [busFilter]
+    );
+    out.checked = q.rowCount;
+    for (const r of q.rows) {
+      try {
+        // MARKER_APP_VAT_FREEZE_LOST_PERIOD_V1 -- ส่ง BU เข้า Window: BU ที่ยังไม่เข้างวดใหม่ (Lost Period) งวดของ BU ยังเปิด DB คืน open ไม่ผูก 20/30 วัน (ระดับระบบจะคืน grace/confirm/locked ตามวัน)
+        const w = await pool.query("SELECT fn_vat_freeze_window($1, $2) AS w", [r.period_month, r.bu]);
+        const st = (w.rows[0].w && w.rows[0].w.state) || "unknown";
+        if (st === "confirm") { out.needs_confirm++; out.results.push({ bu: r.bu, period: r.period_month, action: "needs_confirm" }); continue; }
+        if (st !== "grace" && st !== "open") { out.locked++; out.results.push({ bu: r.bu, period: r.period_month, action: "skipped_" + st }); continue; }
+        const tryKey = r.bu + "|" + r.period_month;
+        if (__freezeSyncTried.get(tryKey) === r.live_sig) { out.results.push({ bu: r.bu, period: r.period_month, action: "skipped_no_effect" }); continue; }
+        __freezeSyncTried.set(tryKey, r.live_sig);
+        const f = await pool.query("SELECT fn_freeze_vat_finalize($1, $2, $3, 'manual', true, false) AS r", [r.period_month, r.bu, user]);
+        out.synced++;
+        out.results.push({ bu: r.bu, period: r.period_month, ...f.rows[0].r });
+      } catch (e) {
+        out.errors++;
+        out.results.push({ bu: r.bu, period: r.period_month, action: "error", error: e.message });
+      }
+    }
+    if (out.synced || out.errors) console.log(`[freeze-sync] ${reason}: synced=${out.synced} confirm=${out.needs_confirm} locked=${out.locked} errors=${out.errors}`);
+  } catch (e) {
+    out.errors++;
+    console.error("[freeze-sync] error:", e.message);
+  } finally {
+    __freezeSyncRunning = false;
+  }
+  return out;
+}
+function scheduleFreezeSync(reason) {
+  if (String(process.env.FREEZE_AUTO_SYNC || "").toLowerCase() === "off") return;
+  if (__freezeSyncTimer) clearTimeout(__freezeSyncTimer);
+  __freezeSyncTimer = setTimeout(() => { __freezeSyncTimer = null; runFreezeSync(reason).catch((e) => console.error("[freeze-sync]", e.message)); }, 5000);
+}
+// ก่อนไฟล์งวดใหม่ (as_of_month > งวดปัจจุบันของ BU) จะแทนที่ Report -> เก็บสถานะสุดท้ายของงวดเก่าเข้า Final ก่อน (ถ้ายังอยู่ในช่วงที่ Freeze ได้)
+async function syncFinalBeforeRollover(bus, asOfMonth) {
+  if (String(process.env.FREEZE_AUTO_SYNC || "").toLowerCase() === "off") return null;
+  const cq = await pool.query("SELECT bu FROM (SELECT bu, max(period_month) AS p FROM vat_summary_live WHERE bu = ANY($1::text[]) GROUP BY bu) x WHERE p < $2", [bus, String(asOfMonth)]);
+  const target = cq.rows.map((r) => r.bu);
+  if (!target.length) return null;
+  return runFreezeSync("pre-rollover", { bus: target });
+}
+{ const __iv = setInterval(() => { runFreezeSync("interval").catch(() => {}); }, 10 * 60 * 1000); if (__iv.unref) __iv.unref(); }
+
+// MARKER_APP_VAT_RECON_CHECK_V1 -- ตรวจ Dashboard (vat_summary_live/frozen) vs Report (Ops) รายBU อัตโนมัติ
+//   Claim = avg_vat | Dashboard: งวดล่าสุดต่อBU (Final ทับ Live) ตัด No Risk + Unpaid(ไม่ใช่ Expired/Check Return) | Report: pending, Aging>=1 หรือ Accept
+//   ไม่แก้ข้อมูล: อ่านอย่างเดียว -> เก็บผลล่าสุดไว้ให้หน้า Dashboard แสดงการ์ดเตือน | ปิดได้ด้วย Env RECON_CHECK=off
+const RECON_SQL = `
+WITH cur AS (SELECT bu, max(period_month) p FROM vat_summary_live GROUP BY bu),
+fz AS (SELECT DISTINCT ON (bu, period_month) bu, period_month, freeze_version
+       FROM vat_summary_frozen WHERE freeze_status='final' ORDER BY bu, period_month, freeze_version DESC),
+dash_rows AS (
+  SELECT c.bu, s.aging_risk, s.payment_type, s.bus_type, s.is_cheque_return, s.avg_vat
+  FROM cur c JOIN vat_summary_live s ON s.bu=c.bu AND s.period_month=c.p
+  WHERE NOT EXISTS (SELECT 1 FROM fz WHERE fz.bu=c.bu AND fz.period_month=c.p)
+  UNION ALL
+  SELECT c.bu, f.aging_risk, f.payment_type, f.bus_type, f.is_cheque_return, f.avg_vat
+  FROM cur c JOIN fz ON fz.bu=c.bu AND fz.period_month=c.p
+  JOIN vat_summary_frozen f ON f.bu=fz.bu AND f.period_month=fz.period_month AND f.freeze_version=fz.freeze_version),
+d AS (SELECT bu, sum(avg_vat) dash_v FROM dash_rows
+  WHERE aging_risk IS DISTINCT FROM 'No Risk'
+    AND NOT (aging_risk IS DISTINCT FROM 'Expired' AND NOT COALESCE(is_cheque_return,false)
+             AND (payment_type='Unpaid' OR bus_type IN ('N-PAY','N-PO3')))
+  GROUP BY bu),
+r AS (SELECT bu, sum(avg_vat) rep_v FROM vat_watchlist_report
+  WHERE status='pending' AND bus_type IN ('CPN','ITC','LAND','OTH','UTL')
+    AND (aging_months >= 1 OR (aging_label='Accept' AND aging_months IS NULL))
+  GROUP BY bu),
+j AS (SELECT COALESCE(d.bu,r.bu) bu, COALESCE(d.dash_v,0) dash_v, COALESCE(r.rep_v,0) rep_v FROM d FULL JOIN r ON r.bu=d.bu)
+SELECT bu, round(dash_v,2) AS dashboard, round(rep_v,2) AS report, round(dash_v-rep_v,2) AS diff,
+       (SELECT p FROM cur WHERE cur.bu=j.bu) AS period_month
+FROM j ORDER BY abs(dash_v-rep_v) DESC, bu`;
+let __reconLast = null;
+let __reconTimer = null;
+async function runReconCheck(reason) {
+  const q = await pool.query(RECON_SQL);
+  const rows = q.rows.map((r) => ({ bu: r.bu, period_month: r.period_month, dashboard: Number(r.dashboard), report: Number(r.report), diff: Number(r.diff) }));
+  const diffs = rows.filter((r) => Math.abs(r.diff) > 0.005);
+  __reconLast = {
+    reason, checked_at: new Date().toISOString(), ok: diffs.length === 0,
+    total_dashboard: Math.round(rows.reduce((a, r) => a + r.dashboard, 0) * 100) / 100,
+    total_report: Math.round(rows.reduce((a, r) => a + r.report, 0) * 100) / 100,
+    diff_count: diffs.length, diffs,
+  };
+  if (diffs.length) console.warn(`[recon-check] ${reason}: ต่างกัน ${diffs.length} BU -> ${diffs.slice(0, 5).map((d) => d.bu + ":" + d.diff).join(", ")}`);
+  return __reconLast;
+}
+function scheduleReconCheck(reason, delayMs) {
+  if (String(process.env.RECON_CHECK || "").toLowerCase() === "off") return;
+  if (__reconTimer) clearTimeout(__reconTimer);
+  __reconTimer = setTimeout(() => { __reconTimer = null; runReconCheck(reason).catch((e) => console.error("[recon-check]", e.message)); }, delayMs || 20000);
+}
+{ const __riv = setInterval(() => { scheduleReconCheck("interval", 1000); }, 10 * 60 * 1000); if (__riv.unref) __riv.unref(); }
+{ const __rst = setTimeout(() => { scheduleReconCheck("startup", 1000); }, 30 * 1000); if (__rst.unref) __rst.unref(); }
+// เขียน Report สำเร็จ -> รอ Freeze Sync (5 วิ) ทำงานก่อน แล้วค่อยตรวจ (20 วิ)
+app.use(["/api/vat_watchlist_report", "/api/vat_watchlist_notes"], (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "OPTIONS" && req.method !== "HEAD") {
+    res.on("finish", () => { if (res.statusCode < 400) scheduleReconCheck("after-write", 20000); });
+  }
+  next();
+});
+app.use(["/api/vat_watchlist_report", "/api/vat_watchlist_notes"], (req, res, next) => { // MARKER_APP_VAT_FREEZE_AUTO_SYNC_HOOK_V1 -- รวม vat_watchlist_notes (Note/Check Return เปลี่ยน Accept/Unrealized ใน Report)
+  if (req.method !== "GET" && req.method !== "OPTIONS" && req.method !== "HEAD") {
+    res.on("finish", () => { if (res.statusCode < 400) scheduleFreezeSync("report-write"); });
+  }
+  next();
+});
+
 // MARKER_APP_VAT_WATCHLIST_REPLACE_BU_TRANSACTION_V1
 // -- POST /api/vat_watchlist_report/replace_bu -- Delete BU เก่า + Insert ข้อมูลใหม่ --
 // -- ทั้งหมดในธุรกรรมเดียวกัน (BEGIN...COMMIT / ROLLBACK) กัน Delete สำเร็จ --
@@ -473,6 +690,9 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
       return res.status(409).json({ error: `ข้อมูล ณ เดือน ${asOfMonthIn} เป็นเดือนที่ปิด Period แล้ว ห้ามนำเข้า Report (ใช้อัปเดต Freeze ได้เท่านั้น)`, code: "LATE_ASOF" });
     }
   }
+  if (asOfMonthIn) { // MARKER_APP_VAT_FREEZE_PRE_ROLLOVER_SYNC_V1 -- เก็บสถานะสุดท้ายของงวดเก่าเข้า Final ก่อน Report ถูกแทนด้วยงวดใหม่
+    try { await syncFinalBeforeRollover(bus, String(asOfMonthIn)); } catch (e) { console.error("[freeze-sync] pre-rollover error:", e.message); }
+  }
   // ทำความสะอาด vendor_name ก่อน Insert -- เก็บ Row ไว้ครบทุก Row แค่ตัดหาง Junk ออกจาก vendor_name
   const rows = rawRows.map((r) => {
     if (r && typeof r.vendor_name === "string") {
@@ -492,7 +712,11 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
     // MARKER_APP_TYPE_ABF_STATUS_V1 -- เก็บแถว Popvat Type A/B/F ไว้ก่อนลบ (ไม่ถูกล้างเมื่อ Upload Incomplete ใหม่)
     const keepTypeCnt = await client.query("SELECT COUNT(*)::int AS n FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND status IN ('type_a','type_b','type_f')", [bus]); // MARKER_APP_REPLACE_BU_TYPE_UNTOUCHED_V1 -- แถว Type A/B/F ไม่ถูกแตะเลย (ไม่ลบ/ไม่ Insert กลับ/ไม่ผ่าน Trigger/ไม่ถูก Join) นับไว้แค่ส่งกลับ
     __lap('keep rows saved');
-    const __delRes = await client.query("DELETE FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('type_a','type_b','type_f')", [bus]); // MARKER_APP_REPLACE_BU_TIMING_LOCK_V1 MARKER_APP_REPLACE_BU_TYPE_UNTOUCHED_V1 -- ไม่ลบแถว Type A/B/F -- เก็บจำนวนที่ลบไว้ส่งกลับ (หน้าเว็บไม่ต้องดึงทั้งตารางมานับเอง)
+    const __taxClasses = Array.isArray(req.body.tax_classes) ? req.body.tax_classes.map((x) => String(x).toUpperCase()).filter((x) => ['N','A','T','F','M'].includes(x)) : []; // MARKER_APP_REPLACE_BU_TAXCLASS_V1 -- Suspense: ล้างเฉพาะ Tax Type Class ที่ระบุ (ไม่ส่ง = ล้างทั้ง BU เหมือนเดิม)
+    const __delRes = __taxClasses.length
+      ? await client.query(`DELETE FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('type_a','type_b','type_f')
+          AND (CASE WHEN UPPER(substring(tax_type from '-(N|M)\\s+S?VAT\\s*7\\s*$')) = 'M' THEN 'M' WHEN UPPER(LEFT(TRIM(tax_type), 1)) IN ('A','T','F') THEN UPPER(LEFT(TRIM(tax_type), 1)) ELSE 'N' END) = ANY($2::text[])`, [bus, __taxClasses])
+      : await client.query("DELETE FROM vat_watchlist_report WHERE bu = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('type_a','type_b','type_f')", [bus]); // MARKER_APP_REPLACE_BU_TIMING_LOCK_V1 MARKER_APP_REPLACE_BU_TYPE_UNTOUCHED_V1 -- ไม่ลบแถว Type A/B/F -- เก็บจำนวนที่ลบไว้ส่งกลับ (หน้าเว็บไม่ต้องดึงทั้งตารางมานับเอง)
     __lap(`deleted ${__delRes.rowCount}`);
     const REPLACE_BU_CHUNK_SIZE = 1000; // 1000 แถว x 30 คอลัมน์ = 30,000 Param (ไม่ชน Limit 65,535)
     for (let i = 0; i < rows.length; i += REPLACE_BU_CHUNK_SIZE) {
@@ -507,6 +731,14 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
     }
     await applyOldIncompleteRefJoin(client, bus, true); // MARKER_VATWATCHLISTOPS_OLDINCOMPLETE_REF_JOIN_CALL_V1
     __lap('ref join done');
+    // MARKER_APP_REPLACE_BU_RESTORE_NOTE_REMARK_V1 -- Import ทับ = ลบ+Insert ใหม่ ทำให้ คอลัมน์ remark ของ Report หาย (payload ไม่มี remark) ทั้งที่ Note (vat_watchlist_notes) ยังอยู่ -> เติม remark กลับจาก Note ของ BU ที่เพิ่ง Import (เฉพาะ Note ที่ยัง Match อยู่ และ remark ในแถวยังว่าง)
+    const __remarkRes = await client.query(
+      `UPDATE vat_watchlist_report r SET remark = n.remark
+         FROM vat_watchlist_notes n
+        WHERE r.bu = ANY($1::text[]) AND r.status = 'pending'
+          AND n.bu = r.bu AND n.invoice_ref = r.invoice_ref AND n.supplier_code IS NOT DISTINCT FROM r.supplier_code
+          AND COALESCE(n.status, '') <> 'unmatch' AND COALESCE(BTRIM(n.remark), '') <> '' AND COALESCE(BTRIM(r.remark), '') = ''`, [bus]);
+    __lap(`note remark restored ${__remarkRes.rowCount}`);
     if (keepSendFp.rowCount > 0) {
       await client.query(
         `UPDATE vat_watchlist_report r SET status = k.status
@@ -913,6 +1145,9 @@ app.use("/api/vat_incomplete_column_config", createTableRouter("vat_incomplete_c
 app.use("/api/vat_watchlist_bu_group_range", createTableRouter("vat_watchlist_bu_group_range")); // MARKER_APP_MOUNT_VAT_WATCHLIST_BU_GROUP_RANGE_V1
 app.use("/api/vat_watchlist_related_person", createTableRouter("vat_watchlist_related_person")); // MARKER_APP_MOUNT_VAT_WATCHLIST_RELATED_PERSON_V1
 app.use("/api/vat_mail_config", createTableRouter("vat_mail_config")); // MARKER_APP_MOUNT_VAT_MAIL_CONFIG_V1
+app.use("/api/menu_user_grant", createTableRouter("menu_user_grant")); // MARKER_APP_MOUNT_MENU_USER_GRANT_V1
+app.use("/api/menu_min_role", createTableRouter("menu_min_role")); // MARKER_APP_MOUNT_MENU_MIN_ROLE_V1
+app.use("/api/vat_mail_sent_log", createTableRouter("vat_mail_sent_log")); // MARKER_APP_MOUNT_VAT_MAIL_SENT_LOG_V1
 app.use("/api/vat_mail_draft", createTableRouter("vat_mail_draft")); // MARKER_APP_MOUNT_VAT_MAIL_DRAFT_V1
 app.use("/api/vat-mail-export", vatMailExportRouter); // MARKER_APP_MOUNT_VAT_MAIL_EXPORT_V1
 app.use("/api/vat_watchlist_notes", createTableRouter("vat_watchlist_notes")); // MARKER_APP_MOUNT_VAT_WATCHLIST_NOTES_V1
@@ -932,6 +1167,7 @@ app.use("/api/vat_summary_live_dashboard",  createTableRouter("vat_summary_live_
 app.use("/api/vat_summary_frozen",          createTableRouter("vat_summary_frozen"));
 app.use("/api/vat_summary_frozen_dashboard", createTableRouter("vat_summary_frozen_dashboard"));
 
+// MARKER_APP_VAT_FREEZE_SYNC_SIGNATURE_V1 -- sync_state เทียบ Signature ต่อแถว (bus_type/aging/payment_type/payment_group/true_type/cheque_return/unrealized_reason + exp_vat/avg_vat) จับการจ่าย/เปลี่ยนสถานะที่ยอดรวมไม่เปลี่ยน
 // MARKER_APP_VAT_FREEZE_API_V1 -- หน้า Freeze: สถานะต่อ BU / สั่ง Freeze Final / ประวัติ
 //   กฎ: งวดเปิด = Draft ตาม Live อัตโนมัติ (DB: fn_freeze_vat_sync_draft เรียกจาก fn_recompute_vat_summary_for_bu) | ปิด Period = Final (fn_freeze_vat_finalize)
 //   หลังปิด: <=20 วัน grace, 21-30 วัน confirm, >30 วัน locked (fn_vat_freeze_window)
@@ -947,19 +1183,22 @@ app.get("/api/vat_freeze/status", requireOwnerFreeze, checkPermission("vat_summa
     const { rows } = await pool.query(
       `WITH live AS (
          SELECT bu, count(*)::int AS n, COALESCE(sum(exp_vat),0) AS ev, COALESCE(sum(avg_vat),0) AS av, COALESCE(sum(invoice_count),0)::int AS ic,
-                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te
+                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te,
+                md5(COALESCE(string_agg(concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text), '|' ORDER BY concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text)), '')) AS sig
          FROM vat_summary_live WHERE period_month = $1 GROUP BY bu),
        fz AS (
          SELECT bu, freeze_version, max(freeze_status) AS freeze_status, max(frozen_at) AS frozen_at, max(frozen_by) AS frozen_by, max(trigger_type) AS trigger_type,
                 count(*)::int AS n, COALESCE(sum(exp_vat),0) AS ev, COALESCE(sum(avg_vat),0) AS av, COALESCE(sum(invoice_count),0)::int AS ic,
-                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te
+                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te,
+                md5(COALESCE(string_agg(concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text), '|' ORDER BY concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text)), '')) AS sig
          FROM vat_summary_frozen WHERE period_month = $1 GROUP BY bu, freeze_version),
        fl AS (SELECT DISTINCT ON (bu) * FROM fz ORDER BY bu, freeze_version DESC)
        SELECT COALESCE(l.bu, f.bu) AS bu,
               l.te AS live_total_expired, f.te AS frozen_total_expired, f.freeze_version, f.freeze_status, f.frozen_at, f.frozen_by, f.trigger_type,
+              (SELECT max(x.period_month) FROM vat_summary_live x WHERE x.bu = COALESCE(l.bu, f.bu)) AS cur_period, -- MARKER_APP_VAT_FREEZE_CUR_PERIOD_V1 งวดปัจจุบันของ BU (ถ้า > งวดที่เลือก = BU ย้ายงวดแล้ว Freeze ซ้ำไม่ได้)
               CASE WHEN f.bu IS NULL THEN 'none'
                    WHEN l.bu IS NULL THEN 'frozen_only'
-                   WHEN f.n = l.n AND abs(f.ev - l.ev) < 0.005 AND abs(f.av - l.av) < 0.005 AND f.ic = l.ic THEN 'synced'
+                   WHEN f.n = l.n AND abs(f.ev - l.ev) < 0.005 AND abs(f.av - l.av) < 0.005 AND f.ic = l.ic AND f.sig = l.sig THEN 'synced'
                    ELSE 'diff' END AS sync_state
        FROM live l FULL JOIN fl f ON f.bu = l.bu
        ORDER BY 1`,
@@ -1064,7 +1303,15 @@ app.post("/api/vat_freeze/run", requireOwnerFreeze, checkPermission("vat_watchli
     }
     const user = (req.user && req.user.email) || "system";
     const results = [];
+    // MARKER_APP_VAT_FREEZE_SKIP_ROLLED_V1 -- BU ที่ย้ายไปงวดใหม่แล้ว (งวดปัจจุบัน > งวดที่ขอ) DB ห้าม Freeze งวดเก่าซ้ำ -> ข้ามและรายงานเป็น "rolled" แทน Error
+    const curQ = await pool.query("SELECT bu, max(period_month) AS p FROM vat_summary_live WHERE bu = ANY($1::text[]) GROUP BY bu", [targets]);
+    const curOf = {};
+    curQ.rows.forEach((x) => { curOf[x.bu] = x.p; });
     for (const b of targets) {
+      if (curOf[b] && String(curOf[b]) > String(period)) {
+        results.push({ bu: b, action: "rolled", current_period: String(curOf[b]) });
+        continue;
+      }
       try {
         const q = await pool.query("SELECT fn_freeze_vat_finalize($1, $2, $3, 'manual', $4, $5) AS r", [String(period), b, user, !!force, !!confirm]);
         results.push({ bu: b, ...q.rows[0].r });
@@ -1073,7 +1320,7 @@ app.post("/api/vat_freeze/run", requireOwnerFreeze, checkPermission("vat_watchli
       }
     }
     const count = (a) => results.filter((x) => x.action === a).length;
-    res.json({ ok: true, period, total: results.length, frozen: count("frozen"), unchanged: count("unchanged"), locked: count("locked"), needs_confirm: count("needs_confirm"), errors: count("error"), results });
+    res.json({ ok: true, period, total: results.length, frozen: count("frozen"), unchanged: count("unchanged"), locked: count("locked"), needs_confirm: count("needs_confirm"), rolled: count("rolled"), errors: count("error"), results });
   } catch (err) {
     console.error("POST /api/vat_freeze/run error:", err.message);
     res.status(500).json({ error: "Internal server error" });
@@ -1119,6 +1366,28 @@ app.post("/api/vat_freeze/refresh_bu", checkPermission("vat_watchlist_report", "
     res.json({ ok: true, bu, period, ...q.rows[0].r, previous });
   } catch (err) {
     console.error("POST /api/vat_freeze/refresh_bu error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// MARKER_APP_VAT_RECON_ROUTE_V1 -- GET /api/vat_recon/status[?refresh=1] (Owner) ผลตรวจ Dashboard vs Report ล่าสุด
+app.get("/api/vat_recon/status", requireOwnerFreeze, checkPermission("vat_summary_frozen", "read"), async (req, res) => {
+  try {
+    const fresh = String(req.query.refresh || "") === "1" || !__reconLast;
+    res.json(fresh ? await runReconCheck("manual") : __reconLast);
+  } catch (err) {
+    console.error("GET /api/vat_recon/status error:", err.message);
+    res.status(500).json({ error: "recon check failed" });
+  }
+});
+
+// MARKER_APP_VAT_FREEZE_SYNC_DIFF_V1 -- POST /api/vat_freeze/sync_diff (Owner) -- ซิงค์ Final ทุก BU ที่ Live ต่างจาก Final (เฉพาะช่วง grace) ทันที
+app.post("/api/vat_freeze/sync_diff", requireOwnerFreeze, checkPermission("vat_watchlist_report", "write"), async (req, res) => {
+  try {
+    const r = await runFreezeSync("manual", { user: (req.user && req.user.email) || "system" });
+    res.json({ ok: true, ...(r || { checked: 0, synced: 0, needs_confirm: 0, locked: 0, errors: 0, results: [], busy: true }) });
+  } catch (err) {
+    console.error("POST /api/vat_freeze/sync_diff error:", err.message);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -1746,6 +2015,10 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
 app.use("/api/bucket_list",         createTableRouter("bucket_list"));
 app.use("/api/doc_access_override", createTableRouter("doc_access_override"));
 app.use("/api/menu_access_override", createTableRouter("menu_access_override")); // MARKER_MOUNT_MENU_ACCESS_OVERRIDE_V1
+app.use("/api/activity_log", (req, res, next) => { // MARKER_ACTIVITYLOG_EVENT_BROADCAST_V1 -- Log ที่หน้าเว็บส่งเข้ามาเอง (POST) ก็แจ้ง Event ด้วย
+  if (req.method === "POST") res.on("finish", () => { if (res.statusCode < 400) notifyActivityLogUpdated(); });
+  next();
+});
 app.use("/api/activity_log",        createTableRouter("activity_log"));
 app.use("/api/ap_active_sessions",  createTableRouter("ap_active_sessions"));
 // MARKER_APP_MOUNT_IE_ACTIVE_SESSIONS_V1 -- แก้ Heartbeat 404 (idColumn เป็น batch_id ตามที่ Frontend upsert(onConflict:'batch_id'))
@@ -1847,6 +2120,21 @@ async function checkAndCleanupOcrActivityLog() {
      -- MARKER_ACTIVITYLOG_OCR_RETENTION_1MONTH_V1
      WHERE action IN ('ocr_completed', 'ocr_failed')
        AND created_at < NOW() - INTERVAL '1 month'`
+  );
+}
+
+// MARKER_ACTIVITYLOG_MENUENTER_RETENTION_30D_V1 -- ลบประวัติ "เข้าเมนู" (action = MENU_ENTER) ที่เก่ากว่า 90 วัน (User Dashboard อ่านจาก activity_log เดียวกัน จึงเก็บให้พอสำหรับย้อนดู)
+// (เฉพาะ MENU_ENTER เท่านั้น -- Login/Logout และ Action อื่น เช่น อนุมัติ/ลบ/เปลี่ยนสิทธิ์ ยังเก็บไว้ตามเดิม)
+async function checkAndCleanupMenuEnterActivityLog() {
+  await pool.query(
+    `DELETE FROM activity_log
+     WHERE action = 'MENU_ENTER'
+       AND created_at < NOW() - INTERVAL '90 days'`
+  );
+  // MARKER_ACTIVITYLOG_ALL_RETENTION_1Y_V1 -- ทุก Action ใน activity_log เก็บ 1 ปี (MENU_ENTER 90 วัน และ OCR 1 เดือน ถูกลบก่อนหน้านี้แล้วตามกติกาของตัวเอง)
+  await pool.query(
+    `DELETE FROM activity_log
+     WHERE created_at < NOW() - INTERVAL '1 year'`
   );
 }
 
@@ -2117,9 +2405,24 @@ const server = app.listen(port, "0.0.0.0", () => {
       console.error("activity_log OCR retention cron error:", err.message);
     }
     try {
+      await checkAndCleanupMenuEnterActivityLog(); // MARKER_ACTIVITYLOG_MENUENTER_RETENTION_30D_V1
+    } catch (err) {
+      console.error("activity_log MENU_ENTER retention cron error:", err.message);
+    }
+    try {
       await purgeExpiredTaxClosePeriods(); // MARKER_TAXCLOSE_LIFECYCLE_V1 -- ล้างข้อมูล Timeline ปิดภาษีหลังปิด Period ครบ N วัน
     } catch (err) {
       console.error("tax close timeline purge cron error:", err.message);
+    }
+    try {
+      await purgeExpiredApReconcileLines(); // MARKER_APRECONCILE_EXPIRE_V1 -- ลบแถวข้อมูล AP (ap_cutting_staging) ของงาน Reconcile ที่ Confirm ราย Account แล้วและครบ 30 วัน (Account ที่ไม่ Confirm ไม่ถูกลบ -- Owner ล้างเอง)
+    } catch (err) {
+      console.error("ap reconcile expire purge cron error:", err.message);
+    }
+    try {
+      await purgeExpiredArCollectionBackup(); // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1 -- ลบ vat_backup_tax_invoice (AR_Collection) ที่ Match ไม่ได้ครบกำหนดหลังปิด Period
+    } catch (err) {
+      console.error("ar_collection backup retention purge cron error:", err.message);
     }
     try {
       await checkAndRemapIeSimpleDraftId();
@@ -2135,6 +2438,11 @@ const server = app.listen(port, "0.0.0.0", () => {
       await checkAndCleanupUnmatchedNotes(); // MARKER_APP_NOTES_CLEANUP_UNMATCHED_V1
     } catch (err) {
       console.error("vat_watchlist_notes unmatched cleanup cron error:", err.message);
+    }
+    try {
+      await checkVatRoundConfirmReminder(); // MARKER_APP_VAT_ROUND_CONFIRM_REMINDER_V1
+    } catch (err) {
+      console.error("vat round confirm reminder cron error:", err.message);
     }
   }, RAM_SNAPSHOT_INTERVAL_MS);
 

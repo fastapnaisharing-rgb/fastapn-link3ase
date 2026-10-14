@@ -266,6 +266,9 @@ app.use("/api/excel", excelReportRouter);
 app.use("/api/docenter", docenterOcrRouter);
 app.use("/api/batch-control", batchControlRouter);
 app.use("/api/vat-reconcile", vatReconcileRouter); // MARKER_APP_MOUNT_VAT_RECONCILE_ROUTER_V1
+// MARKER_APP_AP_RECONCILE_TB_FORWARD_V1 -- หน้า AP Recon. อัปโหลด TB ผ่าน /api/ap-reconcile/tb/{preview,commit} แต่ Parser/Upsert TB อยู่ที่ vatReconcileRouter (/tb/*) ที่เดียว
+// (ตาราง vat_reconcile_tb ใช้ร่วมกัน) -> Forward ไปใช้ Logic เดิมเลย ไม่ Duplicate Code, ต้องวางก่อน apReconcileRouter
+app.use("/api/ap-reconcile/tb", (req, res, next) => { req.url = "/tb" + req.url; vatReconcileRouter(req, res, next); });
 app.use("/api/ap-reconcile", apReconcileRouter); // MARKER_APP_MOUNT_AP_RECONCILE_ROUTER_V1
 app.use("/api/support", supportRouter); // MARKER_MOUNT_SUPPORT_ROUTER_V1
 
@@ -932,6 +935,7 @@ app.use("/api/vat_summary_live_dashboard",  createTableRouter("vat_summary_live_
 app.use("/api/vat_summary_frozen",          createTableRouter("vat_summary_frozen"));
 app.use("/api/vat_summary_frozen_dashboard", createTableRouter("vat_summary_frozen_dashboard"));
 
+// MARKER_APP_VAT_FREEZE_SYNC_SIGNATURE_V1 -- sync_state เทียบ Signature ต่อแถว (bus_type/aging/payment_type/payment_group/true_type/cheque_return/unrealized_reason + exp_vat/avg_vat) จับการจ่าย/เปลี่ยนสถานะที่ยอดรวมไม่เปลี่ยน
 // MARKER_APP_VAT_FREEZE_API_V1 -- หน้า Freeze: สถานะต่อ BU / สั่ง Freeze Final / ประวัติ
 //   กฎ: งวดเปิด = Draft ตาม Live อัตโนมัติ (DB: fn_freeze_vat_sync_draft เรียกจาก fn_recompute_vat_summary_for_bu) | ปิด Period = Final (fn_freeze_vat_finalize)
 //   หลังปิด: <=20 วัน grace, 21-30 วัน confirm, >30 วัน locked (fn_vat_freeze_window)
@@ -947,19 +951,22 @@ app.get("/api/vat_freeze/status", requireOwnerFreeze, checkPermission("vat_summa
     const { rows } = await pool.query(
       `WITH live AS (
          SELECT bu, count(*)::int AS n, COALESCE(sum(exp_vat),0) AS ev, COALESCE(sum(avg_vat),0) AS av, COALESCE(sum(invoice_count),0)::int AS ic,
-                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te
+                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te,
+                md5(COALESCE(string_agg(concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text), '|' ORDER BY concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text)), '')) AS sig
          FROM vat_summary_live WHERE period_month = $1 GROUP BY bu),
        fz AS (
          SELECT bu, freeze_version, max(freeze_status) AS freeze_status, max(frozen_at) AS frozen_at, max(frozen_by) AS frozen_by, max(trigger_type) AS trigger_type,
                 count(*)::int AS n, COALESCE(sum(exp_vat),0) AS ev, COALESCE(sum(avg_vat),0) AS av, COALESCE(sum(invoice_count),0)::int AS ic,
-                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te
+                COALESCE(sum(exp_vat) FILTER (WHERE aging_risk = 'Expired'),0) AS te,
+                md5(COALESCE(string_agg(concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text), '|' ORDER BY concat_ws(':', COALESCE(bus_type,''), COALESCE(aging_month,''), COALESCE(aging_risk,''), COALESCE(payment_type,''), COALESCE(payment_group,''), COALESCE(true_type,''), COALESCE(is_cheque_return::text,''), COALESCE(unrealized_reason,''), round(COALESCE(exp_vat,0),2)::text, round(COALESCE(avg_vat,0),2)::text)), '')) AS sig
          FROM vat_summary_frozen WHERE period_month = $1 GROUP BY bu, freeze_version),
        fl AS (SELECT DISTINCT ON (bu) * FROM fz ORDER BY bu, freeze_version DESC)
        SELECT COALESCE(l.bu, f.bu) AS bu,
               l.te AS live_total_expired, f.te AS frozen_total_expired, f.freeze_version, f.freeze_status, f.frozen_at, f.frozen_by, f.trigger_type,
+              (SELECT max(x.period_month) FROM vat_summary_live x WHERE x.bu = COALESCE(l.bu, f.bu)) AS cur_period, -- MARKER_APP_VAT_FREEZE_CUR_PERIOD_V1 งวดปัจจุบันของ BU (ถ้า > งวดที่เลือก = BU ย้ายงวดแล้ว Freeze ซ้ำไม่ได้)
               CASE WHEN f.bu IS NULL THEN 'none'
                    WHEN l.bu IS NULL THEN 'frozen_only'
-                   WHEN f.n = l.n AND abs(f.ev - l.ev) < 0.005 AND abs(f.av - l.av) < 0.005 AND f.ic = l.ic THEN 'synced'
+                   WHEN f.n = l.n AND abs(f.ev - l.ev) < 0.005 AND abs(f.av - l.av) < 0.005 AND f.ic = l.ic AND f.sig = l.sig THEN 'synced'
                    ELSE 'diff' END AS sync_state
        FROM live l FULL JOIN fl f ON f.bu = l.bu
        ORDER BY 1`,
@@ -1064,7 +1071,15 @@ app.post("/api/vat_freeze/run", requireOwnerFreeze, checkPermission("vat_watchli
     }
     const user = (req.user && req.user.email) || "system";
     const results = [];
+    // MARKER_APP_VAT_FREEZE_SKIP_ROLLED_V1 -- BU ที่ย้ายไปงวดใหม่แล้ว (งวดปัจจุบัน > งวดที่ขอ) DB ห้าม Freeze งวดเก่าซ้ำ -> ข้ามและรายงานเป็น "rolled" แทน Error
+    const curQ = await pool.query("SELECT bu, max(period_month) AS p FROM vat_summary_live WHERE bu = ANY($1::text[]) GROUP BY bu", [targets]);
+    const curOf = {};
+    curQ.rows.forEach((x) => { curOf[x.bu] = x.p; });
     for (const b of targets) {
+      if (curOf[b] && String(curOf[b]) > String(period)) {
+        results.push({ bu: b, action: "rolled", current_period: String(curOf[b]) });
+        continue;
+      }
       try {
         const q = await pool.query("SELECT fn_freeze_vat_finalize($1, $2, $3, 'manual', $4, $5) AS r", [String(period), b, user, !!force, !!confirm]);
         results.push({ bu: b, ...q.rows[0].r });
@@ -1073,7 +1088,7 @@ app.post("/api/vat_freeze/run", requireOwnerFreeze, checkPermission("vat_watchli
       }
     }
     const count = (a) => results.filter((x) => x.action === a).length;
-    res.json({ ok: true, period, total: results.length, frozen: count("frozen"), unchanged: count("unchanged"), locked: count("locked"), needs_confirm: count("needs_confirm"), errors: count("error"), results });
+    res.json({ ok: true, period, total: results.length, frozen: count("frozen"), unchanged: count("unchanged"), locked: count("locked"), needs_confirm: count("needs_confirm"), rolled: count("rolled"), errors: count("error"), results });
   } catch (err) {
     console.error("POST /api/vat_freeze/run error:", err.message);
     res.status(500).json({ error: "Internal server error" });
@@ -1595,7 +1610,7 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
           UNION ALL
           SELECT draft_id, username, bu, fill_started_at, created_at, batch_id, line_count FROM vat_transaction_archive
           UNION ALL
-          SELECT 'RECON-' || id::text AS draft_id, owner_username AS username, bu, fill_started_at, created_at, NULL AS batch_id, 1 AS line_count FROM file_storage WHERE module = 'vat-reconcile-report' -- MARKER_VATRECONCILE_USER_TRANSACTION_V1 -- Reconcile Report: Save (Export) 1 ครั้ง = 1 Job, เริ่มนับจากเลือก Period (fill_started_at)
+          SELECT 'RECON-' || id::text AS draft_id, owner_username AS username, bu, fill_started_at, created_at, NULL AS batch_id, 1 AS line_count FROM file_storage WHERE module = 'vat-reconcile-report' AND COALESCE(is_draft, false) = false /* MARKER_VATRECONCILE_FIRST_DRAFT_SERIAL_V1 -- First Draft ไม่นับเป็น Job */ -- MARKER_VATRECONCILE_USER_TRANSACTION_V1 -- Reconcile Report: Save (Export) 1 ครั้ง = 1 Job, เริ่มนับจากเลือก Period (fill_started_at)
         ) vat_all
         WHERE username = $1
           AND draft_id IS NOT NULL AND draft_id <> ''
@@ -1671,7 +1686,7 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
       let tsRows = [];
       try {
         const tsq = await pool.query(
-          `SELECT id, event, bu, account, period, file_id, (created_at AT TIME ZONE 'Asia/Bangkok') AS ts
+          `SELECT id, event, bu, account, period, file_id, note, (created_at AT TIME ZONE 'Asia/Bangkok') AS ts
              FROM vat_reconcile_activity_ts
             WHERE username = $1
               AND (CASE EXTRACT(DOW FROM (created_at AT TIME ZONE 'Asia/Bangkok'))
@@ -1683,7 +1698,7 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
           grp_key: "TS-" + t.id, module: null, ts: t.ts, ts_real: t.ts, start_ts: t.ts, end_ts: t.ts,
           has_fill_start: false, is_after_hours: false, is_weekend_source: false, sub_items: 0, per_trans_minutes: null,
           bu: t.bu || null, invoice_no: null, batch_id: null, vendor_name: null, gap_minutes: null,
-          is_timestamp: true, event: t.event, account: t.account || null, period: t.period || null,
+          is_timestamp: true, event: t.event, account: t.account || null, period: t.period || null, note: t.note || null,
         }));
       } catch (e) { if (e.code !== "42P01") console.error("[user_transactions] activity ts error:", e.message); }
       try { // Timestamp จาก activity_log (ทุก Action ที่บันทึกไว้) -- แสดงอย่างเดียว

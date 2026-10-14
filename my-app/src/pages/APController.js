@@ -9416,24 +9416,31 @@ const btnOutline = { padding: '5px 12px', background: 'white', color: '#555', bo
 const bdgGreen   = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#EAF3DE', color: '#27500A' };
 
 // ── StepBar ───────────────────────────────────────────────────────────────────
-function StepBar({ step, onGo }) {
+// MARKER_APCONTROLLER_HEADER_V1 -- แถบขั้นตอนแบบป้ายทรงมน (สไตล์เดียวกับ Document Center) + ช่อง right ชิดขวาแถวเดียวกัน (ใส่ปุ่ม Prefix / Account-CPC Rules / Recycle Bin)
+function StepBar({ step, onGo, right }) {
   const steps = [{ n: 1, label: 'Batch setup' }, { n: 2, label: 'Invoice entry' }, { n: 3, label: 'Batch Preview' }];
   return (
-    <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '0 18px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-      {steps.map((s, i) => {
-        const isDone = s.n < step, isActive = s.n === step;
-        return (
-          <React.Fragment key={s.n}>
-            {i > 0 && <span style={{ color: '#ccc', margin: '0 12px', fontSize: '14px', userSelect: 'none' }}>›</span>}
-            <div onClick={() => s.n < step && onGo(s.n)} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 0', cursor: s.n < step ? 'pointer' : 'default' }}>
-              <div style={{ width: '21px', height: '21px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0, background: isDone ? '#EAF3DE' : isActive ? '#1a3a5c' : 'transparent', border: isDone ? '1.5px solid #97C459' : isActive ? '1.5px solid #1a3a5c' : '1.5px solid #ddd', color: isDone ? '#27500A' : isActive ? 'white' : '#888' }}>
-                {isDone ? '✓' : s.n}
+    <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '6px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        {steps.map((s, i) => {
+          const isDone = s.n < step, isActive = s.n === step;
+          return (
+            <React.Fragment key={s.n}>
+              {i > 0 && <span style={{ color: '#b3bccb', fontSize: '14px', userSelect: 'none' }}>›</span>}
+              <div onClick={() => s.n < step && onGo(s.n)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '4px 14px 4px 5px', borderRadius: '99px', cursor: s.n < step ? 'pointer' : 'default',
+                  background: isActive ? '#14284b' : '#fff', border: isActive ? '1px solid #14284b' : isDone ? '1px solid #97C459' : '1px solid #d6dde8' }}>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 600, flexShrink: 0,
+                  background: isActive ? '#2fb58a' : isDone ? '#EAF3DE' : '#eef1f5', color: isActive ? '#fff' : isDone ? '#27500A' : '#6b778c' }}>
+                  {isDone ? '✓' : s.n}
+                </span>
+                <span style={{ fontSize: '13px', fontWeight: isActive ? 600 : 500, color: isActive ? '#fff' : isDone ? '#27500A' : '#6b778c' }}>{s.label}</span>
               </div>
-              <span style={{ fontSize: '12px', fontWeight: isActive ? '500' : '400', color: isActive ? '#1a3a5c' : '#888' }}>{s.label}</span>
-            </div>
-          </React.Fragment>
-        );
-      })}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {right && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>{right}</div>}
     </div>
   );
 }
@@ -16452,6 +16459,62 @@ function SendToModal({ show, onClose, onSend, selectedCount, totalAmount, curren
   );
 }
 
+
+// MARKER_CONTROLLER_PAGE_HEADER_V1 -- หัวหน้าแบบเดียวกับ AP Controller / IE Manual (eyebrow + ชื่อใหญ่ + OPEN (วันที่) / DEADLINE + วันที่ / ผู้ใช้ / Role) ใช้ร่วมกับหน้า Invoice History / Batch Control
+function ControllerPageHeader({ kind = 'ap', eyebrow, title, accent, subtitle, userName = '', currentUser = null, flush = '' }) {
+  const { getCached, fetchCollection } = useDataCache();
+  const { isOwner, isAdmin, isEditor } = useUserRole();
+  React.useEffect(() => { try { if (!getCached('CompanyList') && fetchCollection) fetchCollection('CompanyList').catch(() => {}); } catch (_) { /* ไม่มี Cache -> ข้าม */ } }, []); // eslint-disable-line
+  const infoItems = getCached('CompanyList') || [];
+  const modeK = kind === 'ie' ? 'ie_period_mode' : 'ap_period_mode';
+  const monK = kind === 'ie' ? 'ie_bu_period_month' : 'ap_bu_period_month';
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmtD = (x) => `${String(x.getDate()).padStart(2, '0')}-${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+  const period = (() => {
+    const rep = infoItems.find((i) => i[modeK] !== 'prev' && i[monK]) || infoItems.find((i) => i[monK]) || null;
+    if (!rep) return null;
+    const [yy, mm] = String(rep[monK]).split('-').map(Number);
+    if (!yy || !mm) return null;
+    const nextBiz2 = (start) => { let d = new Date(start), cnt = 0, out = null; while (cnt < 2) { const wd = d.getDay(); if (wd !== 0 && wd !== 6) { cnt += 1; if (cnt === 2) out = new Date(d); } if (cnt < 2) d.setDate(d.getDate() + 1); } return out; };
+    const prevDl = nextBiz2(new Date(yy, mm, 1));
+    const openDate = new Date(prevDl); openDate.setDate(openDate.getDate() + 1);
+    const dl = nextBiz2(new Date(yy, mm + 1, 1));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const daysLeft = Math.round((dl - today) / 86400000);
+    const tone = daysLeft < 0 ? { line: '#e24b4a', text: '#a32d2d' } : daysLeft <= 7 ? { line: '#ba7517', text: '#854f0b' } : { line: '#2fb58a', text: '#14935a' };
+    const left = daysLeft < 0 ? `เกิน ${-daysLeft} วัน` : daysLeft === 0 ? 'วันนี้' : `อีก ${daysLeft} วัน`;
+    return { openDate, dl, tone, left };
+  })();
+  const lab = { fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 };
+  return (
+    <div style={{ background: 'white', padding: '14px 20px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, borderBottom: '0.5px solid #e5e5e0', margin: flush }}>
+      <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+        <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>{eyebrow}</div>
+        <div style={{ fontSize: '22px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>{title}{accent ? <span style={{ color: '#2fb58a' }}>{accent}</span> : null}</div>
+        {subtitle ? <div style={{ fontSize: '12px', color: '#6b778c', marginTop: '2px' }}>{subtitle}</div> : null}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {period && (
+          <div style={{ display: 'flex', gap: '18px' }}>
+            <div style={{ borderLeft: '3px solid #14284b', paddingLeft: '8px' }}>
+              <div style={lab}>{kind === 'ie' ? 'OPEN IE' : 'OPEN AP'}</div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(period.openDate)}</div>
+            </div>
+            <div style={{ borderLeft: `3px solid ${period.tone.line}`, paddingLeft: '8px' }}>
+              <div style={lab}>DEADLINE</div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(period.dl)} <span style={{ fontSize: '12px', fontWeight: 600, color: period.tone.text }}>{period.left}</span></div>
+            </div>
+          </div>
+        )}
+        <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+          <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+          <div style={{ marginTop: '4px' }}><span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer'}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Invoice History — สำหรับหน้า "Draft List" (เปลี่ยนเป็น Invoice History) ──
 // ── ดึงจาก bucket_list (status='done') กรองตาม Receive Date + My/All ──────────
 export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false, isAdmin = false }) {
@@ -16878,9 +16941,20 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   const fmtNum = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-        <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: '#1a3a5c' }}>📄 Invoice History</h2>
+    <div style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
+      {/* MARKER_CONTROLLER_PAGE_HEADER_V1 */}
+      <ControllerPageHeader kind="ap" eyebrow="AP Controller" title="AP Controller - " accent="Invoice History" subtitle="รายการ Invoice ที่ Export ออกจากระบบแล้ว" userName={userName} currentUser={currentUser} flush="0 -18px 14px" />
+
+
+      {/* ── แถว: Tab เท่านั้น ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}> {/* MARKER_INVOICEHISTORY_IMPORT_SAME_ROW_V1 -- Import อยู่บรรทัดเดียวกับแท็บ */}
+        <div style={{ display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px', flexShrink: 0 }}>
+          <button onClick={() => setMainTab('myjob')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'myjob' ? '#fff' : 'transparent', color: mainTab === 'myjob' ? '#14284b' : '#555', boxShadow: mainTab === 'myjob' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>👤 My Job</button>
+          <button onClick={() => setMainTab('myhistory')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'myhistory' ? '#fff' : 'transparent', color: mainTab === 'myhistory' ? '#14284b' : '#555', boxShadow: mainTab === 'myhistory' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>🕓 My History</button>
+          {canSeeAll && (
+            <button onClick={() => setMainTab('invoicehistory')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'invoicehistory' ? '#fff' : 'transparent', color: mainTab === 'invoicehistory' ? '#14284b' : '#555', boxShadow: mainTab === 'invoicehistory' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>👥 Invoice History</button>
+          )}
+        </div>
         {/* MARKER_APCONTROLLER_IMPORT_BUTTON_FIX_V1 */}
         {isOwner && mainTab === 'invoicehistory' && (
           <button onClick={() => document.getElementById('legacyImportFileInput').click()}
@@ -16890,18 +16964,6 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         )}
         <input id="legacyImportFileInput" type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
           onChange={e => { handleImportFileSelect(e.target.files?.[0]); e.target.value = ''; }} />
-      </div>
-      <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px' }}>รายการ Invoice ที่ Export ออกจากระบบแล้ว</div>
-
-      {/* ── แถว: Tab เท่านั้น ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
-          <button onClick={() => setMainTab('myjob')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', background: mainTab === 'myjob' ? '#1a3a5c' : 'white', color: mainTab === 'myjob' ? 'white' : '#555', cursor: 'pointer' }}>👤 My Job</button>
-          <button onClick={() => setMainTab('myhistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'myhistory' ? '#1a3a5c' : 'white', color: mainTab === 'myhistory' ? 'white' : '#555', cursor: 'pointer' }}>🕓 My History</button>
-          {canSeeAll && (
-            <button onClick={() => setMainTab('invoicehistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'invoicehistory' ? '#1a3a5c' : 'white', color: mainTab === 'invoicehistory' ? 'white' : '#555', cursor: 'pointer' }}>👥 Invoice History</button>
-          )}
-        </div>
       </div>
 
       {/* ── sub-tab ขีดเส้นใต้: Recent / History / Legacy — โผล่แค่ตอนอยู่ tab Invoice History ── */}
@@ -16918,11 +16980,11 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', width: '260px', flexShrink: 0 }} />
+          <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff', width: '260px', flexShrink: 0 }} />
           <span style={{ fontSize: '12px', color: '#888' }}>Receive Date</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff' }} />
           <span style={{ fontSize: '12px', color: '#888' }}>ถึง</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff' }} />
           {/* MARKER_INVOICEHISTORY_MODULE_FILTER_DROPDOWN_REMOVED_V1 -- ตัด
               Dropdown ออก หน้านี้เป็นของ AP Controller ล็อก moduleFilter='AP'
               ตายตัวอยู่แล้ว (ดูจุดประกาศ State ด้านบน) ไม่ต้องมี UI ให้เปลี่ยน */}
@@ -16955,7 +17017,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
+      <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: '12px', background: '#fff' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
             {(() => {
@@ -16977,7 +17039,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             })()}
           </colgroup>
           <thead>
-            <tr style={{ background: '#f8f9fa' }}>
+            <tr style={{ background: '#e8f0fb' }}>
               {canSeeAll && (
                 <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0' }}>
                   <input type="checkbox"
@@ -16991,7 +17053,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 </th>
               )}
               {['Batch name', 'Invoice', 'Vendor', 'BU', 'Receive date', 'Amount', 'Vat', 'Total', 'Action', 'Exported at', ...(mainTab === 'invoicehistory' ? ['Created by'] : [])].map(h => (
-                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 700, color: '#1a3a5c', borderBottom: '1px solid #d6e2f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -17009,7 +17071,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 return (
                   <React.Fragment key={g.batch_id || g.items[0]?.id}>
                     {/* ── Batch header — คลิกเพื่อกาง/หด, Action = Restore/Download/Delete ทั้ง Batch ── */}
-                    <tr style={{ background: '#eef4fb', cursor: 'pointer', borderBottom: '0.5px solid #d5e3f5' }}
+                    <tr style={{ background: '#f7faff', cursor: 'pointer', borderBottom: '1px solid #eef0f3' }}
                       onClick={() => setExpandedBatches(prev => { const next = new Set(prev); next.has(g.batch_id) ? next.delete(g.batch_id) : next.add(g.batch_id); return next; })}>
                       {canSeeAll && (
                         <td style={{ padding: '8px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -17032,7 +17094,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                       </td>
                       <td style={{ padding: '8px 10px' }}></td>
                       <td style={{ padding: '8px 10px' }}></td>
-                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{g.bu || '-'}</span></td>
+                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#eef3fb', color: '#1a3a5c', borderRadius: '99px', padding: '2px 10px', fontSize: '11.5px', fontWeight: '700' }}>{g.bu || '-'}</span></td>
                       <td style={{ padding: '8px 10px' }}>{fmtD(rd)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalAmount)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalVat)}</td>
@@ -17275,7 +17337,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             {Array.isArray(viewingInvoice.lines) && viewingInvoice.lines.length > 0 && (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '14px' }}>
                 <thead>
-                  <tr style={{ background: '#f8f9fa' }}>
+                  <tr style={{ background: '#e8f0fb' }}>
                     {['Description', 'Amount', 'Vat', 'WHT', 'Total'].map(h => (
                       <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Description' ? 'left' : 'right', color: '#888', fontWeight: 500, borderBottom: '0.5px solid #e8eaf0' }}>{h}</th>
                     ))}
@@ -17321,6 +17383,161 @@ function ZoneBox({ title, highlighted, noPadding, children, style }) {
       )}
       <div style={{ padding: noPadding ? 0 : '16px 18px', flex: 1, minHeight: 0 }}>
         {children}
+      </div>
+    </div>
+  );
+}
+
+// MARKER_BATCH_CONTROL_DASHBOARD_V1 -- Dashboard ภาพรวม Invoice History (AP) สำหรับ Batch Control (ตาม Mockup v4)
+function BatchControlDashboard() {
+  const THM = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  const now = new Date();
+  const [year, setYear] = React.useState(now.getFullYear());
+  const [month, setMonth] = React.useState(now.getMonth() + 1); // 0 = ทั้งปี
+  const [cntMode, setCntMode] = React.useState('both'); // both | inv | txn
+  const [rows, setRows] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  // MARKER_BATCH_CONTROL_DASHBOARD_TOOLTIP_V1 -- Tooltip แบบกำหนดเอง แทน title ของ Browser
+  const [tip, setTip] = React.useState(null);
+  const tipOn = (render) => ({ onMouseEnter: (e) => setTip({ x: e.clientX, y: e.clientY, render }), onMouseMove: (e) => setTip(t => (t ? { ...t, x: e.clientX, y: e.clientY } : t)), onMouseLeave: () => setTip(null) });
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const mk = (recent) => { const p = new URLSearchParams({ all_users: 'true', recent: String(recent), module: 'AP', date_from: `${year}-01-01`, date_to: `${year}-12-31` }); return apiFetch(`/invoice-history?${p.toString()}`); };
+      const [a, b] = await Promise.all([mk(true), mk(false)]);
+      const seen = new Set(); const out = [];
+      [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].forEach(r => { const k = r.record_id ?? `${r.batch_name}|${r.invoice}|${r.vendor}`; if (seen.has(k)) return; seen.add(k); if (r.record_type !== 'legacy' && String(r.batch_name || '').trim() && String(r.batch_name).trim() !== '-') out.push(r); }); // ไม่นับ Legacy Data // MARKER_BATCH_CONTROL_DASHBOARD_BATCH_ONLY_V1 -- นับเฉพาะรายการที่มี Batch
+      setRows(out);
+    } catch (e) { console.error('batch control dashboard:', e); }
+    setLoading(false);
+  }, [year]);
+  React.useEffect(() => { load(); }, [load]);
+  useRealtimeRefresh(['batch_deleted', 'batch_approved', 'batch_rejected', 'invoice_history_changed'], load);
+
+  const num = (v) => Number(String(v ?? 0).replace(/,/g, '')) || 0;
+  const fmt = (v) => num(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const fmtM = (v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'K' : String(Math.round(v)));
+  const monthOf = (r) => { const d = r.receive_date ? new Date(r.receive_date) : null; return d && !isNaN(d) && d.getFullYear() === year ? d.getMonth() + 1 : 0; };
+
+  const D = React.useMemo(() => {
+    const perMonth = Array.from({ length: 12 }, () => ({ sent: 0, pend: 0, txn: 0, inv: new Set(), batches: new Map() }));
+    const buM = new Map(); const venM = new Map();
+    rows.forEach(r => {
+      const m = monthOf(r); if (!m) return;
+      const t = num(r.total); const pm = perMonth[m - 1]; const isSent = !!r.sent_stamp;
+      if (isSent) pm.sent += t; else pm.pend += t;
+      pm.txn += 1; pm.inv.add(r.invoice || `${r.batch_name}|${r.record_id}`);
+      const bk = r.batch_name || '-'; const bb = pm.batches.get(bk) || { sent: false }; if (isSent) bb.sent = true; pm.batches.set(bk, bb);
+      const bn = r.bu || '-'; const u = buM.get(bn) || { mon: Array(12).fill(0), inv: new Set(), txn: 0, pendB: new Set() };
+      u.mon[m - 1] += t; u.inv.add(r.invoice || `${r.batch_name}|${r.record_id}`); u.txn += 1; if (!isSent) u.pendB.add(bk); buM.set(bn, u);
+      if (month === 0 || m === month) { const v = venM.get(r.vendor || '-') || { inv: new Set(), txn: 0, total: 0 }; v.inv.add(r.invoice || `${r.batch_name}|${r.record_id}`); v.txn += 1; v.total += t; venM.set(r.vendor || '-', v); }
+    });
+    const sel = (m) => { const pm = perMonth[m - 1]; const bs = [...pm.batches.values()]; const sentB = bs.filter(x => x.sent).length; return { total: pm.sent + pm.pend, inv: pm.inv.size, txn: pm.txn, batches: bs.length, sentB }; };
+    let cur;
+    if (month === 0) { const all = perMonth.map((_, i) => sel(i + 1)); cur = { total: all.reduce((a, x) => a + x.total, 0), inv: all.reduce((a, x) => a + x.inv, 0), txn: all.reduce((a, x) => a + x.txn, 0), batches: all.reduce((a, x) => a + x.batches, 0), sentB: all.reduce((a, x) => a + x.sentB, 0) }; }
+    else cur = sel(month);
+    const prev = month > 1 ? sel(month - 1) : null;
+    const lastMonth = perMonth.reduce((a, x, i) => (x.txn > 0 ? i + 1 : a), 0);
+    const buRows = [...buM.entries()].map(([k, u]) => ({ k, mon: u.mon, tot: u.mon.reduce((a, b) => a + b, 0), inv: u.inv.size, txn: u.txn, pend: u.pendB.size })).sort((a, b) => b.tot - a.tot);
+    const ven = [...venM.entries()].map(([k, v]) => ({ k, inv: v.inv.size, txn: v.txn, total: v.total })).sort((a, b) => b.total - a.total).slice(0, 10);
+    return { perMonth, cur, prev, lastMonth, buRows, ven };
+  }, [rows, month, year]);
+
+  const pct = (c, p) => (p ? ((c - p) / p) * 100 : null);
+  const delta = (c, p) => { const d = p == null ? null : pct(c, p); if (d == null) return <span style={{ color: '#8a94a0' }}>—</span>; return <span style={{ color: d >= 0 ? '#1a9d6a' : '#d14343' }}>{d >= 0 ? '▲' : '▼'} {Math.abs(d).toFixed(1)}%</span>; };
+  const card = { background: '#fff', border: '1px solid #e3e6ea', borderRadius: '12px' };
+  const lbl = { fontStyle: 'normal', fontSize: '10.5px', fontWeight: 700, color: '#8a94a0', textTransform: 'uppercase', letterSpacing: '0.4px' };
+  const th = { padding: '9px 10px', background: '#e8f0fb', color: '#1a3a5c', fontSize: '10.5px', fontWeight: 700, textTransform: 'uppercase', textAlign: 'right' };
+  const td = { padding: '8px 10px', fontSize: '12px', borderTop: '1px solid #f0f2f4', textAlign: 'right' };
+  const seg = { display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px', flexWrap: 'wrap' };
+  const segBtn = (a, d) => ({ padding: '6px 11px', fontSize: '12px', borderRadius: '8px', fontWeight: 600, cursor: d ? 'default' : 'pointer', background: a ? '#fff' : 'transparent', color: d ? '#c0c5cc' : a ? '#14284b' : '#666', boxShadow: a ? '0 1px 3px rgba(0,0,0,0.12)' : 'none' });
+  const years = [now.getFullYear() - 3, now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear()];
+  const c = D.cur; const p = month === 0 ? null : D.prev;
+  const maxT = Math.max(1, ...D.perMonth.map(x => x.sent + x.pend));
+  const maxC = Math.max(1, ...D.perMonth.map(x => Math.max(x.txn, x.inv.size)));
+  const shownMonths = Array.from({ length: Math.max(D.lastMonth, month, 1) }, (_, i) => i + 1);
+  const buMonths = month === 0 ? shownMonths.slice(-4) : shownMonths.filter(m => m <= month).slice(-4);
+  const maxCell = Math.max(1, ...D.buRows.flatMap(r => buMonths.map(m => r.mon[m - 1])));
+  const heat = (v) => { const r = v / maxCell; return r > 0.75 ? { background: '#8db7e8', color: '#fff' } : r > 0.5 ? { background: '#b4d0f1' } : r > 0.25 ? { background: '#d3e4f8' } : r > 0 ? { background: '#eaf2fc' } : {}; };
+  const tipBody = (title, lines) => (<div><div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', paddingBottom: '6px', marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.18)' }}>{title}</div>{lines.map(([k, v, c, b]) => (<div key={k} style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11.5px', lineHeight: 1.8 }}><span style={{ color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: '6px' }}>{c && <i style={{ width: '8px', height: '8px', borderRadius: '2px', background: c === '#14284b' ? '#fff' : c, display: 'inline-block' }} />}{k}</span><span style={{ marginLeft: 'auto', fontWeight: b ? 700 : 500, color: '#fff' }}>{v}</span></div>))}</div>);
+  const kpi = (t, v, sub, color) => (<div style={{ ...card, padding: '16px 18px', position: 'relative', overflow: 'hidden' }}><div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '4px', background: color || '#1a3a5c' }} /><div style={lbl}>{t}</div><div style={{ margin: '6px 0 2px', fontSize: '24px', fontWeight: 700, color: '#14284b' }}>{v}</div><div style={{ fontSize: '11px', color: '#8a94a0' }}>{sub}</div></div>);
+  const pctSent = c.batches ? Math.round((c.sentB / c.batches) * 100) : 0;
+  const scope = month === 0 ? `ทั้งปี ${year}` : `${THM[month - 1]} ${year}`;
+
+  const tipW = 210; const tipLeft = tip ? Math.min(tip.x + 16, window.innerWidth - tipW - 12) : 0; const tipTop = tip ? Math.max(8, tip.y - 150) : 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {tip && (<div style={{ position: 'fixed', left: tipLeft, top: tipTop, width: tipW, zIndex: 99999, pointerEvents: 'none', background: 'rgba(20,40,75,0.96)', borderRadius: '10px', padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>{tip.render()}</div>)}
+      <div style={{ background: '#fff', borderBottom: '1px solid #e3e6ea', padding: '12px 24px', display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+        <select value={year} onChange={e => setYear(Number(e.target.value))} style={{ border: '1px solid #d0d7de', borderRadius: '8px', padding: '6px 10px', fontSize: '12.5px', fontWeight: 600, color: '#14284b' }}>
+          {years.map(y => <option key={y} value={y}>ปี {y}</option>)}
+        </select>
+        <div style={seg}>
+          <span onClick={() => setMonth(0)} style={segBtn(month === 0)}>ทั้งปี</span>
+          {THM.map((n, i) => { const future = year === now.getFullYear() && i + 1 > now.getMonth() + 1; return <span key={n} onClick={() => !future && setMonth(i + 1)} style={segBtn(month === i + 1, future)}>{n}</span>; })}
+        </div>
+        <span style={{ marginLeft: 'auto', fontSize: '11px', color: '#8a94a0' }}>{loading ? 'กำลังโหลด...' : 'ข้อมูลจาก Invoice History (AP) · อัปเดตอัตโนมัติ'}</span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '18px 24px 28px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+          {kpi('Invoice (ใบ)', fmt(c.inv), <>{scope} {p && <>· {delta(c.inv, p.inv)}</>}</>)}
+          {kpi('Transaction (รายการ)', fmt(c.txn), <>{scope} {p && <>· {delta(c.txn, p.txn)}</>}</>)}
+          {kpi('Batch ทั้งหมด', fmt(c.batches), `ส่งแล้ว ${c.sentB} · ค้าง ${c.batches - c.sentB}`)}
+          {kpi('ยอดรวม (รวม VAT)', fmt(c.total), <>{scope} {p && <>· {delta(c.total, p.total)}</>}</>, '#1a9d6a')}
+          {kpi('ส่ง Email แล้ว', `${pctSent}%`, <div style={{ height: '6px', borderRadius: '3px', background: '#eef1f5', marginTop: '6px' }}><div style={{ height: '6px', borderRadius: '3px', background: '#1fb37a', width: `${pctSent}%` }} /></div>, '#1fb37a')}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+          <div style={{ ...card, padding: '16px 18px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>ยอดรวมรายเดือน</div>
+            <div style={{ fontSize: '11px', color: '#8a94a0', marginBottom: '12px' }}>แยก ส่งแล้ว / ยังไม่ส่ง · คลิกแท่งเพื่อดูเดือนนั้น</div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '190px', borderBottom: '1px solid #e3e6ea' }}>
+              {D.perMonth.map((x, i) => { const tot = x.sent + x.pend; const h = Math.max(tot ? 4 : 0, (tot / maxT) * 150); return (
+                <div key={i} onClick={() => setMonth(i + 1)} {...tipOn(() => tipBody(`${THM[i]} ${year}`, [['ยอดรวม', fmt(tot), '#14284b', true], ['ส่งแล้ว', fmt(x.sent), '#1a3a5c'], ['ยังไม่ส่ง', fmt(x.pend), '#d97706'], ['Invoice', fmt(x.inv.size) + ' ใบ'], ['Transaction', fmt(x.txn) + ' รายการ'], ['Batch', fmt(x.batches.size)]]))} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', cursor: 'pointer' }}>
+                  <div style={{ fontSize: '10px', color: '#8a94a0', marginBottom: '4px' }}>{tot ? fmtM(tot) : ''}</div>
+                  <div style={{ width: '100%', maxWidth: '46px', height: `${h}px`, display: 'flex', flexDirection: 'column-reverse', borderRadius: '6px 6px 0 0', overflow: 'hidden', outline: month === i + 1 ? '2px solid #1fb37a' : 'none', outlineOffset: '2px' }}>
+                    <div style={{ background: '#1a3a5c', height: tot ? `${(x.sent / tot) * 100}%` : 0 }} /><div style={{ background: '#f3b25a', height: tot ? `${(x.pend / tot) * 100}%` : 0 }} />
+                  </div></div>); })}
+            </div>
+            <div style={{ display: 'flex', gap: '10px', paddingTop: '6px' }}>{THM.map(n => <span key={n} style={{ flex: 1, textAlign: 'center', fontSize: '10.5px', color: '#666', fontWeight: 600 }}>{n}</span>)}</div>
+            <div style={{ display: 'flex', gap: '14px', fontSize: '11px', color: '#666', marginTop: '10px' }}><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#1a3a5c', marginRight: '5px' }} />ส่งแล้ว</span><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#f3b25a', marginRight: '5px' }} />ยังไม่ส่ง</span></div>
+          </div>
+
+          <div style={{ ...card, padding: '16px 18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
+              <div><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>จำนวน Invoice และ Transaction รายเดือน</div><div style={{ fontSize: '11px', color: '#8a94a0', marginBottom: '12px' }}>เทียบจำนวนใบ กับ จำนวนรายการ</div></div>
+              <div style={seg}>{[['both', 'เทียบกัน'], ['inv', 'Invoice'], ['txn', 'Transaction']].map(([k, n]) => <span key={k} onClick={() => setCntMode(k)} style={segBtn(cntMode === k)}>{n}</span>)}</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '190px', borderBottom: '1px solid #e3e6ea' }}>
+              {D.perMonth.map((x, i) => { const iv = x.inv.size; const hh = (v) => `${Math.max(v ? 3 : 0, (v / maxC) * 150)}px`; return (
+                <div key={i} onClick={() => setMonth(i + 1)} {...tipOn(() => tipBody(`${THM[i]} ${year}`, [['Invoice', fmt(iv) + ' ใบ', '#1a3a5c', true], ['Transaction', fmt(x.txn) + ' รายการ', '#1fb37a', true], ['Batch', fmt(x.batches.size)], ['ยอดรวม', fmt(x.sent + x.pend)]]))} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', cursor: 'pointer' }}>
+                  <div style={{ fontSize: '10px', color: '#8a94a0', marginBottom: '4px' }}>{iv || x.txn ? (cntMode === 'both' ? `${iv}/${x.txn}` : cntMode === 'inv' ? iv : x.txn) : ''}</div>
+                  <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', width: '100%', maxWidth: '56px', outline: month === i + 1 ? '2px solid #1fb37a' : 'none', outlineOffset: '2px', borderRadius: '5px' }}>
+                    {cntMode !== 'txn' && <div style={{ flex: 1, background: '#1a3a5c', height: hh(iv), borderRadius: '5px 5px 0 0' }} />}
+                    {cntMode !== 'inv' && <div style={{ flex: 1, background: '#1fb37a', height: hh(x.txn), borderRadius: '5px 5px 0 0' }} />}
+                  </div></div>); })}
+            </div>
+            <div style={{ display: 'flex', gap: '10px', paddingTop: '6px' }}>{THM.map(n => <span key={n} style={{ flex: 1, textAlign: 'center', fontSize: '10.5px', color: '#666', fontWeight: 600 }}>{n}</span>)}</div>
+            <div style={{ display: 'flex', gap: '14px', fontSize: '11px', color: '#666', marginTop: '10px' }}><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#1a3a5c', marginRight: '5px' }} />Invoice (ใบ)</span><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#1fb37a', marginRight: '5px' }} />Transaction (รายการ)</span>{cntMode === 'both' && <span style={{ marginLeft: 'auto' }}>ตัวเลขบนแท่ง = Invoice / Transaction</span>}</div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '16px' }}>
+          <div style={{ ...card, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 18px 10px' }}><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>BU × รายเดือน (ยอดรวม)</div><div style={{ fontSize: '11px', color: '#8a94a0' }}>ยิ่งเข้มยิ่งยอดสูง · Invoice = จำนวนใบ (เลขที่ไม่ซ้ำ) · Txn = จำนวนรายการ</div></div>
+            <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={{ ...th, textAlign: 'left' }}>BU</th>{buMonths.map(m => <th key={m} style={th}>{THM[m - 1]}</th>)}<th style={th}>รวม</th><th style={th}>Invoice</th><th style={th}>Txn</th><th style={th}>Batch ค้างส่ง</th></tr></thead>
+              <tbody>{D.buRows.map(r => (<tr key={r.k}><td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{r.k}</td>{buMonths.map(m => <td key={m} style={{ ...td, ...heat(r.mon[m - 1]) }}>{r.mon[m - 1] ? fmtM(r.mon[m - 1]) : '-'}</td>)}<td style={{ ...td, fontWeight: 700 }}>{fmtM(r.tot)}</td><td style={td}>{fmt(r.inv)}</td><td style={td}>{fmt(r.txn)}</td><td style={td}><span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', fontWeight: 700, background: r.pend ? '#fdf1e0' : '#e6f6ef', color: r.pend ? '#b45309' : '#1a9d6a' }}>{r.pend ? `${r.pend} ค้าง` : 'ครบ'}</span></td></tr>))}
+                {D.buRows.length === 0 && <tr><td style={{ ...td, textAlign: 'center', color: '#aaa' }} colSpan={buMonths.length + 5}>ไม่มีข้อมูล</td></tr>}</tbody></table></div>
+          </div>
+          <div style={{ ...card, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 18px 10px' }}><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>Top Vendor — {scope}</div><div style={{ fontSize: '11px', color: '#8a94a0' }}>เรียงตามยอดรวม</div></div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={{ ...th, textAlign: 'left' }}>Vendor</th><th style={th}>Invoice</th><th style={th}>Txn</th><th style={th}>ยอดรวม</th></tr></thead>
+              <tbody>{D.ven.map(v => (<tr key={v.k}><td style={{ ...td, textAlign: 'left', fontWeight: 700, maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.k}>{v.k}</td><td style={td}>{v.inv}</td><td style={td}>{v.txn}</td><td style={td}>{fmt(v.total)}</td></tr>))}
+                {D.ven.length === 0 && <tr><td style={{ ...td, textAlign: 'center', color: '#aaa' }} colSpan={4}>ไม่มีข้อมูล</td></tr>}</tbody></table>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -17870,21 +18087,18 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
         {/* MARKER_BATCH_CONTROL_NEWTEMPLATE_BACK_TO_TABROW_V1 — ย้ายปุ่ม +Template ใหม่ ออกจาก Header กลับไป
             อยู่ที่แถว Template Tab (ตำแหน่งเดิมก่อนจะย้ายขึ้นมาไว้มุมขวาบนตามคอมเมนต์เดิม
             MARKER_BATCH_CONTROL_NEWTEMPLATE_TOPRIGHT) — เหลือ Header ไว้แค่ Icon/Title เฉยๆ */}
-        <div style={{ background: '#fff', padding: '14px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📊</div>
-          <div>
-            <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c' }}>Batch Control</div>
-            <div style={{ fontSize: '11px', color: '#999' }}>Batch ที่ Approve แล้ว — เลือกส่ง Email ตามเรื่อง</div>
-          </div>
-        </div>
+        {/* MARKER_CONTROLLER_PAGE_HEADER_V1 */}
+        <ControllerPageHeader kind="ap" eyebrow="AP Controller" title="AP Controller - " accent="Batch Control" subtitle="Batch ที่ Approve แล้ว — เลือกส่ง Email ตามเรื่อง" userName={userName} currentUser={currentUser} />
       </div>
 
       {/* MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS — Tab ย่อย Mail Management / Dashboard */}
-      <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', gap: '4px' }}>
-        <div onClick={() => setBatchControlSubTab('mail')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'mail' ? '600' : '400', color: batchControlSubTab === 'mail' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'mail' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Mail Management</div>
+      <div style={{ background: '#fff', padding: '10px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', flexShrink: 0 }}>
+        <div style={{ display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px' }}> {/* MARKER_BATCH_CONTROL_SEGMENTED_V1 -- Tab แบบ Segmented (เปลี่ยนเฉพาะหน้าตา) */}
+        <div onClick={() => setBatchControlSubTab('mail')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: batchControlSubTab === 'mail' ? '#fff' : 'transparent', color: batchControlSubTab === 'mail' ? '#14284b' : '#555', boxShadow: batchControlSubTab === 'mail' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>Mail Management</div>
         {(isOwner || isAdmin) && (
-          <div onClick={() => setBatchControlSubTab('dashboard')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'dashboard' ? '600' : '400', color: batchControlSubTab === 'dashboard' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'dashboard' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Dashboard</div>
+          <div onClick={() => setBatchControlSubTab('dashboard')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: batchControlSubTab === 'dashboard' ? '#fff' : 'transparent', color: batchControlSubTab === 'dashboard' ? '#14284b' : '#555', boxShadow: batchControlSubTab === 'dashboard' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>Dashboard</div>
         )}
+        </div>
       </div>
 
       {/* MARKER_BATCH_CONTROL_TEMPLATE_TABS_V1 — Sub-tab แยกตาม "เรื่อง" = 1 Email Template ต่อ 1 Tab
@@ -17893,8 +18107,8 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
           แทน (ตำแหน่งเดิม) และเอาเงื่อนไข templates.length > 0 ออก เพื่อให้แถวนี้ (และปุ่ม) โผล่มาเสมอตอนยังไม่มี
           Template เลยด้วย — ไม่งั้นตอน Template ยังไม่มีเลย จะไม่มีปุ่มที่กดสร้าง Template แรกได้ */}
       {batchControlSubTab === 'mail' && !showNewTemplate && (
-        <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflowX: 'auto', flex: 1, minWidth: 0 }}>
+        <div style={{ background: '#fff', padding: '10px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2px', overflowX: 'auto', flex: '0 1 auto', minWidth: 0, background: '#eef1f5', borderRadius: '10px', padding: '3px' }}>
             {templates.length === 0 && (
               <div style={{ padding: '10px 0', fontSize: '11.5px', color: '#aaa' }}>ยังไม่มี Template — กด "+" เพื่อเริ่มสร้าง</div>
             )}
@@ -17906,7 +18120,7 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
               const pendingCount = tpl.pending_count ?? tpl.count ?? tpl.batch_count ?? tpl.total ?? null;
               return (
                 <div key={tpl.id} onClick={() => setActiveTemplateId(tpl.id)}
-                  style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: isActive ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: isActive ? '#1a3a5c' : '#888', fontWeight: isActive ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                  style={{ padding: '6px 14px', fontSize: '12px', cursor: 'pointer', borderRadius: '8px', background: isActive ? '#fff' : 'transparent', boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', color: isActive ? '#14284b' : '#555', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                   {tpl.name || `Template #${tpl.id}`}
                   {pendingCount != null && (
                     <span style={{ background: isActive ? '#1a3a5c' : '#e8e8e8', color: isActive ? 'white' : '#888', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{pendingCount}</span>
@@ -18051,15 +18265,15 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
           (BU Pill Filter + ตาราง Header เข้ม + Footer เป็นปุ่ม Confirm) สไตล์อ้างอิงจากกล่อง AP Manual/Document Center
           ซ่อนกล่องนี้ทั้งหมดตอนกด Confirm แล้ว (สลับไปหน้า Config Email เต็มจอแทน ไม่ใช่ Popup) */}
       {!showEmailConfirm && (
-      <div style={{ padding: '16px 24px 20px' }}>
-        <div style={{ background: '#fff', border: '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '14px 18px 10px' }}>
+      <div style={{ padding: '16px 24px 20px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}> {/* MARKER_BATCH_CONTROL_PINNED_HEADER_ZONE_V1 -- Header Zone ตรึง เลื่อนเฉพาะแถวรายการ */}
+        <div style={{ background: '#fff', border: '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '14px 18px 10px', flexShrink: 0 }}>
             <div style={{ fontSize: '13.5px', fontWeight: '700', color: '#1a3a5c' }}>{activeTemplate?.name || 'Batch'}</div>
             <div style={{ fontSize: '11px', color: '#999' }}>{loading ? 'กำลังโหลด...' : `${visibleBatches.length} Batch รอส่ง`}</div>
           </div>
 
           {/* MARKER_BATCH_CONTROL_BU_PILLS_V1 — เปลี่ยนจาก Dropdown "ทุก BU" มาเป็น Pill Filter มีตัวเลขนับ ต่อ BU */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 18px 14px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 18px 14px', flexWrap: 'wrap', flexShrink: 0 }}>
             <span style={{ fontSize: '10.5px', fontWeight: '600', color: '#999', textTransform: 'uppercase', marginRight: '2px' }}>BU</span>
             {buList.map(bu => {
               const isActive = buFilter === bu;
@@ -18130,12 +18344,13 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
               และเพิ่ม columnGap ระหว่างคอลัมน์ (เดิมไม่มี Gap เลย ทำให้ตัวเลข "ยอดรวม" (ชิดขวา) กับ "Filename"
               (ชิดซ้าย) ของคอลัมน์ติดกัน มาเบียดจนดูเหมือนตัวอักษรควบกัน — นี่คือสาเหตุจริงของปัญหา "ยอดรวมFILENAME"
               ที่เห็นในภาพ ไม่ใช่ Bug คำนวณคอลัมน์ผิด) */}
-          <div style={{ display: 'grid', gridTemplateColumns: '40px 1.3fr 70px 90px 90px 120px 1fr 96px 150px 110px', columnGap: '16px', background: '#16324f', padding: '10px 16px', fontSize: '10.5px', color: '#fff', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '40px 1.3fr 70px 90px 90px 120px 1fr 96px 150px 110px', columnGap: '16px', background: '#e8f0fb', padding: '10px 16px', fontSize: '10.5px', color: '#1a3a5c', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.3px', flexShrink: 0, overflowY: 'hidden', scrollbarGutter: 'stable' }}>
             <input type="checkbox" title="เลือกทั้งหมด" checked={visibleBatches.length > 0 && selectedIds.length === visibleBatches.length} onChange={toggleSelectAll} style={{ width: '14px', height: '14px' }} />
             <div>Batch</div><div>BU</div><div>Receive</div><div>Due</div>
             <div style={{ textAlign: 'right' }}>ยอดรวม</div>
             <div>Filename</div><div>Attachment</div><div>Status</div><div>Created By</div>
           </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable' }}>
           {visibleBatches.length === 0 && !loading && <div style={{ padding: '30px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>ไม่มี Batch รอส่งเรื่องนี้</div>}
           {visibleBatches.map(b => {
             // MARKER_BATCH_CONTROL_ATTACHMENT_COLUMN_V1 — Logic เดียวกับ Batch History (My Jobs/All Jobs)
@@ -18169,9 +18384,10 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
             </div>
             );
           })}
+          </div>
 
           {/* MARKER_BATCH_CONTROL_DOCBOX_FOOTER_CONFIRM_V1 — Footer ของกล่อง = สรุปที่เลือก + ปุ่ม Confirm (ไม่ทำ Pagination) */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 18px', borderTop: '0.5px solid #eee', background: '#fafaf8', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 18px', borderTop: '1px solid #e3e6ea', background: '#fafbfc', flexWrap: 'wrap', flexShrink: 0 }}>
             <span style={{ fontSize: '11.5px', color: '#666' }}>
               {selectedIds.length > 0 ? `เลือกไว้ ${selectedIds.length} Batch · ${selectedTotal.toLocaleString()} บาท` : 'ยังไม่ได้เลือก Batch'}
             </span>
@@ -18321,9 +18537,7 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
       )}
 
       {batchControlSubTab === 'dashboard' && (isOwner || isAdmin) && (
-        <div style={{ padding: '60px 24px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
-          📊 Dashboard — Coming soon
-        </div>
+        <BatchControlDashboard />
       )}
 
       {/* MARKER_BATCH_CONTROL_ATTACHMENT_VIEW_MODAL_V1 — Modal Preview อ่านอย่างเดียว (Read-only) สำหรับปุ่ม 👁 View
@@ -18402,7 +18616,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   // -- Bug: isInvoicePopupOwner/isInvoicePopupAdmin ถูก declare อยู่ scope ของ --
   // -- InvoiceDetailPopup เท่านั้น แต่ isAccountCpcAdmin (ใน APController)  --
   // -- เรียกใช้ตัวแปรนี้ข้าม scope มา -> ReferenceError. แก้โดย declare ในนี้เอง --
-  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin } = useUserRole();
+  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin, isEditor: isInvoicePopupEditor } = useUserRole();
   // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
 
@@ -18646,29 +18860,60 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
-      <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-        <span style={{ fontSize: '17px' }}>🧾</span>
-        <div>
-          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>AP Controller</div>
-          <div style={{ fontSize: '11px', color: '#aaa' }}>Accounts Payable Invoice Management</div>
+      {/* MARKER_APCONTROLLER_HEADER_V1 -- หัวแบบเดียวกับ Document Center: eyebrow + ชื่อ + วันที่/ผู้ใช้/Role (ปุ่มเครื่องมือย้ายไปอยู่แถว Step ชิดขวา) */}
+      <div style={{ background: 'white', padding: '14px 20px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+          <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>AP Controller</div>
+          <div style={{ fontSize: '22px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>AP Controller - <span style={{ color: '#2fb58a' }}>AP Manual</span></div>
+          <div style={{ fontSize: '12px', color: '#6b778c', marginTop: '2px' }}>Accounts Payable Invoice Management</div>
         </div>
-        <button onClick={() => { setPrefixInput(systemPrefix); setShowPrefixModal(true); }}
-          style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-          <span>🏷️ Prefix: <strong>{systemPrefix || '—'}</strong></span>
-          <span style={{ fontSize: '10px' }}>✎</span>
-        </button>
-        {/* MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- ปุ่มจัดการ Account/CPC Rules ทั้งหมด */}
-        <button onClick={() => setShowAccountCpcManage(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-          🔗 Account/CPC Rules
-        </button>
-        {/* MARKER_INVOICE_RECYCLEBIN_POPUP_V1 -- Popup เปิดตรงในหน้านี้เลย -- Owner/Admin เท่านั้น */}
-        {(isInvoicePopupOwner || isInvoicePopupAdmin) && (
-          <button onClick={() => setShowInvoiceRecycleBin(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-            🗑️ Recycle Bin (Invoice)
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {/* MARKER_APCONTROLLER_PERIOD_DEADLINE_V1 -- Open AP (Period) + Deadline ในหัวหน้า | คิดจาก CompanyList ชุดเดียวกับ BatchSetup (Current = เดือนถัดจาก ap_bu_period_month, Deadline = 2 วันทำการหลังสิ้นเดือน Current) | รูปแบบวันที่ Oct-26 / 03-Nov-26 */}
+          {(() => {
+            const rep = infoItems.find(i => i.ap_period_mode !== 'prev' && i.ap_bu_period_month) || infoItems.find(i => i.ap_bu_period_month) || null;
+            if (!rep) return null;
+            const [yy, mm] = String(rep.ap_bu_period_month).split('-').map(Number);
+            if (!yy || !mm) return null;
+            const curMonth = new Date(yy, mm, 1);
+            // MARKER_APCONTROLLER_OPEN_DATE_V1 -- วันที่เปิด Period = วันถัดจาก Deadline ของ Period ก่อนหน้า (2 วันทำการหลังสิ้นเดือน M-1) — สูตรเดียวกับ Open IE
+            let od = new Date(yy, mm, 1), ocnt = 0, prevDl = null;
+            while (ocnt < 2) {
+              const wd = od.getDay();
+              if (wd !== 0 && wd !== 6) { ocnt++; if (ocnt === 2) prevDl = new Date(od); }
+              if (ocnt < 2) od.setDate(od.getDate() + 1);
+            }
+            const openDate = new Date(prevDl); openDate.setDate(openDate.getDate() + 1);
+            let d = new Date(yy, mm + 1, 1), cnt = 0, dl = null;
+            while (cnt < 2) {
+              const wd = d.getDay();
+              if (wd !== 0 && wd !== 6) { cnt++; if (cnt === 2) dl = new Date(d); }
+              if (cnt < 2) d.setDate(d.getDate() + 1);
+            }
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const daysLeft = Math.round((dl - today) / 86400000);
+            const tone = daysLeft < 0 ? { line: '#e24b4a', text: '#a32d2d' } : daysLeft <= 7 ? { line: '#ba7517', text: '#854f0b' } : { line: '#2fb58a', text: '#14935a' };
+            const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const fmtM = (x) => `${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+            const fmtD = (x) => `${String(x.getDate()).padStart(2, '0')}-${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+            const left = daysLeft < 0 ? `เกิน ${-daysLeft} วัน` : daysLeft === 0 ? 'วันนี้' : `อีก ${daysLeft} วัน`;
+            return (
+              <div style={{ display: 'flex', gap: '18px' }}>
+                <div style={{ borderLeft: '3px solid #14284b', paddingLeft: '8px' }}>
+                  <div style={{ fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 }}>OPEN AP</div>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(openDate)}</div>
+                </div>
+                <div style={{ borderLeft: `3px solid ${tone.line}`, paddingLeft: '8px' }}>
+                  <div style={{ fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 }}>DEADLINE</div>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(dl)} <span style={{ fontSize: '12px', fontWeight: 600, color: tone.text }}>{left}</span></div>
+                </div>
+              </div>
+            );
+          })()}
+          <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+            <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+            <div style={{ marginTop: '4px' }}><span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{isInvoicePopupOwner ? 'Owner' : isInvoicePopupAdmin ? 'Admin' : isInvoicePopupEditor ? 'Editor' : 'Viewer'}</span></div>
+          </div>
+        </div>
       </div>
 
       {showInvoiceRecycleBin && (
@@ -18823,7 +19068,26 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
           </div>
         </div>
       )}
-      <StepBar step={step} onGo={setStep} />
+      <StepBar step={step} onGo={setStep} right={(
+        <>
+          <button onClick={() => { setPrefixInput(systemPrefix); setShowPrefixModal(true); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z"/></svg><span>Prefix: <strong>{systemPrefix || '—'}</strong></span><span style={{ fontSize: '10px', color: '#6b778c' }}>✎</span>
+          </button>
+          {/* MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- ปุ่มจัดการ Account/CPC Rules ทั้งหมด */}
+          <button onClick={() => setShowAccountCpcManage(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5"/></svg>Account/CPC Rules
+          </button>
+          {/* MARKER_INVOICE_RECYCLEBIN_POPUP_V1 -- Popup เปิดตรงในหน้านี้เลย -- Owner/Admin เท่านั้น */}
+          {(isInvoicePopupOwner || isInvoicePopupAdmin) && (
+            <button onClick={() => setShowInvoiceRecycleBin(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></svg>Recycle Bin (Invoice)
+            </button>
+          )}
+        </>
+      )} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* MARKER_APCONTROLLER_BATCHSETUP_NO_UNMOUNT_V1 */}
         {/* ── ซ่อนด้วย CSS แทน Unmount กัน BU/Receive Date/Due Date/GRT-GRN Preview ── */}
@@ -18844,4 +19108,4 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
     </div>
   );
 }
-// MARKER_APCONTROLLER_APPROVE_LABEL_RENAME_V1
+// MARKER_APCONTROLLER_APPROVE_LABEL_RENAME_V1

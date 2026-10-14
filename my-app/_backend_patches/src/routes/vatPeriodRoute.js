@@ -29,6 +29,7 @@ import { Router } from "express";
 import { wsBroadcast } from "../app.js"; // MARKER_PERIOD_REALTIME_BROADCAST_V1
 import { pool, getUsernameByEmail } from "../db.js";
 import { markTaxClosePeriodClosed, markTaxClosePeriodReopened } from "./taxClosePeriod.js"; // MARKER_TAXCLOSE_LIFECYCLE_V1
+import { stampArCollectionBackupExpired } from "./arCollectionBackupRetention.js"; // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1
 
 const router = Router();
 
@@ -304,10 +305,25 @@ router.post("/close", async (req, res) => {
       try { await client.query("ROLLBACK TO SAVEPOINT taxclose_sp"); } catch (e2) { /* ignore */ }
     }
 
+    // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1
+    // Stamp expired_date ให้แถว vat_backup_tax_invoice ของ AR_Collection (source_type='ar_collection_match') ที่ยัง pending
+    // ทุกแถว ทุก BU (ปิด Period ครั้งนี้ปิดทุก BU พร้อมกันอยู่แล้ว ไม่ต้องเจาะจงเฉพาะ BU) -- Cron (app.js) จะมาลบถาวร
+    // หลัง Stamp ครบ ar_collection_backup_retention_days วัน (ค่าเริ่มต้น 30 วัน) ใช้ SAVEPOINT -- ถ้าพลาด (เช่น Column
+    // expired_date ยังไม่ถูกเพิ่ม/ยังไม่รัน schema/ar_collection_backup_retention_v1.sql) ต้องไม่ทำให้การปิด Period ล้มทั้งก้อน
+    let arBackupExpiredCount = 0;
+    try {
+      await client.query("SAVEPOINT arbackupexp_sp");
+      arBackupExpiredCount = await stampArCollectionBackupExpired(client);
+      await client.query("RELEASE SAVEPOINT arbackupexp_sp");
+    } catch (e) {
+      console.error("POST /vat/period/close ar_collection backup retention error:", e.message);
+      try { await client.query("ROLLBACK TO SAVEPOINT arbackupexp_sp"); } catch (e2) { /* ignore */ }
+    }
+
     await client.query(
       `INSERT INTO activity_log (username, module, action, detail, created_at)
        VALUES ($1, 'VAT', 'CLOSE_PERIOD', $2, NOW())`,
-      [logUsername, JSON.stringify({ closed_month: closingMonthStr, bu_reset_count: rowCount, pv_backup_rows: pvBackupCount, freeze: freezeSummary, over_before: cntBefore, over_after: cntAfter, integrity_ok: integrityOk })]
+      [logUsername, JSON.stringify({ closed_month: closingMonthStr, bu_reset_count: rowCount, pv_backup_rows: pvBackupCount, freeze: freezeSummary, over_before: cntBefore, over_after: cntAfter, integrity_ok: integrityOk, ar_backup_expired_count: arBackupExpiredCount })]
     );
 
     await client.query(
@@ -338,6 +354,7 @@ router.post("/close", async (req, res) => {
       closed_by: username,
       freeze: freezeSummary,
       integrity: { ok: integrityOk, before: cntBefore, after: cntAfter },
+      ar_backup_expired_count: arBackupExpiredCount, // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1
     });
   } catch (err) {
     await client.query("ROLLBACK");

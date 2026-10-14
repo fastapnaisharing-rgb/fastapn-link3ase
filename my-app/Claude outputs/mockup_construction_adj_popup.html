@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Construction ADJ</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#6b7280;font-family:"Segoe UI",Tahoma,sans-serif;padding:24px;display:flex;justify-content:center}
+.modal{width:100%;max-width:980px;background:#fff;border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.35);overflow:hidden}
+.hd{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid #e5e7eb;font-size:15px;font-weight:500}
+.hd span{color:#6b7280;font-size:20px;cursor:pointer}
+.bd{padding:18px 22px 8px}
+.row{display:grid;gap:8px;margin-bottom:12px}
+.top{grid-template-columns:1.1fr 1.1fr 2fr 0.8fr 0.8fr}
+.seg{grid-template-columns:5fr 2fr 1fr 1fr}
+.two{grid-template-columns:1fr 1fr}
+label{display:block;font-size:11px;font-weight:600;color:#1a3a5c;text-align:center;background:#f1f4f8;border:1px solid #d9e0ea;border-radius:6px 6px 0 0;padding:5px 4px}
+.f{height:32px;border:1px solid #d1d5db;border-top:0;border-radius:0 0 6px 6px;padding:0 10px;display:flex;align-items:center;font-size:13px;color:#9ca3af}
+.req{background:#fffbe0;border-color:#f0d878}
+.opt{background:#fff}
+.auto{background:#e8f0fa;border-color:#c5d6ee;justify-content:flex-end}
+.sel{justify-content:space-between}
+.sec{font-size:11px;color:#8a6d3b;letter-spacing:.06em;font-weight:700;margin:4px 0 8px}
+.btns{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:18px 0 12px}
+.btns button{height:34px;border:1px solid #1a3a5c;background:#f4f8fc;color:#1a3a5c;border-radius:8px;font-size:12px;font-weight:600;cursor:default}
+.btns button.sub{background:#1a3a5c;color:#fff}
+.ft{display:flex;justify-content:flex-end;padding:12px 22px;border-top:1px solid #e5e7eb}
+.ft button{padding:6px 18px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px}
+.lg{display:flex;gap:14px;font-size:11px;color:#6b7280;padding:0 22px 10px}
+.lg i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:4px;vertical-align:-1px;border:1px solid #bbb}
+@media(max-width:700px){.top,.seg,.two,.btns{grid-template-columns:1fr 1fr}}
+</style></head><body>
+<div class="modal">
+ <div class="hd">Construction ADJ <span>×</span></div>
+ <div class="bd">
+  <div class="row top">
+   <div><label>PO NUM.</label><div class="f req">กรอก</div></div>
+   <div><label>PERIOD NO.</label><div class="f opt">กรอกเอง</div></div>
+   <div><label>CONTRACT NO.</label><div class="f opt">กรอกเอง</div></div>
+   <div><label>ST-Rate</label><div class="f auto">Auto</div></div>
+   <div><label>SP-Rate</label><div class="f auto">Auto</div></div>
+  </div>
+
+  <div class="row seg">
+   <div><label>ASSET CODE - SEGMENT ALL</label><div class="f req">กรอก</div></div>
+   <div><label>LINE VALUE</label><div class="f auto">Auto</div></div>
+   <div><label>SIDE</label><div class="f auto">Auto</div></div>
+   <div><label>RATE</label><div class="f auto">Auto</div></div>
+  </div>
+  <div class="row seg">
+   <div><label>RESULTS-1 SEGMENT ALL</label><div class="f auto" style="justify-content:flex-start">Auto</div></div>
+   <div><label>LINE VALUE</label><div class="f auto">Auto</div></div>
+   <div><label>SIDE</label><div class="f auto">Auto</div></div>
+   <div><label>RATE</label><div class="f auto">Auto</div></div>
+  </div>
+  <div class="row seg">
+   <div><label>RESULTS-2 SEGMENT ALL</label><div class="f auto" style="justify-content:flex-start">Auto</div></div>
+   <div><label>LINE VALUE</label><div class="f auto">Auto</div></div>
+   <div><label>SIDE</label><div class="f auto">Auto</div></div>
+   <div><label>RATE</label><div class="f auto">Auto</div></div>
+  </div>
+  <div class="row seg">
+   <div><label>RESULTS-3 SEGMENT ALL</label><div class="f auto" style="justify-content:flex-start">Auto</div></div>
+   <div><label>LINE VALUE</label><div class="f auto">Auto</div></div>
+   <div><label>SIDE</label><div class="f auto">Auto</div></div>
+   <div><label>RATE</label><div class="f auto">Auto</div></div>
+  </div>
+
+  <div class="row two">
+   <div><label>Invoice Reference</label><div class="f auto" style="justify-content:flex-start">Auto</div></div>
+   <div><label>Tax Invoice Address</label><div class="f auto sel" style="justify-content:space-between"><span>Auto / เลือก</span><span>▾</span></div></div>
+  </div>
+
+  <div class="btns">
+   <button>D753-REJECT &gt; NM</button><button>D753-TAX INV.</button><button>D753-NO TIV.</button><button>UITLITY CST &gt; 100</button>
+   <button>INCREASE I-PRO9</button><button>INCREASE 753-ASSET</button><button>BLANK BOTTON</button><button class="sub">SUBMIT ADDITION</button>
+  </div>
+ </div>
+ <div class="lg"><span><i style="background:#fffbe0"></i>เหลือง = บังคับกรอก</span><span><i style="background:#fff"></i>ขาว = กรอกเอง</span><span><i style="background:#e8f0fa"></i>ฟ้า = Auto (อ่านอย่างเดียว)</span></div>
+ <div class="ft"><button>ปิด</button></div>
+</div>
+</body></html>

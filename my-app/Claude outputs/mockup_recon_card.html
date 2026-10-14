@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup ตัวเช็กส่วนต่าง</title>
+<style>
+:root{--navy:#14284b;--green:#1a7f4b;--greenbg:#e8f6ee;--amber:#a65f00;--amberbg:#fff6e5;--line:#e5e9f0;--soft:#f4f6f9;--text:#222}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",Tahoma,sans-serif;background:#eef1f5;color:var(--text);padding:20px}
+h4{margin:22px 0 8px;font-size:13px;color:#556}
+.row{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;max-width:1100px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.card small{color:#6b7785;font-size:12px}.card b{display:block;font-size:26px;margin-top:2px}
+.card.recon{border-color:var(--green);background:var(--greenbg)}
+.card.recon.bad{border-color:#e0b060;background:var(--amberbg)}
+.card.recon b{font-size:15px;color:var(--green)}.card.recon.bad b{color:var(--amber)}
+.card.recon em{display:block;font-style:normal;font-size:11.5px;color:#5c6b7a;margin-top:3px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;max-width:1100px;margin-top:12px;overflow:hidden}
+.panel .hd{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--navy);color:#fff;font-size:13px}
+.panel .hd button{font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.4);background:transparent;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 14px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child,th:nth-child(5),td:nth-child(5){text-align:left}
+th{background:var(--soft);color:#556;font-weight:600}
+.pos{color:var(--amber);font-weight:600}
+.tag{display:inline-block;background:var(--amberbg);color:var(--amber);border-radius:999px;padding:1px 9px;font-size:11.5px}
+.foot{padding:9px 14px;font-size:12px;color:#6b7785;background:#fafbfc}
+</style></head><body>
+
+<h4>แบบ A — ทุก BU ตรงกัน (การ์ดใบที่ 6 บนหน้า Freeze)</h4>
+<div class="row">
+  <div class="card"><small>BU ทั้งหมด</small><b>73</b></div>
+  <div class="card"><small>Final</small><b style="color:var(--green)">73</b></div>
+  <div class="card"><small>Draft</small><b>0</b></div>
+  <div class="card"><small>ยังไม่มี Freeze</small><b style="color:#b3261e">0</b></div>
+  <div class="card"><small>ต่างจาก Live</small><b style="color:var(--amber)">0</b></div>
+  <div class="card recon"><small>Dashboard vs Report</small><b>✔ ตรงกัน (ส่วนต่าง 0.00)</b><em>ตรวจล่าสุด 11-10-2026 02:10</em></div>
+</div>
+
+<h4>แบบ B — พบส่วนต่าง (กดการ์ดแล้วเปิดตารางรายBU)</h4>
+<div class="row">
+  <div class="card"><small>BU ทั้งหมด</small><b>73</b></div>
+  <div class="card"><small>Final</small><b style="color:var(--green)">73</b></div>
+  <div class="card"><small>Draft</small><b>0</b></div>
+  <div class="card"><small>ยังไม่มี Freeze</small><b style="color:#b3261e">0</b></div>
+  <div class="card"><small>ต่างจาก Live</small><b style="color:var(--amber)">4</b></div>
+  <div class="card recon bad"><small>Dashboard vs Report</small><b>⚠ ต่าง 7 BU · 56,376.59</b><em>ตรวจล่าสุด 11-10-2026 02:10</em></div>
+</div>
+
+<div class="panel">
+  <div class="hd"><span>ส่วนต่างรายBU (โหมด Claim · เฉพาะ BU ที่ยอดไม่ตรง)</span><button>ตรวจใหม่</button></div>
+  <table>
+    <tr><th>BU</th><th>Dashboard</th><th>Report</th><th>ส่วนต่าง</th><th>เบาะแสสาเหตุ</th></tr>
+    <tr><td>CMK</td><td>775,577.02</td><td>746,651.62</td><td class="pos">+28,925.40</td><td><span class="tag">Aging ไม่ตรงกฎ 4 ใบ</span></td></tr>
+    <tr><td>OMT</td><td>423,922.43</td><td>409,261.63</td><td class="pos">+14,660.80</td><td><span class="tag">Aging ไม่ตรงกฎ 1 ใบ</span></td></tr>
+    <tr><td>TOP</td><td>8,718,621.42</td><td>8,709,517.46</td><td class="pos">+9,103.96</td><td><span class="tag">Aging ไม่ตรงกฎ 8 ใบ</span></td></tr>
+    <tr><td>CRG</td><td>6,762,251.64</td><td>6,759,350.88</td><td class="pos">+2,900.76</td><td><span class="tag">Final ต่างจาก Live</span></td></tr>
+  </table>
+  <div class="foot">ตัวอย่างข้อมูลจากเคสที่เจอ · กดแถว BU เพื่อไปหน้ารายการแถวที่ต่าง · ตรวจอัตโนมัติหลังนำเข้าไฟล์/Freeze และทุก 10 นาที</div>
+</div>
+
+</body></html>

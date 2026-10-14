@@ -5,15 +5,10 @@ import { useUserRole } from '../contexts/useUserRole';
 // MARKER_UPLOADGEN_DOCACCESS_FIX_V1
 import { broadcastWs, subscribeWs } from '../wsManager';
 import SpCloneExplorer from './SpCloneExplorer'; // MARKER_UPLOADGEN_SP_CLONE_V1
+import { DOC_FOLDERS, folderPermOk } from '../docFolderConfig'; // MARKER_DOCFOLDER_CONFIG_V1
 import ReconcileResultsExplorer from './ReconcileResultsExplorer'; // MARKER_UPLOADGEN_VAT_RESULTS_EXPLORER_V1
 
-const DOC_FOLDERS = [
-  { key: 'ap',   label: 'AP Manual',       icon: '🧾', permKey: 'Manual', color: '#E6F1FB', textColor: '#0C447C', desc: 'ใบวางบิล, ใบเสร็จ, หนังสือยืนยัน', docTypes: ['APN01','AP09','AP07'] },
-  { key: 'vat',  label: 'VAT Control',     icon: '🧮', permKey: 'VAT',   color: '#EAF3DE', textColor: '#27500A', desc: 'ใบกำกับภาษี, รายงาน PP30', docTypes: ['VAT'] },
-  { key: 'ie',   label: 'I-Expense',       icon: '💸', permKey: 'IE',    color: '#FAEEDA', textColor: '#633806', desc: 'ใบเบิกค่าใช้จ่าย, ค่าเดินทาง, ค่าที่พัก', docTypes: ['IE'] },
-  { key: 'gl',   label: 'GL Report',       icon: '📊', permKey: 'GL',    color: '#EEEDFE', textColor: '#3C3489', desc: 'รายงาน GL บัญชีแยกประเภท', docTypes: ['GL'] },
-  { key: 'ipro', label: 'I-Pro Interface', icon: '🔗', permKey: 'I-Pro', color: '#FAECE7', textColor: '#712B13', desc: 'เอกสาร interface ระบบ · spec, mapping', docTypes: ['IPRO'] },
-];
+// MARKER_DOCFOLDER_CONFIG_V1 -- รายการกล่องมาจาก docFolderConfig.js (เพิ่มกล่องใหม่ที่ไฟล์นั้น แล้วที่นี่สร้างให้เอง)
 
 // MARKER_SUPPORT_FEEDBACK_PHASE2_V1
 const MENU_SOURCE_OPTIONS = ['AP Controller', 'VAT Controller', 'I-Expense', 'GL Functional', 'I-Pro Interface', 'Master Data', 'Resource Center', 'อื่นๆ'];
@@ -4994,6 +4989,29 @@ function DraftPanel({ userName, currentUser, isOwner, isAdmin, isEditor, onClose
   );
 }
 
+// MARKER_APMANUAL_TH_ICONS_V1 -- ไอคอนหน้าชื่อคอลัมน์ในตาราง AP Manual (Tabler outline, inline SVG ไม่พึ่ง font)
+const TH_ICON_PATHS = {
+  file: ['M14 3v4a1 1 0 0 0 1 1h4', 'M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z', 'M9 9l1 0', 'M9 13l6 0', 'M9 17l6 0'],
+  building: ['M3 21l18 0', 'M9 8l1 0', 'M9 12l1 0', 'M9 16l1 0', 'M14 8l1 0', 'M14 12l1 0', 'M14 16l1 0', 'M5 21v-16a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v16'],
+  tag: ['M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0', 'M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z'],
+  calendar: ['M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12z', 'M16 3v4', 'M8 3v4', 'M4 11h16'],
+  baht: ['M8 6h4a3 3 0 0 1 0 6a3 3 0 0 1 0 6h-4', 'M8 6l0 12', 'M8 12l4 0', 'M10 4l0 2', 'M10 18l0 2'],
+  percent: ['M16 17m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0', 'M8 7m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0', 'M6 18l12 -12'],
+  sum: ['M18 16v2a1 1 0 0 1 -1 1h-11l6 -7l-6 -7h11a1 1 0 0 1 1 1v2'],
+  clip: ['M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5'],
+  tool: ['M7 10h3v-3l-3.5 -3.5a6 6 0 0 1 8 8l6 6a2 2 0 0 1 -3 3l-6 -6a6 6 0 0 1 -8 -8l3.5 3.5'],
+  list: ['M11 6h9', 'M11 12h9', 'M12 18h8', 'M4 16a2 2 0 1 1 4 0c0 .591 -.5 1 -1 1.5l-3 2.5h4', 'M6 10v-6l-2 2'],
+  user: ['M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0', 'M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2'],
+  clock: ['M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0', 'M12 7v5l3 3'],
+};
+function ThIcon({ n }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5dcaa5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ verticalAlign:'-3px',marginRight:'5px',flexShrink:0 }}>
+      {(TH_ICON_PATHS[n] || []).map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  );
+}
+
 function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwner, isAdmin, isEditor }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5023,6 +5041,7 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [viewFile, setViewFile] = useState(null);
   const [lightbox, setLightbox] = useState(null); // { attachments:[], index:0, fileId }
+  const [attHover, setAttHover] = useState(null); // MARKER_UPLOADGEN_ATTACH_ICON_V1 -- id แถวที่เมาส์ชี้ไอคอนไฟล์แนบ (ภาพย่อวาดเฉพาะตอนชี้)
   // MARKER_FOLDERDETAIL_LIGHTBOX_ROTATE_SAVE_V1
   const [lightboxRotation, setLightboxRotation] = useState(0);
   const [lightboxSaving, setLightboxSaving] = useState(false);
@@ -5885,6 +5904,55 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
       {/* ── TOP: Breadcrumb + Header + Toolbar + Tabs + Filter ── */}
       <div style={{ flexShrink:0,background:'white',borderBottom:'1px solid #e8e8e8',boxShadow:'0 1px 4px rgba(0,0,0,0.04)',width:'100%',boxSizing:'border-box' }}>
         {/* Breadcrumb + Header + Toolbar */}
+        {/* MARKER_APMANUAL_HEADER_V1 -- หัวแบบเดียวกับ VAT Control / GL Report: eyebrow + ชื่อ + วันที่/ผู้ใช้/Role | แถบนำทาง + ปุ่ม Draft / Queue / เพิ่มไฟล์ ชิดขวาแถวเดียวกัน */}
+        {folder.key === 'ap' ? (
+        <>
+          <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 24px 12px',background:'#fff' }}>
+            <div style={{ borderLeft:'4px solid #2fb58a',paddingLeft:'12px' }}>
+              <div style={{ fontSize:'10.5px',letterSpacing:'.14em',color:'#2fb58a',fontWeight:700,textTransform:'uppercase' }}>Document Center</div>
+              <div style={{ fontSize:'24px',fontWeight:800,color:'#14284b',lineHeight:1.2,marginTop:'2px' }}>Document Center - <span style={{ color:'#2fb58a' }}>{folder.label}</span></div>
+              <div style={{ fontSize:'12px',color:'#6b778c',marginTop:'2px' }}>{search ? files.length : totalAllCount} รายการทั้งหมด</div>
+            </div>
+            <div style={{ textAlign:'right',fontSize:'12.5px',color:'#4b5a73' }}>
+              <div>{(() => { try { return new Date().toLocaleDateString('th-TH',{ weekday:'long',day:'numeric',month:'long',year:'numeric' }); } catch (_) { return ''; } })()}</div>
+              <div style={{ marginTop:'4px' }}><span style={{ color:'#6b778c',marginRight:'4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize:'11px',background:'#e3f6ec',color:'#14935a',borderRadius:'99px',padding:'2px 10px',fontWeight:700 }}>{isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer'}</span></div>
+            </div>
+          </div>
+          <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',padding:'8px 24px 12px',background:'#fff',flexWrap:'wrap' }}>
+            <div style={{ display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap' }}>
+              <span onClick={onBack} title="กลับไป Document Center" style={{ display:'inline-flex',alignItems:'center',gap:'6px',border:'1px solid #0f6cbd',background:'#fff',color:'#0f6cbd',fontWeight:600,borderRadius:'99px',padding:'5px 14px',fontSize:'13px',cursor:'pointer' }}>← Document Center</span>
+              <span style={{ color:'#b3bccb' }}>›</span>
+              <span style={{ display:'inline-flex',alignItems:'center',gap:'8px',border:'1px solid #14284b',background:'#14284b',color:'#fff',fontWeight:600,borderRadius:'99px',padding:'5px 14px 5px 6px',fontSize:'13px' }}><span style={{ width:'20px',height:'20px',borderRadius:'50%',background:'#2fb58a',color:'#fff',fontSize:'11px',display:'inline-flex',alignItems:'center',justifyContent:'center' }}>1</span>{folder.label}</span>
+            </div>
+            <div style={{ display:'flex',gap:'8px',alignItems:'center',flexShrink:0 }}>
+              <div style={{ position:'relative',display:'inline-block' }}>
+                <button onClick={()=>{ setDraftOpenedAt(new Date().toISOString()); setShowDraftPanel(true); }}
+                  style={{ height:'32px',padding:'0 14px',borderRadius:'99px',border:'1px solid #c8d8ec',background:'#f0f6ff',color:'#1a3a5c',fontSize:'13px',cursor:'pointer',fontWeight:600 }}>
+                  📋 Draft
+                </button>
+                {draftBadge > 0 && (
+                  <span style={{ position:'absolute',top:'-6px',right:'-4px',background:'#856404',color:'white',borderRadius:'50%',width:'16px',height:'16px',fontSize:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'700' }}>
+                    {draftBadge}
+                  </span>
+                )}
+              </div>
+              <div style={{ position:'relative',display:'inline-block' }}>
+                <button onClick={()=>{ setShowQueue(true); fetchQueue(); }}
+                  style={{ height:'32px',padding:'0 14px',borderRadius:'99px',border:'1px solid #c8d8ec',background:'#f0f6ff',color:'#1a3a5c',fontSize:'13px',cursor:'pointer',fontWeight:600 }}>
+                  🔔 Queue
+                </button>
+                {queueBadge > 0 && (
+                  <span style={{ position:'absolute',top:'-6px',right:'-4px',background:'#e74c3c',color:'white',borderRadius:'50%',width:'16px',height:'16px',fontSize:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'700' }}>
+                    {queueBadge}
+                  </span>
+                )}
+              </div>
+              <button onClick={()=>{ setAddOpenedAt(new Date().toISOString()); setShowAdd(true); }} style={{ height:'32px',padding:'0 16px',borderRadius:'99px',border:'none',background:'#14284b',color:'white',fontSize:'13px',cursor:'pointer',fontWeight:600 }}>⬆ เพิ่มไฟล์</button>
+            </div>
+          </div>
+        </>
+        ) : (
+        <>
         <div style={{ padding:'10px 20px 0' }}>
           <div style={{ display:'flex',alignItems:'center',gap:'6px',marginBottom:'8px' }}>
             <button onClick={onBack} style={{ background:'none',border:'none',cursor:'pointer',color:'#aaa',fontSize:'11px',padding:0,display:'flex',alignItems:'center',gap:'4px' }}>← Document Center</button>
@@ -5899,9 +5967,6 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
             </div>
             {/* Toolbar right */}
             <div style={{ display:'flex',gap:'8px',alignItems:'center',flexShrink:0 }}>
-              <input placeholder="Search Serial code, BU..." value={search} onChange={e=>setSearch(e.target.value)}
-                style={{ width:'220px',padding:'5px 10px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'11px',background:'#f7f8fa',outline:'none' }}/>
-              {search && <button onClick={()=>setSearch('')} style={{ padding:'5px 7px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'11px',cursor:'pointer',background:'#f5f5f5',color:'#888' }}>✕</button>}
               <div style={{ position:'relative',display:'inline-block' }}>
                 <button onClick={()=>{ setDraftOpenedAt(new Date().toISOString()); setShowDraftPanel(true); }}
                   style={{ padding:'5px 12px',borderRadius:'6px',border:'0.5px solid #c8d8ec',background:'#f0f6ff',color:'#1a3a5c',fontSize:'12px',cursor:'pointer',fontWeight:'500' }}>
@@ -5928,6 +5993,8 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
             </div>
           </div>
         </div>
+        </>
+        )}
         {/* Tabs */}
         <div style={{ display:'flex',padding:'0 20px' }}>
           {TABS.map(t => (
@@ -5989,6 +6056,10 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
           </div>
           {/* Sort */}
           <div style={{ display:'flex',alignItems:'center',gap:'5px',flexShrink:0 }}>
+            {/* MARKER_APMANUAL_SEARCH_MOVED_V1 -- ย้ายช่องค้นหามาไว้แถวเดียวกับ BU / เรียงตาม */}
+            <input placeholder="Search Serial code, BU..." value={search} onChange={e=>setSearch(e.target.value)}
+              style={{ width:'220px',height:'24px',boxSizing:'border-box',padding:'0 10px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'11px',background:'#f7f8fa',outline:'none',marginRight:'6px' }}/>
+            {search && <button onClick={()=>setSearch('')} style={{ height:'24px',padding:'0 7px',borderRadius:'6px',border:'0.5px solid #ddd',fontSize:'11px',cursor:'pointer',background:'#f5f5f5',color:'#888',marginRight:'6px' }}>✕</button>}
             <span style={{ fontSize:'11px',color:'#bbb',whiteSpace:'nowrap' }}>เรียงตาม</span>
             <select value={sortBy} onChange={e=>{ setSortBy(e.target.value); setCurrentPage(1); }}
               style={{ height:'24px',padding:'0 6px',border:'0.5px solid #ddd',borderRadius:'5px',fontSize:'11px',background:'white',color:'#333',cursor:'pointer' }}>
@@ -6004,7 +6075,9 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
 
       {/* ── MIDDLE: Table + Footer อยู่ใน scroll container เดียวกัน ── */}
       <div style={{ flex:'1 1 0',overflow:'hidden',padding:'8px 16px 0',display:'flex',flexDirection:'column',minHeight:0 }}>
-        <div style={{ flex:'1 1 0',overflowY:'auto',overflowX:'auto',background:'white',border:'0.5px solid #e8e8e8',borderRadius:'6px',display:'flex',flexDirection:'column',position:'relative' }}>
+        <div className="fd-thin-scroll" style={{ flex:'1 1 0',overflowY:'auto',overflowX:'auto',background:'white',border:'0.5px solid #e8e8e8',borderRadius:'6px',display:'flex',flexDirection:'column',position:'relative',scrollbarWidth:'thin',scrollbarColor:'#c9d1db transparent' }}>
+          {/* MARKER_FOLDERDETAIL_THIN_SCROLL_V1 -- Scrollbar บางลง (4px) ของตารางรายการ */}
+          <style>{`.fd-thin-scroll::-webkit-scrollbar{width:4px;height:4px}.fd-thin-scroll::-webkit-scrollbar-track{background:transparent}.fd-thin-scroll::-webkit-scrollbar-thumb{background:#c9d1db;border-radius:4px}.fd-thin-scroll::-webkit-scrollbar-thumb:hover{background:#a9b4c2}.fd-thin-scroll::-webkit-scrollbar-button{display:none;width:0;height:0}`}</style>
           {/* MARKER_FOLDERDETAIL_REFRESHING_BAR_V1 -- แถบบางๆ ด้านบน โชว์เฉพาะตอน Refresh เงียบๆ
               (ตารางเดิมยังค้างโชว์อยู่ ไม่กระพริบเป็นจอเปล่าเหมือนก่อนหน้านี้) */}
           {refreshing && (
@@ -6024,20 +6097,20 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
         ) : filtered.length===0 ? (
           <div style={{ padding:'32px',textAlign:'center',color:'#aaa',fontSize:'12px' }}>ไม่พบรายการในหน้านี้</div>
         ) : (
-          <table style={{ width:'100%',borderCollapse:'collapse',fontSize:'11px',minWidth:'800px' }}>
+          <table style={{ width:'100%',borderCollapse:'collapse',fontSize:'11px',minWidth:folder.key==='ap'?'1100px':'800px' }}>
             <thead><tr>
-              <th style={{ ...S.th,minWidth:'240px' }}>Filename / Serial Code</th>
-              <th style={{ ...S.th,width:'200px' }}>BU Company Name</th>
-              <th style={{ ...S.th,width:'70px',textAlign:'center' }}>BU Code</th>
-              <th style={{ ...S.th,width:'95px',textAlign:'center' }}>Receive Date</th>
-              <th style={{ ...S.th,width:'120px',textAlign:'right' }}>Amount</th>
-              <th style={{ ...S.th,width:'90px',textAlign:'right' }}>VAT</th>
-              <th style={{ ...S.th,width:'120px',textAlign:'right' }}>Total</th>
-              <th style={{ ...S.th,width:'110px',textAlign:'center' }}>Attachment</th>
-              <th style={{ ...S.th,width:'100px',textAlign:'center' }}>Action</th>
-              <th style={{ ...S.th,width:'65px',textAlign:'center' }}>Invoice</th>
-              <th style={{ ...S.th,width:'100px' }}>Uploaded By</th>
-              <th style={{ ...S.th,width:'95px' }}>Updated At</th>
+              <th style={{ ...S.th,minWidth:'240px' }}>{folder.key==='ap' && <ThIcon n="file"/>}Filename / Serial Code</th>
+              <th style={{ ...S.th,width:'210px' }}>{folder.key==='ap' && <ThIcon n="building"/>}BU Company Name</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'90px':'70px',textAlign:'center' }}>{folder.key==='ap' && <ThIcon n="tag"/>}BU Code</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'125px':'95px',textAlign:'center' }}>{folder.key==='ap' && <ThIcon n="calendar"/>}Receive Date</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'130px':'120px',textAlign:'right' }}>{folder.key==='ap' && <ThIcon n="baht"/>}Amount</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'100px':'90px',textAlign:'right' }}>{folder.key==='ap' && <ThIcon n="percent"/>}VAT</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'130px':'120px',textAlign:'right' }}>{folder.key==='ap' && <ThIcon n="sum"/>}Total</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'130px':'110px',textAlign:'center' }}>{folder.key==='ap' && <ThIcon n="clip"/>}Attachment</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'110px':'100px',textAlign:'center' }}>{folder.key==='ap' && <ThIcon n="tool"/>}Action</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'90px':'65px',textAlign:'center' }}>{folder.key==='ap' && <ThIcon n="list"/>}Invoice</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'130px':'100px' }}>{folder.key==='ap' && <ThIcon n="user"/>}Uploaded By</th>
+              <th style={{ ...S.th,width:folder.key==='ap'?'120px':'95px' }}>{folder.key==='ap' && <ThIcon n="clock"/>}Updated At</th>
             </tr></thead>
             <tbody>
               {filtered.map(file => {
@@ -6082,14 +6155,22 @@ function FolderDetail({ folder, onBack, userName, currentUser, canDelete, isOwne
                     <td style={{ ...S.td,textAlign:'center' }}>
                       <div style={{ display:'flex',gap:'4px',justifyContent:'center',alignItems:'center' }}>
                         {Array.isArray(file.attachments)&&file.attachments.length>0 ? (
-                          <>
-                            {file.attachments.slice(0,3).map((a,i)=>(
-                              <img key={i} src={a.data} alt={a.name} title={a.name}
-                                onClick={()=>setLightbox({attachments:file.attachments,index:i,fileId:file.id})}
-                                style={{ width:'32px',height:'32px',borderRadius:'4px',objectFit:'cover',border:'0.5px solid #ddd',cursor:'pointer' }}/>
-                            ))}
-                            {file.attachments.length>3&&<span style={{ fontSize:'10px',color:'#aaa' }}>+{file.attachments.length-3}</span>}
-                          </>
+                          <div style={{ position:'relative',display:'inline-block' }} onMouseEnter={()=>setAttHover(file.id)} onMouseLeave={()=>setAttHover(null)}>
+                            {/* MARKER_UPLOADGEN_ATTACH_ICON_V1 -- ไอคอน + ตัวเลขมุมขวาบนแทนภาพย่อทุกแถว (เบากว่า) | ภาพย่อวาดเฉพาะตอนเมาส์ชี้ | คลิก = เปิด Lightbox เหมือนเดิม */}
+                            <button onClick={()=>setLightbox({attachments:file.attachments,index:0,fileId:file.id})} title={`ไฟล์แนบ ${file.attachments.length} ไฟล์ — คลิกเพื่อดู`}
+                              style={{ width:'34px',height:'34px',borderRadius:'8px',border:'0.5px solid #14284b',background:'#14284b',color:'#fff',cursor:'pointer',display:'inline-flex',alignItems:'center',justifyContent:'center',padding:0 }}>
+                              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                            </button>
+                            <span style={{ position:'absolute',top:'-6px',right:'-6px',minWidth:'16px',height:'16px',padding:'0 4px',borderRadius:'99px',background:'#fff',color:'#14284b',border:'1px solid #14284b',fontSize:'10px',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }}>{file.attachments.length}</span>
+                            {attHover===file.id && (
+                              <div style={{ position:'absolute',top:'100%',left:'50%',transform:'translateX(-50%)',marginTop:'4px',zIndex:60,background:'#fff',border:'0.5px solid #d6dbe4',borderRadius:'8px',padding:'6px',boxShadow:'0 6px 18px rgba(20,40,75,.18)',display:'flex',gap:'4px' }}>
+                                {file.attachments.slice(0,3).map((a,i)=>(
+                                  <img key={i} src={a.data} alt={a.name} title={a.name} onClick={()=>setLightbox({attachments:file.attachments,index:i,fileId:file.id})}
+                                    style={{ width:'56px',height:'56px',borderRadius:'4px',objectFit:'cover',border:'0.5px solid #ddd',cursor:'pointer' }}/>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         ) : <span style={{ fontSize:'10px',color:'#ccc' }}>{file.attachments === undefined ? '…' : '-'}</span>}
                       </div>
                     </td>
@@ -6599,7 +6680,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 
   const { currentUser, userName, userPermissions } = useAuth();
   const { isOwner, isAdmin, isEditor } = useUserRole();
-  const canSpHandler = !!(isOwner || (userPermissions && userPermissions['VAT'])); // MARKER_UPLOADGEN_SP_HANDLER_VAT_ONLY_V1 -- การ์ด SharePoint Handler เห็นเฉพาะ Owner / ผู้มีสิทธิ์ VAT (กฎเดียวกับ Home)
+  const canSpHandler = !!(isOwner || (userPermissions && userPermissions.docAccess && (userPermissions.docAccess.vat || userPermissions.docAccess.gl))); // MARKER_SP_HANDLER_AP_PERMS_V2 -- ตาม Document Access ของ VAT + สิทธิ์ที่เปิดไว้ใน GL Access // MARKER_UPLOADGEN_SP_HANDLER_VAT_ONLY_V1 -- การ์ด SharePoint Handler เห็นเฉพาะ Owner / ผู้มีสิทธิ์ VAT (กฎเดียวกับ Home)
   const dcCache = (DOC_CENTER_CACHE && DOC_CENTER_CACHE.email === ((currentUser && currentUser.email) || '')) ? DOC_CENTER_CACHE : null; // MARKER_DOCCENTER_SKELETON_CACHE_V1
   const [userRoleData, setUserRoleData] = useState(dcCache ? dcCache.userRoleData : null);
   const [fileCounts, setFileCounts] = useState(dcCache ? dcCache.fileCounts : {});
@@ -6790,7 +6871,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       if (e.key !== 'Escape') return;
       if (activeFolder && activeFolder.key !== 'ap') {
         // MARKER_UPLOADGEN_VAT_HUB_V1 -- อยู่ในการ์ดย่อยของ VAT Control: Esc = กลับหน้า 3 การ์ดก่อน
-        if (activeFolder.key === 'vat' && vatSub) { setVatSub(null); return; }
+        if ((activeFolder.key === 'vat' || activeFolder.key === 'gl') && vatSub) { setVatSub(null); return; } // MARKER_GL_AP_CLONE_V1
         setActiveFolder(null);
         fetchData();
       }
@@ -7565,7 +7646,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     if (isOwner) return true;
     const docAccessVal = userPermissions?.docAccess?.[folder.key];
     if (docAccessVal !== undefined) return docAccessVal;
-    return userRoleData?.permissions?.[folder.permKey] ?? false;
+    return folderPermOk(userRoleData?.permissions, folder); // MARKER_DOCFOLDER_GL_BY_PERMISSION_V1
   };
 
   const getRequestStatus = (folderKey) => {
@@ -7683,6 +7764,54 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
           {hubRow({ title:'Z_Report Reconcile', icon:'📤', bg:'#E8F5E9', desc:'Clone จาก SharePoint · รายงาน Reconcile · เปิดผ่าน Browser · โยนไฟล์แล้วส่งไป SharePoint (ไม่เก็บไฟล์จริงในระบบ)', pill:'☁ SharePoint', pillBg:'#E3F2FD', pillColor:'#0C447C', onClick:()=>setVatSub('recon') })}
           {hubRow({ title:'Z_Upload (Z_AllSystemUpload)', icon:'📤', bg:'#FFF3E0', desc:'Clone จาก SharePoint · ไฟล์ Upload เข้าระบบ (อนาคต)', pill:'เร็วๆ นี้', pillBg:'#eee', pillColor:'#888', disabled:true })}
           {hubRow({ title:'VAT Detail', icon:'🗂', bg:'#E8F0FE', desc:'เก็บไฟล์จริงที่ Backend เช่น ไฟล์ประชุม, ใบกำกับภาษี, รายงาน PP30 (อนาคต)', pill:'เร็วๆ นี้', pillBg:'#eee', pillColor:'#888', disabled:true })} {/* MARKER_UPLOADGEN_VATDETAIL_SOON_V1 -- ปิดไว้ก่อน (เดิมเปิดหน้ารายการ AP ที่ไม่เกี่ยวกับ VAT) */}
+          {hubRow({ title:'Mail History', icon:'✉️', bg:'#F3E5F5', desc:'Clone จาก SharePoint (Z_Mail_History) · ประวัติเมลที่ส่งจาก VAT Controller · คลิกเปิดใน Outlook · แสดงเฉพาะเมลที่ส่งโดยผู้ใช้สิทธิ์ VAT (อนาคต)', pill:'เร็วๆ นี้', pillBg:'#eee', pillColor:'#888', disabled:true })} {/* MARKER_UPLOADGEN_MAIL_HISTORY_SOON_V1 -- กล่อง Mail History (ยังไม่เปิดใช้ รอทำ Handler Save As .msg ลง Z_Mail_History) */}
+        </div>
+      </div>
+    );
+  }
+
+  // MARKER_GL_AP_CLONE_V1 -- GL Report > Account Payable Report = Clone จาก SharePoint โฟลเดอร์ Z_Report Reconcile ตัวเดียวกับ VAT (dest=recon, กรองด้วย menu=gl) ใช้ SpCloneExplorer ตัวเดียวกับ VAT Control
+  if (activeFolder && activeFolder.key === 'gl' && vatSub === 'gl-ap') {
+    return (
+      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
+        <SpCloneExplorer dest="recon" menu="gl" title="Account Payable Report" backLabel="GL Report" onBack={() => setVatSub(null)} />
+      </div>
+    );
+  }
+
+  // MARKER_GL_SUBBOXES_V1 -- หน้า Hub ของ GL Report: แสดงกล่องด้านในจาก docFolderConfig.js (subBoxes) | หัวหน้า/แถบขั้นตอน/แถวกล่อง ใช้แบบเดียวกับ Hub ของ VAT Control | ตอนนี้เป็นกล่องเปล่ารอไว้
+  if (activeFolder && Array.isArray(activeFolder.subBoxes) && activeFolder.subBoxes.length) {
+    return (
+      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
+        <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 24px 12px',background:'#fff' }}>
+          <div style={{ borderLeft:'4px solid #2fb58a',paddingLeft:'12px' }}>
+            <div style={{ fontSize:'10.5px',letterSpacing:'.14em',color:'#2fb58a',fontWeight:700,textTransform:'uppercase' }}>Document Center</div>
+            <div style={{ fontSize:'24px',fontWeight:800,color:'#14284b',lineHeight:1.2,marginTop:'2px' }}>Document Center - <span style={{ color:'#2fb58a' }}>GL Report</span></div>
+            <div style={{ fontSize:'12px',color:'#6b778c',marginTop:'2px' }}>เลือกแหล่งไฟล์ของ GL Report</div>
+          </div>
+          <div style={{ textAlign:'right',fontSize:'12.5px',color:'#4b5a73' }}>
+            <div>{(() => { try { return new Date().toLocaleDateString('th-TH',{ weekday:'long',day:'numeric',month:'long',year:'numeric' }); } catch (_) { return ''; } })()}</div>
+            <div style={{ marginTop:'4px' }}><span style={{ color:'#6b778c',marginRight:'4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize:'11px',background:'#e3f6ec',color:'#14935a',borderRadius:'99px',padding:'2px 10px',fontWeight:700 }}>{isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer'}</span></div>
+          </div>
+        </div>
+        <div style={{ display:'flex',alignItems:'center',gap:'6px',padding:'8px 24px 12px',background:'#fff',borderBottom:'1px solid #edebe9',flexWrap:'wrap' }}>
+          <span onClick={()=>{ setActiveFolder(null); fetchData(); }} title="กลับไป Document Center" style={{ display:'inline-flex',alignItems:'center',gap:'6px',border:'1px solid #0f6cbd',background:'#fff',color:'#0f6cbd',fontWeight:600,borderRadius:'99px',padding:'5px 14px',fontSize:'13px',cursor:'pointer' }}>← Document Center</span>
+          <span style={{ color:'#b3bccb' }}>›</span>
+          <span style={{ display:'inline-flex',alignItems:'center',gap:'8px',border:'1px solid #14284b',background:'#14284b',color:'#fff',fontWeight:600,borderRadius:'99px',padding:'5px 14px 5px 6px',fontSize:'13px' }}><span style={{ width:'20px',height:'20px',borderRadius:'50%',background:'#2fb58a',color:'#fff',fontSize:'11px',display:'inline-flex',alignItems:'center',justifyContent:'center' }}>1</span>{activeFolder.label}</span>
+        </div>
+        <div style={{ padding:'16px 20px', display:'flex', flexDirection:'column', gap:'10px', overflowY:'auto' }}>
+          {activeFolder.subBoxes.map((b, i) => (
+            <div key={b.key} onClick={() => { if (b.key === 'gl-z-ap') setVatSub('gl-ap'); }} style={{ cursor: b.key === 'gl-z-ap' ? 'pointer' : 'default', background:'white', border: i === 0 ? '0.5px solid #e8e8e8' : '0.5px dashed #ddd', borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px', opacity: i === 0 ? 1 : 0.55 }}>
+              <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:b.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>{b.icon}</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:'14px', fontWeight:'500', color: i === 0 ? '#1a3a5c' : '#aaa', marginBottom:'2px' }}>{b.title}</div>
+                <div style={{ fontSize:'11px', color: i === 0 ? '#888' : '#bbb' }}>{b.desc}</div>
+              </div>
+              <span style={{ fontSize:'11px', padding:'3px 10px', borderRadius:'99px', background:b.pillBg || '#eee', color:b.pillColor || '#888', flexShrink:0 }}>{b.pill}</span>
+              <button disabled={b.key !== 'gl-z-ap'} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor: b.key === 'gl-z-ap' ? 'pointer' : 'default', flexShrink:0 }}>Detail</button>
+              <span style={{ color:'#999' }}>›</span>
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -7947,7 +8076,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
         <div style={{ background:'white', border:'0.5px solid #e8e8e8', borderRadius:'8px', padding:'12px 16px', display: canSpHandler ? 'flex' : 'none', alignItems:'center', gap:'14px' }}>
           <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:'#E8F5E9', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>📤</div>
           <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c', marginBottom:'2px' }}>SharePoint Handler - <span style={{ color:'#2fb58a' }}>VatController</span></div>
+            <div style={{ fontSize:'14px', fontWeight:'500', color:'#1a3a5c', marginBottom:'2px' }}>SharePoint Handler - <span style={{ color:'#2fb58a' }}>Z_Report Reconcile</span></div>
             <div style={{ fontSize:'11px', color:'#888' }}>ส่งไฟล์รายงานภาษีไปเก็บที่ SharePoint ด้วยปุ่ม Confirm (สร้างโฟลเดอร์ BU / เดือนให้อัตโนมัติ) ติดตั้งครั้งเดียวต่อเครื่อง</div>
             {spInfo && (
               <div style={{ fontSize:'10.5px', color:'#6b7b8c', marginTop:'3px' }}>
@@ -8614,7 +8743,7 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
       {showSpDetail && (
         <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.4)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
           <div style={{ background:'white', borderRadius:'12px', width:'640px', maxWidth:'90vw', maxHeight:'85vh', overflowY:'auto', padding:'28px' }}>
-            <div style={{ fontSize:'18px', fontWeight:'600', color:'#1a3a5c', marginBottom:'4px' }}>📤 SharePoint Handler - <span style={{ color:'#2fb58a' }}>VatController</span></div>
+            <div style={{ fontSize:'18px', fontWeight:'600', color:'#1a3a5c', marginBottom:'4px' }}>📤 SharePoint Handler - <span style={{ color:'#2fb58a' }}>Z_Report Reconcile</span></div>
             <div style={{ fontSize:'13px', color:'#888', marginBottom:'20px' }}>ส่งไฟล์รายงานภาษีไปเก็บที่ SharePoint — ติดตั้งครั้งเดียวต่อเครื่อง</div>
 
             <div style={{ background:'#f7f9fb', borderRadius:'8px', padding:'12px 16px', marginBottom:'20px' }}>
@@ -8701,4 +8830,4 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
 export default DocumentCenter;
 // MARKER_SUPPORT_LIST_FULLHEIGHT_V1
 
-// MARKER_SUPPORT_SEARCH_NARROW_V1
+// MARKER_SUPPORT_SEARCH_NARROW_V1

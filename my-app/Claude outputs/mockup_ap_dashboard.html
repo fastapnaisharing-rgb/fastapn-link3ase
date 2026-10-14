@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Account Payable Recon</title>
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--line:#e3e8ef;--ink:#1f2937;--mute:#6b7280;--blue:#0969da;--blue-soft:#e8f1fd;--ok:#1a7f37;--ok-soft:#e6f4ea;--warn:#9a6700;--warn-soft:#fff4d6;--na:#c4cad4}
+@media (prefers-color-scheme:dark){:root{--bg:#10151c;--card:#171e28;--line:#2a3442;--ink:#e6ebf2;--mute:#97a3b4;--blue:#58a6ff;--blue-soft:#14263d;--ok:#3fb950;--ok-soft:#12301c;--warn:#d4a72c;--warn-soft:#33290d;--na:#465263}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Tahoma,sans-serif;padding:20px}
+.grid{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.hd{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line)}
+.hd h2{margin:0;font-size:15px}.tabs{display:flex;gap:4px;background:var(--bg);padding:3px;border-radius:9px}
+.tabs b{padding:5px 14px;border-radius:7px;font-weight:600;font-size:13px;color:var(--mute)}.tabs b.on{background:var(--card);color:var(--blue);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px 18px}
+.kpi div{background:var(--bg);border-radius:10px;padding:10px 12px}.kpi small{color:var(--mute);font-size:12px}.kpi strong{display:block;font-size:20px}
+table{width:100%;border-collapse:collapse}th,td{padding:9px 10px;text-align:center;font-size:13px}
+thead th{color:var(--mute);font-weight:600;font-size:12px;border-bottom:1px solid var(--line)}
+thead tr.g th{padding-bottom:2px;border:0;color:var(--blue);font-size:12px;letter-spacing:.3px}
+th.l,td.l{text-align:left;padding-left:18px}tbody tr{border-bottom:1px solid var(--line)}tbody tr:hover{background:var(--blue-soft)}
+.sep{border-left:2px solid var(--line)}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 9px;font-weight:600;font-size:12px}
+.ok{background:var(--ok-soft);color:var(--ok)}.warn{background:var(--warn-soft);color:var(--warn)}.na{color:var(--na)}.nd{color:var(--na);font-size:12px;font-style:italic}
+.num{font-weight:700;font-variant-numeric:tabular-nums}
+.bu{font-weight:700}.bu i{font-style:normal;display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:8px}
+.side{padding:16px 18px}.side h3{margin:0 0 12px;font-size:14px}
+label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px;font-weight:600}
+.f{border:1px solid var(--line);border-radius:9px;padding:8px 11px;background:var(--card);display:flex;justify-content:space-between}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+.btn{border:1px solid var(--line);border-radius:9px;padding:9px;text-align:center;font-weight:600;background:var(--card)}
+.btn.p{color:var(--blue);border-color:var(--blue)}.btn.d{color:#cf222e}.btn.x{grid-column:1/3;background:var(--blue);color:#fff;border-color:var(--blue)}
+.foot{padding:10px 18px;color:var(--mute);font-size:12px;display:flex;gap:16px;border-top:1px solid var(--line)}
+.jobs{margin-top:16px}.empty{padding:36px;text-align:center;color:var(--mute)}
+</style></head><body>
+<div class="grid">
+ <div>
+  <div class="card">
+   <div class="hd"><div class="tabs"><b class="on">Dashboard</b><b>Upload File</b></div><span style="color:var(--mute);font-size:12px">Period 2026-09</span></div>
+   <table>
+    <thead>
+     <tr class="g"><th class="l"></th><th colspan="4">AP RECONCILE</th><th colspan="2" class="sep">IE RECONCILE</th></tr>
+     <tr><th class="l">BU</th><th>21930052<br>Trade Payable</th><th>21930054<br>Trade Payable 2</th><th>21930084<br>Cancel Cheque</th><th>21930085<br>Cancel Cheque 2</th><th class="sep">21930100<br>Other Payable</th><th>21930220<br>AP Misc</th></tr>
+    </thead>
+    <tbody>
+     <tr><td class="l bu"><i></i>MPS</td>
+      <td><span class="chip ok">TB ✓</span> <span class="num">24</span></td>
+      <td><span class="chip ok">TB ✓</span> <span class="num">88</span></td>
+      <td class="nd">No Data</td><td class="nd">No Data</td>
+      <td class="sep"><span class="chip ok">TB ✓</span> <span class="nd">AP No Data</span></td>
+      <td class="nd">No Data</td></tr>
+     <tr><td class="l bu"><i style="background:var(--warn)"></i>TOP</td>
+      <td><span class="chip warn">TB รอ</span> <span class="num">3,120</span></td>
+      <td><span class="chip warn">TB รอ</span> <span class="num">5,944</span></td>
+      <td class="nd">No Data</td><td class="nd">No Data</td><td class="sep nd">No Data</td><td class="nd">No Data</td></tr>
+    </tbody>
+   </table>
+   <div class="foot"><span><span class="chip ok">TB ✓</span> มี TB แล้ว</span><span><span class="chip warn">TB รอ</span> ยังไม่มี TB</span><span>ตัวเลข = จำนวนแถว AP</span><span class="nd">No Data = ไม่มีข้อมูล</span></div>
+  </div>
+  <div class="card jobs">
+   <div class="hd"><div class="tabs"><b class="on">My Job</b><b>All Job</b></div><span style="color:var(--mute);font-size:12px">0 ไฟล์</span></div>
+   <div class="empty">ยังไม่มีไฟล์ที่ Generate ไว้</div>
+  </div>
+ </div>
+ <div class="card side">
+  <h3>Reconcile Control Zone</h3>
+  <label>PERIOD</label><div class="f"><span>2026-09</span><span>▾</span></div>
+  <label>BUSINESS UNIT</label><div class="f"><span style="color:var(--mute)">พิมพ์หรือเลือก...</span><span>▾</span></div>
+  <label>ACCOUNT</label><div class="f"><span style="color:var(--mute)">ทุกบัญชี</span><span>▾</span></div>
+  <div class="btns"><div class="btn p">Preview</div><div class="btn d">Clear</div><div class="btn x">Export</div></div>
+ </div>
+</div>
+</body></html>

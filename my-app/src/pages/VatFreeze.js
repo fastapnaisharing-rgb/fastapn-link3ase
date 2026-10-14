@@ -56,6 +56,9 @@ function StatCard({ label, value, color, active, onClick }) {
   );
 }
 
+// BU ที่ย้ายไปงวดใหม่แล้ว (งวดปัจจุบัน > งวดที่เลือก) -> DB ห้าม Freeze งวดเก่าซ้ำ  MARKER_VATFREEZE_ROLLED_V1
+const isRolledOf = (r, period) => !!(r && r.cur_period && period && String(r.cur_period) > String(period));
+
 export default function VatFreeze() {
   const { isOwner, loading: roleLoading } = useUserRole();
   const [periods, setPeriods] = React.useState([]);
@@ -69,6 +72,10 @@ export default function VatFreeze() {
   const [history, setHistory] = React.useState(null); // { bu, rows, loading }
   const [search, setSearch] = React.useState("");
   const [filter, setFilter] = React.useState("all"); // all | final | draft | none | diff
+  // MARKER_VATFREEZE_CONFIRM_MODAL_V1 -- แทน window.confirm ด้วย Modal ธีมเดียวกับระบบ
+  const [dlg, setDlg] = React.useState(null);
+  const askConfirm = (cfg) => new Promise((resolve) => setDlg({ ...cfg, resolve }));
+  const closeDlg = (ok) => { if (dlg) dlg.resolve(ok); setDlg(null); };
 
   const load = React.useCallback(async (p) => {
     setLoading(true);
@@ -98,27 +105,53 @@ export default function VatFreeze() {
     );
   }
 
+  const isRolled = (r) => isRolledOf(r, period);
   const state = (win && win.state) || "unknown";
   const info = WINDOW_INFO[state] || WINDOW_INFO.unknown;
   const canRun = state === "open" || state === "grace" || state === "confirm";
 
   const run = async (bus, force) => {
     let confirm = false;
-    if (state === "confirm") {
-      if (!window.confirm("งวดนี้ปิดมาแล้วเกิน 20 วัน (ไม่เกิน 30 วัน)\nยืนยันอัปเดต Freeze หรือไม่?")) return;
-      confirm = true;
-    } else if (force && !window.confirm(`Freeze Final ซ้ำ ${bus && bus.length === 1 ? bus[0] : "ทุก BU"} เป็นเวอร์ชันใหม่ (เวอร์ชันเดิมเก็บไว้ในประวัติ)?`)) {
-      return;
+    const single = bus && bus.length === 1 ? rows.find((x) => x.bu === bus[0]) : null;
+    const lockedN = rows.filter((x) => isRolled(x)).length;
+    if (state === "confirm" || force) {
+      const ok = await askConfirm({
+        warn: state === "confirm",
+        bu: single ? single.bu : null,
+        row: single,
+        total: rows.length - lockedN,
+        skipped: lockedN,
+        diff: rows.filter((x) => x.sync_state === "diff" && !isRolled(x)).length,
+        days: win && win.days_since_close,
+      });
+      if (!ok) return;
+      if (state === "confirm") confirm = true;
     }
     setBusy(true);
     setMsg(null);
     try {
       const r = await apiFetch("/vat_freeze/run", { method: "POST", body: JSON.stringify({ period, bus, force: !!force, confirm }) });
       const errs = (r.results || []).filter((x) => x.action === "error");
-      setMsg({
-        ok: errs.length === 0 && r.locked === 0,
-        text: `Freeze Final ${r.frozen} | ไม่เปลี่ยน ${r.unchanged} | ล็อก ${r.locked} | ต้องยืนยัน ${r.needs_confirm} | ผิดพลาด ${r.errors}` + (errs.length ? ` — ${errs[0].bu}: ${errs[0].error}` : ""),
-      });
+      const rolledRows = (r.results || []).filter((x) => x.action === "rolled");
+      let text = `Freeze Final ${r.frozen} | ไม่เปลี่ยน ${r.unchanged} | ล็อก ${r.locked} | ต้องยืนยัน ${r.needs_confirm} | ข้าม (BU เข้างวดใหม่แล้ว) ${r.rolled || 0} | ผิดพลาด ${r.errors}`;
+      if (errs.length) text += ` — ${errs[0].bu}: ${errs[0].error}`;
+      if (rolledRows.length === 1 && (r.results || []).length === 1) text = `${rolledRows[0].bu} เข้างวด ${rolledRows[0].current_period} แล้ว — Freeze งวด ${period} ซ้ำไม่ได้ (ล็อกโดยระบบ)`;
+      setMsg({ ok: errs.length === 0 && r.locked === 0 && !(rolledRows.length === 1 && (r.results || []).length === 1), text });
+      await load(period);
+    } catch (e) {
+      setMsg({ ok: false, text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // MARKER_VATFREEZE_SYNC_DIFF_BTN_V1 -- ซิงค์ Final ทุก BU ที่ Live ต่างจาก Final (เฉพาะช่วง 20 วันแรกหลังปิดงวด)
+  const syncDiff = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await apiFetch("/vat_freeze/sync_diff", { method: "POST", body: JSON.stringify({}) });
+      setMsg({ ok: !r.errors, text: r.busy ? "ระบบกำลังซิงค์อยู่ รอสักครู่แล้วลองใหม่" : `ซิงค์ Final ${r.synced} BU | รอยืนยัน (21-30 วัน) ${r.needs_confirm} | ล็อก ${r.locked} | ผิดพลาด ${r.errors}` });
       await load(period);
     } catch (e) {
       setMsg({ ok: false, text: e.message });
@@ -147,7 +180,7 @@ export default function VatFreeze() {
     if (filter === "final") return r.freeze_status === "final";
     if (filter === "draft") return r.freeze_status === "draft";
     if (filter === "none") return !r.freeze_status;
-    if (filter === "diff") return r.sync_state === "diff";
+    if (filter === "diff") return r.sync_state === "diff" && !isRolled(r);
     return true;
   });
   const sumLive = shown.reduce((a, r) => a + (Number(r.live_total_expired) || 0), 0);
@@ -174,6 +207,7 @@ export default function VatFreeze() {
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input placeholder="ค้นหา BU" value={search} onChange={(e) => setSearch(e.target.value)} style={{ padding: "7px 12px", fontSize: 13, width: 180, border: `1px solid #cfd8e3`, borderRadius: 8, background: "white" }} />
           <button disabled={loading} onClick={() => load(period)} style={btn}>{loading ? "กำลังโหลด…" : "รีเฟรช"}</button>
+          <button disabled={busy || state === "open" || state === "locked"} onClick={syncDiff} title="ซิงค์ Final ให้ตรงกับ Report เฉพาะ BU ที่ต่าง (ช่วง 20 วันแรกหลังปิดงวด)" style={{ ...btn, fontWeight: 600 }}>ซิงค์ BU ที่ต่าง</button>
           <button disabled={busy || !canRun || state === "open"} onClick={() => run(null, false)}
             title={state === "open" ? "งวดเปิด: ระบบทำ Draft ให้เอง และจะเปลี่ยนเป็น Final ตอนปิด Period" : ""}
             style={{ padding: "7px 16px", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", background: canRun && state !== "open" ? C.navy : "#c9ced6", color: "white", border: "none", borderRadius: 8, cursor: busy || state === "open" || !canRun ? "not-allowed" : "pointer" }}>
@@ -188,7 +222,7 @@ export default function VatFreeze() {
         <StatCard label="Final" value={nFinal} color="#1e7a3c" active={filter === "final"} onClick={() => setFilter(filter === "final" ? "all" : "final")} />
         <StatCard label="Draft" value={nDraft} color="#0b5394" active={filter === "draft"} onClick={() => setFilter(filter === "draft" ? "all" : "draft")} />
         <StatCard label="ยังไม่มี Freeze" value={nNone} color="#b3261e" active={filter === "none"} onClick={() => setFilter(filter === "none" ? "all" : "none")} />
-        <StatCard label="ต่างจาก Live" value={rows.filter((r) => r.sync_state === "diff").length} color="#a65f00" active={filter === "diff"} onClick={() => setFilter(filter === "diff" ? "all" : "diff")} />
+        <StatCard label="ต่างจาก Live" value={rows.filter((r) => r.sync_state === "diff" && !isRolled(r)).length} color="#a65f00" active={filter === "diff"} onClick={() => setFilter(filter === "diff" ? "all" : "diff")} />
       </div>
 
       {state === "locked" && (
@@ -221,7 +255,8 @@ export default function VatFreeze() {
               {!loading && shown.length === 0 && <tr><td style={{ ...td, textAlign: "center", color: "#999", padding: 30 }} colSpan={9}>ไม่มีข้อมูล</td></tr>}
               {!loading && shown.map((r, i) => {
                 const si = SYNC_INFO[r.sync_state] || SYNC_INFO.none;
-                const diffNow = r.sync_state === "diff";
+                const rolled = isRolled(r);
+                const diffNow = r.sync_state === "diff" && !rolled;
                 return (
                   <tr key={r.bu} style={{ background: i % 2 ? "#fafbfd" : "white" }}>
                     <td style={{ ...td, fontWeight: 700, color: C.navy }}>{r.bu}</td>
@@ -233,12 +268,12 @@ export default function VatFreeze() {
                     <td style={{ ...td, color: "#555" }}>{r.freeze_version ? `v${r.freeze_version}` : "—"}</td>
                     <td style={{ ...td, ...num }}>{fmt(r.live_total_expired)}</td>
                     <td style={{ ...td, ...num, fontWeight: 600, color: diffNow ? "#a65f00" : C.text }}>{fmt(r.frozen_total_expired)}</td>
-                    <td style={{ ...td, color: si.fg, fontSize: 12.5 }}>{r.freeze_status === "final" && diffNow ? "Live เปลี่ยนหลัง Final" : si.label}</td>
+                    <td style={{ ...td, color: si.fg, fontSize: 12.5 }}>{rolled ? <span style={{ color: "#6b7785" }}>BU เข้างวด {r.cur_period} แล้ว (ล็อก)</span> : r.freeze_status === "final" && diffNow ? "Live เปลี่ยนหลัง Final" : si.label}</td>
                     <td style={{ ...td, color: "#555" }}>{fmtDT(r.frozen_at)}</td>
                     <td style={{ ...td, color: "#555" }}>{r.frozen_by || "—"}</td>
                     <td style={{ ...td, textAlign: "right" }}>
                       <button onClick={() => openHistory(r.bu)} style={{ ...btn, padding: "3px 12px", marginRight: 6 }}>ประวัติ</button>
-                      {state !== "open" && canRun && (
+                      {state !== "open" && canRun && !rolled && (
                         <button disabled={busy} onClick={() => run([r.bu], true)} style={{ ...btn, padding: "3px 12px" }}>Freeze ซ้ำ</button>
                       )}
                     </td>
@@ -254,6 +289,69 @@ export default function VatFreeze() {
           <span>รวม Freeze <b style={num}>{fmt(sumFrz)}</b></span>
         </div>
       </div>
+
+      {dlg && (() => {
+        const row = dlg.row;
+        const warn = dlg.warn;
+        const hc = warn ? "#7a4a00" : "#14284b";
+        const cell = { padding: "7px 0", borderBottom: "1px dashed #e5e9f0", fontSize: 13 };
+        const rv = (a, b, bold) => (<tr><td style={cell}>{a}</td><td style={{ ...cell, textAlign: "right", fontWeight: bold ? 700 : 600 }}>{b}</td></tr>);
+        const verBox = (t, v, sub, green) => (
+          <div style={{ flex: 1, border: `1px solid ${green ? "#2fb58a" : C.line}`, background: green ? "#eafaf4" : C.soft, borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ fontSize: 12, color: "#6b7785", fontWeight: 600 }}>{t}</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{v}</div>
+            <div style={{ fontSize: 11.5, color: "#6b7785", marginTop: 2 }}>{sub}</div>
+          </div>
+        );
+        return (
+          <div onClick={() => closeDlg(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,40,75,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: "min(480px, 92vw)", background: "white", borderRadius: 16, overflow: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,0.35)" }}>
+              <div style={{ background: hc, color: "white", padding: "16px 20px", display: "flex", gap: 12, alignItems: "center" }}>
+                <div style={{ width: 38, height: 38, borderRadius: "50%", background: warn ? "rgba(255,255,255,0.18)" : "rgba(47,181,138,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none", fontSize: 18 }}>{warn ? "!" : "❄"}</div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>
+                    {warn ? "ยืนยันอัปเดต Freeze" : "Freeze Final ซ้ำ"}
+                    <span style={{ display: "inline-block", background: "rgba(255,255,255,0.14)", borderRadius: 999, padding: "2px 10px", fontSize: 11.5, marginLeft: 8 }}>{dlg.bu || "ทุก BU"}</span>
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>งวด {period}{dlg.days !== undefined && dlg.days !== null ? ` · ปิดมาแล้ว ${dlg.days} วัน` : ""}</div>
+                </div>
+              </div>
+              <div style={{ padding: "18px 20px" }}>
+                {warn && (
+                  <div style={{ fontSize: 12.5, background: "#fff6e5", color: "#a65f00", border: "1px solid #f3d9a4", borderRadius: 8, padding: "9px 12px", marginBottom: 12 }}>
+                    งวดนี้ปิดเกิน 20 วัน (ไม่เกิน 30 วัน) การอัปเดตจะสร้างเวอร์ชันใหม่และบันทึกว่าแก้ไขหลังพ้นช่วงปกติ
+                  </div>
+                )}
+                {row ? (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                      {verBox("เวอร์ชันปัจจุบัน", row.freeze_version ? `v${row.freeze_version}` : "—", fmtDT(row.frozen_at))}
+                      <div style={{ color: "#2fb58a", fontSize: 20 }}>→</div>
+                      {verBox("เวอร์ชันใหม่", `v${(Number(row.freeze_version) || 0) + 1}`, "ตามยอด Live ตอนนี้", true)}
+                    </div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 10 }}><tbody>
+                      {rv("Total Expired (Freeze)", fmt(row.frozen_total_expired))}
+                      {rv("Total Expired (Live)", fmt(row.live_total_expired))}
+                      {rv("สถานะเทียบ Live", row.sync_state === "diff" ? "Live เปลี่ยนหลัง Final" : "ตรงกับ Live")}
+                    </tbody></table>
+                  </>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 10 }}><tbody>
+                    {rv("จำนวน BU ที่จะ Freeze", dlg.total)}
+                    {rv("BU ที่ Live ต่างจาก Final", dlg.diff)}
+                    {dlg.skipped > 0 && rv("ข้าม (เข้างวดใหม่แล้ว)", dlg.skipped)}
+                  </tbody></table>
+                )}
+                <div style={{ fontSize: 12.5, color: "#556", background: C.soft, borderRadius: 8, padding: "9px 12px" }}>เวอร์ชันเดิมยังเก็บไว้ในประวัติ ย้อนดูได้ทุกเมื่อ</div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: `1px solid ${C.line}`, background: "#fafbfc" }}>
+                <button onClick={() => closeDlg(false)} style={{ ...btn, padding: "9px 18px", fontSize: 13.5 }}>ยกเลิก</button>
+                <button onClick={() => closeDlg(true)} style={{ padding: "9px 18px", fontSize: 13.5, fontWeight: 600, fontFamily: "inherit", borderRadius: 9, cursor: "pointer", border: "none", background: hc, color: "white" }}>{warn ? "ยืนยันอัปเดต" : "ยืนยัน Freeze ซ้ำ"}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {history && (
         <div onClick={() => setHistory(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.42)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
