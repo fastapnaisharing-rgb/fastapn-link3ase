@@ -52,6 +52,7 @@ export const VAT_CONTROLLER_MENU = {
     ]},
     { label: 'Results', icon: '📊', items: [
       { id: 'vat-dashboard',    icon: '📊', label: 'Dashboard' },
+      { id: 'vat-freeze',       icon: '🧊', label: 'Freeze' }, // MARKER_MENU_VAT_FREEZE_V1
       { id: 'vat-upload-file',  icon: '📤', label: 'Upload file' },
       { id: 'vat-monthly-report', icon: '🗓️', label: 'Monthly Report' },
     ]},

@@ -56,6 +56,9 @@ async function syncVatReportTypeFromVendorCategory(codes) {
   }
 }
 
+// MARKER_GUEST_BU_SCOPE_V1 -- ตารางที่ Guest เห็นได้เฉพาะแถวของ BU ที่ผูกไว้ (ชื่อ Column BU ของแต่ละตาราง)
+const GUEST_BU_SCOPE = { company_list: "bu", vat_watchlist_report: "bu", vat_watchlist_notes: "bu" };
+
 function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
@@ -260,6 +263,13 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
           values.push(value);
           idx++;
         }
+      }
+
+      // MARKER_GUEST_BU_SCOPE_V1 -- Guest: กรองให้เห็นเฉพาะ BU ของตัวเอง (บวกกับเงื่อนไขอื่นด้วย AND) | ไม่มี BU ผูก = ไม่เห็นแถวไหนเลย
+      if (String(req.user?.appRole || "").toLowerCase() === "guest" && GUEST_BU_SCOPE[tableName]) {
+        conditions.push(`UPPER(TRIM(${quoteIdent(GUEST_BU_SCOPE[tableName])})) = ANY($${idx}::text[])`);
+        values.push(req.user?.guestBu || []);
+        idx++;
       }
 
       // MARKER_GENERICTABLE_OR_SEARCH_V1 -- Search แบบ OR หลาย Column พร้อมกัน
@@ -497,6 +507,11 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
         [req.params.id]
       );
       if (!rows[0]) return res.status(404).json({ error: "Not found" });
+      // MARKER_GUEST_BU_SCOPE_V1 -- Guest เปิดดูแถวของ BU อื่นตรงๆ ไม่ได้
+      if (String(req.user?.appRole || "").toLowerCase() === "guest" && GUEST_BU_SCOPE[tableName]) {
+        const rowBu = String(rows[0][GUEST_BU_SCOPE[tableName]] ?? "").trim().toUpperCase();
+        if (!(req.user?.guestBu || []).includes(rowBu)) return res.status(404).json({ error: "Not found" });
+      }
       res.json(rows[0]);
     } catch (err) {
       next(err);

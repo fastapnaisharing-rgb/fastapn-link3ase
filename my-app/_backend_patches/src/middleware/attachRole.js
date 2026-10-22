@@ -19,6 +19,14 @@ export async function attachAppRole(req, res, next) {
     // ── recycle_bin ใช้ Email แทน Username ผิดพลาด — Fallback เป็น email ถ้าหา
     // ── username ไม่เจอ กัน undefined หลุดไปที่อื่น) ──────────────────────────
     req.user.username = rows[0]?.username || req.user.email;
+    // MARKER_GUEST_BU_SCOPE_V1 -- Guest เห็นข้อมูลเฉพาะ BU ที่ผูกไว้ (user_roles.guest_bu คั่นด้วยจุลภาค) | ไม่ใช่ Guest = ไม่แนบ
+    req.user.guestBu = null;
+    if (String(req.user.appRole || '').toLowerCase() === 'guest') {
+      try {
+        const g = await pool.query("SELECT guest_bu FROM user_roles WHERE email = $1 LIMIT 1", [req.user.email]);
+        req.user.guestBu = String(g.rows[0]?.guest_bu || '').toUpperCase().split(/[\s,]+/).filter(Boolean);
+      } catch (_) { req.user.guestBu = []; } // คอลัมน์ guest_bu ยังไม่มี = ไม่เห็นข้อมูลเลย (ปลอดภัยไว้ก่อน)
+    }
     next();
   } catch (err) {
     next(err);

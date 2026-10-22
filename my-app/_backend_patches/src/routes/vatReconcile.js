@@ -221,6 +221,33 @@ function parseTbText(rawText, accountConfigMap) {
 // MARKER_VATRECONCILE_TB_XLSX_V1 -- TB ที่ตัดออกมาแล้ว (.xlsx) เช่น "09.2026 TB for Reconcile_0402.xlsx"
 // Sheet "Recon_TB" หัวคอลัมน์: Branch, CPC, Account, SubAcc, Description, Beginning Balance, Period Activity, Ending Balance
 // BU / Period: ใช้ค่าที่ผู้ใช้กำหนด (override) > Sheet "Raw TB" (หัวรายงานต้นฉบับ) > ชื่อไฟล์ (09.2026 = Period, 0402 = BU) ถ้าหาไม่ได้ -> NEED_META (Frontend เปิด Popup)
+// MARKER_VATRECONCILE_TB_RAW_XLSX_V1 -- TB ดิบ GLCRC064 ที่เปิดแล้ว Save เป็น .xlsx (ทุกบรรทัดอยู่คอลัมน์ A) -> ประกอบกลับเป็น Text แล้วใช้ Parser .out เดิม
+async function rawTbXlsxToText(buffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  for (const w of wb.worksheets) {
+    const lines = [];
+    const maxR = w.rowCount || 0;
+    for (let r = 1; r <= maxR; r++) {
+      const v = w.getRow(r).getCell(1).value;
+      let t = "";
+      if (v == null) t = "";
+      else if (typeof v === "object" && Array.isArray(v.richText)) t = v.richText.map((x) => x.text || "").join("");
+      else if (typeof v === "object" && v.result != null) t = String(v.result);
+      else t = String(v);
+      lines.push(t);
+    }
+    const head = lines.slice(0, 15).join("\n");
+    if (head.includes("Company Range:") && head.includes("GLCRC064")) return lines.join("\n");
+  }
+  return null;
+}
+async function parseTbXlsxAuto(buffer, filename, accountConfigMap, overrides = {}) {
+  const rawText = await rawTbXlsxToText(buffer);
+  if (rawText) return parseTbText(rawText, accountConfigMap);
+  return parseTbXlsx(buffer, filename, accountConfigMap, overrides);
+}
+
 async function parseTbXlsx(buffer, filename, accountConfigMap, overrides = {}) {
   const name = String(filename || "").trim();
   const wb = new ExcelJS.Workbook();
@@ -443,7 +470,7 @@ router.post("/tb/preview", upload.single("file"), async (req, res) => {
     if (isPasteTsvName(req.file.originalname)) { const cv = await tsvToXlsxBuffer(req.file.buffer, "tb"); req.file.buffer = cv.buffer; req.file.originalname = "pasted-excel.xlsx"; } // MARKER_VATRECONCILE_PASTE_TSV_V1
     const accountConfigMap = await loadAccountConfigMap();
     const { bu, period, records, unmatchedLines, skippedLines } = /\.xlsx$/i.test(req.file.originalname || "")
-      ? await parseTbXlsx(req.file.buffer, req.file.originalname, accountConfigMap, { period: req.body.period, bu: req.body.bu }) // MARKER_VATRECONCILE_TB_XLSX_V1
+      ? await parseTbXlsxAuto(req.file.buffer, req.file.originalname, accountConfigMap, { period: req.body.period, bu: req.body.bu }) // MARKER_VATRECONCILE_TB_XLSX_V1
       : parseTbText(rawText, accountConfigMap);
 
     if (!bu || !period) {
@@ -509,7 +536,7 @@ router.post("/tb/commit", upload.single("file"), async (req, res) => {
     if (isPasteTsvName(req.file.originalname)) { const cv = await tsvToXlsxBuffer(req.file.buffer, "tb"); req.file.buffer = cv.buffer; req.file.originalname = "pasted-excel.xlsx"; } // MARKER_VATRECONCILE_PASTE_TSV_V1
     const accountConfigMap = await loadAccountConfigMap();
     const { bu, period, records, unmatchedLines } = /\.xlsx$/i.test(req.file.originalname || "")
-      ? await parseTbXlsx(req.file.buffer, req.file.originalname, accountConfigMap, { period: req.body.period, bu: req.body.bu }) // MARKER_VATRECONCILE_TB_XLSX_V1
+      ? await parseTbXlsxAuto(req.file.buffer, req.file.originalname, accountConfigMap, { period: req.body.period, bu: req.body.bu }) // MARKER_VATRECONCILE_TB_XLSX_V1
       : parseTbText(rawText, accountConfigMap);
 
     if (!bu || !period) {

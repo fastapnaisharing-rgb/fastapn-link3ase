@@ -14,10 +14,11 @@ import UserManagement from './pages/UserManagement';
 import APController, { InvoiceHistoryPage, BatchControlPage } from './pages/APController'; // MARKER_APP_BATCH_CONTROL_PAGE_ROUTE
 import IEController, { InvoiceHistoryPage as IEInvoiceHistoryPage, GenerateMacroLogicPage as IEGenerateMacroLogicPage } from './pages/IEController'; // MARKER_APP_IE_CONTROLLER_ROUTE
 import APScanOCR from './pages/APScanOCR';
-import VatController from './pages/VatController';
+import VatController, { invalidateVatSupportCache } from './pages/VatController'; // MARKER_BRANCHLIST_CROSSMODULE_BROADCAST_FIX_V1
 import { maybeUpdateSpHandler } from './spHandlerAutoUpdate'; // MARKER_SP_HANDLER_AUTOUPDATE_V1
 import VatDashboard from './pages/VatDashboard'; // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1
 import VatFreeze from './pages/VatFreeze'; // MARKER_APP_VAT_FREEZE_PAGE_V1
+import DetailOfAccount from './pages/DetailOfAccount'; // MARKER_GL_DETAIL_OF_ACCOUNT_PAGE_V1
 import GLFunctionalController from './pages/GLFunctionalController'; // MARKER_GL_AP_RECON_COMPONENT_V1
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
@@ -179,6 +180,7 @@ const PAGE_MAINTENANCE_MAP = {
   'vat-simple-input-report': 'vat-controller',
   'ie-gr': 'ie-gr', 'ie-drafts': 'ie-drafts', 'ie-generate-macro-logic': 'ie-generate-macro-logic', // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
   'gl-ap-recon': 'gl-functional',
+  'gl-detail-of-account': 'gl-functional', // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1
   'i-pro-interface': 'i-pro-interface',
 };
 
@@ -1282,6 +1284,29 @@ const getBuildVersion = () => {
 
 function MainApp() {
   const { fetchCollection } = useDataCache(); // ── ใช้ Force Refresh Cache หลัง Action ที่กระทบ CompanyList ──
+
+  // MARKER_BRANCHLIST_CROSSMODULE_BROADCAST_FIX_V1
+  // ── เดิม AP/IE Subscribe 'branch_list_updated' เองในไฟล์ของตัวเอง (APController.js/IEController.js)
+  // ── และ VAT เก็บ Cache แยกเป็นของตัวเอง (__vatSupportCache ใน VatController.js) -- ทั้งคู่ทำงาน "เฉพาะตอน
+  // ── Component นั้น Mount อยู่จริง" เท่านั้น เพราะ renderPage() ด้านล่าง Render ทีละหน้า (AP/IE/VAT ไม่เคย
+  // ── Mount พร้อมกัน) -- ถ้า Branch ถูกแก้ไขตอนอยู่หน้าอื่น หน้าที่ไม่ได้ Mount จะไม่รู้เรื่องเลย แล้ว Cache
+  // ── ของมันจะค้างข้อมูลเก่าไปอีกสูงสุดตาม TTL (BranchList ของ AP/IE นาน 1 ชม., VAT นาน 2 นาที) -- ย้าย
+  // ── Subscribe มาไว้ที่ MainApp นี้ซึ่ง Mount ตลอดอายุ Tab (ไม่ขึ้นกับ activePage) ให้ Broadcast ไปถึงทุก
+  // ── โมดูลจริงไม่ว่าผู้ใช้จะอยู่หน้าไหนก็ตาม (Listener เดิมใน AP/IE ยังเก็บไว้ได้ ไม่ชนกัน แค่ Invalidate ซ้ำ)
+  // -- แก้รอบ 2: เดิมเรียก invalidate('BranchList') เฉยๆ (แค่ลบ Cache ทิ้ง) ปัญหาคือ AP/IE อ่าน
+  // -- getCached('BranchList') ตรงใน Render เลย (ไม่ใช่เรียก fetchCollection ซ้ำเอง) ถ้าไม่มีจุดไหน Trigger
+  // -- fetchCollection('BranchList') ใหม่อีก (เช่น Component เดิมไม่ได้ Remount เพราะ activeSubTab เปลี่ยน
+  // -- แค่ภายใน ไม่ใช่สลับ activePage) หน้าจะโชว่ "ว่าง" ค้างไปเลย ไม่ Refresh เป็นข้อมูลใหม่ -- เปลี่ยนเป็น
+  // -- fetchCollection('BranchList', true) (Force Refresh ทันที) ให้ Cache กลางมีข้อมูลใหม่จริงๆ ทันทีที่
+  // -- Broadcast มาถึง ไม่ต้องพึ่งจุดอื่น Trigger ซ้ำ -- Component ที่ Mount อยู่ (อ่าน getCached ตรงๆ) จะเห็น
+  // -- ข้อมูลใหม่ทันทีผ่าน Context Re-render เอง
+  useEffect(() => {
+    const unsubscribe = subscribeWs(['branch_list_updated'], () => {
+      fetchCollection('BranchList', true);
+      invalidateVatSupportCache();
+    });
+    return unsubscribe;
+  }, [fetchCollection]);
   const [activePage, setActivePage] = useState('home');
   const [setupReturnPage, setSetupReturnPage] = useState(null);
   const [setupJumpToken, setSetupJumpToken] = useState(0);
@@ -1374,7 +1399,7 @@ function MainApp() {
   // [CHANGE 1] เพิ่ม 'condition-rule' เข้า MASTER_PAGES เพื่อให้ sidebar highlight ถูกต้อง
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category','condition-rule'];
   const IE_PAGES = ['ie-gr', 'ie-drafts', 'ie-generate-macro-logic']; // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
-  const GL_PAGES = ['gl-ap-recon']; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
+  const GL_PAGES = ['gl-ap-recon', 'gl-detail-of-account']; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
   const isAPActive     = AP_PAGES.includes(activePage);
   const isVATActive    = VAT_PAGES.includes(activePage);
   const isIEActive     = IE_PAGES.includes(activePage);
@@ -1415,7 +1440,8 @@ function MainApp() {
   // MARKER_GL_REPORT_OVERRIDE_V1 -- Override รายคน (Access Panel > Document Access > GL Report) ปิดสิทธิ์ = docAccess.gl เป็น false -> ซ่อนเมนู + เข้าหน้าไม่ได้ (Backend ก็ปฏิเสธด้วย)
   const glOverrideOk = isOwner || userPermissions?.docAccess?.gl !== false;
   const glItemOk = (it) => glOverrideOk && menuMinRoleOk(it.id) && hasAnyPermission(itemPerms(it)); // MARKER_MENU_MIN_ROLE_V1
-  const canAccessGLModule = GL_ALL_ITEMS.some(it => glItemOk(it));
+  const GL_MODULE_PERMS = ['VAT', 'Manual', 'GL', 'IE']; // MARKER_GL_MODULE_PERMS_V1 -- เมนูใหญ่ GL Functional เห็นได้เมื่อมีสิทธิ์ใดสิทธิ์หนึ่งนี้ (เมนูย่อยยังกรองตามสิทธิ์ของตัวเอง)
+  const canAccessGLModule = GL_ALL_ITEMS.some(it => glItemOk(it)) || (glOverrideOk && menuMinRoleOk('gl-functional') && hasAnyPermission(GL_MODULE_PERMS));
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
@@ -2133,6 +2159,12 @@ function MainApp() {
             />
           : <NoAccessPage />;
       }
+      case 'gl-detail-of-account': { // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1 -- เข้าได้เฉพาะ Permission GL (requiredPermissions ใน menuConfig.js)
+        const glDetailItem = GL_ALL_ITEMS.find(it => it.id === 'gl-detail-of-account');
+        return glItemOk(glDetailItem)
+          ? <DetailOfAccount onOpenProfile={() => setActivePage('users')} /> /* MARKER_GL_SIGNOFF_UNSET_STATE_V1 -- ปุ่ม "ตั้งค่าที่ Profile" -> System Console */
+          : <NoAccessPage />;
+      }
       case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
 
       // Master Data
@@ -2407,6 +2439,7 @@ function MainApp() {
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📊 GL Functional</div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+              {!GL_ALL_ITEMS.some(it => glItemOk(it)) && (<div style={{ padding: '12px 16px', fontSize: '12px', color: '#888780', lineHeight: 1.5 }}>ยังไม่มีเมนูย่อยที่บัญชีนี้มีสิทธิ์ใช้งาน</div>)} {/* MARKER_GL_MODULE_PERMS_V1 */}
               {GL_FUNCTIONAL_MENU.groups.map((g, gi) => { // MARKER_GL_GENERIC_PERMISSION_V1
                 const visibleItems = g.items.filter(it => glItemOk(it));
                 if (visibleItems.length === 0) return null;

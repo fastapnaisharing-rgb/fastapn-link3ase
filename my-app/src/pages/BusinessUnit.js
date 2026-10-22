@@ -63,6 +63,51 @@ function StatusDropdown({ value, onChange, options, style }) {
 }
 
 // MARKER_DATEFIELD_BE_COMPARE_V1 -- ช่องวันที่แบบพิมพ์ได้ + ปฏิทินที่ทำเอง: ระดับปีโชว์เลข พ.ศ. กำกับข้าง ค.ศ. (เลขเปรียบเทียบเฉยๆ ไม่มีผลกับค่า) ค่าที่ส่งออกยังเป็น ISO YYYY-MM-DD (ค.ศ.) เหมือน <input type="date"> เดิม
+// MARKER_DATEFIELD_PASTE_THAI_BE_V1 -- Paste/พิมพ์วันที่ไทย (เช่น "1 เม.ย.60", "16 ม.ค.60", "1 เมษายน 2560", "01/04/2560") แล้วแปลงเป็น ค.ศ. (yyyy-mm-dd) ให้เอง
+const TH_MONTHS = { 'มค': 1, 'มกราคม': 1, 'กพ': 2, 'กุมภาพันธ์': 2, 'มีค': 3, 'มีนาคม': 3, 'เมย': 4, 'เมบ': 4, 'เมษายน': 4, 'พค': 5, 'พฤษภาคม': 5, 'มิย': 6, 'มิถุนายน': 6, 'กค': 7, 'กรกฎาคม': 7, 'สค': 8, 'สิงหาคม': 8, 'กย': 9, 'กันยายน': 9, 'ตค': 10, 'ตุลาคม': 10, 'พย': 11, 'พฤศจิกายน': 11, 'ธค': 12, 'ธันวาคม': 12 };
+function parseThaiDateToIso(raw) {
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const t = String(raw || '').replace(/[๐-๙]/g, (c) => String(c.charCodeAt(0) - 0x0E50)).replace(/\u00a0/g, ' ').trim();
+  if (!t) return null;
+  const toCe = (yRaw) => { // 2 หลัก = พ.ศ. ย่อ (60 -> 2560) ; 4 หลัก >= 2400 = พ.ศ. ; อื่นๆ = ค.ศ.
+    const n = parseInt(yRaw, 10);
+    if (yRaw.length <= 2) return 2500 + n - 543;
+    return n >= 2400 ? n - 543 : n;
+  };
+  const build = (d, mo, yRaw) => {
+    const y = toCe(yRaw);
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return `${y}-${pad2(mo)}-${pad2(d)}`;
+  };
+  let m = /^(\d{1,2})\s*((?:[^\d\/.\-]|\s)+?(?:\.(?:[^\d\/.\-]|\s)+?)*\.?)\s*(\d{2}|\d{4})$/.exec(t); // 1 เม.ย.60 | 1 เมษายน 2560
+  if (m) {
+    const mo = TH_MONTHS[m[2].replace(/[.\s]/g, '')];
+    if (mo) return build(+m[1], mo, m[3]);
+  }
+  m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t); // 01/04/2560 (ปี พ.ศ. = รูปแบบไทย วัน/เดือน/ปี)
+  if (m && +m[3] >= 2400) return build(+m[1], +m[2], m[3]);
+  return null;
+}
+// MARKER_BRANCH_IMPORT_INACTIVE_DATE_NORMALIZE_V1 -- Import Branch: แปลง Inactive Date (ไทย "19 ธ.ค.59" / Excel serial / dd/mm/yyyy) เป็น yyyy-mm-dd ก่อนเข้า Preview และแสดงเป็น dd-mmm-yy
+function normInactiveDateImport(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const pad2 = (n) => String(n).padStart(2, '0');
+  if (v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${pad2(v.getMonth() + 1)}-${pad2(v.getDate())}`;
+  if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 86400000)); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; }
+  const t = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const th = parseThaiDateToIso(t);
+  if (th) return th;
+  const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t); // dd/mm/yyyy (ค.ศ.)
+  if (m && +m[3] < 2400) { const d = new Date(+m[3], +m[2] - 1, +m[1]); if (d.getMonth() === +m[2] - 1) return `${m[3]}-${pad2(+m[2])}-${pad2(+m[1])}`; }
+  return t;
+}
+function fmtInactiveDisp(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+  if (!m) return String(v ?? '');
+  return `${m[3]}-${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+m[2] - 1]}-${m[1].slice(2)}`;
+}
 function DateFieldBE({ value, onChange, disabled, style }) {
   // MARKER_BUSINESSUNIT_DATEFIELD_NATIVE_LOOK_BE_V1 -- ปฏิทินหน้าตาเหมือนของ Browser (วัน: ลูกศร ↑↓ + Clear/Today ; เดือน/ปี: รายการปีแถบเทา กางเดือนใต้ปีที่เลือก) แต่แสดงเลข พ.ศ. ข้างทุกปี ; ค่าที่เก็บเป็น ค.ศ. (YYYY-MM-DD) เหมือนเดิม
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -99,6 +144,8 @@ function DateFieldBE({ value, onChange, disabled, style }) {
   const commit = (raw) => {
     const t = String(raw || '').trim();
     if (!t) { onChange(''); return; }
+    const thIso = parseThaiDateToIso(t); // MARKER_DATEFIELD_PASTE_THAI_BE_V1
+    if (thIso) { onChange(thIso); return; }
     const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t);
     if (m) {
       const mo = +m[1], d = +m[2], y = +m[3];
@@ -130,7 +177,7 @@ function DateFieldBE({ value, onChange, disabled, style }) {
   for (let y = 1950; y <= 2100; y++) years.push(y);
   return (
     <div ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
-      <input type="text" disabled={disabled} value={text} placeholder="mm/dd/yyyy" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} style={{ ...style, paddingRight: '26px' }} />
+      <input type="text" disabled={disabled} value={text} placeholder="mm/dd/yyyy" onChange={(e) => setText(e.target.value)} onPaste={(e) => { const thIso = parseThaiDateToIso(e.clipboardData && e.clipboardData.getData('text')); if (thIso) { e.preventDefault(); setText(toDisp(thIso)); onChange(thIso); } }} onBlur={(e) => commit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} style={{ ...style, paddingRight: '26px' }} />
       <span onClick={openPop} style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', cursor: disabled ? 'default' : 'pointer', fontSize: '14px', opacity: disabled ? 0.4 : 1 }}>{'📅'}</span>
       {open && ReactDOM.createPortal(
         <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: '240px', background: 'white', border: '0.5px solid #ddd', borderRadius: '8px', boxShadow: '0 6px 18px rgba(0,0,0,0.22)', zIndex: 99999, padding: '8px', fontSize: '13px', color: '#222' }}>
@@ -370,16 +417,16 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                 return (
                   <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0' }}>{statusTag(row._status)}</td>
-                    {displayFields.map(f => <td key={f} title={String(row[f] ?? '')} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: showAll ? '260px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', background: (row._missingKeys || []).includes(f) ? '#FCEBEB' : undefined, color: String(row[f] ?? '').trim() ? undefined : '#bbb' }}>{String(row[f] ?? '') || '-'}</td>)}
+                    {displayFields.map(f => <td key={f} title={String(row[f] ?? '')} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: showAll ? '260px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', background: (row._missingKeys || []).includes(f) ? '#FCEBEB' : undefined, color: String(row[f] ?? '').trim() ? undefined : '#bbb' }}>{(f === 'Inactive Date' ? fmtInactiveDisp(row[f]) : String(row[f] ?? '')) || '-'}</td>)}
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>
                       {row._status === 'update' && row._changes?.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           {row._changes.map((c, ci) => (
                             <div key={ci} style={{ fontSize: '10px', background: '#f0f7ff', padding: '2px 6px', borderRadius: '4px', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
                               <span style={{ color: '#555', fontWeight: '500' }}>{c.field}:</span>
-                              <span style={{ color: '#791F1F', textDecoration: 'line-through' }}>{c.old || '-'}</span>
+                              <span style={{ color: '#791F1F', textDecoration: 'line-through' }}>{(c.field === 'Inactive Date' ? fmtInactiveDisp(c.old) : c.old) || '-'}</span>
                               <span style={{ color: '#888' }}>→</span>
-                              <span style={{ color: '#27500A', fontWeight: '500' }}>{c.new || '-'}</span>
+                              <span style={{ color: '#27500A', fontWeight: '500' }}>{(c.field === 'Inactive Date' ? fmtInactiveDisp(c.new) : c.new) || '-'}</span>
                             </div>
                           ))}
                         </div>
@@ -1259,7 +1306,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleBranchFileChange = (e) => {
     const file = e && e.target ? e.target.files[0] : e; if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (evt) => { try { const cl = await fetchCollection('CompanyList'); if (Array.isArray(cl)) BRANCH_COMPANY_LIST = cl; } catch (e) { /* ใช้ค่าเดิม */ } const wb = XLSX.read(evt.target.result, { type: 'binary' }); let rawRows = stripReqMark(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })).filter((r) => String(r[BRANCH_KEY] || '').trim()).map((r) => ({ ...r, 'Branch Address': cleanBranchAddress(r['Branch Address']) })); rawRows = autofillBranchImportRows(rawRows, branches); /* MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- ข้ามแถวที่ไม่มี Branch Code (แถวอังกฤษที่ต่อใต้) */ setBranchPreviewRows(markInvalidNewBranchRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS))); setShowBranchPreview(true); };
+    reader.onload = async (evt) => { try { const cl = await fetchCollection('CompanyList'); if (Array.isArray(cl)) BRANCH_COMPANY_LIST = cl; } catch (e) { /* ใช้ค่าเดิม */ } const wb = XLSX.read(evt.target.result, { type: 'binary' }); let rawRows = stripReqMark(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })).filter((r) => String(r[BRANCH_KEY] || '').trim()).map((r) => ({ ...r, 'Branch Address': cleanBranchAddress(r['Branch Address']), ...(Object.prototype.hasOwnProperty.call(r, 'Inactive Date') ? { 'Inactive Date': normInactiveDateImport(r['Inactive Date']) } : {}) })); rawRows = autofillBranchImportRows(rawRows, branches); /* MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- ข้ามแถวที่ไม่มี Branch Code (แถวอังกฤษที่ต่อใต้) */ setBranchPreviewRows(markInvalidNewBranchRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS))); setShowBranchPreview(true); };
     reader.readAsBinaryString(file); if (e && e.target) e.target.value = '';
   };
   const [branchDragOver, setBranchDragOver] = useState(false);

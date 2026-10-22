@@ -21,15 +21,18 @@ export async function maybeUpdateSpHandler() {
     const st = await fetch(`${API_ROOT}/api/file-storage/sp-handler/my-status`, { headers: { Authorization: `Bearer ${token}` } });
     if (!st.ok) return;
     const stj = await st.json();
-    if (!stj || !Array.isArray(stj.outdated) || stj.outdated.length === 0) return;
+    // MARKER_SP_AUTOUPDATE_PROFILE_V1 -- สั่ง update เมื่อเวอร์ชันเก่า หรือ Permission เปลี่ยนจนโปรไฟล์ปลายทางในเครื่องไม่ตรง (Backend ส่ง needUpdate / profileHash)
+    const needUp = !!stj && (stj.needUpdate === true || (Array.isArray(stj.outdated) && stj.outdated.length > 0));
+    if (!needUp) return;
+    const ph = String((stj && stj.profileHash) || '');
     const latest = Number(version);
     if (!Number.isFinite(latest) || latest <= 0) return;
     let last = null;
     try { last = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch { last = null; }
-    const due = !last || Number(last.v) < latest || (Date.now() - Number(last.at || 0)) > RETRY_MS;
+    const due = !last || Number(last.v) < latest || String((last && last.h) || '') !== ph || (Date.now() - Number(last.at || 0)) > RETRY_MS;
     if (!due) return;
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ v: latest, at: Date.now() })); } catch { /* ignore */ }
-    const uri = `fastapn-sp://update?v=${encodeURIComponent(latest)}&api=${encodeURIComponent(API_ROOT)}&token=${encodeURIComponent(token)}`;
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ v: latest, h: ph, at: Date.now() })); } catch { /* ignore */ }
+    const uri = `fastapn-sp://update?v=${encodeURIComponent(latest)}&api=${encodeURIComponent(API_ROOT)}&token=${encodeURIComponent(token)}&profile=1`;
     const a = document.createElement('a');
     a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
   } catch { /* เงียบ: อัปเดต Handler ไม่ใช่งานหลัก */ } finally { inflight = false; }

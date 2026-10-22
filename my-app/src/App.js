@@ -14,10 +14,11 @@ import UserManagement from './pages/UserManagement';
 import APController, { InvoiceHistoryPage, BatchControlPage } from './pages/APController'; // MARKER_APP_BATCH_CONTROL_PAGE_ROUTE
 import IEController, { InvoiceHistoryPage as IEInvoiceHistoryPage, GenerateMacroLogicPage as IEGenerateMacroLogicPage } from './pages/IEController'; // MARKER_APP_IE_CONTROLLER_ROUTE
 import APScanOCR from './pages/APScanOCR';
-import VatController from './pages/VatController';
+import VatController, { invalidateVatSupportCache } from './pages/VatController'; // MARKER_BRANCHLIST_CROSSMODULE_BROADCAST_FIX_V1
 import { maybeUpdateSpHandler } from './spHandlerAutoUpdate'; // MARKER_SP_HANDLER_AUTOUPDATE_V1
 import VatDashboard from './pages/VatDashboard'; // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1
 import VatFreeze from './pages/VatFreeze'; // MARKER_APP_VAT_FREEZE_PAGE_V1
+import DetailOfAccount from './pages/DetailOfAccount'; // MARKER_GL_DETAIL_OF_ACCOUNT_PAGE_V1
 import GLFunctionalController from './pages/GLFunctionalController'; // MARKER_GL_AP_RECON_COMPONENT_V1
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
@@ -179,6 +180,7 @@ const PAGE_MAINTENANCE_MAP = {
   'vat-simple-input-report': 'vat-controller',
   'ie-gr': 'ie-gr', 'ie-drafts': 'ie-drafts', 'ie-generate-macro-logic': 'ie-generate-macro-logic', // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
   'gl-ap-recon': 'gl-functional',
+  'gl-detail-of-account': 'gl-functional', // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1
   'i-pro-interface': 'i-pro-interface',
 };
 
@@ -776,13 +778,7 @@ function BellModal({ requests, isOwner, isAdmin, onApprove, onReject, onClose, o
                         <span style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>{n.title}</span>
                       </div>
                       <div style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>{n.message}</div>
-                      <div style={{ fontSize: '11px', color: '#aaa', marginBottom: (n.category === 'AP_PERIOD_REQUEST' || n.category === 'VAT_ROUND_CONFIRM') && (isOwner || isAdmin) ? '8px' : '0' }}>{formatTime(n.created_at)}</div>
-                      {n.category === 'VAT_ROUND_CONFIRM' && (isOwner || isAdmin) && ( /* MARKER_VATWATCHLIST_CONFIRM_90PCT_V1 */
-                        <button onClick={async (e) => { e.stopPropagation(); try { await apiFetch('/vat_watchlist_round/confirm', { method: 'POST', body: JSON.stringify({}) }); onMarkApNotifRead(n.id); } catch (err) { window.alert((err && err.message) || 'Confirm ไม่สำเร็จ'); } }}
-                          style={{ fontSize: '12px', padding: '6px 16px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontWeight: '500', cursor: 'pointer' }}>
-                          Confirm ว่า Data ครบแล้ว
-                        </button>
-                      )}
+                      <div style={{ fontSize: '11px', color: '#aaa', marginBottom: n.category === 'AP_PERIOD_REQUEST' && (isOwner || isAdmin) ? '8px' : '0' }}>{formatTime(n.created_at)}</div>
                       {n.category === 'AP_PERIOD_REQUEST' && (isOwner || isAdmin) && (
                         <button onClick={(e) => { e.stopPropagation(); onClosePeriod(n.id); }}
                           style={{ fontSize: '12px', padding: '6px 16px', borderRadius: '6px', border: 'none', background: '#791F1F', color: 'white', fontWeight: '500', cursor: 'pointer' }}>
@@ -1288,6 +1284,29 @@ const getBuildVersion = () => {
 
 function MainApp() {
   const { fetchCollection } = useDataCache(); // ── ใช้ Force Refresh Cache หลัง Action ที่กระทบ CompanyList ──
+
+  // MARKER_BRANCHLIST_CROSSMODULE_BROADCAST_FIX_V1
+  // ── เดิม AP/IE Subscribe 'branch_list_updated' เองในไฟล์ของตัวเอง (APController.js/IEController.js)
+  // ── และ VAT เก็บ Cache แยกเป็นของตัวเอง (__vatSupportCache ใน VatController.js) -- ทั้งคู่ทำงาน "เฉพาะตอน
+  // ── Component นั้น Mount อยู่จริง" เท่านั้น เพราะ renderPage() ด้านล่าง Render ทีละหน้า (AP/IE/VAT ไม่เคย
+  // ── Mount พร้อมกัน) -- ถ้า Branch ถูกแก้ไขตอนอยู่หน้าอื่น หน้าที่ไม่ได้ Mount จะไม่รู้เรื่องเลย แล้ว Cache
+  // ── ของมันจะค้างข้อมูลเก่าไปอีกสูงสุดตาม TTL (BranchList ของ AP/IE นาน 1 ชม., VAT นาน 2 นาที) -- ย้าย
+  // ── Subscribe มาไว้ที่ MainApp นี้ซึ่ง Mount ตลอดอายุ Tab (ไม่ขึ้นกับ activePage) ให้ Broadcast ไปถึงทุก
+  // ── โมดูลจริงไม่ว่าผู้ใช้จะอยู่หน้าไหนก็ตาม (Listener เดิมใน AP/IE ยังเก็บไว้ได้ ไม่ชนกัน แค่ Invalidate ซ้ำ)
+  // -- แก้รอบ 2: เดิมเรียก invalidate('BranchList') เฉยๆ (แค่ลบ Cache ทิ้ง) ปัญหาคือ AP/IE อ่าน
+  // -- getCached('BranchList') ตรงใน Render เลย (ไม่ใช่เรียก fetchCollection ซ้ำเอง) ถ้าไม่มีจุดไหน Trigger
+  // -- fetchCollection('BranchList') ใหม่อีก (เช่น Component เดิมไม่ได้ Remount เพราะ activeSubTab เปลี่ยน
+  // -- แค่ภายใน ไม่ใช่สลับ activePage) หน้าจะโชว่ "ว่าง" ค้างไปเลย ไม่ Refresh เป็นข้อมูลใหม่ -- เปลี่ยนเป็น
+  // -- fetchCollection('BranchList', true) (Force Refresh ทันที) ให้ Cache กลางมีข้อมูลใหม่จริงๆ ทันทีที่
+  // -- Broadcast มาถึง ไม่ต้องพึ่งจุดอื่น Trigger ซ้ำ -- Component ที่ Mount อยู่ (อ่าน getCached ตรงๆ) จะเห็น
+  // -- ข้อมูลใหม่ทันทีผ่าน Context Re-render เอง
+  useEffect(() => {
+    const unsubscribe = subscribeWs(['branch_list_updated'], () => {
+      fetchCollection('BranchList', true);
+      invalidateVatSupportCache();
+    });
+    return unsubscribe;
+  }, [fetchCollection]);
   const [activePage, setActivePage] = useState('home');
   const [setupReturnPage, setSetupReturnPage] = useState(null);
   const [setupJumpToken, setSetupJumpToken] = useState(0);
@@ -1313,7 +1332,6 @@ function MainApp() {
   const [viewChatBatchId, setViewChatBatchId] = useState(null); // Batch ID สำหรับดู Chat อย่างเดียว
   const [previewFile, setPreviewFile] = useState(null); // { fileId, fileName }
   const [apNotifications, setApNotifications] = useState([]);
-  const [vatRoundToastHidden, setVatRoundToastHidden] = useState(() => new Set()); // MARKER_VATWATCHLIST_CONFIRM_90PCT_V1 -- Toast มุมขวาล่าง: Confirm รอบ VAT Watchlist (ปิดได้ ไม่ขึ้นซ้ำ id เดิม)
   const [maintenanceMenus, setMaintenanceMenus] = useState([]);
   const [incomingBatch, setIncomingBatch] = useState(null); // ✅ batch transfer notification
   const [toast, setToast] = useState(null); // { type: 'success' | 'warning' | 'error', message }
@@ -1351,7 +1369,10 @@ function MainApp() {
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
   const sidebarRef = useRef(null);
-  const { currentUser, userRole, userName, logout, userPermissions } = useAuth();
+  const { currentUser, userRole, userName, logout, userPermissions: userPermissionsRaw } = useAuth(); // MARKER_GUEST_MODULE_BYPASS_V1
+  const isGuest = String(userRole || '').toLowerCase() === 'guest'; // MARKER_GUEST_ROLE_V1 -- Guest เห็นเฉพาะเมนูที่ตั้ง Permission ขั้นต่ำ = Guest (และต้องมี Permission โมดูลที่ Owner เปิดให้รายคน)
+  // MARKER_GUEST_MODULE_BYPASS_V1 -- Guest ไม่ต้องมี Permission โมดูล (VAT/I-Pro/GL/IE/Function/Manual) | เข้าได้เฉพาะเมนูที่ตั้ง Permission ขั้นต่ำ = Guest (menuMinRoleOk) | docAccess/menuGrants ใช้ค่าจริงจาก Backend
+  const userPermissions = isGuest ? { ...(userPermissionsRaw || {}), VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true } : userPermissionsRaw;
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const screenWidth = useWindowWidth();
   // MARKER_SP_HANDLER_AUTOUPDATE_V1 -- Login แล้ว (มี currentUser) ให้ Handler SharePoint ตรวจ/อัปเดตตัวเอง (หน่วงเล็กน้อยไม่ขวางหน้าแรก)
@@ -1362,7 +1383,7 @@ function MainApp() {
   }, [currentUser]);
   const hasAnyDocAccess = Object.values(userPermissions?.docAccess || {}).some(v => v === true);
   // MARKER_NEWUSER_NO_MASTER_RESOURCE_V1 -- ผู้ใช้ที่สมัครใหม่ (Viewer สิทธิ์ No ทุกโมดูล) เห็นแค่ Home | Master Data ต้องมีสิทธิ์โมดูลอย่างน้อย 1 อย่าง | Resource Center ต้องมี Doc Access
-  const hasAnyModulePerm = isOwner || ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'].some(k => userPermissions?.[k] === true);
+  const hasAnyModulePerm = isOwner || !isGuest && ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual'].some(k => userPermissions?.[k] === true);
 
   // ── Reset pendingHistoryTab ทันทีหลัง Consume (กันบังคับ Inbox ซ้ำตอน Navigate ปกติ) ──
   useEffect(() => {
@@ -1381,7 +1402,7 @@ function MainApp() {
   // [CHANGE 1] เพิ่ม 'condition-rule' เข้า MASTER_PAGES เพื่อให้ sidebar highlight ถูกต้อง
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category','condition-rule'];
   const IE_PAGES = ['ie-gr', 'ie-drafts', 'ie-generate-macro-logic']; // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
-  const GL_PAGES = ['gl-ap-recon']; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
+  const GL_PAGES = ['gl-ap-recon', 'gl-detail-of-account']; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
   const isAPActive     = AP_PAGES.includes(activePage);
   const isVATActive    = VAT_PAGES.includes(activePage);
   const isIEActive     = IE_PAGES.includes(activePage);
@@ -1398,15 +1419,17 @@ function MainApp() {
     const unsub = subscribeWs(['menu_min_role_updated'], load);
     return () => { dead = true; if (typeof unsub === 'function') unsub(); };
   }, []);
-  const ROLE_RANK = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+  const ROLE_RANK = { guest: 0, viewer: 1, editor: 2, admin: 3, owner: 4 }; // MARKER_GUEST_ROLE_V1
   const menuMinRoleOk = (menuId) => {
     if (isOwner) return true;
+    if (menuId === 'home') return true; // MARKER_GUEST_MODULE_BYPASS_V1 -- หน้า Home เข้าได้ทุก Role
     const grant = userPermissions?.menuGrants?.[menuId]; // MARKER_MENU_USER_GRANT_V1 -- สิทธิ์รายบุคคล: true = เข้าได้แม้ Role ต่ำกว่าขั้นต่ำ | false = ห้ามเข้า
     if (grant === true) return true;
     if (grant === false) return false;
     const need = minRoleMap[menuId] || (['vat-watchlist-ops', 'vat-dashboard'].includes(menuId) ? 'Viewer' : 'Editor'); // ไม่เคยตั้ง = Editor ขึ้นไป (Viewer ไม่เห็นเมนู)
-    return (ROLE_RANK[String(userRole || '').toLowerCase()] ?? 0) >= (ROLE_RANK[String(need).toLowerCase()] ?? 1);
+    return (ROLE_RANK[String(userRole || '').toLowerCase()] ?? 0) >= (ROLE_RANK[String(need).toLowerCase()] ?? 2);
   };
+  const guestSeesMenu = (menu) => !isGuest || menu.groups.some(g => g.items.some(it => menuMinRoleOk(it.id))); // MARKER_GUEST_ROLE_V1 -- Guest: โมดูลที่ไม่มีเมนู Guest เลย = ซ่อนทั้งโมดูล
   const hasAnyPermission = (reqPerms) => isOwner || (Array.isArray(reqPerms) && reqPerms.some(p => userPermissions?.[p]));
   // MARKER_MENU_PERMISSION_CONFIG_V1 -- สิทธิ์ที่เข้าเมนูได้ ตั้งจาก User Management > GL Access (ตาราง menu_permission_config) | ไม่เคยตั้ง/โหลดไม่ได้ = ใช้ค่า requiredPermissions ใน menuConfig.js
   const [menuPermMap, setMenuPermMap] = useState({});
@@ -1422,7 +1445,8 @@ function MainApp() {
   // MARKER_GL_REPORT_OVERRIDE_V1 -- Override รายคน (Access Panel > Document Access > GL Report) ปิดสิทธิ์ = docAccess.gl เป็น false -> ซ่อนเมนู + เข้าหน้าไม่ได้ (Backend ก็ปฏิเสธด้วย)
   const glOverrideOk = isOwner || userPermissions?.docAccess?.gl !== false;
   const glItemOk = (it) => glOverrideOk && menuMinRoleOk(it.id) && hasAnyPermission(itemPerms(it)); // MARKER_MENU_MIN_ROLE_V1
-  const canAccessGLModule = GL_ALL_ITEMS.some(it => glItemOk(it));
+  const GL_MODULE_PERMS = ['VAT', 'Manual', 'GL', 'IE']; // MARKER_GL_MODULE_PERMS_V1 -- เมนูใหญ่ GL Functional เห็นได้เมื่อมีสิทธิ์ใดสิทธิ์หนึ่งนี้ (เมนูย่อยยังกรองตามสิทธิ์ของตัวเอง)
+  const canAccessGLModule = GL_ALL_ITEMS.some(it => glItemOk(it)) || (glOverrideOk && menuMinRoleOk('gl-functional') && hasAnyPermission(GL_MODULE_PERMS));
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
@@ -1605,8 +1629,6 @@ function MainApp() {
       const myUsernameLower = (userName || currentUser?.email || '').trim().toLowerCase();
       setRequests(all.filter(r => {
         if (r.request_type === 'batch_transfer') return false;
-        // MARKER_APP_SIGNUP_BELL_OWNER_ADMIN_ONLY_V1 -- Signup ค้าง pending ให้เห็น/นับเลขแดงเฉพาะ Owner/Admin
-        if (r.request_type === 'signup' && !(isOwner || isAdmin)) return false;
         if (r.request_type === 'batch_review') {
           return String(r.target_username || '').trim().toLowerCase() === myUsernameLower;
         }
@@ -2039,7 +2061,7 @@ function MainApp() {
   // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — ALL_FUNCTION_MENUS มาจาก menuConfig.js แล้ว (ลบ Local Array ซ้ำออก)
   const FUNCTION_MENUS = isOwner
     ? ALL_FUNCTION_MENUS
-    : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && !maintenanceMenus.includes(PAGE_MAINTENANCE_MAP[m.id] || m.id));
+    : ALL_FUNCTION_MENUS.filter(m => userPermissions?.[m.permKey] === true && (!isGuest || menuMinRoleOk(m.id)) && !maintenanceMenus.includes(PAGE_MAINTENANCE_MAP[m.id] || m.id));
 
   // ── renderPage ───────────────────────────────────────────────────────────────
   const renderPage = () => {
@@ -2140,6 +2162,12 @@ function MainApp() {
               onSubTabChange={sub => setActivePage(sub)}
               flyoutOpen={openMenu === 'gl'}
             />
+          : <NoAccessPage />;
+      }
+      case 'gl-detail-of-account': { // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1 -- เข้าได้เฉพาะ Permission GL (requiredPermissions ใน menuConfig.js)
+        const glDetailItem = GL_ALL_ITEMS.find(it => it.id === 'gl-detail-of-account');
+        return glItemOk(glDetailItem)
+          ? <DetailOfAccount onOpenProfile={() => setActivePage('users')} /> /* MARKER_GL_SIGNOFF_UNSET_STATE_V1 -- ปุ่ม "ตั้งค่าที่ Profile" -> System Console */
           : <NoAccessPage />;
       }
       case 'i-pro-interface': return (isOwner || userPermissions?.['I-Pro']) ? <PlaceholderPage title="I-Pro Interface" icon="🔗" /> : <NoAccessPage />;
@@ -2244,7 +2272,7 @@ function MainApp() {
             )}
 
             {/* AP Controller — flyout trigger */}
-            {(isOwner || (userPermissions?.['Manual'] && !maintenanceMenus.includes('ap-controller'))) && (
+            {(isOwner || (userPermissions?.['Manual'] && guestSeesMenu(AP_CONTROLLER_MENU) && !maintenanceMenus.includes('ap-controller'))) && (
               <div onClick={handleAPEnter} title={!sidebarExpanded ? 'AP Controller' : ''}
                 style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isAPActive || openMenu === 'ap-gr' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ap' ? 'rgba(93,202,165,0.12)' : isAPActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isAPActive || openMenu === 'ap' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                 {sidebarExpanded ? <><span>🧾 AP Controller</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>🧾</span>}
@@ -2253,14 +2281,14 @@ function MainApp() {
 
             {/* Other function menus (skip ap-gr and vat-controller, handled separately) */}
             {/* VAT Controller — flyout trigger */}
-            {(isOwner || (userPermissions?.['VAT'] && !maintenanceMenus.includes('vat-controller'))) && (
+            {(isOwner || (userPermissions?.['VAT'] && guestSeesMenu(VAT_CONTROLLER_MENU) && !maintenanceMenus.includes('vat-controller'))) && (
               <div onClick={handleVATEnter} title={!sidebarExpanded ? 'VAT Controller' : ''}
                 style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isVATActive || openMenu === 'vat' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'vat' ? 'rgba(93,202,165,0.12)' : isVATActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isVATActive || openMenu === 'vat' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                 {sidebarExpanded ? <><span>💹 VAT Controller</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>💹</span>}
               </div>
             )}
             {/* IE Controller — flyout trigger */}
-            {(isOwner || (userPermissions?.['IE'] && !maintenanceMenus.includes('ie-controller'))) && (
+            {(isOwner || (userPermissions?.['IE'] && guestSeesMenu(IE_CONTROLLER_MENU) && !maintenanceMenus.includes('ie-controller'))) && (
               <div onClick={handleIEEnter} title={!sidebarExpanded ? 'I-Expense' : ''}
                 style={{ height: '38px', display: 'flex', alignItems: 'center', justifyContent: sidebarExpanded ? 'space-between' : 'center', padding: sidebarExpanded ? '0 16px' : '0', cursor: 'pointer', fontSize: sidebarExpanded ? '13px' : '16px', borderLeft: isIEActive || openMenu === 'ie' ? '3px solid #5DCAA5' : '3px solid transparent', background: openMenu === 'ie' ? 'rgba(93,202,165,0.12)' : isIEActive ? 'rgba(255,255,255,0.08)' : 'transparent', color: isIEActive || openMenu === 'ie' ? '#5DCAA5' : 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                 {sidebarExpanded ? <><span>💸 I-Expense</span><span style={{ fontSize: '10px' }}>▸</span></> : <span>💸</span>}
@@ -2284,7 +2312,7 @@ function MainApp() {
             </div>}
 
             <div style={{ margin: '4px 8px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
-            {(isOwner || hasAnyDocAccess) && navItem('upload', '📁', 'Resource Center')}
+            {!isGuest && (isOwner || hasAnyDocAccess) && navItem('upload', '📁', 'Resource Center')} {/* MARKER_GUEST_MODULE_BYPASS_V1 -- Guest ไม่เห็น Resource Center (Master Data ซ่อนอยู่แล้วผ่าน hasAnyModulePerm) */}
           </nav>
 
           {/* Bottom */}
@@ -2307,7 +2335,7 @@ function MainApp() {
                     <div style={{ fontSize: '11px', color: roleColor[userRole] || '#fff', fontWeight: '500' }}>{userRole}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    <button ref={bellRef} onClick={() => setShowBell(v => !v)}
+                    {!isGuest && (<button ref={bellRef} onClick={() => setShowBell(v => !v)}
                       style={{ background: showBell ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${showBell ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: showBell ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                       <BellIcon />
                       {totalBadgeCount > 0 && (
@@ -2315,7 +2343,7 @@ function MainApp() {
                           {Math.min(totalBadgeCount, 9)}
                         </span>
                       )}
-                    </button>
+                    </button>)} {/* MARKER_GUEST_NO_NOTICE_V1 -- Guest ไม่รับ Notice */}
                     <button ref={profileIconRef} onClick={handleProfileIconClick} onMouseEnter={handleTeamIconEnter} onMouseLeave={handleTeamIconLeave}
                       style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '30px', height: '30px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <UserIcon />
@@ -2328,13 +2356,13 @@ function MainApp() {
               </>
             ) : (
               <>
-                <button ref={bellRef} onClick={() => setShowBell(v => !v)}
+                {!isGuest && (<button ref={bellRef} onClick={() => setShowBell(v => !v)}
                   style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                   <BellIcon />
                   {totalBadgeCount > 0 && (
                     <span style={{ position: 'absolute', top: '-4px', right: '-4px', width: '8px', height: '8px', background: '#e74c3c', borderRadius: '50%', border: '1.5px solid #1a3a5c' }} />
                   )}
-                </button>
+                </button>)} {/* MARKER_GUEST_NO_NOTICE_V1 -- Guest ไม่รับ Notice */}
                 <button ref={profileIconRef} onClick={handleProfileIconClick} onMouseEnter={handleTeamIconEnter} onMouseLeave={handleTeamIconLeave}
                   style={{ background: activePage === 'users' ? 'rgba(93,202,165,0.2)' : 'rgba(255,255,255,0.08)', border: `1px solid ${activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.2)'}`, borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer', color: activePage === 'users' ? '#5DCAA5' : 'rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <UserIcon />
@@ -2416,6 +2444,7 @@ function MainApp() {
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📊 GL Functional</div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
+              {!GL_ALL_ITEMS.some(it => glItemOk(it)) && (<div style={{ padding: '12px 16px', fontSize: '12px', color: '#888780', lineHeight: 1.5 }}>ยังไม่มีเมนูย่อยที่บัญชีนี้มีสิทธิ์ใช้งาน</div>)} {/* MARKER_GL_MODULE_PERMS_V1 */}
               {GL_FUNCTIONAL_MENU.groups.map((g, gi) => { // MARKER_GL_GENERIC_PERMISSION_V1
                 const visibleItems = g.items.filter(it => glItemOk(it));
                 if (visibleItems.length === 0) return null;
@@ -2466,23 +2495,7 @@ function MainApp() {
         {renderPage()}
       </div>
 
-      {(isOwner || isAdmin) && (() => { // MARKER_VATWATCHLIST_CONFIRM_90PCT_V1 -- Toast มุมขวาล่าง
-        const tn = (apNotifications || []).find((n) => n.category === 'VAT_ROUND_CONFIRM' && !vatRoundToastHidden.has(n.id));
-        if (!tn) return null;
-        return (
-          <div style={{ position: 'fixed', right: 20, bottom: 20, zIndex: 4000, width: 340, background: '#fff', border: '1px solid #d0d7de', borderLeft: '4px solid #1a3a5c', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.22)', padding: '12px 14px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-              <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: '#1a3a5c' }}>{tn.title}</div>
-              <button onClick={() => setVatRoundToastHidden((p) => new Set([...p, tn.id]))} style={{ border: 'none', background: 'none', fontSize: 16, lineHeight: 1, cursor: 'pointer', color: '#57606a' }}>×</button>
-            </div>
-            <div style={{ fontSize: 12, color: '#57606a', margin: '6px 0 10px' }}>{tn.message}</div>
-            <button onClick={async () => { try { await apiFetch('/vat_watchlist_round/confirm', { method: 'POST', body: JSON.stringify({}) }); setVatRoundToastHidden((p) => new Set([...p, tn.id])); handleMarkApNotifRead(tn.id); } catch (err) { window.alert((err && err.message) || 'Confirm ไม่สำเร็จ'); } }}
-              style={{ fontSize: 12, padding: '7px 16px', borderRadius: 6, border: 'none', background: '#1a3a5c', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Confirm ว่า Data ครบแล้ว</button>
-          </div>
-        );
-      })()}
-
-      {showBell && (
+      {!isGuest && showBell && (
         <BellModal
           currentUsername={userName || currentUser?.email || ''}
           onGotoUpload={() => { setActivePage('upload'); setShowBell(false); }}

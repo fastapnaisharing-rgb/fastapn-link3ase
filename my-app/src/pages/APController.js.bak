@@ -1683,8 +1683,12 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
   const listRef  = useRef(null);
   const [favUpdating, setFavUpdating] = useState(null); // code ที่กำลัง update
   // MARKER_MASTERDATA_REALTIME_V1 -- คนอื่นแก้ Item Code ที่ไหนก็ตาม Refetch ให้เห็นสด
+  // MARKER_ITEMCODE_RESULTS_REFRESH_V1 -- results เป็น State ค้นจาก Server: ต้อง Refetch เองหลัง Save/Delete/Event
+  const [resultsTick, setResultsTick] = useState(0);
+  const bumpResults = () => setResultsTick(t => t + 1);
   useRealtimeRefresh(['itemcode_list_updated'], () => {
     if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode realtime] fetchCollection background error:', e));
+    bumpResults();
   });
 
   const isReadOnly = view === 'view';
@@ -1765,7 +1769,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       }
     }, 300);
     return () => { clearTimeout(t); controller.abort(); };
-  }, [show, query, bu, bookFilter, sourceModule, vendorTaxId, allBu, canEdit]);
+  }, [show, query, bu, bookFilter, sourceModule, vendorTaxId, allBu, canEdit, resultsTick]);
 
 
 
@@ -1804,6 +1808,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode handleSave] fetchCollection background error:', e));
       try { broadcastWs('itemcode_list_updated', {}); } catch (e) { console.error('[broadcast itemcode_list_updated]', e); }
+      bumpResults();
       setView('search'); setForm(emptyForm); setViewTarget(null);
     } catch (e) {
       console.error('[ItemCode handleSave failed]', e);
@@ -1820,6 +1825,7 @@ function ItemCodeSearchPopup({ show, onClose, onSelect, itemcodeItems = [], fetc
       // MARKER_ITEMCODE_SMCODE_SAVE_NO_AWAIT_V1
       if (fetchCollection) fetchCollection('ItemcodeList', true).catch(e => console.error('[ItemCode handleDelete] fetchCollection background error:', e));
       try { broadcastWs('itemcode_list_updated', {}); } catch (e) { console.error('[broadcast itemcode_list_updated]', e); }
+      bumpResults();
     } catch (e) { confirmDialog.alert('ลบไม่สำเร็จ: ' + e.message, { variant: 'danger' }); }
   };
 
@@ -2261,7 +2267,8 @@ const calcInvoiceLine = (line, itemcodeItems, vendorInfo, form) => {
     const effectiveCpcAV = form?.branchCpc?.trim() ? form.branchCpc.trim() : rawCpcAV;
     const accountValAV = [effectiveCpcAV, String(itemData.account ?? '').trim(), subValAV].filter(Boolean).join('-');
     const amountNumAV = parseFloat(String(line.amount).replace(/,/g, '')) || 0;
-    return { ...line, account: accountValAV, taxCode: '', whtCode: '', vat: '', wht: '', total: fmt2Val(amountNumAV), tax: 'NN', _isAutoVatLine: true };
+    // MARKER_CTA_AP_VAT_SAME_ACCOUNT_V1 -- CTA-AP: บรรทัด VAT ใช้ Account เดียวกับบรรทัดบน (ไม่ใช้ Account จาก Item VAT7%-)
+    return { ...line, account: (line._ctaApSync && line.account) ? line.account : accountValAV, taxCode: '', whtCode: '', vat: '', wht: '', total: fmt2Val(amountNumAV), tax: 'NN', _isAutoVatLine: true };
   }
   const rawSub = String(itemData.sub ?? '').trim();
   const spi1 = String(itemData.spi1 ?? '').trim().toUpperCase();
@@ -2584,13 +2591,32 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
         const f = emptyForm();
         SUPPLIER_FIELDS.forEach(([key]) => { f[key] = viewItem[key] || ''; });
         f['BU Code'] = viewItem['BU Code'] || String(viewItem['Code'] ?? '').split('-')[0] || bu || '';
-        setEditTarget(viewItem); setFormState(f); setView('view');
+        f['disabled_fields'] = Array.isArray(viewItem['disabled_fields']) ? viewItem['disabled_fields'] : []; // MARKER_QUICKVIEW_DISABLED_FIELDS_COPY_V1
+        setEditTarget(viewItem); setFormState(f); setView('edit'); // MARKER_QUICKVIEW_EDIT_DIRECT_V1 -- Quick View เปิดแบบแก้ไขได้ทันที
       } else {
         setView('search'); setEditTarget(null); setFormState({});
       }
       setTimeout(() => inputRef.current?.focus(), 60);
     }
   }, [show, initialViewCode]);
+
+  // MARKER_QUICKVIEW_EDIT_DIRECT_V1 -- มีการแก้ที่ยังไม่ Save ใน Quick View ไหม
+  const quickViewDirty = () => !!(initialViewCode && editTarget && (
+    SUPPLIER_FIELDS.some(([k]) => k !== 'BU Code' && String(form[k] || '') !== String(editTarget[k] || '')) ||
+    JSON.stringify(form['disabled_fields'] || []) !== JSON.stringify(Array.isArray(editTarget['disabled_fields']) ? editTarget['disabled_fields'] : [])
+  ));
+
+  // MARKER_QUICKVIEW_LIVE_SYNC_V1 -- Quick View (view mode) Sync ข้อมูลสดเมื่อ supplierItems เปลี่ยน (Auto Update)
+  useEffect(() => {
+    if (!show || !initialViewCode || view !== 'edit' || quickViewDirty()) return; // MARKER_QUICKVIEW_EDIT_DIRECT_V1 -- Sync เฉพาะตอนยังไม่ได้แก้
+    const latest = supplierItems.find(i => String(i['Code'] ?? '').trim().toUpperCase() === String(initialViewCode).trim().toUpperCase());
+    if (!latest || latest === editTarget) return;
+    const f = emptyForm();
+    SUPPLIER_FIELDS.forEach(([key]) => { f[key] = latest[key] || ''; });
+    f['BU Code'] = latest['BU Code'] || String(latest['Code'] ?? '').split('-')[0] || bu || '';
+    f['disabled_fields'] = Array.isArray(latest['disabled_fields']) ? latest['disabled_fields'] : [];
+    setEditTarget(latest); setFormState(f);
+  }, [supplierItems]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!show) return;
@@ -2650,6 +2676,26 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     return () => { clearTimeout(t); controller.abort(); };
   }, [show, query, bu, effectiveBookFilter, sortField, sortDir, refreshTick]);
 
+  // MARKER_SUPPLIER_LASTUSED_HISTORY_V1 -- คลิกขวาดูประวัติการเรียกใช้ Supplier
+  const [histItem, setHistItem] = useState(null);
+  const [histRows, setHistRows] = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
+  const fmtUsed = (v) => {
+    if (!v) return '';
+    const d = new Date(v); if (isNaN(d.getTime())) return '';
+    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${p2(d.getDate())}-${M[d.getMonth()]}-${String(d.getFullYear()).slice(2)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  };
+  const openHistory = async (item) => {
+    setHistItem(item); setHistRows([]); setHistLoading(true);
+    try {
+      const { data } = await db.from('bucket_list').select('invoice_no, batch_id, bu, created_by, created_at, exported_at, status, net').eq('supplier_code', item['Code'] || '').eq('module', 'AP').order('created_at', { ascending: false }).limit(200);
+      setHistRows(Array.isArray(data) ? data : []);
+    } catch (e) { console.error('[Supplier history]', e); }
+    setHistLoading(false);
+  };
+
   if (!show) return null;
 
   const buFiltered = effectiveBookFilter
@@ -2702,8 +2748,11 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
   // ── เปิดผ่านปุ่ม Detail (initialViewCode) ไม่มี "หน้า Search" ให้กลับไป ────
   // ── เพราะข้ามขั้นตอนนั้นไปตรงๆตั้งแต่แรก -- กด Back ต้องปิด Popup ทั้งหมด ────
   // ── กลับไป Invoice Detail แทนการเด้งไปหน้า Search เปล่าๆ ที่ไม่มีความหมาย ────
-  const handleBack = () => {
-    if (initialViewCode) { onClose(); return; }
+  const handleBack = async (force) => {
+    if (initialViewCode) {
+      if (force !== true && quickViewDirty() && !(await confirmDialog.confirm('มีการแก้ไขที่ยังไม่ได้บันทึก ต้องการปิดโดยไม่บันทึกใช่หรือไม่?', { confirmText: 'ปิดโดยไม่บันทึก' }))) return; // MARKER_QUICKVIEW_EDIT_DIRECT_V1
+      onClose(); return;
+    }
     setView('search'); setEditTarget(null); setFormState({}); setFormError('');
     setTimeout(() => inputRef.current?.focus(), 60);
   };
@@ -2732,7 +2781,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
     console.log('[DEBUG SupplierSave] handleSave ถูกเรียก', { view, editTargetId: editTarget?.id, code: form?.['Code'], time: new Date().toISOString() });
     console.trace('[DEBUG SupplierSave] Stack Trace');
     if (!canEdit) return;
-    const err = validate(form, view); if (err) { setFormError(err); return; } // MARKER_SUPPLIER_EDIT_VALIDATE_RELAX_V1
+    const err = validate(form, view === 'view' ? 'edit' : view); if (err) { setFormError(err); return; } // MARKER_SUPPLIER_EDIT_VALIDATE_RELAX_V1 // MARKER_QUICKVIEW_SAVE_UPDATE_V1
     setSaving(true);
     try {
       const meta = { updated_by: userName, updated_at: new Date().toISOString() };
@@ -2744,7 +2793,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       if (Array.isArray(payload['disabled_fields'])) {
         payload['disabled_fields'] = JSON.stringify(payload['disabled_fields']);
       }
-      if (view === 'edit' && editTarget?.id) {
+      if ((view === 'edit' || view === 'view') && editTarget?.id) { // MARKER_QUICKVIEW_SAVE_UPDATE_V1 -- view mode (Quick View) = Update ตัวเดิม ไม่ใช่ INSERT
         console.log('[DEBUG SupplierSave] -> UPDATE', editTarget.id);
         const { error } = await db.from('supplier_list').update(payload).eq('id', editTarget.id);
         if (error) throw error;
@@ -2758,7 +2807,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
       // ── Broadcast ให้ Tab/User อื่นที่กำลังเปิด Vendor ตัวนี้อยู่รู้ด้วยว่า ────
       // ── ข้อมูลอัปเดตแล้ว (Invoice Entry จะดัก Event นี้แล้ว lookupVendor ใหม่) ──
       broadcastWs('supplier_list_updated', { code: payload['Code'] || '' });
-      handleBack();
+      handleBack(true); // MARKER_QUICKVIEW_EDIT_DIRECT_V1 -- Save แล้วปิดเลย ไม่ถามซ้ำ
     } catch (e) { setFormError('บันทึกไม่สำเร็จ: ' + e.message); }
     setSaving(false);
   };
@@ -3120,6 +3169,43 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
 
   const renderSearchView = () => (
     <>
+      {histItem && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(15,30,50,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseDown={e => { if (e.target === e.currentTarget) setHistItem(null); }}>
+          <div style={{ background: 'white', borderRadius: '12px', width: '86%', maxWidth: '860px', maxHeight: '80%', display: 'flex', flexDirection: 'column', boxShadow: '0 16px 48px rgba(26,58,92,0.3)', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid #f0f2f5', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>รายละเอียดประวัติการเรียกใช้ · {histItem['Code']}</div>
+                <div style={{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{histItem['Supplier Name'] || ''}{!histLoading ? ` · ${histRows.length}${histRows.length >= 200 ? '+' : ''} รายการ` : ''}</div>
+              </div>
+              <button onClick={() => setHistItem(null)} style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#f5f5f5', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>×</button>
+            </div>
+            <div style={{ overflow: 'auto', flex: 1 }}>
+              {histLoading ? <div style={{ padding: '32px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>กำลังโหลด...</div>
+                : histRows.length === 0 ? <div style={{ padding: '32px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>ยังไม่เคยถูกเรียกใช้ใน Invoice</div>
+                : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead style={{ position: 'sticky', top: 0 }}>
+                    <tr>{['เรียกใช้เมื่อ', 'Invoice No.', 'Batch', 'BU', 'ผู้ใช้', 'Net', 'สถานะ'].map(h => <th key={h} style={{ background: '#1a3a5c', color: 'rgba(255,255,255,0.8)', padding: '8px 12px', textAlign: 'left', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {histRows.map((r, ri) => (
+                      <tr key={ri} style={{ borderBottom: '0.5px solid #f3f4f6' }}>
+                        <td style={{ padding: '7px 12px', whiteSpace: 'nowrap', color: '#1a3a5c', fontWeight: 500 }}>{fmtUsed(r.created_at)}</td>
+                        <td style={{ padding: '7px 12px', fontFamily: 'monospace', fontSize: '11px' }}>{r.invoice_no || '-'}</td>
+                        <td style={{ padding: '7px 12px', fontSize: '11px', color: '#555' }}>{r.batch_id || '-'}</td>
+                        <td style={{ padding: '7px 12px', fontSize: '11px' }}>{r.bu || '-'}</td>
+                        <td style={{ padding: '7px 12px', fontSize: '11px', color: '#555' }}>{r.created_by || '-'}</td>
+                        <td style={{ padding: '7px 12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.net != null && r.net !== '' ? Number(r.net).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                        <td style={{ padding: '7px 12px', fontSize: '11px', color: r.exported_at ? '#27500A' : '#856404' }}>{r.exported_at ? `Export ${fmtUsed(r.exported_at)}` : (r.status || 'pending')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
         <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>🏭</div>
         <div style={{ flex: 1 }}>
@@ -3184,6 +3270,7 @@ function SupplierSearchPopup({ show, onClose, onSelect, supplierItems = [], bu =
                   {showAllHeader && <tr><td colSpan={COLS.length + 1} style={{ padding: '5px 12px', fontSize: '10px', fontWeight: '600', color: '#888', background: '#f8f9fa', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '0.5px solid #e8eaf0' }}>All Vendors ({restItems.length})</td></tr>}
                   <tr data-row={i}
                     onClick={() => onSelect(item)}
+                                        onContextMenu={e => { e.preventDefault(); setActive(i); openHistory(item); }}
                     onMouseEnter={() => setActive(i)}
                     style={{ background: isAct ? '#eef3fb' : (i < quickItems.length ? '#f7fafd' : 'white'), cursor: 'pointer', borderBottom: '0.5px solid #f3f4f6' }}>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
@@ -4151,7 +4238,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       // ── กรอง internal/UI-only fields ออก (ไม่ใช่ column จริงใน sm_code_list table) ──
       // ── _type, _sub_type ฯลฯ = ขึ้นต้นด้วย _ (helper fields สำหรับ dropdown ภายใน) ──
       // ── BlankCell = placeholder field เปล่าๆ ไว้จัด layout เฉยๆ ──────────────────
-      const EXCLUDE_FIELDS = ['BlankCell'];
+      const EXCLUDE_FIELDS = ['BlankCell', 'search_text']; // MARKER_SMCODE_EXCLUDE_GENERATED_SEARCH_TEXT_V1 -- search_text เป็น Generated Column ของ sm_code_list (Update ไม่ได้ -> 500)
       const cleanedF = Object.fromEntries(Object.entries(f).filter(([k]) => !k.startsWith('_') && !EXCLUDE_FIELDS.includes(k)));
       // sm_code_list table ใช้ column ชื่อ username/last_update (ไม่ใช่ updated_by/updated_at เหมือน table อื่น)
       const payload = { ...cleanedF, username: userName, last_update: new Date().toISOString(), source_mode: 'AP' };
@@ -4175,7 +4262,7 @@ function RealVendorPopup({ show, onClose, onSelect, smCodeItems = [], vendorTaxI
       try { broadcastWs('sm_code_list_updated', {}); } catch (e) { console.error('[broadcast sm_code_list_updated]', e); }
       wsNotifySmCodeUpdated();
       setView('search'); setEditTarget(null); setSmForm({}); setSmFormError('');
-    } catch (e) { setSmFormError('บันทึกไม่สำเร็จ: ' + e.message); }
+    } catch (e) { setSmFormError('บันทึกไม่สำเร็จ: ' + (e?.message || e?.error || (typeof e === 'string' ? e : '') || JSON.stringify(e) || 'ไม่ทราบสาเหตุ')); console.error('[SmCode handleSmSave]', e); } // MARKER_SMCODE_SAVE_REAL_ERROR_MSG_V1 -- db.js คืน error เป็น String ไม่มี .message เดิมเลยขึ้น undefined
     setSaving(false);
   };
 
@@ -4830,7 +4917,154 @@ return (
 // ─────────────────────────────────────────────────────────────────────────────
 // InvoiceDetailPopup ✅ PATCHED — flex body, minHeight:0, no coming-soon
 // ─────────────────────────────────────────────────────────────────────────────
-function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '', flowMemory = {}, setFlowMemory = () => {}, supplierCodeRef, matchedRule = null, onOpenSupplierDetail = () => {}, vendorRuleItems = [], buInfo = null, grtPrefix = '' }) {
+// MARKER_CTA_DUEDATE_POPUP_V1
+// ── หา Item Code ของ "VAT7%-" (ใช้เป็นบรรทัด VAT คู่ของ CTA-AP) -- ไม่เจอให้ Fallback เป็น Item เดิม ──
+const findCtaVatItemCode = (itemcodeItems, fallbackCode) => {
+  const v = (itemcodeItems || []).find(i => String(i.description ?? '').trim().toUpperCase() === 'VAT7%-');
+  return v?.code || fallbackCode;
+};
+
+// ── Popup ตรวจ Due Date ก่อน Submit เมื่อมี Item ที่ VALUE = CTA-AP / CTA-NN ─────────────
+// ── กรอก Due ย้อนหลัง (< วันนี้) -> Paygroup = ALREADY PAID + "วันที่ตัดชำระ : <วันที่กรอก>" ──
+// ── กด Paid -> ใช้ Due Date ตาม Batch Setup + "วันที่ตัดชำระ : <วันที่ Batch Setup>" ───────
+// ── (ไม่เปลี่ยน Paygroup) / Due ไม่ย้อนหลัง -> ใช้ตามที่กรอก ไม่แตะ Paygroup/Description ──
+function CtaDueDatePopup({ show, ctaValue = '', batchDueDate = '', onConfirm, onCancel }) {
+  // MARKER_CTA_DUE_HYBRID_INPUT_V1 -- พิมพ์เองได้ (dd/mm/yy, dd-mmm-yy, ddmmyyyy) หรือกดปฏิทินเลือก
+  const [dueText, setDueText] = useState('');
+  const pickerRef = useRef(null);
+  const [paid, setPaid] = useState(false);
+  const [indexText, setIndexText] = useState(''); // MARKER_CTA_INDEX_FIELD_V1 -- ข้อความเพิ่มเติม (ไม่บังคับ) ใส่หน้า Description
+  useEffect(() => { if (show) { setDueText(''); setPaid(false); setIndexText(''); } }, [show]);
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show]);
+  if (!show) return null;
+  const p2 = (n) => String(n).padStart(2, '0');
+  const now = new Date();
+  const todayIso = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmtDMY = (iso) => {
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}-${MON[parseInt(m[2], 10) - 1]}-${m[1].slice(2)}` : String(iso || '');
+  };
+  // แสดงปี 4 หลักในช่อง Due Date / ข้อความใน Popup (Description ที่บันทึกยังใช้ fmtDMY แบบ yy เหมือน Macro)
+  const fmtDMY4 = (iso) => {
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}-${MON[parseInt(m[2], 10) - 1]}-${m[1]}` : String(iso || '');
+  };
+  const parseDueText = (txt) => {
+    const s = String(txt || '').trim();
+    if (!s) return '';
+    let d, mo, y;
+    let m = s.match(/^(\d{1,2})[\/\-.\s]+([A-Za-z]{3})[A-Za-z]*[\/\-.\s]+(\d{2}|\d{4})$/);
+    if (m) { d = +m[1]; mo = MON.findIndex(x => x.toLowerCase() === m[2].toLowerCase()) + 1; y = m[3]; }
+    else if ((m = s.match(/^(\d{1,2})[\/\-.\s]+(\d{1,2})[\/\-.\s]+(\d{2}|\d{4})$/))) { d = +m[1]; mo = +m[2]; y = m[3]; }
+    else if ((m = s.match(/^(\d{2})(\d{2})(\d{4}|\d{2})$/))) { d = +m[1]; mo = +m[2]; y = m[3]; }
+    else return '';
+    let yn = +y;
+    if (y.length === 2) yn += 2000;
+    if (yn > 2400) yn -= 543; // พ.ศ. -> ค.ศ.
+    if (!mo || mo < 1 || mo > 12 || d < 1) return '';
+    const dt = new Date(yn, mo - 1, d);
+    if (dt.getFullYear() !== yn || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return '';
+    return `${yn}-${p2(mo)}-${p2(d)}`;
+  };
+  const due = parseDueText(dueText);
+  const eomIso = (() => { const e = new Date(now.getFullYear(), now.getMonth() + 1, 0); return `${e.getFullYear()}-${p2(e.getMonth() + 1)}-${p2(e.getDate())}`; })();
+  const isBackdated = !paid && !!due && due < todayIso;
+  // ย้อนหลังในเดือนปัจจุบัน -> ใช้วันที่ที่กรอก / ย้อนข้ามเดือน -> ใช้สิ้นเดือนปัจจุบัน
+  const crossMonth = isBackdated && due.slice(0, 7) < todayIso.slice(0, 7);
+  const effDue = paid ? batchDueDate : (crossMonth ? eomIso : due);
+  const canConfirm = paid ? !!batchDueDate : !!due;
+  const mode = paid ? 'paid' : (isBackdated ? 'backdated' : 'due');
+  const descSuffix = (paid || isBackdated) ? `วันที่ตัดชำระ : ${fmtDMY4(effDue)}` : '';
+  const doConfirm = () => {
+    if (!canConfirm) return;
+    onConfirm({ mode, dueDate: effDue, descSuffix, indexText: indexText.trim(), paygroup: paid ? '' : 'ALREADY PAID' }); // กด "ตัดบัญชี" = ALREADY PAID เสมอ / กด Paid = ไม่เปลี่ยน
+  };
+  // MARKER_CTA_PAID_SUBMIT_DIRECT_V1
+  // ── กด Paid = Submit ทันที (เหมือนตัดบัญชี) -- ใช้ Due Date ตาม Batch Setup + "วันที่ตัดชำระ" ──
+  // ── Paygroup ไม่เปลี่ยน (paygroup: '') -- ผลที่บันทึกตรงกับกล่อง "ผลที่ระบบจะบันทึก (กด Paid)" เดิม ──
+  const doPaid = () => {
+    if (!batchDueDate) return;
+    onConfirm({ mode: 'paid', dueDate: batchDueDate, descSuffix: `วันที่ตัดชำระ : ${fmtDMY4(batchDueDate)}`, indexText: indexText.trim(), paygroup: '' });
+  };
+  const boxBorder = isBackdated ? '#E7C98A' : paid ? '#A7D3B4' : '#B8C1CF';
+  const boxBg = isBackdated ? '#FFF8E6' : paid ? '#EEF8F1' : 'transparent';
+  const rowStyle = { display: 'flex', gap: '12px', fontSize: '13px' };
+  const keyStyle = { width: '96px', color: '#555', flexShrink: 0 };
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10006, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div style={{ background: 'white', borderRadius: '12px', width: '500px', maxWidth: '94vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 22px', borderBottom: '0.5px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ flex: 1, fontSize: '15px', fontWeight: 600, color: '#1a3a5c' }}>ตรวจสอบ Due Date ก่อน Submit</div>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: '#1E3A8A', background: '#DBE6FB', borderRadius: '999px', padding: '3px 10px' }}>{ctaValue}</div>
+        </div>
+        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>Due Date</label>
+            <div style={{ position: 'relative' }}>
+              <input type="text" value={paid ? fmtDMY4(batchDueDate || '') : dueText} disabled={paid} autoFocus
+                placeholder="พิมพ์ได้ เช่น 05/10/2026 หรือ 5-Oct-2026 หรือกดปฏิทิน"
+                onChange={(e) => setDueText(e.target.value)}
+                onBlur={() => { if (due) setDueText(fmtDMY4(due)); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); doConfirm(); } }}
+                style={{ width: '100%', height: '38px', boxSizing: 'border-box', border: `1.5px solid ${(dueText && !due && !paid) ? '#B91C1C' : isBackdated ? '#B45309' : '#9AA6B8'}`, borderRadius: '8px', padding: '0 38px 0 10px', fontSize: '14px', background: paid ? '#EEF1F5' : 'white', color: '#1B2430' }} />
+              <button type="button" disabled={paid} title="เลือกจากปฏิทิน"
+                onClick={() => { try { pickerRef.current?.showPicker?.(); } catch (e) { pickerRef.current?.focus(); } }}
+                style={{ position: 'absolute', right: '6px', top: '5px', width: '28px', height: '28px', border: 'none', background: 'transparent', cursor: paid ? 'not-allowed' : 'pointer', fontSize: '16px', opacity: paid ? 0.4 : 1 }}>📅</button>
+              <input ref={pickerRef} type="date" tabIndex={-1} value={due || ''}
+                onChange={(e) => { if (e.target.value) setDueText(fmtDMY4(e.target.value)); }}
+                style={{ position: 'absolute', right: '6px', bottom: 0, width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }} />
+            </div>
+            <div style={{ fontSize: '11px', color: (dueText && !due && !paid) ? '#B91C1C' : crossMonth ? '#92400E' : isBackdated ? '#92400E' : (paid ? '#166534' : '#666'), fontWeight: (isBackdated || paid || (dueText && !due)) ? 500 : 400 }}>
+              {paid ? 'ใช้ Due Date จากหน้า Batch Setup'
+                : (dueText && !due) ? 'รูปแบบวันที่ไม่ถูกต้อง (เช่น 05/10/2026 หรือ 5-Oct-2026)'
+                : crossMonth ? `ย้อนหลังข้ามเดือน: ระบบใช้สิ้นเดือน ${fmtDMY4(eomIso)}`
+                : isBackdated ? `ย้อนหลังในเดือนนี้: ก่อนวันนี้ ${fmtDMY4(todayIso)}`
+                : `ถ้าใส่ย้อนหลัง (ก่อนวันนี้ ${fmtDMY4(todayIso)}) ระบบจะตั้ง Paygroup เป็น ALREADY PAID ให้อัตโนมัติ`}
+            </div>
+          </div>
+          {/* MARKER_CTA_INDEX_FIELD_V1 -- ช่อง Index (ไม่บังคับ): ถ้าใส่ จะถูกวางไว้ "หน้า" Description */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>Index <span style={{ fontWeight: 400, color: '#888' }}>(ไม่บังคับ — ถ้าใส่ จะอยู่หน้า Description)</span></label>
+            <input type="text" value={indexText} onChange={(e) => setIndexText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); doConfirm(); } }}
+              placeholder="เช่น เลขที่ PO (ถ้ามี)"
+              style={{ height: '38px', boxSizing: 'border-box', border: '1.5px solid #9AA6B8', borderRadius: '8px', padding: '0 10px', fontSize: '14px', background: 'white', color: '#1B2430' }} />
+          </div>
+          <div style={{ border: `1.5px ${(paid || isBackdated) ? 'solid' : 'dashed'} ${boxBorder}`, background: boxBg, borderRadius: '10px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#555' }}>ผลที่ระบบจะบันทึก{paid ? ' (กด Paid)' : ''}</div>
+            {!canConfirm ? (
+              <div style={{ fontSize: '13px', color: '#666' }}>ยังไม่ได้กรอก — กรอก Due Date หรือกดปุ่ม Paid</div>
+            ) : (
+              <>
+                <div style={rowStyle}><div style={keyStyle}>Paygroup</div><div style={{ fontWeight: 700 }}>{paid ? 'ไม่เปลี่ยน' : 'ALREADY PAID'}</div></div>
+                <div style={rowStyle}><div style={keyStyle}>Description</div><div style={{ fontWeight: 700 }}>{(indexText.trim() || descSuffix) ? [indexText.trim(), '[Description เดิม]', descSuffix].filter(Boolean).join(' ') : 'ไม่เพิ่ม'}</div></div>
+                <div style={rowStyle}><div style={keyStyle}>Due Date</div><div style={{ fontWeight: 700 }}>{fmtDMY4(effDue)}{paid ? ' (ตาม Batch Setup)' : crossMonth ? ` (สิ้นเดือน — ที่กรอก ${fmtDMY4(due)})` : ''}</div></div>
+              </>
+            )}
+          </div>
+        </div>
+        <div style={{ padding: '14px 22px', background: '#F6F7F9', borderTop: '0.5px solid #e5e7eb', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+          <button type="button" onClick={onCancel}
+            style={{ padding: '8px 18px', borderRadius: '8px', border: '1px solid #9AA6B8', background: 'white', color: '#333', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>ยกเลิก</button>
+          <button type="button" onClick={doPaid} disabled={!batchDueDate}
+            title={batchDueDate ? '' : 'ไม่พบ Due Date ใน Batch Setup'}
+            style={{ padding: '8px 18px', borderRadius: '8px', border: '1.5px solid #166534', background: paid ? '#166534' : 'white', color: paid ? 'white' : '#166534', fontSize: '13px', fontWeight: 700, cursor: batchDueDate ? 'pointer' : 'not-allowed', opacity: batchDueDate ? 1 : 0.5 }}>{paid ? 'Paid ✓' : 'Paid'}</button>
+          <button type="button" onClick={doConfirm} disabled={!canConfirm}
+            style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: canConfirm ? '#1a3a5c' : '#C5CCD8', color: canConfirm ? 'white' : '#5B6678', fontSize: '13px', fontWeight: 700, cursor: canConfirm ? 'pointer' : 'not-allowed' }}>ตัดบัญชี</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceDetailPopup({ show, onClose, batchDueDate = '', form, setField, vendorInfo, itemcodeItems = [], smCodeItems = [], fetchCollection, userName = '', currentUser, bu = '', onResolveBranch = () => {}, onSubmitInvoice = async () => false, isAutoGrt = false, grtPreview = '', grnPreview = '', categoryItems = [], branchItems = [], recentPeriods = [], nextGrnRunning = 0, grnPrefix = '', flowMemory = {}, setFlowMemory = () => {}, supplierCodeRef, matchedRule = null, onOpenSupplierDetail = () => {}, vendorRuleItems = [], buInfo = null, grtPrefix = '' }) {
   usePopupOpenTracker(show);
   const { width: winW } = useWindowSize();
   const isMobile = winW < 768;
@@ -4896,6 +5130,37 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const line1 = lines[0];
   const setLine1 = (fn) => setLines(prev => { const next = [...prev]; next[0] = typeof fn === 'function' ? fn(prev[0]) : fn; return next; });
   const setLine1Field = (key, val) => setLine1(l => ({ ...l, [key]: val }));
+  // MARKER_INVOICEDETAIL_LINE_IB_CTXMENU_V1 -- คลิกขวาที่แถว Line (ที่มี Item Code) > Interbranch > เลือก Branch > ใส่ [BranchCode] หน้า Description ของ Line นั้น
+  const [lineIbMenu, setLineIbMenu] = useState({ show: false, x: 0, y: 0, idx: -1 });
+  const [lineIbPickIdx, setLineIbPickIdx] = useState(-1);
+  const lineIbMenuRef = useRef(null);
+  useEffect(() => {
+    if (!lineIbMenu.show) return undefined;
+    const close = (e) => { if (e && e.type === 'mousedown' && lineIbMenuRef.current && lineIbMenuRef.current.contains(e.target)) return; setLineIbMenu(m => ({ ...m, show: false })); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); window.removeEventListener('keydown', onKey); };
+  }, [lineIbMenu.show]);
+  // item = Branch ที่เลือก | item = null -> ยกเลิก Interbranch ของ Line นั้น | เก็บค่าเหมือนที่ handleSelectBranch(isIB) ตั้งให้หัว Invoice แล้วให้ Debounce Recalc คำนวณ Desc/Account/Tax Code ต่อ
+  const applyLineIb = (idx, item) => {
+    if (idx < 0) return;
+    let ibForm = null;
+    if (item) {
+      const ownLabel = formatBranchLabel(item);
+      const ho = findHOBranch(branchItems, item['bu']);
+      const cpc = String(item['cpc'] ?? '').trim();
+      ibForm = { branchNo: item['Branch Code'] || '', branchIBLabel: ownLabel, branchDirectLabel: ho ? formatBranchLabel(ho) : '-', branchCpc: cpc, headerCpc: cpc };
+    }
+    setLines(prev => {
+      if (!prev[idx]) return prev;
+      const next = [...prev];
+      next[idx] = { ...prev[idx], _ibLineForm: ibForm };
+      return next;
+    });
+  };
   const setLineField = (idx, key, val) => {
     // MARKER_DEBUG_REALVENDOR_LEAK_V1 -- Debug ชั่วคราว หาสาเหตุ realVendorName รั่วไป Line อื่น
     if (key === 'realVendorName' && val) {
@@ -5444,16 +5709,19 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   // MARKER_INVOICEDETAIL_DESC_PARTIAL_LOCK_V1 -- Lock แค่ข้อ 4 + คำนวณ Description เต็มใหม่ทันที (ไม่รอ Debounce)
   const commitDescPartialInvoiceDetail = (idx, manualPart4) => {
     const curItemCodeUpper = String(lines[idx]?.itemCode ?? '').trim().toUpperCase();
-    const updatedLine = { ...lines[idx], _descManualPart4: manualPart4, _descLockedForCode: curItemCodeUpper };
+    // MARKER_INVOICEDETAIL_DESC_TYPED_LOCK_V1 -- แก้ผ่าน Double-click = กลับไปใช้กลไก Lock ข้อ 4 -> ปล่อย Lock ข้อความที่พิมพ์เอง
+    const updatedLine = { ...lines[idx], _descManualPart4: manualPart4, _descLockedForCode: curItemCodeUpper, _descTypedFor: '' };
     const recalculated = calcLine(updatedLine, itemcodeItems, vendorInfo, form, allAccountCpcRules);
     if (idx === 0) {
       setLine1Field('desc', recalculated.desc);
       setLine1Field('_descManualPart4', manualPart4);
       setLine1Field('_descLockedForCode', curItemCodeUpper);
+      setLine1Field('_descTypedFor', '');
     } else {
       setLineField(idx, 'desc', recalculated.desc);
       setLineField(idx, '_descManualPart4', manualPart4);
       setLineField(idx, '_descLockedForCode', curItemCodeUpper);
+      setLineField(idx, '_descTypedFor', '');
     }
   };
   // MARKER_APCONTROLLER_INVOICE_FLOW_V1
@@ -5751,6 +6019,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const base = String(lines[lineIdx]?.desc || '').trim();
     const combined = base ? `${base} ${descText}` : descText;
     lineIdx === 0 ? setLine1Field('desc', combined) : setLineField(lineIdx, 'desc', combined);
+    // MARKER_INVOICEDETAIL_DESC_TYPED_LOCK_V1 -- เลือกจากคลัง Description -> ปล่อย Lock ข้อความที่พิมพ์เอง (ให้ ATDES Suffix คำนวณตามปกติ)
+    lineIdx === 0 ? setLine1Field('_descTypedFor', '') : setLineField(lineIdx, '_descTypedFor', '');
     // MARKER_APCONTROLLER_DESC_LOCK_ON_MANUAL_EDIT_V2
     // ── เก็บแค่ "ส่วนต่อท้าย" แยกไว้ต่างหาก (ไม่ Lock ทั้งก้อนเหมือน V1) ──────
     // ── ให้ calcLine ต่อท้ายให้สดทุกครั้งที่คำนวณใหม่ (Period/BDes อัปเดตได้) ──
@@ -6009,25 +6279,28 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       // MARKER_APCONTROLLER_NV7_AUTO_VAT_LINE_V1
       // ── Item ที่ SPEC-TX = NV7 -- Tab ออกจาก Amount แล้ว Auto สร้าง/อัปเดต ──
       // ── บรรทัดคู่ (VAT7%-) ต่อท้ายทันที + บังคับทั้ง 2 บรรทัดเป็น Tax=NN ────
-      const isNV7 = !lines[idx]?._isAutoVatLine && String(itemData?.spec_tx ?? '').trim().toUpperCase() === 'NV7';
+      // MARKER_CTA_AP_AUTOVAT_V1 -- Item VALUE = CTA-AP ใช้กลไกบรรทัดคู่ VAT7%- เดียวกับ NV7 (บรรทัดหลัก NN + บรรทัด VAT 7% NN)
+      const isCtaAp = String(itemData?.value ?? '').trim().toUpperCase() === 'CTA-AP';
+      const isNV7 = !lines[idx]?._isAutoVatLine && (String(itemData?.spec_tx ?? '').trim().toUpperCase() === 'NV7' || isCtaAp);
       if (isNV7) {
         const amountNum = parseFloat(val) || 0;
         const roundedAmount = Math.round(amountNum * 100) / 100;
         const vatNum = Math.round(roundedAmount * 0.07 * 100) / 100;
         const formattedAmount = roundedAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const baseVatLine = {
-          hl: 'L', itemCode, amount: vatNum.toFixed(2), tax: 'NN',
+          hl: 'L', itemCode: isCtaAp ? findCtaVatItemCode(itemcodeItems, itemCode) : itemCode, amount: vatNum.toFixed(2), tax: 'NN',
           taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '',
         };
         const calcVatLine = calcLine(baseVatLine, itemcodeItems, vendorInfo, form, allAccountCpcRules);
-        const vatLine = { ...calcVatLine, tax: 'NN', desc: `VAT7%-${calcVatLine.desc || ''}`, _isAutoVatLine: true };
+        const vatLine = { ...calcVatLine, tax: 'NN', desc: (isCtaAp && /^VAT7%-/i.test(String(calcVatLine.desc || ''))) ? calcVatLine.desc : `VAT7%-${calcVatLine.desc || ''}`, _isAutoVatLine: true };
         setLines(prev => {
           const next = [...prev];
           next[idx] = { ...next[idx], amount: formattedAmount, tax: 'NN' };
+          const vatLineFinal = (isCtaAp && next[idx].account) ? { ...vatLine, account: next[idx].account, _ctaApSync: true } : vatLine;
           if (next[idx + 1]?._isAutoVatLine) {
-            next[idx + 1] = vatLine;
+            next[idx + 1] = vatLineFinal;
           } else {
-            next.splice(idx + 1, 0, vatLine);
+            next.splice(idx + 1, 0, vatLineFinal);
           }
           return next;
         });
@@ -6195,6 +6468,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   };
 
   const calcLine = (line, itemcodeItems, vendorInfo, form, accountCpcRules = []) => {
+    // MARKER_INVOICEDETAIL_LINE_IB_CTXMENU_V3 -- Interbranch ระดับ Line: ใช้ Branch ของ Line นี้แทนของหัว Invoice (เหมือนกด IB ปกติ: Desc/CPC/Tax Code คำนวณตาม IB)
+    if (line._ibLineForm) form = { ...form, ...line._ibLineForm };
     if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
     const itemData = itemcodeItemsMapPerf.get(line.itemCode.trim().toUpperCase());
     if (!itemData) return line;
@@ -6215,7 +6490,8 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       const effectiveCpcAV = form?.branchCpc?.trim() ? form.branchCpc.trim() : rawCpcAV;
       const accountValAV = [effectiveCpcAV, String(itemData.account ?? '').trim(), subValAV].filter(Boolean).join('-');
       const amountNumAV = parseFloat(String(line.amount).replace(/,/g, '')) || 0;
-      return { ...line, account: accountValAV, taxCode: '', whtCode: '', vat: '', wht: '', total: fmt2(amountNumAV), tax: 'NN', _isAutoVatLine: true };
+      // MARKER_CTA_AP_VAT_SAME_ACCOUNT_V1
+      return { ...line, account: (line._ctaApSync && line.account) ? line.account : accountValAV, taxCode: '', whtCode: '', vat: '', wht: '', total: fmt2(amountNumAV), tax: 'NN', _isAutoVatLine: true };
     }
     const rawSub = String(itemData.sub ?? '').trim();
     const spi1 = String(itemData.spi1 ?? '').trim().toUpperCase();
@@ -6265,6 +6541,13 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     const part4Text = hasManualPart4 ? (line._descManualPart4 ?? '') : String(itemData.description ?? '').trim();
     const descVal = [ibPrefix, customizeText, form?.period ?? '', part4Text, hasAtdesSuffix ? line._atdesSuffix : '', disGDesc, ibLabel].filter(Boolean).join(' ');
     let finalDescVal = descVal;
+    // MARKER_INVOICEDETAIL_DESC_TYPED_LOCK_V1
+    // ── ข้อความที่ "พิมพ์เองตรง ๆ" ในช่อง Description (ไม่ผ่านคลัง Description / Double-click) ──
+    // ── เดิมไม่มีที่เก็บ -> Recalc (Debounce) สร้าง Desc ใหม่ทับจนข้อความที่คีย์หายไป ──────────
+    // ── ตอนนี้ใช้ข้อความที่พิมพ์เป็นหลักตราบใดที่ยัง Item Code เดิม (เปลี่ยน Item Code = กลับเป็น Auto) ──
+    if (line._descTypedFor && line._descTypedFor === itemCodeUpper && typeof line._descTyped === 'string') {
+      finalDescVal = line._descTyped;
+    }
     // MARKER_WHT_QUICKCALC_CALCLINE_DESC_SUFFIX_V1
     // -- จุดนี้คือตัวจริงที่ Sync Description เข้าตาราง Invoice Lines --------
     // -- (ไม่ใช่ calcInvoiceLine) -- บรรทัด WHT จากปุ่ม W1-W5 ต่อท้ายด้วย -----
@@ -6318,6 +6601,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     lines.map(l => l.itemCode).join(','),
     lines.map(l => l.amount).join(','),
     lines.map(l => l.tax).join(','),
+    lines.map(l => (l._ibLineForm ? l._ibLineForm.branchNo : '')).join(','), // MARKER_INVOICEDETAIL_LINE_IB_CTXMENU_V3
     form?.period, form?.invTax,
     form?.supplierCode, // MARKER_ACCOUNTCPC_ITEMCODE_SUPPLIER_BIND_V1 -- Recalc ทันทีที่เปลี่ยน Supplier (Rule ผูก Supplier แล้ว)
     form?.backDesc1, form?.backDesc2, form?.backDesc3,
@@ -6329,7 +6613,28 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     vendorInfo, itemcodeItems?.length, branchItems?.length,
   ]);
 
+  // MARKER_APCONTROLLER_AUTOVAT_DESC_SYNC_V1
+  // Sync Description: Auto VAT7%- line always mirrors the previous line description
+  const autoVatDescSyncKey = lines.map(l => `${l._isAutoVatLine ? 1 : 0}\u0001${l.desc ?? ''}`).join('\u0002');
+  useEffect(() => {
+    setLines(prev => {
+      let changed = false;
+      const next = prev.map((l, i) => {
+        if (!l._isAutoVatLine || i === 0) return l;
+        const src = prev[i - 1];
+        if (!src || src._isAutoVatLine) return l;
+        const want = `VAT7%-${src.desc || ''}`;
+        if (l.desc === want) return l;
+        changed = true;
+        return { ...l, desc: want };
+      });
+      return changed ? next : prev;
+    });
+  }, [autoVatDescSyncKey]);
+
   const [showPeriodConfirm, setShowPeriodConfirm] = useState(false);
+  // MARKER_CTA_DUEDATE_POPUP_V1 -- Popup ตรวจ Due Date เมื่อมี Item VALUE = CTA-AP / CTA-NN
+  const [ctaPopup, setCtaPopup] = useState(null);
   // MARKER_APCONTROLLER_POPUP_ESCAPE_ROUND3_V1
   useEffect(() => {
     if (!showPeriodConfirm) return;
@@ -6342,8 +6647,21 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
 
-  const doActualSubmit = async () => {
+  const doActualSubmit = async (ctaOverride = null) => {
     if (submittingRef.current) return; // เช็คทันที ไม่รอ re-render
+    // MARKER_CTA_DUEDATE_POPUP_V1
+    // ── ด่าน CTA: มีบรรทัดที่ Item VALUE = CTA-AP / CTA-NN -> เปิด Popup ตรวจ Due Date ก่อน ──
+    // ── (ผ่านด่านแล้ว Popup เรียกกลับมาที่ฟังก์ชันนี้พร้อม ctaOverride) ────────────────────
+    const getCtaValue = (l) => {
+      if (!l?.itemCode?.trim() || l._isAutoVatLine) return '';
+      const it = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === String(l.itemCode).trim().toUpperCase());
+      const v = String(it?.value ?? '').trim().toUpperCase();
+      return (v === 'CTA-AP' || v === 'CTA-C/V' || v === 'CTA-NN') ? v : ''; // MARKER_CTA_CV_INDEX_POPUP_V1 -- CTA-C/V ต้องเปิด Popup (Index -> GRT) เหมือน CTA-AP / CTA-NN
+    };
+    if (!ctaOverride) {
+      const ctaFound = lines.map(getCtaValue).find(Boolean);
+      if (ctaFound) { setCtaPopup({ ctaValue: ctaFound }); return; }
+    }
     // MARKER_GRT_MANUAL_CONFIRM_V1
     // ── Manual Mode + GRT/GRN ยังว่างอยู่ -- ถามก่อนว่าต้องการกำหนดเองมั้ย ──
     // ── ต้องการ = ไม่ Submit ให้กรอกก่อน / ไม่ต้องการ = Auto เฉพาะใบนี้ ──────
@@ -6356,7 +6674,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       const tc = String(l?.taxCode || '');
       return tc.includes('VAT7') && !tc.includes('SVAT7');
     });
-    if (!isAutoGrt && (!form?.grtNum?.trim() || (needsGrn && !form?.grn?.trim()))) {
+    // MARKER_CTA_INDEX_REPLACE_GRT_V1 -- มี Index จาก Popup CTA = ใช้ Index เป็น GRT เลย ไม่ต้องถามเรื่อง GRT (GRN ยังเช็คเหมือนเดิม)
+    const ctaIndexAsGrt = String(ctaOverride?.indexText || '').trim();
+    if (!isAutoGrt && ((!ctaIndexAsGrt && !form?.grtNum?.trim()) || (needsGrn && !form?.grn?.trim()))) {
       const wantManual = await confirmDialog.confirm(
         'ยังไม่ได้กำหนด GRT/GRN สำหรับ Invoice นี้ ต้องการกำหนดเองหรือไม่?',
         { variant: 'warning', confirmText: 'ต้องการกำหนดเอง', cancelText: 'ไม่ต้องการ (ใช้ Auto)' }
@@ -6368,7 +6688,26 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     setIsSubmitting(true);
     try {
       // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- ส่งเวลาที่เริ่มกรอกไปให้ handleSubmitInvoice แนบเข้า bucket_list
-      const ok = await onSubmitInvoice(lines, forceAutoGrtForThisInvoice, fillStartedAtRef.current);
+      // MARKER_CTA_DUEDATE_POPUP_V1 -- ต่อ "วันที่ตัดชำระ : ..." ท้าย Description ของบรรทัด CTA (และบรรทัด VAT คู่ของ CTA-AP)
+      let submitLines = lines;
+      // MARKER_CTA_AP_VAT_SAME_ACCOUNT_V1 -- ก่อนส่ง: บรรทัด VAT ของ CTA-AP ใช้ Account เดียวกับบรรทัดบนเสมอ
+      submitLines = submitLines.map((l, i) => (
+        (l._isAutoVatLine && l._ctaApSync && i > 0 && lines[i - 1]?.account) ? { ...l, account: lines[i - 1].account } : l
+      ));
+      if (ctaOverride?.descSuffix || ctaOverride?.indexText) {
+        submitLines = submitLines.map((l, i) => {
+          const isCtaLine = !!getCtaValue(l);
+          const isCtaVat = !!l._isAutoVatLine && i > 0 && !!getCtaValue(lines[i - 1]);
+          if (!isCtaLine && !isCtaVat) return l;
+          const base = String(l.desc || '').trim();
+          // MARKER_CTA_INDEX_FIELD_V1 -- รูปแบบ: [Index] [Description เดิม] [วันที่ตัดชำระ : ...]
+          return { ...l, desc: [ctaOverride.indexText, base, ctaOverride.descSuffix].filter(Boolean).join(' ') };
+        });
+      }
+      const ctaSubmitPatch = ctaOverride
+        ? { formPatch: { dueDate: ctaOverride.dueDate, ctaMode: ctaOverride.mode, ...(ctaOverride.paygroup ? { paygroup: ctaOverride.paygroup } : {}) } }
+        : null;
+      const ok = await onSubmitInvoice(submitLines, forceAutoGrtForThisInvoice, fillStartedAtRef.current, ctaSubmitPatch);
       if (ok) {
         // MARKER_FLOW_INCREMENT_USAGE_ON_SUBMIT_V1
         // ── Submit สำเร็จ + มี Flow Active อยู่ -> +1 use_count ที่ Backend ──────
@@ -6442,6 +6781,9 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
       if (!l.itemCode?.trim()) return false;
       const item = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === String(l.itemCode ?? '').trim().toUpperCase());
       const spi1 = String(item?.spi1 ?? '').toUpperCase();
+      // MARKER_CTA_SKIP_PERIOD_WARN_V1 -- Item VALUE = CTA-AP / CTA-C/V / CTA-NN ไม่ต้องเตือน Period
+      const valCta = String(item?.value ?? '').trim().toUpperCase();
+      if (valCta === 'CTA-AP' || valCta === 'CTA-C/V' || valCta === 'CTA-NN') return false;
       return spi1.includes('PRD') || spi1.includes('CT');
     });
     if (needsPeriod && !form?.period?.trim()) {
@@ -6564,6 +6906,29 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, backdropFilter: 'blur(2px)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: 'white', ...popupStyle, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
+
+        {/* MARKER_INVOICEDETAIL_LINE_IB_CTXMENU_V1 -- เมนูคลิกขวา + Popup เลือก Branch */}
+        {lineIbMenu.show && (
+          <div ref={lineIbMenuRef} onContextMenu={e => e.preventDefault()}
+            style={{ position: 'fixed', left: Math.max(4, Math.min(lineIbMenu.x, window.innerWidth - 230)), top: Math.max(4, Math.min(lineIbMenu.y, window.innerHeight - 90)), zIndex: 99999, background: 'white', border: '0.5px solid #e8eaf0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', padding: '4px 0', minWidth: '200px', fontSize: '12px', color: '#1a3a5c' }}>
+            <div onClick={() => { setLineIbPickIdx(lineIbMenu.idx); setLineIbMenu(m => ({ ...m, show: false })); }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#eef4fb'; }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+              style={{ padding: '7px 14px', cursor: 'pointer' }}>🔀 Interbranch</div>
+            {lines[lineIbMenu.idx] && lines[lineIbMenu.idx]._ibLineForm && (
+              <div onClick={() => { applyLineIb(lineIbMenu.idx, null); setLineIbMenu(m => ({ ...m, show: false })); }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#fdf0f0'; }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                style={{ padding: '7px 14px', cursor: 'pointer', color: '#a32d2d' }}>✕ ยกเลิก Interbranch ({lines[lineIbMenu.idx]._ibLineForm.branchNo}-IB)</div>
+            )}
+          </div>
+        )}
+        <BranchSearchPopup
+          show={lineIbPickIdx >= 0}
+          onClose={() => setLineIbPickIdx(-1)}
+          onSelect={(item) => { applyLineIb(lineIbPickIdx, item); setLineIbPickIdx(-1); }}
+          branchItems={branchItems}
+          bu={bu}
+          onSaveBranch={async () => { confirmDialog.alert('กรุณาสร้าง Branch ใหม่จากหน้า Invoice Entry (Step 2) แทน', { variant: 'danger' }); return false; }}
+        />
 
         {/* ── Header ── */}
         <div style={{ padding: isMobile ? '12px 14px' : '14px 22px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5', flexWrap: 'wrap' }}>
@@ -7015,7 +7380,7 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                 <tbody>
                   {lines.map((line, idx) => (
                     <React.Fragment key={idx}>
-                    <tr>
+                    <tr onContextMenu={(e) => { if (!String(line.itemCode ?? '').trim()) return; e.preventDefault(); setLineIbMenu({ show: true, x: e.clientX, y: e.clientY, idx }); }}>{/* MARKER_INVOICEDETAIL_LINE_IB_CTXMENU_V3 -- คลิกขวา = ขึ้นเมนู Interbranch ก่อนเสมอ แล้วกดเมนูถึงเปิด Search */}
                       {/* MARKER_WHT_QUICKCALC_ROW_CHECKBOX_V1 */}
                       <td style={{ padding: '4px 6px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center' }}>
                         <input type="checkbox" checked={selectedLineIdx.has(idx)}
@@ -7319,7 +7684,17 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
                               type="text" inputMode={MONEY_FIELDS.includes(key) ? 'decimal' : 'text'} value={line[key]}
                               title={key === 'desc' ? (line[key] ? line[key] + ' (Double-click เพื่อแก้ไขแบบเต็ม)' : '' ) : line[key]}
                               ref={key === 'amount' ? (el => { lineAmountRefs.current[idx] = el; if (idx === 0) amountRef.current = el; }) : undefined}
-                              onChange={e => { const v = e.target.value; MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v)); }}
+                              onChange={e => {
+                                const v = e.target.value;
+                                MONEY_FIELDS.includes(key) ? handleMoneyChange(idx, key, v) : (idx === 0 ? setLine1Field(key, v) : setLineField(idx, key, v));
+                                // MARKER_INVOICEDETAIL_DESC_TYPED_LOCK_V1 -- จำข้อความที่พิมพ์เองไว้ กัน Recalc ทับ (ลบจนว่าง = กลับเป็น Auto)
+                                if (key === 'desc' && !lines[idx]?._isAutoVatLine) {
+                                  const lockFor = v.trim() ? String(lines[idx]?.itemCode ?? '').trim().toUpperCase() : '';
+                                  const setF = idx === 0 ? setLine1Field : (k, val) => setLineField(idx, k, val);
+                                  setF('_descTyped', v);
+                                  setF('_descTypedFor', lockFor);
+                                }
+                              }}
                               onFocus={MONEY_FIELDS.includes(key) ? () => handleMoneyFocus(idx, key, line[key]) : undefined}
                               onBlur={MONEY_FIELDS.includes(key) ? () => handleMoneyBlur(idx, key, line[key]) : undefined}
                               onDoubleClick={key === 'desc' ? () => {
@@ -8019,6 +8394,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
         })()}
       </div>
     </div>
+    {/* MARKER_CTA_DUEDATE_POPUP_V1 */}
+    <CtaDueDatePopup show={!!ctaPopup} ctaValue={ctaPopup?.ctaValue || ''} batchDueDate={batchDueDate}
+      onCancel={() => setCtaPopup(null)}
+      onConfirm={async (res) => { setCtaPopup(null); await doActualSubmit(res); }} />
     {showPeriodConfirm && (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10005, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         onMouseDown={(e) => { if (e.target === e.currentTarget) setShowPeriodConfirm(false); }}>
@@ -8046,9 +8425,10 @@ function InvoiceDetailPopup({ show, onClose, form, setField, vendorInfo, itemcod
 // ─────────────────────────────────────────────────────────────────────────────
 // BucketItemPopup — View / Edit ของรายการใน Batch Bucket
 // ─────────────────────────────────────────────────────────────────────────────
-function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave, branchItems = [], smCodeItems = [], categoryItems = [], grtPrefix = '', grnPrefix = '', isAutoGrt = false }) { // MARKER_BUCKETITEMPOPUP_GRT_GRN_PROPS_FIX_V1
+function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view', itemcodeItems = [], supplierItems = [], vendorRuleItems = [], bu = '', fetchCollection, userName = '', currentUser, onSave, branchItems = [], smCodeItems = [], categoryItems = [], grtPrefix = '', grnPrefix = '', isAutoGrt = false, batchDueDate = '' }) { // MARKER_BUCKETITEMPOPUP_GRT_GRN_PROPS_FIX_V1 // MARKER_CTA_EDIT_INVOICE_POPUP_V1
   // MARKER_BUCKETITEM_BRANCH_DOUBLECLICK_POPUP_V1
   const [showBranchPopupInBucket, setShowBranchPopupInBucket] = useState(false);
+  const [ctaPopup, setCtaPopup] = useState(null); // MARKER_CTA_EDIT_INVOICE_POPUP_V1 -- Edit Invoice: Item VALUE = CTA-AP / CTA-C/V / CTA-NN -> Popup Due Date / Paid / Index เหมือนตอน Submit
   // MARKER_BUCKETITEM_CONTRACT_POPUP_V1 -- Port จาก InvoiceDetailPopup มาใช้ (เดิมปุ่มไม่มี onClick เลย)
   const [showContractPopup, setShowContractPopup] = useState(false);
   // MARKER_BUCKETITEM_REALVENDOR_V1 -- เปิด/ปิด Popup ค้นหา Real Vendor
@@ -8140,6 +8520,8 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
   const [expandEditIdx, setExpandEditIdx] = useState(null);
   const [expandEditVal, setExpandEditVal] = useState('');
   const expandEditCancelRef = useRef(false);
+  // MARKER_BUCKETITEM_NV7_PORT_V1 -- เก็บ Item Code ตอน Focus ไว้เทียบตอน Blur (ล้างบรรทัด VAT คู่เฉพาะตอนเปลี่ยนจริง)
+  const itemCodeFocusValRef = useRef('');
   // MARKER_BUCKETITEM_DESC_PARTIAL_LOCK_V1 -- Lock แค่ข้อ 4 + คำนวณ Description เต็มใหม่ทันที (ไม่รอ Effect)
   const commitDescPartial = (idx, manualPart4) => {
     setLines(prev => {
@@ -8170,10 +8552,42 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
         const lineWithGrn = ls.find(l => String(l.realGrn || '').trim() !== '');
         if (lineWithGrn) fd.grn = lineWithGrn.realGrn;
       }
+      // MARKER_CTA_INDEX_DISPLAY_GRT_V1 -- ใบที่มีรายการ Item VALUE = CTA-AP/CTA-C/V/CTA-NN และ Description ขึ้นต้นด้วย Index -> แสดง Index เป็น GRT แทนเลข Auto (รวมใบเก่าที่ Submit ก่อนหน้า)
+      try {
+        const ctaLineI = ls.find(l => {
+          if (!l?.itemCode || l._isAutoVatLine) return false;
+          const it = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === String(l.itemCode).trim().toUpperCase());
+          const v = String(it?.value ?? '').trim().toUpperCase();
+          return v === 'CTA-AP' || v === 'CTA-C/V' || v === 'CTA-NN';
+        });
+        if (ctaLineI) {
+          const tok = String(ctaLineI.desc || '').trim().split(/\s+/)[0] || '';
+          if (/^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9][A-Za-z0-9\-_\/.]{5,}$/.test(tok)) fd.grtNum = tok;
+        }
+      } catch (e) { /* ignore */ }
       setForm(fd);
       setLines(ls);
     }
   }, [show, invoiceIdentityKey]);
+
+  // MARKER_BUCKETITEM_AUTOVAT_DESC_SYNC_V1
+  // Sync Description: Auto VAT7%- line always mirrors the previous line description
+  const autoVatDescSyncKey = lines.map(l => `${l._isAutoVatLine ? 1 : 0}\u0001${l.desc ?? ''}`).join('\u0002');
+  useEffect(() => {
+    setLines(prev => {
+      let changed = false;
+      const next = prev.map((l, i) => {
+        if (!l._isAutoVatLine || i === 0) return l;
+        const src = prev[i - 1];
+        if (!src || src._isAutoVatLine) return l;
+        const want = `VAT7%-${src.desc || ''}`;
+        if (l.desc === want) return l;
+        changed = true;
+        return { ...l, desc: want };
+      });
+      return changed ? next : prev;
+    });
+  }, [autoVatDescSyncKey]);
 
   const vendorInfo = supplierItems.find(s => {
     const code = String(s['Code'] ?? '').trim().toLowerCase();
@@ -8685,6 +9099,54 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
       const itemCode = lines[idx]?.itemCode?.trim();
       const itemData = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === itemCode?.toUpperCase());
       const isVRV = String(itemData?.value ?? '').trim().toUpperCase() === 'V-RV';
+      // MARKER_BUCKETITEM_NV7_PORT_V1 -- Port จาก handleMoneyBlur ของ InvoiceDetailPopup (BU ไม่จด VAT + SPEC-TX = NV7)
+      // ── 1) BU ไม่จด VAT (VAT % = 0): ถ้า Tax ที่ได้เป็น V/S+เลข -> แตกบรรทัด VAT7% แล้วบรรทัดหลักเป็น N+เลข ──
+      const buVatPercentRawE = String(buInfo?.['VAT %'] ?? '').trim();
+      if (buVatPercentRawE === '0' && !lines[idx]?._isAutoVatLine) {
+        const noticesE = String(vendorInfo?.['Notice'] ?? '').split('|').map(n => n.trim().toUpperCase());
+        const hasITCE = noticesE.includes('ITC');
+        const hasVITEME = noticesE.some(n => n === 'V-ITEM' || n === 'TC V-ITEM');
+        const hasTCE = noticesE.some(n => n === 'TC' || n === 'TC V-ITEM');
+        let sourceStrE = String(vendorInfo?.['Tax-Type'] ?? '').trim().toUpperCase();
+        if (hasTCE || hasVITEME || hasITCE) sourceStrE = String(itemData?.spec_tx ?? '').trim().toUpperCase();
+        if (form?.invTax?.trim()) sourceStrE = String(form.invTax).trim().toUpperCase();
+        if (lines[idx]?.tax?.trim()) sourceStrE = String(lines[idx].tax).trim().toUpperCase();
+        if (/^[VS][0-9]/.test(sourceStrE)) {
+          const digitE = sourceStrE.slice(1);
+          const roundedAmountE = Math.round((parseFloat(val) || 0) * 100) / 100;
+          const vatNumE = Math.round(roundedAmountE * 0.07 * 100) / 100;
+          const formattedAmountE = roundedAmountE.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const baseVatLineE = { hl: 'L', itemCode, amount: vatNumE.toFixed(2), tax: 'NN', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' };
+          const calcVatLineE = calcInvoiceLine(baseVatLineE, itemcodeItems, vendorInfo, form);
+          const vatLineE = { ...calcVatLineE, tax: 'NN', desc: `VAT7%-${calcVatLineE.desc || ''}`, _isAutoVatLine: true };
+          setLines(prev => {
+            const next = [...prev];
+            next[idx] = { ...next[idx], amount: formattedAmountE, tax: 'N' + digitE };
+            if (next[idx + 1]?._isAutoVatLine) next[idx + 1] = vatLineE; else next.splice(idx + 1, 0, vatLineE);
+            return next;
+          });
+          return;
+        }
+      }
+      // ── 2) Item ที่ SPEC-TX = NV7: สร้าง/อัปเดตบรรทัดคู่ (VAT7%-) ต่อท้าย + บังคับทั้ง 2 บรรทัด Tax=NN ──
+      // MARKER_CTA_AP_AUTOVAT_V1 -- Item VALUE = CTA-AP ใช้กลไกเดียวกับ NV7 (Port จาก InvoiceDetailPopup)
+      const isCtaApE = String(itemData?.value ?? '').trim().toUpperCase() === 'CTA-AP';
+      if (!lines[idx]?._isAutoVatLine && (String(itemData?.spec_tx ?? '').trim().toUpperCase() === 'NV7' || isCtaApE)) {
+        const roundedAmountN = Math.round((parseFloat(val) || 0) * 100) / 100;
+        const vatNumN = Math.round(roundedAmountN * 0.07 * 100) / 100;
+        const formattedAmountN = roundedAmountN.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const baseVatLineN = { hl: 'L', itemCode: isCtaApE ? findCtaVatItemCode(itemcodeItems, itemCode) : itemCode, amount: vatNumN.toFixed(2), tax: 'NN', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' };
+        const calcVatLineN = calcInvoiceLine(baseVatLineN, itemcodeItems, vendorInfo, form);
+        const vatLineN = { ...calcVatLineN, tax: 'NN', desc: (isCtaApE && /^VAT7%-/i.test(String(calcVatLineN.desc || ''))) ? calcVatLineN.desc : `VAT7%-${calcVatLineN.desc || ''}`, _isAutoVatLine: true };
+        setLines(prev => {
+          const next = [...prev];
+          next[idx] = { ...next[idx], amount: formattedAmountN, tax: 'NN' };
+          const vatLineNFinal = (isCtaApE && next[idx].account) ? { ...vatLineN, account: next[idx].account, _ctaApSync: true } : vatLineN;
+          if (next[idx + 1]?._isAutoVatLine) next[idx + 1] = vatLineNFinal; else next.splice(idx + 1, 0, vatLineNFinal);
+          return next;
+        });
+        return;
+      }
       if (isVRV) {
         const vatAmount = parseFloat(val) || 0;
         const amountExVat = Math.round(vatAmount * 100 / 7 * 100) / 100;
@@ -8739,7 +9201,7 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
 
   const inputStyle = (w, disabled) => ({ height: '28px', padding: '0 8px', fontSize: '11px', borderRadius: '6px', outline: 'none', border: '0.5px solid #ddd', background: disabled ? '#f5f5f5' : 'white', color: disabled ? '#999' : '#1a3a5c', boxSizing: 'border-box', width: w || '100%' });
 
-  const handleSave = async () => {
+  const handleSaveCore = async (ctaOverride = null) => { // MARKER_CTA_EDIT_INVOICE_POPUP_V1
     // ── ตัดแถวว่างท้ายตารางออกก่อน Submit (Item Code + Amount ว่างทั้งคู่) ──
     let cleanedLines = [...lines];
     while (cleanedLines.length > 1) {
@@ -8757,12 +9219,45 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
     }
 
     if (!cleanedLines[0]?.itemCode?.trim() || !cleanedLines[0]?.amount?.trim()) { confirmDialog.alert('กรุณากรอก Item Code และ Amount อย่างน้อย 1 บรรทัด'); return; }
+    // MARKER_CTA_EDIT_INVOICE_POPUP_V1 -- ด่าน CTA ตอน Save Edit: Item VALUE = CTA-AP / CTA-C/V / CTA-NN -> เปิด Popup (Due Date / Paid / Index) ก่อน เหมือนตอน Submit
+    const getCtaValueB = (l) => {
+      if (!l?.itemCode?.trim() || l._isAutoVatLine) return '';
+      const it = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === String(l.itemCode).trim().toUpperCase());
+      const v = String(it?.value ?? '').trim().toUpperCase();
+      return (v === 'CTA-AP' || v === 'CTA-C/V' || v === 'CTA-NN') ? v : '';
+    };
+    if (!ctaOverride) {
+      const ctaFoundB = cleanedLines.map(getCtaValueB).find(Boolean);
+      if (ctaFoundB) { setCtaPopup({ ctaValue: ctaFoundB }); return; }
+    }
+    let saveLines = cleanedLines;
+    let saveForm = form;
+    if (ctaOverride) {
+      // รูปแบบ: [Index] [Description เดิม] [วันที่ตัดชำระ : ...] -- กันซ้ำถ้า Save ซ้ำ (มี Index/ข้อความนี้อยู่แล้วไม่ต่อซ้ำ)
+      const idxTxt = String(ctaOverride.indexText || '').trim();
+      const sufTxt = String(ctaOverride.descSuffix || '').trim();
+      if (idxTxt || sufTxt) {
+        saveLines = cleanedLines.map((l, i) => {
+          const isCtaLine = !!getCtaValueB(l);
+          const isCtaVat = !!l._isAutoVatLine && i > 0 && !!getCtaValueB(cleanedLines[i - 1]);
+          if (!isCtaLine && !isCtaVat) return l;
+          const base = String(l.desc || '').trim();
+          const parts = [];
+          if (idxTxt && !base.startsWith(idxTxt) && !base.startsWith('VAT7%-' + idxTxt)) parts.push(idxTxt);
+          parts.push(base);
+          if (sufTxt && !base.includes(sufTxt)) parts.push(sufTxt);
+          return { ...l, desc: parts.filter(Boolean).join(' ') };
+        });
+      }
+      saveForm = { ...form, dueDate: ctaOverride.dueDate, ctaMode: ctaOverride.mode, ...(ctaOverride.paygroup ? { paygroup: ctaOverride.paygroup } : {}), ...(idxTxt ? { grtNum: idxTxt } : {}) }; // Index = GRT แทน GRT Auto
+    }
     setSaving(true);
-    const invoiceNo = buildInvoiceNumber(form.invoiceNum, form.invDate, vendorInfo) + (form.invoiceSuffix || '');
-    const ok = await onSave({ form_data: form, lines: cleanedLines, invoiceNo });
+    const invoiceNo = buildInvoiceNumber(saveForm.invoiceNum, saveForm.invDate, vendorInfo) + (saveForm.invoiceSuffix || '');
+    const ok = await onSave({ form_data: saveForm, lines: saveLines, invoiceNo });
     setSaving(false);
     if (ok) onClose();
   };
+  const handleSave = () => handleSaveCore(null); // MARKER_CTA_EDIT_INVOICE_POPUP_V1
 
   const totalVat = lines.reduce((s, l) => s + (parseFloat(String(l.vat).replace(/,/g, '')) || 0), 0);
   const totalWht = lines.reduce((s, l) => s + (parseFloat(String(l.wht).replace(/,/g, '')) || 0), 0);
@@ -8772,6 +9267,10 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500, backdropFilter: 'blur(2px)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      {/* MARKER_CTA_EDIT_INVOICE_POPUP_V1 */}
+      <CtaDueDatePopup show={!!ctaPopup} ctaValue={ctaPopup?.ctaValue || ''} batchDueDate={batchDueDate}
+        onCancel={() => setCtaPopup(null)}
+        onConfirm={async (res) => { setCtaPopup(null); await handleSaveCore(res); }} />
       <div style={{ background: 'white', width: '98vw', maxWidth: '1400px', height: '92vh', borderRadius: '14px', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(26,58,92,0.22)' }}>
 
         <div style={{ padding: '14px 22px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, borderBottom: '1px solid #f0f2f5' }}>
@@ -8808,7 +9307,11 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
                     onDoubleClick={(label === 'Branch Direct' && !isView) ? () => setShowBranchPopupInBucket(true) : undefined}
                     title={(label === 'Branch Direct' && !isView) ? 'ดับเบิลคลิกเพื่อเลือก Branch' : undefined}
                     style={{ display: 'flex', gap: '6px', cursor: (label === 'Branch Direct' && !isView) ? 'pointer' : 'default' }}>
-                    <span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span><span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || '—'}</span>
+                    <span style={{ fontSize: '11px', color: '#999', width: '88px', flexShrink: 0 }}>{label}</span>{/* MARKER_BUCKETITEM_GRT_EDITABLE_V1 -- Edit Mode: แก้ GRT ได้ (เช่น ใส่ Index) / View Mode ยังอ่านอย่างเดียว */}
+                    {(label === 'GRT' && !isView)
+                      ? <input type="text" value={form.grtNum || ''} onChange={(e) => setField('grtNum', e.target.value)} placeholder="—"
+                          style={{ flex: 1, minWidth: 0, height: '24px', border: '1px solid #cfd8e3', borderRadius: '5px', padding: '0 6px', fontSize: '12px', color: '#1a3a5c', fontFamily: 'monospace', boxSizing: 'border-box' }} />
+                      : <span style={{ fontSize: '12px', color: val ? '#1a3a5c' : '#ccc', fontFamily: 'monospace' }}>{val || '—'}</span>}
                   </div>
                 ))}
               </div>
@@ -9036,7 +9539,20 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
                                   else if (e.key === 'Enter' && favList[favActiveIdx]) { e.preventDefault(); selectFavoriteItem(favList[favActiveIdx], idx, key); }
                                   else if (e.key === 'Escape') { setFavDropdownIdx(null); }
                                 }}
-                                onBlur={() => setTimeout(() => setFavDropdownIdx(null), 150)}
+                                onFocus={() => { itemCodeFocusValRef.current = String(line[key] ?? '').trim().toUpperCase(); }}
+                                onBlur={() => {
+                                  setTimeout(() => setFavDropdownIdx(null), 150);
+                                  // MARKER_BUCKETITEM_NV7_PORT_V1 -- เปลี่ยน Item Code จริงเท่านั้น -> ลบบรรทัด VAT7%- คู่เดิม + ล้าง Tax "NN" (Tab ผ่านเฉยๆ ไม่ลบ)
+                                  if (isView) return;
+                                  const nowCodeE = String(lines[idx]?.itemCode ?? '').trim().toUpperCase();
+                                  if (nowCodeE === itemCodeFocusValRef.current) return;
+                                  setLines(prev => {
+                                    let next = [...prev];
+                                    if (next[idx + 1]?._isAutoVatLine) next = next.filter((_, i) => i !== idx + 1);
+                                    if (String(next[idx]?.tax ?? '').trim().toUpperCase() === 'NN') next[idx] = { ...next[idx], tax: '' };
+                                    return next;
+                                  });
+                                }}
                                 style={{ ...inputStyle('100%', isView), paddingRight: isView ? '8px' : '24px' }} />
                               {!isView && (
                                 <button type="button" onClick={() => { setActiveLineIdx(idx); setShowItemCodePopup(true); }}
@@ -9076,7 +9592,27 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
                               <input type="text" value={line[key]} disabled={isView}
                                 onChange={e => setLineField(idx, 'tax', e.target.value.toUpperCase())}
                                 onClick={() => { if (!isView) { setTaxDropdownIdx(idx); setTaxLineActiveIdx(TAX_TYPE_OPTS.indexOf(line[key])); } }}
-                                onBlur={() => setTimeout(() => setTaxDropdownIdx(null), 120)}
+                                onBlur={() => {
+                                  setTimeout(() => setTaxDropdownIdx(null), 120);
+                                  // MARKER_BUCKETITEM_NV7_PORT_V1 -- พิมพ์ "NV7" ตรงในช่อง Tax -> Logic เดียวกับ SPEC-TX = NV7 (Port จาก InvoiceDetailPopup)
+                                  if (isView) return;
+                                  const taxValNowE = lines[idx]?.tax?.trim().toUpperCase();
+                                  if (taxValNowE === 'NV7' && !lines[idx]?._isAutoVatLine) {
+                                    const itemCodeNowE = lines[idx]?.itemCode?.trim();
+                                    const roundedAmountTE = Math.round((parseFloat(String(lines[idx]?.amount).replace(/,/g, '')) || 0) * 100) / 100;
+                                    const vatNumTE = Math.round(roundedAmountTE * 0.07 * 100) / 100;
+                                    const formattedAmountTE = roundedAmountTE.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    const baseVatLineTE = { hl: 'L', itemCode: itemCodeNowE, amount: vatNumTE.toFixed(2), tax: 'NN', taxCode: '', whtCode: '', account: '', desc: '', vat: '', wht: '', total: '' };
+                                    const calcVatLineTE = calcInvoiceLine(baseVatLineTE, itemcodeItems, vendorInfo, form);
+                                    const vatLineTE = { ...calcVatLineTE, tax: 'NN', desc: `VAT7%-${calcVatLineTE.desc || ''}`, _isAutoVatLine: true };
+                                    setLines(prev => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], amount: formattedAmountTE, tax: 'NN' };
+                                      if (next[idx + 1]?._isAutoVatLine) next[idx + 1] = vatLineTE; else next.splice(idx + 1, 0, vatLineTE);
+                                      return next;
+                                    });
+                                  }
+                                }}
                                 onKeyDown={(e) => {
                                   if (isView) return;
                                   // MARKER_APCONTROLLER_TAX_DROPDOWN_ARROW_NAV_V1
@@ -9322,6 +9858,13 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
             onSelect={(item) => {
               setLineField(activeLineIdx, 'itemCode', item.code || '');
               setShowItemCodePopup(false);
+              // MARKER_BUCKETITEM_NV7_PORT_V1 -- เปลี่ยน Item Code ผ่าน Popup ค้นหา -> ลบบรรทัด VAT7%- คู่เดิม + ล้าง Tax "NN"
+              setLines(prev => {
+                let next = [...prev];
+                if (next[activeLineIdx + 1]?._isAutoVatLine) next = next.filter((_, i) => i !== activeLineIdx + 1);
+                if (String(next[activeLineIdx]?.tax ?? '').trim().toUpperCase() === 'NN') next[activeLineIdx] = { ...next[activeLineIdx], tax: '' };
+                return next;
+              });
               // MARKER_BUCKETITEM_AMOUNT_AUTOFOCUS_V1
               setTimeout(() => lineAmountRefs.current[activeLineIdx]?.focus(), 50);
             }}
@@ -9410,24 +9953,31 @@ const btnOutline = { padding: '5px 12px', background: 'white', color: '#555', bo
 const bdgGreen   = { fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: '#EAF3DE', color: '#27500A' };
 
 // ── StepBar ───────────────────────────────────────────────────────────────────
-function StepBar({ step, onGo }) {
+// MARKER_APCONTROLLER_HEADER_V1 -- แถบขั้นตอนแบบป้ายทรงมน (สไตล์เดียวกับ Document Center) + ช่อง right ชิดขวาแถวเดียวกัน (ใส่ปุ่ม Prefix / Account-CPC Rules / Recycle Bin)
+function StepBar({ step, onGo, right }) {
   const steps = [{ n: 1, label: 'Batch setup' }, { n: 2, label: 'Invoice entry' }, { n: 3, label: 'Batch Preview' }];
   return (
-    <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '0 18px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-      {steps.map((s, i) => {
-        const isDone = s.n < step, isActive = s.n === step;
-        return (
-          <React.Fragment key={s.n}>
-            {i > 0 && <span style={{ color: '#ccc', margin: '0 12px', fontSize: '14px', userSelect: 'none' }}>›</span>}
-            <div onClick={() => s.n < step && onGo(s.n)} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 0', cursor: s.n < step ? 'pointer' : 'default' }}>
-              <div style={{ width: '21px', height: '21px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '500', flexShrink: 0, background: isDone ? '#EAF3DE' : isActive ? '#1a3a5c' : 'transparent', border: isDone ? '1.5px solid #97C459' : isActive ? '1.5px solid #1a3a5c' : '1.5px solid #ddd', color: isDone ? '#27500A' : isActive ? 'white' : '#888' }}>
-                {isDone ? '✓' : s.n}
+    <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '6px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        {steps.map((s, i) => {
+          const isDone = s.n < step, isActive = s.n === step;
+          return (
+            <React.Fragment key={s.n}>
+              {i > 0 && <span style={{ color: '#b3bccb', fontSize: '14px', userSelect: 'none' }}>›</span>}
+              <div onClick={() => s.n < step && onGo(s.n)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '4px 14px 4px 5px', borderRadius: '99px', cursor: s.n < step ? 'pointer' : 'default',
+                  background: isActive ? '#14284b' : '#fff', border: isActive ? '1px solid #14284b' : isDone ? '1px solid #97C459' : '1px solid #d6dde8' }}>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 600, flexShrink: 0,
+                  background: isActive ? '#2fb58a' : isDone ? '#EAF3DE' : '#eef1f5', color: isActive ? '#fff' : isDone ? '#27500A' : '#6b778c' }}>
+                  {isDone ? '✓' : s.n}
+                </span>
+                <span style={{ fontSize: '13px', fontWeight: isActive ? 600 : 500, color: isActive ? '#fff' : isDone ? '#27500A' : '#6b778c' }}>{s.label}</span>
               </div>
-              <span style={{ fontSize: '12px', fontWeight: isActive ? '500' : '400', color: isActive ? '#1a3a5c' : '#888' }}>{s.label}</span>
-            </div>
-          </React.Fragment>
-        );
-      })}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {right && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>{right}</div>}
     </div>
   );
 }
@@ -10793,6 +11343,27 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
     const c1 = Math.min(pvSel.c1, pvSel.c2), c2 = Math.max(pvSel.c1, pvSel.c2);
     return r >= r1 && r <= r2 && c >= c1 && c <= c2;
   };
+  // MARKER_PV_TAB_NAV_V1 -- Tab / Shift+Tab เลื่อน Cell ถัดไป/ก่อนหน้า (สุดแถวขึ้นแถวใหม่) + Auto-Scroll
+  const pvTabMove = (r, c, back) => {
+    const maxR = filePreview.rows.length + pvPadCount - 1, maxC = pvColCount - 1;
+    let nr = r, nc = c;
+    if (back) { if (nc > 0) nc -= 1; else if (nr > 0) { nr -= 1; nc = maxC; } }
+    else { if (nc < maxC) nc += 1; else if (nr < maxR) { nr += 1; nc = 0; } }
+    setPvSel({ r1: nr, c1: nc, r2: nr, c2: nc });
+    setTimeout(() => {
+      if (!pvScrollRef.current) return;
+      const cont = pvScrollRef.current;
+      const activeCell = cont.querySelector('[data-pv-active="true"]');
+      if (!activeCell) return;
+      const cr = activeCell.getBoundingClientRect();
+      const pr = cont.getBoundingClientRect();
+      if (cr.right > pr.right - 10) cont.scrollLeft += cr.right - pr.right + 10;
+      else if (cr.left < pr.left + 46) cont.scrollLeft -= pr.left + 46 - cr.left;
+      if (cr.bottom > pr.bottom - 10) cont.scrollTop += cr.bottom - pr.bottom + 10;
+      else if (cr.top < pr.top + 10) cont.scrollTop -= pr.top + 10 - cr.top;
+    }, 0);
+  };
+
   const handlePvCopy = () => {
     if (pvSel.r1 < 0 || !filePreview) return;
     const r1 = Math.min(pvSel.r1, pvSel.r2), r2 = Math.max(pvSel.r1, pvSel.r2);
@@ -10818,6 +11389,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
     const onKey = (e) => {
       if (pvEditingCell) { if (e.key === 'Escape') setPvEditingCell(null); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { handlePvCopy(); return; }
+      if (e.key === 'Tab' && pvSel.r1 >= 0) { e.preventDefault(); pvTabMove(pvSel.r1, pvSel.c1, e.shiftKey); return; } // MARKER_PV_TAB_NAV_V1
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         e.preventDefault();
         setPvSel(s => {
@@ -12175,7 +12747,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
                                       }));
                                     }}
                                     onBlur={() => setPvEditingCell(null)}
-                                    onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Tab') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
+                                    onKeyDown={e => { if (e.key === 'Tab') { e.preventDefault(); e.currentTarget.blur(); pvTabMove(ri, ci, e.shiftKey); } else if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
                                     style={{ width: '100%', height: '100%', display: 'block', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', padding: '0 5px', margin: 0, fontSize: '11px', lineHeight: '21px', fontFamily: 'monospace', color: 'inherit' }} />
                                 ) : (
                                   <div style={{ padding: '0 5px', height: '100%', lineHeight: '21px', boxSizing: 'border-box', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px', fontFamily: 'monospace' }}>
@@ -12219,7 +12791,7 @@ function BatchSetup({ onStart, infoItems = [], initialHistoryTab, initialViewBat
                                     });
                                   }}
                                   onBlur={() => setPvEditingCell(null)}
-                                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Tab') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
+                                  onKeyDown={e => { if (e.key === 'Tab') { e.preventDefault(); e.currentTarget.blur(); pvTabMove(rIdx, ci, e.shiftKey); } else if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setPvEditingCell(null); }}
                                   style={{ width: '100%', height: '100%', display: 'block', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', padding: '0 5px', margin: 0, fontSize: '11px', lineHeight: '21px', fontFamily: 'monospace', color: 'inherit' }} />
                               ) : null}
                             </td>
@@ -13341,6 +13913,10 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   const [flowMemory, setFlowMemory] = useState({});
   const [form, setFormState] = useState({ supplierCode: '', invDate: '', invoiceNum: '', branchNo: '', branchDirectLabel: '', branchIBLabel: '', grt: batchConfig?.buInfo?.['AP GRT Control'] || '', dueDate: batchConfig?.dueDate || '', period: '', invTax: '', grtNum: '', grn: '', backDesc1: '', backDesc2: '', backDesc3: '', customizePeriod: '', customizePercent: '' });
 
+  // MARKER_INVOICEENTRY_GRT_STATUS_LIVE_V1 -- sync ช่อง GRT Status ตาม Info (AP GRT Control) เมื่อค่าเปลี่ยน/โหลดทีหลัง
+  const liveGrtControl = batchConfig?.buInfo?.['AP GRT Control'] || '';
+  useEffect(() => { setFormState(f => (f.grt === liveGrtControl ? f : { ...f, grt: liveGrtControl })); }, [liveGrtControl]);
+
   // ── GRT/GRN running number — gen อัตโนมัติเมื่อ GRT Status = Auto ──────────
   // GRT: รันทุก invoice / GRN: รันเฉพาะ invoice ที่ Tax code เป็น VAT7 (ไม่ใช่ SVAT7)
   // MARKER_RESTORE_SEMIAUTO_AND_FIX_REALGRN_V1
@@ -13357,6 +13933,91 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3
   const [supplierViewCode, setSupplierViewCode] = useState('');
   const [bucketPopup, setBucketPopup] = useState({ show: false, mode: 'view', rowKey: null });
+  // MARKER_BUCKET_ROW_ARROW_NAV_V1 -- แถว Invoice ใน Bucket ที่ Highlight อยู่ (คลิก/ลูกศรขึ้นลง)
+  // MARKER_BUCKET_TOTAL_NET_DISPLAY_V1 -- Total ที่แสดงใน Bucket = Amount + Vat + Wht (Wht ติดลบ) | แสดงผลเท่านั้น ไม่แก้ inv.net
+  const bucketNetValue = (inv) => Math.round(((parseFloat(inv?.amount) || 0) + (parseFloat(inv?.vat) || 0) + (parseFloat(inv?.wht) || 0)) * 100) / 100;
+  const bucketNetPay = (inv) => (inv?.amount != null && inv.amount !== '') ? bucketNetValue(inv).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+  // MARKER_BUCKET_ROW_TOOLTIP_V2 -- Tooltip การ์ดของแถว Invoice ใน Bucket (ตำแหน่งปรับผ่าน ref ไม่ Re-render ตอนขยับเมาส์)
+  const [bucketTip, setBucketTip] = useState(null);
+  const bucketTipRef = useRef(null);
+  const bucketTipPos = useRef({ x: 0, y: 0 });
+  const bucketTipTimer = useRef(null);
+  const placeBucketTip = (e) => {
+    const w = 340, h = 200;
+    let x = e.clientX + 16, y = e.clientY + 16;
+    if (x + w > window.innerWidth) x = e.clientX - w - 12;
+    if (y + h > window.innerHeight) y = e.clientY - h - 12;
+    return { x: Math.max(4, x), y: Math.max(4, y) };
+  };
+  const showBucketTip = (e, inv) => {
+    bucketTipPos.current = placeBucketTip(e);
+    clearTimeout(bucketTipTimer.current);
+    bucketTipTimer.current = setTimeout(() => setBucketTip(inv), 250);
+  };
+  const moveBucketTip = (e) => {
+    bucketTipPos.current = placeBucketTip(e);
+    const el = bucketTipRef.current;
+    if (el) { el.style.left = bucketTipPos.current.x + 'px'; el.style.top = bucketTipPos.current.y + 'px'; }
+  };
+  const hideBucketTip = () => { clearTimeout(bucketTipTimer.current); setBucketTip(null); };
+  const renderBucketTip = (inv) => {
+    const fm = (v) => (v != null && v !== '' && !isNaN(parseFloat(v))) ? parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+    const fd = inv?.form_data || {};
+    const bNo = String(inv?.branch_label || fd.branchDirectLabel || '').split('-')[0].trim() || '-';
+    const ibRaw = String(fd.branchIBLabel || '').trim();
+    const bIB = (ibRaw && ibRaw !== '-') ? ibRaw.split('-')[0].trim() : '-';
+    const wht = parseFloat(inv?.wht) || 0;
+    const lbl = { color: '#8a94a6', fontSize: '11px' };
+    const chip = (t, hi) => (<span style={{ fontFamily: 'monospace', fontSize: '11px', fontWeight: 600, padding: '1px 8px', borderRadius: '10px', background: hi ? '#FFF3CD' : '#eef2f7', color: hi ? '#856404' : '#1a3a5c' }}>{t}</span>);
+    const row = (k, v) => (<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '3px 0' }}><span style={lbl}>{k}</span>{v}</div>);
+    return (
+      <div ref={bucketTipRef} style={{ position: 'fixed', left: bucketTipPos.current.x, top: bucketTipPos.current.y, zIndex: 99999, width: '340px', pointerEvents: 'none', background: '#fff', border: '1px solid #dfe5ee', borderRadius: '10px', boxShadow: '0 10px 28px rgba(26,58,92,0.22)', overflow: 'hidden', fontSize: '12px' }}>
+        <div style={{ background: '#1a3a5c', color: '#fff', padding: '9px 12px' }}>
+          <div style={{ fontSize: '9px', letterSpacing: '0.08em', opacity: 0.65 }}>SUPPLIER NAME</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px', lineHeight: 1.35 }}>{inv?.vendor_name || '-'}</div>
+        </div>
+        <div style={{ padding: '8px 12px 4px' }}>
+          {row('GRT No.', chip(fd.grtNum || '-'))}
+          {row('Branch No.', chip(bNo))}
+          {row('Branch IB.', chip(bIB, bIB !== '-'))}
+        </div>
+        <div style={{ margin: '4px 0 0', borderTop: '1px dashed #e3e8f0' }} />{/* MARKER_BUCKET_ROW_TOOLTIP_V3 */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 0.7fr 1fr 1.15fr' }}>
+          {[['AMOUNT', fm(inv?.amount), '#1a3a5c', 'transparent'], ['VAT', fm(inv?.vat), '#1a3a5c', 'transparent'], ['WHT', fm(inv?.wht), wht < 0 ? '#A32D2D' : '#1a3a5c', 'transparent'], ['TOTAL', bucketNetPay(inv), '#085041', '#E6F4EC']].map(([k, v, c, bg], idx) => (
+            <div key={k} style={{ padding: '8px 10px', background: bg, textAlign: 'right', borderLeft: idx === 0 ? 'none' : '1px solid #eef1f6' }}>
+              <div style={{ fontSize: '9px', letterSpacing: '0.06em', fontWeight: 600, color: k === 'TOTAL' ? '#0F6E56' : '#8a94a6' }}>{k}</div>
+              <div style={{ fontFamily: 'monospace', fontSize: k === 'TOTAL' ? '13px' : '12px', fontWeight: k === 'TOTAL' ? 700 : 600, color: c, marginTop: '3px', whiteSpace: 'nowrap' }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+  const [activeBucketRow, setActiveBucketRow] = useState(null);
+  const bucketScrollRef = useRef(null);
+  const handleBucketKeyDown = (e) => {
+    const tag = String(e.target?.tagName || '').toUpperCase();
+    if (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(tag)) return;
+    const box = bucketScrollRef.current; if (!box) return;
+    const rows = Array.from(box.querySelectorAll('tr[data-bkey]'));
+    if (!rows.length) return;
+    const idx = rows.findIndex(r => r.getAttribute('data-bkey') === activeBucketRow);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      hideBucketTip(); // MARKER_BUCKET_ROW_TOOLTIP_V2
+      const nextIdx = idx < 0 ? (e.key === 'ArrowDown' ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, idx + (e.key === 'ArrowDown' ? 1 : -1)));
+      const el = rows[nextIdx];
+      setActiveBucketRow(el.getAttribute('data-bkey'));
+      el.scrollIntoView({ block: 'nearest' });
+      const headH = (box.querySelector('thead')?.offsetHeight || 0) + 2;
+      if (el.offsetTop - box.scrollTop < headH) box.scrollTop = Math.max(0, el.offsetTop - headH);
+    } else if (e.key === ' ' && idx >= 0) {
+      e.preventDefault();
+      rows[idx].querySelector('input[type="checkbox"]')?.click();
+    } else if (e.key === 'Escape' && idx >= 0) {
+      setActiveBucketRow(null);
+    }
+  };
   const [selectedRows, setSelectedRows] = useState(new Set()); // ✅ Batch Bucket: เลือกแถวสำหรับ bulk delete
   // MARKER_DUPLICATE_NOTICE_TOGGLE_V1 -- Toast แจ้งเตือน Duplicate ที่ไม่ Block (ตอน Toggle Off)
   const [dupToastMsg, setDupToastMsg] = useState(null);
@@ -13589,8 +14250,23 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     return null;
   };
 
+  // MARKER_SUPPLIER_REF_REAL_VENDOR_V1 -- Supplier ที่มี 'Supplier Ref.' = ตัวแทน, ตัวจริงคือ Supplier ที่ Supplier Number = Ref.
+  // -> ดึง Vendor Name / Supplier No. / Tax ID / Branch No. / Address / Contact / Email จากตัวจริง (Code, Site, Tax-Type, Notice, Rule ยังเป็นของตัวที่เลือก)
+  const resolveSupplierRef = (found) => {
+    const ref = String(found?.['Supplier Ref.'] ?? '').trim().toLowerCase();
+    if (!ref) return found;
+    const cands = supplierItems.filter(s => s !== found && String(s['Supplier Number'] ?? '').trim().toLowerCase() === ref && String(s['Tax ID'] ?? '').trim());
+    if (!cands.length) return found;
+    const buCode = String(found['BU Code'] ?? '').trim().toLowerCase();
+    const real = cands.find(s => String(s['BU Code'] ?? '').trim().toLowerCase() === buCode) || cands[0];
+    const merged = { ...found, _realVendorCode: real['Code'] };
+    ['Supplier Name', 'Supplier Number', 'Tax ID', 'No.', 'Address', 'Contact', 'Email'].forEach(k => { if (String(real[k] ?? '').trim()) merged[k] = real[k]; });
+    return merged;
+  };
+
   const lookupVendor = (code) => {
-    const found = findSupplierByCode(code);
+    const foundRaw = findSupplierByCode(code);
+    const found = foundRaw ? resolveSupplierRef(foundRaw) : foundRaw;
     setVendorInfo(found);
     // ── Match เจอจาก Lookup Key ที่ 2 (ค่าไม่ตรงกับ Code จริง) ──────────
     // ── แทนที่ช่อง Supplier code ด้วย Code จริงให้อัตโนมัติ ──────────────
@@ -13607,11 +14283,17 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   // MARKER_APCONTROLLER_SUPPLIER_DETAIL_QUICKVIEW_V3
   // ── มีคนแก้ Supplier ตัวไหนก็ตาม (ผ่านปุ่ม Detail หรือ Master Data) ────────
   // ── ถ้าเป็น Vendor ที่กำลังเปิดอยู่ในหน้านี้พอดี ให้รีเฟรชสดทันที ───────────
+  const [supplierRefreshTick, setSupplierRefreshTick] = useState(0); // MARKER_INVOICEENTRY_SUPPLIER_REFRESH_TICK_V1
   useRealtimeRefresh(['supplier_list_updated'], async () => {
     if (!form.supplierCode?.trim()) return;
     if (fetchCollection) await fetchCollection('SupplierList', true);
-    lookupVendor(form.supplierCode);
+    // MARKER_INVOICEENTRY_SUPPLIER_REFRESH_TICK_V1 -- เดิมเรียก lookupVendor(form.supplierCode) ตรงนี้ แต่ใช้ supplierItems ของ Render เก่า (Closure)
+    // -> vendorInfo/disabled_fields ไม่เปลี่ยนจนกว่า Poll 60 วิ | เปลี่ยนเป็น bump ตัวนับ แล้วให้ useEffect ด้านล่างค้นใน Render ใหม่ที่มีข้อมูลสด
+    setSupplierRefreshTick(t => t + 1);
   });
+  useEffect(() => { // MARKER_INVOICEENTRY_SUPPLIER_REFRESH_TICK_V1
+    if (supplierRefreshTick > 0 && form.supplierCode?.trim()) lookupVendor(form.supplierCode);
+  }, [supplierRefreshTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Quick Vendor: Vendor ที่ไม่ซ้ำกัน (กรองด้วย Tax ID + Branch No) จาก Invoice ──
   // ── ที่มีอยู่ใน Batch Bucket ตอนนี้ — ไม่ต้องมี Storage ใหม่ ใช้ข้อมูลเดิมที่มีอยู่แล้ว ──
@@ -14422,7 +15104,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     }
   };
 
-  const handleSubmitInvoice = async (lines, forceAutoGrtForThisInvoice = false, fillStartedAt = null) => {
+  const handleSubmitInvoice = async (lines, forceAutoGrtForThisInvoice = false, fillStartedAt = null, ctaOverride = null) => {
     // MARKER_FILL_STARTED_AT_CAPTURE_V1 -- fillStartedAt: เวลาที่ User เริ่มกรอก Invoice นี้ (จาก InvoiceDetailPopup)
     // MARKER_ONPROCESS_VIEWONLY_CHECK_V1 -- View-Only Mode ห้าม Submit Invoice ใหม่เด็ดขาด
     if (batchConfig?.viewOnly) {
@@ -14503,7 +15185,11 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     // ── คนละใบ ไม่ใช้เลขเดียวกันซ้ำทุกใบเหมือน Auto (Auto ไม่แตะ ยังใช้เลขเดียวเดิม) ──
     let semiAutoGrtNums = [];
     // MARKER_GRT_MANUAL_CONFIRM_V1 -- เพิ่ม forceAutoGrtForThisInvoice เข้าเงื่อนไข
-    if (isAutoGrt || forceAutoGrtForThisInvoice) {
+    // MARKER_CTA_INDEX_REPLACE_GRT_V1 -- Index แทน GRT: ไม่ขอเลข/ไม่ขยับ Running GRT แม้เป็น Auto (Index ต้องคงที่ไว้ใช้ค้นหา)
+    const ctaIndexGrt = String(ctaOverride?.indexText || '').trim();
+    if (ctaIndexGrt) {
+      grtNumVal = ctaIndexGrt;
+    } else if (isAutoGrt || forceAutoGrtForThisInvoice) {
       if (isSemiAutoGrtSubmit && mySemiUserSubmit) {
         let runningCursor = nextGrtRunning;
         for (let g = 0; g < groups.length; g++) {
@@ -14584,10 +15270,12 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
         // MARKER_RESTORE_SEMIAUTO_AND_FIX_REALGRN_V1
         form_data:       {
           ...form,
+          // MARKER_CTA_DUEDATE_POPUP_V1 -- ค่าจาก Popup CTA (dueDate / paygroup ถ้าย้อนหลัง) ทับ form ตอนบันทึก
+          ...(ctaOverride?.formPatch || {}),
           // MARKER_SEMI_AUTO_GRT_PER_SPLIT_ASSIGN_V1
           // ── Semi-Auto: ใช้เลขเรียงตาม Index ของ Split (gi) แต่ละใบคนละเลข ──────
           // ── Auto: ยังใช้เลขเดียวกันซ้ำทุกใบเหมือนเดิม (grtNumVal ตัวเดียว) ─────
-          grtNum: (isSemiAutoGrtSubmit && mySemiUserSubmit) ? (semiAutoGrtNums[gi] || grtNumVal) : grtNumVal,
+          grtNum: ctaIndexGrt ? ctaIndexGrt : ((isSemiAutoGrtSubmit && mySemiUserSubmit) ? (semiAutoGrtNums[gi] || grtNumVal) : grtNumVal),
           grn: grnVal,
           invoiceSuffix,
           // Real Vendor — ดึงจาก H line ดั้งเดิมของ Block (hLine) เสมอ ไม่ใช่บรรทัดแรกของกลุ่มย่อย
@@ -15077,6 +15765,7 @@ const handleSelectBranch = (item, meta = {}) => {
         smCodeItems={smCodeItems}
         categoryItems={categoryItems}
         grtPrefix={batchConfig?.grtPrefix || ''}
+        batchDueDate={batchConfig?.dueDate || ''} // MARKER_CTA_EDIT_INVOICE_POPUP_V1
         grnPrefix={batchConfig?.grnPrefix || ''}
         isAutoGrt={isAutoGrt}
       />
@@ -15140,7 +15829,7 @@ const handleSelectBranch = (item, meta = {}) => {
       
       <div style={{ ...card, overflow: 'visible', flexShrink: 0 }}>
         <InvoiceHeader form={form} setField={setField} onSupplierBlur={lookupVendor} onSupplierSearch={() => setShowSupplierPopup(true)} vendorInfo={vendorInfo} vendorLoading={false} matchedRule={matchedRule} onBranchSearch={() => setShowBranchPopup(true)} onBranchNoChange={handleBranchNoChange} onBranchNoBlur={handleBranchNoBlur} onBranchNoKeyDown={handleBranchNoKeyDown} onInvoiceDetail={() => setShowInvoiceDetail(true)} recentHeaderCpc={recentHeaderCpc} recentHeaderAccount={recentHeaderAccount} recentHeaderSubAcc={recentHeaderSubAcc} recentSupplierCode={recentSupplierCode} supplierCodeRef={supplierCodeRef} branchNoRef={branchNoRef} headerCpcRef={headerCpcRef} headerAccountRef={headerAccountRef} headerSubAccRef={headerSubAccRef} isOwner={isOwner} onOpenGrtSetting={() => setShowGrtSettingPopup(true)} />
-        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} buInfo={batchConfig?.buInfo || null} grtPrefix={batchConfig?.grtPrefix || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} flowMemory={flowMemory} setFlowMemory={setFlowMemory} supplierCodeRef={supplierCodeRef} matchedRule={matchedRule} onOpenSupplierDetail={() => { setSupplierViewCode(form.supplierCode || ''); setShowSupplierPopup(true); }} vendorRuleItems={vendorRuleItems} />
+        <InvoiceDetailPopup show={showInvoiceDetail} onClose={() => setShowInvoiceDetail(false)} form={form} setField={setField} vendorInfo={vendorInfo} itemcodeItems={itemcodeItems} fetchCollection={fetchCollection} userName={userName} currentUser={currentUser} bu={batchConfig?.bu || ''} buInfo={batchConfig?.buInfo || null} grtPrefix={batchConfig?.grtPrefix || ''} onResolveBranch={resolveBranch} onSubmitInvoice={handleSubmitInvoice} batchDueDate={batchConfig?.dueDate || ''} isAutoGrt={isAutoGrt} grtPreview={isAutoGrt ? `${batchConfig?.grtPrefix || ''}${String(nextGrtRunning + 1).padStart(4,'0')}` : ''} grnPreview={isAutoGrt ? `${batchConfig?.grnPrefix || ''}${String(nextGrnRunning + 1).padStart(4,'0')}` : ''} nextGrnRunning={nextGrnRunning} grnPrefix={batchConfig?.grnPrefix || ''} smCodeItems={smCodeItems} categoryItems={categoryItems} branchItems={branchItems} recentPeriods={recentPeriods} flowMemory={flowMemory} setFlowMemory={setFlowMemory} supplierCodeRef={supplierCodeRef} matchedRule={matchedRule} onOpenSupplierDetail={() => { setSupplierViewCode(form.supplierCode || ''); setShowSupplierPopup(true); }} vendorRuleItems={vendorRuleItems} />
       </div>
 
       {/* ── Batch Bucket (โครง — ยังไม่มี data จริง ใช้ invoices state) ──────── */}
@@ -15227,7 +15916,8 @@ const handleSelectBranch = (item, meta = {}) => {
           </div>
         </div>
         {/* ── Batch Bucket: Sticky Header (Freeze หัวตาราง) ── */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <div ref={bucketScrollRef} tabIndex={0} onKeyDown={handleBucketKeyDown} style={{ flex: 1, minHeight: 0, overflowY: 'auto', outline: 'none' }}>{/* MARKER_BUCKET_ROW_ARROW_NAV_V1 */}
+        {bucketTip && ReactDOM.createPortal(renderBucketTip(bucketTip), document.body)}{/* MARKER_BUCKET_ROW_TOOLTIP_V2 */}
         {bucketViewMode === 'invoice' ? (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
@@ -15275,7 +15965,9 @@ const handleSelectBranch = (item, meta = {}) => {
             }).map((inv, i) => {
               const rowKey = inv.id || inv._localId || i;
               return (
-              <tr key={rowKey} style={{ borderBottom: '0.5px solid #f5f5f5' }}>
+              <tr key={rowKey} data-bkey={String(rowKey)} onMouseEnter={(e) => showBucketTip(e, inv)} onMouseMove={moveBucketTip} onMouseLeave={hideBucketTip} // MARKER_BUCKET_ROW_ARROW_NAV_V1 // MARKER_BUCKET_ROW_TOOLTIP_V2
+                onClick={() => { setActiveBucketRow(String(rowKey)); bucketScrollRef.current?.focus({ preventScroll: true }); }}
+                style={{ borderBottom: '0.5px solid #f5f5f5', cursor: 'pointer', background: activeBucketRow === String(rowKey) ? '#E3EEFB' : undefined, boxShadow: activeBucketRow === String(rowKey) ? 'inset 3px 0 0 #1a3a5c' : undefined }}>
                 <td style={{ padding: '8px 9px', textAlign: 'center' }}>
                   <input type="checkbox" checked={selectedRows.has(rowKey)}
                     onChange={() => setSelectedRows(prev => { const next = new Set(prev); next.has(rowKey) ? next.delete(rowKey) : next.add(rowKey); return next; })} />
@@ -15299,7 +15991,7 @@ const handleSelectBranch = (item, meta = {}) => {
                 <td style={{ padding: '8px 9px', fontWeight: '500', color: '#1a3a5c', textAlign: 'right' }}>{inv.amount != null && inv.amount !== '' ? Number(inv.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                 <td style={{ padding: '8px 9px', color: '#555', textAlign: 'right' }}>{inv.vat != null && inv.vat !== '' ? Number(inv.vat).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                 <td style={{ padding: '8px 9px', color: inv.wht < 0 ? '#A32D2D' : '#555', textAlign: 'right' }}>{inv.wht != null && inv.wht !== '' ? Number(inv.wht).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
-                <td style={{ padding: '8px 9px', fontWeight: '600', color: '#1a3a5c', textAlign: 'right' }}>{inv.net != null && inv.net !== '' ? Number(inv.net).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                <td style={{ padding: '8px 9px', fontWeight: '600', color: '#1a3a5c', textAlign: 'right' }}>{bucketNetPay(inv)}</td>
                 <td style={{ padding: '8px 9px', color: '#555', fontSize: '11px', textAlign: 'center' }}>
                   {(() => {
                     // ── Due Date Fallback: ถ้า Invoice ไม่มี Due Date -> ใช้ของ Batch Setup แทน ──
@@ -15519,7 +16211,7 @@ const handleSelectBranch = (item, meta = {}) => {
                           <td style={{ padding: '6px 9px', textAlign: 'right', fontSize: '11px', color: '#555' }}>{inv.amount != null && inv.amount !== '' ? Number(inv.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                           <td style={{ padding: '6px 9px', textAlign: 'right', fontSize: '11px', color: '#555' }}>{inv.vat != null && inv.vat !== '' ? Number(inv.vat).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                           <td style={{ padding: '6px 9px', textAlign: 'right', fontSize: '11px', color: inv.wht < 0 ? '#A32D2D' : '#555' }}>{inv.wht != null && inv.wht !== '' ? Number(inv.wht).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
-                          <td style={{ padding: '6px 9px', textAlign: 'right', fontSize: '11px', fontWeight: '600', color: '#1a3a5c' }}>{inv.net != null && inv.net !== '' ? Number(inv.net).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                          <td style={{ padding: '6px 9px', textAlign: 'right', fontSize: '11px', fontWeight: '600', color: '#1a3a5c' }}>{bucketNetPay(inv)}</td>
                           <td style={{ padding: '6px 9px' }} />
                           <td style={{ padding: '6px 9px', textAlign: 'center' }}>
                             {inv.status === 'sent' ? (
@@ -15575,7 +16267,7 @@ const handleSelectBranch = (item, meta = {}) => {
           const bucketAmount = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
           const bucketVat    = invoices.reduce((s, inv) => s + (parseFloat(inv.vat) || 0), 0);
           const bucketWht    = invoices.reduce((s, inv) => s + (parseFloat(inv.wht) || 0), 0);
-          const bucketTotal  = invoices.reduce((s, inv) => s + (parseFloat(inv.net) || 0), 0);
+          const bucketTotal  = invoices.reduce((s, inv) => s + bucketNetValue(inv), 0); // MARKER_BUCKET_TOTAL_NET_DISPLAY_V1
           const fmtBucketNum = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
           return (
             <div style={{ flexShrink: 0, borderTop: '1.5px solid #1a3a5c', background: '#f8f9fa', display: 'flex', width: '100%', boxSizing: 'border-box' }}>
@@ -16446,6 +17138,62 @@ function SendToModal({ show, onClose, onSend, selectedCount, totalAmount, curren
   );
 }
 
+
+// MARKER_CONTROLLER_PAGE_HEADER_V1 -- หัวหน้าแบบเดียวกับ AP Controller / IE Manual (eyebrow + ชื่อใหญ่ + OPEN (วันที่) / DEADLINE + วันที่ / ผู้ใช้ / Role) ใช้ร่วมกับหน้า Invoice History / Batch Control
+function ControllerPageHeader({ kind = 'ap', eyebrow, title, accent, subtitle, userName = '', currentUser = null, flush = '' }) {
+  const { getCached, fetchCollection } = useDataCache();
+  const { isOwner, isAdmin, isEditor } = useUserRole();
+  React.useEffect(() => { try { if (!getCached('CompanyList') && fetchCollection) fetchCollection('CompanyList').catch(() => {}); } catch (_) { /* ไม่มี Cache -> ข้าม */ } }, []); // eslint-disable-line
+  const infoItems = getCached('CompanyList') || [];
+  const modeK = kind === 'ie' ? 'ie_period_mode' : 'ap_period_mode';
+  const monK = kind === 'ie' ? 'ie_bu_period_month' : 'ap_bu_period_month';
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmtD = (x) => `${String(x.getDate()).padStart(2, '0')}-${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+  const period = (() => {
+    const rep = infoItems.find((i) => i[modeK] !== 'prev' && i[monK]) || infoItems.find((i) => i[monK]) || null;
+    if (!rep) return null;
+    const [yy, mm] = String(rep[monK]).split('-').map(Number);
+    if (!yy || !mm) return null;
+    const nextBiz2 = (start) => { let d = new Date(start), cnt = 0, out = null; while (cnt < 2) { const wd = d.getDay(); if (wd !== 0 && wd !== 6) { cnt += 1; if (cnt === 2) out = new Date(d); } if (cnt < 2) d.setDate(d.getDate() + 1); } return out; };
+    const prevDl = nextBiz2(new Date(yy, mm, 1));
+    const openDate = new Date(prevDl); openDate.setDate(openDate.getDate() + 1);
+    const dl = nextBiz2(new Date(yy, mm + 1, 1));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const daysLeft = Math.round((dl - today) / 86400000);
+    const tone = daysLeft < 0 ? { line: '#e24b4a', text: '#a32d2d' } : daysLeft <= 7 ? { line: '#ba7517', text: '#854f0b' } : { line: '#2fb58a', text: '#14935a' };
+    const left = daysLeft < 0 ? `เกิน ${-daysLeft} วัน` : daysLeft === 0 ? 'วันนี้' : `อีก ${daysLeft} วัน`;
+    return { openDate, dl, tone, left };
+  })();
+  const lab = { fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 };
+  return (
+    <div style={{ background: 'white', padding: '14px 20px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, borderBottom: '0.5px solid #e5e5e0', margin: flush }}>
+      <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+        <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>{eyebrow}</div>
+        <div style={{ fontSize: '22px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>{title}{accent ? <span style={{ color: '#2fb58a' }}>{accent}</span> : null}</div>
+        {subtitle ? <div style={{ fontSize: '12px', color: '#6b778c', marginTop: '2px' }}>{subtitle}</div> : null}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {period && (
+          <div style={{ display: 'flex', gap: '18px' }}>
+            <div style={{ borderLeft: '3px solid #14284b', paddingLeft: '8px' }}>
+              <div style={lab}>{kind === 'ie' ? 'OPEN IE' : 'OPEN AP'}</div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(period.openDate)}</div>
+            </div>
+            <div style={{ borderLeft: `3px solid ${period.tone.line}`, paddingLeft: '8px' }}>
+              <div style={lab}>DEADLINE</div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(period.dl)} <span style={{ fontSize: '12px', fontWeight: 600, color: period.tone.text }}>{period.left}</span></div>
+            </div>
+          </div>
+        )}
+        <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+          <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+          <div style={{ marginTop: '4px' }}><span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{isOwner ? 'Owner' : isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer'}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Invoice History — สำหรับหน้า "Draft List" (เปลี่ยนเป็น Invoice History) ──
 // ── ดึงจาก bucket_list (status='done') กรองตาม Receive Date + My/All ──────────
 export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false, isAdmin = false }) {
@@ -16872,9 +17620,20 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
   const fmtNum = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-        <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: '#1a3a5c' }}>📄 Invoice History</h2>
+    <div style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
+      {/* MARKER_CONTROLLER_PAGE_HEADER_V1 */}
+      <ControllerPageHeader kind="ap" eyebrow="AP Controller" title="AP Controller - " accent="Invoice History" subtitle="รายการ Invoice ที่ Export ออกจากระบบแล้ว" userName={userName} currentUser={currentUser} flush="0 -18px 14px" />
+
+
+      {/* ── แถว: Tab เท่านั้น ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}> {/* MARKER_INVOICEHISTORY_IMPORT_SAME_ROW_V1 -- Import อยู่บรรทัดเดียวกับแท็บ */}
+        <div style={{ display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px', flexShrink: 0 }}>
+          <button onClick={() => setMainTab('myjob')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'myjob' ? '#fff' : 'transparent', color: mainTab === 'myjob' ? '#14284b' : '#555', boxShadow: mainTab === 'myjob' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>👤 My Job</button>
+          <button onClick={() => setMainTab('myhistory')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'myhistory' ? '#fff' : 'transparent', color: mainTab === 'myhistory' ? '#14284b' : '#555', boxShadow: mainTab === 'myhistory' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>🕓 My History</button>
+          {canSeeAll && (
+            <button onClick={() => setMainTab('invoicehistory')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, border: 'none', borderRadius: '8px', background: mainTab === 'invoicehistory' ? '#fff' : 'transparent', color: mainTab === 'invoicehistory' ? '#14284b' : '#555', boxShadow: mainTab === 'invoicehistory' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>👥 Invoice History</button>
+          )}
+        </div>
         {/* MARKER_APCONTROLLER_IMPORT_BUTTON_FIX_V1 */}
         {isOwner && mainTab === 'invoicehistory' && (
           <button onClick={() => document.getElementById('legacyImportFileInput').click()}
@@ -16884,18 +17643,6 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         )}
         <input id="legacyImportFileInput" type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
           onChange={e => { handleImportFileSelect(e.target.files?.[0]); e.target.value = ''; }} />
-      </div>
-      <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px' }}>รายการ Invoice ที่ Export ออกจากระบบแล้ว</div>
-
-      {/* ── แถว: Tab เท่านั้น ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', border: '0.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
-          <button onClick={() => setMainTab('myjob')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', background: mainTab === 'myjob' ? '#1a3a5c' : 'white', color: mainTab === 'myjob' ? 'white' : '#555', cursor: 'pointer' }}>👤 My Job</button>
-          <button onClick={() => setMainTab('myhistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'myhistory' ? '#1a3a5c' : 'white', color: mainTab === 'myhistory' ? 'white' : '#555', cursor: 'pointer' }}>🕓 My History</button>
-          {canSeeAll && (
-            <button onClick={() => setMainTab('invoicehistory')} style={{ padding: '6px 14px', fontSize: '12px', border: 'none', borderLeft: '0.5px solid #ddd', background: mainTab === 'invoicehistory' ? '#1a3a5c' : 'white', color: mainTab === 'invoicehistory' ? 'white' : '#555', cursor: 'pointer' }}>👥 Invoice History</button>
-          )}
-        </div>
       </div>
 
       {/* ── sub-tab ขีดเส้นใต้: Recent / History / Legacy — โผล่แค่ตอนอยู่ tab Invoice History ── */}
@@ -16912,11 +17659,11 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px', width: '260px', flexShrink: 0 }} />
+          <input type="text" placeholder="ค้นหา Invoice No. / Vendor" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff', width: '260px', flexShrink: 0 }} />
           <span style={{ fontSize: '12px', color: '#888' }}>Receive Date</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff' }} />
           <span style={{ fontSize: '12px', color: '#888' }}>ถึง</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '6px 10px', fontSize: '12px', border: '0.5px solid #ddd', borderRadius: '6px' }} />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} min={`${new Date().getFullYear() - 5}-01-01`} max={`${new Date().getFullYear() + 5}-12-31`} style={{ padding: '8px 10px', fontSize: '12.5px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff' }} />
           {/* MARKER_INVOICEHISTORY_MODULE_FILTER_DROPDOWN_REMOVED_V1 -- ตัด
               Dropdown ออก หน้านี้เป็นของ AP Controller ล็อก moduleFilter='AP'
               ตายตัวอยู่แล้ว (ดูจุดประกาศ State ด้านบน) ไม่ต้องมี UI ให้เปลี่ยน */}
@@ -16949,7 +17696,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #e8eaf0', borderRadius: '8px' }}>
+      <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: '12px', background: '#fff' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
           <colgroup>
             {(() => {
@@ -16971,7 +17718,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             })()}
           </colgroup>
           <thead>
-            <tr style={{ background: '#f8f9fa' }}>
+            <tr style={{ background: '#e8f0fb' }}>
               {canSeeAll && (
                 <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '0.5px solid #e8eaf0' }}>
                   <input type="checkbox"
@@ -16985,7 +17732,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 </th>
               )}
               {['Batch name', 'Invoice', 'Vendor', 'BU', 'Receive date', 'Amount', 'Vat', 'Total', 'Action', 'Exported at', ...(mainTab === 'invoicehistory' ? ['Created by'] : [])].map(h => (
-                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 500, color: '#888', borderBottom: '0.5px solid #e8eaf0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
+                <th key={h} style={{ padding: '8px 10px', textAlign: ['Amount', 'Vat', 'Total'].includes(h) ? 'right' : h === 'Action' ? 'center' : 'left', fontWeight: 700, color: '#1a3a5c', borderBottom: '1px solid #d6e2f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -17003,7 +17750,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                 return (
                   <React.Fragment key={g.batch_id || g.items[0]?.id}>
                     {/* ── Batch header — คลิกเพื่อกาง/หด, Action = Restore/Download/Delete ทั้ง Batch ── */}
-                    <tr style={{ background: '#eef4fb', cursor: 'pointer', borderBottom: '0.5px solid #d5e3f5' }}
+                    <tr style={{ background: '#f7faff', cursor: 'pointer', borderBottom: '1px solid #eef0f3' }}
                       onClick={() => setExpandedBatches(prev => { const next = new Set(prev); next.has(g.batch_id) ? next.delete(g.batch_id) : next.add(g.batch_id); return next; })}>
                       {canSeeAll && (
                         <td style={{ padding: '8px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -17026,7 +17773,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
                       </td>
                       <td style={{ padding: '8px 10px' }}></td>
                       <td style={{ padding: '8px 10px' }}></td>
-                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#f0f3f8', color: '#1a3a5c', borderRadius: '5px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{g.bu || '-'}</span></td>
+                      <td style={{ padding: '8px 10px' }}><span style={{ background: '#eef3fb', color: '#1a3a5c', borderRadius: '99px', padding: '2px 10px', fontSize: '11.5px', fontWeight: '700' }}>{g.bu || '-'}</span></td>
                       <td style={{ padding: '8px 10px' }}>{fmtD(rd)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalAmount)}</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{fmtNum(g.totalVat)}</td>
@@ -17269,7 +18016,7 @@ export function InvoiceHistoryPage({ currentUser, userName = '', isOwner = false
             {Array.isArray(viewingInvoice.lines) && viewingInvoice.lines.length > 0 && (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '14px' }}>
                 <thead>
-                  <tr style={{ background: '#f8f9fa' }}>
+                  <tr style={{ background: '#e8f0fb' }}>
                     {['Description', 'Amount', 'Vat', 'WHT', 'Total'].map(h => (
                       <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Description' ? 'left' : 'right', color: '#888', fontWeight: 500, borderBottom: '0.5px solid #e8eaf0' }}>{h}</th>
                     ))}
@@ -17315,6 +18062,161 @@ function ZoneBox({ title, highlighted, noPadding, children, style }) {
       )}
       <div style={{ padding: noPadding ? 0 : '16px 18px', flex: 1, minHeight: 0 }}>
         {children}
+      </div>
+    </div>
+  );
+}
+
+// MARKER_BATCH_CONTROL_DASHBOARD_V1 -- Dashboard ภาพรวม Invoice History (AP) สำหรับ Batch Control (ตาม Mockup v4)
+function BatchControlDashboard() {
+  const THM = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  const now = new Date();
+  const [year, setYear] = React.useState(now.getFullYear());
+  const [month, setMonth] = React.useState(now.getMonth() + 1); // 0 = ทั้งปี
+  const [cntMode, setCntMode] = React.useState('both'); // both | inv | txn
+  const [rows, setRows] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  // MARKER_BATCH_CONTROL_DASHBOARD_TOOLTIP_V1 -- Tooltip แบบกำหนดเอง แทน title ของ Browser
+  const [tip, setTip] = React.useState(null);
+  const tipOn = (render) => ({ onMouseEnter: (e) => setTip({ x: e.clientX, y: e.clientY, render }), onMouseMove: (e) => setTip(t => (t ? { ...t, x: e.clientX, y: e.clientY } : t)), onMouseLeave: () => setTip(null) });
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const mk = (recent) => { const p = new URLSearchParams({ all_users: 'true', recent: String(recent), module: 'AP', date_from: `${year}-01-01`, date_to: `${year}-12-31` }); return apiFetch(`/invoice-history?${p.toString()}`); };
+      const [a, b] = await Promise.all([mk(true), mk(false)]);
+      const seen = new Set(); const out = [];
+      [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].forEach(r => { const k = r.record_id ?? `${r.batch_name}|${r.invoice}|${r.vendor}`; if (seen.has(k)) return; seen.add(k); if (r.record_type !== 'legacy' && String(r.batch_name || '').trim() && String(r.batch_name).trim() !== '-') out.push(r); }); // ไม่นับ Legacy Data // MARKER_BATCH_CONTROL_DASHBOARD_BATCH_ONLY_V1 -- นับเฉพาะรายการที่มี Batch
+      setRows(out);
+    } catch (e) { console.error('batch control dashboard:', e); }
+    setLoading(false);
+  }, [year]);
+  React.useEffect(() => { load(); }, [load]);
+  useRealtimeRefresh(['batch_deleted', 'batch_approved', 'batch_rejected', 'invoice_history_changed'], load);
+
+  const num = (v) => Number(String(v ?? 0).replace(/,/g, '')) || 0;
+  const fmt = (v) => num(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const fmtM = (v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'K' : String(Math.round(v)));
+  const monthOf = (r) => { const d = r.receive_date ? new Date(r.receive_date) : null; return d && !isNaN(d) && d.getFullYear() === year ? d.getMonth() + 1 : 0; };
+
+  const D = React.useMemo(() => {
+    const perMonth = Array.from({ length: 12 }, () => ({ sent: 0, pend: 0, txn: 0, inv: new Set(), batches: new Map() }));
+    const buM = new Map(); const venM = new Map();
+    rows.forEach(r => {
+      const m = monthOf(r); if (!m) return;
+      const t = num(r.total); const pm = perMonth[m - 1]; const isSent = !!r.sent_stamp;
+      if (isSent) pm.sent += t; else pm.pend += t;
+      pm.txn += 1; pm.inv.add(r.invoice || `${r.batch_name}|${r.record_id}`);
+      const bk = r.batch_name || '-'; const bb = pm.batches.get(bk) || { sent: false }; if (isSent) bb.sent = true; pm.batches.set(bk, bb);
+      const bn = r.bu || '-'; const u = buM.get(bn) || { mon: Array(12).fill(0), inv: new Set(), txn: 0, pendB: new Set() };
+      u.mon[m - 1] += t; u.inv.add(r.invoice || `${r.batch_name}|${r.record_id}`); u.txn += 1; if (!isSent) u.pendB.add(bk); buM.set(bn, u);
+      if (month === 0 || m === month) { const v = venM.get(r.vendor || '-') || { inv: new Set(), txn: 0, total: 0 }; v.inv.add(r.invoice || `${r.batch_name}|${r.record_id}`); v.txn += 1; v.total += t; venM.set(r.vendor || '-', v); }
+    });
+    const sel = (m) => { const pm = perMonth[m - 1]; const bs = [...pm.batches.values()]; const sentB = bs.filter(x => x.sent).length; return { total: pm.sent + pm.pend, inv: pm.inv.size, txn: pm.txn, batches: bs.length, sentB }; };
+    let cur;
+    if (month === 0) { const all = perMonth.map((_, i) => sel(i + 1)); cur = { total: all.reduce((a, x) => a + x.total, 0), inv: all.reduce((a, x) => a + x.inv, 0), txn: all.reduce((a, x) => a + x.txn, 0), batches: all.reduce((a, x) => a + x.batches, 0), sentB: all.reduce((a, x) => a + x.sentB, 0) }; }
+    else cur = sel(month);
+    const prev = month > 1 ? sel(month - 1) : null;
+    const lastMonth = perMonth.reduce((a, x, i) => (x.txn > 0 ? i + 1 : a), 0);
+    const buRows = [...buM.entries()].map(([k, u]) => ({ k, mon: u.mon, tot: u.mon.reduce((a, b) => a + b, 0), inv: u.inv.size, txn: u.txn, pend: u.pendB.size })).sort((a, b) => b.tot - a.tot);
+    const ven = [...venM.entries()].map(([k, v]) => ({ k, inv: v.inv.size, txn: v.txn, total: v.total })).sort((a, b) => b.total - a.total).slice(0, 10);
+    return { perMonth, cur, prev, lastMonth, buRows, ven };
+  }, [rows, month, year]);
+
+  const pct = (c, p) => (p ? ((c - p) / p) * 100 : null);
+  const delta = (c, p) => { const d = p == null ? null : pct(c, p); if (d == null) return <span style={{ color: '#8a94a0' }}>—</span>; return <span style={{ color: d >= 0 ? '#1a9d6a' : '#d14343' }}>{d >= 0 ? '▲' : '▼'} {Math.abs(d).toFixed(1)}%</span>; };
+  const card = { background: '#fff', border: '1px solid #e3e6ea', borderRadius: '12px' };
+  const lbl = { fontStyle: 'normal', fontSize: '10.5px', fontWeight: 700, color: '#8a94a0', textTransform: 'uppercase', letterSpacing: '0.4px' };
+  const th = { padding: '9px 10px', background: '#e8f0fb', color: '#1a3a5c', fontSize: '10.5px', fontWeight: 700, textTransform: 'uppercase', textAlign: 'right' };
+  const td = { padding: '8px 10px', fontSize: '12px', borderTop: '1px solid #f0f2f4', textAlign: 'right' };
+  const seg = { display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px', flexWrap: 'wrap' };
+  const segBtn = (a, d) => ({ padding: '6px 11px', fontSize: '12px', borderRadius: '8px', fontWeight: 600, cursor: d ? 'default' : 'pointer', background: a ? '#fff' : 'transparent', color: d ? '#c0c5cc' : a ? '#14284b' : '#666', boxShadow: a ? '0 1px 3px rgba(0,0,0,0.12)' : 'none' });
+  const years = [now.getFullYear() - 3, now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear()];
+  const c = D.cur; const p = month === 0 ? null : D.prev;
+  const maxT = Math.max(1, ...D.perMonth.map(x => x.sent + x.pend));
+  const maxC = Math.max(1, ...D.perMonth.map(x => Math.max(x.txn, x.inv.size)));
+  const shownMonths = Array.from({ length: Math.max(D.lastMonth, month, 1) }, (_, i) => i + 1);
+  const buMonths = month === 0 ? shownMonths.slice(-4) : shownMonths.filter(m => m <= month).slice(-4);
+  const maxCell = Math.max(1, ...D.buRows.flatMap(r => buMonths.map(m => r.mon[m - 1])));
+  const heat = (v) => { const r = v / maxCell; return r > 0.75 ? { background: '#8db7e8', color: '#fff' } : r > 0.5 ? { background: '#b4d0f1' } : r > 0.25 ? { background: '#d3e4f8' } : r > 0 ? { background: '#eaf2fc' } : {}; };
+  const tipBody = (title, lines) => (<div><div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', paddingBottom: '6px', marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.18)' }}>{title}</div>{lines.map(([k, v, c, b]) => (<div key={k} style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11.5px', lineHeight: 1.8 }}><span style={{ color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: '6px' }}>{c && <i style={{ width: '8px', height: '8px', borderRadius: '2px', background: c === '#14284b' ? '#fff' : c, display: 'inline-block' }} />}{k}</span><span style={{ marginLeft: 'auto', fontWeight: b ? 700 : 500, color: '#fff' }}>{v}</span></div>))}</div>);
+  const kpi = (t, v, sub, color) => (<div style={{ ...card, padding: '16px 18px', position: 'relative', overflow: 'hidden' }}><div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '4px', background: color || '#1a3a5c' }} /><div style={lbl}>{t}</div><div style={{ margin: '6px 0 2px', fontSize: '24px', fontWeight: 700, color: '#14284b' }}>{v}</div><div style={{ fontSize: '11px', color: '#8a94a0' }}>{sub}</div></div>);
+  const pctSent = c.batches ? Math.round((c.sentB / c.batches) * 100) : 0;
+  const scope = month === 0 ? `ทั้งปี ${year}` : `${THM[month - 1]} ${year}`;
+
+  const tipW = 210; const tipLeft = tip ? Math.min(tip.x + 16, window.innerWidth - tipW - 12) : 0; const tipTop = tip ? Math.max(8, tip.y - 150) : 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {tip && (<div style={{ position: 'fixed', left: tipLeft, top: tipTop, width: tipW, zIndex: 99999, pointerEvents: 'none', background: 'rgba(20,40,75,0.96)', borderRadius: '10px', padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>{tip.render()}</div>)}
+      <div style={{ background: '#fff', borderBottom: '1px solid #e3e6ea', padding: '12px 24px', display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+        <select value={year} onChange={e => setYear(Number(e.target.value))} style={{ border: '1px solid #d0d7de', borderRadius: '8px', padding: '6px 10px', fontSize: '12.5px', fontWeight: 600, color: '#14284b' }}>
+          {years.map(y => <option key={y} value={y}>ปี {y}</option>)}
+        </select>
+        <div style={seg}>
+          <span onClick={() => setMonth(0)} style={segBtn(month === 0)}>ทั้งปี</span>
+          {THM.map((n, i) => { const future = year === now.getFullYear() && i + 1 > now.getMonth() + 1; return <span key={n} onClick={() => !future && setMonth(i + 1)} style={segBtn(month === i + 1, future)}>{n}</span>; })}
+        </div>
+        <span style={{ marginLeft: 'auto', fontSize: '11px', color: '#8a94a0' }}>{loading ? 'กำลังโหลด...' : 'ข้อมูลจาก Invoice History (AP) · อัปเดตอัตโนมัติ'}</span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '18px 24px 28px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+          {kpi('Invoice (ใบ)', fmt(c.inv), <>{scope} {p && <>· {delta(c.inv, p.inv)}</>}</>)}
+          {kpi('Transaction (รายการ)', fmt(c.txn), <>{scope} {p && <>· {delta(c.txn, p.txn)}</>}</>)}
+          {kpi('Batch ทั้งหมด', fmt(c.batches), `ส่งแล้ว ${c.sentB} · ค้าง ${c.batches - c.sentB}`)}
+          {kpi('ยอดรวม (รวม VAT)', fmt(c.total), <>{scope} {p && <>· {delta(c.total, p.total)}</>}</>, '#1a9d6a')}
+          {kpi('ส่ง Email แล้ว', `${pctSent}%`, <div style={{ height: '6px', borderRadius: '3px', background: '#eef1f5', marginTop: '6px' }}><div style={{ height: '6px', borderRadius: '3px', background: '#1fb37a', width: `${pctSent}%` }} /></div>, '#1fb37a')}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+          <div style={{ ...card, padding: '16px 18px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>ยอดรวมรายเดือน</div>
+            <div style={{ fontSize: '11px', color: '#8a94a0', marginBottom: '12px' }}>แยก ส่งแล้ว / ยังไม่ส่ง · คลิกแท่งเพื่อดูเดือนนั้น</div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '190px', borderBottom: '1px solid #e3e6ea' }}>
+              {D.perMonth.map((x, i) => { const tot = x.sent + x.pend; const h = Math.max(tot ? 4 : 0, (tot / maxT) * 150); return (
+                <div key={i} onClick={() => setMonth(i + 1)} {...tipOn(() => tipBody(`${THM[i]} ${year}`, [['ยอดรวม', fmt(tot), '#14284b', true], ['ส่งแล้ว', fmt(x.sent), '#1a3a5c'], ['ยังไม่ส่ง', fmt(x.pend), '#d97706'], ['Invoice', fmt(x.inv.size) + ' ใบ'], ['Transaction', fmt(x.txn) + ' รายการ'], ['Batch', fmt(x.batches.size)]]))} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', cursor: 'pointer' }}>
+                  <div style={{ fontSize: '10px', color: '#8a94a0', marginBottom: '4px' }}>{tot ? fmtM(tot) : ''}</div>
+                  <div style={{ width: '100%', maxWidth: '46px', height: `${h}px`, display: 'flex', flexDirection: 'column-reverse', borderRadius: '6px 6px 0 0', overflow: 'hidden', outline: month === i + 1 ? '2px solid #1fb37a' : 'none', outlineOffset: '2px' }}>
+                    <div style={{ background: '#1a3a5c', height: tot ? `${(x.sent / tot) * 100}%` : 0 }} /><div style={{ background: '#f3b25a', height: tot ? `${(x.pend / tot) * 100}%` : 0 }} />
+                  </div></div>); })}
+            </div>
+            <div style={{ display: 'flex', gap: '10px', paddingTop: '6px' }}>{THM.map(n => <span key={n} style={{ flex: 1, textAlign: 'center', fontSize: '10.5px', color: '#666', fontWeight: 600 }}>{n}</span>)}</div>
+            <div style={{ display: 'flex', gap: '14px', fontSize: '11px', color: '#666', marginTop: '10px' }}><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#1a3a5c', marginRight: '5px' }} />ส่งแล้ว</span><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#f3b25a', marginRight: '5px' }} />ยังไม่ส่ง</span></div>
+          </div>
+
+          <div style={{ ...card, padding: '16px 18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
+              <div><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>จำนวน Invoice และ Transaction รายเดือน</div><div style={{ fontSize: '11px', color: '#8a94a0', marginBottom: '12px' }}>เทียบจำนวนใบ กับ จำนวนรายการ</div></div>
+              <div style={seg}>{[['both', 'เทียบกัน'], ['inv', 'Invoice'], ['txn', 'Transaction']].map(([k, n]) => <span key={k} onClick={() => setCntMode(k)} style={segBtn(cntMode === k)}>{n}</span>)}</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '190px', borderBottom: '1px solid #e3e6ea' }}>
+              {D.perMonth.map((x, i) => { const iv = x.inv.size; const hh = (v) => `${Math.max(v ? 3 : 0, (v / maxC) * 150)}px`; return (
+                <div key={i} onClick={() => setMonth(i + 1)} {...tipOn(() => tipBody(`${THM[i]} ${year}`, [['Invoice', fmt(iv) + ' ใบ', '#1a3a5c', true], ['Transaction', fmt(x.txn) + ' รายการ', '#1fb37a', true], ['Batch', fmt(x.batches.size)], ['ยอดรวม', fmt(x.sent + x.pend)]]))} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', cursor: 'pointer' }}>
+                  <div style={{ fontSize: '10px', color: '#8a94a0', marginBottom: '4px' }}>{iv || x.txn ? (cntMode === 'both' ? `${iv}/${x.txn}` : cntMode === 'inv' ? iv : x.txn) : ''}</div>
+                  <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', width: '100%', maxWidth: '56px', outline: month === i + 1 ? '2px solid #1fb37a' : 'none', outlineOffset: '2px', borderRadius: '5px' }}>
+                    {cntMode !== 'txn' && <div style={{ flex: 1, background: '#1a3a5c', height: hh(iv), borderRadius: '5px 5px 0 0' }} />}
+                    {cntMode !== 'inv' && <div style={{ flex: 1, background: '#1fb37a', height: hh(x.txn), borderRadius: '5px 5px 0 0' }} />}
+                  </div></div>); })}
+            </div>
+            <div style={{ display: 'flex', gap: '10px', paddingTop: '6px' }}>{THM.map(n => <span key={n} style={{ flex: 1, textAlign: 'center', fontSize: '10.5px', color: '#666', fontWeight: 600 }}>{n}</span>)}</div>
+            <div style={{ display: 'flex', gap: '14px', fontSize: '11px', color: '#666', marginTop: '10px' }}><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#1a3a5c', marginRight: '5px' }} />Invoice (ใบ)</span><span><i style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: '#1fb37a', marginRight: '5px' }} />Transaction (รายการ)</span>{cntMode === 'both' && <span style={{ marginLeft: 'auto' }}>ตัวเลขบนแท่ง = Invoice / Transaction</span>}</div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '16px' }}>
+          <div style={{ ...card, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 18px 10px' }}><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>BU × รายเดือน (ยอดรวม)</div><div style={{ fontSize: '11px', color: '#8a94a0' }}>ยิ่งเข้มยิ่งยอดสูง · Invoice = จำนวนใบ (เลขที่ไม่ซ้ำ) · Txn = จำนวนรายการ</div></div>
+            <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={{ ...th, textAlign: 'left' }}>BU</th>{buMonths.map(m => <th key={m} style={th}>{THM[m - 1]}</th>)}<th style={th}>รวม</th><th style={th}>Invoice</th><th style={th}>Txn</th><th style={th}>Batch ค้างส่ง</th></tr></thead>
+              <tbody>{D.buRows.map(r => (<tr key={r.k}><td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{r.k}</td>{buMonths.map(m => <td key={m} style={{ ...td, ...heat(r.mon[m - 1]) }}>{r.mon[m - 1] ? fmtM(r.mon[m - 1]) : '-'}</td>)}<td style={{ ...td, fontWeight: 700 }}>{fmtM(r.tot)}</td><td style={td}>{fmt(r.inv)}</td><td style={td}>{fmt(r.txn)}</td><td style={td}><span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', fontWeight: 700, background: r.pend ? '#fdf1e0' : '#e6f6ef', color: r.pend ? '#b45309' : '#1a9d6a' }}>{r.pend ? `${r.pend} ค้าง` : 'ครบ'}</span></td></tr>))}
+                {D.buRows.length === 0 && <tr><td style={{ ...td, textAlign: 'center', color: '#aaa' }} colSpan={buMonths.length + 5}>ไม่มีข้อมูล</td></tr>}</tbody></table></div>
+          </div>
+          <div style={{ ...card, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 18px 10px' }}><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>Top Vendor — {scope}</div><div style={{ fontSize: '11px', color: '#8a94a0' }}>เรียงตามยอดรวม</div></div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={{ ...th, textAlign: 'left' }}>Vendor</th><th style={th}>Invoice</th><th style={th}>Txn</th><th style={th}>ยอดรวม</th></tr></thead>
+              <tbody>{D.ven.map(v => (<tr key={v.k}><td style={{ ...td, textAlign: 'left', fontWeight: 700, maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.k}>{v.k}</td><td style={td}>{v.inv}</td><td style={td}>{v.txn}</td><td style={td}>{fmt(v.total)}</td></tr>))}
+                {D.ven.length === 0 && <tr><td style={{ ...td, textAlign: 'center', color: '#aaa' }} colSpan={4}>ไม่มีข้อมูล</td></tr>}</tbody></table>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -17864,21 +18766,18 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
         {/* MARKER_BATCH_CONTROL_NEWTEMPLATE_BACK_TO_TABROW_V1 — ย้ายปุ่ม +Template ใหม่ ออกจาก Header กลับไป
             อยู่ที่แถว Template Tab (ตำแหน่งเดิมก่อนจะย้ายขึ้นมาไว้มุมขวาบนตามคอมเมนต์เดิม
             MARKER_BATCH_CONTROL_NEWTEMPLATE_TOPRIGHT) — เหลือ Header ไว้แค่ Icon/Title เฉยๆ */}
-        <div style={{ background: '#fff', padding: '14px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📊</div>
-          <div>
-            <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c' }}>Batch Control</div>
-            <div style={{ fontSize: '11px', color: '#999' }}>Batch ที่ Approve แล้ว — เลือกส่ง Email ตามเรื่อง</div>
-          </div>
-        </div>
+        {/* MARKER_CONTROLLER_PAGE_HEADER_V1 */}
+        <ControllerPageHeader kind="ap" eyebrow="AP Controller" title="AP Controller - " accent="Batch Control" subtitle="Batch ที่ Approve แล้ว — เลือกส่ง Email ตามเรื่อง" userName={userName} currentUser={currentUser} />
       </div>
 
       {/* MARKER_BATCH_CONTROL_MAIL_DASHBOARD_TABS — Tab ย่อย Mail Management / Dashboard */}
-      <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', gap: '4px' }}>
-        <div onClick={() => setBatchControlSubTab('mail')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'mail' ? '600' : '400', color: batchControlSubTab === 'mail' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'mail' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Mail Management</div>
+      <div style={{ background: '#fff', padding: '10px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', flexShrink: 0 }}>
+        <div style={{ display: 'inline-flex', background: '#eef1f5', borderRadius: '10px', padding: '3px', gap: '2px' }}> {/* MARKER_BATCH_CONTROL_SEGMENTED_V1 -- Tab แบบ Segmented (เปลี่ยนเฉพาะหน้าตา) */}
+        <div onClick={() => setBatchControlSubTab('mail')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: batchControlSubTab === 'mail' ? '#fff' : 'transparent', color: batchControlSubTab === 'mail' ? '#14284b' : '#555', boxShadow: batchControlSubTab === 'mail' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>Mail Management</div>
         {(isOwner || isAdmin) && (
-          <div onClick={() => setBatchControlSubTab('dashboard')} style={{ padding: '10px 16px', fontSize: '12.5px', fontWeight: batchControlSubTab === 'dashboard' ? '600' : '400', color: batchControlSubTab === 'dashboard' ? '#1a3a5c' : '#888', borderBottom: batchControlSubTab === 'dashboard' ? '2px solid #1a3a5c' : '2px solid transparent', cursor: 'pointer' }}>Dashboard</div>
+          <div onClick={() => setBatchControlSubTab('dashboard')} style={{ padding: '7px 16px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: batchControlSubTab === 'dashboard' ? '#fff' : 'transparent', color: batchControlSubTab === 'dashboard' ? '#14284b' : '#555', boxShadow: batchControlSubTab === 'dashboard' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>Dashboard</div>
         )}
+        </div>
       </div>
 
       {/* MARKER_BATCH_CONTROL_TEMPLATE_TABS_V1 — Sub-tab แยกตาม "เรื่อง" = 1 Email Template ต่อ 1 Tab
@@ -17887,8 +18786,8 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
           แทน (ตำแหน่งเดิม) และเอาเงื่อนไข templates.length > 0 ออก เพื่อให้แถวนี้ (และปุ่ม) โผล่มาเสมอตอนยังไม่มี
           Template เลยด้วย — ไม่งั้นตอน Template ยังไม่มีเลย จะไม่มีปุ่มที่กดสร้าง Template แรกได้ */}
       {batchControlSubTab === 'mail' && !showNewTemplate && (
-        <div style={{ background: '#fff', padding: '0 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflowX: 'auto', flex: 1, minWidth: 0 }}>
+        <div style={{ background: '#fff', padding: '10px 24px', borderBottom: '0.5px solid #e5e5e0', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2px', overflowX: 'auto', flex: '0 1 auto', minWidth: 0, background: '#eef1f5', borderRadius: '10px', padding: '3px' }}>
             {templates.length === 0 && (
               <div style={{ padding: '10px 0', fontSize: '11.5px', color: '#aaa' }}>ยังไม่มี Template — กด "+" เพื่อเริ่มสร้าง</div>
             )}
@@ -17900,7 +18799,7 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
               const pendingCount = tpl.pending_count ?? tpl.count ?? tpl.batch_count ?? tpl.total ?? null;
               return (
                 <div key={tpl.id} onClick={() => setActiveTemplateId(tpl.id)}
-                  style={{ padding: '9px 14px', fontSize: '12px', cursor: 'pointer', borderBottom: isActive ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px', color: isActive ? '#1a3a5c' : '#888', fontWeight: isActive ? '500' : '400', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                  style={{ padding: '6px 14px', fontSize: '12px', cursor: 'pointer', borderRadius: '8px', background: isActive ? '#fff' : 'transparent', boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.12)' : 'none', color: isActive ? '#14284b' : '#555', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                   {tpl.name || `Template #${tpl.id}`}
                   {pendingCount != null && (
                     <span style={{ background: isActive ? '#1a3a5c' : '#e8e8e8', color: isActive ? 'white' : '#888', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{pendingCount}</span>
@@ -18045,15 +18944,15 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
           (BU Pill Filter + ตาราง Header เข้ม + Footer เป็นปุ่ม Confirm) สไตล์อ้างอิงจากกล่อง AP Manual/Document Center
           ซ่อนกล่องนี้ทั้งหมดตอนกด Confirm แล้ว (สลับไปหน้า Config Email เต็มจอแทน ไม่ใช่ Popup) */}
       {!showEmailConfirm && (
-      <div style={{ padding: '16px 24px 20px' }}>
-        <div style={{ background: '#fff', border: '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '14px 18px 10px' }}>
+      <div style={{ padding: '16px 24px 20px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}> {/* MARKER_BATCH_CONTROL_PINNED_HEADER_ZONE_V1 -- Header Zone ตรึง เลื่อนเฉพาะแถวรายการ */}
+        <div style={{ background: '#fff', border: '0.5px solid #e5e5e0', borderRadius: '10px', overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '14px 18px 10px', flexShrink: 0 }}>
             <div style={{ fontSize: '13.5px', fontWeight: '700', color: '#1a3a5c' }}>{activeTemplate?.name || 'Batch'}</div>
             <div style={{ fontSize: '11px', color: '#999' }}>{loading ? 'กำลังโหลด...' : `${visibleBatches.length} Batch รอส่ง`}</div>
           </div>
 
           {/* MARKER_BATCH_CONTROL_BU_PILLS_V1 — เปลี่ยนจาก Dropdown "ทุก BU" มาเป็น Pill Filter มีตัวเลขนับ ต่อ BU */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 18px 14px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 18px 14px', flexWrap: 'wrap', flexShrink: 0 }}>
             <span style={{ fontSize: '10.5px', fontWeight: '600', color: '#999', textTransform: 'uppercase', marginRight: '2px' }}>BU</span>
             {buList.map(bu => {
               const isActive = buFilter === bu;
@@ -18124,12 +19023,13 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
               และเพิ่ม columnGap ระหว่างคอลัมน์ (เดิมไม่มี Gap เลย ทำให้ตัวเลข "ยอดรวม" (ชิดขวา) กับ "Filename"
               (ชิดซ้าย) ของคอลัมน์ติดกัน มาเบียดจนดูเหมือนตัวอักษรควบกัน — นี่คือสาเหตุจริงของปัญหา "ยอดรวมFILENAME"
               ที่เห็นในภาพ ไม่ใช่ Bug คำนวณคอลัมน์ผิด) */}
-          <div style={{ display: 'grid', gridTemplateColumns: '40px 1.3fr 70px 90px 90px 120px 1fr 96px 150px 110px', columnGap: '16px', background: '#16324f', padding: '10px 16px', fontSize: '10.5px', color: '#fff', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '40px 1.3fr 70px 90px 90px 120px 1fr 96px 150px 110px', columnGap: '16px', background: '#e8f0fb', padding: '10px 16px', fontSize: '10.5px', color: '#1a3a5c', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.3px', flexShrink: 0, overflowY: 'hidden', scrollbarGutter: 'stable' }}>
             <input type="checkbox" title="เลือกทั้งหมด" checked={visibleBatches.length > 0 && selectedIds.length === visibleBatches.length} onChange={toggleSelectAll} style={{ width: '14px', height: '14px' }} />
             <div>Batch</div><div>BU</div><div>Receive</div><div>Due</div>
             <div style={{ textAlign: 'right' }}>ยอดรวม</div>
             <div>Filename</div><div>Attachment</div><div>Status</div><div>Created By</div>
           </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable' }}>
           {visibleBatches.length === 0 && !loading && <div style={{ padding: '30px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>ไม่มี Batch รอส่งเรื่องนี้</div>}
           {visibleBatches.map(b => {
             // MARKER_BATCH_CONTROL_ATTACHMENT_COLUMN_V1 — Logic เดียวกับ Batch History (My Jobs/All Jobs)
@@ -18163,9 +19063,10 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
             </div>
             );
           })}
+          </div>
 
           {/* MARKER_BATCH_CONTROL_DOCBOX_FOOTER_CONFIRM_V1 — Footer ของกล่อง = สรุปที่เลือก + ปุ่ม Confirm (ไม่ทำ Pagination) */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 18px', borderTop: '0.5px solid #eee', background: '#fafaf8', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 18px', borderTop: '1px solid #e3e6ea', background: '#fafbfc', flexWrap: 'wrap', flexShrink: 0 }}>
             <span style={{ fontSize: '11.5px', color: '#666' }}>
               {selectedIds.length > 0 ? `เลือกไว้ ${selectedIds.length} Batch · ${selectedTotal.toLocaleString()} บาท` : 'ยังไม่ได้เลือก Batch'}
             </span>
@@ -18315,9 +19216,7 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
       )}
 
       {batchControlSubTab === 'dashboard' && (isOwner || isAdmin) && (
-        <div style={{ padding: '60px 24px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
-          📊 Dashboard — Coming soon
-        </div>
+        <BatchControlDashboard />
       )}
 
       {/* MARKER_BATCH_CONTROL_ATTACHMENT_VIEW_MODAL_V1 — Modal Preview อ่านอย่างเดียว (Read-only) สำหรับปุ่ม 👁 View
@@ -18396,7 +19295,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   // -- Bug: isInvoicePopupOwner/isInvoicePopupAdmin ถูก declare อยู่ scope ของ --
   // -- InvoiceDetailPopup เท่านั้น แต่ isAccountCpcAdmin (ใน APController)  --
   // -- เรียกใช้ตัวแปรนี้ข้าม scope มา -> ReferenceError. แก้โดย declare ในนี้เอง --
-  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin } = useUserRole();
+  const { isOwner: isInvoicePopupOwner, isAdmin: isInvoicePopupAdmin, isEditor: isInvoicePopupEditor } = useUserRole();
   // ✅ optimistic override ของเลข running GRT/GRN ล่าสุด (อัปเดตจาก InvoiceEntry ทุกครั้งที่ submit)
   const [runningOverride, setRunningOverride] = useState(null); // { bu, ap_grt, ap_grn }
 
@@ -18467,6 +19366,11 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
   useRealtimeRefresh(['vendor_rule_updated'], () => {
     if (fetchCollection) fetchCollection('VendorRule', true).catch(e => console.error('[VendorRule] fetchCollection background error:', e));
   });
+  // MARKER_PARENT_COMPANYLIST_REALTIME_V1 -- เดิมดัก company_list_updated เฉพาะใน BatchSetup (unmount ตอนอยู่ Invoice Entry/Batch Preview)
+  // -> แก้ Setting Company (Prefix/Period/GRT ฯลฯ) แล้วหน้า Invoice Entry ไม่เห็นการเปลี่ยนแปลง -- ดักที่ Parent ให้ครอบทุก Step
+  useRealtimeRefresh(['company_list_updated'], () => {
+    if (fetchCollection) fetchCollection('CompanyList', true).catch(e => console.error('[CompanyList realtime parent] fetchCollection error:', e));
+  });
 
   const infoItemsRaw    = getCached('CompanyList') || [];
   // ✅ merge ค่า ap_grt/ap_grn ล่าสุด (optimistic) เข้ากับ CompanyList ก่อนส่งให้ BatchSetup
@@ -18477,6 +19381,16 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
           : i
       ))
     : infoItemsRaw;
+  // MARKER_INVOICEENTRY_GRT_STATUS_LIVE_V1 -- batchConfig.buInfo ถูก Snapshot ตอนกด Start จึงไม่เห็นการแก้ 'AP GRT Control' ใน Info ภายหลัง
+  // -> ผสมค่า GRT Control ล่าสุดจาก CompanyList (Realtime) เข้า batchConfig เฉพาะให้ InvoiceEntry (แก้เฉพาะ field เดียว ไม่แตะ ap_grt/ap_grn ฯลฯ)
+  const liveBatchConfig = React.useMemo(() => {
+    if (!batchConfig?.buInfo) return batchConfig;
+    const buKey = String(batchConfig.bu ?? '').toLowerCase();
+    const live = infoItemsRaw.find(i => (batchConfig.buInfo.id != null && i.id === batchConfig.buInfo.id) || String(i['bu'] ?? '').toLowerCase() === buKey);
+    const liveCtrl = live?.['AP GRT Control'];
+    if (!liveCtrl || liveCtrl === batchConfig.buInfo['AP GRT Control']) return batchConfig;
+    return { ...batchConfig, buInfo: { ...batchConfig.buInfo, 'AP GRT Control': liveCtrl } };
+  }, [batchConfig, infoItemsRaw]);
   const supplierItems   = getCached('SupplierList') || [];
   const branchItems     = getCached('BranchList');
   const accountItems    = getCached('AccountList');
@@ -18640,29 +19554,60 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f7fa', fontFamily: 'sans-serif', fontSize: '13px', overflow: 'hidden' }}>
-      <div style={{ background: 'white', borderBottom: '0.5px solid #e8eaf0', padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-        <span style={{ fontSize: '17px' }}>🧾</span>
-        <div>
-          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>AP Controller</div>
-          <div style={{ fontSize: '11px', color: '#aaa' }}>Accounts Payable Invoice Management</div>
+      {/* MARKER_APCONTROLLER_HEADER_V1 -- หัวแบบเดียวกับ Document Center: eyebrow + ชื่อ + วันที่/ผู้ใช้/Role (ปุ่มเครื่องมือย้ายไปอยู่แถว Step ชิดขวา) */}
+      <div style={{ background: 'white', padding: '14px 20px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+          <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>AP Controller</div>
+          <div style={{ fontSize: '22px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>AP Controller - <span style={{ color: '#2fb58a' }}>AP Manual</span></div>
+          <div style={{ fontSize: '12px', color: '#6b778c', marginTop: '2px' }}>Accounts Payable Invoice Management</div>
         </div>
-        <button onClick={() => { setPrefixInput(systemPrefix); setShowPrefixModal(true); }}
-          style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-          <span>🏷️ Prefix: <strong>{systemPrefix || '—'}</strong></span>
-          <span style={{ fontSize: '10px' }}>✎</span>
-        </button>
-        {/* MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- ปุ่มจัดการ Account/CPC Rules ทั้งหมด */}
-        <button onClick={() => setShowAccountCpcManage(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-          🔗 Account/CPC Rules
-        </button>
-        {/* MARKER_INVOICE_RECYCLEBIN_POPUP_V1 -- Popup เปิดตรงในหน้านี้เลย -- Owner/Admin เท่านั้น */}
-        {(isInvoicePopupOwner || isInvoicePopupAdmin) && (
-          <button onClick={() => setShowInvoiceRecycleBin(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#f8f9fa', color: '#555', fontSize: '11px', cursor: 'pointer' }}>
-            🗑️ Recycle Bin (Invoice)
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {/* MARKER_APCONTROLLER_PERIOD_DEADLINE_V1 -- Open AP (Period) + Deadline ในหัวหน้า | คิดจาก CompanyList ชุดเดียวกับ BatchSetup (Current = เดือนถัดจาก ap_bu_period_month, Deadline = 2 วันทำการหลังสิ้นเดือน Current) | รูปแบบวันที่ Oct-26 / 03-Nov-26 */}
+          {(() => {
+            const rep = infoItems.find(i => i.ap_period_mode !== 'prev' && i.ap_bu_period_month) || infoItems.find(i => i.ap_bu_period_month) || null;
+            if (!rep) return null;
+            const [yy, mm] = String(rep.ap_bu_period_month).split('-').map(Number);
+            if (!yy || !mm) return null;
+            const curMonth = new Date(yy, mm, 1);
+            // MARKER_APCONTROLLER_OPEN_DATE_V1 -- วันที่เปิด Period = วันถัดจาก Deadline ของ Period ก่อนหน้า (2 วันทำการหลังสิ้นเดือน M-1) — สูตรเดียวกับ Open IE
+            let od = new Date(yy, mm, 1), ocnt = 0, prevDl = null;
+            while (ocnt < 2) {
+              const wd = od.getDay();
+              if (wd !== 0 && wd !== 6) { ocnt++; if (ocnt === 2) prevDl = new Date(od); }
+              if (ocnt < 2) od.setDate(od.getDate() + 1);
+            }
+            const openDate = new Date(prevDl); openDate.setDate(openDate.getDate() + 1);
+            let d = new Date(yy, mm + 1, 1), cnt = 0, dl = null;
+            while (cnt < 2) {
+              const wd = d.getDay();
+              if (wd !== 0 && wd !== 6) { cnt++; if (cnt === 2) dl = new Date(d); }
+              if (cnt < 2) d.setDate(d.getDate() + 1);
+            }
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const daysLeft = Math.round((dl - today) / 86400000);
+            const tone = daysLeft < 0 ? { line: '#e24b4a', text: '#a32d2d' } : daysLeft <= 7 ? { line: '#ba7517', text: '#854f0b' } : { line: '#2fb58a', text: '#14935a' };
+            const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const fmtM = (x) => `${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+            const fmtD = (x) => `${String(x.getDate()).padStart(2, '0')}-${MON[x.getMonth()]}-${String(x.getFullYear()).slice(-2)}`;
+            const left = daysLeft < 0 ? `เกิน ${-daysLeft} วัน` : daysLeft === 0 ? 'วันนี้' : `อีก ${daysLeft} วัน`;
+            return (
+              <div style={{ display: 'flex', gap: '18px' }}>
+                <div style={{ borderLeft: '3px solid #14284b', paddingLeft: '8px' }}>
+                  <div style={{ fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 }}>OPEN AP</div>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(openDate)}</div>
+                </div>
+                <div style={{ borderLeft: `3px solid ${tone.line}`, paddingLeft: '8px' }}>
+                  <div style={{ fontSize: '10.5px', letterSpacing: '.1em', color: '#6b778c', fontWeight: 600 }}>DEADLINE</div>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#14284b' }}>{fmtD(dl)} <span style={{ fontSize: '12px', fontWeight: 600, color: tone.text }}>{left}</span></div>
+                </div>
+              </div>
+            );
+          })()}
+          <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+            <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+            <div style={{ marginTop: '4px' }}><span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || (currentUser && currentUser.email) || ''}</span><span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{isInvoicePopupOwner ? 'Owner' : isInvoicePopupAdmin ? 'Admin' : isInvoicePopupEditor ? 'Editor' : 'Viewer'}</span></div>
+          </div>
+        </div>
       </div>
 
       {showInvoiceRecycleBin && (
@@ -18817,7 +19762,26 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
           </div>
         </div>
       )}
-      <StepBar step={step} onGo={setStep} />
+      <StepBar step={step} onGo={setStep} right={(
+        <>
+          <button onClick={() => { setPrefixInput(systemPrefix); setShowPrefixModal(true); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z"/></svg><span>Prefix: <strong>{systemPrefix || '—'}</strong></span><span style={{ fontSize: '10px', color: '#6b778c' }}>✎</span>
+          </button>
+          {/* MARKER_ACCOUNT_CPC_MANAGE_POPUP_V1 -- ปุ่มจัดการ Account/CPC Rules ทั้งหมด */}
+          <button onClick={() => setShowAccountCpcManage(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5"/></svg>Account/CPC Rules
+          </button>
+          {/* MARKER_INVOICE_RECYCLEBIN_POPUP_V1 -- Popup เปิดตรงในหน้านี้เลย -- Owner/Admin เท่านั้น */}
+          {(isInvoicePopupOwner || isInvoicePopupAdmin) && (
+            <button onClick={() => setShowInvoiceRecycleBin(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '30px', padding: '0 12px', borderRadius: '99px', border: '1px solid #d6dde8', background: '#f6f8fb', color: '#14284b', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2fb58a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></svg>Recycle Bin (Invoice)
+            </button>
+          )}
+        </>
+      )} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* MARKER_APCONTROLLER_BATCHSETUP_NO_UNMOUNT_V1 */}
         {/* ── ซ่อนด้วย CSS แทน Unmount กัน BU/Receive Date/Due Date/GRT-GRN Preview ── */}
@@ -18826,7 +19790,7 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
           <BatchSetup onStart={handleStart} infoItems={infoItems} initialHistoryTab={initialHistoryTab} initialViewBatchId={initialViewBatchId} step={step} activeChannel={activeChannel} setActiveChannel={setActiveChannel} />  {/* MARKER_BELL_VIEW_SYNC_V1 */}
         </div>
         {step === 2 && (
-          <InvoiceEntry batchConfig={batchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)} activeChannel={activeChannel} setActiveChannel={setActiveChannel} setPreviewChannelChoice={setPreviewChannelChoice}
+          <InvoiceEntry batchConfig={liveBatchConfig} invoices={invoices} setInvoices={setInvoices} onNext={() => setStep(3)} onBack={() => setStep(1)} activeChannel={activeChannel} setActiveChannel={setActiveChannel} setPreviewChannelChoice={setPreviewChannelChoice}
             supplierItems={supplierItems} branchItems={branchItems} accountItems={accountItems} subAccItems={subAccItems}
             cpcItems={cpcItems} itemcodeItems={itemcodeItems} categoryItems={categoryItems} noticeItems={noticeItems}
             vendorRuleItems={vendorRuleItems} smCodeItems={smCodeItems} fetchCollection={fetchCollection}
@@ -18838,4 +19802,4 @@ export default function APController({ activeSubTab, onSubTabChange, flyoutOpen,
     </div>
   );
 }
-// MARKER_APCONTROLLER_APPROVE_LABEL_RENAME_V1
+// MARKER_APCONTROLLER_APPROVE_LABEL_RENAME_V1

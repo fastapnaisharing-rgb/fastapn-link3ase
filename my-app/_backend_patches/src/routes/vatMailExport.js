@@ -147,6 +147,10 @@ async function fetchRows(cfg, scope, ctx) {
   const types = rules.types || [];
   if (types.length) where.push(`bus_type = ANY(${add(types)})`);
 
+  // MARKER_VATMAILEXPORT_EXCLUDE_SUBTYPE_V1 -- Sub Type ที่ไม่ต้องการติดตาม (Config > เงื่อนไข > Sub Type) ตัดออกจากเมล (Include รายตัวยังดึงได้ตามเดิม)
+  const exSubTypes = (rules.exclude_sub_types || []).map((s) => String(s || "").trim().toUpperCase()).filter(Boolean);
+  if (exSubTypes.length) where.push(`NOT (UPPER(TRIM(COALESCE(sub_type, ''))) = ANY(${add(exSubTypes)}))`);
+
   const ignore = (rules.ignore || []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean);
   if (ignore.length) where.push(`NOT (supplier_code = ANY(${add(ignore)}))`);
 

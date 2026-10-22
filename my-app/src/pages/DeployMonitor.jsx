@@ -1407,3 +1407,173 @@ export function CPUDashboardTab() {
     </div>
   );
 }
+
+// MARKER_STORAGE_DASHBOARD_TAB_V1 -- Storage Dashboard (System Console > Backend Ops): ความจุ / โควตา / ขนาดรายจุดเก็บ
+const stFmt = (b) => {
+  const n = Number(b) || 0;
+  if (n >= 1073741824) return (n / 1073741824).toFixed(n >= 10737418240 ? 1 : 2) + ' GB';
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+  return n + ' B';
+};
+const stColor = (lv) => (lv === 'red' ? '#c0392b' : lv === 'yellow' ? '#d97706' : '#0F6E56');
+const stLevel = (p, y, r) => (p == null ? 'ok' : p >= r ? 'red' : p >= y ? 'yellow' : 'ok');
+
+export function StorageDashboardTab() {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [edit, setEdit] = useState(null);
+  const [msg, setMsg] = useState('');
+
+  const load = useCallback(async (refresh) => {
+    setBusy(true); setErr('');
+    try {
+      const r = await authFetch('/file-storage/storage-stats' + (refresh ? '?refresh=1' : ''));
+      if (r && r.error) setErr(r.error); else setD(r);
+    } catch (e) { setErr('โหลดไม่สำเร็จ: ' + e.message); }
+    setBusy(false);
+  }, []);
+  useEffect(() => { load(false); }, [load]);
+
+  const save = async () => {
+    setMsg('');
+    const body = { quotas: {}, doa_max_periods: Number(edit.doa_max_periods), warn_yellow: Number(edit.warn_yellow), warn_red: Number(edit.warn_red), reserve_pct: Number(edit.reserve_pct) };
+    Object.keys(edit.quotas).forEach((k) => { body.quotas[k] = Number(edit.quotas[k]); });
+    try {
+      const r = await authFetch('/file-storage/storage-config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (r && r.error) { setMsg(r.error); return; }
+      setEdit(null); load(true);
+    } catch (e) { setMsg('บันทึกไม่สำเร็จ: ' + e.message); }
+  };
+
+  const card = { background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, marginBottom: 12 };
+  const th = { textAlign: 'left', padding: '6px 8px', color: '#888', fontWeight: 600, fontSize: 12, borderBottom: '1px solid #e5e7eb' };
+  const td = { padding: '6px 8px', fontSize: 13, borderBottom: '1px solid #f0f0f0' };
+  const num = { textAlign: 'right' };
+  const pill = (lv, t) => <span style={{ background: stColor(lv), color: '#fff', borderRadius: 10, padding: '1px 8px', fontSize: 11 }}>{t}</span>;
+  const bar = (pct, col) => <div style={{ height: 10, background: '#e5e7eb', borderRadius: 6, overflow: 'hidden' }}><div style={{ width: Math.min(100, Math.max(0, pct || 0)) + '%', height: '100%', background: col }} /></div>;
+
+  if (!d) return <div style={{ padding: 20, fontSize: 13, color: err ? '#c0392b' : '#888' }}>{err || 'กำลังโหลด…'}</div>;
+  const cfg = d.config || {}; const Y = cfg.warn_yellow || 70; const R = cfg.warn_red || 90;
+  const cap = d.capacity || {}; const capLv = stLevel(cap.pct, Y, R);
+  const fc = d.forecast || {};
+  const kpi = (k, v, s, c) => (<div style={{ ...card, marginBottom: 0, flex: '1 1 160px' }}><div style={{ fontSize: 12, color: '#888' }}>{k}</div><div style={{ fontSize: 22, fontWeight: 700, color: c || '#1f2937' }}>{v}</div><div style={{ fontSize: 12, color: '#888' }}>{s}</div></div>);
+
+  return (
+    <div style={{ padding: 16, height: '100%', overflowY: 'auto', background: '#f5f6fa', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: '#888' }}>อัปเดต {new Date(d.at).toLocaleString('th-TH')}{d.cached ? ' (แคช 2 นาที)' : ''}</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => setEdit({ quotas: { ...(cfg.quotas || {}) }, doa_max_periods: cfg.doa_max_periods, warn_yellow: cfg.warn_yellow, warn_red: cfg.warn_red, reserve_pct: cfg.reserve_pct })} style={{ padding: '4px 10px', fontSize: 12, border: '1px solid #ddd', borderRadius: 6, background: 'white', cursor: 'pointer' }}>✎ ปรับโควตา (Owner)</button>
+          <button onClick={() => load(true)} disabled={busy} style={{ padding: '4px 10px', fontSize: 12, border: '1px solid #ddd', borderRadius: 6, background: 'white', cursor: 'pointer' }}>{busy ? 'กำลังโหลด…' : '↻ รีเฟรช'}</button>
+        </div>
+      </div>
+      {err && <div style={{ ...card, color: '#c0392b' }}>{err}</div>}
+
+      {(d.alerts || []).length > 0 && (
+        <div style={{ ...card, borderColor: stColor(d.alerts.some((a) => a.level === 'red') ? 'red' : 'yellow') }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ แจ้งเตือน ({d.alerts.length})</div>
+          {d.alerts.map((a, i) => <div key={i} style={{ fontSize: 13 }}>{pill(a.level, a.level === 'red' ? 'แดง' : 'เหลือง')} {a.text}</div>)}
+        </div>
+      )}
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>พื้นที่เก็บข้อมูล FASTAPN</div>
+        {cap.source === 'none' ? (
+          <div style={{ fontSize: 13, color: '#d97706' }}>อ่านความจุดิสก์ไม่ได้ — ตั้ง env STORAGE_CAPACITY_GB บน Server (ตอนนี้ข้อมูล FASTAPN ใช้ไป {stFmt(cap.app_bytes)})</div>
+        ) : (<>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+            {kpi('ข้อมูล FASTAPN ใช้ไป', stFmt(cap.app_bytes), 'ฐานข้อมูล ' + stFmt(cap.db_bytes) + ' + ไฟล์อัปโหลด ' + stFmt(cap.files_bytes), stColor(capLv))}
+            {kpi('เก็บเพิ่มได้อีก', stFmt(cap.usable_free), 'พื้นที่ว่างรายไดรฟ์ หักสำรองให้เครื่อง ' + cap.reserve_pct + '%', stColor(capLv))}
+            {kpi('พื้นที่ที่ FASTAPN ใช้ได้รวม', stFmt(cap.app_capacity), 'ใช้ไป ' + (cap.pct != null ? cap.pct : '-') + '% ของส่วนนี้')}
+            {kpi('คาดว่าเต็มในอีก', fc.months_left != null ? '≈ ' + fc.months_left + ' เดือน' : '—', fc.per_month != null ? 'ข้อมูลโตเฉลี่ย ' + stFmt(fc.per_month) + '/เดือน' : 'ต้องมีประวัติ ≥ 7 วัน (ตอนนี้ ' + (fc.days_of_history || 0) + ' วัน)')}
+          </div>
+          {bar(cap.pct, stColor(capLv))}
+          <div style={{ marginTop: 6 }}>{pill(capLv, 'ใช้ ' + (cap.pct != null ? cap.pct : '-') + '%')} <span style={{ fontSize: 12, color: '#888' }}>เหลือง ≥{Y}% · แดง ≥{R}% (คิดเทียบพื้นที่ที่ FASTAPN ใช้ได้รวม)</span></div>
+          <div style={{ marginTop: 10, fontWeight: 600, fontSize: 13 }}>รายไดรฟ์ (ข้อมูลประกอบ — รวม Windows / โปรแกรมอื่นด้วย)</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th style={th}>ไดรฟ์ / ที่เก็บ</th><th style={{ ...th, ...num }}>ขนาดดิสก์</th><th style={{ ...th, ...num }}>FASTAPN</th><th style={{ ...th, ...num }}>อย่างอื่น (Windows/โปรแกรม)</th><th style={{ ...th, ...num }}>ว่าง</th><th style={{ ...th, ...num }}>เก็บเพิ่มได้ (หักสำรอง)</th><th style={th}>FASTAPN ใช้ของที่ได้</th><th style={{ ...th, ...num }}>ดิสก์ใช้ทั้งไดรฟ์</th></tr></thead>
+            <tbody>{(d.drives || []).map((x, i) => { const lv = stLevel(x.app_pct, Y, R); return <tr key={i}><td style={td}>{x.label}<div style={{ fontSize: 11, color: '#888' }}>{x.path}</div></td><td style={{ ...td, ...num }}>{stFmt(x.total)}</td><td style={{ ...td, ...num }}>{stFmt(x.app)}</td><td style={{ ...td, ...num }}>{stFmt(x.other)}</td><td style={{ ...td, ...num }}>{stFmt(x.free)}</td><td style={{ ...td, ...num }}><b>{stFmt(x.usable_free)}</b></td><td style={td}>{pill(lv, x.app_pct + '%')}</td><td style={{ ...td, ...num, color: '#888' }}>{x.used_pct}%</td></tr>; })}</tbody></table>
+        </>)}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>โควตาแยกตามกลุ่ม</div>
+        {(d.groups || []).map((g) => {
+          const lv = stLevel(g.use_pct, Y, R);
+          return (
+            <div key={g.key} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px,1.3fr) 3fr 210px', gap: 8, alignItems: 'center', padding: '5px 0' }}>
+              <span style={{ fontSize: 13 }}>{g.label}</span>
+              {bar(g.use_pct, stColor(lv))}
+              <span style={{ fontSize: 13 }}><b>{stFmt(g.bytes)}</b> / {g.quota_bytes ? stFmt(g.quota_bytes) : '-'} ({g.quota_pct}%) {g.use_pct != null && pill(lv, g.use_pct + '%')}</span>
+            </div>
+          );
+        })}
+        <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>% ท้ายแถว = ใช้ไปเทียบกับโควตาของกลุ่ม · โควตาเป็น % ของ "พื้นที่ที่ FASTAPN ใช้ได้รวม" (ข้อมูล FASTAPN + เก็บเพิ่มได้) · กลุ่ม "ไฟล์ที่อัปโหลด" นับจากไฟล์จริงบนดิสก์ ({d.files.scanned}/{d.files.total} ไฟล์{d.files.truncated ? ' — สแกนไม่ครบ' : ''})</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 12 }}>
+        <div style={card}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Detail of Account แยกตามชนิด</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th style={th}>Kind</th><th style={{ ...th, ...num }}>ไฟล์</th><th style={{ ...th, ...num }}>BU</th><th style={{ ...th, ...num }}>ขนาด</th></tr></thead>
+            <tbody>{(d.doa.by_kind || []).map((r) => <tr key={r.kind}><td style={td}><b>{r.kind}</b>{r.kind === 'TBRAW' ? ' (TB ทั้งไฟล์)' : ''}</td><td style={{ ...td, ...num }}>{r.files}</td><td style={{ ...td, ...num }}>{r.bus}</td><td style={{ ...td, ...num }}>{stFmt(r.bytes)}</td></tr>)}</tbody></table>
+          <div style={{ fontWeight: 600, margin: '10px 0 4px' }}>BU ที่ใช้พื้นที่มากสุด (Top 5)</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}><tbody>{(d.doa.top_bu || []).map((r, i) => <tr key={i}><td style={td}>{r.bu}</td><td style={td}>{r.kind}</td><td style={{ ...td, ...num }}>{r.files} ไฟล์</td><td style={{ ...td, ...num }}>{stFmt(r.bytes)}</td></tr>)}</tbody></table>
+        </div>
+
+        <div style={card}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>เพดานงวดต่อ BU (TBRAW) — สูงสุด {d.doa.max_periods} งวด</div>
+          <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>เกินเพดานแล้วแจ้งเตือนให้ย้ายไป SharePoint — ระบบไม่ลบเอง</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th style={th}>BU</th><th style={{ ...th, ...num }}>งวดที่เก็บ</th><th style={{ ...th, ...num }}>เพดาน</th><th style={th}>สถานะ</th></tr></thead>
+            <tbody>{(d.doa.periods || []).slice(0, 12).map((r) => <tr key={r.bu}><td style={td}>{r.bu}</td><td style={{ ...td, ...num }}>{r.periods}</td><td style={{ ...td, ...num }}>{r.max}</td><td style={td}>{pill(r.level, r.level === 'red' ? 'เต็มเพดาน' : r.level === 'yellow' ? 'ใกล้เต็ม' : 'ปกติ')}</td></tr>)}</tbody></table>
+        </div>
+
+        <div style={card}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Memory ใน Process</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}><tbody>
+            <tr><td style={td}>RSS (รวม)</td><td style={{ ...td, ...num }}>{stFmt(d.process.rss)}</td></tr>
+            <tr><td style={td}>Heap ที่ใช้ / จัดสรร</td><td style={{ ...td, ...num }}>{stFmt(d.process.heapUsed)} / {stFmt(d.process.heapTotal)}</td></tr>
+            <tr><td style={td}>External + Buffers</td><td style={{ ...td, ...num }}>{stFmt(d.process.external)}</td></tr>
+            {(d.mem_caches || []).map((c, i) => <tr key={i}><td style={td}>{c.name} ({c.entries} รายการ)</td><td style={{ ...td, ...num }}>{stFmt(c.bytes)}</td></tr>)}
+          </tbody></table>
+        </div>
+
+        <div style={card}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>ไฟล์บนดิสก์ แยกตาม module / สถานะ</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th style={th}>Module</th><th style={th}>สถานะ</th><th style={{ ...th, ...num }}>ไฟล์</th><th style={{ ...th, ...num }}>ขนาด</th></tr></thead>
+            <tbody>{(d.files.rows || []).map((r, i) => <tr key={i}><td style={td}>{r.module}</td><td style={td}>{r.status}</td><td style={{ ...td, ...num }}>{r.files}{r.missing ? <span style={{ color: '#d97706' }}> (+{r.missing} หาย)</span> : null}</td><td style={{ ...td, ...num }}>{stFmt(r.bytes)}</td></tr>)}</tbody></table>
+        </div>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>ตารางใหญ่สุด (Top 10 จาก {d.table_count} ตาราง)</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th style={th}>ตาราง</th><th style={th}>กลุ่ม</th><th style={{ ...th, ...num }}>แถว</th><th style={{ ...th, ...num }}>ข้อมูล</th><th style={{ ...th, ...num }}>Index</th><th style={{ ...th, ...num }}>รวม</th></tr></thead>
+          <tbody>{(d.tables || []).map((t) => <tr key={t.name}><td style={td}>{t.name}</td><td style={td}>{(d.groups.find((g) => g.key === t.group) || {}).label}</td><td style={{ ...td, ...num }}>{t.rows.toLocaleString()}</td><td style={{ ...td, ...num }}>{stFmt(t.tbl)}</td><td style={{ ...td, ...num }}>{stFmt(t.idx)}</td><td style={{ ...td, ...num }}><b>{stFmt(t.total)}</b></td></tr>)}</tbody></table>
+      </div>
+
+      {edit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }} onClick={() => setEdit(null)}>
+          <div style={{ background: 'white', borderRadius: 10, padding: 16, width: 420, maxWidth: '92vw' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>ปรับโควตา (% ของความจุทั้งหมด)</div>
+            {(d.groups || []).map((g) => (
+              <div key={g.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 13 }}>
+                <span>{g.label}</span>
+                <input type="number" min="0" max="100" value={edit.quotas[g.key]} onChange={(e) => setEdit({ ...edit, quotas: { ...edit.quotas, [g.key]: e.target.value } })} style={{ width: 70, textAlign: 'right' }} />
+              </div>
+            ))}
+            <div style={{ fontSize: 12, color: Object.values(edit.quotas).reduce((s, v) => s + Number(v || 0), 0) > 100 ? '#c0392b' : '#888', margin: '4px 0 8px' }}>รวม {Object.values(edit.quotas).reduce((s, v) => s + Number(v || 0), 0)}% (ต้องไม่เกิน 100)</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>เพดานงวดต่อ BU (TBRAW)</span><input type="number" min="1" value={edit.doa_max_periods} onChange={(e) => setEdit({ ...edit, doa_max_periods: e.target.value })} style={{ width: 70, textAlign: 'right' }} /></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>เตือนเหลือง (%)</span><input type="number" min="1" max="100" value={edit.warn_yellow} onChange={(e) => setEdit({ ...edit, warn_yellow: e.target.value })} style={{ width: 70, textAlign: 'right' }} /></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>เตือนแดง (%)</span><input type="number" min="1" max="100" value={edit.warn_red} onChange={(e) => setEdit({ ...edit, warn_red: e.target.value })} style={{ width: 70, textAlign: 'right' }} /></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>กันที่ว่างไว้ให้เครื่อง (%)</span><input type="number" min="0" max="60" value={edit.reserve_pct} onChange={(e) => setEdit({ ...edit, reserve_pct: e.target.value })} style={{ width: 70, textAlign: 'right' }} /></div>
+            {msg && <div style={{ color: '#c0392b', fontSize: 12, marginTop: 6 }}>{msg}</div>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 10 }}>
+              <button onClick={() => setEdit(null)} style={{ padding: '5px 12px', border: '1px solid #ddd', borderRadius: 6, background: 'white', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={save} style={{ padding: '5px 12px', border: 'none', borderRadius: 6, background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>บันทึก</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

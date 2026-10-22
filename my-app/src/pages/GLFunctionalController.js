@@ -213,20 +213,28 @@ export default function GLFunctionalController({ activeSubTab, onSubTabChange, f
   }, [period, dashTick]);
 
   // ── File Storage: ดึงรายการไฟล์จริงตาม Scope (mine/all) ────────────────
-  const loadFileJobs = useCallback((scope, silent = false) => { // MARKER_APRECONCILE_REALTIME_V1 -- silent = รีเฟรชเงียบ (Event/Poll) ไม่ขึ้น Loading ไม่ล้างรายการเดิมถ้าพลาด
+  const jobsCacheRef = useRef({}); // MARKER_FILEJOBS_FAST_V1 -- แคชรายการไฟล์แยกตาม scope (mine/all)
+  const loadFileJobs = useCallback((scope, silent = false) => { // MARKER_APRECONCILE_REALTIME_V1 -- silent = รีเฟรชเงียบ (Event/Poll) ไม่ขึ้น Loading ไม่ล้างรายการเดิม
     let cancelled = false;
-    if (!silent) { setFileJobsLoading(true); setFileJobsError(''); }
+    const cached = jobsCacheRef.current[scope]; // MARKER_FILEJOBS_FAST_V1
+    if (!silent) { if (cached) setFileJobs(cached); setFileJobsLoading(!cached); setFileJobsError(''); } // มีแคช = โชว์ทันที ไม่ขึ้น Loading
     fetchJson(`/file-storage/ap-reconcile-jobs?scope=${scope}`)
-      .then(async (data) => { // MARKER_APRECONCILE_AP_EXPIRE_V1 -- เติมวันหมดอายุ (Confirm+30 วัน) + จำนวน Line ข้อมูล AP ที่จะถูกลบ ให้คอลัมน์ Expire Date
+      .then(async (data) => { // MARKER_APRECONCILE_AP_EXPIRE_V1 -- เติมวันหมดอายุ (Confirm+30 วัน) + จำนวน Line ข้อมูล AP ที่จะถูกลบ ให้คอลัมน์ Item Expired Date
         let list = Array.isArray(data) ? data : [];
-        try {
-          const ids = list.filter((j) => j && j.confirmed_at).map((j) => j.id);
-          if (ids.length) {
+        // MARKER_FILEJOBS_FAST_V1 -- ยกวันหมดอายุเดิมจากแคชมาก่อน (ไม่กะพริบ) แล้วแสดงรายการทันที ไม่รอ expire-info
+        const prevById = {}; (cached || []).forEach((j) => { if (j && j.expire_at) prevById[j.id] = j; });
+        list = list.map((j) => (j && j.confirmed_at && prevById[j.id] ? { ...j, expire_at: prevById[j.id].expire_at, expire_lines: prevById[j.id].expire_lines, expire_purged: prevById[j.id].expire_purged } : j));
+        if (cancelled) return;
+        jobsCacheRef.current[scope] = list; setFileJobs(list); setFileJobsLoading(false);
+        const ids = list.filter((j) => j && j.confirmed_at).map((j) => j.id);
+        if (ids.length) {
+          try {
             const info = await fetchJson(`/ap-reconcile/expire-info?ids=${ids.join(',')}`);
-            list = list.map((j) => (info && info[j.id] ? { ...j, expire_at: info[j.id].expire_at, expire_lines: info[j.id].lines, expire_purged: info[j.id].purged } : j));
-          }
-        } catch (_) { /* ไม่มีข้อมูล Expire = แสดง — */ }
-        if (!cancelled) setFileJobs(list);
+            if (cancelled) return;
+            const merged = list.map((j) => (info && info[j.id] ? { ...j, expire_at: info[j.id].expire_at, expire_lines: info[j.id].lines, expire_purged: info[j.id].purged } : j));
+            jobsCacheRef.current[scope] = merged; setFileJobs(merged);
+          } catch (_) { /* ไม่มีข้อมูล Expire = แสดง — */ }
+        }
       })
       .catch((err) => { if (!cancelled && !silent) { setFileJobsError(err.message); setFileJobs([]); } })
       .finally(() => { if (!cancelled) setFileJobsLoading(false); });

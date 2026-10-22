@@ -63,6 +63,32 @@ function StatusDropdown({ value, onChange, options, style }) {
 }
 
 // MARKER_DATEFIELD_BE_COMPARE_V1 -- ช่องวันที่แบบพิมพ์ได้ + ปฏิทินที่ทำเอง: ระดับปีโชว์เลข พ.ศ. กำกับข้าง ค.ศ. (เลขเปรียบเทียบเฉยๆ ไม่มีผลกับค่า) ค่าที่ส่งออกยังเป็น ISO YYYY-MM-DD (ค.ศ.) เหมือน <input type="date"> เดิม
+// MARKER_DATEFIELD_PASTE_THAI_BE_V1 -- Paste/พิมพ์วันที่ไทย (เช่น "1 เม.ย.60", "16 ม.ค.60", "1 เมษายน 2560", "01/04/2560") แล้วแปลงเป็น ค.ศ. (yyyy-mm-dd) ให้เอง
+const TH_MONTHS = { 'มค': 1, 'มกราคม': 1, 'กพ': 2, 'กุมภาพันธ์': 2, 'มีค': 3, 'มีนาคม': 3, 'เมย': 4, 'เมษายน': 4, 'พค': 5, 'พฤษภาคม': 5, 'มิย': 6, 'มิถุนายน': 6, 'กค': 7, 'กรกฎาคม': 7, 'สค': 8, 'สิงหาคม': 8, 'กย': 9, 'กันยายน': 9, 'ตค': 10, 'ตุลาคม': 10, 'พย': 11, 'พฤศจิกายน': 11, 'ธค': 12, 'ธันวาคม': 12 };
+function parseThaiDateToIso(raw) {
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const t = String(raw || '').replace(/[๐-๙]/g, (c) => String(c.charCodeAt(0) - 0x0E50)).replace(/\u00a0/g, ' ').trim();
+  if (!t) return null;
+  const toCe = (yRaw) => { // 2 หลัก = พ.ศ. ย่อ (60 -> 2560) ; 4 หลัก >= 2400 = พ.ศ. ; อื่นๆ = ค.ศ.
+    const n = parseInt(yRaw, 10);
+    if (yRaw.length <= 2) return 2500 + n - 543;
+    return n >= 2400 ? n - 543 : n;
+  };
+  const build = (d, mo, yRaw) => {
+    const y = toCe(yRaw);
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return `${y}-${pad2(mo)}-${pad2(d)}`;
+  };
+  let m = /^(\d{1,2})\s*([^\d\s\/.\-]+(?:\.[^\d\s\/.\-]+)*\.?)\s*(\d{2}|\d{4})$/.exec(t); // 1 เม.ย.60 | 1 เมษายน 2560
+  if (m) {
+    const mo = TH_MONTHS[m[2].replace(/[.\s]/g, '')];
+    if (mo) return build(+m[1], mo, m[3]);
+  }
+  m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t); // 01/04/2560 (ปี พ.ศ. = รูปแบบไทย วัน/เดือน/ปี)
+  if (m && +m[3] >= 2400) return build(+m[1], +m[2], m[3]);
+  return null;
+}
 function DateFieldBE({ value, onChange, disabled, style }) {
   // MARKER_BUSINESSUNIT_DATEFIELD_NATIVE_LOOK_BE_V1 -- ปฏิทินหน้าตาเหมือนของ Browser (วัน: ลูกศร ↑↓ + Clear/Today ; เดือน/ปี: รายการปีแถบเทา กางเดือนใต้ปีที่เลือก) แต่แสดงเลข พ.ศ. ข้างทุกปี ; ค่าที่เก็บเป็น ค.ศ. (YYYY-MM-DD) เหมือนเดิม
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -99,6 +125,8 @@ function DateFieldBE({ value, onChange, disabled, style }) {
   const commit = (raw) => {
     const t = String(raw || '').trim();
     if (!t) { onChange(''); return; }
+    const thIso = parseThaiDateToIso(t); // MARKER_DATEFIELD_PASTE_THAI_BE_V1
+    if (thIso) { onChange(thIso); return; }
     const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t);
     if (m) {
       const mo = +m[1], d = +m[2], y = +m[3];
@@ -130,7 +158,7 @@ function DateFieldBE({ value, onChange, disabled, style }) {
   for (let y = 1950; y <= 2100; y++) years.push(y);
   return (
     <div ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
-      <input type="text" disabled={disabled} value={text} placeholder="mm/dd/yyyy" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} style={{ ...style, paddingRight: '26px' }} />
+      <input type="text" disabled={disabled} value={text} placeholder="mm/dd/yyyy" onChange={(e) => setText(e.target.value)} onPaste={(e) => { const thIso = parseThaiDateToIso(e.clipboardData && e.clipboardData.getData('text')); if (thIso) { e.preventDefault(); setText(toDisp(thIso)); onChange(thIso); } }} onBlur={(e) => commit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} style={{ ...style, paddingRight: '26px' }} />
       <span onClick={openPop} style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', cursor: disabled ? 'default' : 'pointer', fontSize: '14px', opacity: disabled ? 0.4 : 1 }}>{'📅'}</span>
       {open && ReactDOM.createPortal(
         <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: '240px', background: 'white', border: '0.5px solid #ddd', borderRadius: '8px', boxShadow: '0 6px 18px rgba(0,0,0,0.22)', zIndex: 99999, padding: '8px', fontSize: '13px', color: '#222' }}>
@@ -190,7 +218,8 @@ function DateFieldBE({ value, onChange, disabled, style }) {
 }
 
 // MARKER_BUSINESSUNIT_FIX_INFOCELL_STYLE_V1
-function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_COMBOBOX_PORTAL_FIX_V1
+function ComboBox({ value, onChange, options, placeholder, bare, rows }) { // MARKER_COMBOBOX_ROWS_V1 -- rows = แสดงกี่แถวแล้ว Scroll + เปิดมาแสดงครบทุกรายการ
+  const [typed, setTyped] = useState(false); // MARKER_COMBOBOX_PORTAL_FIX_V1
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(value || '');
   const [highlight, setHighlight] = useState(-1); // ✅ Index ที่ Highlight อยู่ตอนเลื่อนด้วย Arrow Up/Down
@@ -207,11 +236,11 @@ function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_C
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
-  const filtered = [...new Set(options.filter(o => o && o !== '-' && o.toLowerCase().includes(input.toLowerCase())))].slice(0, 20);
+  const filtered = [...new Set(options.filter(o => o && o !== '-' && (rows && !typed ? true : o.toLowerCase().includes(input.toLowerCase()))))].slice(0, rows ? 200 : 20);
   const bareStyle = { height: '28px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: 'center' };
   const normalStyle = { padding: '5px 8px', borderRadius: '5px', border: '0.5px solid #d0d0d0', fontSize: '12px', width: '100%', boxSizing: 'border-box', height: '30px' };
   // ✅ เลือก Option — ใช้ร่วมทั้ง Mouse Click และ Arrow+Enter
-  const selectOption = (opt) => { setInput(opt); onChange(opt); setOpen(false); setHighlight(-1); };
+  const selectOption = (opt) => { setTyped(false); setInput(opt); onChange(opt); setOpen(false); setHighlight(-1); };
   // MARKER_COMBOBOX_PORTAL_FIX_V1 -- คำนวณตำแหน่งก่อนเปิด Dropdown เสมอ (สำหรับ Portal position:fixed)
   const openDropdown = () => {
     if (ref.current) {
@@ -240,13 +269,13 @@ function ComboBox({ value, onChange, options, placeholder, bare }) { // MARKER_C
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <input value={input}
-        onChange={e => { setInput(e.target.value); onChange(e.target.value); openDropdown(); setHighlight(-1); }}
-        onFocus={openDropdown}
+        onChange={e => { setTyped(true); setInput(e.target.value); onChange(e.target.value); openDropdown(); setHighlight(-1); }}
+        onFocus={() => { setTyped(false); openDropdown(); }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder || ''}
         style={bare ? bareStyle : normalStyle} />
       {open && filtered.length > 0 && ReactDOM.createPortal(
-        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 99999, maxHeight: '180px', overflowY: 'auto' }}>
+        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 99999, maxHeight: rows ? `${rows*30}px` : '180px', overflowY: 'auto' }}>
           {filtered.map((opt, i) => (
             <div key={i} onMouseDown={() => selectOption(opt)}
               onMouseEnter={() => setHighlight(i)}
@@ -619,6 +648,8 @@ const autofillBranchImportRows = (rows, existing) => {
 };
 // MARKER_BRANCH_IMPORT_MIN_REQUIRED_V1 -- Import สาขาใหม่: ต้องมีช่องขั้นต่ำครบ (หลังระบบเติมให้แล้ว) ไม่ครบ = ไม่ผ่าน (ไม่ถูก Import) และบอกว่าขาดอะไร
 const BRANCH_IMPORT_REQUIRED = [['Branch Code', 'Branch Code'], ['status', 'Status'], ['Company for Show in Report Display', 'Company for Report'], ['Simple Company', 'Simple Company'], ['bu', 'BU'], ['Group-P', 'Group-P'], ['BU-TaxID', 'BU Tax ID'], ['BU-Branch', 'BU Branch']];
+// MARKER_BRANCH_REQUIRED_MARK_V1 -- หัวคอลัมน์ใน Excel ที่ลงท้ายด้วย * (ช่องบังคับ) ให้ตัด * ออกก่อน แล้วค่อยจับคู่ชื่อ Field
+const stripReqMark = (rows) => rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [String(k).replace(/\s*\*+\s*$/, '').trim(), v])));
 const markInvalidNewBranchRows = (rows) => rows.map((r) => {
   if (r._status !== 'new') return r;
   const has = (k) => String(r[k] == null ? '' : r[k]).trim() !== '';
@@ -1238,14 +1269,48 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     setRecycleBinLoading2(false); setRecycleBinProgress(0);
   };
 
-  const handleBranchDownloadTemplate = () => { const ws = XLSX.utils.aoa_to_sheet([BRANCH_FIELDS.filter(f => !['updated_by','updated_at'].includes(f))]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'BranchList'); XLSX.writeFile(wb, 'BranchList_Template.xlsx'); };
-
-  const handleBranchFileChange = (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (evt) => { try { const cl = await fetchCollection('CompanyList'); if (Array.isArray(cl)) BRANCH_COMPANY_LIST = cl; } catch (e) { /* ใช้ค่าเดิม */ } const wb = XLSX.read(evt.target.result, { type: 'binary' }); let rawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }).filter((r) => String(r[BRANCH_KEY] || '').trim()).map((r) => ({ ...r, 'Branch Address': cleanBranchAddress(r['Branch Address']) })); rawRows = autofillBranchImportRows(rawRows, branches); /* MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- ข้ามแถวที่ไม่มี Branch Code (แถวอังกฤษที่ต่อใต้) */ setBranchPreviewRows(markInvalidNewBranchRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS))); setShowBranchPreview(true); };
-    reader.readAsBinaryString(file); e.target.value = '';
+  // MARKER_BRANCH_TEMPLATE_DESIGNED_FILE_V1 -- ปุ่ม Template โหลดไฟล์ที่ออกแบบไว้ (public/templates/BranchList_Template.xlsx); ถ้าโหลดไม่ได้ค่อย fallback เป็นไฟล์หัวคอลัมน์เปล่า
+  const handleBranchDownloadTemplate = async () => {
+    try {
+      const res = await fetch(`${process.env.PUBLIC_URL || ''}/templates/BranchList_Template.xlsx?v=${Date.now()}`, { cache: 'no-store' });
+      const ct = String(res.headers.get('content-type') || '');
+      if (!res.ok || ct.includes('text/html')) throw new Error('template not found');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'BranchList_Template.xlsx';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) { handleBranchDownloadTemplateBasic(); }
   };
+  const handleBranchDownloadTemplateBasic = () => { const ws = XLSX.utils.aoa_to_sheet([BRANCH_FIELDS.filter(f => !['updated_by','updated_at'].includes(f)).map(f => BRANCH_REQUIRED_KEYS.includes(f) ? f + ' *' : f)]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'BranchList'); XLSX.writeFile(wb, 'BranchList_Template.xlsx'); };
+
+  // MARKER_BRANCH_IMPORT_DRAG_DROP_V1 -- Import ได้ทั้งกดปุ่มเลือกไฟล์ และลากไฟล์มาวางบนหน้า Branch
+  const handleBranchFileChange = (e) => {
+    const file = e && e.target ? e.target.files[0] : e; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => { try { const cl = await fetchCollection('CompanyList'); if (Array.isArray(cl)) BRANCH_COMPANY_LIST = cl; } catch (e) { /* ใช้ค่าเดิม */ } const wb = XLSX.read(evt.target.result, { type: 'binary' }); let rawRows = stripReqMark(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })).filter((r) => String(r[BRANCH_KEY] || '').trim()).map((r) => ({ ...r, 'Branch Address': cleanBranchAddress(r['Branch Address']) })); rawRows = autofillBranchImportRows(rawRows, branches); /* MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- ข้ามแถวที่ไม่มี Branch Code (แถวอังกฤษที่ต่อใต้) */ setBranchPreviewRows(markInvalidNewBranchRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS))); setShowBranchPreview(true); };
+    reader.readAsBinaryString(file); if (e && e.target) e.target.value = '';
+  };
+  const [branchDragOver, setBranchDragOver] = useState(false);
+  const branchDropRef = useRef({});
+  branchDropRef.current = { tab, handle: handleBranchFileChange };
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+    const onEnter = (e) => { if (branchDropRef.current.tab !== 'branch' || !hasFiles(e)) return; e.preventDefault(); depth++; setBranchDragOver(true); };
+    const onOver = (e) => { if (branchDropRef.current.tab !== 'branch' || !hasFiles(e)) return; e.preventDefault(); };
+    const onLeave = (e) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (depth === 0) setBranchDragOver(false); };
+    const onDrop = (e) => {
+      if (!hasFiles(e)) return; depth = 0; setBranchDragOver(false);
+      if (branchDropRef.current.tab !== 'branch') return;
+      e.preventDefault();
+      const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (!f) return;
+      if (!/\.(xlsx|xls)$/i.test(f.name)) { alert('รองรับเฉพาะไฟล์ .xlsx หรือ .xls'); return; }
+      branchDropRef.current.handle(f);
+    };
+    window.addEventListener('dragenter', onEnter); window.addEventListener('dragover', onOver);
+    window.addEventListener('dragleave', onLeave); window.addEventListener('drop', onDrop);
+    return () => { window.removeEventListener('dragenter', onEnter); window.removeEventListener('dragover', onOver); window.removeEventListener('dragleave', onLeave); window.removeEventListener('drop', onDrop); };
+  }, []);
 
   const handleBranchConfirmImport = async () => {
     setBranchImporting(true);
@@ -1305,6 +1370,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   const getInfoOptions = (field) => [...new Set(infoItems.map(i => i[field]||'').filter(v=>v))];
+  const PREPARE_KEYS = ['AP Prepare By','IE Prepare By','PREPARE BY']; // MARKER_BUSINESSUNIT_PREPARE_DROPDOWN_V1
+  const getPrepareOptions = () => [...new Set(infoItems.flatMap(i => PREPARE_KEYS.map(k => String(i[k]||'').trim())).filter(v=>v))].sort((a,b)=>a.localeCompare(b));
   const getBranchOptions = (field) => [...new Set(branches.map(i => i[field]||'').filter(v=>v))];
 
   const renderColGroup = (columns, hasCheck, actionW) => (
@@ -1575,6 +1642,8 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
         />
       ) : key === 'base' ? ( // MARKER_BUSINESSUNIT_BASE_DROPDOWN_V1 -- Base: เลือกได้เฉพาะ CRC / RBS / CDG / CHR Base
         <FixedSelect value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={['CRC Base','RBS Base','CDG Base','CHR Base']} placeholder="เลือก Base" />
+      ) : PREPARE_KEYS.includes(key) ? ( // MARKER_BUSINESSUNIT_PREPARE_DROPDOWN_V1 -- Prepare By ทั้ง AP/IE/VAT: รายชื่อจาก 3 คอลัมน์ไม่ซ้ำ, 5 แถวแล้ว Scroll
+        <ComboBox value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getPrepareOptions()} placeholder="เลือก Prepare By" rows={5} bare/>
       ) : INFO_COMBO.includes(key) ? (
         <ComboBox value={infoForm[key]||''} onChange={val=>setInfoForm({...infoForm,[key]:val})} options={getInfoOptions(key)} placeholder={`เลือก ${label}`} bare/>
       ) : (
@@ -1831,6 +1900,11 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleBranchDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
               <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => branchFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
               <input ref={branchFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleBranchFileChange} />
+              {branchDragOver && (
+                <div style={{ position:'fixed', inset:0, zIndex:9999, background:'rgba(15,110,86,0.15)', border:'4px dashed #0F6E56', display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none' }}>
+                  <div style={{ background:'#0F6E56', color:'#fff', padding:'18px 32px', borderRadius:'12px', fontSize:'18px', fontWeight:700, boxShadow:'0 8px 30px rgba(0,0,0,.25)' }}>📂 วางไฟล์ Excel ที่นี่เพื่อ Import สาขา</div>
+                </div>
+              )}
               <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowBranchNew(true); setBranchNewForm(Object.fromEntries(BRANCH_EDIT.map(([k]) => [k, k === 'status' ? 'Active' : '']))); setBranchNewError(''); /* MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1 */ }}>+ New</button>
             </>}
           </div>

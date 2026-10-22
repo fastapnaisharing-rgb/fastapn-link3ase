@@ -15,7 +15,9 @@ import { broadcastWs, subscribeWs } from '../wsManager';
 import { confirmDialog } from '../confirmDialog';
 // MARKER_REJECT_CHAT_DRAWER_V1
 import BatchChatDrawer from './BatchChatDrawer';
-import { parseOraText, PREPAYMENT_TEMPLATE_COLUMNS } from '../lib/IE-MacroLogic'; // MARKER_IE_MACROLOGIC_IMPORT_V1
+import { parseOraText, PREPAYMENT_TEMPLATE_COLUMNS, getPrepaymentColumns, getPrepaymentColumnsFromHeader } from '../lib/IE-MacroLogic'; // MARKER_IE_MACROLOGIC_TOPS_EXTRA_COLS_V1 // MARKER_IE_MACROLOGIC_IMPORT_V1
+import { preparePrepaymentPivot, injectPrepaymentPivot } from '../lib/IE-PrepaymentPivot'; // MARKER_IE_PREPAYMENT_PIVOT_V1
+import { composePrepaymentAgingMail, compactMailHtml, buildPrepaymentAgingRows, buildPrepaymentAgingHtml, findUnknownPlaceholders, bodyEditablePart, lockBodyTpl, DEFAULT_SUBJECT_TPL, DEFAULT_MAIL_CONFIG, DEFAULT_BODY_TPL, PREPAYMENT_AGING_PLACEHOLDER, PREPAYMENT_MAIL_PLACEHOLDERS } from '../lib/IE-PrepaymentAgingMail'; // MARKER_IE_PREPAYMENT_AGING_MAIL_V1
 // MARKER_IE_MACROLOGIC_EXCELJS_IMPORT_V1 — ใช้สร้าง Export Excel แบบมี Styling (สี Header, เส้นขอบ, Freeze, Column Width)
 // ⚠️ ต้องรัน `npm install exceljs` ในโปรเจกต์ก่อน ไม่งั้น Build จะพังหา Package ไม่เจอ
 import ExcelJS from 'exceljs';
@@ -3632,6 +3634,65 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
 // ─────────────────────────────────────────────────────────────────────────────
 // RealVendorPopup — เลือก Real Vendor จาก sm_code_list + กรอก Real Invoice No.
 // ─────────────────────────────────────────────────────────────────────────────
+// MARKER_IE_MAIL_BU_SEARCH_PICKER_V1 -- กล่องเลือก BU แบบค้นหาได้ (Mail Manage): เห็น 5 แถว เลื่อนดูที่เหลือ + ช่อง Search
+function IeMailBuPicker({ value, options = [], pinned = [], onChange, disabled = false }) { // MARKER_IE_MAIL_BU_PICKER_PINNED_V1 -- pinned = BU ที่มี Config แล้ว (ขึ้นก่อน + จุดเขียว) / Dropdown กว้างเท่าช่อง
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [hi, setHi] = useState(0);
+  const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+  const pinSet = new Set((pinned || []).map(String));
+  const ordered = [...(options || []).filter((o) => pinSet.has(String(o))), ...(options || []).filter((o) => !pinSet.has(String(o)))];
+  const filtered = ordered.filter((o) => !q.trim() || String(o).toLowerCase().includes(q.trim().toLowerCase()));
+  const lastPinIdx = filtered.reduce((acc, o, i) => (pinSet.has(String(o)) ? i : acc), -1);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  useEffect(() => { if (!open) return undefined; const f = () => { if (inputRef.current) inputRef.current.focus(); }; f(); const t1 = setTimeout(f, 0); const t2 = setTimeout(f, 80); return () => { clearTimeout(t1); clearTimeout(t2); }; }, [open]); // MARKER_IE_MAIL_BU_PICKER_FOCUS_V1 -- Cursor อยู่ช่องค้นหาทันที (กันปุ่มแย่ง Focus ตอนปล่อยเมาส์)
+  useEffect(() => { setHi(0); }, [q, open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.children[hi];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }, [hi, open]);
+  const pick = (o) => { setOpen(false); setQ(''); if (o !== value) onChange(o); };
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi((i) => (filtered.length ? (i + 1) % filtered.length : 0)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((i) => (filtered.length ? (i - 1 + filtered.length) % filtered.length : 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[hi] != null) pick(filtered[hi]); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); setQ(''); }
+  };
+  const ROW_H = 30;
+  return (
+    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-block', verticalAlign: 'middle' }}>
+      <button type="button" disabled={disabled} onClick={(e) => { e.preventDefault(); setOpen((o) => !o); }}
+        title="คลิกเพื่อค้นหา / เลือก BU"
+        style={{ height: '30px', minWidth: '170px', display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', border: '0.5px solid #cfd6df', borderRadius: '6px', padding: '0 8px', fontSize: '12px', background: '#fff', color: '#1a3a5c', cursor: disabled ? 'not-allowed' : 'pointer' }}>
+        <span>{value || 'เลือก BU'}</span>
+        <span style={{ color: '#888', fontSize: '11px' }}>🔍 ▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: '34px', left: 0, zIndex: 60, width: '100%', boxSizing: 'border-box', background: '#fff', border: '0.5px solid #cfd6df', borderRadius: '8px', boxShadow: '0 6px 20px rgba(0,0,0,0.15)', padding: '6px' }}>
+          <input ref={inputRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} placeholder="🔍 ค้นหา BU..."
+            style={{ width: '100%', boxSizing: 'border-box', height: '28px', border: '0.5px solid #cfd6df', borderRadius: '6px', padding: '0 8px', fontSize: '12px', outline: 'none', marginBottom: '4px' }} />
+          <div ref={listRef} style={{ maxHeight: `${ROW_H * 5}px`, overflowY: 'auto' }}>
+            {filtered.map((o, i) => (
+              <div key={o} onMouseDown={(e) => { e.preventDefault(); pick(o); }} onMouseEnter={() => setHi(i)}
+                style={{ height: `${ROW_H}px`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 8px', fontSize: '12px', cursor: 'pointer', borderRadius: '4px', background: i === hi ? '#eaf0f6' : (o === value ? '#f3f7fb' : 'transparent'), color: o === value ? '#1a3a5c' : '#333', fontWeight: o === value ? 600 : 400, borderBottom: i === lastPinIdx && i < filtered.length - 1 ? '0.5px solid #d5e2f0' : 'none' }}>
+                <span>{o}</span>{pinSet.has(String(o)) && <span title="มี Config แล้ว" style={{ marginLeft: 'auto', color: '#1a7a4c', fontSize: '14px', fontWeight: 700 }}>✓</span>}
+              </div>
+            ))}
+            {filtered.length === 0 && <div style={{ height: `${ROW_H}px`, display: 'flex', alignItems: 'center', padding: '0 8px', fontSize: '12px', color: '#aaa' }}>ไม่พบ BU</div>}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
 // SmComboBox — custom dropdown มี maxHeight + scroll (ใช้ใน RealVendorPopup smGrid)
 function SmComboBox({ value, onChange, options = [], center = false }) {
   const [open, setOpen] = useState(false);
@@ -19863,7 +19924,343 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
 
-  useEffect(() => { fetchCollection('BranchList'); }, []);
+  // MARKER_IE_MACROLOGIC_PREVIEW_AGING_CHART_V1 -- เฉพาะหน้า Preview: ปุ่มเต็มจอ (Browser Fullscreen เหมือน VatDashboard) + กราฟ Aging
+  // (ไม่กระทบไฟล์ Excel ที่ Download -- กราฟคำนวณสดจากแถวที่อ่านมาใน Preview)
+  const previewBoxRef = useRef(null);
+  const [previewFull, setPreviewFull] = useState(false);
+  const [agingMetric, setAgingMetric] = useState('count'); // 'count' | 'amount'
+  // MARKER_IE_MACROLOGIC_PREVIEW_FILTER_V1 -- แถบ Search + Aging Filter ระหว่างกราฟกับตาราง (กรองเฉพาะตารางที่ดูใน Preview ไม่กระทบไฟล์)
+  const [previewSearch, setPreviewSearch] = useState('');
+  const [previewAging, setPreviewAging] = useState('ALL');
+  useEffect(() => { setPreviewSearch(''); setPreviewAging('ALL'); }, [previewEntry]);
+
+  // MARKER_IE_MACROLOGIC_MAIL_MANAGE_V1 -- Mail Manage: Config Email ต่อ (ประเภทรายงาน + BU) เก็บบน Server
+  const MAIL_REPORT_TYPES = [{ value: 'PREPAYMENT', label: 'Prepayment' }];
+  const [mailOpen, setMailOpen] = useState(false);
+  const [mailType, setMailType] = useState('PREPAYMENT');
+  const [mailBu, setMailBu] = useState('');
+  const [mailForm, setMailForm] = useState({ ...DEFAULT_MAIL_CONFIG });
+  const [mailMeta, setMailMeta] = useState(null); // แถวที่บันทึกไว้ (updated_by/updated_at) หรือ null = ยังไม่เคยตั้งค่า
+  const [mailList, setMailList] = useState([]);
+  // MARKER_IE_MACROLOGIC_MAIL_TEMPLATE_V1 -- Draft Template กลาง (Subject/Body + Placeholder) ใช้ร่วมกันหลาย Config แบบเดียวกับ VAT (draft_id)
+  const [mailTemplates, setMailTemplates] = useState([]);
+  const [tplForm, setTplForm] = useState({ id: null, name: '', subject_template: DEFAULT_SUBJECT_TPL, body_template: DEFAULT_BODY_TPL });
+  const [tplDirty, setTplDirty] = useState(false);
+  const applyTpl = (t) => setTplForm(t ? { id: t.id, name: t.name || '', subject_template: t.subject_template || '', body_template: t.body_template || '' } : { id: null, name: '', subject_template: DEFAULT_SUBJECT_TPL, body_template: DEFAULT_BODY_TPL });
+  const [mailBusy, setMailBusy] = useState(false);
+  const [mailMsg, setMailMsg] = useState(null); // { ok, text }
+  const [mailTab, setMailTab] = useState('config'); // MARKER_IE_MACROMAIL_EXAMPLE_TAB_V1 -- แท็บ Config | Example (ตัวอย่างเมล)
+  const [draftMail, setDraftMail] = useState(null); // { mail, hasConfig } -- Overlay Draft ใน Preview
+  // MARKER_IE_MACROLOGIC_MAIL_BU_OPTIONS_V1 -- รายชื่อ BU จริงมาจาก CompanyList (ฟิลด์ bu) ไม่ใช่ BranchList."BU Code" ที่มีค่าปน เช่น '-', '0', '11012'
+  const mailBuOptions = (() => {
+    const items = getCached('CompanyList') || [];
+    // MARKER_IE_MAIL_BU_OPTIONS_UNION_V1 -- รวม BU จาก CompanyList + BU ใน Job ที่มี + BU ที่ตั้ง Config ไว้แล้ว (กัน CompanyList ยังไม่โหลดแล้ว Dropdown เหลือ BU เดียว)
+    const fromJobs = (jobs || []).map(j => String((j && j.bu) || '').trim());
+    const fromCfg = (mailList || []).map(it => String((it && it.bu) || '').trim());
+    const fromCompany = items.map(c => String(c['bu'] || '').trim());
+    return [...new Set([...fromCompany, ...fromJobs, ...fromCfg].filter(Boolean))].sort((x, y) => x.localeCompare(y));
+  })();
+  const loadMailConfig = async (type, bu) => {
+    if (!bu) { setMailForm({ ...DEFAULT_MAIL_CONFIG }); setMailMeta(null); applyTpl(null); return; }
+    setMailBusy(true); setMailMsg(null); setMailDirty(false); setTplDirty(false); setMailStale(false);
+    try {
+      const data = await apiFetch(`/ie-macrologic-mail/config?report_type=${encodeURIComponent(type)}&bu=${encodeURIComponent(bu)}`);
+      const tplId = (data && data.template && data.template.id) || null;
+      if (data && data.config) { setMailForm({ ...DEFAULT_MAIL_CONFIG, ...data.config, template_id: data.config.template_id || tplId }); setMailMeta(data.config); }
+      else { setMailForm({ ...DEFAULT_MAIL_CONFIG, template_id: tplId }); setMailMeta(null); }
+      applyTpl(data && data.template);
+    } catch (e) { setMailMsg({ ok: false, text: e.message || 'โหลด Config ไม่สำเร็จ' }); }
+    finally { setMailBusy(false); }
+  };
+  const loadMailList = async (type) => {
+    try { const d = await apiFetch(`/ie-macrologic-mail/list?report_type=${encodeURIComponent(type)}`); setMailList((d && d.items) || []); }
+    catch (e) { setMailList([]); }
+  };
+  const loadMailTemplates = async (type) => {
+    try { const d = await apiFetch(`/ie-macrologic-mail/templates?report_type=${encodeURIComponent(type)}`); setMailTemplates((d && d.items) || []); }
+    catch (e) { setMailTemplates([]); }
+  };
+  const openMailManage = () => {
+    const bu0 = mailBu || (previewEntry && previewEntry.job && previewEntry.job.bu) || (jobs[0] && jobs[0].bu) || mailBuOptions[0] || '';
+    setMailBu(bu0); setMailOpen(true); setMailMsg(null);
+    loadMailConfig(mailType, bu0); loadMailList(mailType); loadMailTemplates(mailType); loadMailDrafts(mailType, bu0);
+  };
+  const saveMailConfig = async () => {
+    if (!mailBu) { setMailMsg({ ok: false, text: 'เลือก BU ก่อน' }); return; }
+    { const bd = [...badMails(mailForm.to_emails), ...badMails(mailForm.cc_emails)]; if (bd.length) { setMailMsg({ ok: false, text: 'รูปแบบอีเมลไม่ถูกต้อง: ' + bd.join(', ') }); return; } }
+    // MARKER_IE_MACROMAIL_CONFIG_OWN_TEMPLATE_V1 -- Subject/เนื้อหาบันทึกพร้อม Config ต่อ BU (ไม่ต้องกด 'บันทึก Draft' แยก)
+    setMailBusy(true); setMailMsg(null);
+    try {
+      const body = { report_type: mailType, bu: mailBu, to_emails: cleanMailList(mailForm.to_emails), cc_emails: cleanMailList(mailForm.cc_emails), greeting_name: mailForm.greeting_name, attach_file: mailForm.attach_file !== false, template_id: tplForm.id || null, subject_template: tplForm.subject_template || '', body_template: lockBodyTpl(bodyEditablePart(tplForm.body_template)) };
+      const d = await apiFetch('/ie-macrologic-mail/config', { method: 'PUT', body: JSON.stringify(body) });
+      if (d && d.config) { setMailForm({ ...DEFAULT_MAIL_CONFIG, ...d.config }); setMailMeta(d.config); }
+      if (d && d.template) applyTpl(d.template);
+      setMailMsg({ ok: true, text: `บันทึก Config ${mailType} / ${mailBu} แล้ว` });
+      setMailDirty(false); setTplDirty(false); setMailStale(false);
+      loadMailTemplates(mailType);
+      loadMailList(mailType);
+      notifyMail('ie_macromail_config_updated', { report_type: mailType, bu: mailBu, action: 'save' });
+    } catch (e) { setMailMsg({ ok: false, text: e.message || 'บันทึกไม่สำเร็จ' }); }
+    finally { setMailBusy(false); }
+  };
+  const editTplForm = (fn) => { setTplDirty(true); setMailDirty(true); setTplForm(fn); };
+  const selectTemplate = (id) => {
+    const t = mailTemplates.find(x => String(x.id) === String(id));
+    if (!t) return;
+    applyTpl(t); setTplDirty(false); setMailDirty(true); setMailForm(f => ({ ...f, template_id: t.id })); setMailMsg(null);
+  };
+  const newTemplate = () => { applyTpl(null); setTplDirty(true); setMailDirty(true); setMailMsg(null); };
+  const saveTemplate = async () => {
+    if (!tplForm.name.trim()) { setMailMsg({ ok: false, text: 'ตั้งชื่อ Draft ก่อนบันทึก' }); return; }
+    setMailBusy(true); setMailMsg(null);
+    try {
+      const d = await apiFetch('/ie-macrologic-mail/template', { method: 'PUT', body: JSON.stringify({ id: tplForm.id, report_type: mailType, name: tplForm.name, subject_template: tplForm.subject_template, body_template: tplForm.body_template }) });
+      if (d && d.template) { applyTpl(d.template); setMailForm(f => ({ ...f, template_id: d.template.id })); }
+      setTplDirty(false);
+      setMailMsg({ ok: true, text: `บันทึก Draft "${(d && d.template && d.template.name) || tplForm.name}" แล้ว — มีผลกับทุก Config ที่ใช้ Draft นี้` });
+      loadMailTemplates(mailType);
+      notifyMail('ie_macromail_template_updated', { report_type: mailType, id: d && d.template && d.template.id, action: 'save' });
+    } catch (e) { setMailMsg({ ok: false, text: e.message || 'บันทึก Draft ไม่สำเร็จ' }); }
+    finally { setMailBusy(false); }
+  };
+  const deleteTemplate = async () => {
+    if (!tplForm.id || !window.confirm(`ลบ Draft "${tplForm.name}" ?`)) return;
+    setMailBusy(true); setMailMsg(null);
+    try {
+      await apiFetch(`/ie-macrologic-mail/template/${tplForm.id}`, { method: 'DELETE' });
+      notifyMail('ie_macromail_template_updated', { report_type: mailType, id: tplForm.id, action: 'delete' });
+      setMailMsg({ ok: true, text: 'ลบ Draft แล้ว' });
+      await loadMailTemplates(mailType); loadMailConfig(mailType, mailBu);
+    } catch (e) { setMailMsg({ ok: false, text: e.message || 'ลบไม่สำเร็จ' }); }
+    finally { setMailBusy(false); }
+  };
+  const deleteMailConfig = async () => {
+    if (!mailMeta || !window.confirm(`ลบ Config ${mailType} / ${mailBu} ?`)) return;
+    setMailBusy(true); setMailMsg(null);
+    try {
+      await apiFetch(`/ie-macrologic-mail/config?report_type=${encodeURIComponent(mailType)}&bu=${encodeURIComponent(mailBu)}`, { method: 'DELETE' });
+      setMailForm({ ...DEFAULT_MAIL_CONFIG }); setMailMeta(null); setMailMsg({ ok: true, text: 'ลบ Config แล้ว' }); setMailDirty(false); loadMailList(mailType);
+      notifyMail('ie_macromail_config_updated', { report_type: mailType, bu: mailBu, action: 'delete' });
+    } catch (e) { setMailMsg({ ok: false, text: e.message || 'ลบไม่สำเร็จ' }); }
+    finally { setMailBusy(false); }
+  };
+  // ── Draft Mail: ทุก Draft ถูกบันทึกลงตารางกลางพร้อม Source (Job/ไฟล์ที่มา + เปิดจากหน้าไหน + Config ที่ใช้) เพื่อเลือกใช้ซ้ำได้ ──
+  // MARKER_IE_MACROLOGIC_MAIL_REALTIME_V1 -- Broadcast + Auto Refresh: ทุกจุดที่ Update (Config / Draft / Job) แจ้งทุกคนที่เปิดอยู่ผ่าน WS แล้ว Refresh กลับ
+  const [mailDirty, setMailDirty] = useState(false); // ผู้ใช้กำลังแก้ฟอร์ม Config ที่ยังไม่บันทึก -- ห้าม Refresh ทับ
+  const [mailStale, setMailStale] = useState(false); // มีคนอื่นแก้ Config ชุดเดียวกันระหว่างที่เรากำลังแก้
+  const editMailForm = (fn) => { setMailDirty(true); setMailForm(fn); };
+  // MARKER_IE_MAILMANAGE_PASTE_CLEAN_V2 -- ช่อง To/CC เหมือน VAT Config CC: ดึงอีเมลจากข้อความที่วาง (ตัดชื่อ <> [] " ) / คั่น '; ' อัตโนมัติ / ตัดซ้ำ / ข้อความที่ไม่ใช่อีเมลเก็บไว้ให้แก้ (กรอบแดง + กันบันทึก)
+  const MAIL_RE = /[A-Za-z0-9._%+'\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}/g;
+  const cleanMailList = (t) => { const seen = new Set(); const out = []; String(t || '').split(/[;,\n\r\t]+/).forEach((tok) => { const x = tok.trim(); if (!x) return; const found = x.match(MAIL_RE); (found || (x.indexOf('@') < 0 ? [] : [x.replace(/^[<\["'(]+|[>\]"')]+$/g, '').trim()])).forEach((m) => { if (!m) return; const k = m.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(m); } }); }); return out.join('; '); };
+  const badMails = (t) => cleanMailList(t).split('; ').filter((m) => m && !/^[^\s@;,<>]+@[^\s@;,<>]+\.[^\s@;,<>]+$/.test(m));
+  const pasteMailField = (field) => (ev) => { const t = ev.clipboardData && ev.clipboardData.getData('text/plain'); if (!t) return; ev.preventDefault(); editMailForm((f) => ({ ...f, [field]: cleanMailList(`${f[field] || ''}; ${t}`) })); };
+  const blurMailField = (field) => () => editMailForm((f) => { const c = cleanMailList(f[field]); return c === String(f[field] || '').trim() ? f : { ...f, [field]: c }; });
+  const notifyMail = (event, data) => { try { broadcastWs(event, data); } catch (e) { console.error('[broadcast ' + event + ']', e); } };
+  const mailLive = useRef({});
+  useEffect(() => {
+    const unsub = subscribeWs(['ie_macromail_config_updated', 'ie_macromail_draft_updated', 'ie_macromail_template_updated', 'ie_macrologic_job_changed'], (event, payload) => {
+      const L = mailLive.current;
+      if (event === 'ie_macrologic_job_changed') { L.loadJobs && L.loadJobs(); return; }
+      const type = String((payload && payload.report_type) || '').toUpperCase();
+      const bu = String((payload && payload.bu) || '');
+      if (!L.mailOpen) return;
+      if (event === 'ie_macromail_template_updated') {
+        if (type === L.mailType) {
+          L.loadMailTemplates(L.mailType);
+          if (L.tplId && String((payload && payload.id) || '') === String(L.tplId)) { if (L.mailDirty) setMailStale(true); else L.loadMailConfig(L.mailType, L.mailBu); }
+        }
+        return;
+      }
+      if (event === 'ie_macromail_config_updated') {
+        if (type === L.mailType) L.loadMailList(L.mailType); // ชิป BU ที่ตั้งค่าแล้ว
+        if (type === L.mailType && bu === L.mailBu) {
+          if (L.mailDirty) setMailStale(true); else L.loadMailConfig(L.mailType, L.mailBu);
+        }
+      } else if (type === L.mailType && (!L.mailBu || bu === L.mailBu)) {
+        L.loadMailDrafts(L.mailType, L.mailBu);
+      }
+    });
+    return unsub;
+  }, []);
+  const [mailDrafts, setMailDrafts] = useState([]);
+  const [draftRetention, setDraftRetention] = useState(30); // MARKER_IE_MACROMAIL_DRAFT_CLEAR_FE_V1
+  const bodyTplRef = useRef(null);
+  const loadMailDrafts = async (type, bu) => {
+    try { const d = await apiFetch(`/ie-macrologic-mail/drafts?report_type=${encodeURIComponent(type)}&bu=${encodeURIComponent(bu || '')}&limit=50`); setMailDrafts((d && d.items) || []); if (d && d.retention_days) setDraftRetention(d.retention_days); }
+    catch (e) { setMailDrafts([]); }
+  };
+  const readJobRows = async (job) => {
+    const blob = await fetchJobFileBlob(job.id);
+    const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array', cellDates: true });
+    const sheet = wb.Sheets['Prepayment Aging'] || wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+    const colsJ = getPrepaymentColumnsFromHeader(aoa[0]); // MARKER_IE_MACROLOGIC_TOPS_EXTRA_COLS_V1
+    return aoa.slice(1).filter(arr => arr && arr.length > 0).map(arr => {
+      const obj = {};
+      colsJ.forEach((c, idx) => {
+        let val = arr[idx];
+        if (['invoiceDate', 'settlementDate', 'paymentDate', 'expectedClearDate'].includes(c.key)) val = formatIeMacrologicDate(val);
+        else if (['invoiceAmount', 'withheldAmount', 'amountRemaining'].includes(c.key)) val = Number(val) || 0;
+        else val = val ?? '';
+        obj[c.key] = val;
+      });
+      return obj;
+    });
+  };
+  const startDraft = async (job, rows, origin) => {
+    const bu = job.bu || '';
+    let cfg = null; let tpl = null;
+    try { const d = await apiFetch(`/ie-macrologic-mail/config?report_type=PREPAYMENT&bu=${encodeURIComponent(bu)}`); cfg = d && d.config; tpl = d && d.template; } catch (e) { /* ใช้ค่าเริ่มต้น */ }
+    const mail = composePrepaymentAgingMail(cfg, rows, bu, tpl);
+    const { list, total } = buildPrepaymentAgingRows(rows);
+    let draftId = null; let saveErr = '';
+    if (bu) {
+      try {
+        const d = await apiFetch('/ie-macrologic-mail/draft', { method: 'POST', body: JSON.stringify({
+          report_type: 'PREPAYMENT', bu, source_job_id: String(job.id), source_file_name: job.file_name || '', source_origin: origin,
+          config_snapshot: { config: cfg || null, template: tpl ? { id: tpl.id, name: tpl.name, subject_template: tpl.subject_template, body_template: tpl.body_template } : null }, to_emails: mail.to, cc_emails: mail.cc, subject: mail.subject, body_html: mail.html, body_text: mail.text,
+          summary: { rows: list.map(g => ({ status: g.status, branch: g.branchName, count: g.count, remaining: g.remaining })), total_count: total.count, total_remaining: total.remaining },
+          }) });
+        draftId = d && d.draft && d.draft.id;
+        notifyMail('ie_macromail_draft_updated', { report_type: 'PREPAYMENT', bu, action: 'create', id: draftId });
+      } catch (e) { saveErr = e.message || 'บันทึก Draft ไม่สำเร็จ'; }
+    }
+    setMailMsg(saveErr ? { ok: false, text: 'เปิด Draft ได้ แต่บันทึกประวัติไม่สำเร็จ: ' + saveErr } : null);
+    setDraftMail({ mail, hasConfig: !!cfg, bu, jobId: String(job.id), fileName: job.file_name || '', origin, draftId });
+  };
+  const openDraftFromPreview = () => { if (previewEntry) startDraft(previewEntry.job, previewEntry.rows, 'PREVIEW'); };
+  const openDraftFromList = async (job) => {
+    setPreviewLoading(true);
+    try { startDraft(job, await readJobRows(job), 'JOB_LIST').catch(() => {}); }
+    catch (e) { alert('สร้าง Draft ไม่สำเร็จ: ' + e.message); }
+    finally { setPreviewLoading(false); }
+  };
+  const openSavedDraft = async (id) => {
+    try {
+      const d = await apiFetch(`/ie-macrologic-mail/draft/${id}`);
+      const x = d && d.draft; if (!x) return;
+      setMailMsg(null);
+      setDraftMail({ mail: { subject: x.subject, to: x.to_emails, cc: x.cc_emails, html: x.body_html, text: x.body_text, attach_file: !(x.config_snapshot && x.config_snapshot.config && x.config_snapshot.config.attach_file === false) }, hasConfig: true, bu: x.bu, jobId: x.source_job_id, fileName: x.source_file_name, origin: x.source_origin, draftId: x.id, saved: true, createdAt: x.created_at, createdBy: x.created_by });
+    } catch (e) { setMailMsg({ ok: false, text: e.message || 'เปิด Draft ไม่สำเร็จ' }); }
+  };
+  const clearAllDrafts = async () => { // MARKER_IE_MACROMAIL_DRAFT_CLEAR_FE_V1
+    if (!mailBu || !mailDrafts.length) return;
+    if (!window.confirm(`ล้าง Draft ที่สร้างไว้ทั้งหมดของ ${mailType} / ${mailBu} (${mailDrafts.length} รายการ) ?\nลบแล้วกู้คืนไม่ได้`)) return;
+    try { const r = await apiFetch(`/ie-macrologic-mail/drafts?report_type=${encodeURIComponent(mailType)}&bu=${encodeURIComponent(mailBu)}`, { method: 'DELETE' }); loadMailDrafts(mailType, mailBu); notifyMail('ie_macromail_draft_updated', { report_type: mailType, bu: mailBu, action: 'clear' }); setMailMsg({ ok: true, text: `ล้าง Draft แล้ว ${(r && r.deleted) || 0} รายการ` }); }
+    catch (e) { setMailMsg({ ok: false, text: e.message || 'ล้างไม่สำเร็จ' }); }
+  };
+  const deleteSavedDraft = async (id) => {
+    if (!window.confirm('ลบ Draft นี้ออกจากประวัติ ?')) return;
+    try { await apiFetch(`/ie-macrologic-mail/draft/${id}`, { method: 'DELETE' }); loadMailDrafts(mailType, mailBu); notifyMail('ie_macromail_draft_updated', { report_type: mailType, bu: mailBu, action: 'delete', id }); }
+    catch (e) { setMailMsg({ ok: false, text: e.message || 'ลบไม่สำเร็จ' }); }
+  };
+  const copyDraftMail = async () => {
+    if (!draftMail) return;
+    const { html, text } = draftMail.mail;
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new window.ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([text], { type: 'text/plain' }) })]);
+      } else { await navigator.clipboard.writeText(text); }
+      setMailMsg({ ok: true, text: 'คัดลอกเนื้อหาเมลแล้ว -- วางใน Outlook ได้เลย' });
+    } catch (e) { setMailMsg({ ok: false, text: 'คัดลอกไม่สำเร็จ: ' + (e.message || e) }); }
+  };
+  // MARKER_IE_MACROMAIL_OUTLOOK_DRAFT_V1 -- Draft Mail / Send ผ่านตัวช่วย fastapn:// (Outlook Draft Handler ตัวเดียวกับหน้า VAT / Batch Control)
+  //   mode 'draft' = เปิด Draft ใน Outlook ให้ตรวจก่อน | mode 'send' = ส่งทันที (Handler เรียก Send ให้เลย)
+  //   ไฟล์แนบ: Handler ดึงจาก /api/file-storage/:id/download ด้วย Token ของผู้ใช้ (เจ้าของ Job โหลดได้) -- ไม่ต้องแก้ Backend
+  //   เนื้อหา: ส่ง bodyHtml แบบย่อ (compactMailHtml) เพื่อให้ URL ไม่ยาวเกินขีดจำกัด | ถ้ายังยาวเกิน -> คัดลอก HTML ไว้ใน Clipboard ให้กด Ctrl+V
+  const openDraftInOutlook = async (mode = 'draft') => {
+    if (!draftMail) return;
+    const m = draftMail.mail;
+    if (!String(m.to || '').trim()) { setMailMsg({ ok: false, text: 'ยังไม่มีผู้รับ (To) -- ไปตั้งค่าที่ปุ่ม Mail Manage ก่อน' }); return; }
+    const token = sessionStorage.getItem('fastapn_token');
+    const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+    const withFile = m.attach_file && draftMail.jobId;
+    const buildUri = (bodyHtml, bodyPath) => 'fastapn://' + [
+      `to=${encodeURIComponent(String(m.to || '').trim())}`,
+      String(m.cc || '').trim() ? `cc=${encodeURIComponent(String(m.cc).trim())}` : null,
+      `subject=${encodeURIComponent(m.subject || '')}`,
+      `body=${encodeURIComponent('')}`,
+      `bodyHtml=${encodeURIComponent(bodyHtml)}`,
+      bodyPath ? `bodyPath=${encodeURIComponent(bodyPath)}` : null, // MARKER_IE_MACROMAIL_BODYPATH_V1 -- Handler v3 ดึงเนื้อเมลจาก Backend เอง
+      `attachIds=${encodeURIComponent(withFile ? String(draftMail.jobId) : '')}`,
+      `attachNames=${encodeURIComponent(encodeURIComponent(withFile ? (draftMail.fileName || 'Prepayment.xlsx') : ''))}`,
+      `token=${encodeURIComponent(token || '')}`,
+      `apiBase=${encodeURIComponent(apiBase)}`,
+      `sendMode=${encodeURIComponent(mode)}`,
+    ].filter(Boolean).join('&');
+    let uri = buildUri(compactMailHtml(m.html)); let note = '';
+    if (uri.length > 30000) {
+      // เนื้อเมลใหญ่เกินกว่าจะส่งผ่าน URL -> ให้ Handler v3 ดึงจาก Backend (ต้องมี Draft ที่บันทึกแล้ว + ทุกเครื่องของผู้ใช้เป็น Handler v3 ขึ้นไป)
+      let ready = false;
+      if (draftMail.draftId) {
+        try { const st = await apiFetch('/file-storage/outlook-handler/my-status'); ready = !!(st && Array.isArray(st.machines) && st.machines.length && st.machines.every((x) => Number(x.version) >= 3)); } catch (e) { ready = false; }
+      }
+      if (ready) {
+        uri = buildUri('<div>(ดึงเนื้อหาจาก Server ไม่สำเร็จ -- ปิดเมลนี้แล้วกด Draft Mail ใหม่)</div>', `/api/ie-macrologic-mail/draft/${draftMail.draftId}/body`);
+        note = ' (ตารางใหญ่ -- ดึงเนื้อหาจาก Server)';
+      } else {
+        if (mode === 'send') { setMailMsg({ ok: false, text: 'ตารางใหญ่เกินส่งตรงผ่านลิงก์ได้ -- ต้องใช้ตัวช่วย Outlook เวอร์ชันใหม่ (v3) ซึ่งดึงเนื้อหาจาก Server ได้ (ติดตั้งใหม่จากหน้า Batch Control / Setup - Tools แล้วลองใหม่) หรือกด Draft Mail แล้ววางตารางเอง' }); return; }
+        await copyDraftMail();
+        uri = buildUri('<div>(กด Ctrl+V เพื่อวางตารางที่คัดลอกไว้)</div>');
+        note = ' -- ตารางใหญ่เกินให้ส่งผ่านลิงก์ จึงคัดลอกไว้ใน Clipboard แล้ว กด Ctrl+V ในเมล (ติดตั้งตัวช่วย Outlook v3 เพื่อให้ดึงตารางจาก Server เอง)';
+      }
+    }
+    let handled = false;
+    const t = setTimeout(() => { if (!handled) setMailMsg({ ok: false, text: 'เปิด Outlook ไม่สำเร็จ -- เครื่องนี้ยังไม่ได้ติดตั้งตัวช่วย fastapn:// (ดูคู่มือติดตั้งในหน้า Batch Control)' }); }, 1500);
+    window.addEventListener('blur', function onBlur() {
+      handled = true; clearTimeout(t); window.removeEventListener('blur', onBlur);
+      setMailMsg({ ok: true, text: (mode === 'send' ? 'สั่งส่งเมลผ่าน Outlook แล้ว' : 'เปิด Draft ใน Outlook แล้ว -- ตรวจและกดส่งได้เลย') + note });
+    }, { once: true });
+    window.location.href = uri;
+  };
+  const ORIGIN_LABEL = { PREVIEW: 'Preview', JOB_LIST: 'รายการ Job' };
+  const renderDraftOverlay = (inside) => draftMail && (
+    <div onMouseDown={ev => { if (ev.target === ev.currentTarget) setDraftMail(null); }}
+      style={{ position: inside ? 'absolute' : 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: inside ? 5 : 10006, borderRadius: inside ? '12px' : 0 }}>
+      <div style={{ background: '#fff', borderRadius: '12px', width: 'min(1240px, 96%)', maxHeight: '92%', overflow: 'auto', padding: '18px 22px', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: '15px', fontWeight: 500, color: '#1a3a5c' }}>✉ Draft Email — PREPAYMENT / {draftMail.bu || '-'}{draftMail.draftId ? <span style={{ fontSize: '11px', color: '#888', fontWeight: 400 }}> · Draft #{draftMail.draftId}</span> : null}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>{/* MARKER_IE_MACROMAIL_SEND_BTN_V1 -- ปุ่มย้ายขึ้นด้านบน */}
+            <button onClick={copyDraftMail} style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #1a3a5c', background: '#fff', color: '#1a3a5c', fontSize: '13px', cursor: 'pointer' }}>คัดลอกเนื้อหา</button>
+            <button onClick={() => openDraftInOutlook('draft')} title="เปิด Draft ใน Outlook พร้อมผู้รับ / หัวข้อ / ตาราง / ไฟล์แนบ ให้ตรวจก่อนส่ง" style={{ padding: '6px 14px', borderRadius: '6px', border: '0.5px solid #1a3a5c', background: '#fff', color: '#1a3a5c', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>✉ Draft Mail</button>
+            <button onClick={() => openDraftInOutlook('send')} title="ส่งเมลทันทีผ่าน Outlook (ไม่เปิดให้ตรวจ)" style={{ padding: '6px 18px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>➤ Send</button>
+            <button onClick={() => setDraftMail(null)} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#999', cursor: 'pointer' }}>✕</button>
+          </div>
+        </div>
+        <div style={{ marginTop: '8px', padding: '6px 10px', background: '#f4f8fc', border: '0.5px solid #d5e2f0', borderRadius: '8px', fontSize: '12px', color: '#1a3a5c' }}>
+          <strong>Source:</strong> ไฟล์ {draftMail.fileName || '-'} (Job #{draftMail.jobId}) · เปิดจาก {ORIGIN_LABEL[draftMail.origin] || draftMail.origin || '-'}
+          {draftMail.saved ? ` · สร้างโดย ${draftMail.createdBy || '-'} ${fmtDT(draftMail.createdAt)}` : ''}
+        </div>
+        {!draftMail.hasConfig && (
+          <div style={{ marginTop: '8px', padding: '8px 12px', background: '#fff7e6', border: '0.5px solid #f0c36d', borderRadius: '8px', fontSize: '12px', color: '#7a5200' }}>
+            ยังไม่มี Config ของ PREPAYMENT / {draftMail.bu || '-'} — ไปตั้งค่าที่ปุ่ม Mail Manage เพื่อใส่ To / CC / ชื่อที่ใช้เรียน
+          </div>
+        )}
+        <div style={{ marginTop: '10px', fontSize: '12px', color: '#333', display: 'grid', gridTemplateColumns: '70px 1fr', rowGap: '4px' }}>
+          <span style={{ color: '#888' }}>To</span><span>{draftMail.mail.to || '-'}</span>
+          <span style={{ color: '#888' }}>CC</span><span>{draftMail.mail.cc || '-'}</span>
+          <span style={{ color: '#888' }}>Subject</span><span>{draftMail.mail.subject}</span>
+          <span style={{ color: '#888' }}>แนบไฟล์</span><span>{draftMail.mail.attach_file ? `📎 ${draftMail.fileName || '-'}` : 'ไม่แนบ'}</span>
+        </div>
+        <div style={{ marginTop: '10px', border: '0.5px solid #e3e7ec', borderRadius: '8px', padding: '12px 14px', overflow: 'auto' }}
+          dangerouslySetInnerHTML={{ __html: draftMail.mail.html }} />
+        {mailMsg && <div style={{ marginTop: '8px', fontSize: '12px', color: mailMsg.ok ? '#1a7a4c' : '#c0392b' }}>{mailMsg.text}</div>}
+      </div>
+    </div>
+  );
+  useEffect(() => {
+    const onChange = () => setPreviewFull(!!document.fullscreenElement && document.fullscreenElement === previewBoxRef.current);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const togglePreviewFull = () => {
+    try {
+      if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); }
+      else if (previewBoxRef.current && previewBoxRef.current.requestFullscreen) { previewBoxRef.current.requestFullscreen().catch(() => {}); }
+    } catch (e) { /* เบราว์เซอร์ไม่รองรับ/ถูกบล็อก -- ไม่ทำอะไร */ }
+  };
+
+  useEffect(() => { fetchCollection('BranchList'); try { if (!getCached('CompanyList')) fetchCollection('CompanyList').catch(() => {}); } catch (e) { /* ไม่มี Cache -> ข้าม */ } }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── โหลด Job List จาก Backend ตาม Tab ที่เลือก (mine/all) ─────────────────
   const loadJobs = async () => {
@@ -19880,6 +20277,7 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
   };
 
   useEffect(() => { loadJobs(); }, [mainTab]);
+  mailLive.current = { mailOpen, mailType, mailBu, mailDirty, tplId: tplForm.id, loadMailConfig, loadMailList, loadMailTemplates, loadMailDrafts, loadJobs }; // MARKER_IE_MACROLOGIC_MAIL_REALTIME_V1 -- ต้องอยู่หลังประกาศ loadJobs (TDZ)
 
   // ── Map Branch Code ที่เจอในไฟล์ -> BU Code จาก Branch Master (BranchList) ──
   const resolveBuFromRows = (rowsArr) => {
@@ -19896,12 +20294,14 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
   };
 
   // ── สร้าง Workbook ที่มี Styling ครบ (สี Header/เส้นขอบ/Freeze/Comma/Date Format) ──
-  const buildStyledWorkbookBuffer = async (rowsArr) => {
+  const buildStyledWorkbookBuffer = async (rowsArr, buName = '') => {
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Sheet1');
+    const wsPivot = wb.addWorksheet('Pivot'); // MARKER_IE_PREPAYMENT_PIVOT_V1 -- ชีตแรก = Pivot + Slicer (เติมท้ายฟังก์ชัน)
+    const ws = wb.addWorksheet('Prepayment Aging'); // MARKER_IE_MACROLOGIC_SHEETNAME_V1
 
     const MONTH_MAP = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
-    const DATE_KEYS = ['invoiceDate', 'settlementDate'];
+    const DATE_KEYS = ['invoiceDate', 'settlementDate', 'paymentDate', 'expectedClearDate'];
+    const colsX = getPrepaymentColumns(rowsArr); // MARKER_IE_MACROLOGIC_TOPS_EXTRA_COLS_V1
     const parseOraDateToJs = (s) => {
       const m = String(s || '').match(/^(\d{2})-([A-Z]{3})-(\d{4})$/);
       if (!m) return s;
@@ -19910,14 +20310,15 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
       return new Date(Number(m[3]), mon, Number(m[1]));
     };
 
-    const header = PREPAYMENT_TEMPLATE_COLUMNS.map(c => c.header.trim());
+    const header = colsX.map(c => c.header.trim());
     ws.addRow(header);
-    rowsArr.forEach(r => ws.addRow(PREPAYMENT_TEMPLATE_COLUMNS.map(c =>
+    const matrix = rowsArr.map(r => colsX.map(c =>
       DATE_KEYS.includes(c.key) ? parseOraDateToJs(r[c.key]) : r[c.key]
-    )));
+    ));
+    matrix.forEach(arr => ws.addRow(arr));
 
     const AMOUNT_KEYS = ['invoiceAmount', 'withheldAmount', 'amountRemaining'];
-    PREPAYMENT_TEMPLATE_COLUMNS.forEach((c, idx) => {
+    colsX.forEach((c, idx) => {
       if (AMOUNT_KEYS.includes(c.key)) ws.getColumn(idx + 1).numFmt = '#,##0.00';
       if (DATE_KEYS.includes(c.key)) ws.getColumn(idx + 1).numFmt = 'dd-mmm-yy';
     });
@@ -19947,7 +20348,15 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
     });
     ws.views = [{ state: 'frozen', ySplit: 1 }];
 
-    return wb.xlsx.writeBuffer();
+    // MARKER_IE_PREPAYMENT_PIVOT_V1 -- หัวรายงาน + Pivot Table จริง + Slicer(Status) ที่ชีต Pivot (เติมด้วย JSZip เพราะ ExcelJS สร้าง Pivot ไม่ได้)
+    const pivotInfo = preparePrepaymentPivot(wsPivot, header, matrix, { bu: buName });
+    const rawBuffer = await wb.xlsx.writeBuffer();
+    try {
+      return await injectPrepaymentPivot(rawBuffer, header, matrix, pivotInfo);
+    } catch (err) {
+      console.error('[IE-MacroLogic] เติม Pivot/Slicer ไม่สำเร็จ — ใช้ไฟล์ที่มีตารางสรุป Static แทน:', err);
+      return rawBuffer;
+    }
   };
 
   // ── Generate + อัปโหลดขึ้น Backend ทันที (ไม่เก็บ Local อีกต่อไป) ───────────
@@ -19960,7 +20369,7 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
       const now = new Date();
       const fileName = `${buForName}_Prepayment_${pad2(now.getDate())}_${pad2(now.getMonth() + 1)}_${now.getFullYear()}.xlsx`;
 
-      const buffer = await buildStyledWorkbookBuffer(parsed.rows);
+      const buffer = await buildStyledWorkbookBuffer(parsed.rows, buForName);
       const fileBase64 = arrayBufferToBase64(buffer);
       const refId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -19972,6 +20381,7 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
         }),
       });
 
+      notifyMail('ie_macrologic_job_changed', { action: 'create' });
       if (mainTab !== 'mine') setMainTab('mine'); else await loadJobs();
     } catch (err) {
       alert('บันทึกไฟล์ขึ้น Server ไม่สำเร็จ: ' + err.message);
@@ -20056,14 +20466,15 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
       const blob = await fetchJobFileBlob(job.id);
       const buf = await blob.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const sheet = wb.Sheets['Prepayment Aging'] || wb.Sheets[wb.SheetNames[0]]; // MARKER_IE_PREPAYMENT_PIVOT_V1 -- ชีตแรกเป็น Pivot แล้ว อ่านข้อมูลจากชีต Prepayment Aging
       const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
       const dataRows = aoa.slice(1);
-      const DATE_KEYS = ['invoiceDate', 'settlementDate'];
+      const DATE_KEYS = ['invoiceDate', 'settlementDate', 'paymentDate', 'expectedClearDate'];
       const AMOUNT_KEYS = ['invoiceAmount', 'withheldAmount', 'amountRemaining'];
+      const colsP = getPrepaymentColumnsFromHeader(aoa[0]); // MARKER_IE_MACROLOGIC_TOPS_EXTRA_COLS_V1
       const rows = dataRows.filter(arr => arr && arr.length > 0).map(arr => {
         const obj = {};
-        PREPAYMENT_TEMPLATE_COLUMNS.forEach((c, idx) => {
+        colsP.forEach((c, idx) => {
           let val = arr[idx];
           if (DATE_KEYS.includes(c.key)) val = formatIeMacrologicDate(val);
           else if (AMOUNT_KEYS.includes(c.key)) val = Number(val) || 0;
@@ -20086,6 +20497,7 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
       await apiFetch(`/file-storage/${job.id}`, { method: 'DELETE' });
       setJobs(prev => prev.filter(j => j.id !== job.id));
       setConfirmDeleteJob(null);
+      notifyMail('ie_macrologic_job_changed', { action: 'delete', id: job.id });
     } catch (err) {
       alert('ลบไม่สำเร็จ: ' + err.message);
     }
@@ -20096,9 +20508,17 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
 
   return (
     <div style={{ padding: '24px', height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}> {/* MARKER_IE_MACROLOGIC_FLEX_FILL_V12 -- Flex Column แทน overflow:auto เดี่ยวๆ ให้ Zone ด้านล่างยืดเต็มพื้นที่ที่เหลือได้จริง ไม่เกิด Scrollbar ซ้อนที่ Root */}
-      <div style={{ fontSize: '16px', fontWeight: 500, color: '#1a3a5c', marginBottom: '4px' }}>⚙️ Generate by Macro Logic</div>
-      <div style={{ fontSize: '12px', color: '#888', marginBottom: '18px' }}>
-        แปลง Oracle Text Report (เช่น Prepayment Status Report) เป็นตารางข้อมูลอัตโนมัติ — เก็บไฟล์ไว้บน Server 48 ชม.
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}> {/* MARKER_IE_MACROLOGIC_MAIL_MANAGE_V1 */}
+        <div>
+          <div style={{ fontSize: '16px', fontWeight: 500, color: '#1a3a5c', marginBottom: '4px' }}>⚙️ Generate by Macro Logic</div>
+          <div style={{ fontSize: '12px', color: '#888', marginBottom: '18px' }}>
+            แปลง Oracle Text Report (เช่น Prepayment Status Report) เป็นตารางข้อมูลอัตโนมัติ — เก็บไฟล์ไว้บน Server 48 ชม.
+          </div>
+        </div>
+        <button type="button" onClick={openMailManage}
+          style={{ padding: '7px 14px', borderRadius: '8px', border: '0.5px solid #1a3a5c', background: '#fff', color: '#1a3a5c', fontSize: '13px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          ✉ Mail Manage
+        </button>
       </div>
 
       {/* จุดเดียว: ลากไฟล์วาง / คลิกเลือกไฟล์ / Ctrl+V วางข้อความหรือไฟล์ */}
@@ -20182,6 +20602,10 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
                         style={{ padding: '5px 12px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '11px', fontWeight: 500, cursor: previewLoading ? 'default' : 'pointer', opacity: previewLoading ? 0.6 : 1 }}>
                         👁 Preview
                       </button>
+                      <button onClick={() => openDraftFromList(job)} disabled={previewLoading} title="สร้าง Draft Email จากไฟล์ของ Job นี้"
+                        style={{ marginLeft: '6px', padding: '5px 12px', borderRadius: '6px', border: '0.5px solid #1a3a5c', background: '#fff', color: '#1a3a5c', fontSize: '11px', fontWeight: 500, cursor: previewLoading ? 'default' : 'pointer', opacity: previewLoading ? 0.6 : 1 }}>
+                        ✉ Draft
+                      </button>
                     </td>
                     <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                       <button onClick={() => handleDownloadJob(job)}
@@ -20223,12 +20647,215 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
         </div>
       )}
 
+      {!previewEntry && renderDraftOverlay(false)}
+      {/* MARKER_IE_MACROLOGIC_MAIL_MANAGE_V1 -- Modal Mail Manage */}
+      {mailOpen && (
+        <div onMouseDown={ev => { if (ev.target === ev.currentTarget) setMailOpen(false); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10004, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: '12px', width: 'min(860px, 96vw)', height: 'min(780px, 92vh)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '20px 26px', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}> {/* MARKER_IE_MACROMAIL_FIXED_HEIGHT_V1 -- ความสูงคงที่ทั้ง 2 แท็บ: ส่วนหัว/แท็บ/ปุ่มล่างอยู่กับที่ เนื้อหาเลื่อนได้ */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 500, color: '#1a3a5c' }}>✉ Mail Manage</div>
+                <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>ตั้งค่าอีเมลแยกตามประเภทรายงาน + BU (ทุกคนที่ใช้ BU เดียวกันใช้ค่าชุดเดียวกัน)</div>
+              </div>
+              <button onClick={() => setMailOpen(false)} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#999', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <label style={{ fontSize: '12px', color: '#555' }}>ประเภทรายงาน&nbsp;
+                <select value={mailType} onChange={ev => { setMailType(ev.target.value); loadMailConfig(ev.target.value, mailBu); loadMailList(ev.target.value); loadMailTemplates(ev.target.value); loadMailDrafts(ev.target.value, mailBu); }}
+                  style={{ height: '30px', border: '0.5px solid #cfd6df', borderRadius: '6px', padding: '0 8px', fontSize: '12px' }}>
+                  {MAIL_REPORT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: '12px', color: '#555' }}>BU&nbsp;
+                <IeMailBuPicker value={mailBu} pinned={mailList.map((it) => it.bu)} options={[...new Set([mailBu, ...mailBuOptions].filter(Boolean))]} onChange={(b) => { setMailBu(b); loadMailConfig(mailType, b); loadMailDrafts(mailType, b); }} /> {/* MARKER_IE_MAIL_BU_SEARCH_PICKER_V1 */}
+              </label>
+              <span style={{ fontSize: '12px', color: mailMeta ? '#1a7a4c' : '#b45309' }}>
+                {mailMeta ? `บันทึกไว้แล้ว · แก้ไขโดย ${mailMeta.updated_by || '-'} ${fmtDT(mailMeta.updated_at)}` : 'ยังไม่เคยตั้งค่า (ค่าเริ่มต้น)'}
+              </span>
+              {mailStale && (
+                <span style={{ fontSize: '12px', color: '#b45309' }}>
+                  ⚠ มีคนอื่นแก้ Config ชุดนี้แล้ว <button type="button" onClick={() => loadMailConfig(mailType, mailBu)} style={{ marginLeft: '4px', padding: '1px 8px', border: '0.5px solid #b45309', borderRadius: '6px', background: '#fff', color: '#b45309', fontSize: '11px', cursor: 'pointer' }}>โหลดค่าล่าสุด (ทิ้งที่แก้)</button>
+                </span>
+              )}
+            </div>
+            {false && mailList.length > 0 && ( /* MARKER_IE_MAIL_CONFIGURED_CHIPS_HIDDEN_V1 -- ซ่อนแถว "ที่ตั้งค่าไว้แล้ว" (ใน Dropdown BU มีติ๊กเขียวบอกอยู่แล้ว) */
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', color: '#888' }}>ที่ตั้งค่าไว้แล้ว:</span>
+                {mailList.map(it => (
+                  <button key={it.bu} type="button" onClick={() => { setMailBu(it.bu); loadMailConfig(mailType, it.bu); loadMailDrafts(mailType, it.bu); }}
+                    style={{ padding: '2px 10px', borderRadius: '999px', border: '0.5px solid ' + (it.bu === mailBu ? '#1a3a5c' : '#cfd6df'), background: it.bu === mailBu ? '#1a3a5c' : '#fff', color: it.bu === mailBu ? '#fff' : '#1a3a5c', fontSize: '11px', cursor: 'pointer' }}>{it.bu}</button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '4px', marginTop: '12px', borderBottom: '0.5px solid #e3e7ec' }}> {/* MARKER_IE_MACROMAIL_EXAMPLE_TAB_V1 */}
+              {[['config', 'Config'], ['example', 'Example']].map(([k, lb]) => (
+                <button key={k} type="button" onClick={() => setMailTab(k)} style={{ padding: '7px 16px', fontSize: '13px', border: 'none', background: 'none', cursor: 'pointer', color: mailTab === k ? '#1a3a5c' : '#888', fontWeight: mailTab === k ? 600 : 400, borderBottom: mailTab === k ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-0.5px' }}>{lb}</button>
+              ))}
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px' }}>
+            {/* MARKER_IE_MACROLOGIC_MAIL_COMPOSE_UI_V2 -- เหมือนหน้า Config เมล VAT: To/CC/ชื่อผู้รับ/Subject/เนื้อหา (แก้ได้) + Prepayment Aging Placeholder บรรทัดสุดท้าย (ล็อก) */}
+            {(() => {
+              const sampleRows = [
+                { status: 'A - Below 15 Days', branchName: `${mailBu || 'BU'}-Head Office`, invoiceDate: '16-SEP-2026', amountRemaining: 15000 },
+                { status: 'B - Below 30 Days', branchName: `${mailBu || 'BU'}-Head Office`, invoiceDate: '17-SEP-2026', amountRemaining: 4700 },
+                { status: 'C - 2 Month', branchName: `${mailBu || 'BU'}-Chiang Mai`, invoiceDate: '19-AUG-2026', amountRemaining: 5000 },
+                { status: 'F - Over 6 Month', branchName: `${mailBu || 'BU'}-AUTO1`, invoiceDate: '15-JUL-2024', amountRemaining: 140875 },
+              ];
+              const now2 = new Date();
+              const attName = `${mailBu || 'BU'}_Prepayment_${pad2(now2.getDate())}_${pad2(now2.getMonth() + 1)}_${now2.getFullYear()}.xlsx`;
+              const editable = bodyEditablePart(tplForm.body_template);
+              const unk = findUnknownPlaceholders(editable);
+              const lab = { fontSize: '12px', color: '#555', marginBottom: '3px', display: 'block' };
+              const inp = { display: 'block', width: '100%', boxSizing: 'border-box', height: '34px', padding: '0 10px', border: '0.5px solid #cfd6df', borderRadius: '8px', fontSize: '13px', fontFamily: 'inherit' };
+              const req = <span style={{ color: '#c0392b' }}> *</span>;
+              const insertAt = (key) => {
+                const el = bodyTplRef.current; const a = el ? el.selectionStart : editable.length; const b2 = el ? el.selectionEnd : editable.length;
+                editTplForm(f => ({ ...f, body_template: lockBodyTpl(editable.slice(0, a) + key + editable.slice(b2)) }));
+                setTimeout(() => { if (el) { el.focus(); const pos = a + key.length; el.setSelectionRange(pos, pos); } }, 0);
+              };
+              if (mailTab === 'example') { // MARKER_IE_MACROMAIL_EXAMPLE_TAB_V1 -- ตัวอย่างเมลที่จะได้ (จาก Config + Draft ปัจจุบัน + ข้อมูลตัวอย่าง)
+                const ex = composePrepaymentAgingMail(mailForm, sampleRows, mailBu || 'BU', tplForm);
+                const row = { display: 'flex', gap: '8px', fontSize: '12px', padding: '3px 0' };
+                return (
+                  <div style={{ marginTop: '14px' }}>
+                    <div style={{ fontSize: '11px', color: '#8a94a3', marginBottom: '8px' }}>ตัวอย่างเมลจาก Config + Draft ที่ตั้งไว้ตอนนี้ (ตัวเลขในตารางเป็นข้อมูลตัวอย่าง ของจริงคำนวณจากไฟล์ของ Job)</div>
+                    <div style={{ border: '0.5px solid #cfd6df', borderRadius: '8px', padding: '10px 14px', background: '#fff' }}>
+                      <div style={row}><b style={{ width: '60px', color: '#555' }}>To</b><span style={{ wordBreak: 'break-all' }}>{ex.to || '-'}</span></div>
+                      <div style={row}><b style={{ width: '60px', color: '#555' }}>CC</b><span style={{ wordBreak: 'break-all' }}>{ex.cc || '-'}</span></div>
+                      <div style={row}><b style={{ width: '60px', color: '#555' }}>Subject</b><span>{ex.subject}</span></div>
+                      <div style={row}><b style={{ width: '60px', color: '#555' }}>ไฟล์แนบ</b><span>{mailForm.attach_file !== false ? `📎 ${attName}` : 'ไม่แนบ'}</span></div>
+                      <div style={{ borderTop: '0.5px solid #eef1f5', marginTop: '8px', paddingTop: '10px', overflow: 'auto', pointerEvents: 'none', userSelect: 'none' }} dangerouslySetInnerHTML={{ __html: ex.html }} />
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div style={{ marginTop: '14px', opacity: mailBusy ? 0.6 : 1 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' }}>
+                    <label><span style={lab}>To (คั่นด้วย ;){req}</span>
+                      <input type="text" value={mailForm.to_emails || ''} placeholder="name@company.com; name2@company.com" onPaste={pasteMailField('to_emails')} onBlur={blurMailField('to_emails')} onChange={ev => editMailForm(f => ({ ...f, to_emails: ev.target.value }))} style={{ ...inp, background: '#fffbe6', ...(badMails(mailForm.to_emails).length ? { borderColor: '#d32f2f' } : {}) }} />{badMails(mailForm.to_emails).length > 0 && <span style={{ display: 'block', fontSize: '11px', color: '#d32f2f', marginTop: '3px' }}>รูปแบบอีเมลไม่ถูกต้อง: {badMails(mailForm.to_emails).join(', ')}</span>}</label>
+                    <label><span style={lab}>CC (คั่นด้วย ;)</span>
+                      <input type="text" value={mailForm.cc_emails || ''} placeholder="name@company.com" onPaste={pasteMailField('cc_emails')} onBlur={blurMailField('cc_emails')} onChange={ev => editMailForm(f => ({ ...f, cc_emails: ev.target.value }))} style={{ ...inp, background: '#fffbe6', ...(badMails(mailForm.cc_emails).length ? { borderColor: '#d32f2f' } : {}) }} />{badMails(mailForm.cc_emails).length > 0 && <span style={{ display: 'block', fontSize: '11px', color: '#d32f2f', marginTop: '3px' }}>รูปแบบอีเมลไม่ถูกต้อง: {badMails(mailForm.cc_emails).join(', ')}</span>}</label>
+                  </div>
+                  <label style={{ display: 'block', marginTop: '10px' }}><span style={lab}>ชื่อผู้รับ (ใช้แทน {'{greeting_name}'} ในคำเรียก){req}</span>
+                    <input type="text" value={mailForm.greeting_name || ''} placeholder="เช่น คุณสมชาย" onChange={ev => editMailForm(f => ({ ...f, greeting_name: ev.target.value }))} style={{ ...inp, background: '#fffbe6' }} /></label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', fontSize: '12px', color: '#1a3a5c', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={mailForm.attach_file !== false} onChange={ev => editMailForm(f => ({ ...f, attach_file: ev.target.checked }))} />
+                    <span>แนบไฟล์ Excel ของ Job</span>
+                    <span style={{ padding: '2px 10px', borderRadius: '6px', background: mailForm.attach_file !== false ? '#e8f0f8' : '#f1f3f5', border: '0.5px solid #cfd6df', color: mailForm.attach_file !== false ? '#1a3a5c' : '#999', textDecoration: mailForm.attach_file !== false ? 'none' : 'line-through' }}>📎 {attName}</span>
+                  </label>
+                  {/* MARKER_IE_MACROMAIL_TPLBAR_HIDDEN_V1 -- ซ่อนแถบเลือก/ตั้งชื่อ/สร้าง Draft Template (ใช้ Draft เดียวของรายงานนี้) -- เปิดกลับโดยแก้ false เป็น true */}
+                  {false && (
+                  <div style={{ marginTop: '14px', padding: '8px 10px', background: '#f4f8fc', border: '0.5px solid #d5e2f0', borderRadius: '8px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '12px', color: '#1a3a5c', fontWeight: 500 }}>Draft</span>
+                    <select value={tplForm.id || ''} onChange={ev => selectTemplate(ev.target.value)}
+                      style={{ height: '30px', border: '0.5px solid #cfd6df', borderRadius: '6px', padding: '0 8px', fontSize: '12px', minWidth: '160px' }}>
+                      {!tplForm.id && <option value="">(Draft ใหม่ — ยังไม่บันทึก)</option>}
+                      {mailTemplates.map(t => <option key={t.id} value={t.id}>{t.name} ({t.used_by || 0} Config)</option>)}
+                    </select>
+                    <input type="text" value={tplForm.name} placeholder="ชื่อ Draft" onChange={ev => editTplForm(f => ({ ...f, name: ev.target.value }))}
+                      style={{ height: '30px', boxSizing: 'border-box', border: '0.5px solid #cfd6df', borderRadius: '6px', padding: '0 8px', fontSize: '12px', width: '180px' }} />
+                    <button type="button" onClick={newTemplate} style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #1a3a5c', background: '#fff', color: '#1a3a5c', fontSize: '12px', cursor: 'pointer' }}>+ Draft ใหม่</button>
+                    <span style={{ fontSize: '11px', color: '#6b7684' }}>Subject และเนื้อหาด้านล่างเป็นของ Draft นี้ — ใช้ร่วมกันได้หลาย BU</span>
+                  </div>
+                  )}
+                  <label style={{ display: 'block', marginTop: '10px' }}><span style={lab}>Subject (ใช้ {'{BU}'} {'{DATE}'} {'{Min_Date}'} {'{Max_Date}'} ได้)</span>
+                    <input type="text" value={tplForm.subject_template || ''} placeholder="{BU} - ขอจัดส่งรายละเอียด Prepayment ตั้งแต่ {Min_Date} - {Max_Date}" onChange={ev => editTplForm(f => ({ ...f, subject_template: ev.target.value }))} style={inp} /></label>
+                  <span style={{ ...lab, marginTop: '10px' }}>เนื้อหา</span>
+                  <div style={{ border: '0.5px solid #cfd6df', borderRadius: '8px', overflow: 'hidden' }}>
+                    <textarea ref={bodyTplRef} value={editable} rows={6}
+                      onChange={ev => editTplForm(f => ({ ...f, body_template: lockBodyTpl(ev.target.value) }))}
+                      style={{ display: 'block', width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: 'none', outline: 'none', fontSize: '13px', lineHeight: 1.7, fontFamily: 'inherit', resize: 'vertical' }} />
+                    <div style={{ borderTop: '0.5px dashed #9db8d6', background: '#f4f8fc', padding: '8px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '12px', color: '#1a3a5c', fontWeight: 500 }}>🔒 Prepayment Aging Placeholder</span>
+                        <code style={{ fontSize: '11px', color: '#6b7684' }}>{PREPAYMENT_AGING_PLACEHOLDER}</code>
+                        <span style={{ fontSize: '11px', color: '#8a94a3' }}>บรรทัดสุดท้ายของเมล · ล็อก แก้/ลบไม่ได้ · คำนวณจากข้อมูลในไฟล์ของ Job</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#8a94a3', marginTop: '3px' }}>ดูตัวอย่างตารางและเมลทั้งฉบับที่แท็บ <a href="#example" onClick={(e) => { e.preventDefault(); setMailTab('example'); }} style={{ color: '#1a3a5c' }}>Example</a></div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '5px', marginTop: '6px' }}>
+                    <span style={{ fontSize: '11px', color: '#6b7684' }}>แทรก Placeholder:</span>
+                    {PREPAYMENT_MAIL_PLACEHOLDERS.filter(ph => ph.key !== PREPAYMENT_AGING_PLACEHOLDER && ph.key !== '{add_text}').map(ph => (
+                      <button key={ph.key} type="button" title={ph.desc} onClick={() => insertAt(ph.key)}
+                        style={{ padding: '2px 9px', borderRadius: '999px', border: '0.5px solid #cfd6df', background: '#fff', color: '#1a3a5c', fontSize: '11px', cursor: 'pointer' }}>{ph.key}</button>
+                    ))}
+                    <button type="button" onClick={() => editTplForm(f => ({ ...f, body_template: DEFAULT_BODY_TPL }))}
+                      style={{ padding: '2px 9px', borderRadius: '999px', border: '0.5px solid #ddd', background: '#fff', color: '#777', fontSize: '11px', cursor: 'pointer' }}>คืนค่าเริ่มต้น</button>
+                    {unk.length > 0 && <span style={{ fontSize: '11px', color: '#b45309' }}>Placeholder ที่ไม่รู้จัก: {unk.join(', ')}</span>}
+                  </div>
+                  {false && ( /* MARKER_IE_MACROMAIL_SAVE_DRAFT_ROW_HIDDEN_V1 -- Subject/เนื้อหาบันทึกพร้อม 'บันทึก Config' ต่อ BU แล้ว */
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                    <button type="button" onClick={saveTemplate} disabled={mailBusy}
+                      style={{ padding: '5px 14px', borderRadius: '6px', border: 'none', background: tplDirty ? '#1a3a5c' : '#6b7684', color: '#fff', fontSize: '12px', cursor: 'pointer' }}>บันทึก Draft{tplDirty ? ' *' : ''}</button>
+                    {false && tplForm.id && <button type="button" onClick={deleteTemplate} disabled={mailBusy}
+                      style={{ padding: '5px 12px', borderRadius: '6px', border: '0.5px solid #e0b4b0', background: '#fff', color: '#c0392b', fontSize: '12px', cursor: 'pointer' }}>ลบ Draft</button>}
+                    <span style={{ fontSize: '11px', color: '#6b7684' }}>
+                      {tplForm.id ? `บันทึก Draft มีผลกับทุก Config ที่ใช้ Draft นี้ (${(mailTemplates.find(t => String(t.id) === String(tplForm.id)) || {}).used_by || 0} Config)` : 'ตั้งชื่อแล้วกด "บันทึก Draft" เพื่อสร้าง'}
+                    </span>
+                  </div>
+                  )}
+                </div>
+              );
+            })()}
+            {/* MARKER_IE_MACROMAIL_DRAFT_LIST_HIDDEN_V1 -- ซ่อนตาราง 'Draft ที่สร้างไว้' (ไม่ต้องดูประวัติ; Backend ลบเองหลัง 1 วัน) -- เปิดกลับได้โดยแก้ false เป็น true */}
+            {false && (
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 500, color: '#1a3a5c' }}>Draft ที่สร้างไว้ ({mailType} / {mailBu || '-'})</div>
+                <span style={{ fontSize: '11px', color: '#8a94a3' }}>ลบอัตโนมัติเมื่อเก่ากว่า {draftRetention} วัน</span>
+                <button type="button" onClick={clearAllDrafts} disabled={!mailDrafts.length} style={{ marginLeft: 'auto', padding: '3px 12px', borderRadius: '6px', border: '0.5px solid #e0b4b0', background: '#fff', color: '#c0392b', fontSize: '11px', cursor: mailDrafts.length ? 'pointer' : 'not-allowed', opacity: mailDrafts.length ? 1 : 0.4 }}>ล้างทั้งหมด</button>
+              </div>
+              <div style={{ marginTop: '6px', border: '0.5px solid #e3e7ec', borderRadius: '8px', maxHeight: '190px', overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead><tr style={{ background: '#f1f4f8', color: '#1a3a5c' }}>
+                    {['เวลา', 'Source (ไฟล์ / Job)', 'เปิดจาก', 'สร้างโดย', 'To', ''].map(h => <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 500, whiteSpace: 'nowrap', position: 'sticky', top: 0, background: '#f1f4f8' }}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {mailDrafts.length === 0 && <tr><td colSpan={6} style={{ padding: '12px', textAlign: 'center', color: '#8a94a3' }}>ยังไม่มี Draft — กด ✉ Draft ที่รายการ Job หรือใน Preview</td></tr>}
+                    {mailDrafts.map(d => (
+                      <tr key={d.id} style={{ borderTop: '0.5px solid #eef1f5' }}>
+                        <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>{fmtDT(d.created_at)}</td>
+                        <td style={{ padding: '5px 10px' }}>{d.source_file_name || '-'} <span style={{ color: '#8a94a3' }}>(Job #{d.source_job_id})</span></td>
+                        <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>{ORIGIN_LABEL[d.source_origin] || d.source_origin || '-'}</td>
+                        <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>{d.created_by || '-'}</td>
+                        <td style={{ padding: '5px 10px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.to_emails || '-'}</td>
+                        <td style={{ padding: '5px 10px', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                          <button type="button" onClick={() => openSavedDraft(d.id)} style={{ padding: '3px 10px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: '#fff', fontSize: '11px', cursor: 'pointer' }}>เลือกใช้</button>
+                          <button type="button" onClick={() => deleteSavedDraft(d.id)} title="ลบ" style={{ marginLeft: '4px', padding: '3px 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#fff', color: '#999', fontSize: '11px', cursor: 'pointer' }}>✕</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            )}
+            </div>
+            {mailMsg && <div style={{ marginTop: '10px', fontSize: '12px', color: mailMsg.ok ? '#1a7a4c' : '#c0392b', flexShrink: 0 }}>{mailMsg.text}</div>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginTop: '14px', flexShrink: 0 }}>
+              <button onClick={deleteMailConfig} disabled={!mailMeta || mailBusy}
+                style={{ padding: '7px 16px', borderRadius: '6px', border: '0.5px solid #e0b4b0', background: '#fff', color: '#c0392b', fontSize: '13px', cursor: mailMeta ? 'pointer' : 'not-allowed', opacity: mailMeta ? 1 : 0.4 }}>ลบ Config</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => setMailOpen(false)} style={{ padding: '7px 16px', borderRadius: '6px', border: '0.5px solid #ddd', background: '#fff', color: '#555', fontSize: '13px', cursor: 'pointer' }}>ปิด</button>
+                <button onClick={saveMailConfig} disabled={mailBusy}
+                  style={{ padding: '7px 18px', borderRadius: '6px', border: 'none', background: '#1a7a4c', color: '#fff', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>บันทึก Config</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MARKER_IE_MACROLOGIC_PREVIEW_POPUP_V1 — Popup Preview ตารางเต็ม (Parse สดจากไฟล์ที่ดาวน์โหลดกลับมา) */}
       {previewEntry && (
         <div
           onMouseDown={e => { if (e.target === e.currentTarget) setPreviewEntry(null); }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10005, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', borderRadius: '12px', width: '98vw', maxWidth: '98vw', maxHeight: '94vh', display: 'flex', flexDirection: 'column', padding: '24px 40px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}> {/* MARKER_IE_MACROLOGIC_V4_POPUP_GAP */}
+          <div ref={previewBoxRef} style={previewFull
+            ? { position: 'relative', background: 'white', width: '100vw', height: '100vh', maxWidth: '100vw', maxHeight: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', padding: '20px 32px' }
+            : { position: 'relative', background: 'white', borderRadius: '12px', width: '98vw', maxWidth: '98vw', height: '94vh', maxHeight: '94vh', display: 'flex', flexDirection: 'column', padding: '24px 40px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}> {/* MARKER_IE_MACROLOGIC_V4_POPUP_GAP */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
               <div>
                 <div style={{ fontSize: '15px', fontWeight: 500, color: '#1a3a5c' }}>📄 {previewEntry.job.file_name}</div>
@@ -20236,37 +20863,129 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
                   BU: <strong>{previewEntry.job.bu || '-'}</strong> · จำนวนรายการ: <strong>{previewEntry.meta.totalRows.toLocaleString()}</strong> · ยอดรวม: <strong>{fmt(previewEntry.meta.totalAmount)}</strong>
                 </div>
               </div>
-              <button onClick={() => setPreviewEntry(null)} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#999', cursor: 'pointer' }}>✕</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" onClick={openDraftFromPreview}
+                  title="เปิด Draft อีเมลจาก Mail Manage (ตามประเภทรายงาน + BU ของ Job นี้)"
+                  style={{ height: '30px', padding: '0 12px', border: '0.5px solid #d0d5dd', borderRadius: '6px', background: '#f0f2f5', color: '#1a3a5c', cursor: 'pointer', fontSize: '12px' }}>✉ Draft Email</button>
+                <button type="button" onClick={togglePreviewFull}
+                  title={previewFull ? 'ย่อกลับ (Esc)' : 'ขยายเต็มจอ'} aria-label={previewFull ? 'ย่อกลับ' : 'ขยายเต็มจอ'}
+                  style={{ width: '30px', height: '30px', padding: 0, border: '0.5px solid #d0d5dd', borderRadius: '6px', background: '#f0f2f5', color: '#1a3a5c', cursor: 'pointer', fontSize: '15px', lineHeight: 1 }}>
+                  {previewFull ? '🗗' : '⛶'}
+                </button>
+                <button onClick={() => setPreviewEntry(null)} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#999', cursor: 'pointer' }}>✕</button>
+              </div>
             </div>
-            <div style={{ flex: 1, overflow: 'auto', border: '0.5px solid #eee', borderRadius: '8px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            {/* MARKER_IE_MACROLOGIC_PREVIEW_AGING_CHART_V1 + FILTER_V1 + REDESIGN_V2 -- เฉพาะ Preview: การ์ดสรุป + แถบ Aging + Search/Filter (ไม่อยู่ในไฟล์ Download) */}
+            {(() => {
+              const ORDER = ['A - Below 15 Days', 'B - Below 30 Days', 'C - 2 Month', 'D - 3 Month', 'E - 4-6 Month', 'F - Over 6 Month', 'Settled/Unpaid'];
+              const COLORS = { 'A - Below 15 Days': '#9db8d6', 'B - Below 30 Days': '#7a9cc4', 'C - 2 Month': '#5580b0', 'D - 3 Month': '#38629a', 'E - 4-6 Month': '#e0a458', 'F - Over 6 Month': '#c0392b', 'Settled/Unpaid': '#b8bec7' };
+              const agg = {};
+              ORDER.forEach(k => { agg[k] = { n: 0, amt: 0 }; });
+              previewEntry.rows.forEach(r => {
+                const k = String(r.status || '').trim() || '(ไม่ระบุ)';
+                if (!agg[k]) agg[k] = { n: 0, amt: 0 };
+                agg[k].n += 1;
+                agg[k].amt += Number(r.amountRemaining) || 0;
+              });
+              const keys = [...ORDER, ...Object.keys(agg).filter(k => !ORDER.includes(k))];
+              const val = k => (agingMetric === 'count' ? agg[k].n : agg[k].amt);
+              const total = keys.reduce((s2, k) => s2 + val(k), 0) || 1;
+              const allN = previewEntry.rows.length;
+              const allAmt = keys.reduce((s2, k) => s2 + agg[k].amt, 0);
+              const overN = agg['F - Over 6 Month'].n;
+              const overPct = allAmt ? (agg['F - Over 6 Month'].amt / allAmt * 100) : 0;
+              const q = previewSearch.trim().toLowerCase();
+              const shown = previewEntry.rows.filter(r => (previewAging === 'ALL' || String(r.status || '').trim() === previewAging)
+                && (!q || getPrepaymentColumns(previewEntry.rows).some(c => String(r[c.key] == null ? '' : r[c.key]).toLowerCase().includes(q))));
+              const shownAmt = shown.reduce((s2, r) => s2 + (Number(r.amountRemaining) || 0), 0);
+              const filtered = previewAging !== 'ALL' || !!q;
+              const kpis = [['รายการทั้งหมด', allN.toLocaleString()], ['ยอดคงเหลือรวม (บาท)', fmt(allAmt)], ['เกิน 6 เดือน', `${overN.toLocaleString()} รายการ`], ['สัดส่วนยอดเกิน 6 เดือน', `${overPct.toFixed(1)}%`]];
+              const segBtn = (on) => ({ padding: '4px 11px', border: 'none', fontSize: '12px', cursor: 'pointer', borderRadius: 0, background: on ? '#1a3a5c' : '#fff', color: on ? '#fff' : '#1a3a5c' });
+              const chip = (on) => ({ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '999px', border: '0.5px solid ' + (on ? '#1a3a5c' : '#cfd6df'), background: on ? '#1a3a5c' : '#fff', color: on ? '#fff' : '#1a3a5c', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' });
+              return (
+                <div style={{ flexShrink: 0, marginBottom: '8px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '10px' }}>
+                    {kpis.map(([l, v]) => (
+                      <div key={l} style={{ border: '0.5px solid #e3e7ec', borderRadius: '10px', padding: '10px 12px', background: '#f8fafc' }}>
+                        <div style={{ fontSize: '11px', color: '#6b7684' }}>{l}</div>
+                        <div style={{ fontSize: '19px', fontWeight: 500, color: '#1a3a5c', marginTop: '2px' }}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#1a3a5c' }}>สัดส่วน Aging</div>
+                    <div style={{ display: 'flex', border: '0.5px solid #cfd6df', borderRadius: '6px', overflow: 'hidden' }}>
+                      <button type="button" onClick={() => setAgingMetric('count')} style={segBtn(agingMetric === 'count')}>จำนวนรายการ</button>
+                      <button type="button" onClick={() => setAgingMetric('amount')} style={segBtn(agingMetric === 'amount')}>ยอดเงิน (บาท)</button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', height: previewFull ? '28px' : '22px', borderRadius: '6px', overflow: 'hidden', background: '#eef1f5', marginTop: '10px' }}>
+                    {keys.map(k => (
+                      <div key={k} title={`${k}: ${agingMetric === 'count' ? agg[k].n.toLocaleString() : fmt(agg[k].amt)}`}
+                        onClick={() => setPreviewAging(previewAging === k ? 'ALL' : k)}
+                        style={{ width: `${val(k) / total * 100}%`, height: '100%', cursor: 'pointer', background: COLORS[k] || '#8a94a3', opacity: previewAging === 'ALL' || previewAging === k ? 1 : 0.25 }} />
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' }}>
+                    <button type="button" onClick={() => setPreviewAging('ALL')} style={chip(previewAging === 'ALL')}>ทั้งหมด <span style={{ opacity: 0.7 }}>({allN.toLocaleString()})</span></button>
+                    {keys.map(k => (
+                      <button key={k} type="button" onClick={() => setPreviewAging(k)} style={chip(previewAging === k)}>
+                        <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: COLORS[k] || '#8a94a3', display: 'inline-block' }} />
+                        {k} <span style={{ opacity: 0.7 }}>({agingMetric === 'count' ? agg[k].n.toLocaleString() : fmt(agg[k].amt)})</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
+                    <input type="text" value={previewSearch} onChange={e => setPreviewSearch(e.target.value)}
+                      placeholder="🔍 ค้นหา Supplier, Invoice, Branch, Description ..."
+                      style={{ width: '300px', maxWidth: '100%', height: '30px', boxSizing: 'border-box', padding: '0 10px', border: '0.5px solid #cfd6df', borderRadius: '8px', fontSize: '12px' }} />
+                    <div style={{ marginLeft: 'auto', fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>แสดง <strong>{shown.length.toLocaleString()}</strong> / {allN.toLocaleString()} รายการ · คงเหลือ <strong>{fmt(shownAmt)}</strong></span>
+                      {filtered && <button type="button" onClick={() => { setPreviewSearch(''); setPreviewAging('ALL'); }} style={{ padding: '3px 10px', border: '0.5px solid #ddd', borderRadius: '6px', background: '#fff', color: '#555', fontSize: '12px', cursor: 'pointer' }}>ล้างตัวกรอง</button>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+            <div style={{ flex: 1, minHeight: '220px', overflow: 'auto', border: '0.5px solid #eee', borderRadius: '8px' }}>
+              <table style={{ width: 'max-content', minWidth: 0, borderCollapse: 'collapse', fontSize: '12px' }}> {/* MARKER_IE_MACROLOGIC_PREVIEW_COMPACT_V1 -- คอลัมน์พอดีเนื้อหา ไม่ยืดเต็มจอ */}
                 <thead>
-                  <tr style={{ background: '#f5f7fa' }}>
-                    {PREPAYMENT_TEMPLATE_COLUMNS.map(c => (
-                      <th key={c.key} style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid #eee', whiteSpace: 'nowrap', color: '#1a3a5c', position: 'sticky', top: 0, background: '#f5f7fa' }}>{c.header.trim()}</th>
+                  <tr style={{ background: '#f1f4f8' }}>
+                    {getPrepaymentColumns(previewEntry.rows).map(c => (
+                      <th key={c.key} style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid #eee', whiteSpace: 'nowrap', color: '#1a3a5c', fontWeight: 500, position: 'sticky', top: 0, background: '#f1f4f8' }}>{c.header.trim()}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {previewEntry.rows.map((r, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f2f2f2' }}>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.branchCode}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.supplierName}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.supplierNumber}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.invoiceType}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.invoiceNumber}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.voucherNumber}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.invoiceDate}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.settlementDate}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', textAlign: 'right' }}>{fmt(r.invoiceAmount)}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', textAlign: 'right' }}>{fmt(r.withheldAmount)}</td>
-                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', textAlign: 'right' }}>{fmt(r.amountRemaining)}</td>
-                      <td style={{ padding: '6px 10px' }}>{r.description}</td>
+                  {previewEntry.rows.filter(r => {
+                    const q2 = previewSearch.trim().toLowerCase();
+                    return (previewAging === 'ALL' || String(r.status || '').trim() === previewAging)
+                      && (!q2 || getPrepaymentColumns(previewEntry.rows).some(c => String(r[c.key] == null ? '' : r[c.key]).toLowerCase().includes(q2)));
+                  }).map((r, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #eef1f5', background: i % 2 ? '#fafbfd' : '#fff' }}>
+                      {/* MARKER_IE_MACROLOGIC_PREVIEW_GENERIC_CELLS_V1 -- วนตาม PREPAYMENT_TEMPLATE_COLUMNS แทนการเขียนทีละ <td> (คอลัมน์ใหม่จะขึ้นเอง) */}
+                      {getPrepaymentColumns(previewEntry.rows).map(c => {
+                        const isAmt = ['invoiceAmount', 'withheldAmount', 'amountRemaining'].includes(c.key);
+                        const isNum = isAmt || c.key === 'daysOutstanding';
+                        return (
+                          <td key={c.key} style={{ padding: '6px 10px', whiteSpace: c.key === 'description' ? 'normal' : 'nowrap', textAlign: isNum ? 'right' : 'left', ...(c.key === 'description' ? { minWidth: '220px', maxWidth: '340px' } : {}), ...(c.key === 'supplierName' ? { maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis' } : {}) }} title={c.key === 'supplierName' ? r[c.key] : undefined}>
+                            {c.key === 'status' && r.status
+                              ? (() => { const PC = { 'A - Below 15 Days': ['#9db8d6', '#1f4f82'], 'B - Below 30 Days': ['#7a9cc4', '#1b4a7a'], 'C - 2 Month': ['#5580b0', '#fff'], 'D - 3 Month': ['#38629a', '#fff'], 'E - 4-6 Month': ['#e0a458', '#5a3a08'], 'F - Over 6 Month': ['#c0392b', '#fff'], 'Settled/Unpaid': ['#b8bec7', '#333'] }[r.status] || ['#e3e7ec', '#333'];
+                                return <span style={{ display: 'inline-block', padding: '2px 9px', borderRadius: '999px', fontSize: '11px', fontWeight: 500, background: PC[0], color: PC[1] }}>{r.status}</span>; })()
+                              : isAmt ? fmt(r[c.key])
+                              : (c.key === 'daysOutstanding' && r[c.key] !== '' && r[c.key] != null
+                                ? <span style={Number(r[c.key]) > 180 ? { color: '#c0392b', fontWeight: 500 } : undefined}>{Number(r[c.key]).toLocaleString()}</span>
+                                : r[c.key])}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {/* MARKER_IE_MACROLOGIC_MAIL_MANAGE_V1 -- Overlay Draft Email (อยู่ใน previewBoxRef เพื่อให้เห็นตอนเต็มจอ) */}
+            {renderDraftOverlay(true)}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
               <button onClick={() => setPreviewEntry(null)}
                 style={{ padding: '7px 16px', borderRadius: '6px', border: '0.5px solid #ddd', background: 'white', color: '#555', fontSize: '13px', cursor: 'pointer' }}>ปิด</button>
@@ -20386,6 +21105,11 @@ export default function IEController({ activeSubTab, onSubTabChange, flyoutOpen,
   // Realtime Event เลย -- แก้ Vendor Rule/Notice จาก VendorMaster แล้ว Invoice Entry หน้านี้ไม่เห็นการเปลี่ยนแปลง
   useRealtimeRefresh(['vendor_rule_updated'], () => {
     if (fetchCollection) fetchCollection('VendorRule', true).catch(e => console.error('[VendorRule] fetchCollection background error:', e));
+  });
+  // MARKER_PARENT_COMPANYLIST_REALTIME_V1 -- เดิมดัก company_list_updated เฉพาะใน BatchSetup (unmount ตอนอยู่ Invoice Entry/Batch Preview)
+  // -> แก้ Setting Company (Prefix/Period/GRT ฯลฯ) แล้วหน้า Invoice Entry ไม่เห็นการเปลี่ยนแปลง -- ดักที่ Parent ให้ครอบทุก Step
+  useRealtimeRefresh(['company_list_updated'], () => {
+    if (fetchCollection) fetchCollection('CompanyList', true).catch(e => console.error('[CompanyList realtime parent] fetchCollection error:', e));
   });
 
   const infoItemsRaw    = getCached('CompanyList') || [];

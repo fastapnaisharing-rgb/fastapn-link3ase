@@ -58,7 +58,7 @@ async function getDocAccess(userId, permissions) {
   // MARKER_MIN_ROLE_SWITCH_V1 -- Permission ขั้นต่ำต่อโฟลเดอร์ (menu_min_role, menu_id = 'doc-<folder>') | Role ต่ำกว่าขั้นต่ำ = ไม่ได้ (ยกเว้นมี Override รายบุคคลด้านล่าง) | ไม่มีแถว = ไม่จำกัด
   try {
     const rr = await pool.query("SELECT role FROM user_roles WHERE id = $1", [userId]);
-    const rank = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+    const rank = { guest: -1, viewer: 0, editor: 1, admin: 2, owner: 3 }; // MARKER_GUEST_ROLE_V1 -- Guest ต่ำกว่า Viewer = ไม่เข้าโฟลเดอร์เอกสารทุกใบ (Document Access ไม่มี Guest)
     const myRank = rank[String((rr.rows[0] && rr.rows[0].role) || "").toLowerCase()] ?? 0;
     const { rows: mins } = await pool.query("SELECT menu_id, min_role FROM menu_min_role WHERE menu_id LIKE 'doc-%'");
     mins.forEach((m) => {
@@ -443,7 +443,8 @@ router.post("/admin/create-user", async (req, res) => {
   if (!header?.startsWith("Bearer "))
     return res.status(401).json({ error: "Missing token" });
 
-  const { username, email, password, role } = req.body;
+  let { username, email, password, role, bu } = req.body;
+  if (role === 'Guest' && username && !(email && String(email).trim())) email = String(username).trim().toLowerCase() + '@guest.local'; // MARKER_GUEST_ADD_TAB_V1 -- Guest ไม่ต้องกรอก Email : สร้าง Email ภายในให้
   if (!username || !email || !password || !role)
     return res.status(400).json({ error: "username, email, password and role required" });
   if (password.length < 6)
@@ -458,6 +459,9 @@ router.post("/admin/create-user", async (req, res) => {
     const callerRole = callerRows[0]?.role;
     if (!['Owner', 'Admin'].includes(callerRole))
       return res.status(403).json({ error: "Owner/Admin only" });
+    // MARKER_GUEST_ROLE_V1 -- เพิ่ม Guest ได้เฉพาะ Owner
+    if (role === 'Guest' && callerRole !== 'Owner')
+      return res.status(403).json({ error: "เฉพาะ Owner เท่านั้นที่เพิ่ม Guest ได้" });
 
     // เช็ค email ซ้ำ
     const { rows: existing } = await pool.query(
@@ -479,6 +483,7 @@ router.post("/admin/create-user", async (req, res) => {
       Admin:  { VAT: true,  'I-Pro': true,  GL: true,  IE: true,  Function: true,  Manual: true  },
       Editor: { VAT: true,  'I-Pro': false, GL: false, IE: false, Function: false, Manual: true  },
       Viewer: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false },
+      Guest:  { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false }, // MARKER_GUEST_ROLE_V1
     };
     const permissions = DEFAULT_PERMISSIONS[role] || DEFAULT_PERMISSIONS.Viewer;
 
@@ -487,6 +492,11 @@ router.post("/admin/create-user", async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, 'active', NOW())`,
       [email.trim().toLowerCase(), username.trim().toLowerCase(), hash, role, JSON.stringify(permissions)]
     );
+    // MARKER_GUEST_ADD_TAB_V1 -- BU ของ Guest (คอลัมน์ user_roles.guest_bu ต้องรัน add_guest_bu.sql ก่อน) | ผิดพลาดไม่ทำให้สร้างผู้ใช้ล้ม
+    if (role === 'Guest' && bu) {
+      try { await pool.query("UPDATE user_roles SET guest_bu = $1 WHERE email = $2", [String(bu).trim().toUpperCase(), email.trim().toLowerCase()]); }
+      catch (e) { console.error('create-user guest_bu:', e.message); }
+    }
 
     res.json({ ok: true });
   } catch (err) {
@@ -527,6 +537,9 @@ router.delete("/admin/delete-user", async (req, res) => {
     );
     if (targetRows[0]?.role === 'Owner')
       return res.status(403).json({ error: "ไม่สามารถลบ Owner ได้ครับ" });
+    // MARKER_GUEST_ROLE_V1 -- ลบ Guest ได้เฉพาะ Owner
+    if (targetRows[0]?.role === 'Guest' && callerRole !== 'Owner')
+      return res.status(403).json({ error: "เฉพาะ Owner เท่านั้นที่ลบ Guest ได้" });
 
     await pool.query("DELETE FROM user_roles WHERE email = $1", [email.trim().toLowerCase()]);
 

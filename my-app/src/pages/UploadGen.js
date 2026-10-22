@@ -7779,6 +7779,18 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
     );
   }
 
+  // MARKER_GL_DOA_BOX_V1 -- GL Report > Z_Detail of Account = Clone จาก SharePoint (dest=gl) | เข้าได้เฉพาะ Permission GL (Owner ผ่านเสมอ) | Backend ตรวจสิทธิ์ซ้ำอีกชั้น
+  const glBoxOk = (b) => !b.permKey || !!isOwner || !!(userRoleData && userRoleData.permissions && userRoleData.permissions[b.permKey]);
+  if (activeFolder && activeFolder.key === 'gl' && vatSub === 'gl-doa') {
+    return glBoxOk({ permKey: 'GL' }) ? (
+      <div style={{ display:'flex',flexDirection:'column',flex:1,height:'100%',overflow:'hidden',position:'relative' }}>
+        <SpCloneExplorer dest="gl" menu="doa" title="Detail of Account" backLabel="GL Report" onBack={() => setVatSub(null)} />
+      </div>
+    ) : (
+      <div style={{ padding:'40px', color:'#888', textAlign:'center' }}>เมนูนี้เข้าได้เฉพาะผู้ที่มีสิทธิ์ GL</div>
+    );
+  }
+
   // MARKER_GL_SUBBOXES_V1 -- หน้า Hub ของ GL Report: แสดงกล่องด้านในจาก docFolderConfig.js (subBoxes) | หัวหน้า/แถบขั้นตอน/แถวกล่อง ใช้แบบเดียวกับ Hub ของ VAT Control | ตอนนี้เป็นกล่องเปล่ารอไว้
   if (activeFolder && Array.isArray(activeFolder.subBoxes) && activeFolder.subBoxes.length) {
     return (
@@ -7800,18 +7812,18 @@ function DocumentCenter({ jumpToSetupToken, returnPage, onBackToCaller } = {}) {
           <span style={{ display:'inline-flex',alignItems:'center',gap:'8px',border:'1px solid #14284b',background:'#14284b',color:'#fff',fontWeight:600,borderRadius:'99px',padding:'5px 14px 5px 6px',fontSize:'13px' }}><span style={{ width:'20px',height:'20px',borderRadius:'50%',background:'#2fb58a',color:'#fff',fontSize:'11px',display:'inline-flex',alignItems:'center',justifyContent:'center' }}>1</span>{activeFolder.label}</span>
         </div>
         <div style={{ padding:'16px 20px', display:'flex', flexDirection:'column', gap:'10px', overflowY:'auto' }}>
-          {activeFolder.subBoxes.map((b, i) => (
-            <div key={b.key} onClick={() => { if (b.key === 'gl-z-ap') setVatSub('gl-ap'); }} style={{ cursor: b.key === 'gl-z-ap' ? 'pointer' : 'default', background:'white', border: i === 0 ? '0.5px solid #e8e8e8' : '0.5px dashed #ddd', borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px', opacity: i === 0 ? 1 : 0.55 }}>
+          {activeFolder.subBoxes.filter(glBoxOk).map((b) => { const live = !b.empty; const subTo = b.key === 'gl-z-ap' ? 'gl-ap' : b.key === 'gl-doa' ? 'gl-doa' : null; const i = live ? 0 : 1; return ( // MARKER_GL_DOA_BOX_V1
+            <div key={b.key} onClick={() => { if (subTo) setVatSub(subTo); }} style={{ cursor: subTo ? 'pointer' : 'default', background:'white', border: i === 0 ? '0.5px solid #e8e8e8' : '0.5px dashed #ddd', borderRadius:'8px', padding:'12px 16px', display:'flex', alignItems:'center', gap:'14px', opacity: i === 0 ? 1 : 0.55 }}>
               <div style={{ width:'42px', height:'42px', borderRadius:'8px', background:b.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flexShrink:0 }}>{b.icon}</div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:'14px', fontWeight:'500', color: i === 0 ? '#1a3a5c' : '#aaa', marginBottom:'2px' }}>{b.title}</div>
                 <div style={{ fontSize:'11px', color: i === 0 ? '#888' : '#bbb' }}>{b.desc}</div>
               </div>
               <span style={{ fontSize:'11px', padding:'3px 10px', borderRadius:'99px', background:b.pillBg || '#eee', color:b.pillColor || '#888', flexShrink:0 }}>{b.pill}</span>
-              <button disabled={b.key !== 'gl-z-ap'} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor: b.key === 'gl-z-ap' ? 'pointer' : 'default', flexShrink:0 }}>Detail</button>
+              <button disabled={!subTo} style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'6px', border:'0.5px solid #d0d0d0', background:'white', color:'#555', cursor: subTo ? 'pointer' : 'default', flexShrink:0 }}>Detail</button>
               <span style={{ color:'#999' }}>›</span>
             </div>
-          ))}
+          ); })}
         </div>
       </div>
     );

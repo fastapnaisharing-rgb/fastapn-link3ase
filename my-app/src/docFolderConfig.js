@@ -11,7 +11,7 @@ export const DOC_FOLDERS = [
     // MARKER_GL_SUBBOXES_V1 -- กล่องด้านในของ GL Report (เพิ่ม/เปลี่ยนชื่อ = แก้ที่นี่ที่เดียว) | empty:true = กล่องเปล่ารอไว้ ยังไม่มีไฟล์/ปุ่มใช้งาน
     subBoxes: [
       { key: 'gl-z-ap',  title: 'Z_Report Reconcile - Account Payable', icon: '📤', bg: '#E8F5E9', desc: 'รายงาน Reconcile Account Payable · เก็บที่ SharePoint', pill: '☁ SharePoint', pillBg: '#E3F2FD', pillColor: '#0C447C', empty: false },
-      { key: 'gl-box-2', title: 'กล่องว่าง 2', icon: '🧩', bg: '#f5f5f5', desc: 'Coming soon', pill: 'เร็วๆ นี้', empty: true },
+      { key: 'gl-doa', title: 'Detail of Account', icon: '📒', bg: '#EEEDFE', desc: 'Detail of Account + Backup (Z_Detail of Account / Z_Backup_DOH) · เก็บที่ SharePoint · เข้าได้เฉพาะสิทธิ์ GL', pill: '☁ SharePoint', pillBg: '#E3F2FD', pillColor: '#0C447C', empty: false, permKey: 'GL' }, // MARKER_GL_DOA_BOX_V1 -- permKey = เห็น/เข้ากล่องนี้ได้เฉพาะสิทธิ์นี้ (Owner ผ่านเสมอ)
       { key: 'gl-box-3', title: 'กล่องว่าง 3', icon: '🧩', bg: '#f5f5f5', desc: 'Coming soon', pill: 'เร็วๆ นี้', empty: true },
       { key: 'gl-box-4', title: 'กล่องว่าง 4', icon: '🧩', bg: '#f5f5f5', desc: 'Coming soon', pill: 'เร็วๆ นี้', empty: true },
       { key: 'gl-box-5', title: 'กล่องว่าง 5', icon: '🧩', bg: '#f5f5f5', desc: 'Coming soon', pill: 'เร็วๆ นี้', empty: true },

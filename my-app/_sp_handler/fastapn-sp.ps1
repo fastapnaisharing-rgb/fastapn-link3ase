@@ -14,9 +14,26 @@
 # MARKER_SP_HANDLER_V7_HIDDEN -- v7: ไม่ให้หน้าต่าง cmd/PowerShell เด้ง: ติดตั้ง fastapn-run-hidden.vbs และปรับคำสั่ง Registry (fastapn-sp:// และ fastapn:// ถ้ามี) ให้เปิดผ่าน wscript //B อัตโนมัติ + อัปเดตตัวเองแบบไม่เปิดหน้าต่าง
 # MARKER_SP_HANDLER_V10_AUTO_DEST -- v10: หาโฟลเดอร์ปลายทาง (Z_Report Reconcile / Z_AllSystemUpload / ... ) ของเครื่องนั้นเองอัตโนมัติทุกครั้งที่ส่ง ถ้าค่าใน config ไม่มี/พาธเปลี่ยน/ผิดชื่อ (ค้นจากชื่อโฟลเดอร์ที่ล็อคตายตัวใต้ OneDrive ทุกบัญชี/ทุกไดรฟ์) แล้วจำพาธใหม่ลง config ให้ -- ไม่ต้องรัน setup ใหม่
 # MARKER_SP_HANDLER_V9_MULTI_SEND -- v9: send รับหลายไฟล์ใน URI เดียว: fastapn-sp://send?name=<ไฟล์แรก>&names=<a.xlsx|b.xlsx|...>&bu=..&period=..&dest=.. (ยิงครั้งเดียวต่อชุด ไม่โดนเบราว์เซอร์ทิ้งคำสั่ง) | ไม่ส่ง names = ทำงานเหมือน v8 ทุกอย่าง
+# MARKER_SP_HANDLER_V15_GL_DEST -- v15: เพิ่มปลายทาง gl = Z_Detail of Account และ doh = Z_Backup_DOH (อยู่ใน OneDrive\...\_Taii\Reconcile_Backup\) | หาโฟลเดอร์เจอเองโดยลองพาธตรง <root>\_Taii\Reconcile_Backup\<ชื่อ> ก่อน (ไม่พึ่งการค้นลึก) | โครงสร้างข้างในเหมือน recon: <BU>\<YYYY.MM>\<ชื่อไฟล์>
+# URI: fastapn-sp://send?name=<ไฟล์>&bu=<รหัสBU>&period=<YYYY.MM>&dest=gl  |  dest=doh
+# MARKER_SP_HANDLER_V16_EMPTY_LIST -- v16: แก้ list โฟลเดอร์ว่างแล้วขึ้น (400) Bad Request
+# MARKER_SP_HANDLER_V17_GL_ROOT -- v17: dest=gl = รากโฟลเดอร์ _Taii\Reconcile_Backup (เห็น Z_Detail of Account + Z_Backup_DOH ในหน้าเดียว) | ส่งไฟล์เข้าโฟลเดอร์ใดใช้ put?path=Z_Backup_DOH/<BU>/<YYYY.MM> หรือ Z_Detail of Account/<BU>/<YYYY.MM>
+# MARKER_SP_HANDLER_V18_LOCAL_DOD -- v18: Drive D ในเครื่อง (dest=dod = D:\apps\Backup_DOH) | backup = เก็บลง Drive D (ทับไฟล์ชื่อเดิม) + SharePoint Z_Backup_DOH ถ้ามี (scope=local = เฉพาะ Drive D) | list dest=dod ส่งรายการให้ Backend ชั่วคราวตาม req | pull = ดึงไฟล์ใน Drive D ขึ้น Backend ชั่วคราวตาม req
+# URI: fastapn-sp://backup?name=<ไฟล์>&bu=<COM>&period=<YYYY.MM>[&scope=local]  |  fastapn-sp://list?dest=dod&path=&req=<id>&api=..&token=..  |  fastapn-sp://pull?dest=dod&path=<BU/YYYY.MM/ไฟล์>&req=<id>&api=..&token=..
 param([string]$Uri)
-$HandlerVersion = 10   # MARKER_SP_HANDLER_VERSION_V1 -- เลขเวอร์ชัน (ต้องตรงกับ SP_HANDLER_VERSION ใน spHandlerAssets.js) ใช้กับคำสั่ง update
+$HandlerVersion = 20   # MARKER_SP_HANDLER_VERSION_V1 -- เลขเวอร์ชัน (ต้องตรงกับ SP_HANDLER_VERSION ใน spHandlerAssets.js) ใช้กับคำสั่ง update
 $base = Split-Path -Parent $MyInvocation.MyCommand.Path   # = D:\apps
+# MARKER_SP_HANDLER_V20_PROFILE -- v20: โปรไฟล์ปลายทางตาม Permission ของผู้ใช้ (Backend สร้าง) | ไม่มีไฟล์ = ติดตั้งรุ่นเก่า -> อนุญาตทุกปลายทางเหมือนเดิมจนกว่าจะ update โปรไฟล์
+$profPath = Join-Path $base 'fastapn-sp-profile.json'
+function Get-SpProfile { if (Test-Path -LiteralPath $profPath) { try { return (Get-Content -LiteralPath $profPath -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null } }; return $null }
+function Test-ProfileDest([string]$key) {
+  $pf = Get-SpProfile; if (-not $pf) { return $true }
+  $keys = @(); foreach ($d in @($pf.dests)) { if ($d -and $d.key) { $keys += [string]$d.key } }
+  if ($key -eq 'dod') { return (($keys -contains 'gl') -or ($keys -contains 'doh')) }   # Drive D ในเครื่อง = ของกลุ่ม GL
+  return ($keys -contains $key)
+}
+function Get-ProfileLabel([string]$key) { $pf = Get-SpProfile; if (-not $pf) { return $null }; foreach ($d in @($pf.dests)) { if ($d -and [string]$d.key -eq $key -and $d.label) { return [string]$d.label } }; return $null }
+function Get-ProfileHash { $pf = Get-SpProfile; if ($pf -and $pf.hash -ne $null) { return [string]$pf.hash }; return '' }
 $log  = Join-Path $base 'fastapn-sp.log'
 function Log($m) { try { if (-not (Test-Path $base)) { New-Item -ItemType Directory -Path $base -Force | Out-Null }; "$(Get-Date -Format s) $m" | Out-File -FilePath $log -Append -Encoding utf8 } catch {} }
 function Notify($title, $msg) {
@@ -50,6 +67,9 @@ function Get-OneDriveRoots {
 function Find-DestRoot([string]$label) {
   if (-not $label) { return $null }
   $roots = @(Get-OneDriveRoots)
+  # MARKER_SP_HANDLER_V15_GL_DEST -- โฟลเดอร์ใต้ _Taii\Reconcile_Backup (Library ที่แชร์/Shortcut ใน OneDrive): ลองพาธตรงทุก root ก่อน (ไม่ใช้ Recurse เพราะ Shortcut อาจถูกข้าม)
+  if ($label -ieq 'Reconcile_Backup') { foreach ($r in $roots) { foreach ($c in @((Join-Path $r '_Taii\Reconcile_Backup'), (Join-Path $r 'Reconcile_Backup'))) { if (Test-Path -LiteralPath $c -PathType Container) { return $c } } } }   # MARKER_SP_HANDLER_V17_GL_ROOT -- v17: dest=gl ชี้ที่ราก Reconcile_Backup
+  foreach ($r in $roots) { foreach ($sub in @('_Taii\Reconcile_Backup', 'Reconcile_Backup')) { $c = Join-Path (Join-Path $r $sub) $label; if (Test-Path -LiteralPath $c -PathType Container) { return $c } } }
   foreach ($r in $roots) { $c = Join-Path (Join-Path $r 'VAT Controller\My System') $label; if (Test-Path -LiteralPath $c -PathType Container) { return $c } }
   foreach ($r in $roots) {
     try { $f = Get-ChildItem -LiteralPath $r -Directory -Recurse -Depth 4 -Filter $label -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $label } | Select-Object -First 1; if ($f) { return $f.FullName } } catch {}
@@ -105,7 +125,7 @@ try {
   Ensure-HiddenLauncher
   $action = 'send'
   if ($Uri -match '^fastapn-sp://([A-Za-z]+)') { $action = $Matches[1].ToLower() }
-  if ($action -notin @('send','delete','open','update','put','list','mkdir','rename','move')) { Fail "คำสั่งไม่รู้จัก: '$action'" }
+  if ($action -notin @('send','delete','open','update','put','list','mkdir','rename','move','backup','pull')) { Fail "คำสั่งไม่รู้จัก: '$action'" }
   # เอาเฉพาะส่วนหลังเครื่องหมาย ? (กรณี Windows/Browser ใส่ "/" คั่นเป็น send/?name=... หรือท้าย URI)
   $raw = ''
   $qi = $Uri.IndexOf('?')
@@ -118,19 +138,31 @@ try {
     try {
       $rapi = ([string]$p['api']).TrimEnd('/'); $rtok = [string]$p['token']
       if ($rapi -match '^https?://[A-Za-z0-9.:_-]+(/[A-Za-z0-9._/-]*)?$' -and $rtok) {
-        $body = (@{ version = [int]$ver; machine = $env:COMPUTERNAME } | ConvertTo-Json -Compress)
+        $body = (@{ version = [int]$ver; machine = $env:COMPUTERNAME; profileHash = (Get-ProfileHash) } | ConvertTo-Json -Compress)   # MARKER_SP_HANDLER_V20_PROFILE
         Invoke-RestMethod -Uri "$rapi/api/file-storage/sp-handler/report" -Method Post -Headers @{ Authorization = "Bearer $rtok" } -ContentType 'application/json' -Body $body -TimeoutSec 6 | Out-Null
       }
     } catch { Log "report skip: $($_.Exception.Message)" }
   }
   if ($action -eq 'update') {
     $newVer = 0; [void][int]::TryParse([string]$p['v'], [ref]$newVer)
-    if ($newVer -le $HandlerVersion) { Log "UPDATE skip (เครื่องนี้ v$HandlerVersion >= v$newVer)"; Send-VersionReport $HandlerVersion; exit 0 }   # v6: ข้ามอัปเดตแล้วยังรายงานเวอร์ชันให้ Backend (ปุ่ม "ตรวจสอบ" ที่ Home / เครื่องที่เพิ่งติดตั้ง)
+    # MARKER_SP_HANDLER_V20_PROFILE -- ดึงโปรไฟล์ปลายทางของผู้ใช้จาก Backend (403 = ไม่มีสิทธิ์ใช้ปลายทางใดเลย -> เขียนโปรไฟล์ว่าง)
+    function Sync-SpProfile {
+      try {
+        $sapi = ([string]$p['api']).TrimEnd('/'); $stok = [string]$p['token']
+        if ($sapi -notmatch '^https?://[A-Za-z0-9.:_-]+(/[A-Za-z0-9._/-]*)?$' -or -not $stok) { return }
+        $txt = $null
+        try { $txt = (Invoke-WebRequest -Uri "$sapi/api/file-storage/sp-handler/profile" -Headers @{ Authorization = "Bearer $stok" } -UseBasicParsing -TimeoutSec 10).Content }
+        catch { if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 403) { $txt = '{"version":1,"hash":"","dests":[]}' } else { throw } }
+        if ($txt) { $o = $txt | ConvertFrom-Json; if ($o -and $o.PSObject.Properties['dests']) { [System.IO.File]::WriteAllText($profPath, [string]$txt, (New-Object System.Text.UTF8Encoding($true))); Log ('PROFILE synced hash=' + [string]$o.hash) } }
+      } catch { Log "profile sync skip: $($_.Exception.Message)" }
+    }
+    if ($newVer -le $HandlerVersion) { Sync-SpProfile; Log "UPDATE skip (เครื่องนี้ v$HandlerVersion >= v$newVer)"; Send-VersionReport $HandlerVersion; exit 0 }   # v6: ข้ามอัปเดตแล้วยังรายงานเวอร์ชันให้ Backend (ปุ่ม "ตรวจสอบ" ที่ Home / เครื่องที่เพิ่งติดตั้ง)
     $api = ([string]$p['api']).TrimEnd('/'); $tok = [string]$p['token']
     if ($api -notmatch '^https?://[A-Za-z0-9.:_-]+(/[A-Za-z0-9._/-]*)?$') { Fail "api ไม่ถูกต้อง: '$api'" }
     if (-not $tok) { Fail 'คำสั่ง update ไม่มี token' }
     $self = $MyInvocation.MyCommand.Path
     $tmpNew = Join-Path $base 'fastapn-sp.ps1.new'
+    Sync-SpProfile   # MARKER_SP_HANDLER_V20_PROFILE
     Invoke-WebRequest -Uri "$api/api/file-storage/sp-handler/ps1-only" -Headers @{ Authorization = "Bearer $tok" } -OutFile $tmpNew -UseBasicParsing
     $txt = Get-Content -LiteralPath $tmpNew -Raw -Encoding UTF8
     if ($txt -notmatch 'param\(\[string\]\$Uri\)' -or $txt -notmatch '\$HandlerVersion\s*=\s*(\d+)') { Remove-Item -LiteralPath $tmpNew -Force -ErrorAction SilentlyContinue; Fail 'ไฟล์ที่ดาวน์โหลดไม่ใช่ Handler ที่ถูกต้อง ยกเลิกการอัปเดต' }
@@ -153,11 +185,13 @@ try {
   if ($action -eq 'send' -and $fnameList.Count -gt 0) { $fname = $fnameList[0] }
   $dest = [string]$p['dest']; if (-not $dest) { $dest = 'recon' }
   if ($dest -notmatch '^[a-z]{2,12}$') { Fail "ปลายทางไม่ถูกต้อง: '$dest'" }
+  if ($action -eq 'backup') { $dest = 'dod' }   # MARKER_SP_HANDLER_V18_LOCAL_DOD -- backup เก็บลง Drive D เสมอ
+  if (-not (Test-ProfileDest $dest)) { Fail "ปลายทาง '$dest' ไม่อยู่ในสิทธิ์ของบัญชีนี้ (ตรวจสิทธิ์ Permission แล้วเปิดแอพเพื่ออัปเดต Handler)" }   # MARKER_SP_HANDLER_V20_PROFILE
   # path (โฟลเดอร์ย่อยแบบ a/b/c) ใช้กับ put/list และ open/delete แบบ Clone | ห้าม .. / ไดรฟ์ / อักขระต้องห้าม
   $rel = ([string]$p['path']).Replace('/', '\').Trim('\')
   if ($rel -and ($rel -match '(^|\\)\.\.(\\|$)' -or $rel -match '[:*?"<>|]')) { Fail "path ไม่ถูกต้อง: '$rel'" }
   $usePath = ($action -in @('put','list')) -or ($action -in @('open','delete') -and $p.ContainsKey('path')) -or ($action -eq 'delete' -and $p.ContainsKey('items'))
-  if ($action -in @('send','delete','open') -and -not $usePath) {
+  if ($action -in @('send','delete','open','backup') -and -not $usePath) {
     if (-not $fname -or -not $bu -or -not $period) { Fail 'คำสั่งไม่ครบ (ต้องมี name / bu / period)' }
     # รหัส BU ต้องเป็นรหัสแบบตัวเลข/ตัวอักษร (เช่น 0568, 055Z) และงวดต้องเป็น YYYY.MM -> กัน Path แปลกๆ
     if ($bu -notmatch '^[0-9][0-9A-Za-z]{2,7}$') { Fail "รหัส BU ไม่ถูกต้อง: '$bu'" }
@@ -179,7 +213,8 @@ try {
   if ($cfg.dests -and $cfg.dests.PSObject.Properties[$dest]) { $rootCfg = [string]$cfg.dests.$dest }
   elseif ($dest -eq 'recon' -and $cfg.destRoot) { $rootCfg = [string]$cfg.destRoot }
   # ล็อคชื่อโฟลเดอร์ปลายทางให้ตรงกับชนิด (กันตั้งค่าผิดที่)
-  $expect = @{ recon = 'Z_Report Reconcile'; upload = 'Z_AllSystemUpload'; ap = 'Z_Report Reconcile - Account Payable' }[$dest]  # v8: ap = ไฟล์ AP Recon (GL Report) ล็อคชื่อโฟลเดอร์ตายตัวเหมือนกัน
+  $expect = @{ recon = 'Z_Report Reconcile'; upload = 'Z_AllSystemUpload'; ap = 'Z_Report Reconcile - Account Payable'; gl = 'Reconcile_Backup'; doh = 'Z_Backup_DOH' }[$dest]  # v17: gl = รากโฟลเดอร์ _Taii\Reconcile_Backup (เห็น 2 โฟลเดอร์ข้างใน: Z_Detail of Account + Z_Backup_DOH)   # v8: ap = ไฟล์ AP Recon (GL Report) ล็อคชื่อโฟลเดอร์ตายตัวเหมือนกัน
+  { $pl = Get-ProfileLabel $dest; if ($pl) { $expect = $pl } }   # MARKER_SP_HANDLER_V20_PROFILE
   if ($rootCfg -and (Test-Path -LiteralPath $rootCfg -PathType Container) -and ((-not $expect) -or ((Split-Path -Leaf $rootCfg.TrimEnd('\')) -ieq $expect))) { $root = $rootCfg }
   if (-not $root -and $expect) {
     $found = Find-DestRoot $expect
@@ -194,7 +229,11 @@ try {
       } catch { Log "บันทึก config ไม่ได้: $($_.Exception.Message)" }
     }
   }
-  if (-not $root) { Fail "ไม่พบโฟลเดอร์ปลายทาง '$expect' ในเครื่องนี้ (ค้นใน OneDrive ทุกบัญชีแล้ว)`nตรวจว่าโฟลเดอร์ SharePoint ซิงก์ลงเครื่องแล้ว (VAT Controller\My System\$expect) หรือรัน setup-fastapn-sp.bat เพื่อเลือกเอง" }
+  if (-not $root -and $dest -eq 'dod') {   # MARKER_SP_HANDLER_V18_LOCAL_DOD -- Drive D ในเครื่อง: <โฟลเดอร์สคริปต์>\Backup_DOH (D:\apps\Backup_DOH) สร้างให้เองถ้ายังไม่มี
+    $root = Join-Path $base 'Backup_DOH'
+    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null; Log "CREATE dod root $root" }
+  }
+  if (-not $root) { Fail "ไม่พบโฟลเดอร์ปลายทาง '$expect' ในเครื่องนี้ (ค้นใน OneDrive ทุกบัญชีแล้ว)`nตรวจว่าโฟลเดอร์ SharePoint ซิงก์ลงเครื่องแล้ว ($(if ($dest -eq 'gl') { "_Taii\Reconcile_Backup" } elseif ($dest -eq 'doh') { "_Taii\Reconcile_Backup\$expect" } else { "VAT Controller\My System\$expect" })) หรือรัน setup-fastapn-sp.bat เพื่อเลือกเอง" }
 
   # ── ตัวช่วย (v6): แปลง path สัมพัทธ์เป็นพาธเต็ม + ตรวจว่าอยู่ใต้โฟลเดอร์ปลายทาง ──
   $rootFull2 = [System.IO.Path]::GetFullPath($root).TrimEnd('\')
@@ -227,11 +266,19 @@ try {
       if (($relp.Split('\')).Count -gt 5) { continue }
       [void]$all.Add(@{ path = $relp.Replace('\','/'); dir = [bool]$it.PSIsContainer; size = $(if ($it.PSIsContainer) { 0 } else { [long]$it.Length }); mtime = $it.LastWriteTimeUtc.ToString('o') })
     }
+    if ($dest -eq 'dod') {   # MARKER_SP_HANDLER_V18_LOCAL_DOD -- รายการใน Drive D ส่งเป็นชุดเดียวตาม req (พักชั่วคราวบน Backend ไม่เข้า Cache SharePoint)
+      $reqId = [string]$p['req']; if (-not $reqId) { $reqId = [guid]::NewGuid().ToString('N') }
+      $lim = @($all | Select-Object -First 1500)
+      $lb = (@{ req = $reqId; machine = $env:COMPUTERNAME; root = $rd; total = $all.Count; items = $lim } | ConvertTo-Json -Depth 4 -Compress)
+      Invoke-RestMethod -Uri "$api2/api/file-storage/sp-handler/local/list" -Method Post -Headers @{ Authorization = "Bearer $tok2" } -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($lb)) -TimeoutSec 30 | Out-Null
+      Log "LIST(local) OK dest=dod rel='$rd' items=$($all.Count)"
+      return $true
+    }
     $syncId = [guid]::NewGuid().ToString('N'); $n = $all.Count; $chunk = 200; $sent = 0
     $hdr = @{ Authorization = "Bearer $tok2" }
     do {
       $take = [Math]::Min($chunk, $n - $sent)
-      $part = if ($take -gt 0) { @($all.GetRange($sent, $take)) } else { @() }
+      $part = @(if ($take -gt 0) { @($all.GetRange($sent, $take)) })   # MARKER_SP_HANDLER_V16_EMPTY_LIST -- v16: โฟลเดอร์ว่าง (0 รายการ) ต้องส่ง items=[] ไม่ใช่ null (เดิม if/else คืน $null ทำให้ Backend ตอบ 400)
       $sent += $take
       $body = (@{ dest = $dest; machine = $env:COMPUTERNAME; syncId = $syncId; root = $rd; done = ($sent -ge $n); total = $n; items = $part } | ConvertTo-Json -Depth 4 -Compress)
       Invoke-RestMethod -Uri "$api2/api/file-storage/sp-handler/tree" -Method Post -Headers $hdr -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30 | Out-Null
@@ -241,6 +288,21 @@ try {
   }
   if ($action -eq 'list') {
     if (-not (Send-Tree $rel)) { Fail 'คำสั่ง list ต้องมี api และ token' }
+    exit 0
+  }
+
+  # MARKER_SP_HANDLER_V18_LOCAL_DOD -- pull: อ่านไฟล์ใน Drive D (ไม่เกิน 25 MB) ส่งขึ้น Backend พักชั่วคราวตาม req ให้หน้าเว็บอ่านต่อ (หน้าเว็บอ่านไฟล์ในเครื่องเองไม่ได้)
+  if ($action -eq 'pull') {
+    $api3 = ([string]$p['api']).TrimEnd('/'); $tok3 = [string]$p['token']; $req3 = [string]$p['req']
+    if ($api3 -notmatch '^https?://[A-Za-z0-9.:_-]+(/[A-Za-z0-9._/-]*)?$' -or -not $tok3 -or $req3 -notmatch '^[A-Za-z0-9]{8,64}$') { Fail 'คำสั่ง pull ต้องมี api / token / req' }
+    if ($dest -ne 'dod') { Fail 'คำสั่ง pull ใช้ได้เฉพาะ Drive D (dest=dod)' }
+    $pf = Resolve-InRoot $rel
+    if (-not (Test-Path -LiteralPath $pf -PathType Leaf)) { Log "PULL not found $pf"; Notify 'FastAPN: ดึงไฟล์จาก Drive D' "ไม่พบไฟล์: $rel"; exit 0 }
+    $pi = Get-Item -LiteralPath $pf
+    if ($pi.Length -gt 25MB) { Fail 'ไฟล์ใหญ่เกิน 25 MB' }
+    $qn = [System.Uri]::EscapeDataString($pi.Name)
+    Invoke-RestMethod -Uri "$api3/api/file-storage/sp-handler/local/pull?req=$req3&name=$qn" -Method Post -Headers @{ Authorization = "Bearer $tok3" } -ContentType 'application/octet-stream' -InFile $pf -TimeoutSec 120 | Out-Null
+    Log "PULL OK $pf ($($pi.Length) bytes)"
     exit 0
   }
 
@@ -314,7 +376,11 @@ try {
     if ($rels.Count -gt 200) { Fail 'ลบได้ครั้งละไม่เกิน 200 รายการ' }
     $fulls = @()
     foreach ($r in $rels) { $f = Resolve-InRoot $r; if ($f -eq $rootFull2) { Fail 'ห้ามลบโฟลเดอร์หลัก' }; $fulls += $f }
-    # MARKER_SP_HANDLER_DELETE_SILENT_V1 -- ลบเงียบ ไม่มีกล่องยืนยัน/ไม่มีแจ้งเตือน (กู้คืนจากถังขยะ SharePoint ได้ชั่วคราว) | แจ้งเฉพาะกรณีมีรายการถูกข้าม
+    Add-Type -AssemblyName System.Windows.Forms
+    $pv = (($rels | Select-Object -First 8) -join "`n"); if ($rels.Count -gt 8) { $pv += "`n... และอีก $($rels.Count - 8) รายการ" }
+    $silent = ($p.ContainsKey('silent') -and [string]$p['silent'] -eq '1')   # MARKER_SP_HANDLER_SILENT_DELETE_V1 -- silent=1 (เว็บส่งตอน Release ที่ผู้ใช้ยืนยันในเว็บแล้ว) = ลบเลย ไม่ถาม ไม่ขึ้นแจ้งเตือน (ถ้ามีไฟล์ที่ลบไม่ได้ยังแจ้ง)
+    $ans = if ($silent) { 'Yes' } else { [System.Windows.Forms.MessageBox]::Show("ลบ $($rels.Count) รายการนี้ออกจาก SharePoint ?`n`n[$dest]`n$pv`n`n(โฟลเดอร์ลบได้เฉพาะที่ว่างเปล่า · ไฟล์อยู่ในถังขยะของ SharePoint กู้คืนได้ชั่วคราว)", 'FastAPN SharePoint Handler', 'YesNo', 'Warning', 'Button2') }
+    if ($ans -ne 'Yes') { Log 'DELETE items cancelled'; exit 0 }
     $ok = 0; $skip = @()
     foreach ($f in $fulls) {
       $leaf = Split-Path -Leaf $f
@@ -328,8 +394,8 @@ try {
     Log "DELETE items ok=$ok skip=$($skip.Count)"
     $parents = @($rels | ForEach-Object { Get-ParentRel $_ } | Select-Object -Unique)
     [void](Send-Tree $(if ($parents.Count -eq 1) { $parents[0] } else { '' }))
-    $mm = "ลบแล้ว $ok รายการ"; if ($skip.Count) { $mm += "`nข้าม: " + (($skip | Select-Object -First 5) -join ', ') }
-    if ($skip.Count) { Notify 'FastAPN: ลบจาก SharePoint' $mm }
+    $mm = "ทั้งหมด $($rels.Count) รายการ — สำเร็จ $ok · ไม่สำเร็จ $($skip.Count)"; if ($skip.Count) { $mm += "`nไม่สำเร็จ: " + (($skip | Select-Object -First 5) -join ', ') }   # MARKER_SP_HANDLER_NOTICE_SUMMARY_V2
+    Notify 'FastAPN: ลบจาก SharePoint' $mm
     exit 0
   }
 
@@ -342,7 +408,7 @@ try {
       Log "DELETE not found $full"
       exit 0
     }
-    # MARKER_SP_HANDLER_DELETE_SILENT_V1 -- ลบเงียบ ไม่มีกล่องยืนยัน (ไฟล์ยังกู้คืนจากถังขยะ SharePoint ได้ชั่วคราว) | delete แบบหลายรายการ (items=) ยังมีกล่องยืนยัน
+    # MARKER_SP_HANDLER_DELETE_SINGLE_SILENT_V14 -- v14: ลบไฟล์เดี่ยวแบบเงียบ ไม่มีกล่องยืนยัน/ไม่มีแจ้งเตือน (ผู้ใช้สั่งให้ตัด | ไฟล์ยังกู้คืนจากถังขยะ SharePoint ได้ชั่วคราว)
     Remove-Item -LiteralPath $full -Force
     Log "DELETE OK $full"
     exit 0
@@ -399,18 +465,37 @@ try {
     }
     if (-not (Test-Path -LiteralPath $monthDir)) { New-Item -ItemType Directory -Path $monthDir -Force | Out-Null }
     $final = Join-Path $monthDir $fname
+    if ($action -eq 'backup') {   # MARKER_SP_HANDLER_V18_LOCAL_DOD -- เก็บลง Drive D (ทับไฟล์ชื่อเดิม) แล้วส่งต่อ SharePoint Z_Backup_DOH ถ้ามี (ยกเว้น scope=local) | ไม่มีให้ส่งต่อ = ลบไฟล์ค้างใน Downloads
+      Copy-Item -LiteralPath $src.FullName -Destination $final -Force
+      $sentSp = $false
+      if ([string]$p['scope'] -ne 'local' -and (Test-ProfileDest 'doh')) {   # MARKER_SP_HANDLER_V20_PROFILE
+        $dohRoot = $null; try { $dohRoot = Find-DestRoot 'Z_Backup_DOH' } catch { $dohRoot = $null }
+        if ($dohRoot) {
+          $spDir = Join-Path (Join-Path $dohRoot $bu) $period
+          if (-not (Test-Path -LiteralPath $spDir)) { New-Item -ItemType Directory -Path $spDir -Force | Out-Null }
+          Move-Item -LiteralPath $src.FullName -Destination (Join-Path $spDir $fname) -Force; $sentSp = $true; Log "BACKUP SP OK $spDir\$fname"
+        }
+      }
+      if (-not $sentSp) { Remove-Item -LiteralPath $src.FullName -Force -ErrorAction SilentlyContinue }
+      Log "BACKUP OK $final"
+    } else {
     Move-Item -LiteralPath $src.FullName -Destination $final -Force   # ชื่อซ้ำ = ทับ (SharePoint เก็บ Version History ให้)
+    }
+    # MARKER_SP_HANDLER_V19_CLEAN_DL -- v19: ลบไฟล์ชื่อเดียวกันที่ค้างใน Downloads (name.ext / name (n).ext) ให้ไฟล์ล่าสุดทับของเดิม ไม่เหลือ (1) (2)
+    try { Get-ChildItem -LiteralPath $dlDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ieq $ext -and ($_.Name -ieq $fname -or $_.Name -match ('^' + [regex]::Escape($stem) + ' \(\d+\)' + [regex]::Escape($ext) + '$')) } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } } catch { }
     Log "OK $final"
     $okNames += $fname
   }
+  # MARKER_SP_HANDLER_NOTICE_SUMMARY_V2 -- แจ้งเตือนสรุปครั้งเดียว: ทั้งหมดกี่ไฟล์ สำเร็จ/ไม่สำเร็จ (ไม่ขึ้นหน้าต่าง Error แยก)
+  $totalN = $okNames.Count + $missNames.Count
+  $sumMsg = "[$dest] $bu \ $period`nทั้งหมด $totalN ไฟล์ — สำเร็จ $($okNames.Count) · ไม่สำเร็จ $($missNames.Count)"
+  if ($action -eq 'put') { $sumMsg = "[$dest] $rel`nทั้งหมด $totalN ไฟล์ — สำเร็จ $($okNames.Count) · ไม่สำเร็จ $($missNames.Count)" }
   if ($missNames.Count -gt 0) {
-    $lst = ($missNames | ForEach-Object { "- $_" }) -join "`n"
-    if ($okNames.Count -gt 0) { Notify 'FastAPN: ส่งไป SharePoint' ("[$dest] $bu \ $period : ส่งแล้ว $($okNames.Count) ไฟล์`nแต่ยังไม่พบ $($missNames.Count) ไฟล์ใน Downloads") }
-    Fail "ไม่พบไฟล์ใน Downloads ($dlDir):`n$lst`nตรวจว่า Browser ดาวน์โหลดโดยไม่ถามที่เก็บ (ปิด 'Ask where to save each file')`nหรือตั้ง downloadsDir ใน $cfgPath"
-  }
-  if ($action -eq 'put') { Notify 'FastAPN: ส่งไป SharePoint' ("[$dest] $rel \ $($okNames[0])`nรอ OneDrive ซิงก์ขึ้น SharePoint") }
-  elseif ($okNames.Count -gt 1) { Notify 'FastAPN: ส่งไป SharePoint' ("[$dest] $bu \ $period : $($okNames.Count) ไฟล์`nรอ OneDrive ซิงก์ขึ้น SharePoint") }
-  else { Notify 'FastAPN: ส่งไป SharePoint' ("[$dest] $bu \ $period \ $($okNames[0])`nรอ OneDrive ซิงก์ขึ้น SharePoint") }
+    $lst = ($missNames | Select-Object -First 5 | ForEach-Object { "- $_" }) -join "`n"
+    Log "ERROR: ไม่พบไฟล์ใน Downloads ($dlDir): $($missNames -join ', ')"
+    $sumMsg += "`nไม่พบใน Downloads:`n$lst"
+  } else { $sumMsg += $(if ($action -eq 'backup') { "`nเก็บที่ Drive D: $root" } else { "`nรอ OneDrive ซิงก์ขึ้น SharePoint" }) }
+  Notify $(if ($action -eq 'backup') { if ($missNames.Count -gt 0) { 'FastAPN: Backup ลง Drive D (มีไฟล์ไม่สำเร็จ)' } else { 'FastAPN: Backup ลง Drive D สำเร็จ' } } elseif ($missNames.Count -gt 0) { 'FastAPN: ส่งไป SharePoint (มีไฟล์ไม่สำเร็จ)' } else { 'FastAPN: ส่งไป SharePoint สำเร็จ' }) $sumMsg
 } catch {
   Fail ("เกิดข้อผิดพลาด: " + $_.Exception.Message)
 }

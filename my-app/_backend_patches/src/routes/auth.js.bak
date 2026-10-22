@@ -58,7 +58,7 @@ async function getDocAccess(userId, permissions) {
   // MARKER_MIN_ROLE_SWITCH_V1 -- Permission ขั้นต่ำต่อโฟลเดอร์ (menu_min_role, menu_id = 'doc-<folder>') | Role ต่ำกว่าขั้นต่ำ = ไม่ได้ (ยกเว้นมี Override รายบุคคลด้านล่าง) | ไม่มีแถว = ไม่จำกัด
   try {
     const rr = await pool.query("SELECT role FROM user_roles WHERE id = $1", [userId]);
-    const rank = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+    const rank = { guest: -1, viewer: 0, editor: 1, admin: 2, owner: 3 }; // MARKER_GUEST_ROLE_V1 -- Guest ต่ำกว่า Viewer = ไม่เข้าโฟลเดอร์เอกสารทุกใบ (Document Access ไม่มี Guest)
     const myRank = rank[String((rr.rows[0] && rr.rows[0].role) || "").toLowerCase()] ?? 0;
     const { rows: mins } = await pool.query("SELECT menu_id, min_role FROM menu_min_role WHERE menu_id LIKE 'doc-%'");
     mins.forEach((m) => {
@@ -355,20 +355,22 @@ router.post("/signup", async (req, res) => {
     const newUserId = rows[0].id;
 
     // สร้าง notification ให้ Owner
-    // MARKER_AUTH_SIGNUP_AUTO_VIEWER_V1 -- สมัครแล้วเป็น Viewer ทันที ไม่ต้อง Approve | แจ้ง Owner ทางกระดิ่ง (รายการ "จัดการแล้ว") ให้รับทราบและไปตั้ง Permission เอง
+    // MARKER_AUTH_SIGNUP_PENDING_UNTIL_ROLE_V1 -- สมัครแล้วเข้าใช้งานได้ทันทีในสิทธิ์ Viewer
+    // แต่คำขอ Signup ค้างเป็น 'pending' (ขึ้นเลขแดงที่กระดิ่ง) จนกว่า Owner จะปรับ Role/Permission
+    // ให้ User คนนี้ใน User Management (ฝั่ง UserManagement.js จะเปลี่ยนเป็น approved ให้เอง)
     const signupName = username.trim().toLowerCase();
-    const signupMsg = `${signupName} สมัครเข้าใช้งานระบบแล้ว (Viewer) — Owner ตรวจสอบสิทธิ์ที่ Access Panel`;
+    const signupMsg = `${signupName} สมัครเข้าใช้งานระบบแล้ว (Viewer) — รอ Owner กำหนด Role/สิทธิ์`;
     try {
       await pool.query(
-        `INSERT INTO access_requests (requester_id, requester_name, status, request_type, ref_user_id, handled_by, handled_at, message, created_at)
-         VALUES ($1, $2, 'approved', 'signup', $1, 'ระบบ (Auto Viewer)', NOW(), $3, NOW())`,
+        `INSERT INTO access_requests (requester_id, requester_name, status, request_type, ref_user_id, message, created_at)
+         VALUES ($1, $2, 'pending', 'signup', $1, $3, NOW())`,
         [newUserId, signupName, signupMsg]
       );
     } catch (e) {
       // ตารางไม่มีคอลัมน์ message -> บันทึกแบบไม่มีข้อความ (ไม่ให้การสมัครล้ม)
       await pool.query(
-        `INSERT INTO access_requests (requester_id, requester_name, status, request_type, ref_user_id, handled_by, handled_at, created_at)
-         VALUES ($1, $2, 'approved', 'signup', $1, 'ระบบ (Auto Viewer)', NOW(), NOW())`,
+        `INSERT INTO access_requests (requester_id, requester_name, status, request_type, ref_user_id, created_at)
+         VALUES ($1, $2, 'pending', 'signup', $1, NOW())`,
         [newUserId, signupName]
       );
     }
@@ -456,6 +458,9 @@ router.post("/admin/create-user", async (req, res) => {
     const callerRole = callerRows[0]?.role;
     if (!['Owner', 'Admin'].includes(callerRole))
       return res.status(403).json({ error: "Owner/Admin only" });
+    // MARKER_GUEST_ROLE_V1 -- เพิ่ม Guest ได้เฉพาะ Owner
+    if (role === 'Guest' && callerRole !== 'Owner')
+      return res.status(403).json({ error: "เฉพาะ Owner เท่านั้นที่เพิ่ม Guest ได้" });
 
     // เช็ค email ซ้ำ
     const { rows: existing } = await pool.query(
@@ -477,6 +482,7 @@ router.post("/admin/create-user", async (req, res) => {
       Admin:  { VAT: true,  'I-Pro': true,  GL: true,  IE: true,  Function: true,  Manual: true  },
       Editor: { VAT: true,  'I-Pro': false, GL: false, IE: false, Function: false, Manual: true  },
       Viewer: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false },
+      Guest:  { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false }, // MARKER_GUEST_ROLE_V1
     };
     const permissions = DEFAULT_PERMISSIONS[role] || DEFAULT_PERMISSIONS.Viewer;
 
@@ -525,6 +531,9 @@ router.delete("/admin/delete-user", async (req, res) => {
     );
     if (targetRows[0]?.role === 'Owner')
       return res.status(403).json({ error: "ไม่สามารถลบ Owner ได้ครับ" });
+    // MARKER_GUEST_ROLE_V1 -- ลบ Guest ได้เฉพาะ Owner
+    if (targetRows[0]?.role === 'Guest' && callerRole !== 'Owner')
+      return res.status(403).json({ error: "เฉพาะ Owner เท่านั้นที่ลบ Guest ได้" });
 
     await pool.query("DELETE FROM user_roles WHERE email = $1", [email.trim().toLowerCase()]);
 

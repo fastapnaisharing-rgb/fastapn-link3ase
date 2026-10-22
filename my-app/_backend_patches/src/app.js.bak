@@ -15,11 +15,13 @@ import apPeriodRouter, { checkAutoCloseRequest, checkAndSyncPeriodStatus } from 
 import vatPeriodRouter from "./routes/vatPeriodRoute.js";
 import { purgeExpiredTaxClosePeriods } from "./routes/taxClosePeriod.js"; // MARKER_TAXCLOSE_LIFECYCLE_V1
 import { purgeExpiredArCollectionBackup } from "./routes/arCollectionBackupRetention.js"; // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1
+import { purgeExpiredApReconcileLines } from "./routes/apReconcileExpire.js"; // MARKER_APRECONCILE_EXPIRE_V1
 import iePeriodRouter, { checkAutoCloseIERequest, checkAndSyncIEPeriodStatus } from "./routes/iePeriod.js";
 import systemRouter, { takeRamSnapshot, takeCpuSnapshot, autoCleanJunk, getCurrentCpu } from "./routes/system.js"; // MARKER_SYNC_GETCURRENTCPU_APP_V1
 import fileStorageRouter, { checkAndCleanupFileStorage } from "./routes/fileStorage.js";
 import vatExportRouter from "./routes/vatExport.js"; // MARKER_APP_VAT_EXPORT_ROUTER_V1 -- Export Popvat/Simple/ADI จาก Draft เป็นไฟล์ Excel
 import ieExportRouter from "./routes/ieExport.js"; // MARKER_APP_IE_EXPORT_ROUTER_V1 -- Export Simple ของ IE จาก ie_simplevatdraft เป็นไฟล์ Excel
+import ieMacroMailConfigRouter from "./routes/ieMacroMailConfig.js"; // MARKER_APP_IE_MACROMAIL_ROUTER_V1 -- Mail Manage ของ Generate by Macro Logic
 // MARKER_MOUNT_FAVORITE_ROUTER_V1
 import favoriteRouter from "./routes/favorite.js";
 import itemMasterSearchRouter from "./routes/itemMasterSearch.js"; // MARKER_APP_MOUNT_ITEM_MASTER_SEARCH_V1
@@ -272,6 +274,7 @@ app.use("/api/system", systemRouter);
 app.use("/api/file-storage", fileStorageRouter);
 app.use("/api/vat-export", vatExportRouter); // MARKER_APP_VAT_EXPORT_ROUTER_V1
 app.use("/api/ie-export", ieExportRouter); // MARKER_APP_IE_EXPORT_ROUTER_V1
+app.use("/api/ie-macrologic-mail", ieMacroMailConfigRouter); // MARKER_APP_IE_MACROMAIL_ROUTER_V1
 app.use("/api/favorite", favoriteRouter);
 app.use("/api/batch-comments", batchCommentsRouter);
 app.use("/api/legacy-import", legacyImportRouter);
@@ -2412,6 +2415,11 @@ const server = app.listen(port, "0.0.0.0", () => {
       await purgeExpiredTaxClosePeriods(); // MARKER_TAXCLOSE_LIFECYCLE_V1 -- ล้างข้อมูล Timeline ปิดภาษีหลังปิด Period ครบ N วัน
     } catch (err) {
       console.error("tax close timeline purge cron error:", err.message);
+    }
+    try {
+      await purgeExpiredApReconcileLines(); // MARKER_APRECONCILE_EXPIRE_V1 -- ลบแถวข้อมูล AP (ap_cutting_staging) ของงาน Reconcile ที่ Confirm ราย Account แล้วและครบ 30 วัน (Account ที่ไม่ Confirm ไม่ถูกลบ -- Owner ล้างเอง)
+    } catch (err) {
+      console.error("ap reconcile expire purge cron error:", err.message);
     }
     try {
       await purgeExpiredArCollectionBackup(); // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1 -- ลบ vat_backup_tax_invoice (AR_Collection) ที่ Match ไม่ได้ครบกำหนดหลังปิด Period

@@ -36,12 +36,32 @@ try {
   foreach ($e in @($env:OneDriveCommercial, $env:OneDrive)) { if ($e -and (Test-Path -LiteralPath $e) -and ($odRoots -notcontains $e)) { $odRoots += $e } }
   try { foreach ($d in (Get-ChildItem -LiteralPath $env:USERPROFILE -Directory -Filter 'OneDrive*' -ErrorAction SilentlyContinue)) { if ($odRoots -notcontains $d.FullName) { $odRoots += $d.FullName } } } catch {}
   $rel = 'VAT Controller\My System'
+  # MARKER_SP_SETUP_USE_PROFILE_V1 -- โปรไฟล์ปลายทางตามสิทธิ์ผู้ใช้ (ไม่มีไฟล์ = ชุดเก่า: ทำทุกปลายทางเหมือนเดิม)
+  $prof = $null; $profKeys = @(); $profSrc = Join-Path $srcDir 'fastapn-sp-profile.json'
+  if (Test-Path -LiteralPath $profSrc) { try { $prof = Get-Content -LiteralPath $profSrc -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($d in @($prof.dests)) { if ($d -and $d.key) { $profKeys += [string]$d.key } } } catch { $prof = $null; $profKeys = @() } }
+  $needVat = (-not $prof) -or ($profKeys -contains 'recon') -or ($profKeys -contains 'upload')
+  $needGl  = (-not $prof) -or ($profKeys -contains 'gl') -or ($profKeys -contains 'doh')
+  if ($prof) { Write-Host ('ติดตั้งตามสิทธิ์ของบัญชี: ' + $(if ($profKeys.Count) { $profKeys -join ', ' } else { '(ไม่มีปลายทาง)' })) -ForegroundColor Cyan }
+  # MARKER_SP_SETUP_VAT_FOLDER_FIRST_V1 -- ค้นก่อนว่ามีโฟลเดอร์ VAT Controller ในเครื่องนี้หรือไม่ (_Taii\ ก่อน) | ไม่พบ = ข้ามปลายทางฝั่ง VAT
+  $vatDirs = @()
+  foreach ($r in $(if ($needVat) { $odRoots } else { @() })) { foreach ($c in @((Join-Path $r 'VAT Controller'))) { if ((Test-Path -LiteralPath $c -PathType Container) -and ($vatDirs -notcontains $c)) { $vatDirs += $c } } }
+  if ($needVat -and $vatDirs.Count -eq 0) { foreach ($r in $odRoots) { try { $f = Get-ChildItem -LiteralPath $r -Directory -Recurse -Depth 4 -Filter 'VAT Controller' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'VAT Controller' } | Select-Object -First 1; if ($f) { $vatDirs += $f.FullName; break } } catch {} } }
+  if (-not $needVat) { } elseif ($vatDirs.Count -gt 0) { Write-Host ('พบโฟลเดอร์ VAT Controller: ' + ($vatDirs -join ' | ')) -ForegroundColor Green } else { Write-Host 'ไม่พบโฟลเดอร์ VAT Controller ในเครื่องนี้ -- ข้ามปลายทางฝั่ง VAT (Z_Report Reconcile / Z_AllSystemUpload)' -ForegroundColor Yellow }
+  # MARKER_SP_SETUP_ENTRY_BY_MODULE_V1 -- ทางเข้า GL = _Taii (ค้นก่อน: <OneDrive>\_Taii -> ค้นลึกไม่เกิน 4 ชั้น | รองรับเครื่องที่ Reconcile_Backup อยู่ตรง OneDrive เลย) | ไม่พบ = ข้าม gl/doh
+  $taiiDirs = @()
+  foreach ($r in $(if ($needGl) { $odRoots } else { @() })) { $c = Join-Path $r '_Taii'; if ((Test-Path -LiteralPath $c -PathType Container) -and ($taiiDirs -notcontains $c)) { $taiiDirs += $c } }
+  if ($needGl -and $taiiDirs.Count -eq 0) { foreach ($r in $odRoots) { try { $f = Get-ChildItem -LiteralPath $r -Directory -Recurse -Depth 4 -Filter '_Taii' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq '_Taii' } | Select-Object -First 1; if ($f) { $taiiDirs += $f.FullName; break } } catch {} } }
+  if ($needGl -and $taiiDirs.Count -eq 0) { foreach ($r in $odRoots) { if (Test-Path -LiteralPath (Join-Path $r 'Reconcile_Backup') -PathType Container) { $taiiDirs += $r } } }
+  if (-not $needGl) { } elseif ($taiiDirs.Count -gt 0) { Write-Host ('พบทางเข้า GL (_Taii): ' + ($taiiDirs -join ' | ')) -ForegroundColor Green } else { Write-Host 'ไม่พบทางเข้า GL (_Taii) ในเครื่องนี้ -- ข้ามปลายทางฝั่ง GL (Reconcile_Backup / Z_Backup_DOH)' -ForegroundColor Yellow }
   # ปลายทางที่รองรับ: ชื่อโฟลเดอร์ถูกล็อคตายตัว (เลือกผิดชื่อไม่ได้)  recon = จำเป็น, upload = ไม่บังคับ
   $targets = @(
     @{ key='recon';  label='Z_Report Reconcile'; required=$false },   # v8: ไม่บังคับต่อปลายทางแล้ว (ผู้ใช้ฝั่ง AP อาจมีแต่โฟลเดอร์ AP) -- ต้องพบอย่างน้อย 1 ปลายทาง
     @{ key='ap';     label='Z_Report Reconcile - Account Payable'; required=$false },
-    @{ key='upload'; label='Z_AllSystemUpload';  required=$false }
+    @{ key='upload'; label='Z_AllSystemUpload';  required=$false },
+    @{ key='gl';     label='Reconcile_Backup';   required=$false },   # MARKER_SP_SETUP_INSTALL_FOUND_ONLY_V1
+    @{ key='doh';    label='Z_Backup_DOH';       required=$false }
   )
+  $targets = @($targets | Where-Object { (-not $prof) -or ($profKeys -contains $_.key) })   # MARKER_SP_SETUP_USE_PROFILE_V1
   $dests = [ordered]@{}
   foreach ($tg in $targets) {
     $k = $tg.key; $label = $tg.label; $picked = ''
@@ -49,9 +69,18 @@ try {
     if ($cur.ContainsKey($k) -and $cur[$k] -and (Test-Path -LiteralPath $cur[$k] -PathType Container) -and ((Split-Path -Leaf $cur[$k]) -eq $label)) { $picked = $cur[$k] }
     # 2) หาอัตโนมัติจาก OneDrive: <OneDrive>\VAT Controller\My System\<label>
     if (-not $picked) {
-      foreach ($r in $odRoots) { $cand = Join-Path (Join-Path $r $rel) $label; if (Test-Path -LiteralPath $cand -PathType Container) { $picked = $cand; Write-Host ("พบ $label อัตโนมัติ: $cand") -ForegroundColor Green; break } }
+      foreach ($vd in $vatDirs) { if ($k -ne 'recon' -and $k -ne 'upload') { break }; $cand = Join-Path (Join-Path $vd 'My System') $label; if (Test-Path -LiteralPath $cand -PathType Container) { $picked = $cand; Write-Host ("พบ $label อัตโนมัติ: $cand") -ForegroundColor Green; break } }   # MARKER_SP_SETUP_VAT_FOLDER_FIRST_V1
     }
-    # 2.1) v8: โฟลเดอร์ AP ไม่ได้อยู่ใต้ VAT Controller\My System แน่นอน -> ค้นใต้ OneDrive ลึกไม่เกิน 4 ชั้น
+    # 2.0) MARKER_SP_SETUP_INSTALL_FOUND_ONLY_V1 -- ค้น _Taii\ ก่อน: _Taii\Reconcile_Backup\<label> -> _Taii\<label> -> Reconcile_Backup\<label> (gl = ตัว Reconcile_Backup เอง)
+    if (-not $picked -and ($k -eq 'gl' -or $k -eq 'doh')) {   # MARKER_SP_SETUP_ENTRY_BY_MODULE_V1 -- เฉพาะ GL: ค้นใต้ทางเข้า _Taii
+      foreach ($r in $taiiDirs) {
+        $cands = @((Join-Path $r ('Reconcile_Backup\' + $label)), (Join-Path $r $label))
+        if ($k -eq 'gl') { $cands = @((Join-Path $r 'Reconcile_Backup')) }
+        foreach ($cand in $cands) { if (Test-Path -LiteralPath $cand -PathType Container) { $picked = $cand; Write-Host ('พบ ' + $label + ' อัตโนมัติ: ' + $cand) -ForegroundColor Green; break } }
+        if ($picked) { break }
+      }
+    }
+    # 2.1) v8: โฟลเดอร์ AP ไม่ได้อยู่ใต้ VAT Controller\My System แน่นอน -> ค้นใต้ OneDrive ลึกไม่เกิน 4 ชั้น (MARKER_SP_SETUP_INSTALL_FOUND_ONLY_V1: ใช้กับ doh ด้วย)
     if (-not $picked -and $k -eq 'ap') {
       foreach ($r in $odRoots) { try { $f = Get-ChildItem -LiteralPath $r -Directory -Recurse -Depth 4 -Filter $label -ErrorAction SilentlyContinue | Select-Object -First 1; if ($f) { $picked = $f.FullName; Write-Host ("พบ $label อัตโนมัติ: $picked") -ForegroundColor Green; break } } catch {} }
     }
@@ -71,25 +100,14 @@ try {
     }
     if ($picked) { $dests[$k] = $picked } elseif (-not $tg.required) { Write-Host "ข้าม $label (ไม่พบโฟลเดอร์ที่ซิงก์ในเครื่องนี้ ถ้าจะใช้ภายหลังให้ซิงก์แล้วรัน setup ใหม่)" -ForegroundColor DarkYellow }
   }
-  # v8: ต้องมีปลายทางอย่างน้อย 1 ที่ -- ถ้าไม่เจอเลย ให้เลือกเอง (ชื่อโฟลเดอร์ต้องเป็น Z_Report Reconcile หรือ Z_Report Reconcile - Account Payable)
-  if ($dests.Count -eq 0) {
-    if ($Silent) { throw 'ไม่พบโฟลเดอร์ปลายทาง SharePoint (Z_Report Reconcile / Z_Report Reconcile - Account Payable) ในเครื่องนี้ (โหมด -Silent ไม่เปิดหน้าต่างเลือก)' }
-    while ($dests.Count -eq 0) {
-      $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-      $dlg.Description = 'ไม่พบโฟลเดอร์ SharePoint อัตโนมัติ กรุณาเลือกโฟลเดอร์ชื่อ Z_Report Reconcile (VAT) หรือ Z_Report Reconcile - Account Payable (AP) ที่ซิงก์ลงเครื่อง'
-      $dlg.ShowNewFolderButton = $false
-      if ($odRoots.Count -gt 0) { $dlg.SelectedPath = $odRoots[0] }
-      Write-Host 'กำลังเปิดหน้าต่างเลือกโฟลเดอร์... (ถ้าไม่เห็น ให้ดูที่ Taskbar)' -ForegroundColor Yellow
-      if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { throw 'ต้องเลือกโฟลเดอร์ปลายทางอย่างน้อย 1 ที่' }
-      $leaf = Split-Path -Leaf $dlg.SelectedPath
-      $hit = $targets | Where-Object { $_.label -eq $leaf } | Select-Object -First 1
-      if ($hit) { $dests[$hit.key] = $dlg.SelectedPath }
-      else { [System.Windows.Forms.MessageBox]::Show("ต้องเลือกโฟลเดอร์ชื่อ 'Z_Report Reconcile' หรือ 'Z_Report Reconcile - Account Payable' เท่านั้น (ที่เลือก: '$leaf')", 'FastAPN SharePoint Handler', 'OK', 'Warning') | Out-Null }
-    }
-  }
+  # MARKER_SP_SETUP_INSTALL_FOUND_ONLY_V1 -- ติดตั้งเฉพาะโฟลเดอร์ที่หาเจอ: ไม่เจอเลยก็ติดตั้งต่อ (ไม่ถามเลือก ไม่ throw) Handler จะหาเองตอนใช้งานเมื่อซิงก์ SharePoint ลงเครื่องแล้ว
+  if ($dests.Count -eq 0) { Write-Host 'ยังไม่พบโฟลเดอร์ SharePoint ที่ซิงก์ในเครื่องนี้ -- ติดตั้ง Handler ให้ก่อน (ซิงก์โฟลเดอร์ลงเครื่องแล้ว Handler จะหาเองตอนใช้งาน หรือรัน setup ใหม่)' -ForegroundColor Yellow }
+  # MARKER_SP_SETUP_VERIFY_DEST_MATCH_V1 -- ตรวจ key -> โฟลเดอร์ ให้ตรงชื่อที่ล็อกไว้ (recon=Z_Report Reconcile, ap=Z_Report Reconcile - Account Payable, upload=Z_AllSystemUpload, gl=Reconcile_Backup, doh=Z_Backup_DOH) และมีอยู่จริง
+  foreach ($tg in $targets) { $k = $tg.key; if ($dests.Contains($k)) { $p = [string]$dests[$k]; if (-not (Test-Path -LiteralPath $p -PathType Container) -or ((Split-Path -Leaf $p.TrimEnd('\')) -ine $tg.label)) { Write-Host ('ตัด ' + $k + ' ออก: พาธไม่ตรงชื่อโฟลเดอร์ ' + $tg.label + ' (' + $p + ')') -ForegroundColor Yellow; $dests.Remove($k) } else { Write-Host ('จับคู่แล้ว ' + $k + ' -> ' + $p) -ForegroundColor DarkGreen } } }
   $cfg = [ordered]@{ downloadsDir = $dl; dests = $dests }
   ($cfg | ConvertTo-Json -Depth 4) | Out-File -FilePath $cfgPath -Encoding utf8
   Write-Host "[2/3] บันทึกค่าตั้งค่า $cfgPath" -ForegroundColor Green
+  if ($prof) { Copy-Item -LiteralPath $profSrc -Destination (Join-Path $base 'fastapn-sp-profile.json') -Force }   # MARKER_SP_SETUP_USE_PROFILE_V1
   foreach ($k in $dests.Keys) { Write-Host ("      $k = " + $dests[$k]) }
 
   $key = 'HKCU:\Software\Classes\fastapn-sp'
@@ -106,7 +124,7 @@ try {
   Set-ItemProperty -Path "$key\shell\open\command" -Name '(default)' -Value $cmd
   Write-Host '[3/3] ลงทะเบียน fastapn-sp:// (HKCU) เรียบร้อย' -ForegroundColor Green
   Write-Host ''
-  Write-Host '=== สำเร็จ! (v$newVer) กลับไป Link3ase แล้วใช้งานได้เลย ===' -ForegroundColor Cyan
+  Write-Host ("=== สำเร็จ! (v$newVer) กลับไป Link3ase แล้วใช้งานได้เลย ===") -ForegroundColor Cyan
 } catch {
   Write-Host ''; Write-Host '=== เกิดข้อผิดพลาด ===' -ForegroundColor Red; Write-Host $_.Exception.Message -ForegroundColor Red
 }

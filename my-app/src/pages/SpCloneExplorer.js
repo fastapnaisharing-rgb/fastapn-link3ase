@@ -16,6 +16,8 @@ const tok = () => sessionStorage.getItem('fastapn_token') || '';
 const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NEED_V = 6;   // เวอร์ชัน Handler ขั้นต่ำสำหรับ mkdir / rename / move / ลบหลายรายการ
+// MARKER_SPC_HANDLER_USER_LEVEL_V1 -- ตัดสิน 'มี Handler' ระดับผู้ใช้: ใช้เครื่องที่ IP ตรงก่อน (machines) ถ้าไม่ตรง (เช่น เปิดผ่าน localhost/VPN/IP เปลี่ยน) ใช้ allMachines ที่ Backend ส่งมา ไม่ให้ล็อกหน้าทั้งที่เคยรายงานแล้ว
+const pickHandlerVer = (d) => { const a = Array.isArray(d.machines) && d.machines.length ? d.machines : (Array.isArray(d.allMachines) ? d.allMachines : []); return a.length ? Math.max(...a.map((m) => Number(m.version) || 0)) : null; };
 const enc = encodeURIComponent;
 const badName = (n) => !n || n === '.' || n === '..' || /[\\/:*?"<>|]/.test(n);
 
@@ -47,7 +49,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
   const MY = MENU === 'gl'; // MARKER_SPC_MY_FOLDERS_V1 -- GL Report: ปุ่ม "My Folders" (เลือกโฟลเดอร์ของตัวเอง ทุกคนใช้ได้) แทน Folder Manage ของ Owner
   const PAGE_TITLE = title || 'VatController';
   const BACK_LABEL = backLabel || 'VAT Control';
-  const ROOT_LABEL = DEST === 'ap' ? 'Z_Report Reconcile - Account Payable' : 'Z_Report Reconcile';
+  const ROOT_LABEL = ({ ap: 'Z_Report Reconcile - Account Payable', gl: 'Detail of Account', doh: 'Z_Backup_DOH' })[DEST] || 'Z_Report Reconcile'; // MARKER_GL_DOA_BOX_V1
   const { userName, currentUser, userRole } = useAuth();   // MARKER_SPC_RESOURCE_HEADER_V1
   const { isOwner } = useUserRole();
   const [syncing, setSyncing] = useState(false);
@@ -101,7 +103,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
     try {
       const res = await fetch(`${API_ROOT}/api/file-storage/sp-handler/my-status`, { headers: authHeaders() });
       const d = await res.json();
-      const v = Array.isArray(d.machines) && d.machines.length ? Math.max(...d.machines.map((m) => Number(m.version) || 0)) : null;
+      const v = pickHandlerVer(d);
       setHandlerVer(v); setHandlerChecked(true); return v;
     } catch (_) { setHandlerVer(null); return null; }
   }, []);
@@ -126,6 +128,26 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
       if (Date.now() - at > STALE_MS) { triggerList(''); await sleep(6000); load(); }
     })();
   }, [checkHandler, triggerList, load]);
+
+  // MARKER_SPC_AUTO_RECHECK_HANDLER_V1 -- ตรวจสถานะ Handler/สิทธิ์ซ้ำอัตโนมัติ ไม่ต้องกดเอง: ทุก 10 วิ ตอนถูกบล็อก, ทุก 60 วิ ตอนใช้งานอยู่, และทุกครั้งที่กลับมาที่แท็บ/หน้าต่าง | ถ้าเรียกไม่สำเร็จ (เน็ตหลุดชั่วคราว) ไม่ลดสิทธิ์ ไม่เด้งหน้าล็อก
+  useEffect(() => {
+    const blocked = handlerChecked && !handlerVer;
+    const tick = async () => {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`${API_ROOT}/api/file-storage/sp-handler/my-status`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const d = await res.json();
+        const v = pickHandlerVer(d);
+        setHandlerVer(v); setHandlerChecked(true);
+        if (v && !handlerVer) load();
+      } catch (_) { /* เงียบ — รอบหน้าลองใหม่ */ }
+    };
+    const id = setInterval(tick, blocked ? 10000 : 60000);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(id); window.removeEventListener('focus', tick); document.removeEventListener('visibilitychange', tick); };
+  }, [handlerChecked, handlerVer, load]);
 
   const refresh = async () => {
     setSyncing(true);

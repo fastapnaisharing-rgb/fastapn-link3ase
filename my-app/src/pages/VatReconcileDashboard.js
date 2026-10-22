@@ -999,8 +999,9 @@ export default function VatReconcileDashboard({ defaultPeriod, onNavigate }) {
 
   // ── รายชื่อ BU สำหรับ Combobox: กรองเหลือเฉพาะ BU ที่มีข้อมูลจริงใน Period ที่เลือกอยู่เท่านั้น
   //    (ถ้า Period นั้นไม่มี BU ไหนมีข้อมูลเลย -> List ว่างเปล่าไปเลย ไม่มี Fallback โชว์ทุก BU แล้ว) ──
+  // MARKER_VATRECONCILEDASHBOARD_BU_OPTIONS_INPUT_ONLY_V1 -- ตรวจว่ามี Input จริงหรือไม่: นับเฉพาะ Input Summary / Simple 100 / Simple AVG (ไม่นับ TB) ให้ตรงกับตาราง Dashboard (buildPivotRows: DETAIL_FIRST) -- เดิมนับ TB ด้วย ทำให้ Dropdown โผล่ BU ที่ตารางไม่แสดง
   const buHasData = (label) => rows.some(
-    (r) => r.label === label && (r.tb_active || r.input_summary_active || r.simple_100_active || r.simple_avg_active)
+    (r) => r.label === label && (r.input_summary_active || r.simple_100_active || r.simple_avg_active)
   );
   const allBuLabels = [...new Set(rows.map((r) => r.label))].sort();
   const businessUnitOptions = allBuLabels.filter(buHasData);

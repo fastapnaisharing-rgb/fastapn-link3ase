@@ -9,6 +9,7 @@ export function useUserRole() {
   const isAdmin  = role === 'admin'  || isOwner;
   const isEditor = role === 'editor' || isAdmin;
   const isViewer = true;
+  const isGuest  = role === 'guest'; // MARKER_GUEST_ROLE_V1
 
-  return { role, loading: !authReady, isOwner, isAdmin, isEditor, isViewer };
+  return { role, loading: !authReady, isOwner, isAdmin, isEditor, isViewer, isGuest };
 }

@@ -21,6 +21,7 @@ import systemRouter, { takeRamSnapshot, takeCpuSnapshot, autoCleanJunk, getCurre
 import fileStorageRouter, { checkAndCleanupFileStorage } from "./routes/fileStorage.js";
 import vatExportRouter from "./routes/vatExport.js"; // MARKER_APP_VAT_EXPORT_ROUTER_V1 -- Export Popvat/Simple/ADI จาก Draft เป็นไฟล์ Excel
 import ieExportRouter from "./routes/ieExport.js"; // MARKER_APP_IE_EXPORT_ROUTER_V1 -- Export Simple ของ IE จาก ie_simplevatdraft เป็นไฟล์ Excel
+import ieMacroMailConfigRouter from "./routes/ieMacroMailConfig.js"; // MARKER_APP_IE_MACROMAIL_ROUTER_V1 -- Mail Manage ของ Generate by Macro Logic
 // MARKER_MOUNT_FAVORITE_ROUTER_V1
 import favoriteRouter from "./routes/favorite.js";
 import itemMasterSearchRouter from "./routes/itemMasterSearch.js"; // MARKER_APP_MOUNT_ITEM_MASTER_SEARCH_V1
@@ -273,6 +274,7 @@ app.use("/api/system", systemRouter);
 app.use("/api/file-storage", fileStorageRouter);
 app.use("/api/vat-export", vatExportRouter); // MARKER_APP_VAT_EXPORT_ROUTER_V1
 app.use("/api/ie-export", ieExportRouter); // MARKER_APP_IE_EXPORT_ROUTER_V1
+app.use("/api/ie-macrologic-mail", ieMacroMailConfigRouter); // MARKER_APP_IE_MACROMAIL_ROUTER_V1
 app.use("/api/favorite", favoriteRouter);
 app.use("/api/batch-comments", batchCommentsRouter);
 app.use("/api/legacy-import", legacyImportRouter);
@@ -1129,6 +1131,155 @@ app.post("/api/vat_watchlist_report/sync_draft_status", checkPermission("vat_wat
     res.status(500).json({ error: "Internal server error", detail: err.message });
   }
 });
+// MARKER_APP_VAT_POPVAT_BULK_V1
+// -- POST /api/vat_watchlist_report/popvat_bulk -- Popvat หลายรายการ (หลักสิบ-หลักพัน) ใน Transaction เดียว --
+// -- แทนการยิง POST popvatdraft + GET report + PUT report ทีละแถว (Quick Action / Matching ต่างๆ เรียกใช้ซ้ำได้) --
+// -- ทำ: (1) INSERT vat_upload_popvatdraft เป็นก้อน (2) UPDATE vat_watchlist_report แบบ set-based (จับ BU+Invoice Ref.+Supplier Code เหมือนเดิม) --
+// --     (3) อัปเดตเลข GRN ใน company_list (ถ้าส่งมา) -- Error ที่ใดที่หนึ่ง = ROLLBACK ทั้งชุด --
+// -- Idempotent: draft_id เดียวกันที่เคยบันทึกแล้ว ไม่ INSERT ซ้ำ (กดส่งใหม่หลังเน็ตหลุดได้) --
+// -- ต้องอยู่ก่อน Generic Mount (/api/vat_watchlist_report) เหมือน sync_draft_status; Hook scheduleReconCheck/scheduleFreezeSync ด้านบนทำงานให้เองเพราะเป็น POST ใต้ path นี้ --
+const POPVAT_BULK_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_ ]*$/;
+const POPVAT_BULK_REPORT_PUT_COLS = new Set(["status", "aging_label", "aging_months", "remark", "type_receive_date"]);
+const POPVAT_BULK_GRN_COLS = new Set(["vat_grn", "vat_grn_ov"]);
+const POPVAT_BULK_MAX_ITEMS = 20000;
+const popvatBulkQuote = (name) => `"${String(name).replace(/"/g, '""')}"`;
+function popvatBulkSerialize(val) {
+  if (val === null || val === undefined) return null;
+  if (Array.isArray(val) || (typeof val === "object" && !(val instanceof Date))) return JSON.stringify(val);
+  return val;
+}
+app.post(
+  "/api/vat_watchlist_report/popvat_bulk",
+  checkPermission("vat_watchlist_report", "write"),
+  checkPermission("vat_upload_popvatdraft", "write"),
+  async (req, res) => {
+    const { bu, draft_id: draftId, items, grn } = req.body || {};
+    if (!bu || typeof bu !== "string") return res.status(400).json({ error: "bu is required" });
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "items is required" });
+    if (items.length > POPVAT_BULK_MAX_ITEMS) return res.status(400).json({ error: `items เกิน ${POPVAT_BULK_MAX_ITEMS} รายการต่อครั้ง` });
+
+    // ── Validate ก่อนเปิด Transaction ──
+    const draftCols = new Set();
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it || typeof it !== "object" || !it.draft || typeof it.draft !== "object" || Array.isArray(it.draft)) {
+        return res.status(400).json({ error: `items[${i}].draft ไม่ถูกต้อง` });
+      }
+      for (const c of Object.keys(it.draft)) {
+        if (c === "id") continue;
+        if (!POPVAT_BULK_IDENT_RE.test(c)) return res.status(400).json({ error: `ชื่อคอลัมน์ไม่ถูกต้อง: ${c}` });
+        draftCols.add(c);
+      }
+      if (it.report_put) {
+        for (const c of Object.keys(it.report_put)) {
+          if (!POPVAT_BULK_REPORT_PUT_COLS.has(c)) return res.status(400).json({ error: `report_put ไม่อนุญาตคอลัมน์: ${c}` });
+        }
+      }
+    }
+    if (grn) {
+      if (!POPVAT_BULK_GRN_COLS.has(grn.column) || !Number.isFinite(Number(grn.value)) || grn.company_id == null) {
+        return res.status(400).json({ error: "grn ไม่ถูกต้อง" });
+      }
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // ── (0) Idempotency: draft_id นี้เคยบันทึกครบแล้ว -> ไม่ INSERT ซ้ำ ──
+      let existing = [];
+      if (draftId) {
+        const ex = await client.query("SELECT id, original_invoice_number FROM vat_upload_popvatdraft WHERE draft_id = $1 ORDER BY id", [String(draftId)]);
+        existing = ex.rows;
+      }
+      const duplicate = existing.length > 0;
+      let inserted = duplicate ? existing : [];
+
+      // ── (1) INSERT Draft เป็นก้อน (Union Column ทุกแถว เติม null ให้แถวที่ไม่มีฟิลด์) ──
+      if (!duplicate) {
+        const columns = [...draftCols];
+        if (columns.length === 0) throw Object.assign(new Error("draft ว่าง"), { http: 400 });
+        const colList = columns.map(popvatBulkQuote).join(", ");
+        const perChunk = Math.max(1, Math.floor(30000 / columns.length)); // จำกัด Parameter ต่อ Query (Postgres สูงสุด 65535)
+        for (let off = 0; off < items.length; off += perChunk) {
+          const chunk = items.slice(off, off + perChunk);
+          const values = [];
+          let idx = 1;
+          const valuesSql = chunk.map((it) => {
+            const ph = columns.map((c) => { values.push(popvatBulkSerialize(it.draft[c])); return `$${idx++}`; });
+            return `(${ph.join(", ")})`;
+          });
+          const r = await client.query(
+            `INSERT INTO vat_upload_popvatdraft (${colList}) VALUES ${valuesSql.join(", ")} RETURNING id, original_invoice_number`,
+            values
+          );
+          inserted = inserted.concat(r.rows);
+        }
+      }
+
+      // ── (2) UPDATE สถานะ Incomplete (vat_watchlist_report) -- จัดกลุ่มตามค่าที่จะ Set (ปกติกลุ่มเดียว) แล้ว UPDATE ครั้งเดียวต่อกลุ่ม ──
+      // เงื่อนไขเดิมของหน้าเว็บ: BU + Invoice Ref. ตรง + status IN (pending, send_fp) + Supplier Code ตรงกัน (ว่างฝั่งใดฝั่งหนึ่ง = ผ่าน)
+      const groups = new Map();
+      for (const it of items) {
+        if (!it.report_put || !it.match || !it.match.invoice_ref) continue;
+        const put = {};
+        for (const c of [...POPVAT_BULK_REPORT_PUT_COLS]) if (c in it.report_put) put[c] = it.report_put[c];
+        const anyStatus = !!it.match.any_status; // MARKER_POPVAT_BULK_ANY_STATUS_V1 -- Full Page: Update ทุก status (Selection ชนะเสมอ) ไม่จำกัดแค่ pending/send_fp
+        const key = JSON.stringify({ put, snap: !!it.snapshot_prev_aging, anyStatus });
+        if (!groups.has(key)) groups.set(key, { put, snap: !!it.snapshot_prev_aging, anyStatus, inv: [], sup: [] });
+        const g = groups.get(key);
+        g.inv.push(String(it.match.invoice_ref));
+        g.sup.push(String(it.match.supplier_code || "").trim().toUpperCase());
+      }
+      let reportUpdated = 0;
+      for (const g of groups.values()) {
+        const sets = [];
+        const params = [g.inv, g.sup, bu];
+        for (const [c, v] of Object.entries(g.put)) { params.push(v === undefined ? null : v); sets.push(`${popvatBulkQuote(c)} = $${params.length}`); }
+        if (g.snap) sets.push(`type_prev_aging = jsonb_build_object('l', r.aging_label, 'm', r.aging_months)::text`); // เก็บ Aging เดิมไว้ก่อนถูก Set ทับ (SET ใช้ค่า r.* ก่อนอัปเดต)
+        if (sets.length === 0) continue;
+        const u = await client.query(
+          `UPDATE vat_watchlist_report r SET ${sets.join(", ")}
+             FROM unnest($1::text[], $2::text[]) AS k(inv, sup)
+            WHERE r.bu = $3 AND r.invoice_ref = k.inv ${g.anyStatus ? '' : "AND r.status IN ('pending', 'send_fp')"}
+              AND (k.sup = '' OR btrim(COALESCE(r.supplier_code, '')) = '' OR upper(btrim(r.supplier_code)) = k.sup)`,
+          params
+        );
+        reportUpdated += u.rowCount || 0;
+      }
+
+      // ── (3) เลข GRN ล่าสุดของ BU (ถ้าส่งมา) -- ถ้าส่ง expected_before มาด้วยและเลขจริงไม่ตรง = มีคนอื่นรันแซง -> ROLLBACK + 409 ──
+      let grnValue = null;
+      if (grn && !duplicate) {
+        const col = popvatBulkQuote(grn.column);
+        const cur = await client.query(`SELECT ${col} AS v FROM company_list WHERE id = $1 FOR UPDATE`, [grn.company_id]);
+        if (!cur.rows[0]) throw Object.assign(new Error("ไม่พบ company_list ที่ระบุ"), { http: 404 });
+        if (grn.expected_before != null && Number(cur.rows[0].v || 0) !== Number(grn.expected_before)) {
+          throw Object.assign(new Error("เลข GRN ถูกเปลี่ยนโดยผู้ใช้อื่น กรุณาเปิดใหม่"), { http: 409 });
+        }
+        await client.query(`UPDATE company_list SET ${col} = $1 WHERE id = $2`, [Number(grn.value), grn.company_id]);
+        grnValue = Number(grn.value);
+      }
+
+      await client.query("COMMIT");
+      res.status(duplicate ? 200 : 201).json({
+        success: true,
+        duplicate,
+        inserted: inserted.length,
+        report_updated: reportUpdated,
+        grn: grnValue,
+        drafts: inserted,
+      });
+    } catch (err) {
+      try { await client.query("ROLLBACK"); } catch (_) { /* ignore */ }
+      console.error("vat_watchlist_report popvat_bulk error:", err);
+      if (err && err.http) return res.status(err.http).json({ error: err.message });
+      res.status(500).json({ error: "Internal server error", debug_message: err.message, debug_detail: err.detail, debug_code: err.code });
+    } finally {
+      client.release();
+    }
+  }
+);
 // MARKER_APP_OLDINCOMPLETEREF_GET_LIST_V1 -- GET /api/vat_watchlist_old_incomplete_ref (อ่านอย่างเดียว) -- หน้า Check/Upload Incomplete เรียกใช้ตรวจ Exemption ของ Note ที่ผูก old_ref_check_no (เดิมได้ 404 -> ได้ List ว่าง -> Note ถูก Unmatch ผิด)
 // -- ใช้ Route เฉพาะ ไม่ผ่าน createTableRouter กัน Backend ล้มตอนเริ่มทำงานถ้าตารางไม่อยู่ใน tablePermissions --
 app.get("/api/vat_watchlist_old_incomplete_ref", checkPermission("vat_watchlist_report", "read"), async (req, res) => {

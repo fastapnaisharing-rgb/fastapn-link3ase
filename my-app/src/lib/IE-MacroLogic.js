@@ -165,14 +165,99 @@ function parseAmount(str) {
   return Number.isNaN(num) ? 0 : (neg ? -num : num);
 }
 
+const ORA_MONTH_IDX = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
+
+// MARKER_IE_MACROLOGIC_AGING_V1 — จำนวนวันจาก Invoice Date (DD-MMM-YYYY) ถึงวันนี้ ('' ถ้าอ่านวันที่ไม่ได้)
+function calcDaysOutstanding(oraDate, todayUtc) {
+  const m = String(oraDate || '').match(/^(\d{2})-([A-Z]{3})-(\d{4})$/);
+  if (!m || ORA_MONTH_IDX[m[2]] === undefined) return '';
+  const d = Date.UTC(Number(m[3]), ORA_MONTH_IDX[m[2]], Number(m[1]));
+  return Math.round((todayUtc - d) / 86400000);
+}
+
+// ช่วง Aging (วัน): A 0-15 | B 16-30 | C 31-60 | D 61-90 | E 91-180 | F >180
+export function getAgingBucket(days) {
+  if (days === '' || days == null) return '';
+  if (days <= 15) return 'A - Below 15 Days';
+  if (days <= 30) return 'B - Below 30 Days';
+  if (days <= 60) return 'C - 2 Month';
+  if (days <= 90) return 'D - 3 Month';
+  if (days <= 180) return 'E - 4-6 Month';
+  return 'F - Over 6 Month';
+}
+
+// MARKER_IE_MACROLOGIC_TOPS_LAYOUT_V1 -- เติมคอลัมน์ Aging (Remark/Currency/Category/Days/Status) ใช้ร่วมกันทุกรูปแบบรายงาน
+function applyPrepaymentAging(rows) {
+  const now = new Date();
+  const cutoffUtc = Date.UTC(now.getFullYear(), now.getMonth(), 0);
+  rows.forEach(r => {
+    const days = (r.amountRemaining || 0) === 0 ? 0 : calcDaysOutstanding(r.invoiceDate, cutoffUtc);
+    r.remark = '';
+    r.currency = 'THB';
+    r.category = 'IE Advance';
+    r.daysOutstanding = days;
+    r.status = (r.amountRemaining || 0) === 0 ? 'Settled/Unpaid' : getAgingBucket(days);
+  });
+}
+
+// MARKER_IE_MACROLOGIC_TOPS_LAYOUT_V1 -- รายงานรูปแบบ TOPS ("Prepayment Status Report for IE (custom)"): จัดกลุ่ม Branch -> Employee
+//   บรรทัดสาขา "Branch :  040101" / บรรทัดพนักงาน "Employee :  ชื่อ" / แถวข้อมูล: PREPAYMENT | Invoice No | Invoice Date(ปี 2 หลัก) | Employee(ถูกตัด) | Job | Dept | Tel | Approver | Payment Date | Expected Clear Date | Overdue | Invoice Amt | Remaining | Description...
+//   แปลงให้ได้แถวหน้าตาเดียวกับรูปแบบแรก: supplierName = ชื่อพนักงาน, วันที่ปี 2 หลัก -> DD-MMM-YYYY, settlementDate = Payment Date, withheld = 0
+const TOPS_DATE_RE = /\b(\d{2})-([A-Z]{3})-(\d{2,4})\b/g;
+const TOPS_MONEY_RE = /\(?-?\d[\d,]*\.\d{2}\)?/g;
+const normOraDate = (d) => String(d || '').replace(/^(\d{2}-[A-Z]{3}-)(\d{2})$/, (m, a, y) => a + (2000 + Number(y)));
+export function isTopsLayout(rawText) {
+  const t = String(rawText || '');
+  return /^\s*Branch\s*:\s*\S+/m.test(t) && /^\s*Employee\s*:/m.test(t) && !/Branch\s+Name:/.test(t);
+}
+export function parsePrepaymentTopsText(rawText) {
+  const rows = []; let last = null; let branch = ''; let employee = '';
+  let spans = [[0,14],[15,27],[28,40],[41,61],[62,69],[70,84],[85,102],[103,118],[119,129],[131,141],[142,152],[153,168],[169,187],[191,221],[225,254]]; // ตำแหน่งคอลัมน์ (อ่านจากบรรทัดขีดของไฟล์ได้ ถ้าไม่เจอใช้ค่านี้)
+  const cut = (line, i) => (spans[i] ? line.slice(spans[i][0], spans[i][1]).trim() : '');
+  String(rawText || '').split(/\r\n|\r|\n/).forEach((raw) => {
+    const line = raw.replace(/\f/g, '').replace(/_x000C_/g, '');
+    if (/^\s*-{10,}\s+-{8,}\s+-{8,}\s+-{10,}/.test(line)) { const sp = [...line.matchAll(/-+/g)].map(x => [x.index, x.index + x[0].length]); if (sp.length >= 15) spans = sp; return; }
+    let m = line.match(/^\s*Branch\s*:\s*(\S+)/); if (m) { branch = m[1]; last = null; return; }
+    m = line.match(/^\s*Employee\s*:\s*(.+?)\s*$/); if (m) { employee = m[1].replace(/\s{2,}/g, ' '); last = null; return; }
+    m = line.match(/^\s*PREPAYMENT\s+(\S+)\s+(\d{2}-[A-Z]{3}-\d{2,4})\s/i);
+    if (m) {
+      TOPS_DATE_RE.lastIndex = 0; const dates = [];
+      let dm; while ((dm = TOPS_DATE_RE.exec(line))) dates.push(dm[0]);
+      const afterDates = dates.length >= 3 ? line.slice(line.indexOf(dates[2], line.indexOf(dates[1]) + dates[1].length) + dates[2].length) : line.slice(line.indexOf(dates[0]) + dates[0].length);
+      TOPS_MONEY_RE.lastIndex = 0; const nums = []; let nm;
+      while (nums.length < 2 && (nm = TOPS_MONEY_RE.exec(afterDates))) nums.push(nm);
+      if (nums.length < 2) return; // ไม่ใช่แถวข้อมูลจริง
+      const description = afterDates.slice(nums[1].index + nums[1][0].length).trim();
+      const rec = {
+        branchCode: branch, branchName: branch, supplierName: employee, // branchName = รหัสสาขา (ไฟล์ TOPS ไม่มีชื่อสาขา)
+        supplierNumber: '', invoiceType: 'Prepayment',
+        invoiceNumber: m[1], voucherNumber: '', invoiceDate: normOraDate(m[2]), settlementDate: normOraDate(dates[1] || ''),
+        invoiceAmount: parseAmount(nums[0][0]), withheldAmount: 0, amountRemaining: parseAmount(nums[1][0]), description,
+        // MARKER_IE_MACROLOGIC_TOPS_EXTRA_COLS_V1 -- ดึงทุกคอลัมน์ของรายงาน TOPS ตามตำแหน่งในไฟล์ (ต่อท้ายคอลัมน์เทมเพลต)
+        employeeName: cut(line, 3).replace(/\s{2,}/g, ' '), job: cut(line, 4), department: cut(line, 5), telephone: cut(line, 6), finalApprover: cut(line, 7),
+        paymentDate: normOraDate(dates[1] || ''), expectedClearDate: normOraDate(dates[2] || ''), overdueDays: (() => { const v = cut(line, 10); return /^-?\d+$/.test(v) ? Number(v) : v; })(),
+        reasonUnapplied: line.length > (spans[14] ? spans[14][0] : 225) ? cut(line, 14) : '',
+      };
+      rows.push(rec); last = rec; return;
+    }
+    // บรรทัดต่อของ Description (เยื้องลึก ไม่มีวันที่/จำนวนเงิน)
+    if (last && /^\s{60,}\S/.test(line) && !TOPS_MONEY_RE.test(line) && !/Subtotal|Total|Employee|Branch/.test(line)) { last.description = `${last.description} ${line.trim()}`.trim(); }
+    TOPS_MONEY_RE.lastIndex = 0;
+  });
+  applyPrepaymentAging(rows);
+  return { rows, meta: { totalRows: rows.length, totalAmount: rows.reduce((s, r) => s + (r.invoiceAmount || 0), 0) } };
+}
+
 export function parsePrepaymentOraText(rawText) {
   if (!rawText) return { rows: [], meta: { totalRows: 0, totalAmount: 0 } };
+  if (isTopsLayout(rawText)) return parsePrepaymentTopsText(rawText); // MARKER_IE_MACROLOGIC_TOPS_LAYOUT_V1
   const lines = rawText.split(/\r\n|\r|\n/);
   const rows = [];
   let last = null;
+  let currentBranchName = ''; // MARKER_IE_MACROLOGIC_BRANCHNAME_V1 — ข้อความหลัง Branch Code ในบรรทัด Branch Name:
   let currentBranch = ''; // MARKER_IE_MACROLOGIC_BRANCH_CODE_V1 — Track จากบรรทัด "Branch  Name: {code}  {desc}"
 
-  const branchRe = /Branch\s+Name:\s*(\S+)/;
+  const branchRe = /Branch\s+Name:\s*(\S+)\s*(.*)$/;
 
   for (const raw of lines) {
     const line = raw.replace(/\f/g, ''); // ตัด Form-feed (Page Break marker, Excel เก็บเป็น _x000C_)
@@ -180,12 +265,13 @@ export function parsePrepaymentOraText(rawText) {
     const branchMatch = line.match(branchRe);
     if (branchMatch) {
       currentBranch = branchMatch[1];
+      currentBranchName = (branchMatch[2] || '').trim();
       continue; // บรรทัด Context ไม่ใช่บรรทัดข้อมูล ข้ามไปเลย
     }
 
     const fields = extractPrepaymentFields(line);
     if (fields) {
-      const rec = { branchCode: currentBranch, ...fields };
+      const rec = { branchCode: currentBranch, branchName: currentBranchName, ...fields };
       rows.push(rec);
       last = rec;
     } else if (last && isSupplierNameContinuation(line)) {
@@ -204,6 +290,12 @@ export function parsePrepaymentOraText(rawText) {
     if (!parsedRows[i].supplierName) parsedRows[i].supplierName = parsedRows[i - 1].supplierName;
     if (!parsedRows[i].supplierNumber) parsedRows[i].supplierNumber = parsedRows[i - 1].supplierNumber;
   }
+
+  // MARKER_IE_MACROLOGIC_AGING_V1 — เติมคอลัมน์ตามไฟล์ PTC_Prepayment (Remark/Currency/Branch Name/Category/Status/Days)
+  // Days Outstanding = IF(Remaining=0, 0, วันตัดยอด - InvoiceDate) ตามสูตรเดิมใน Excel
+  // วันตัดยอด = วันสิ้นเดือนก่อนหน้า (ในไฟล์ต้นแบบอ้าง Cell C6 ของชีต 3_Summary_Proof ซึ่งเป็นสิ้นเดือน)
+  // Status = ช่วง Aging (A-F) ; ถ้า Remaining = 0 แสดง "Settled/Unpaid"
+  applyPrepaymentAging(rows);
 
   return {
     rows,
@@ -229,7 +321,42 @@ export const PREPAYMENT_TEMPLATE_COLUMNS = [
   { key: 'withheldAmount',  header: 'WithheldAmount' },
   { key: 'amountRemaining', header: 'AmountRemaining' },
   { key: 'description',     header: 'Description' },
+  { key: 'remark',          header: 'Remark' },
+  { key: 'currency',        header: 'Currency' },
+  { key: 'branchName',      header: 'Branch Name' },
+  { key: 'category',        header: 'Category' },
+  { key: 'status',          header: 'Status' },
+  { key: 'daysOutstanding', header: 'Days Outstanding' },
 ];
+
+// MARKER_IE_MACROLOGIC_TOPS_EXTRA_COLS_V1 -- คอลัมน์เพิ่มของรายงานแบบ TOPS (ต่อท้าย 18 คอลัมน์แรกที่เรียงเหมือนไฟล์ HWS) -- แสดง/Export เฉพาะเมื่อไฟล์มีข้อมูลคอลัมน์นั้น
+export const PREPAYMENT_EXTRA_COLUMNS = [
+  { key: 'employeeName',      header: 'Employee Name' },
+  { key: 'job',               header: 'Job' },
+  { key: 'department',        header: 'Department' },
+  { key: 'telephone',         header: 'Telephone' },
+  { key: 'finalApprover',     header: 'Final Approver' },
+  { key: 'paymentDate',       header: 'Payment Date' },
+  { key: 'expectedClearDate', header: 'Expected Clear Date' },
+  { key: 'overdueDays',       header: 'Overdue Days' },
+  { key: 'reasonUnapplied',   header: 'Reason Unapplied' },
+];
+const _colsCache = new WeakMap();
+// คอลัมน์ที่ใช้จริงกับชุดแถวนี้: 18 คอลัมน์เทมเพลต + คอลัมน์เพิ่มที่มีข้อมูลอย่างน้อย 1 แถว (ไฟล์ HWS ไม่มี = ได้ 18 คอลัมน์เหมือนเดิม)
+export function getPrepaymentColumns(rows) {
+  if (!rows || typeof rows !== 'object') return PREPAYMENT_TEMPLATE_COLUMNS;
+  if (_colsCache.has(rows)) return _colsCache.get(rows);
+  const extra = PREPAYMENT_EXTRA_COLUMNS.filter(c => rows.some(r => r && r[c.key] !== undefined && r[c.key] !== null && String(r[c.key]).trim() !== ''));
+  const cols = extra.length ? [...PREPAYMENT_TEMPLATE_COLUMNS, ...extra] : PREPAYMENT_TEMPLATE_COLUMNS;
+  _colsCache.set(rows, cols);
+  return cols;
+}
+// อ่านย้อนจากไฟล์ที่ Export: คอลัมน์เพิ่มที่มีหัวตรงชื่อในแถวหัวตาราง (ตำแหน่งหลัง 18 คอลัมน์แรก)
+export function getPrepaymentColumnsFromHeader(headerRow) {
+  const hdr = (headerRow || []).slice(PREPAYMENT_TEMPLATE_COLUMNS.length).map(h => String(h == null ? '' : h).trim());
+  const extra = hdr.map(h => PREPAYMENT_EXTRA_COLUMNS.find(c => c.header === h)).filter(Boolean);
+  return extra.length ? [...PREPAYMENT_TEMPLATE_COLUMNS, ...extra] : PREPAYMENT_TEMPLATE_COLUMNS;
+}
 
 // ── จุดเรียกใช้เดียวจาก Component — Detect Type แล้วเลือก Parser ให้เอง ───
 // เผื่ออนาคตมี Report Type อื่นจาก Oracle เพิ่ม แค่เพิ่ม case ที่นี่ที่เดียว

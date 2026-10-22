@@ -1,4 +1,5 @@
-﻿import { Router } from "express";
+import { Router } from "express";
+import express from "express"; // MARKER_SP_LOCAL_DOD_V1 -- ใช้ express.raw รับไฟล์จาก Handler
 import { pool, getUsernameByEmail } from "../db.js";
 import zlib from "zlib";
 import fs from "fs";
@@ -687,13 +688,14 @@ router.delete("/:id", async (req, res) => {
 });
 
 // MARKER_OUTLOOK_HANDLER_VERSION_V1 -- เวอร์ชัน Outlook Handler (v2 = เปิด Outlook ให้เองถ้ายังไม่เปิด + รายงานเวอร์ชันกลับ Backend) | ทุกครั้งที่แก้สคริปต์ Handler ให้เพิ่มเลขนี้ + เวลาปล่อย
-const OUTLOOK_HANDLER_VERSION = 2;
-const OUTLOOK_HANDLER_RELEASED_AT = "2026-10-09T05:30:00.000Z";
+// MARKER_OUTLOOK_HANDLER_BODYPATH_V1 -- v3 = รองรับพารามิเตอร์ bodyPath (path ใต้ /api/ ของ Backend) : Handler ดึงเนื้อเมล HTML จาก Backend ด้วย Token ผู้ใช้ แล้วใช้เป็น HTMLBody (เนื้อเมลใหญ่ไม่ติดขีดจำกัดความยาวของ URL fastapn://) | ดึงไม่สำเร็จ = บังคับเป็น Draft ไม่ส่งเอง
+const OUTLOOK_HANDLER_VERSION = 3;
+const OUTLOOK_HANDLER_RELEASED_AT = "2026-10-16T01:00:00.000Z";
 
 // -- GET /api/file-storage/outlook-handler --
 router.get("/outlook-handler", async (req, res) => {
   try {
-    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$bp=$p['bodyPath'];if($bp -and $bp.StartsWith('/api/')){try{$rw=Invoke-WebRequest -Uri ($api+$bp) -Headers @{Authorization="Bearer $tok"} -UseBasicParsing -TimeoutSec 60;$ft=[System.Text.Encoding]::UTF8.GetString($rw.RawContentStream.ToArray());if($ft){$p['bodyHtml']=$ft}else{throw 'empty body'}}catch{$mode='draft';"$(Get-Date -Format s) bodyPath=$bp err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}};$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;
     const reg = `Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn]\r\n@="FastAPN Outlook Handler"\r\n"URL Protocol"=""\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\DefaultIcon]\r\n@="powershell.exe,0"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\shell\\open\\command]\r\n@="wscript.exe //B //Nologo \\"D:\\\\apps\\\\fastapn-run-hidden.vbs\\" \\"D:\\\\apps\\\\fastapn-outlook.ps1\\" \\"%1\\""`;
     const setupPs1 = `\uFEFF# FastAPN Outlook Handler - Setup ทั้งหมดในตัวเดียว\r\n# วิธีใช้: คลิกขวาไฟล์นี้ -> Run with PowerShell (ไม่ต้อง Admin)\r\n$ErrorActionPreference = "Stop"\r\n$sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path\r\nWrite-Host "=== FastAPN Outlook Handler Setup ===" -ForegroundColor Cyan\r\ntry {\r\n    if (-not (Test-Path "D:\\apps")) {\r\n        New-Item -ItemType Directory -Path "D:\\apps" -Force | Out-Null\r\n        Write-Host "[1/3] สร้างโฟลเดอร์ D:\\apps เรียบร้อย" -ForegroundColor Green\r\n    } else {\r\n        Write-Host "[1/3] โฟลเดอร์ D:\\apps มีอยู่แล้ว" -ForegroundColor Yellow\r\n    }\r\n    $ps1Source = Join-Path $sourceDir "fastapn-outlook.ps1"\r\n    if (-not (Test-Path $ps1Source)) { throw "ไม่พบไฟล์ fastapn-outlook.ps1 ที่ $ps1Source" }\r\n    Copy-Item $ps1Source -Destination "D:\\apps\\fastapn-outlook.ps1" -Force\r\n    Write-Host "[2/3] ก๊อป fastapn-outlook.ps1 ไปที่ D:\\apps\\ เรียบร้อย" -ForegroundColor Green\r\n    $vbsSource = Join-Path $sourceDir "fastapn-run-hidden.vbs"\r\n    if (-not (Test-Path $vbsSource)) { throw "ไม่พบไฟล์ fastapn-run-hidden.vbs ที่ $vbsSource" }\r\n    Copy-Item $vbsSource -Destination "D:\\apps\\fastapn-run-hidden.vbs" -Force\r\n    $regSource = Join-Path $sourceDir "install-fastapn-handler.reg"\r\n    if (-not (Test-Path $regSource)) { throw "ไม่พบไฟล์ install-fastapn-handler.reg ที่ $regSource" }\r\n    reg import "$regSource" *>$null; if ($LASTEXITCODE -ne 0) { throw "reg import failed (exit code $LASTEXITCODE)" }\r\n    Write-Host "[3/3] Import Registry เรียบร้อย" -ForegroundColor Green\r\n    Write-Host ""\r\n    Write-Host "=== ติดตั้งสำเร็จ! กลับไปกดปุ่ม เปิด Outlook Draft ได้เลย ===" -ForegroundColor Cyan\r\n} catch {\r\n    Write-Host ""\r\n    Write-Host "=== เกิดข้อผิดพลาด ===" -ForegroundColor Red\r\n    Write-Host $_.Exception.Message -ForegroundColor Red\r\n}\r\nWrite-Host ""\r\nRead-Host "กด Enter เพื่อปิดหน้าต่างนี้"`;
     const readme = `FastAPN Outlook Handler\r\n=======================\r\nวิธีติดตั้ง (แนะนำ - ขั้นตอนเดียว):\r\n1. ดับเบิลคลิกไฟล์ setup-fastapn-outlook.bat\r\n2. รอจนขึ้น "ติดตั้งสำเร็จ!" แล้วกด Enter ปิดหน้าต่าง\r\n3. กลับมากดปุ่ม เปิด Outlook Draft ได้เลย`;
@@ -715,7 +717,7 @@ router.get("/outlook-handler", async (req, res) => {
 // -- GET /api/file-storage/outlook-handler/ps1-only --
 router.get("/outlook-handler/ps1-only", async (req, res) => {
   try {
-    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;;
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$bp=$p['bodyPath'];if($bp -and $bp.StartsWith('/api/')){try{$rw=Invoke-WebRequest -Uri ($api+$bp) -Headers @{Authorization="Bearer $tok"} -UseBasicParsing -TimeoutSec 60;$ft=[System.Text.Encoding]::UTF8.GetString($rw.RawContentStream.ToArray());if($ft){$p['bodyHtml']=$ft}else{throw 'empty body'}}catch{$mode='draft';"$(Get-Date -Format s) bodyPath=$bp err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}};$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="fastapn-outlook.ps1"');
     res.send(Buffer.from(ps1, 'utf8'));
@@ -754,6 +756,7 @@ const spCanUse = async (req) => {
   const u = req.user || {};
   if (u.appRole === "Owner") return true;
   const p = u.permissions || {};
+  if (p.GL === true) return true; // MARKER_SP_HANDLER_PROFILE_V1 -- มีแค่ Permission GL ก็โหลด/ใช้ Handler (ปลายทาง gl/doh) ได้
   try {
     let vatOk = !!p.VAT;
     const r = await pool.query("SELECT id FROM user_roles WHERE email = $1 LIMIT 1", [u.email]);
@@ -767,6 +770,34 @@ const spCanUse = async (req) => {
   } catch (_) { return false; }
 };
 const spDeny = (res) => res.status(403).json({ error: "เฉพาะ Owner / ผู้ที่เข้า VAT Control (Document Access) ได้ / ผู้มีสิทธิ์ที่เปิดไว้ใน GL Access" });
+// MARKER_SP_HANDLER_PROFILE_V1 -- ตารางปลายทาง Handler: key -> ชื่อโฟลเดอร์ที่ล็อกไว้ + ทางเข้า (entry) + กลุ่มสิทธิ์ | เพิ่ม Permission/ปลายทางใหม่ = เพิ่มแถวที่นี่ที่เดียว
+// กลุ่ม vat = ทางเข้า "VAT Controller" (I-Pro / IE / Manual / VAT) | กลุ่ม gl = ทางเข้า "_Taii" (GL)
+const SP_DEST_TABLE = {
+  recon:  { label: "Z_Report Reconcile",                   entry: "VAT Controller", group: "vat" },
+  upload: { label: "Z_AllSystemUpload",                    entry: "VAT Controller", group: "vat" },
+  ap:     { label: "Z_Report Reconcile - Account Payable", entry: "",               group: "vat" },
+  gl:     { label: "Reconcile_Backup",                     entry: "_Taii",          group: "gl" },
+  doh:    { label: "Z_Backup_DOH",                         entry: "_Taii",          group: "gl" },
+};
+const spGroupsOf = async (req) => {
+  const u = req.user || {}; const p = u.permissions || {};
+  if (u.appRole === "Owner") return { vat: true, gl: true };
+  let vat = false;
+  try {
+    vat = !!p.VAT;
+    const r = await pool.query("SELECT id FROM user_roles WHERE email = $1 LIMIT 1", [u.email]);
+    const uid = r.rows[0] && r.rows[0].id;
+    if (uid) { const o = await pool.query("SELECT allowed FROM doc_access_override WHERE user_id = $1 AND folder_key = 'vat'", [uid]); if (o.rows.length) vat = !!o.rows[0].allowed; }
+    if (!vat) vat = !!(await glAccessFor(u));
+  } catch (_) { /* ไม่ได้ = ไม่นับกลุ่ม vat */ }
+  return { vat, gl: p.GL === true };
+};
+const spProfileOf = async (req) => {
+  const g = await spGroupsOf(req);
+  const dests = Object.keys(SP_DEST_TABLE).filter((k) => g[SP_DEST_TABLE[k].group]).map((k) => ({ key: k, label: SP_DEST_TABLE[k].label, entry: SP_DEST_TABLE[k].entry, group: SP_DEST_TABLE[k].group }));
+  const hash = dests.map((d) => d.key).sort().join(",");   // ใช้เทียบว่าโปรไฟล์ในเครื่องตรงกับสิทธิ์ปัจจุบันไหม
+  return { version: 1, hash, dests, groups: g };
+};
 
 // -- GET /api/file-storage/sp-handler --  // MARKER_SP_HANDLER_ROUTES_V1
 // ชุดติดตั้ง FastAPN SharePoint Handler (zip) -- ผ่าน verifyAuthLocal ปกติ (ต้อง Login) ไม่มี Endpoint Public
@@ -775,6 +806,7 @@ router.get("/sp-handler", async (req, res) => {
   try {
     const zip = new JSZip();
     for (const [name, b64] of Object.entries(SP_HANDLER_FILES)) zip.file(name, Buffer.from(b64, "base64"));
+    { const prof = await spProfileOf(req); if (!prof.dests.length) return spDeny(res); zip.file("fastapn-sp-profile.json", "\uFEFF" + JSON.stringify({ version: prof.version, hash: prof.hash, dests: prof.dests }, null, 2)); } // MARKER_SP_HANDLER_PROFILE_V1
     const buf = await zip.generateAsync({ type: "nodebuffer" });
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", 'attachment; filename="fastapn-sp-handler.zip"');
@@ -789,7 +821,7 @@ router.get("/sp-handler/version", (req, res) => { res.json({ version: SP_HANDLER
 pool.query(`CREATE TABLE IF NOT EXISTS tool_handler_status (
   username text NOT NULL, tool text NOT NULL, machine text NOT NULL, version int NOT NULL,
   first_reported_at timestamptz NOT NULL DEFAULT now(), reported_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (username, tool, machine))`).then(() => pool.query(`ALTER TABLE tool_handler_status ADD COLUMN IF NOT EXISTS ip text`)).catch((e) => console.error("[migrate tool_handler_status]:", e.message));
+  PRIMARY KEY (username, tool, machine))`).then(() => pool.query(`ALTER TABLE tool_handler_status ADD COLUMN IF NOT EXISTS ip text`)).then(() => pool.query(`ALTER TABLE tool_handler_status ADD COLUMN IF NOT EXISTS profile_hash text`)).catch((e) => console.error("[migrate tool_handler_status]:", e.message)); // MARKER_SP_HANDLER_PROFILE_V1
 // MARKER_SP_HANDLER_PER_MACHINE_V1 -- IP ของเครื่องที่เรียก (ใช้จับคู่เครื่องที่ Handler รายงาน กับเครื่องที่เปิดเว็บอยู่)
 function spClientIp(req) {
   const xf = String((req.headers && req.headers["x-forwarded-for"]) || "").split(",")[0].trim();
@@ -805,10 +837,11 @@ router.post("/sp-handler/report", async (req, res) => {
     const version = parseInt(req.body && req.body.version, 10);
     const machine = String((req.body && req.body.machine) || "").slice(0, 64).trim() || "?";
     if (!username || !Number.isFinite(version) || version < 1) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
+    const profHash = String((req.body && req.body.profileHash) || "").slice(0, 80); // MARKER_SP_HANDLER_PROFILE_V1
     await pool.query(
-      `INSERT INTO tool_handler_status (username, tool, machine, version, ip) VALUES ($1,'sp',$2,$3,$4)
-       ON CONFLICT (username, tool, machine) DO UPDATE SET version = EXCLUDED.version, ip = EXCLUDED.ip, reported_at = now()`,
-      [username, machine, version, spClientIp(req)]
+      `INSERT INTO tool_handler_status (username, tool, machine, version, ip, profile_hash) VALUES ($1,'sp',$2,$3,$4,$5)
+       ON CONFLICT (username, tool, machine) DO UPDATE SET version = EXCLUDED.version, ip = EXCLUDED.ip, profile_hash = EXCLUDED.profile_hash, reported_at = now()`,
+      [username, machine, version, spClientIp(req), profHash]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -822,8 +855,19 @@ pool.query(`CREATE TABLE IF NOT EXISTS sp_tree_meta (
   dest text PRIMARY KEY, synced_at timestamptz NOT NULL DEFAULT now(), synced_by text, machine text, total int NOT NULL DEFAULT 0)`).catch((e) => console.error("[migrate sp_tree_meta]:", e.message));
 
 // ลิงก์ฐานของ SharePoint (ไว้เปิด Excel Online) ตั้งใน .env: SP_WEB_BASE_RECON / SP_WEB_BASE_UPLOAD = URL โฟลเดอร์นั้นบน SharePoint (ไม่ต้องมี / ท้าย)
-const SP_DESTS = ["recon", "upload", "ap"]; // MARKER_SP_HANDLER_DEST_AP_V1 -- ap = Z_Report Reconcile - Account Payable (GL Report)
-const spWebBase = (dest) => String((dest === "upload" ? process.env.SP_WEB_BASE_UPLOAD : dest === "ap" ? process.env.SP_WEB_BASE_AP : process.env.SP_WEB_BASE_RECON) || "").replace(/\/+$/, "");
+const SP_DESTS = ["recon", "upload", "ap", "gl", "doh"]; // MARKER_SP_HANDLER_PROFILE_V1 -- ตารางจริงอยู่ที่ SP_DEST_TABLE // MARKER_SP_HANDLER_DEST_GL_DOH_V1 -- gl = Z_Detail of Account, doh = Z_Backup_DOH (ใต้ _Taii\Reconcile_Backup)
+// // MARKER_SP_HANDLER_DEST_AP_V1 -- ap = Z_Report Reconcile - Account Payable (GL Report)
+// MARKER_SP_DEST_GL_GUARD_V1 -- dest gl/doh (Z_Detail of Account / Z_Backup_DOH) เข้าได้เฉพาะ Owner หรือผู้มี Permission GL | ตรวจที่ทุก Route ใต้ /sp-handler ที่ส่ง dest มา (query หรือ body)
+router.use("/sp-handler", async (req, res, next) => { // MARKER_SP_HANDLER_PROFILE_V1 -- ด่านกัน dest ทุกตัวตามกลุ่มสิทธิ์ (vat = recon/upload/ap | gl = gl/doh)
+  const d = String((req.query && req.query.dest) || (req.body && req.body.dest) || "");
+  try {
+    const g = await spGroupsOf(req);
+    if (SP_DEST_TABLE[d]) { if (g[SP_DEST_TABLE[d].group]) return next(); return res.status(403).json({ error: SP_DEST_TABLE[d].group === "gl" ? "เมนูนี้เข้าได้เฉพาะผู้ที่มีสิทธิ์ GL" : "ปลายทางนี้เข้าได้เฉพาะผู้ที่มีสิทธิ์ VAT / IE / Manual / I-Pro" }); }
+    if (!d && g.gl && !g.vat && !["", "/", "/profile", "/report", "/my-status", "/ps1-only", "/version"].includes(req.path)) return res.status(403).json({ error: "ต้องระบุปลายทางที่ผู้ใช้มีสิทธิ์" });   // คนที่มีแค่ GL ห้ามชนเส้นทางที่ default เป็น recon
+  } catch (_) { /* ตรวจไม่ได้ = ใช้ด่านเดิมของแต่ละ Route */ }
+  return next();
+});
+const spWebBase = (dest) => String((dest === "upload" ? process.env.SP_WEB_BASE_UPLOAD : dest === "ap" ? process.env.SP_WEB_BASE_AP : dest === "gl" ? process.env.SP_WEB_BASE_GL : dest === "doh" ? process.env.SP_WEB_BASE_DOH : process.env.SP_WEB_BASE_RECON) || "").replace(/\/+$/, "");
 
 // POST /api/file-storage/sp-handler/tree  body: { dest, machine, syncId, done, total, items:[{path,dir,size,mtime}] } (ส่งเป็นชุดๆ)
 router.post("/sp-handler/tree", async (req, res) => {
@@ -831,6 +875,7 @@ router.post("/sp-handler/tree", async (req, res) => {
   try {
     const username = await getUsernameByEmail(req.user.email);
     const b = req.body || {};
+    if (b.items == null) b.items = []; // MARKER_SP_TREE_EMPTY_ITEMS_V1 -- โฟลเดอร์ว่าง: Handler เก่าอาจส่ง items=null -> ถือเป็นอาร์เรย์ว่าง (ไม่ตอบ 400)
     const dest = String(b.dest || "");
     const syncId = String(b.syncId || "").slice(0, 64);
     if (!username || !SP_DESTS.includes(dest) || !syncId || !Array.isArray(b.items)) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
@@ -1107,20 +1152,84 @@ router.get("/sp-handler/tree", async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// MARKER_SP_LOCAL_DOD_V1 -- Drive D ของเครื่องผู้ใช้ (dest=dod): Handler v18 ส่งรายการ/ไฟล์มา "พักชั่วคราว" ในหน่วยความจำ (5 นาที) ตาม req ของผู้ใช้คนนั้น -- ไม่เก็บลง DB เพราะเป็นไฟล์ในเครื่องแต่ละคน (ไม่ปนกันระหว่างเครื่อง/ผู้ใช้)
+const spLocalBox = new Map();
+setInterval(() => { const t = Date.now(); for (const [k, v] of spLocalBox) if (t - v.at > 300000) spLocalBox.delete(k); }, 60000).unref();
+const spLocalKey = async (req, kind, id) => {
+  const u = await getUsernameByEmail(req.user.email); const r = String(id || "");
+  if (!u || !/^[A-Za-z0-9]{8,64}$/.test(r)) return null;
+  return `${kind}|${u}|${r}`;
+};
+router.post("/sp-handler/local/list", async (req, res) => {
+  if (!(await spCanUse(req))) return spDeny(res);
+  try {
+    const b = req.body || {}; const k = await spLocalKey(req, "list", b.req);
+    if (!k) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
+    if (spLocalBox.size > 500) return res.status(429).json({ error: "คำขอมากเกินไป ลองใหม่ภายหลัง" });
+    const items = (Array.isArray(b.items) ? b.items : []).slice(0, 1500)
+      .filter((i) => i && typeof i.path === "string" && i.path && !i.path.includes("..") && i.path.length < 500)
+      .map((i) => ({ path: i.path, name: i.path.split("/").pop(), dir: !!i.dir, size: Math.max(0, Number(i.size) || 0), mtime: i.mtime || null }));
+    spLocalBox.set(k, { at: Date.now(), items, machine: String(b.machine || "").slice(0, 64) });
+    res.json({ ok: true, count: items.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.get("/sp-handler/local/result", async (req, res) => {
+  if (!(await spCanUse(req))) return spDeny(res);
+  try {
+    const k = await spLocalKey(req, "list", req.query.req);
+    if (!k) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
+    const v = spLocalBox.get(k);
+    if (!v) return res.json({ ready: false });
+    res.json({ ready: true, items: v.items, machine: v.machine });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.post("/sp-handler/local/pull", express.raw({ type: "application/octet-stream", limit: "25mb" }), async (req, res) => {
+  if (!(await spCanUse(req))) return spDeny(res);
+  try {
+    const k = await spLocalKey(req, "pull", req.query.req); const buf = req.body;
+    if (!k || !Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
+    if (spLocalBox.size > 500) return res.status(429).json({ error: "คำขอมากเกินไป ลองใหม่ภายหลัง" });
+    const name = String(req.query.name || "file").split(/[\\/]/).pop().slice(0, 200) || "file";
+    spLocalBox.set(k, { at: Date.now(), name, buf });
+    res.json({ ok: true, bytes: buf.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.get("/sp-handler/local/pull-result", async (req, res) => {
+  if (!(await spCanUse(req))) return spDeny(res);
+  try {
+    const k = await spLocalKey(req, "pull", req.query.req);
+    if (!k) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
+    const v = spLocalBox.get(k);
+    if (!v || !v.buf) return res.json({ ready: false });
+    spLocalBox.delete(k); // อ่านได้ครั้งเดียว
+    res.json({ ready: true, name: v.name, b64: v.buf.toString("base64") });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/file-storage/sp-handler/my-status -> เวอร์ชันล่าสุด + เครื่องของฉันที่รายงานไว้ (Home ใช้แสดงแจ้งเตือน/Toast)
 router.get("/sp-handler/my-status", async (req, res) => {
   try {
     const username = await getUsernameByEmail(req.user.email);
     const { rows } = await pool.query(
-      `SELECT machine, version, reported_at, ip FROM tool_handler_status WHERE username=$1 AND tool='sp' ORDER BY reported_at DESC`, [username]);
+      `SELECT machine, version, reported_at, ip, profile_hash FROM tool_handler_status WHERE username=$1 AND tool='sp' ORDER BY reported_at DESC`, [username]);
     // MARKER_SP_HANDLER_PER_MACHINE_V1 -- เช็กตามเครื่องที่เปิดเว็บ: เอาเฉพาะรายงานที่ IP ตรงกับผู้เรียก (ไม่ใช่ทุกเครื่องของบัญชี) | ไม่รู้ IP = ใช้ทั้งบัญชีแบบเดิม
     const clientIp = spClientIp(req);
     const allRows = rows;
     const mine = clientIp ? allRows.filter((r) => r.ip && r.ip === clientIp) : allRows;
     const outdated = mine.filter((r) => r.version < SP_HANDLER_VERSION);
+    const curProf = await spProfileOf(req); const profileStale = mine.filter((r) => r.version >= SP_HANDLER_VERSION && (r.profile_hash || "") !== curProf.hash); // MARKER_SP_HANDLER_PROFILE_V1 -- Permission เปลี่ยนแต่โปรไฟล์ในเครื่องยังไม่ตรง
     const daysSinceRelease = Math.max(0, Math.floor((Date.now() - new Date(SP_HANDLER_RELEASED_AT).getTime()) / 86400000));
     // MARKER_SP_HANDLER_INSTALLED_V1 -- installed=false เมื่อ Backend ไม่เคยได้รับรายงานจากผู้ใช้นี้เลย (Home ใช้แจ้งให้ติดตั้ง Handler)
-    res.json({ latest: SP_HANDLER_VERSION, releasedAt: SP_HANDLER_RELEASED_AT, daysSinceRelease, machines: mine, allMachines: allRows, clientIp, outdated, installed: allRows.length > 0 }); // MARKER_SP_HANDLER_INSTALLED_USER_LEVEL_V1 -- ผู้ใช้เคยมีเครื่องใดรายงานแล้ว = ติดตั้งแล้ว (ไม่ผูก IP) | outdated ยังเช็กตามเครื่อง
+    res.json({ latest: SP_HANDLER_VERSION, releasedAt: SP_HANDLER_RELEASED_AT, daysSinceRelease, machines: mine, allMachines: allRows, clientIp, outdated, profileStale, profileHash: curProf.hash, needUpdate: outdated.length > 0 || profileStale.length > 0, installed: allRows.length > 0 }); // MARKER_SP_HANDLER_INSTALLED_USER_LEVEL_V1 -- ผู้ใช้เคยมีเครื่องใดรายงานแล้ว = ติดตั้งแล้ว (ไม่ผูก IP) | outdated ยังเช็กตามเครื่อง
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// -- GET /api/file-storage/sp-handler/profile -- MARKER_SP_HANDLER_PROFILE_V1 -- โปรไฟล์ปลายทางของผู้ใช้ตาม Permission (Handler เขียนลง fastapn-sp-profile.json ตอน update)
+router.get("/sp-handler/profile", async (req, res) => {
+  try {
+    const prof = await spProfileOf(req);
+    if (!prof.dests.length) return spDeny(res);
+    res.json({ version: prof.version, hash: prof.hash, dests: prof.dests });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1518,6 +1627,854 @@ router.get("/vat-reconcile-jobs", async (req, res) => {
     console.error("GET /file-storage/vat-reconcile-jobs error:", err.message);
     res.status(500).json({ error: "Internal server error" });
   }
+});
+
+
+// MARKER_GL_SIGNOFF_PROFILE_V1 -- ข้อมูลผู้ลงนามของแต่ละ User: My Job (Prepare by) + Report to (Review by) | ตั้งที่ System Console > Profile แล้วทุกหน้าเรียกใช้ได้
+pool.query(`CREATE TABLE IF NOT EXISTS user_signoff_profile (
+  owner_email TEXT PRIMARY KEY, my_name TEXT NOT NULL DEFAULT '', my_job TEXT NOT NULL DEFAULT '',
+  report_to_name TEXT NOT NULL DEFAULT '', report_to_job TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ DEFAULT NOW())`)
+  .catch((e) => console.error("[migrate user_signoff_profile]:", e.message));
+// MARKER_PROFILE_MODULE_V1 -- Module ของ User (คั่นด้วย comma) ใช้ Filter ข้อมูลตามโมดูล
+pool.query(`ALTER TABLE user_signoff_profile ADD COLUMN IF NOT EXISTS module TEXT NOT NULL DEFAULT ''`)
+  .catch((e) => console.error("[migrate user_signoff_profile.module]:", e.message));
+
+router.get("/signoff-profile", async (req, res) => {
+  try {
+    const q = await pool.query("SELECT my_name, my_job, report_to_name, report_to_job, module FROM user_signoff_profile WHERE owner_email = $1", [req.user.email]);
+    res.json(q.rows[0] || { my_name: "", my_job: "", report_to_name: "", report_to_job: "", module: "" });
+  } catch (e) { console.error("[signoff-profile GET]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.put("/signoff-profile", async (req, res) => {
+  try {
+    const b = req.body || {};
+    // อัปเดตเฉพาะช่องที่ส่งมา (ช่องที่ไม่ส่ง = คงค่าเดิม) กันหน้าหนึ่งเขียนทับค่าที่อีกหน้าตั้งไว้
+    const f = (k) => (b[k] === undefined ? null : String(b[k] == null ? "" : b[k]).trim().slice(0, 200));
+    await pool.query(
+      `INSERT INTO user_signoff_profile (owner_email, my_name, my_job, report_to_name, report_to_job, module, updated_at)
+       VALUES ($1, COALESCE($2,''), COALESCE($3,''), COALESCE($4,''), COALESCE($5,''), COALESCE($6,''), NOW())
+       ON CONFLICT (owner_email) DO UPDATE SET
+         my_name = COALESCE($2, user_signoff_profile.my_name), my_job = COALESCE($3, user_signoff_profile.my_job),
+         report_to_name = COALESCE($4, user_signoff_profile.report_to_name), report_to_job = COALESCE($5, user_signoff_profile.report_to_job),
+         module = COALESCE($6, user_signoff_profile.module), updated_at = NOW()`,
+      [req.user.email, f("my_name"), f("my_job"), f("report_to_name"), f("report_to_job"), f("module")]);
+    res.json({ ok: true });
+  } catch (e) { console.error("[signoff-profile PUT]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+
+// MARKER_GL_DOA_CONFIG_V1 -- Config รับข้อมูล Detail of Account: User + Account + BU (ใช้ได้เฉพาะ Owner / Permission GL)
+const doaGlOnly = (req, res) => {
+  const u = req.user || {};
+  if (u.appRole === "Owner" || (u.permissions && u.permissions.GL === true)) return true;
+  res.status(403).json({ error: "เมนูนี้เข้าได้เฉพาะผู้ที่มีสิทธิ์ GL" });
+  return false;
+};
+pool.query(`CREATE TABLE IF NOT EXISTS doa_account_config (
+  id SERIAL PRIMARY KEY, bu TEXT NOT NULL, account TEXT NOT NULL, user_email TEXT NOT NULL,
+  created_by TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE (bu, account, user_email))`)
+  .catch((e) => console.error("[migrate doa_account_config]:", e.message));
+// MARKER_GL_DOA_CONFIG_CPC_SUB_V1 -- เพิ่ม CPC + Sub Acc ใน Config (unique = BU+CPC+Account+Sub+User)
+pool.query(`ALTER TABLE doa_account_config ADD COLUMN IF NOT EXISTS cpc TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS sub_acc TEXT NOT NULL DEFAULT ''`)
+  .then(() => pool.query(`ALTER TABLE doa_account_config DROP CONSTRAINT IF EXISTS doa_account_config_bu_account_user_email_key`))
+  // MARKER_GL_DOA_CONFIG_NO_OLD_UQ_V1 -- ไม่สร้าง index เก่า _uq (ไม่มี mode) อีก: เคยชนกับ ON CONFLICT ของ uq2 และถูกสร้างกลับทุกครั้งที่ restart
+  .catch((e) => console.error("[migrate doa_account_config cpc/sub]:", e.message));
+// MARKER_GL_DOA_CONFIG_ACCEPT_EXCLUDE_V1 -- CPC / Sub Acc แต่ละตัวเลือกโหมด accept (รับ) หรือ exclude (ยกเว้น)
+pool.query(`ALTER TABLE doa_account_config ADD COLUMN IF NOT EXISTS cpc_mode TEXT NOT NULL DEFAULT 'accept', ADD COLUMN IF NOT EXISTS sub_mode TEXT NOT NULL DEFAULT 'accept'`)
+  .then(() => pool.query(`DROP INDEX IF EXISTS doa_account_config_uq`))
+  .then(() => pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS doa_account_config_uq2 ON doa_account_config (bu, cpc, cpc_mode, account, sub_acc, sub_mode, user_email)`))
+  .catch((e) => console.error("[migrate doa_account_config mode]:", e.message));
+
+// MARKER_GL_DOA_CONFIG_AUTO_EXCLUDE_V1 -- User A ตั้ง CPC/Sub Acc เฉพาะ (เช่น 99999) ของ Account ใด -> User อื่นที่ตั้ง BBBBB / BBBBBB (ทุกค่า) ของ Account เดียวกัน
+// ระบบเพิ่ม Exclude ค่านั้นให้อัตโนมัติ (auto_from = เจ้าของค่า) เพื่อไม่ให้ขอบเขตซ้อนกัน | ลบ/แก้ Config ของเจ้าของค่า -> คำนวณ Exclude อัตโนมัติใหม่
+pool.query(`ALTER TABLE doa_account_config ADD COLUMN IF NOT EXISTS auto_from TEXT`).catch((e) => console.error("[migrate doa_account_config auto_from]:", e.message));
+async function doaRecalcAutoExclude(bu, account) {
+  await pool.query("DELETE FROM doa_account_config WHERE bu = $1 AND account = $2 AND auto_from IS NOT NULL", [bu, account]);
+  const q = await pool.query("SELECT cpc, cpc_mode, sub_acc, sub_mode, user_email FROM doa_account_config WHERE bu = $1 AND account = $2", [bu, account]);
+  const rows = q.rows; const users = [...new Set(rows.map((r) => r.user_email))];
+  const has = (u, f, v) => rows.some((r) => r.user_email === u && r[f + "_mode"] === "accept" && r[f === "cpc" ? "cpc" : "sub_acc"] === v);
+  const ins = (cpc, cm, sub, sm, u, from) => pool.query("INSERT INTO doa_account_config (bu, cpc, cpc_mode, account, sub_acc, sub_mode, user_email, created_by, auto_from) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (bu, cpc, cpc_mode, account, sub_acc, sub_mode, user_email) DO NOTHING", [bu, cpc, cm, account, sub, sm, u, "auto", from]);
+  // MARKER_GL_DOA_CONFIG_SAME_MODULE_V1 -- User ที่อยู่ Module เดียวกัน (Profile > Module) ตั้ง Config แบบเดียวกัน/ซ้อนกันได้ ไม่ต้อง Auto Exclude ระหว่างกัน
+  const mq = await pool.query("SELECT LOWER(owner_email) AS e, module FROM user_signoff_profile WHERE LOWER(owner_email) = ANY($1)", [users.map((u) => String(u).toLowerCase())]);
+  const mod = {}; mq.rows.forEach((r) => { mod[r.e] = String(r.module || "").trim().toLowerCase(); });
+  const sameMod = (a, b) => { const x = mod[String(a).toLowerCase()]; return !!x && x === mod[String(b).toLowerCase()]; };
+  for (const c of users) {
+    const cpcs = [...new Set(rows.filter((r) => r.user_email === c && r.cpc_mode === "accept" && r.cpc && r.cpc !== "BBBBB").map((r) => r.cpc))];
+    const subs = [...new Set(rows.filter((r) => r.user_email === c && r.sub_mode === "accept" && r.sub_acc && r.sub_acc !== "BBBBBB").map((r) => r.sub_acc))];
+    for (const h of users) {
+      if (h === c || sameMod(h, c)) continue;
+      if (has(h, "cpc", "BBBBB")) for (const x of cpcs) { if (!has(h, "cpc", x)) await ins(x, "exclude", "", "exclude", h, c); }
+      if (has(h, "sub", "BBBBBB")) for (const x of subs) { if (!has(h, "sub", x)) await ins("", "exclude", x, "exclude", h, c); }
+    }
+  }
+}
+
+router.get("/doa-config", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const bu = String(req.query.bu || "").trim();
+    const q = bu
+      ? await pool.query("SELECT id, bu, cpc, cpc_mode, account, sub_acc, sub_mode, user_email, created_at FROM doa_account_config WHERE bu = $1 ORDER BY cpc, account, sub_acc, user_email", [bu])
+      : await pool.query("SELECT id, bu, cpc, cpc_mode, account, sub_acc, sub_mode, user_email, created_at FROM doa_account_config ORDER BY bu, cpc, account, sub_acc, user_email");
+    res.json({ items: q.rows });
+  } catch (e) { console.error("[doa-config GET]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.get("/doa-config/mine", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const q = await pool.query("SELECT bu, account FROM doa_account_config WHERE user_email = $1 ORDER BY bu, account", [req.user.email]);
+    res.json({ items: q.rows });
+  } catch (e) { console.error("[doa-config MINE]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.post("/doa-config", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {};
+    const user_email = String(b.user_email || "").trim().toLowerCase().slice(0, 200);
+    const cut = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    // รูปแบบใหม่: items [{bu, cpc, account, sub_acc}] | รูปแบบเดิม: bu + accounts[]
+    let items = Array.isArray(b.items) ? b.items.map((x) => ({ bu: cut(x.bu, 50), cpc: cut(x.cpc, 50), account: cut(x.account, 50), sub_acc: cut(x.sub_acc, 50), cpc_mode: x.cpc_mode === "exclude" ? "exclude" : "accept", sub_mode: x.sub_mode === "exclude" ? "exclude" : "accept" })) : [];
+    if (!items.length) items = (Array.isArray(b.accounts) ? b.accounts : [b.account]).map((a) => ({ bu: cut(b.bu, 50), cpc: "", account: cut(a, 50), sub_acc: "", cpc_mode: "accept", sub_mode: "accept" }));
+    items = items.filter((x) => x.account);
+    if (!user_email || !items.length || items.some((x) => !x.bu)) return res.status(400).json({ error: "ต้องระบุ BU, User และ Account" });
+    const bad = items.find((x) => DOA_NON_GL_BUS.has(x.bu));
+    if (bad) return res.status(400).json({ error: `BU ${bad.bu} ไม่ใช่ TB ของ GL` });
+    { // MARKER_GL_DOA_LINE_ALLOW_V1 -- บรรทัดที่ Admin จำกัดสิทธิ์ให้ Module อื่น ห้ามดึงเป็น Config (ระบุ CPC+Sub Acc ตรงตัว)
+      const um = await pool.query("SELECT module FROM user_signoff_profile WHERE LOWER(owner_email) = $1", [user_email]); const myMod = String((um.rows[0] || {}).module || "").trim() || "(ไม่ระบุ Module)"; const denied = [];
+      for (const kb of new Set(items.map((x) => x.bu))) { const ok = await doaAllowFn(kb); for (const x of items) { if (x.bu !== kb || x.cpc_mode !== "accept" || x.sub_mode !== "accept" || !x.cpc || x.cpc === "BBBBB" || !x.sub_acc || x.sub_acc === "BBBBBB") continue; if (!ok(x.account, x.cpc, x.sub_acc, myMod)) denied.push(`${x.account}/${x.cpc}/${x.sub_acc} (เฉพาะ ${ok.of(x.account, x.cpc, x.sub_acc).join(", ")})`); } }
+      if (denied.length) return res.status(403).json({ error: "บรรทัดเหล่านี้จำกัดสิทธิ์ให้ Module อื่น: " + denied.slice(0, 5).join("; ") + (denied.length > 5 ? ` …อีก ${denied.length - 5}` : "") });
+    }
+    for (const x of items) {
+      await pool.query("INSERT INTO doa_account_config (bu, cpc, cpc_mode, account, sub_acc, sub_mode, user_email, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (bu, cpc, cpc_mode, account, sub_acc, sub_mode, user_email) DO NOTHING", [x.bu, x.cpc, x.cpc_mode, x.account, x.sub_acc, x.sub_mode, user_email, req.user.email]);
+    }
+    for (const k of new Set(items.map((x) => x.bu + "\u0001" + x.account))) { const [kb, ka] = k.split("\u0001"); await doaRecalcAutoExclude(kb, ka); }
+    for (const kb of new Set(items.map((x) => x.bu))) doaRestampBu(kb).catch((e) => console.error("[doa restamp cfg add]", e.message)); // MARKER_GL_DOA_TB_STANDBY_ADMIN_V1 -- ผูก Config = Stamp Module ใน TB กลางทันที
+    res.json({ ok: true, added: items.length });
+  } catch (e) { console.error("[doa-config POST]", e.message); res.status(500).json({ error: "บันทึก Config ไม่สำเร็จ: " + e.message }); }
+});
+
+router.delete("/doa-config/:id", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const id = parseInt(req.params.id, 10);
+    const old = await pool.query("DELETE FROM doa_account_config WHERE id = $1 RETURNING bu, account", [id]);
+    if (old.rows[0]) await doaRecalcAutoExclude(old.rows[0].bu, old.rows[0].account);
+    if (old.rows[0]) doaRestampBu(old.rows[0].bu).catch((e) => console.error("[doa restamp cfg del]", e.message)); // MARKER_GL_DOA_TB_STANDBY_ADMIN_V1
+    res.json({ ok: true });
+  } catch (e) { console.error("[doa-config DELETE]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+
+// MARKER_GL_DOA_TB_BACKUP_V1 -- Backup TB ของ GL: เก็บลง DB ชั่วคราว ต่อ BU + งวด มีอายุเก็บ (ค่าเริ่มต้น 3 เดือน ปรับด้วย env DOA_BACKUP_MONTHS) แล้วลบอัตโนมัติ
+// BU ที่ไม่ใช่ TB ของ GL (เป็น TB ของระบบอื่น) -- GL Detail of Account ไม่รับ Backup/Config ของ BU เหล่านี้ | ปรับด้วย env DOA_NON_GL_BUS (คั่นด้วย ,)
+const DOA_NON_GL_BUS = new Set(String(process.env.DOA_NON_GL_BUS || "11610752,11610755,11610751,11630052,11630055,11630051,21930054,21930052,21930084,21930085").split(",").map((x) => x.trim()).filter(Boolean));
+const DOA_BACKUP_MONTHS = Math.max(1, parseInt(process.env.DOA_BACKUP_MONTHS || "3", 10) || 3);
+pool.query(`CREATE TABLE IF NOT EXISTS doa_tb_backup (
+  id SERIAL PRIMARY KEY, bu TEXT NOT NULL, period TEXT NOT NULL, file_name TEXT, row_count INT NOT NULL DEFAULT 0,
+  data JSONB NOT NULL, created_by TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (bu, period))`)
+  .then(() => pool.query(`ALTER TABLE doa_tb_backup ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'TB'`)) // MARKER_GL_DOA_SIMPLE_BACKUP_V1 -- kind: TB (เก็บ 3 เดือน) | Simple = Outstanding Simple ที่ Reform แล้ว (เก็บ 1 เดือน)
+  .then(() => pool.query(`ALTER TABLE doa_tb_backup DROP CONSTRAINT IF EXISTS doa_tb_backup_bu_period_key`))
+  .then(() => pool.query(`ALTER TABLE doa_tb_backup ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT ''`)) // MARKER_GL_DOA_BACKUP_PER_USER_V1 -- เก็บต่อ User: แต่ละคนมีไฟล์ของตัวเอง (owner = อีเมลผู้โยน) ไม่ทับกัน | owner ว่าง = ไฟล์เดิมก่อนแยก User (ทุกคนอ่านได้ จนกว่าจะหมดอายุ)
+  .then(() => pool.query(`DROP INDEX IF EXISTS doa_tb_backup_uq_kind`))
+  .then(() => pool.query(`ALTER TABLE doa_tb_backup ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT ''`)) // MARKER_GL_DOA_BACKUP_BY_ACCOUNT_V1 -- Detail backup แยกต่อ Account ('' = ไฟล์เดิมทั้ง BU)
+  .then(() => pool.query(`DROP INDEX IF EXISTS doa_tb_backup_uq_owner`))
+  .then(() => pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS doa_tb_backup_uq_owner_acc ON doa_tb_backup (bu, period, kind, owner, account)`))
+  .catch((e) => console.error("[migrate doa_tb_backup]:", e.message));
+const DOA_SIMPLE_MONTHS = Math.max(1, parseInt(process.env.DOA_SIMPLE_MONTHS || "1", 10) || 1);
+// MARKER_GL_DOA_RECLAIM_V1 -- ลบข้อมูลแล้วคืนพื้นที่ทันที: PostgreSQL ไม่คืนพื้นที่ให้ตารางเองจนกว่าจะ VACUUM FULL (ตาราง doa_tb_backup เล็ก ล็อกชั่วครู่) | เรียกต่อกันพร้อมกันได้ ไม่ซ้อน
+let doaReclaimRun = null;
+const doaReclaimNow = async () => {
+  if (doaReclaimRun) return doaReclaimRun;
+  doaReclaimRun = (async () => { try { await pool.query("VACUUM FULL doa_tb_backup"); } catch (e) { console.error("[doa reclaim]", e.message); } try { stCache = null; } catch (e) { /* stCache ประกาศภายหลัง */ } })().finally(() => { doaReclaimRun = null; });
+  return doaReclaimRun;
+};
+const purgeDoaBackup = () => pool.query("DELETE FROM doa_tb_backup WHERE expires_at < NOW()").then((r) => { if (r && r.rowCount) return doaReclaimNow(); }).catch((e) => console.error("[purge doa_tb_backup]:", e.message));
+// MARKER_GL_DOA_EXPIRY_END_OF_MONTH_V1 -- Simple/Detail หมดอายุ "สิ้นเดือนของ (งวด + N เดือน)" เช่น งวด 2026.09 + 1 = สิ้นเดือน 10.2026 (ไม่นับจากวันที่อัปโหลด); แก้แถวเดิมครั้งเดียวตอนเริ่ม
+const doaFixExpiry = async () => { try { const c = await stSettings(); /* MARKER_GL_DOA_DETAIL_EXPIRY_V2 -- Detail ไม่หมดอายุ (สะสม Include) */ await pool.query("UPDATE doa_tb_backup SET expires_at = timestamptz '2999-12-31 23:59:59+00' WHERE kind = 'Detail' AND expires_at < timestamptz '2999-12-31 23:59:59+00'"); for (const [kind, days] of [["Simple", c.doa_simple_days || 0]]) { await pool.query(`UPDATE doa_tb_backup SET expires_at = ((date_trunc('month', to_date(period, 'YYYY.MM')) + (CASE WHEN $2::int > 0 THEN 1 ELSE $1::int + 1 END || ' months')::interval)::timestamp AT TIME ZONE 'Asia/Bangkok') + (CASE WHEN $2::int > 0 THEN $2::int ELSE 0 END || ' days')::interval - interval '1 second' WHERE kind = $3 AND period ~ '^[0-9]{4}\\.[0-9]{2}$'`, [DOA_SIMPLE_MONTHS, days, kind]); } } catch (e) { console.error("[doa fix expiry]", e.message); } };
+setTimeout(() => doaFixExpiry().then(purgeDoaBackup), 10000);
+setTimeout(purgeDoaBackup, 15000);
+setInterval(purgeDoaBackup, 6 * 3600 * 1000);
+
+router.get("/doa-backup", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const bu = String(req.query.bu || "").trim();
+    if (!bu) return res.status(400).json({ error: "ต้องระบุ BU" });
+    const me = String(req.user.email || "").toLowerCase();
+    const q = await pool.query("SELECT id, bu, period, kind, file_name, row_count, created_by, created_at, expires_at, owner, account FROM doa_tb_backup WHERE bu = $1 AND expires_at >= NOW() AND (owner = $2 OR owner = '') ORDER BY period DESC, (owner = $2) DESC", [bu, me]); // ไฟล์ของตัวเองมาก่อน ไฟล์เดิม (owner ว่าง) ตามหลัง
+    res.json({ items: q.rows, retention_months: DOA_BACKUP_MONTHS, by_account: true }); // MARKER_GL_DOA_BACKUP_BY_ACCOUNT_V1 -- Frontend ตรวจว่า Backend รองรับ by Account ก่อนบันทึก (กันทับไฟล์ทั้ง BU)
+  } catch (e) { console.error("[doa-backup LIST]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// MARKER_GL_DOA_TB_STANDBY_ADMIN_V1 -- TB กลาง: ตรวจกับ Config ทั้งหมด แล้ว Stamp Module ที่ใช้ Account | Admin Operation ดู Standby ทุก BU
+const DOA_SEGKEY_RE = /(?:^|-)(\d{1,2})-(\d{2})-(\d{4})-(\w+)-(\w+)-(\d{5,})-(\w+)\s*$/;
+const doaTbAccounts = (m) => {
+  if (!Array.isArray(m)) return [];
+  const cell = (r, j) => (Array.isArray(r) && j >= 0 && r[j] != null ? String(r[j]).trim() : "");
+  const num = (v) => { const t = String(v == null ? "" : v).trim(); if (!t) return 0; const neg = /^\(.*\)$/.test(t) || /^-/.test(t); const n = Number(t.replace(/[(),\s-]/g, "")); return Number.isNaN(n) ? 0 : (neg ? -n : n); };
+  const hi = m.findIndex((r) => Array.isArray(r) && r.some((c) => /^account$/i.test(String(c || "").trim())));
+  let kc = -1;
+  for (let j = 0; j < 4 && kc < 0; j++) { let n = 0; for (let i = 0; i < Math.min(m.length, 300); i++) { if (DOA_SEGKEY_RE.test(cell(m[i], j))) { n++; if (n >= 3) { kc = j; break; } } } }
+  if (hi < 0 && kc < 0) return [];
+  const hd = (m[hi] || []).map((c) => String(c || "").trim()); const ix = (re) => hd.findIndex((c) => re.test(c));
+  const ja = ix(/^account$/i), jc = ix(/^(cpc|cost\s*(center|centre)|cc)\b/i), js = ix(/sub\s*-?\s*acc|sub\s*account|subacc/i), jd = ix(/^desc/i), je = ix(/^ending/i);
+  const out = new Map();
+  for (let i = hi < 0 ? 0 : hi + 1; i < m.length; i++) {
+    const r = m[i]; const k = kc >= 0 ? DOA_SEGKEY_RE.exec(cell(r, kc)) : null;
+    const code = k ? k[6] : cell(r, ja); if (!code || !/\d/.test(code) || !/^[0-9A-Za-z._\/-]+$/.test(code)) continue;
+    const cpc = k ? k[5] : cell(r, jc); const sub = k ? k[7] : cell(r, js); const o = out.get(code) || { code, name: "", e: 0, n: 0, cpcs: new Set(), pairs: new Set() };
+    o.e += je >= 0 ? num(r[je]) : 0; o.n += 1; if (cpc) o.cpcs.add(cpc); o.pairs.add(cpc + "\u0001" + sub); if (!o.name && jd >= 0) o.name = cell(r, jd); out.set(code, o);
+  }
+  return [...out.values()];
+};
+pool.query(`CREATE TABLE IF NOT EXISTS doa_tb_stamp (
+  bu TEXT NOT NULL, period TEXT NOT NULL, account TEXT NOT NULL, module TEXT NOT NULL,
+  stamped_by TEXT, stamped_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (bu, period, account, module))`)
+  .catch((e) => console.error("[migrate doa_tb_stamp]:", e.message));
+const doaZ0 = (x) => String(x == null ? "" : x).replace(/^0+/, "");
+const doaMt = (cfg, v, all) => { const c = String(cfg == null ? "" : cfg).trim().toUpperCase(); return !c || c === all || c === String(v == null ? "" : v).toUpperCase() || doaZ0(c) === doaZ0(v); };
+// MARKER_GL_DOA_LINE_ALLOW_V1 -- สิทธิ์ดึง Config รายบรรทัด (CPC+Account+Sub Acc): บรรทัดที่ Admin กำหนด Module ไว้ = เฉพาะ Module นั้นดึงไปเป็น Config ได้ (ไม่มีกฎ = ทุก Module) ต่อให้ Config เป็น BBBBB ก็ไม่ใช่ของ Module อื่น
+pool.query(`CREATE TABLE IF NOT EXISTS doa_line_allow (
+  bu TEXT NOT NULL, account TEXT NOT NULL, cpc TEXT NOT NULL DEFAULT '', sub_acc TEXT NOT NULL DEFAULT '', module TEXT NOT NULL,
+  created_by TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (bu, account, cpc, sub_acc, module))`)
+  .catch((e) => console.error("[migrate doa_line_allow]:", e.message));
+// MARKER_GL_DOA_SPECIFIC_BEATS_WILDCARD_V1 -- บรรทัดที่ Module หนึ่งระบุ CPC/Sub Acc ตรงตัวแล้ว Config แบบ BBBBB ของ Module อื่นไม่แย่งไป; บรรทัด Standby (ยังไม่มีใครระบุ) BBBBB ผูกได้เลย | Module เดียวกันนับเป็นเจ้าของร่วมได้
+const doaSpec = (r) => ((r.cpc && String(r.cpc).toUpperCase() !== "BBBBB") ? 1 : 0) + ((r.sub_acc && String(r.sub_acc).toUpperCase() !== "BBBBBB") ? 1 : 0);
+const doaPickOwners = (c) => { const best = new Map(); c.forEach((x) => best.set(x.module, Math.max(best.get(x.module) || 0, x.spec))); const mx = Math.max(-1, ...best.values()); return c.filter((x) => best.get(x.module) === mx); };
+async function doaAllowFn(bu) {
+  const q = await pool.query("SELECT account, cpc, sub_acc, module FROM doa_line_allow WHERE bu = $1", [bu]).catch(() => ({ rows: [] }));
+  const m = new Map(); q.rows.forEach((r) => { const k = r.account + "\u0001" + r.cpc + "\u0001" + r.sub_acc; if (!m.has(k)) m.set(k, []); m.get(k).push(r.module); });
+  const of = (code, cpc, sub) => m.get(String(code) + "\u0001" + String(cpc || "") + "\u0001" + String(sub || "")) || [];
+  const fn = (code, cpc, sub, module) => { const a = of(code, cpc, sub); return !a.length || a.some((x) => String(x).trim().toLowerCase() === String(module || "").trim().toLowerCase()); };
+  fn.of = of; return fn;
+}
+// ตรวจ TB กลางของ BU กับ Config ทั้งหมด (ทุกคน) แล้ว Stamp Module -- ถอด Stamp ที่ไม่ตรง Config ปัจจุบัน / คงเวลา Stamp เดิม
+async function doaRestampBu(bu) {
+  const tq = await pool.query("SELECT period, data FROM doa_tb_backup WHERE kind = 'TBRAW' AND bu = $1", [bu]);
+  if (!tq.rows.length) return;
+  const cq = await pool.query("SELECT account, cpc, cpc_mode, sub_acc, sub_mode, LOWER(user_email) AS e FROM doa_account_config WHERE bu = $1 AND auto_from IS NULL", [bu]);
+  const mq = await pool.query("SELECT LOWER(owner_email) AS e, module FROM user_signoff_profile");
+  const modOf = {}; mq.rows.forEach((r) => { modOf[r.e] = String(r.module || "").trim() || "(ไม่ระบุ Module)"; });
+  const allowOK = await doaAllowFn(bu);
+  const byAcc = new Map(); cq.rows.forEach((r) => { const k = String(r.account); if (!byAcc.has(k)) byAcc.set(k, []); byAcc.get(k).push(r); });
+  const want = new Map(); // period -> Set("account\u0001module\u0001email")
+  for (const t of tq.rows) {
+    const set = want.get(t.period) || new Set();
+    for (const a of doaTbAccounts(t.data)) {
+      const rules = byAcc.get(a.code) || [];
+      for (const p of a.pairs) {
+        const [cpc, sub] = p.split("\u0001"); const c = [];
+        for (const r of rules) {
+          if (r.cpc_mode === "exclude" || r.sub_mode === "exclude") continue;
+          const mo = modOf[r.e] || "(ไม่ระบุ Module)";
+          const exs = rules.filter((x) => x.e === r.e && (x.cpc_mode === "exclude" || x.sub_mode === "exclude"));
+          if (doaMt(r.cpc, cpc, "BBBBB") && doaMt(r.sub_acc, sub, "BBBBBB") && allowOK(a.code, cpc, sub, mo) && !exs.some((x) => (x.cpc_mode === "exclude" ? doaMt(x.cpc, cpc, "\u0000") : true) && (x.sub_mode === "exclude" ? doaMt(x.sub_acc, sub, "\u0000") : true))) c.push({ e: r.e, module: mo, spec: doaSpec(r) });
+        }
+        for (const o of doaPickOwners(c)) set.add(a.code + "\u0001" + o.module + "\u0001" + o.e);
+      }
+    }
+    want.set(t.period, set);
+  }
+  for (const [period, set] of want) {
+    const keep = new Set([...set].map((x) => x.split("\u0001").slice(0, 2).join("\u0001")));
+    const ex = await pool.query("SELECT account, module FROM doa_tb_stamp WHERE bu = $1 AND period = $2", [bu, period]);
+    for (const r of ex.rows) { if (!keep.has(r.account + "\u0001" + r.module)) await pool.query("DELETE FROM doa_tb_stamp WHERE bu = $1 AND period = $2 AND account = $3 AND module = $4", [bu, period, r.account, r.module]); }
+    for (const x of set) { const [account, module, e] = x.split("\u0001"); await pool.query("INSERT INTO doa_tb_stamp (bu, period, account, module, stamped_by) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (bu, period, account, module) DO NOTHING", [bu, period, account, module, e]); }
+  }
+}
+router.get("/doa-backup-admin/standby", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    const bq = await pool.query("SELECT DISTINCT bu FROM doa_tb_backup WHERE kind = 'TBRAW'");
+    for (const b of bq.rows) { try { await doaRestampBu(b.bu); } catch (e) { console.error("[doa restamp]", b.bu, e.message); } }
+    const q = await pool.query("SELECT id, bu, period, file_name, row_count, owner, created_by, created_at, data FROM doa_tb_backup WHERE kind = 'TBRAW' ORDER BY bu, period DESC, owner LIMIT 300");
+    const sq = await pool.query("SELECT bu, period, account, module, stamped_by, stamped_at FROM doa_tb_stamp");
+    const st = new Map(); sq.rows.forEach((r) => { const k = r.bu + "\u0001" + r.period; if (!st.has(k)) st.set(k, new Map()); const m = st.get(k); if (!m.has(r.account)) m.set(r.account, []); m.get(r.account).push({ module: r.module, by: r.stamped_by, at: r.stamped_at }); });
+    const items = q.rows.map((r) => {
+      const accs = doaTbAccounts(r.data); const have = st.get(r.bu + "\u0001" + r.period) || new Map(); const stby = accs.filter((a) => !have.has(a.code)); const used = accs.filter((a) => have.has(a.code));
+      return { id: r.id, bu: r.bu, period: r.period, file_name: r.file_name, row_count: r.row_count, owner: r.owner, created_at: r.created_at,
+        total_accounts: accs.length, config_accounts: used.length, standby_count: stby.length,
+        standby: stby.slice(0, 300).map((a) => ({ code: a.code, name: a.name, e: Math.round(a.e * 100) / 100, cpc_count: a.cpcs.size, rows: a.n })),
+        used: used.slice(0, 300).map((a) => ({ code: a.code, name: a.name, e: Math.round(a.e * 100) / 100, cpc_count: a.cpcs.size, modules: have.get(a.code).map((x) => x.module).sort(), stamped_at: have.get(a.code).map((x) => x.at).sort()[0] || null })) };
+    });
+    res.json({ items });
+  } catch (e) { console.error("[doa-backup-admin standby]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// MARKER_GL_DOA_ADMIN_LINES_V1 -- Admin Operation ระดับบรรทัด: CPC + Account + Sub Acc แต่ละบรรทัดเป็นของใคร (คำนวณสดจาก TBRAW x Config ทุกคน, ไม่เพิ่มตาราง)
+const doaTbLines = (m) => {
+  if (!Array.isArray(m)) return [];
+  const cell = (r, j) => (Array.isArray(r) && j >= 0 && r[j] != null ? String(r[j]).trim() : "");
+  const num = (v) => { const t = String(v == null ? "" : v).trim(); if (!t) return 0; const neg = /^\(.*\)$/.test(t) || /^-/.test(t); const n = Number(t.replace(/[(),\s-]/g, "")); return Number.isNaN(n) ? 0 : (neg ? -n : n); };
+  const hi = m.findIndex((r) => Array.isArray(r) && r.some((c) => /^account$/i.test(String(c || "").trim())));
+  let kc = -1;
+  for (let j = 0; j < 4 && kc < 0; j++) { let n = 0; for (let i = 0; i < Math.min(m.length, 300); i++) { if (DOA_SEGKEY_RE.test(cell(m[i], j))) { n++; if (n >= 3) { kc = j; break; } } } }
+  if (hi < 0 && kc < 0) return [];
+  const hd = (m[hi] || []).map((c) => String(c || "").trim()); const ix = (re) => hd.findIndex((c) => re.test(c));
+  const ja = ix(/^account$/i), jc = ix(/^(cpc|cost\s*(center|centre)|cc)\b/i), js = ix(/sub\s*-?\s*acc|sub\s*account|subacc/i), jd = ix(/^desc/i), je = ix(/^ending/i);
+  const out = new Map();
+  for (let i = hi < 0 ? 0 : hi + 1; i < m.length; i++) {
+    const r = m[i]; const k = kc >= 0 ? DOA_SEGKEY_RE.exec(cell(r, kc)) : null;
+    const code = k ? k[6] : cell(r, ja); if (!code || !/\d/.test(code) || !/^[0-9A-Za-z._\/-]+$/.test(code)) continue;
+    const cpc = k ? k[5] : cell(r, jc); const sub = k ? k[7] : cell(r, js); const key = code + "\u0001" + cpc + "\u0001" + sub;
+    const o = out.get(key) || { code, cpc, sub, name: "", e: 0, n: 0 };
+    o.e += je >= 0 ? num(r[je]) : 0; o.n += 1; if (!o.name && jd >= 0) o.name = cell(r, jd); out.set(key, o);
+  }
+  return [...out.values()];
+};
+const doaTbDropLines = (m, dropSet) => { // คืนตารางที่ตัดบรรทัดข้อมูลที่ตรง (code,cpc,sub) ออก; แถวหัว/รวม/ที่อ่านไม่ได้คงไว้
+  if (!Array.isArray(m)) return { data: m, removed: 0 };
+  const cell = (r, j) => (Array.isArray(r) && j >= 0 && r[j] != null ? String(r[j]).trim() : "");
+  const hi = m.findIndex((r) => Array.isArray(r) && r.some((c) => /^account$/i.test(String(c || "").trim())));
+  let kc = -1;
+  for (let j = 0; j < 4 && kc < 0; j++) { let n = 0; for (let i = 0; i < Math.min(m.length, 300); i++) { if (DOA_SEGKEY_RE.test(cell(m[i], j))) { n++; if (n >= 3) { kc = j; break; } } } }
+  if (hi < 0 && kc < 0) return { data: m, removed: 0 };
+  const hd = (m[hi] || []).map((c) => String(c || "").trim()); const ix = (re) => hd.findIndex((c) => re.test(c));
+  const ja = ix(/^account$/i), jc = ix(/^(cpc|cost\s*(center|centre)|cc)\b/i), js = ix(/sub\s*-?\s*acc|sub\s*account|subacc/i);
+  const start = hi < 0 ? 0 : hi + 1; const out = []; let removed = 0;
+  for (let i = 0; i < m.length; i++) {
+    const r = m[i];
+    if (i >= start) {
+      const k = kc >= 0 ? DOA_SEGKEY_RE.exec(cell(r, kc)) : null;
+      const code = k ? k[6] : cell(r, ja);
+      if (code && /\d/.test(code) && /^[0-9A-Za-z._\/-]+$/.test(code)) {
+        const cpc = k ? k[5] : cell(r, jc); const sub = k ? k[7] : cell(r, js);
+        if (dropSet.has(code + "\u0001" + cpc + "\u0001" + sub)) { removed++; continue; }
+      }
+    }
+    out.push(r);
+  }
+  return { data: out, removed };
+};
+// หาเจ้าของรายบรรทัด (CPC+Account+Sub Acc) ของ BU จาก Config ทุกคน (รวม Exclude) + Module จาก Profile
+async function doaOwnerFn(bu) {
+  const cq = await pool.query("SELECT account, cpc, cpc_mode, sub_acc, sub_mode, LOWER(user_email) AS e FROM doa_account_config WHERE bu = $1 AND auto_from IS NULL", [bu]);
+  const mq = await pool.query("SELECT LOWER(owner_email) AS e, module FROM user_signoff_profile");
+  const modOf = {}; mq.rows.forEach((r) => { modOf[r.e] = String(r.module || "").trim() || "(ไม่ระบุ Module)"; });
+  const allowOK = await doaAllowFn(bu);
+  const byAcc = new Map(); cq.rows.forEach((r) => { const k = String(r.account); if (!byAcc.has(k)) byAcc.set(k, []); byAcc.get(k).push(r); });
+  const fn = (l) => {
+    const rules = byAcc.get(l.code) || []; const owners = new Map();
+    for (const r of rules) {
+      if (r.cpc_mode === "exclude" || r.sub_mode === "exclude") continue;
+      const exs = rules.filter((x) => x.e === r.e && (x.cpc_mode === "exclude" || x.sub_mode === "exclude"));
+      const hit = doaMt(r.cpc, l.cpc, "BBBBB") && doaMt(r.sub_acc, l.sub, "BBBBBB") && !exs.some((x) => (x.cpc_mode === "exclude" ? doaMt(x.cpc, l.cpc, "\u0000") : true) && (x.sub_mode === "exclude" ? doaMt(x.sub_acc, l.sub, "\u0000") : true));
+      if (hit) owners.set(r.e, { module: modOf[r.e] || "(ไม่ระบุ Module)", spec: doaSpec(r) });
+    }
+    const c = [...owners].map(([email, v]) => ({ email, module: v.module, spec: v.spec })).filter((x) => allowOK(l.code, l.cpc, l.sub, x.module));
+    return doaPickOwners(c).map((x) => ({ email: x.email, module: x.module }));
+  };
+  fn.allowOf = allowOK.of; return fn;
+}
+router.get("/doa-backup-admin/lines", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    const id = Number(req.query.id); if (!Number.isInteger(id)) return res.status(400).json({ error: "id ไม่ถูกต้อง" });
+    const tq = await pool.query("SELECT bu, period, data FROM doa_tb_backup WHERE kind = 'TBRAW' AND id = $1", [id]);
+    if (!tq.rows.length) return res.status(404).json({ error: "ไม่พบ TB" });
+    const { bu, data } = tq.rows[0]; const ownerOf = await doaOwnerFn(bu);
+    const lines = doaTbLines(data).slice(0, 6000).map((l) => ({ code: l.code, cpc: l.cpc, sub: l.sub, name: l.name, e: Math.round(l.e * 100) / 100, rows: l.n, owners: ownerOf(l), allow: ownerOf.allowOf(l.code, l.cpc, l.sub) }));
+    const mq2 = await pool.query("SELECT TRIM(module) AS module, count(DISTINCT LOWER(owner_email))::int AS users FROM user_signoff_profile WHERE TRIM(COALESCE(module,'')) <> '' GROUP BY TRIM(module) ORDER BY 1").catch(() => ({ rows: [] }));
+    res.json({ bu, period: tq.rows[0].period, lines, modules: mq2.rows });
+  } catch (e) { console.error("[doa-backup-admin lines]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+// MARKER_GL_DOA_ADMIN_LINES_ALLOW_V1 -- Admin กำหนดว่าบรรทัด (CPC+Account+Sub Acc) ใดดึงเป็น Config ได้เฉพาะ Module ใด: add / remove / clear (clear = กลับเป็นทุก Module)
+router.post("/doa-backup-admin/lines/allow", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    const b = req.body || {}; const id = Number(b.id); const cut = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    const want = Array.isArray(b.lines) ? b.lines.slice(0, 2000) : []; const add = (Array.isArray(b.add) ? b.add : []).map((x) => cut(x, 80)).filter(Boolean); const rem = (Array.isArray(b.remove) ? b.remove : []).map((x) => cut(x, 80)).filter(Boolean);
+    if (!Number.isInteger(id) || !want.length || (!add.length && !rem.length && !b.clear)) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+    const t0 = await pool.query("SELECT bu FROM doa_tb_backup WHERE kind = 'TBRAW' AND id = $1", [id]);
+    if (!t0.rows.length) return res.status(404).json({ error: "ไม่พบ TB" });
+    const bu = t0.rows[0].bu; if (DOA_NON_GL_BUS.has(bu)) return res.status(400).json({ error: `BU ${bu} ไม่ใช่ TB ของ GL` });
+    let n = 0;
+    for (const x of want) {
+      const code = cut(x.code, 50); const cpc = cut(x.cpc, 50); const sub = cut(x.sub, 50); if (!code) continue;
+      if (b.clear) await pool.query("DELETE FROM doa_line_allow WHERE bu = $1 AND account = $2 AND cpc = $3 AND sub_acc = $4", [bu, code, cpc, sub]);
+      for (const m of rem) await pool.query("DELETE FROM doa_line_allow WHERE bu = $1 AND account = $2 AND cpc = $3 AND sub_acc = $4 AND module = $5", [bu, code, cpc, sub, m]);
+      for (const m of add) await pool.query("INSERT INTO doa_line_allow (bu, account, cpc, sub_acc, module, created_by) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", [bu, code, cpc, sub, m, u.email]);
+      n++;
+    }
+    doaRestampBu(bu).catch((e) => console.error("[doa restamp allow]", e.message));
+    console.log("[doa lines allow]", u.email, bu, "lines", n, "add", add.join(","), "remove", rem.join(","), b.clear ? "clear" : "");
+    res.json({ ok: true, lines: n });
+  } catch (e) { console.error("[doa-backup-admin lines allow]", e.message); res.status(500).json({ error: "บันทึกสิทธิ์ไม่สำเร็จ: " + e.message }); }
+});
+// MARKER_GL_DOA_ADMIN_LINES_DELETE_V1 -- Admin ลบบรรทัด Standby (ไม่มีเจ้าของ) ออกจาก TB กลาง ทุกไฟล์ TBRAW ของ BU+งวดเดียวกัน (ลบถาวร; โยน TB ใหม่จะกลับมา) / บรรทัดที่มีเจ้าของจะไม่ถูกลบ
+router.post("/doa-backup-admin/lines/delete", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    const id = Number((req.body || {}).id); const want = Array.isArray((req.body || {}).lines) ? req.body.lines : [];
+    if (!Number.isInteger(id) || !want.length) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+    const t0 = await pool.query("SELECT bu, period FROM doa_tb_backup WHERE kind = 'TBRAW' AND id = $1", [id]);
+    if (!t0.rows.length) return res.status(404).json({ error: "ไม่พบ TB" });
+    const { bu, period } = t0.rows[0]; const ownerOf = await doaOwnerFn(bu);
+    const lk = (c, p, s) => String(c) + "\u0001" + String(p || "") + "\u0001" + String(s || "");
+    const ask = new Set(want.map((x) => lk(x.code, x.cpc, x.sub)));
+    const all = await pool.query("SELECT id, data FROM doa_tb_backup WHERE kind = 'TBRAW' AND bu = $1 AND period = $2", [bu, period]);
+    let deleted = 0, rowsRemoved = 0; const skipped = new Set();
+    for (const t of all.rows) {
+      const lines = doaTbLines(t.data); const ok = new Set();
+      for (const l of lines) { const k = lk(l.code, l.cpc, l.sub); if (!ask.has(k)) continue; if (ownerOf(l).length) skipped.add(k); else ok.add(k); }
+      if (!ok.size) continue;
+      const nd = doaTbDropLines(t.data, ok);
+      await pool.query("UPDATE doa_tb_backup SET data = $1::jsonb, row_count = GREATEST(row_count - $2, 0) WHERE id = $3", [JSON.stringify(nd.data), nd.removed, t.id]);
+      deleted += ok.size; rowsRemoved += nd.removed;
+    }
+    if (deleted) await doaReclaimNow(); // MARKER_GL_DOA_DELETE_RECLAIM_V1 -- UPDATE JSONB ทิ้งแถวเก่า (dead tuple) ไว้ ขนาดตารางไม่ลดจนกว่าจะ VACUUM FULL
+    stCache = null;
+    console.log("[doa lines delete]", u.email, bu, period, "lines", deleted, "rows", rowsRemoved);
+    res.json({ ok: true, deleted, rows_removed: rowsRemoved, skipped_owned: skipped.size });
+  } catch (e) { console.error("[doa-backup-admin lines delete]", e.message); res.status(500).json({ error: "ลบไม่สำเร็จ: " + e.message }); }
+});
+
+// MARKER_STORAGE_DASHBOARD_V2 -- Storage Dashboard (System Console > Backend Ops): นับเฉพาะข้อมูล FASTAPN, พื้นที่ว่างรายไดรฟ์หักสำรอง, โควตา (อ่านอย่างเดียว)
+const ST_GIB = 1073741824;
+const ST_GROUPS = [
+  { key: "doa", label: "Detail of Account (GL)", pct: 45, test: (n) => /^doa_/.test(n) },
+  { key: "files", label: "ไฟล์ที่อัปโหลด (File Storage)", pct: 25, test: () => false },
+  { key: "vat", label: "VAT / AP / Batch", pct: 15, test: (n) => /^(vat_|ap_|batch_|invoice)/.test(n) },
+  { key: "logsp", label: "Activity Log + SharePoint Handler", pct: 5, test: (n) => /^(activity_log|sp_)/.test(n) },
+  { key: "reserve", label: "เผื่อระบบ / Backup / อื่นๆ", pct: 10, test: () => true },
+];
+const stGroupKey = (n) => { for (const g of ST_GROUPS) if (g.test(n)) return g.key; return "reserve"; };
+let stCache = null;
+pool.query(`CREATE TABLE IF NOT EXISTS storage_setting (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_by TEXT, updated_at TIMESTAMPTZ DEFAULT NOW())`).catch((e) => console.error("[storage_setting]", e.message));
+pool.query(`CREATE TABLE IF NOT EXISTS storage_quota (grp TEXT PRIMARY KEY, pct NUMERIC NOT NULL, updated_by TEXT, updated_at TIMESTAMPTZ DEFAULT NOW())`).catch((e) => console.error("[storage_quota]", e.message));
+pool.query(`CREATE TABLE IF NOT EXISTS storage_history (day DATE PRIMARY KEY, db_bytes BIGINT, used_bytes BIGINT, total_bytes BIGINT, free_bytes BIGINT, created_at TIMESTAMPTZ DEFAULT NOW())`)
+  .then(() => pool.query(`ALTER TABLE storage_history ADD COLUMN IF NOT EXISTS app_bytes BIGINT`))
+  .then(() => pool.query(`ALTER TABLE storage_history ADD COLUMN IF NOT EXISTS doa_bytes BIGINT`)) // MARKER_DOA_STORAGE_POPUP_V1 -- ขนาดข้อมูล DOA รายวัน (คาดว่าเต็มโควตา DOA) // V2: ขนาดข้อมูล FASTAPN (DB + ไฟล์) ใช้คำนวณคาดว่าเต็ม
+  .catch((e) => console.error("[storage_history]", e.message));
+let stFilesBytes = 0; // ขนาดไฟล์อัปโหลดล่าสุดที่สแกนได้ (ใช้ตอน Snapshot รายวัน)
+
+const stDiskOf = async (p, label) => {
+  try {
+    if (!p || typeof fs.promises.statfs !== "function") return null;
+    const s = await fs.promises.statfs(p); const bs = Number(s.bsize);
+    const total = Number(s.blocks) * bs, free = Number(s.bavail) * bs;
+    return { label, path: p, total, free, used: Math.max(0, total - Number(s.bfree) * bs) };
+  } catch (e) { return null; }
+};
+const stDrives = async () => {
+  const list = [];
+  let fdir = process.env.STORAGE_FILES_DIR || "";
+  if (!fdir) { try { const r = await pool.query("SELECT file_path FROM file_storage WHERE file_path IS NOT NULL ORDER BY id DESC LIMIT 1"); if (r.rows[0]) fdir = path.dirname(r.rows[0].file_path); } catch (e) {} }
+  const a = await stDiskOf(fdir, "ไฟล์ที่อัปโหลด"); if (a) { a.kinds = ["files"]; list.push(a); }
+  let ddir = process.env.STORAGE_DB_DIR || "";
+  if (!ddir) { try { const r = await pool.query("SHOW data_directory"); ddir = r.rows[0] && r.rows[0].data_directory; } catch (e) {} }
+  const b = await stDiskOf(ddir, "ฐานข้อมูล PostgreSQL"); if (b) { b.kinds = ["db"]; list.push(b); }
+  const seen = new Set(), uniq = [];
+  for (const d of list) { const k = d.total + "|" + d.used; if (seen.has(k)) { const o = uniq.find((x) => x.total + "|" + x.used === k); if (o) { o.label += " + " + d.label; o.kinds = o.kinds.concat(d.kinds); } continue; } seen.add(k); uniq.push(d); }
+  return uniq;
+};
+const stSettings = async () => {
+  const o = { doa_max_periods: 24, warn_yellow: 70, warn_red: 90, reserve_pct: 0, doa_simple_days: 0, doa_detail_days: 0, quotas: {} }; // reserve_pct: 0 = ไม่หักสำรอง (ปรับได้ที่ Dashboard)
+  ST_GROUPS.forEach((g) => { o.quotas[g.key] = g.pct; });
+  try {
+    (await pool.query("SELECT k, v FROM storage_setting")).rows.forEach((r) => { const n = Number(r.v); if (Number.isFinite(n) && r.k in o) o[r.k] = n; });
+    (await pool.query("SELECT grp, pct FROM storage_quota")).rows.forEach((r) => { if (r.grp in o.quotas) o.quotas[r.grp] = Number(r.pct); });
+  } catch (e) {}
+  return o;
+};
+const stSnapshot = async () => {
+  try {
+    const db = Number((await pool.query("SELECT pg_database_size(current_database()) AS b")).rows[0].b);
+    const dr = await stDrives();
+    const total = dr.reduce((s, d) => s + d.total, 0), free = dr.reduce((s, d) => s + d.free, 0), used = dr.reduce((s, d) => s + d.used, 0);
+    const doaB = Number((await pool.query("SELECT COALESCE(sum(pg_total_relation_size(c.oid)), 0)::bigint AS b FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r' AND n.nspname = 'public' AND c.relname LIKE 'doa\\_%'")).rows[0].b);
+    await pool.query(`INSERT INTO storage_history (day, db_bytes, used_bytes, total_bytes, free_bytes, app_bytes, doa_bytes) VALUES (CURRENT_DATE, $1, $2, $3, $4, $5, $6)
+      ON CONFLICT (day) DO UPDATE SET db_bytes = EXCLUDED.db_bytes, used_bytes = EXCLUDED.used_bytes, total_bytes = EXCLUDED.total_bytes, free_bytes = EXCLUDED.free_bytes, app_bytes = EXCLUDED.app_bytes, doa_bytes = EXCLUDED.doa_bytes, created_at = NOW()`, [db, dr.length ? used : db, total || null, dr.length ? free : null, db + stFilesBytes, doaB]);
+  } catch (e) { console.error("[storage_snapshot]", e.message); }
+};
+setTimeout(stSnapshot, 60000).unref();
+setInterval(stSnapshot, 6 * 3600 * 1000).unref();
+
+router.get("/storage-stats", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    if (req.query.refresh !== "1" && stCache && Date.now() - stCache.at < 120000) return res.json({ ...stCache.data, cached: true });
+    const out = { at: new Date().toISOString() };
+    const cfg = await stSettings(); out.config = cfg;
+    out.db = (await pool.query("SELECT current_database() AS name, pg_database_size(current_database())::bigint AS bytes")).rows[0]; out.db.bytes = Number(out.db.bytes);
+    // ตาราง + จัดกลุ่ม
+    const tq = await pool.query(`SELECT c.relname AS name, pg_total_relation_size(c.oid)::bigint AS total, pg_relation_size(c.oid)::bigint AS tbl, pg_indexes_size(c.oid)::bigint AS idx, COALESCE(s.n_live_tup, 0)::bigint AS rows
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+      WHERE c.relkind = 'r' AND n.nspname = 'public' ORDER BY total DESC`);
+    const tabs = tq.rows.map((r) => ({ name: r.name, group: stGroupKey(r.name), total: Number(r.total), tbl: Number(r.tbl), idx: Number(r.idx), rows: Number(r.rows) }));
+    const gb = {}; ST_GROUPS.forEach((g) => { gb[g.key] = { key: g.key, label: g.label, bytes: 0, tables: 0, files: 0 }; });
+    tabs.forEach((t) => { gb[t.group].bytes += t.total; gb[t.group].tables += 1; });
+    out.tables = tabs.slice(0, 10); out.table_count = tabs.length;
+    // ไฟล์บนดิสก์ (stat ทีละชุด เพดาน 50,000 ไฟล์ / 20 วินาที)
+    const fq = await pool.query("SELECT module, status, file_path FROM file_storage WHERE file_path IS NOT NULL LIMIT 50000").catch(() => ({ rows: [] }));
+    const fm = new Map(); const t0 = Date.now(); let scanned = 0, truncated = false, fbytes = 0, fcount = 0;
+    for (let i = 0; i < fq.rows.length; i += 200) {
+      if (Date.now() - t0 > 20000) { truncated = true; break; }
+      const part = fq.rows.slice(i, i + 200);
+      const rs = await Promise.allSettled(part.map((r) => fs.promises.stat(r.file_path)));
+      part.forEach((r, j) => { const k = (r.module || "-") + "|" + (r.status || "-"); const o = fm.get(k) || { module: r.module || "-", status: r.status || "-", files: 0, missing: 0, bytes: 0 }; if (rs[j].status === "fulfilled") { o.files += 1; o.bytes += rs[j].value.size; fbytes += rs[j].value.size; fcount += 1; } else o.missing += 1; fm.set(k, o); scanned++; });
+    }
+    gb.files.bytes = fbytes; gb.files.files = fcount;
+    out.files = { rows: [...fm.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 15), scanned, total: fq.rows.length, truncated };
+    // ความจุ: นับเฉพาะข้อมูล FASTAPN (DB + ไฟล์อัปโหลด) / พื้นที่ว่างรายไดรฟ์หักสำรอง reserve_pct ให้เครื่อง
+    stFilesBytes = fbytes;
+    const drives = await stDrives(); const rsv = cfg.reserve_pct;
+    const appBytes = out.db.bytes + fbytes;
+    drives.forEach((x) => { x.used_pct = x.total ? Math.round(x.used / x.total * 1000) / 10 : null; x.reserve = Math.round(x.total * rsv / 100); x.usable_free = Math.max(0, x.free - x.reserve);
+      x.app = (x.kinds.includes("db") ? out.db.bytes : 0) + (x.kinds.includes("files") ? fbytes : 0); x.other = Math.max(0, x.used - x.app); x.app_pct = (x.app + x.usable_free) > 0 ? Math.round(x.app / (x.app + x.usable_free) * 1000) / 10 : 100; });
+    out.drives = drives;
+    let source = "disk", diskTotal = 0, diskUsed = 0, diskFree = 0, usableFree = 0, other = 0;
+    if (drives.length) { diskTotal = drives.reduce((s, x) => s + x.total, 0); diskUsed = drives.reduce((s, x) => s + x.used, 0); diskFree = drives.reduce((s, x) => s + x.free, 0); usableFree = drives.reduce((s, x) => s + x.usable_free, 0); other = drives.reduce((s, x) => s + x.other, 0); }
+    else { const capGb = Number(process.env.STORAGE_CAPACITY_GB || 0); if (capGb > 0) { source = "env"; diskTotal = capGb * ST_GIB; diskUsed = appBytes; diskFree = Math.max(0, diskTotal - appBytes); usableFree = Math.max(0, diskTotal * (1 - rsv / 100) - appBytes); } else source = "none"; }
+    const appCap = appBytes + usableFree; const total = appCap;
+    out.capacity = { source, reserve_pct: rsv, app_bytes: appBytes, db_bytes: out.db.bytes, files_bytes: fbytes, other_bytes: other, disk_total: diskTotal, disk_used: diskUsed, disk_free: diskFree, usable_free: usableFree, app_capacity: appCap, pct: appCap ? Math.round(appBytes / appCap * 1000) / 10 : null };
+    out.groups = ST_GROUPS.map((g) => { const q = cfg.quotas[g.key] || 0, qb = total ? total * q / 100 : 0, b = gb[g.key]; return { key: g.key, label: g.label, bytes: b.bytes, tables: b.tables, files: b.files, quota_pct: q, quota_bytes: qb, use_pct: qb ? Math.round(b.bytes / qb * 1000) / 10 : null }; });
+    // Detail of Account
+    const dk = await pool.query("SELECT kind, count(*)::int AS files, count(DISTINCT bu)::int AS bus, COALESCE(sum(pg_column_size(data)), 0)::bigint AS bytes FROM doa_tb_backup GROUP BY kind ORDER BY bytes DESC").catch(() => ({ rows: [] }));
+    const dt = await pool.query("SELECT bu, kind, count(*)::int AS files, COALESCE(sum(pg_column_size(data)), 0)::bigint AS bytes FROM doa_tb_backup GROUP BY bu, kind ORDER BY bytes DESC LIMIT 5").catch(() => ({ rows: [] }));
+    const dp = await pool.query("SELECT bu, count(*)::int AS periods FROM doa_tb_backup WHERE kind = 'TBRAW' GROUP BY bu ORDER BY periods DESC, bu LIMIT 30").catch(() => ({ rows: [] }));
+    out.doa = { by_kind: dk.rows.map((r) => ({ kind: r.kind, files: r.files, bus: r.bus, bytes: Number(r.bytes) })), top_bu: dt.rows.map((r) => ({ bu: r.bu, kind: r.kind, files: r.files, bytes: Number(r.bytes) })), max_periods: cfg.doa_max_periods,
+      periods: dp.rows.map((r) => ({ bu: r.bu, periods: r.periods, max: cfg.doa_max_periods, level: r.periods >= cfg.doa_max_periods ? "red" : (r.periods >= cfg.doa_max_periods * 0.9 ? "yellow" : "ok") })) };
+    // Memory ของ Process
+    const mu = process.memoryUsage(); out.process = { rss: mu.rss, heapUsed: mu.heapUsed, heapTotal: mu.heapTotal, external: mu.external, arrayBuffers: mu.arrayBuffers };
+    try { let ln = 0, lb = 0; for (const v of spLocalBox.values()) { ln += 1; try { lb += JSON.stringify(v).length; } catch (e) {} } out.mem_caches = [{ name: "ที่พักชั่วคราว Drive D (spLocalBox)", entries: ln, bytes: lb }]; } catch (e) { out.mem_caches = []; }
+    // คาดว่าเต็ม: การโตของข้อมูล FASTAPN เทียบกับพื้นที่ว่างที่ใช้ได้ (ต้องมีประวัติ >= 7 วัน)
+    const hq = await pool.query("SELECT day, app_bytes FROM storage_history WHERE app_bytes IS NOT NULL AND day >= CURRENT_DATE - 90 ORDER BY day").catch(() => ({ rows: [] }));
+    out.forecast = { days_of_history: hq.rows.length, per_month: null, months_left: null };
+    if (hq.rows.length >= 2) {
+      const a = hq.rows[0], z = hq.rows[hq.rows.length - 1], span = Math.max(1, Math.round((new Date(z.day) - new Date(a.day)) / 86400000));
+      if (span >= 7) { const perDay = (Number(z.app_bytes) - Number(a.app_bytes)) / span; out.forecast.per_month = Math.round(perDay * 30); if (perDay > 0 && usableFree > 0) out.forecast.months_left = Math.round(usableFree / perDay / 30 * 10) / 10; }
+    }
+    // Alerts
+    const al = [], Y = cfg.warn_yellow, R = cfg.warn_red, lv = (p) => (p >= R ? "red" : (p >= Y ? "yellow" : null));
+    drives.forEach((x) => { const l = lv(x.app_pct); if (l) al.push({ level: l, text: "ไดรฟ์ " + x.path.slice(0, 3) + " (" + x.label + "): FASTAPN ใช้ " + x.app_pct + "% ของพื้นที่ที่ใช้ได้" + (x.usable_free <= 0 ? " — ที่ว่างเหลือต่ำกว่าส่วนที่กันไว้ให้เครื่อง" : "") }); });
+    out.groups.forEach((g) => { if (g.use_pct != null && lv(g.use_pct)) al.push({ level: lv(g.use_pct), text: g.label + " ใช้ " + g.use_pct + "% ของโควตา" }); });
+    out.doa.periods.forEach((p) => { if (p.level !== "ok") al.push({ level: p.level, text: "BU " + p.bu + " เก็บ " + p.periods + "/" + p.max + " งวด" + (p.level === "red" ? " — ควรย้ายงวดเก่าไป SharePoint" : " — ใกล้เต็ม") }); });
+    if (out.forecast.months_left != null && out.forecast.months_left <= 3) al.push({ level: out.forecast.months_left <= 1 ? "red" : "yellow", text: "คาดว่าดิสก์เต็มในอีก ~" + out.forecast.months_left + " เดือน" });
+    out.alerts = al;
+    stCache = { at: Date.now(), data: out };
+    res.json(out);
+  } catch (e) { console.error("[storage-stats]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.put("/storage-config", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner") return res.status(403).json({ error: "เฉพาะ Owner" });
+  try {
+    const b = req.body || {}, by = u.email || u.username || "";
+    if (b.quotas) {
+      let sum = 0; const rows = [];
+      for (const g of ST_GROUPS) { const n = Number(b.quotas[g.key]); if (!Number.isFinite(n) || n < 0 || n > 100) return res.status(400).json({ error: "โควตา " + g.key + " ต้องเป็น 0-100" }); sum += n; rows.push([g.key, n]); }
+      if (sum > 100.0001) return res.status(400).json({ error: "ผลรวมโควตาต้องไม่เกิน 100% (ตอนนี้ " + sum + "%)" });
+      for (const [k, n] of rows) await pool.query("INSERT INTO storage_quota (grp, pct, updated_by) VALUES ($1,$2,$3) ON CONFLICT (grp) DO UPDATE SET pct = EXCLUDED.pct, updated_by = EXCLUDED.updated_by, updated_at = NOW()", [k, n, by]);
+    }
+    const sets = [["doa_max_periods", 1, 600], ["warn_yellow", 1, 100], ["warn_red", 1, 100], ["reserve_pct", 0, 60]];
+    for (const [k, lo, hi] of sets) { if (b[k] == null) continue; const n = Number(b[k]); if (!Number.isFinite(n) || n < lo || n > hi) return res.status(400).json({ error: k + " ต้องอยู่ระหว่าง " + lo + "-" + hi }); await pool.query("INSERT INTO storage_setting (k, v, updated_by) VALUES ($1,$2,$3) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_by = EXCLUDED.updated_by, updated_at = NOW()", [k, String(n), by]); }
+    stCache = null;
+    res.json({ ok: true, config: await stSettings() });
+  } catch (e) { console.error("[storage-config]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// MARKER_DOA_STORAGE_POPUP_V1 -- DOA Storage (Detail of Account > ป้าย 💾 + Popup, เฉพาะ Owner/Admin): ขนาดข้อมูลของ DOA แยกชนิด / BU / Module (อ่านอย่างเดียว, เบากว่า /storage-stats เพราะไม่สแกนไฟล์)
+let stDoaCache = null;
+// MARKER_GL_DOA_STORAGE_BADGE_ALL_V1 -- คำนวณสถิติ DOA Storage ครั้งเดียว ใช้ทั้ง Popup ของ Admin และป้ายอ่านอย่างเดียวของ User ทุกคน
+async function doaStorageStats(refresh) {
+    if (!refresh && stDoaCache && Date.now() - stDoaCache.at < 60000) return { ...stDoaCache.data, cached: true };
+    const cfg = await stSettings(); const out = { at: new Date().toISOString(), config: { doa_max_periods: cfg.doa_max_periods, warn_yellow: cfg.warn_yellow, warn_red: cfg.warn_red, doa_simple_days: cfg.doa_simple_days || 0, doa_detail_days: cfg.doa_detail_days || 0 } };
+    const tq = await pool.query(`SELECT c.relname AS name, pg_total_relation_size(c.oid)::bigint AS total, pg_relation_size(c.oid)::bigint AS tbl, pg_indexes_size(c.oid)::bigint AS idx, COALESCE(s.n_live_tup, 0)::bigint AS rows
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+      WHERE c.relkind = 'r' AND n.nspname = 'public' AND c.relname LIKE 'doa\\_%' ORDER BY total DESC`);
+    out.tables = tq.rows.map((r) => ({ name: r.name, total: Number(r.total), tbl: Number(r.tbl), idx: Number(r.idx), rows: Number(r.rows) }));
+    const total = out.tables.reduce((s, t) => s + t.total, 0);
+    // โควตา DOA = % ของ (ข้อมูล FASTAPN + พื้นที่เก็บเพิ่มได้) -- ใช้ขนาดไฟล์อัปโหลดล่าสุดที่เคยสแกน (stFilesBytes)
+    const dbb = Number((await pool.query("SELECT pg_database_size(current_database()) AS b")).rows[0].b);
+    const drives = await stDrives(); const rsv = cfg.reserve_pct || 0;
+    let usableFree = 0, source = "disk";
+    if (drives.length) usableFree = drives.reduce((s, x) => s + Math.max(0, x.free - x.total * rsv / 100), 0);
+    else { const capGb = Number(process.env.STORAGE_CAPACITY_GB || 0); if (capGb > 0) { source = "env"; usableFree = Math.max(0, capGb * ST_GIB * (1 - rsv / 100) - dbb - stFilesBytes); } else source = "none"; }
+    const appCap = source === "none" ? 0 : dbb + stFilesBytes + usableFree;
+    const qpct = cfg.quotas.doa || 0, qbytes = appCap * qpct / 100;
+    out.quota = { source, pct: qpct, bytes: qbytes, free: Math.max(0, qbytes - total), use_pct: qbytes ? Math.round(total / qbytes * 1000) / 10 : null };
+    out.total = total;
+    const bq = await pool.query("SELECT bu, kind, count(*)::int AS files, COALESCE(sum(pg_column_size(data)), 0)::bigint AS bytes, max(created_at) AS last FROM doa_tb_backup GROUP BY bu, kind").catch(() => ({ rows: [] }));
+    const kinds = new Map(), bus = new Map();
+    for (const r of bq.rows) {
+      const k = kinds.get(r.kind) || { kind: r.kind, files: 0, bytes: 0, bus: 0 }; k.files += r.files; k.bytes += Number(r.bytes); k.bus += 1; kinds.set(r.kind, k);
+      const b = bus.get(r.bu) || { bu: r.bu, kinds: {}, files: 0, bytes: 0, periods: 0, last: null };
+      b.kinds[r.kind] = { files: r.files, bytes: Number(r.bytes) }; b.files += r.files; b.bytes += Number(r.bytes); if (r.kind === "TBRAW") b.periods = r.files;
+      if (!b.last || (r.last && new Date(r.last) > new Date(b.last))) b.last = r.last; bus.set(r.bu, b);
+    }
+    out.by_kind = [...kinds.values()].sort((a, b) => b.bytes - a.bytes);
+    const max = cfg.doa_max_periods;
+    out.by_bu = [...bus.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 400).map((b) => ({ ...b, max, level: b.periods >= max ? "red" : (b.periods >= max * 0.9 ? "yellow" : "ok") }));
+    out.bu_count = bus.size; out.files = out.by_kind.reduce((s, k) => s + k.files, 0); out.max_periods = max;
+    const sq = await pool.query("SELECT module, count(*)::int AS rows, count(DISTINCT account)::int AS accounts, count(DISTINCT bu)::int AS bus FROM doa_tb_stamp GROUP BY module ORDER BY rows DESC").catch(() => ({ rows: [] }));
+    out.by_module = sq.rows.map((r) => ({ module: r.module, rows: r.rows, accounts: r.accounts, bus: r.bus }));
+    const hq = await pool.query("SELECT day, doa_bytes FROM storage_history WHERE doa_bytes IS NOT NULL AND day >= CURRENT_DATE - 90 ORDER BY day").catch(() => ({ rows: [] }));
+    out.forecast = { days_of_history: hq.rows.length, per_month: null, months_left: null };
+    if (hq.rows.length >= 2) {
+      const a = hq.rows[0], z = hq.rows[hq.rows.length - 1], span = Math.max(1, Math.round((new Date(z.day) - new Date(a.day)) / 86400000));
+      if (span >= 7) { const perDay = (Number(z.doa_bytes) - Number(a.doa_bytes)) / span; out.forecast.per_month = Math.round(perDay * 30); if (perDay > 0 && out.quota.free > 0) out.forecast.months_left = Math.round(out.quota.free / perDay / 30 * 10) / 10; }
+    }
+    const fl = await pool.query("SELECT id, bu, period, kind, owner, created_by, file_name, row_count, created_at, expires_at, pg_column_size(data)::bigint AS bytes FROM doa_tb_backup ORDER BY pg_column_size(data) DESC, id LIMIT 500").catch(() => ({ rows: [] })); // MARKER_GL_DOA_STORAGE_FILE_LIST_V1 -- รายชื่อไฟล์ที่เก็บ (เฉพาะ Admin: badge ของ User ไม่ส่ง)
+    out.file_list = fl.rows.map((r) => ({ id: r.id, bu: r.bu, period: r.period, kind: r.kind, owner: r.owner, created_by: r.created_by, file_name: r.file_name, rows: r.row_count, bytes: Number(r.bytes), created_at: r.created_at, expires_at: r.expires_at }));
+    stDoaCache = { at: Date.now(), data: out };
+    return out;
+}
+router.get("/doa-backup-admin/storage", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try { res.json(await doaStorageStats(req.query.refresh === "1")); }
+  catch (e) { console.error("[doa-storage]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+// ป้าย DOA Storage สำหรับผู้ใช้ทั่วไป (อ่านอย่างเดียว): ส่งเฉพาะขนาดรวมกับ % โควตา ไม่ส่งรายละเอียด BU/Module | ต้องอยู่ก่อน /doa-backup/:id
+// MARKER_GL_DOA_STORAGE_FILE_VIEW_V1 -- Admin ดูข้อมูลในไฟล์ที่เก็บ (ตัวอย่าง 300 แถวแรก) จากหน้า DOA Storage > ไฟล์ที่เก็บ
+router.get("/doa-backup-admin/file/:id", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    const id = parseInt(req.params.id, 10); if (!Number.isInteger(id)) return res.status(400).json({ error: "id ไม่ถูกต้อง" });
+    const q = await pool.query("SELECT id, bu, period, kind, owner, file_name, row_count, created_at, data FROM doa_tb_backup WHERE id = $1", [id]);
+    if (!q.rows.length) return res.status(404).json({ error: "ไม่พบไฟล์" });
+    const r = q.rows[0]; const m = Array.isArray(r.data) ? r.data : []; const cut = (v) => String(v == null ? "" : v).slice(0, 80);
+    res.json({ id: r.id, bu: r.bu, period: r.period, kind: r.kind, owner: r.owner, file_name: r.file_name, total: m.length, shown: Math.min(300, m.length), rows: m.slice(0, 300).map((row) => (Array.isArray(row) ? row.slice(0, 40).map(cut) : [cut(row)])) });
+  } catch (e) { console.error("[doa-backup-admin file]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+// MARKER_GL_DOA_STORAGE_FILE_DELETE_V1 -- Admin ลบไฟล์ที่เก็บรายไฟล์ (กันขยะ) แล้วคืนพื้นที่ทันที
+router.delete("/doa-backup-admin/file/:id", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    const id = parseInt(req.params.id, 10); if (!Number.isInteger(id)) return res.status(400).json({ error: "id ไม่ถูกต้อง" });
+    const d = await pool.query("DELETE FROM doa_tb_backup WHERE id = $1 RETURNING bu, period, kind", [id]);
+    if (!d.rowCount) return res.status(404).json({ error: "ไม่พบไฟล์" });
+    await doaReclaimNow();
+    if (d.rows[0].kind === "TB") doaRestampBu(d.rows[0].bu).catch((e) => console.error("[doa restamp file-del]", e.message));
+    res.json({ ok: true, deleted: d.rowCount });
+  } catch (e) { console.error("[doa-backup-admin file delete]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+// MARKER_GL_DOA_RETENTION_DAYS_V1 -- Admin ตั้งอายุเก็บ Simple/Detail: 0 = สิ้นเดือนถัดจากงวด, N = N วันนับจากสิ้นงวด (แก้แถวเดิมทันที + ลบที่หมดอายุ)
+router.put("/doa-backup-admin/retention", async (req, res) => {
+  const u = req.user || {};
+  if (u.appRole !== "Owner" && u.appRole !== "Admin") return res.status(403).json({ error: "เฉพาะ Owner / Admin" });
+  try {
+    const b = req.body || {}; const by = u.email || u.username || "";
+    for (const k of ["doa_simple_days", "doa_detail_days"]) {
+      if (b[k] == null) continue; const n = Number(b[k]);
+      if (!Number.isInteger(n) || n < 0 || n > 3650) return res.status(400).json({ error: k + " ต้องเป็นจำนวนเต็ม 0-3650" });
+      await pool.query("INSERT INTO storage_setting (k, v, updated_by) VALUES ($1,$2,$3) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_by = EXCLUDED.updated_by, updated_at = NOW()", [k, String(n), by]);
+    }
+    await doaFixExpiry(); await purgeDoaBackup(); stDoaCache = null; stCache = null;
+    const c = await stSettings(); res.json({ ok: true, doa_simple_days: c.doa_simple_days, doa_detail_days: c.doa_detail_days });
+  } catch (e) { console.error("[doa retention]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+router.get("/doa-backup/storage-badge", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const fresh = req.query.refresh === "1" && !(stDoaCache && Date.now() - stDoaCache.at < 3000);
+    const o = await doaStorageStats(fresh);
+    res.json({ at: o.at, total: o.total, quota: { use_pct: o.quota ? o.quota.use_pct : null }, config: { warn_yellow: o.config.warn_yellow, warn_red: o.config.warn_red } });
+  } catch (e) { console.error("[doa-storage-badge]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// MARKER_GL_DOA_CLEAR_TB_TRIM_RAW_V1 -- ผู้ใช้กด "ล้าง TB" = ตัด Account เหล่านั้นออกจาก TB ทั้งไฟล์ (TBRAW) ของ "ตัวเอง" ด้วย (ไม่งั้นหน้าจอโหลดกลับมาจาก TBRAW และพื้นที่ไม่ลด) / Account อื่นในไฟล์คงอยู่ ไม่เหลือบรรทัดข้อมูลเลย = ลบทั้งไฟล์
+router.post("/doa-backup/trim", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {}; const bu = String(b.bu || "").trim(); const period = String(b.period || "").trim(); const me = String(req.user.email || "").toLowerCase();
+    const codes = new Set((Array.isArray(b.codes) ? b.codes : []).map((x) => String(x).trim()).filter(Boolean).slice(0, 5000)); const z = (x) => String(x).replace(/^0+/, "");
+    if (!bu || !period || !codes.size) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+    const tq = await pool.query("SELECT id, data FROM doa_tb_backup WHERE kind = 'TBRAW' AND bu = $1 AND period = $2 AND owner = $3", [bu, period, me]);
+    let removedLines = 0, removedRows = 0, deletedFiles = 0;
+    for (const t of tq.rows) {
+      const lines = doaTbLines(t.data); const drop = new Set(lines.filter((l) => codes.has(l.code) || [...codes].some((c) => z(c) === z(l.code))).map((l) => l.code + "\u0001" + l.cpc + "\u0001" + l.sub));
+      if (!drop.size) continue;
+      const nd = doaTbDropLines(t.data, drop); removedLines += drop.size; removedRows += nd.removed;
+      if (!doaTbLines(nd.data).length) { await pool.query("DELETE FROM doa_tb_backup WHERE id = $1", [t.id]); deletedFiles++; }
+      else await pool.query("UPDATE doa_tb_backup SET data = $1::jsonb, row_count = GREATEST(row_count - $2, 0) WHERE id = $3", [JSON.stringify(nd.data), nd.removed, t.id]);
+    }
+    if (removedLines) { await doaReclaimNow(); doaRestampBu(bu).catch((e) => console.error("[doa restamp trim]", e.message)); }
+    res.json({ ok: true, removed_lines: removedLines, removed_rows: removedRows, deleted_files: deletedFiles });
+  } catch (e) { console.error("[doa-backup trim]", e.message); res.status(500).json({ error: "ตัด TB ไม่สำเร็จ: " + e.message }); }
+});
+// MARKER_GL_DOA_CLEAR_BY_CONFIG_BACKEND_V1 -- ล้าง Simple/Detail ฝั่ง Backend ตาม Config ของผู้ใช้: ตัด Account ที่อยู่ใน Config (หรือที่ระบุ แต่ต้องอยู่ใน Config) ออกจาก "ทุกไฟล์ที่เขาเห็น" (ของตัวเอง + ไฟล์ร่วม owner ว่าง) ไม่เหลือข้อมูล = ลบไฟล์ แล้วคืนพื้นที่ทันที
+const doaDropMine = (m, isMine) => { // ตัดแถวของ Simple/Detail ที่เป็นของผู้ใช้ตาม Config ระดับ CPC+Account+Sub Acc (isMine(acc,cpc,sub)); Account ที่ CPC อื่นถือ ไม่แตะ
+  if (!Array.isArray(m)) return { data: m, removed: 0, hasData: false };
+  const re = /^(gl\s*)?(account|acct|a\/c|บัญชี|รหัสบัญชี|acc\s*code\s*deferred)/i; let hi = -1, ac = 0;
+  for (let i = 0; i < Math.min(m.length, 30) && hi < 0; i++) { const j = (Array.isArray(m[i]) ? m[i] : []).findIndex((c) => re.test(String(c || "").trim())); if (j >= 0) { hi = i; ac = j; } }
+  if (hi < 0) return { data: m, removed: 0, hasData: true };
+  const hd = (m[hi] || []).map((c) => String(c || "").trim()); const ix = (rx) => hd.findIndex((c) => rx.test(c));
+  const jc = ix(/^(cpc|cost\s*(center|centre)|cc)\b/i), js = ix(/sub\s*-?\s*acc|sub\s*account|subacc/i);
+  const cell = (r, j) => (Array.isArray(r) && j >= 0 && r[j] != null ? String(r[j]).trim() : "");
+  let cur = "", curAll = true, removed = 0, kept = 0; const out = [];
+  m.forEach((r, i) => {
+    if (i <= hi) { out.push(r); return; }
+    const c = cell(r, ac);
+    if (/^total/i.test(c)) { const drop = curAll && cur && c.indexOf(cur) >= 0; if (drop) { removed++; return; } out.push(r); return; }
+    if (c) { cur = c; curAll = true; }
+    const cpc = cell(r, jc), sub = cell(r, js);
+    if (cur && /\d/.test(cur) && isMine(cur, cpc, sub)) { removed++; return; }
+    if (cur) curAll = false; // มีแถวของ Account นี้ที่ไม่ใช่ของเรา -> แถว Total ของ Account นี้คงไว้
+    out.push(r); if (cur) kept++;
+  });
+  return { data: out, removed, hasData: kept > 0 };
+};
+router.post("/doa-backup/clear", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {}; const bu = String(b.bu || "").trim(); const period = String(b.period || "").trim(); const kind = String(b.kind || "").trim(); const me = String(req.user.email || "").toLowerCase();
+    if (!bu || !period || (kind !== "Simple" && kind !== "Detail")) return res.status(400).json({ error: "ข้อมูลไม่ครบ (bu, period, kind = Simple/Detail)" });
+    const cq = await pool.query("SELECT account, cpc, cpc_mode, sub_acc, sub_mode FROM doa_account_config WHERE bu = $1 AND LOWER(user_email) = $2", [bu, me]);
+    const asked = Array.isArray(b.codes) ? new Set(b.codes.map((x) => doaZ0(String(x).trim())).filter(Boolean)) : null;
+    const rowsC = cq.rows.filter((r) => !asked || asked.has(doaZ0(String(r.account).trim())));
+    const isMine = (acc, cpc, sub) => {
+      const cs = rowsC.filter((r) => doaZ0(r.account) === doaZ0(acc)); if (!cs.length) return false;
+      const okCpc = (r) => doaMt(r.cpc, cpc, "BBBBB"), okSub = (r) => doaMt(r.sub_acc, sub, "BBBBBB");
+      if (cs.some((r) => (r.cpc_mode === "exclude" && r.cpc && okCpc(r)) || (r.sub_mode === "exclude" && r.sub_acc && okSub(r)))) return false;
+      return cs.some((r) => r.cpc_mode === "accept" && r.sub_mode === "accept" && okCpc(r) && okSub(r));
+    };
+    if (!rowsC.length) return res.json({ ok: true, removed_rows: 0, deleted_files: 0, updated_files: 0, note: "ไม่มี Config ของคุณให้ล้าง" });
+    const fq = await pool.query("SELECT id, data, owner FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND (owner = $4 OR owner = '')", [bu, period, kind, me]);
+    let removedRows = 0, deleted = 0, updated = 0;
+    for (const f of fq.rows) {
+      const r = doaDropMine(f.data, isMine); if (!r.removed) continue; removedRows += r.removed;
+      if (!r.hasData) { await pool.query("DELETE FROM doa_tb_backup WHERE id = $1", [f.id]); deleted++; }
+      else { await pool.query("UPDATE doa_tb_backup SET data = $1::jsonb, row_count = $2 WHERE id = $3", [JSON.stringify(r.data), r.data.length, f.id]); updated++; }
+    }
+    if (deleted || updated) await doaReclaimNow();
+    res.json({ ok: true, removed_rows: removedRows, deleted_files: deleted, updated_files: updated });
+  } catch (e) { console.error("[doa-backup clear]", e.message); res.status(500).json({ error: "ล้างข้อมูลไม่สำเร็จ: " + e.message }); }
+});
+router.get("/doa-backup/:id", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const q = await pool.query("SELECT id, bu, period, kind, file_name, data, expires_at, account FROM doa_tb_backup WHERE id = $1 AND expires_at >= NOW() AND (owner = $2 OR owner = '')", [parseInt(req.params.id, 10), String(req.user.email || "").toLowerCase()]);
+    if (!q.rows.length) return res.status(404).json({ error: "ไม่พบ Backup (อาจหมดอายุแล้ว)" });
+    res.json({ item: q.rows[0] });
+  } catch (e) { console.error("[doa-backup GET]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.post("/doa-backup", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {};
+    const bu = String(b.bu || "").trim().slice(0, 50);
+    const period = String(b.period || "").trim();
+    const rows = Array.isArray(b.rows) ? b.rows : null;
+    const kind = b.kind === "TBRAW" ? "TBRAW" : (b.kind === "Simple" ? "Simple" : (b.kind === "Detail" ? "Detail" : "TB")); const months = kind === "TBRAW" ? 1200 : (kind === "TB" ? DOA_BACKUP_MONTHS : DOA_SIMPLE_MONTHS); /* MARKER_GL_DOA_TB_RAW_BACKEND_V1 -- TBRAW = TB ทั้งไฟล์ ไม่หมดอายุ (1200 เดือน) ส่งซ้ำ = เขียนทับ */ // MARKER_GL_DOA_DETAIL_BACKUP_V1 -- Detail เก็บใน doa_tb_backup (kind = Detail) เก็บ 1 เดือนเหมือน Simple
+    if (DOA_NON_GL_BUS.has(bu)) return res.status(400).json({ error: `BU ${bu} ไม่ใช่ TB ของ GL` });
+    if (kind === "TBRAW") { const pr = await pool.query("SELECT module FROM user_signoff_profile WHERE LOWER(owner_email) = LOWER($1)", [req.user.email]); if (!pr.rows[0] || !String(pr.rows[0].module || "").trim()) return res.status(403).json({ error: "ต้องตั้งค่า Profile (Module) ก่อนโยนข้อมูล" }); } // MARKER_GL_DOA_TB_STANDBY_ADMIN_V1 -- ไม่ตั้ง Profile/Module = ไม่รับ TB เข้า (ต้อง Stamp Module ได้)
+    if (!bu || !/^\d{4}\.\d{2}$/.test(period) || !rows || !rows.length) return res.status(400).json({ error: "ต้องระบุ BU, งวด (YYYY.MM) และข้อมูล TB" });
+    const retCfg = await stSettings();
+    const meOwner = String(req.user.email || "").toLowerCase();
+    const acct = kind === "Detail" ? String(b.account || "").trim().slice(0, 50) : ""; // MARKER_GL_DOA_BACKUP_BY_ACCOUNT_V1
+    // MARKER_GL_DOA_REUPLOAD_DEDUPE_V1 -- โยนไฟล์ Simple/Detail ซ้ำ: ข้อมูลเหมือนเดิม = ไม่เขียนซ้ำ (คงที่); ถ้ามีแถวเก่าไม่ระบุเจ้าของ (owner='') ที่ผู้ใช้คนเดียวกันเคยโยนไว้ = ถูกแทนที่ ไม่ทิ้งซ้ำ
+    if (kind === "Simple" || kind === "Detail") {
+      const same = await pool.query("SELECT id, expires_at FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = $4 AND account = $6 AND data = $5::jsonb", [bu, period, kind, meOwner, JSON.stringify(rows), acct]);
+      if (same.rows.length) {
+        const lg = acct ? { rowCount: 0 } : await pool.query("DELETE FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = '' AND LOWER(COALESCE(created_by,'')) = $4", [bu, period, kind, meOwner]);
+        if (lg.rowCount) await doaReclaimNow();
+        return res.json({ ok: true, id: same.rows[0].id, expires_at: same.rows[0].expires_at, retention_months: months, unchanged: true, replaced_legacy: lg.rowCount });
+      }
+    }
+    const q = await pool.query(
+      `INSERT INTO doa_tb_backup (bu, period, file_name, row_count, data, created_by, created_at, expires_at, kind, owner, account)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,NOW(), CASE WHEN $8::text = 'Detail' THEN timestamptz '2999-12-31 23:59:59+00' WHEN $8::text = 'Simple' THEN ((date_trunc('month', to_date($2, 'YYYY.MM')) + (CASE WHEN ($10::text)::int > 0 THEN 1 ELSE (($7::text)::int + 1) END || ' months')::interval)::timestamp AT TIME ZONE 'Asia/Bangkok') + (CASE WHEN ($10::text)::int > 0 THEN ($10::text) ELSE '0' END || ' days')::interval - interval '1 second' ELSE NOW() + (($7::text) || ' months')::interval END, $8, $9, $11)
+       ON CONFLICT (bu, period, kind, owner, account) DO UPDATE SET file_name=EXCLUDED.file_name, row_count=EXCLUDED.row_count, data=EXCLUDED.data,
+         created_by=EXCLUDED.created_by, created_at=NOW(), expires_at=EXCLUDED.expires_at
+       RETURNING id, expires_at`,
+      [bu, period, String(b.file_name || "").slice(0, 200), rows.length, JSON.stringify(rows), req.user.email, String(months), kind, String(req.user.email || "").toLowerCase(), String(kind === "Simple" ? (retCfg.doa_simple_days || 0) : kind === "Detail" ? (retCfg.doa_detail_days || 0) : 0), acct]);
+    let replacedLegacy = 0;
+    if ((kind === "Simple" || kind === "Detail") && meOwner && !acct) { const lg = await pool.query("DELETE FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = '' AND LOWER(COALESCE(created_by,'')) = $4", [bu, period, kind, meOwner]); replacedLegacy = lg.rowCount; if (replacedLegacy) await doaReclaimNow(); }
+    if (kind === "TBRAW") doaRestampBu(bu).catch((e) => console.error("[doa restamp TBRAW]", e.message)); // MARKER_GL_DOA_TB_STANDBY_ADMIN_V1 -- โยน TB เข้า = ตรวจกับ Config ทั้งหมด + Stamp Module
+    res.json({ ok: true, id: q.rows[0].id, expires_at: q.rows[0].expires_at, retention_months: months, replaced_legacy: replacedLegacy });
+  } catch (e) { console.error("[doa-backup POST]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.delete("/doa-backup/:id", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const dq = await pool.query("DELETE FROM doa_tb_backup WHERE id = $1 AND (owner = $2 OR owner = '')", [parseInt(req.params.id, 10), String(req.user.email || "").toLowerCase()]);
+    if (dq.rowCount) await doaReclaimNow();
+    res.json({ ok: true });
+  } catch (e) { console.error("[doa-backup DELETE]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+/* MARKER_GL_DOA_CLEAR_PENDING_V1 -- Stamp Clear ของ Detail: 2 สถานะ Pending (Auto Clear จาก Backup รอยืนยัน) | Cleared (ยืนยัน/Stamp Clear แล้ว) */
+pool.query(`CREATE TABLE IF NOT EXISTS doa_detail_clear (
+  id SERIAL PRIMARY KEY, bu TEXT NOT NULL, period TEXT NOT NULL, row_key TEXT NOT NULL, account_code TEXT,
+  row JSONB NOT NULL, status TEXT NOT NULL DEFAULT 'Cleared', cleared_by TEXT, cleared_at TIMESTAMPTZ DEFAULT NOW(),
+  history_file TEXT, history_at TIMESTAMPTZ, UNIQUE (bu, row_key))`)
+  .then(() => pool.query(`ALTER TABLE doa_detail_clear ADD COLUMN IF NOT EXISTS file_id INT`)) // MARKER_GL_DOA_CLEAR_FILE_ID_V1 -- File ID ของ Backup ที่แถวนี้มาจาก (ใช้ File ID เดียวกันได้ แต่ทุกแถวต้องมี account_code กำกับ)
+  .catch((e) => console.error("[migrate doa_detail_clear]:", e.message));
+
+router.get("/doa-clear", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const bu = String(req.query.bu || "").trim();
+    if (!bu) return res.status(400).json({ error: "ต้องระบุ BU" });
+    const wantRow = String(req.query.detail || "") === "1"; const acc = String(req.query.account || "").trim();
+    const q = await pool.query(`SELECT row_key, period, account_code, file_id, status, cleared_by, cleared_at${wantRow ? ", row" : ""} FROM doa_detail_clear WHERE bu = $1 AND status IN ('Cleared','Pending','Backup','Include')${acc ? " AND account_code = $2" : ""} ORDER BY cleared_at DESC`, acc ? [bu, acc] : [bu]); /* MARKER_GL_DOA_CLEAR_HISTORY_V1 -- detail=1 + account = ประวัติ Clear/Auto Clear ของ Account (มีข้อมูลแถว) */ /* MARKER_GL_DOA_CLEAR_PENDING_V1 -- 2 สถานะ: Pending (Auto Clear จาก Backup รอยืนยัน) | Cleared (ยืนยัน/Stamp Clear แล้ว) — ทั้งคู่ตัดออกจาก Detail/Reconcile */
+    res.json({ items: q.rows });
+  } catch (e) { console.error("[doa-clear LIST]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.post("/doa-clear", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {}; const bu = String(b.bu || "").trim().slice(0, 50); const period = String(b.period || "").trim();
+    const st = b.status === 'Pending' ? 'Pending' : (b.status === 'Include' ? 'Include' : 'Cleared'); /* MARKER_GL_DOA_CLEAR_INCLUDE_V1 -- Include = แถวที่ดึงมาจาก Backup (ไม่ซ่อนจาก Detail) */ const items = Array.isArray(b.items) ? b.items : []; const fileId = Number.isInteger(Number(b.file_id)) && Number(b.file_id) > 0 ? Number(b.file_id) : null;
+    if (DOA_NON_GL_BUS.has(bu)) return res.status(400).json({ error: `BU ${bu} ไม่ใช่ GL` });
+    if (!bu || !/^\d{4}\.\d{2}$/.test(period) || !items.length) return res.status(400).json({ error: "ต้องระบุ BU, งวด และรายการที่จะ Clear" });
+    if (items.length > 20000) return res.status(400).json({ error: "รายการมากเกินไป" });
+    const me = String(req.user.email || "").toLowerCase(); let n = 0;
+    for (const it of items) {
+      const key = String((it && it.key) || "").slice(0, 600); if (!key) continue;
+      const r = await pool.query(
+        `INSERT INTO doa_detail_clear (bu, period, row_key, account_code, row, cleared_by, file_id, status) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)
+         ON CONFLICT (bu, row_key) DO UPDATE SET status = EXCLUDED.status, cleared_by = EXCLUDED.cleared_by, cleared_at = NOW() WHERE (doa_detail_clear.status IN ('Pending','Include') AND EXCLUDED.status = 'Cleared') OR (doa_detail_clear.status = 'Include' AND EXCLUDED.status = 'Pending')`,
+        [bu, period, key, String((it.row && it.row.account_code) || "").slice(0, 50), JSON.stringify(it.row || {}), me, fileId, st]);
+      n += r.rowCount || 0;
+    }
+    res.json({ ok: true, cleared: n, skipped: items.length - n });
+  } catch (e) { console.error("[doa-clear POST]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.post("/doa-clear/reverse", async (req, res) => { /* MARKER_GL_DOA_CLEAR_REVERSE_V1 -- ยกเลิก Stamp Clear (RVS) ของ Account: ลบแถว Pending/Cleared ที่ยังไม่ถูกย้ายเข้า History */
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {}; const bu = String(b.bu || "").trim().slice(0, 50); const account = String(b.account || "").trim().slice(0, 50);
+    if (!bu || !account) return res.status(400).json({ error: "ต้องระบุ BU และ Account" });
+    if (DOA_NON_GL_BUS.has(bu)) return res.status(400).json({ error: `BU ${bu} ไม่ใช่ GL` });
+    const keys = Array.isArray(b.keys) ? b.keys.map((x) => String(x).slice(0, 600)).filter(Boolean) : null;
+    const q = keys && keys.length
+      ? await pool.query("DELETE FROM doa_detail_clear WHERE bu = $1 AND account_code = $2 AND row_key = ANY($3::text[]) AND status IN ('Pending','Cleared') AND history_file IS NULL", [bu, account, keys])
+      : await pool.query("DELETE FROM doa_detail_clear WHERE bu = $1 AND account_code = $2 AND status IN ('Pending','Cleared') AND history_file IS NULL", [bu, account]);
+    res.json({ ok: true, reversed: q.rowCount || 0 });
+  } catch (e) { console.error("[doa-clear REVERSE]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.post("/doa-clear/status", async (req, res) => { /* MARKER_GL_DOA_CLEAR_STATUS_V1 -- Confirm: Pending -> Backup | Release: Backup -> Pending (แถวที่ Stamp Clear แล้ว = Cleared ไม่ถูกแตะ) */
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {}; const bu = String(b.bu || "").trim().slice(0, 50); const account = String(b.account || "").trim().slice(0, 50);
+    const from = String(b.from || ""); const to = String(b.to || "");
+    if (!bu || !account) return res.status(400).json({ error: "ต้องระบุ BU และ Account" });
+    const keys = Array.isArray(b.keys) ? b.keys.map(String).slice(0, 5000) : null;
+    if (!((from === "Pending" && to === "Backup") || (from === "Backup" && to === "Pending") || (from === "Cleared" && to === "Pending" && keys && keys.length))) return res.status(400).json({ error: "เปลี่ยนสถานะได้เฉพาะ Pending <-> Backup หรือ Cleared -> Pending (ระบุแถว)" });
+    if (DOA_NON_GL_BUS.has(bu)) return res.status(400).json({ error: `BU ${bu} ไม่ใช่ GL` });
+    const q = keys ? await pool.query("UPDATE doa_detail_clear SET status = $4 WHERE bu = $1 AND account_code = $2 AND status = $3 AND row_key = ANY($5::text[])", [bu, account, from, to, keys]) : await pool.query("UPDATE doa_detail_clear SET status = $4 WHERE bu = $1 AND account_code = $2 AND status = $3 AND history_file IS NULL", [bu, account, from, to]);
+    res.json({ ok: true, changed: q.rowCount || 0 });
+  } catch (e) { console.error("[doa-clear STATUS]", e.message); res.status(500).json({ error: "Internal server error" }); }
 });
 
 export default router;

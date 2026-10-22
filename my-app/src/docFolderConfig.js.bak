@@ -10,7 +10,7 @@ export const DOC_FOLDERS = [
   { key: 'gl',   label: 'GL Report',       icon: '📊', permKey: 'GL', permKeys: ['Manual', 'IE', 'I-Pro'], color: '#EEEDFE', textColor: '#3C3489', desc: 'รายงาน GL บัญชีแยกประเภท', docTypes: ['GL'],
     // MARKER_GL_SUBBOXES_V1 -- กล่องด้านในของ GL Report (เพิ่ม/เปลี่ยนชื่อ = แก้ที่นี่ที่เดียว) | empty:true = กล่องเปล่ารอไว้ ยังไม่มีไฟล์/ปุ่มใช้งาน
     subBoxes: [
-      { key: 'gl-z-ap',  title: 'Z_Report Reconcile - Account Payable', icon: '📤', bg: '#E8F5E9', desc: 'รายงาน Reconcile Account Payable · เก็บที่ SharePoint (เร็วๆ นี้)', pill: '☁ SharePoint', pillBg: '#E3F2FD', pillColor: '#0C447C', empty: true },
+      { key: 'gl-z-ap',  title: 'Z_Report Reconcile - Account Payable', icon: '📤', bg: '#E8F5E9', desc: 'รายงาน Reconcile Account Payable · เก็บที่ SharePoint', pill: '☁ SharePoint', pillBg: '#E3F2FD', pillColor: '#0C447C', empty: false },
       { key: 'gl-box-2', title: 'กล่องว่าง 2', icon: '🧩', bg: '#f5f5f5', desc: 'Coming soon', pill: 'เร็วๆ นี้', empty: true },
       { key: 'gl-box-3', title: 'กล่องว่าง 3', icon: '🧩', bg: '#f5f5f5', desc: 'Coming soon', pill: 'เร็วๆ นี้', empty: true },
       { key: 'gl-box-4', title: 'กล่องว่าง 4', icon: '🧩', bg: '#f5f5f5', desc: 'Coming soon', pill: 'เร็วๆ นี้', empty: true },

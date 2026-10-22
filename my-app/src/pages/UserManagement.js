@@ -1,9 +1,10 @@
 ﻿import React, { useState, useEffect, useMemo } from 'react';
   import { db } from '../lib/db';
   import { apiFetch } from '../api';
+  import { loadSignoffProfile, saveSignoffProfile } from '../signoffs'; // MARKER_GL_SIGNOFF_PROFILE_UI_V1
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
-  import DeployMonitor, { RAMDashboardTab, CPUDashboardTab } from './DeployMonitor'; // MARKER_USERMANAGEMENT_CPU_DASHBOARD_TAB
+  import DeployMonitor, { RAMDashboardTab, CPUDashboardTab, StorageDashboardTab } from './DeployMonitor'; // MARKER_USERMANAGEMENT_CPU_DASHBOARD_TAB
   import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
   import { DOC_FOLDERS, folderPermOk, folderPermLabel, PERM_TO_FOLDER } from '../docFolderConfig'; // MARKER_DOCFOLDER_CONFIG_V1
   import { broadcastWs, subscribeWs } from '../wsManager';
@@ -19,7 +20,8 @@
     Owner:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true, ApproveBatch: false },
     Admin:  { VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true, ApproveBatch: false },
     Editor: { VAT: true, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: true, ApproveBatch: false },
-    Viewer: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false, ApproveBatch: false }
+    Viewer: { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false, ApproveBatch: false },
+    Guest:  { VAT: false, 'I-Pro': false, GL: false, IE: false, Function: false, Manual: false, ApproveBatch: false } // MARKER_GUEST_ROLE_V1 -- Guest เริ่มต้น No ทั้งหมด Owner เปิดให้รายคนเอง
   };
 
   const TABLE_LABELS = {
@@ -127,23 +129,24 @@
 
 // MARKER_MIN_ROLE_SWITCH_V1 -- ตัวเลือก Permission ขั้นต่ำ แบบ Segmented (Viewer | Editor | Admin)
 const MIN_ROLE_STYLE = {
+  Guest:  { bg: '#f0e9fb', fg: '#6a3fb5', bd: '#cdb8ee', hint: 'ทุก Role รวม Guest เข้าได้' }, // MARKER_GUEST_ROLE_V1
   Viewer: { bg: '#e6f4ea', fg: '#1e7a3a', bd: '#9fd3ad', hint: 'ทุก Role เข้าได้' },
   Editor: { bg: '#e7f0fd', fg: '#1a5fb4', bd: '#a9c6f2', hint: 'Editor ขึ้นไป' },
   Admin:  { bg: '#fdf1dc', fg: '#9a5b00', bd: '#efc98a', hint: 'Admin ขึ้นไป' },
 };
 const MENU_ACCENTS = ['#2e9e63', '#3b7ddd', '#e0a030', '#5c6bc0', '#e05a5a']; // MARKER_ACCESS_REDESIGN_V1 -- สีแถบข้างการ์ด (หน้าตาเท่านั้น)
 const menuAccent = (k) => { let h = 0; for (const c of String(k)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return MENU_ACCENTS[h % MENU_ACCENTS.length]; };
-function MinRoleSwitch({ value, onChange, disabled }) {
+function MinRoleSwitch({ value, onChange, disabled, allowGuest }) { // MARKER_GUEST_ROLE_V1 -- allowGuest = แท็บเมนู (AP/VAT/IE/GL/I-Pro) เท่านั้น | Document Access ไม่มี Guest
   return (
     <div onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
       title={disabled ? 'เฉพาะ Owner เปลี่ยนได้' : 'Role ขั้นต่ำที่เข้าเมนูนี้ได้ (Owner เข้าได้เสมอ)'}
       style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '10px' }}>
       <span style={{ fontSize: '11px', color: '#8a94a6', whiteSpace: 'nowrap' }}>Permission ขั้นต่ำ</span>
       <div style={{ display: 'inline-flex', padding: '3px', background: '#f1f4f9', borderRadius: '999px', border: 'none', opacity: disabled ? 0.7 : 1 }}>
-        {['Viewer', 'Editor', 'Admin'].map((r) => {
+        {(allowGuest ? ['Guest', 'Viewer', 'Editor', 'Admin'] : ['Viewer', 'Editor', 'Admin']).map((r) => {
           const on = value === r; const c = MIN_ROLE_STYLE[r];
           return (
-            <button key={r} type="button" disabled={disabled} onClick={() => { if (!on) onChange(r); }} title={c.hint}
+            <button key={r} type="button" disabled={disabled} onClick={() => { if (!on) onChange(r); }} title={allowGuest && r === 'Viewer' ? 'Viewer ขึ้นไป (Guest เข้าไม่ได้)' : c.hint}
               style={{ padding: '5px 14px', fontSize: '12px', fontWeight: on ? 700 : 500, borderRadius: '999px', border: on ? `1px solid ${c.bd}` : '1px solid transparent', background: on ? c.bg : 'transparent', color: on ? c.fg : '#7b8496', cursor: disabled ? 'not-allowed' : (on ? 'default' : 'pointer'), transition: 'all .15s' }}>
               {r}
             </button>
@@ -717,7 +720,7 @@ function MinRoleSwitch({ value, onChange, disabled }) {
                             เข้าได้ด้วยสิทธิ์ {allowedPerms.length ? allowedPerms.join(' · ') : '—'} · ผู้ใช้ที่เข้าได้ {eligibleUsers.length} คน
                           </div>
                         </div>
-                        <MinRoleSwitch value={minRoles[item.id] || (['vat-watchlist-ops', 'vat-dashboard'].includes(item.id) ? 'Viewer' : 'Editor')} disabled={!isOwner} onChange={(r) => handleMinRoleChange(item.id, r)} />
+                        <MinRoleSwitch allowGuest value={minRoles[item.id] || (['vat-watchlist-ops', 'vat-dashboard'].includes(item.id) ? 'Viewer' : 'Editor')} disabled={!isOwner} onChange={(r) => handleMinRoleChange(item.id, r)} />
                         <button onClick={() => setOpenMenuGroup(isOpen ? null : itemKey)}
                           style={{ padding: '7px 14px', borderRadius: '10px', border: `1px solid ${isOpen ? '#1a3a5c' : '#d9dfeb'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#4a5b73', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                           ⚙️ {isOpen ? 'ปิด' : 'ตั้งค่า'}
@@ -777,7 +780,7 @@ function MinRoleSwitch({ value, onChange, disabled }) {
                         </div>
                       </div>
                       {(
-                        <MinRoleSwitch value={minRoles[item.id] || (['vat-watchlist-ops', 'vat-dashboard'].includes(item.id) ? 'Viewer' : 'Editor')} disabled={!isOwner} onChange={(r) => handleMinRoleChange(item.id, r)} />
+                        <MinRoleSwitch allowGuest value={minRoles[item.id] || (['vat-watchlist-ops', 'vat-dashboard'].includes(item.id) ? 'Viewer' : 'Editor')} disabled={!isOwner} onChange={(r) => handleMinRoleChange(item.id, r)} />
                       )}
                       <button onClick={() => setOpenMenuGroup(isOpen ? null : itemKey)}
                         style={{ padding: '7px 14px', borderRadius: '10px', border: `1px solid ${isOpen ? '#1a3a5c' : '#d9dfeb'}`, background: isOpen ? '#1a3a5c' : 'white', color: isOpen ? 'white' : '#4a5b73', fontSize: '12.5px', cursor: 'pointer' }}>
@@ -1832,6 +1835,16 @@ function MinRoleSwitch({ value, onChange, disabled }) {
     );
   }
 
+  // MARKER_PROFILE_FOCUS_FIX_V1 -- ย้าย H/F/Group ออกจาก render ของ ProfileInline (ประกาศใน render ทำให้ remount input ทุกครั้งที่พิมพ์ -> โฟกัสหลุด/หน้าเด้ง)
+  const ProfileH = ({ children, sub }) => <div style={{ marginBottom: '14px' }}><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>{children}</div>{sub && <div style={{ fontSize: '11px', color: '#8a96a6', marginTop: '2px' }}>{sub}</div>}</div>;
+  const ProfileF = ({ label, children }) => <div style={{ marginBottom: '12px' }}><label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '500', marginBottom: '4px' }}>{label}</label>{children}</div>;
+  const ProfileGroup = ({ color, title, sub, children }) => (
+    <div style={{ borderLeft: '4px solid ' + color, background: '#F8FAFC', borderRadius: '8px', padding: '12px 16px', marginBottom: '14px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 700, color: '#1a3a5c', marginBottom: '10px' }}>{title} <span style={{ fontWeight: 400, color: '#8a96a6', fontSize: '12px' }}>{sub}</span></div>
+      {children}
+    </div>
+  );
+
   function ProfileInline({ currentUser, userName }) {
     const [username, setUsername] = React.useState('');
     const [newPassword, setNewPassword] = React.useState('');
@@ -1844,6 +1857,9 @@ function MinRoleSwitch({ value, onChange, disabled }) {
     const [currentUsername, setCurrentUsername] = React.useState('');
     const [currentRole, setCurrentRole] = React.useState(''); // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1
     const [currentUserId, setCurrentUserId] = React.useState(null); // db.js update() ต้องใช้ id เท่านั้น
+    const [so, setSo] = React.useState({ my_name: '', my_job: '', report_to_name: '', report_to_job: '', module: '' }); // MARKER_GL_SIGNOFF_PROFILE_UI_V1
+    const [soMsg, setSoMsg] = React.useState('');
+    React.useEffect(() => { loadSignoffProfile().then(d => setSo(d)).catch(() => {}); }, []);
 
     React.useEffect(() => {
       const fetchUser = async () => {
@@ -1875,6 +1891,7 @@ function MinRoleSwitch({ value, onChange, disabled }) {
         if (!currentUserId) throw new Error('ไม่พบ User ID กรุณา Refresh หน้าแล้วลองใหม่');
         const { error: roleError } = await db.from('user_roles').update({ username: username.trim().toLowerCase() }).eq('id', currentUserId);
         if (roleError) throw new Error(typeof roleError === 'string' ? roleError : (roleError?.message || 'บันทึกไม่สำเร็จ'));
+        try { await saveSignoffProfile(so); } catch (e) { throw new Error('บันทึก Module ไม่สำเร็จ: ' + e.message); }
         setSuccess('บันทึกข้อมูลสำเร็จแล้วครับ!');
         setNewPassword(''); setConfirmPassword('');
       } catch (err) { setError('เกิดข้อผิดพลาด: ' + (typeof err === 'string' ? err : (err?.message || 'ไม่ทราบสาเหตุ'))); }
@@ -1888,41 +1905,55 @@ function MinRoleSwitch({ value, onChange, disabled }) {
     };
 
     return (
-      <div style={{ maxWidth: '480px' }}>
+      <div style={{ width: '100%' }}>{/* MARKER_PROFILE_REDESIGN_V2 -- ออกแบบหน้า Profile ใหม่ (เปลี่ยนเฉพาะหน้าตา) Module อยู่กลุ่มเดียวกับ Prepare by */}
         {error && <div style={{ background: '#FCEBEB', color: '#791F1F', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{error}</div>}
         {success && <div style={{ background: '#EAF3DE', color: '#27500A', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{success}</div>}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', padding: '14px 16px', background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8' }}>
-          <div style={{ position: 'relative', flexShrink: 0 }}>
-            {avatarPreview
-              ? <img src={avatarPreview} alt="avatar" style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #e0e0e0' }} />
-              : <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: '#1a3a5c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', fontWeight: '600', color: 'white' }}>{initials}</div>
-            }
-            <button onClick={() => fileRef.current.click()}
-              style={{ position: 'absolute', bottom: 0, right: 0, width: '22px', height: '22px', borderRadius: '50%', background: '#5DCAA5', border: 'none', cursor: 'pointer', fontSize: '12px', color: 'white', lineHeight: 1 }}>+</button>
-          </div>
-          <input type="file" accept="image/*" ref={fileRef} onChange={handleAvatarChange} style={{ display: 'none' }} />
-          <div>
-            <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a3a5c' }}>{currentUsername || currentUser?.email}</div>
-            <div style={{ fontSize: '12px', color: '#888' }}>{currentRole || '-'}</div> {/* MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- ดึง Role จริงแทน Hardcode "Admin" */}
-            <div style={{ fontSize: '11px', color: '#aaa' }}>{currentUser?.email}</div>
-          </div>
-        </div>
-        <div style={{ background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', padding: '16px 20px', marginBottom: '12px' }}>
-          <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c', marginBottom: '12px' }}>ข้อมูลทั่วไป</div>
-          <label style={S.label}>Username</label>
-          <input style={S.input} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" />
-          <label style={S.label}>Email</label>
-          <input style={{ ...S.input, background: '#f5f5f5', color: '#999', cursor: 'not-allowed', marginBottom: '0' }}
-            type="email" value={currentUser?.email || ''} disabled />
-        </div>
-        <div style={{ background: 'white', borderRadius: '10px', border: '0.5px solid #e8e8e8', padding: '16px 20px', marginBottom: '16px' }}>
-          <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a3a5c', marginBottom: '12px' }}>เปลี่ยน Password</div>
-          <label style={S.label}>Password ใหม่</label>
-          <input style={S.input} type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" />
-          <label style={S.label}>ยืนยัน Password ใหม่</label>
-          <input style={{ ...S.input, marginBottom: 0 }} type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password ใหม่อีกครั้ง" />
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        {soMsg && <div style={{ background: soMsg.startsWith('✓') ? '#EAF3DE' : '#FCEBEB', color: soMsg.startsWith('✓') ? '#27500A' : '#791F1F', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{soMsg}</div>}
+        {(() => {
+          const card = { background: 'white', borderRadius: '12px', border: '1px solid #e6eaf0', boxShadow: '0 1px 3px rgba(26,58,92,.06)', padding: '18px 22px' };
+          const inp = { ...S.input, marginBottom: 0 };
+          return (<>
+            <div style={{ ...card, display: 'flex', alignItems: 'center', gap: '18px', marginBottom: '16px', background: 'linear-gradient(135deg,#1a3a5c 0%,#2c5a86 100%)', border: 'none' }}>
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                {avatarPreview
+                  ? <img src={avatarPreview} alt="avatar" style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover', border: '3px solid rgba(255,255,255,.7)' }} />
+                  : <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(255,255,255,.18)', border: '3px solid rgba(255,255,255,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 600, color: 'white' }}>{initials}</div>}
+                <button onClick={() => fileRef.current.click()} style={{ position: 'absolute', bottom: 0, right: 0, width: '22px', height: '22px', borderRadius: '50%', background: '#5DCAA5', border: '2px solid white', cursor: 'pointer', fontSize: '12px', color: 'white', lineHeight: 1 }}>+</button>
+              </div>
+              <input type="file" accept="image/*" ref={fileRef} onChange={handleAvatarChange} style={{ display: 'none' }} />
+              <div>
+                <div style={{ fontSize: '17px', fontWeight: 600, color: 'white' }}>{currentUsername || currentUser?.email}</div>
+                <div style={{ display: 'inline-block', margin: '4px 0', padding: '1px 10px', borderRadius: '10px', background: 'rgba(255,255,255,.2)', color: 'white', fontSize: '11px' }}>{currentRole || '-'}</div>
+                <div style={{ fontSize: '12px', color: 'rgba(255,255,255,.8)' }}>{currentUser?.email}</div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '16px', alignItems: 'start' }}>
+              <div style={card}>
+                <ProfileH sub="ชื่อผู้ใช้และรหัสผ่านสำหรับเข้าระบบ">บัญชีผู้ใช้</ProfileH>
+                <ProfileF label="Username"><input style={inp} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" /></ProfileF>
+                <ProfileF label="Email"><input style={{ ...inp, background: '#f5f5f5', color: '#999', cursor: 'not-allowed' }} type="email" value={currentUser?.email || ''} disabled /></ProfileF>
+                <div style={{ borderTop: '1px solid #eef1f5', margin: '16px 0 14px', paddingTop: '14px', fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>เปลี่ยน Password</div>
+                <ProfileF label="Password ใหม่"><input style={inp} type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" /></ProfileF>
+                <ProfileF label="ยืนยัน Password ใหม่"><input style={inp} type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password ใหม่อีกครั้ง" /></ProfileF>
+              </div>
+              {/* MARKER_GL_SIGNOFF_PROFILE_UI_V1 -- ผู้ลงนาม: My Job = Prepare by | Report to = Review by (ใช้ใน Detail of Account และหน้าอื่น) */}
+              <div style={card}>
+                <ProfileH sub="ใช้แสดงในรายงาน และ Module ใช้ Filter ข้อมูล">ข้อมูลผู้ลงนาม &amp; Module</ProfileH>
+                <ProfileGroup color="#2c7be5" title="Prepare by" sub="ผู้จัดทำ · My Job">
+                  <ProfileF label="ชื่อ - นามสกุล"><input style={inp} value={so.my_name} onChange={e => setSo({ ...so, my_name: e.target.value })} placeholder="ระบุชื่อ - นามสกุล" /></ProfileF>
+                  <ProfileF label="ตำแหน่ง"><input style={inp} value={so.my_job} onChange={e => setSo({ ...so, my_job: e.target.value })} placeholder="ระบุตำแหน่ง" /></ProfileF>
+                  {/* MARKER_PROFILE_MODULE_TEXT_V1 -- Module = กรอกเอง (ไม่ใช่ Permission) */}
+                  <ProfileF label="Module (ใช้ Filter ข้อมูล)"><input style={inp} value={so.module || ''} onChange={e => setSo({ ...so, module: e.target.value })} placeholder="ระบุ Module (คั่นหลายค่าด้วย ,)" /></ProfileF>
+                </ProfileGroup>
+                <ProfileGroup color="#12a37f" title="Review by" sub="ผู้สอบทาน · Report to">
+                  <ProfileF label="ชื่อ - นามสกุล"><input style={inp} value={so.report_to_name} onChange={e => setSo({ ...so, report_to_name: e.target.value })} placeholder="ระบุชื่อ - นามสกุล" /></ProfileF>
+                  <ProfileF label="ตำแหน่ง"><input style={inp} value={so.report_to_job} onChange={e => setSo({ ...so, report_to_job: e.target.value })} placeholder="ระบุตำแหน่ง" /></ProfileF>
+                </ProfileGroup>
+              </div>
+            </div>
+          </>);
+        })()}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
           <button onClick={handleSave} disabled={loading}
             style={{ padding: '8px 20px', borderRadius: '6px', border: 'none', background: '#1a3a5c', color: 'white', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
             {loading ? 'กำลังบันทึก...' : '💾 บันทึก'}
@@ -2971,9 +3002,33 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     return (
       <div style={S.container}>
         <div ref={headerRef}>
-          <div style={S.topbar}>
-            <h2 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>⚙️ System Console</h2>
-          </div>
+          {/* MARKER_SYSTEMCONSOLE_HEADER_NONOWNER_V1 -- หัวแบบเดียวกับ Owner: แถบเขียวซ้าย + eyebrow + ชื่อใหญ่ | ขวา: วันที่ + ผู้ใช้ + Role | แถบ Step */}
+          {(() => {
+            const LB = { profile: 'Profile', activity: 'Activity Log', access: 'Access Control' };
+            return (<>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '16px 4px 12px', background: '#fff', flexWrap: 'wrap' }}>
+                <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '12px' }}>
+                  <div style={{ fontSize: '10.5px', letterSpacing: '.14em', color: '#2fb58a', fontWeight: 700, textTransform: 'uppercase' }}>System Console</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: '#14284b', lineHeight: 1.2, marginTop: '2px' }}>System Console - <span style={{ color: '#2fb58a' }}>{LB[tab] || ''}</span></div>
+                </div>
+                <div style={{ textAlign: 'right', fontSize: '12.5px', color: '#4b5a73' }}>
+                  <div>{(() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })()}</div>
+                  <div style={{ marginTop: '4px' }}>
+                    <span style={{ color: '#6b778c', marginRight: '4px' }}>{userName || currentUser?.email || ''}</span>
+                    <span style={{ fontSize: '11px', background: '#e3f6ec', color: '#14935a', borderRadius: '99px', padding: '2px 10px', fontWeight: 700 }}>{userRole || ''}</span>
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 4px 12px', background: '#fff', flexWrap: 'wrap' }}>
+                <span onClick={() => setTab('profile')} title="กลับไปหน้าแรกของ System Console" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', border: '1px solid #0f6cbd', background: '#fff', color: '#0f6cbd', fontWeight: 600, borderRadius: '99px', padding: '5px 14px', fontSize: '13px', cursor: 'pointer' }}>← System Console</span>
+                <span style={{ color: '#b3bccb' }}>›</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', border: '1px solid #14284b', background: '#14284b', color: '#fff', fontWeight: 600, borderRadius: '99px', padding: '5px 14px 5px 6px', fontSize: '13px' }}>
+                  <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#2fb58a', color: '#fff', fontSize: '11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
+                  {LB[tab] || ''}
+                </span>
+              </div>
+            </>);
+          })()}
           <div style={{ borderBottom: '2px solid #e8e8e8', display: 'flex', marginBottom: '0' }}>
             <button style={S.tabBtn(tab === 'profile')} onClick={() => setTab('profile')}>👤 Profile</button>
             <button style={S.tabBtn(tab === 'activity')} onClick={() => setTab('activity')}>📋 Activity Log</button>
@@ -3041,8 +3096,10 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [filterRole, setFilterRole] = useState('');
     const [binCount, setBinCount] = useState(0);
     const [showForm, setShowForm] = useState(false);
+    const [userMode, setUserMode] = useState('user'); // MARKER_GUEST_USER_TOGGLE_V1 -- สวิตช์ User | Guest ข้างปุ่ม Add User (Owner เท่านั้น)
     const [deleteTarget, setDeleteTarget] = useState(null);
-    const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Editor' });
+    const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Editor', bu: '' });
+    const [addTab, setAddTab] = useState('user'); // MARKER_GUEST_ADD_TAB_V1 -- แท็บในฟอร์ม Add New User: user | guest (Guest เห็นเฉพาะ Owner)
     const [error, setError] = useState('');
     const [savedId, setSavedId] = useState(null);
     const [backendOpsSubTab, setBackendOpsSubTab] = useState('deploy');
@@ -3053,10 +3110,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const { userRole } = useAuth();
 
     // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1 -- Sort: Owner อยู่อันดับ 1 เสมอ, ถัดไป Online ก่อน Offline, เท่ากันเรียงชื่อ (ไม่ Sort ตาม Role แล้ว)
+    const guestView = isOwner && userMode === 'guest'; // MARKER_GUEST_USER_TOGGLE_V1
     const filteredUsers = users.filter(u => {
-      const matchSearch = !userSearch || (u.username?.toLowerCase().includes(userSearch.toLowerCase()) || u.email?.toLowerCase().includes(userSearch.toLowerCase()));
+      // MARKER_USERMANAGEMENT_SEARCH_PERMISSION_V1 -- ค้นหาได้ทั้ง Username / Email / Prefix / Role และ Permission (พิมพ์ชื่อ Permission = คนที่เป็น Yes, ใส่ - นำหน้า = คนที่เป็น No เช่น "gl" หรือ "-vat") หลายคำ = ต้องตรงทุกคำ
+      const searchTokens = String(userSearch || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const hay = [u.username, u.email, u.system_prefix, u.guest_bu, u.role].filter(Boolean).join(' ').toLowerCase();
+      const matchSearch = searchTokens.every(tok => {
+        if (tok.length > 1 && tok.startsWith('-')) {
+          const neg = tok.slice(1);
+          return PERMISSIONS.some(p => p.toLowerCase().startsWith(neg) && !u.permissions?.[p]);
+        }
+        if (hay.includes(tok)) return true;
+        return tok.length >= 2 && PERMISSIONS.some(p => p.toLowerCase().startsWith(tok) && !!u.permissions?.[p]);
+      });
       const matchRole = !filterRole || u.role === filterRole;
-      return matchSearch && matchRole;
+      const matchMode = (isOwner && userMode === 'guest') ? u.role === 'Guest' : u.role !== 'Guest'; // MARKER_GUEST_USER_TOGGLE_V1 -- Guest เห็น/จัดการได้เฉพาะ Owner
+      return matchSearch && matchRole && matchMode;
     }).slice().sort((a, b) => {
       if (a.role === 'Owner' && b.role !== 'Owner') return -1;
       if (b.role === 'Owner' && a.role !== 'Owner') return 1;
@@ -3067,7 +3136,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     });
 
     const fetchUsers = async () => {
-      const ROLE_ORDER = { Owner: 1, Admin: 2, Editor: 3, Viewer: 4 };
+      const ROLE_ORDER = { Owner: 1, Admin: 2, Editor: 3, Viewer: 4, Guest: 5 };
       const { data } = await db.from('user_roles').select('*');
       const sorted = (data || []).sort((a, b) => (ROLE_ORDER[a.role]||5) - (ROLE_ORDER[b.role]||5));
       setUsers(sorted);
@@ -3173,6 +3242,16 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       setUsers(prev => prev.map(u => u.id === id ? { ...u, system_prefix: value.toUpperCase() } : u));
     };
     const handlePrefixBlur = (user) => { saveUser(user, { approveSignup: false }); };
+    // MARKER_GUEST_USER_TOGGLE_V1 -- BU ของ Guest (คอลัมน์ user_roles.guest_bu) : หลาย BU คั่นด้วยจุลภาค
+    const handleGuestBuInput = (id, value) => { setUsers(prev => prev.map(u => u.id === id ? { ...u, guest_bu: value.toUpperCase() } : u)); };
+    const handleGuestBuBlur = async (user) => {
+      try {
+        const v = String(user.guest_bu || '').toUpperCase().split(/[\s,]+/).filter(Boolean).join(',');
+        await apiFetch(`/user_roles/${user.id}`, { method: 'PUT', body: JSON.stringify({ guest_bu: v }) });
+        setUsers(prev => prev.map(u => u.id === user.id ? { ...u, guest_bu: v } : u));
+        setSavedId(user.id); setTimeout(() => setSavedId(null), 1500);
+      } catch (err) { setError('บันทึก BU ไม่สำเร็จ: ' + err.message); }
+    };
 
     const handleRoleChange = (id, newRole) => {
       setUsers(prev => {
@@ -3221,13 +3300,14 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
         method: 'POST',
         body: JSON.stringify({
           username: form.username.trim().toLowerCase(),
-          email:    form.email,
+          email:    addTab === 'guest' ? '' : form.email, // MARKER_GUEST_ADD_TAB_V1 -- Guest ไม่ใช้ Email (Backend สร้าง Email ภายในให้)
           password: form.password,
-          role:     form.role,
+          role:     addTab === 'guest' ? 'Guest' : form.role,
+          bu:       addTab === 'guest' ? String(form.bu || '').toUpperCase().split(/[\s,]+/).filter(Boolean).join(',') : undefined,
         }),
       });
       if (!result?.ok) throw new Error(result?.error || 'สร้าง user ไม่สำเร็จ');
-      setShowForm(false); setForm({ email: '', password: '', username: '', role: 'Editor' }); fetchUsers();
+      setShowForm(false); setForm({ email: '', password: '', username: '', role: 'Editor', bu: '' }); setAddTab('user'); fetchUsers();
     } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
@@ -3246,8 +3326,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     } catch (err) { setError('เกิดข้อผิดพลาด: ' + err.message); }
   };
 
-    const roleColor = { Owner: '#27500A', Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888' };
-    const roleBg = { Owner: '#EAF3DE', Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5' };
+    const roleColor = { Owner: '#27500A', Admin: '#1a3a5c', Editor: '#0F6E56', Viewer: '#888', Guest: '#6a3fb5' };
+    const roleBg = { Owner: '#EAF3DE', Admin: '#e8f0fb', Editor: '#f0faf6', Viewer: '#f5f5f5', Guest: '#f0e9fb' };
 
     return (
       <div className="bo-hide-scrollbar" style={S.container}>
@@ -3289,7 +3369,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                     );
                   })}
                 </div>
-                {tab === 'users' && <button style={{ ...S.btn, marginLeft: 0, background: '#14284b', color: 'white', borderRadius: '99px', padding: '8px 18px', fontWeight: 600 }} onClick={() => { setShowForm(true); setError(''); }}>+ Add User</button>}
+                {tab === 'users' && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
+                    {isOwner && (
+                      <span style={{ display: 'inline-flex', padding: '3px', background: '#f1f4f9', borderRadius: '999px' }}>
+                        {[['user', 'User'], ['guest', 'Guest']].map(([k, label]) => (
+                          <button key={k} type="button" onClick={() => setUserMode(k)}
+                            style={{ padding: '5px 16px', fontSize: '12.5px', fontWeight: userMode === k ? 700 : 500, borderRadius: '999px', cursor: 'pointer',
+                              border: userMode === k ? (k === 'guest' ? '1px solid #cdb8ee' : '1px solid #d9dfeb') : '1px solid transparent',
+                              background: userMode === k ? (k === 'guest' ? '#f0e9fb' : 'white') : 'transparent',
+                              color: userMode === k ? (k === 'guest' ? '#6a3fb5' : '#1a3a5c') : '#7b8496' }}>{label}</button>
+                        ))}
+                      </span>
+                    )}
+                    <button style={{ ...S.btn, marginLeft: 0, background: '#14284b', color: 'white', borderRadius: '99px', padding: '8px 18px', fontWeight: 600 }} onClick={() => { setShowForm(true); setError(''); setUserSearch(''); setAddTab(guestView ? 'guest' : 'user'); /* MARKER_USERS_SEARCH_NO_AUTOFILL_V1 -- เปิดฟอร์ม Add User แล้วล้างช่อง Search กันค่าที่เบราว์เซอร์เติมค้าง */ }}>+ Add User</button>
+                  </span>
+                )}
               </div>
             );
           })()}
@@ -3320,15 +3415,15 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
           // MARKER_SYSTEMCONSOLE_FIXED_HEIGHT_V1 -- Users: ตรึง Header + ช่องค้นหา + หัวตาราง เลื่อนเฉพาะแถวผู้ใช้
           <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--console-header-height, 180px) - 40px)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0 6px', flexWrap: 'wrap', flexShrink: 0 }}>
-              <input placeholder="Search username, email..." value={userSearch} onChange={e => setUserSearch(e.target.value)}
-                style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: '220px' }} />
+              <input type="text" placeholder="Search username, email, permission..." name="um-user-filter" autoComplete="off" data-lpignore="true" spellCheck={false} value={userSearch} onChange={e => setUserSearch(e.target.value)} title="พิมพ์ชื่อ Permission เพื่อหาคนที่เป็น Yes (เช่น gl) · ใส่ - นำหน้าเพื่อหาคนที่เป็น No (เช่น -vat) · พิมพ์ได้หลายคำ"
+                style={{ padding: '5px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', width: '260px' }} />
               <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
                 style={{ padding: '5px 8px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', background: 'white', cursor: 'pointer' }}>
                 <option value=''>Role ทั้งหมด</option>
                 <option value='Owner'>Owner</option>
                 <option value='Admin'>Admin</option>
                 <option value='Editor'>Editor</option>
-                <option value='Viewer'>Viewer</option>
+                <option value='Viewer'>Viewer</option><option value='Guest'>Guest</option>
               </select>
               {(userSearch || filterRole) && (
                 <button onClick={() => { setUserSearch(''); setFilterRole(''); }}
@@ -3341,11 +3436,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '900px' }}>
                 <thead>
                   <tr>
-                    <th style={S.thLeft}>Username</th>
+                    <th style={S.thLeft}>{guestView ? 'User' : 'Username'}</th>
                     <th style={S.thLeft}>Email</th>
-                    <th style={S.th}>Prefix</th>
+                    <th style={S.th}>{guestView ? 'Business' : 'Prefix'}</th>
                     <th style={S.th}>Role</th>
-                    {PERMISSIONS.map(p => <th key={p} style={S.th}>{p}</th>)}
+                    {PERMISSIONS.filter(p => !(guestView && p === 'ApproveBatch')).map(p => <th key={p} style={S.th}>{p}</th>)}
                     <th style={S.th}>Action</th>
                   </tr>
                 </thead>
@@ -3379,21 +3474,28 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                         </td>
                         <td style={S.tdLeft}>{u.email}</td>
                         <td style={S.td}>
+                          {guestView ? (
+                            <input value={u.guest_bu || ''} onChange={e => handleGuestBuInput(u.id, e.target.value)} onBlur={() => handleGuestBuBlur(u)}
+                              onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                              placeholder="เช่น CRG, TOP"
+                              style={{ width: '170px', padding: '4px 6px', borderRadius: '4px', border: '1px solid #cdb8ee', fontSize: '12px', textAlign: 'center', textTransform: 'uppercase', fontFamily: 'monospace' }} />
+                          ) : (
                           <input value={u.system_prefix || ''} onChange={e => handlePrefixInput(u.id, e.target.value)} onBlur={() => handlePrefixBlur(u)}
                             placeholder="เช่น KN" maxLength={10}
                             style={{ width: '70px', padding: '4px 6px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', textAlign: 'center', textTransform: 'uppercase', fontFamily: 'monospace' }} />
+                          )}
                         </td>
                         <td style={S.td}>
                           {canChangeRole ? (
                             <select value={u.role||'Editor'} onChange={e => handleRoleChange(u.id, e.target.value)}
                               style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', color: roleColor[u.role]||'#333', fontWeight: '500', background: roleBg[u.role]||'white' }}>
-                              <option>Admin</option><option>Editor</option><option>Viewer</option>
+                              <option>Admin</option><option>Editor</option><option>Viewer</option>{(isOwner || u.role === 'Guest') && <option>Guest</option>}
                             </select>
                           ) : (
                             <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '20px', background: roleBg[u.role]||'#eee', color: roleColor[u.role]||'#333', fontWeight: '500' }}>{u.role||'Editor'}</span>
                           )}
                         </td>
-                        {PERMISSIONS.map(p => {
+                        {PERMISSIONS.filter(p => !(guestView && p === 'ApproveBatch')).map(p => {
                           const val = u.permissions?.[p] ?? false;
                           return <td key={p} style={S.td}><button style={val ? S.yes : S.no} onClick={() => handlePermissionChange(u.id, p, !val)}>{val ? 'Yes' : 'No'}</button></td>;
                         })}
@@ -3429,7 +3531,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
             <style>{`.bo-hide-scrollbar, .bo-hide-scrollbar * { scrollbar-width: none; -ms-overflow-style: none; } .bo-hide-scrollbar::-webkit-scrollbar, .bo-hide-scrollbar *::-webkit-scrollbar { display: none; width: 0; height: 0; }`}</style>
             {/* MARKER_BACKENDOPS_SUBTABS_BACK_V1 -- เป็นฟีเจอร์ภายในหน้า Backend Ops เอง (ไม่ใช่หน้าหลักแบบ Document Center) จึงกลับมาอยู่ในกรอบเนื้อหาเหมือนเดิม */}
             <div style={{ display: 'flex', gap: '4px', padding: '0 20px', borderBottom: '2px solid #e8e8e8', flexShrink: 0, background: 'white' }}>
-              {[['deploy', 'Deploy Monitor'], ['ram', 'RAM Dashboard'], ['cpu', 'CPU Dashboard']].map(([k, lb]) => (
+              {[['deploy', 'Deploy Monitor'], ['ram', 'RAM Dashboard'], ['cpu', 'CPU Dashboard'], ['storage', 'Storage Dashboard']].map(([k, lb]) => (
                 <button key={k} onClick={() => setBackendOpsSubTab(k)}
                   style={{ padding: '8px 16px', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: backendOpsSubTab === k ? '#1a3a5c' : '#888', fontSize: '13px', fontWeight: backendOpsSubTab === k ? '500' : '400', cursor: 'pointer', borderBottom: backendOpsSubTab === k ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-2px' }}>
                   {lb}
@@ -3441,6 +3543,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
               <div style={{ display: backendOpsSubTab === 'deploy' ? 'block' : 'none', height: '100%' }}><DeployMonitor inline /></div>
               <div style={{ display: backendOpsSubTab === 'ram' ? 'block' : 'none', height: '100%', overflow: 'hidden' }}><RAMDashboardTab /></div>
               <div style={{ display: backendOpsSubTab === 'cpu' ? 'block' : 'none', height: '100%', overflow: 'hidden' }}><CPUDashboardTab /></div>
+              {backendOpsSubTab === 'storage' && <div style={{ height: '100%', overflow: 'hidden' }}><StorageDashboardTab /></div>} {/* MARKER_STORAGE_DASHBOARD_TAB_V1 */}
             </div>
           </div>
         )}
@@ -3449,14 +3552,32 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
           <div style={S.overlay}>
             <div style={S.modal}>
               <h3 style={{ marginBottom: '16px', fontSize: '15px' }}>Add New User</h3>
+              {isOwner && (
+                <div style={{ display: 'inline-flex', padding: '3px', background: '#f1f4f9', borderRadius: '999px', marginBottom: '14px' }}>
+                  {[['user', 'User'], ['guest', 'Guest']].map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => { setAddTab(k); setError(''); }}
+                      style={{ padding: '5px 18px', fontSize: '12px', fontWeight: addTab === k ? 700 : 500, borderRadius: '999px', cursor: 'pointer',
+                        border: addTab === k ? (k === 'guest' ? '1px solid #cdb8ee' : '1px solid #d9dfeb') : '1px solid transparent',
+                        background: addTab === k ? (k === 'guest' ? '#f0e9fb' : 'white') : 'transparent',
+                        color: addTab === k ? (k === 'guest' ? '#6a3fb5' : '#1a3a5c') : '#7b8496' }}>{label}</button>
+                  ))}
+                </div>
+              )}
               {error && <div style={{ background: '#FCEBEB', color: '#791F1F', padding: '8px', borderRadius: '6px', marginBottom: '10px', fontSize: '12px' }}>{error}</div>}
-              {[['username','Username','text'],['email','Email','email'],['password','Password','password']].map(([key,label,type]) => (
+              {[['username','Username','text'],['email','Email','email'],['password','Password','password']].filter(([key]) => !(addTab === 'guest' && key === 'email')).map(([key,label,type]) => (
                 <div key={key}><label style={{ fontSize: '12px', color: '#666' }}>{label}</label><input style={S.input} type={type} value={form[key]} onChange={e => setForm({...form,[key]:e.target.value})} /></div>
               ))}
-              <div><label style={{ fontSize: '12px', color: '#666' }}>Role</label>
-                <select style={S.input} value={form.role} onChange={e => setForm({...form,role:e.target.value})}><option>Admin</option><option>Editor</option><option>Viewer</option></select>
+              {addTab === 'guest' && (
+                <div>
+                  <label style={{ fontSize: '12px', color: '#666' }}>BU (ไม่บังคับ — หลาย BU คั่นด้วยจุลภาค เช่น CRG, TOP)</label>
+                  <input style={S.input} type="text" value={form.bu || ''} placeholder="CRG" onChange={e => setForm({...form, bu: e.target.value})} />
+                  <div style={{ background: '#f0e9fb', color: '#6a3fb5', borderRadius: '6px', padding: '8px 10px', fontSize: '12px', marginBottom: '12px' }}>Role = Guest อัตโนมัติ · เห็นเฉพาะเมนูที่เปิดให้ Guest ในหน้า Access</div>
+                </div>
+              )}
+              <div style={addTab === 'guest' ? { display: 'none' } : undefined}><label style={{ fontSize: '12px', color: '#666' }}>Role</label>
+                <select style={S.input} value={form.role} onChange={e => setForm({...form,role:e.target.value})}><option>Admin</option><option>Editor</option><option>Viewer</option>{isOwner && <option>Guest</option>}</select>
               </div>
-              <div style={{ background: '#f8f8f8', borderRadius: '6px', padding: '10px', marginBottom: '12px' }}>
+              <div style={{ background: '#f8f8f8', borderRadius: '6px', padding: '10px', marginBottom: '12px', display: addTab === 'guest' ? 'none' : undefined }}>
                 <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>Permission เริ่มต้น ({form.role})</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                   {PERMISSIONS.map(p => <span key={p} style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: DEFAULT_PERMISSIONS[form.role]?.[p] ? '#EAF3DE' : '#FCEBEB', color: DEFAULT_PERMISSIONS[form.role]?.[p] ? '#27500A' : '#791F1F' }}>{p}: {DEFAULT_PERMISSIONS[form.role]?.[p] ? 'Yes' : 'No'}</span>)}
@@ -3523,7 +3644,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     return { key: 'other', label: 'อื่นๆ', color: '#8a94a3' };
   }
   function dashboardModuleStyle(mod) {
-    const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' } };
+    const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' }, VAT: { bg: '#e4e9f3', color: '#2c3d63' }, 'COL-AP': { bg: '#fdf1dc', color: '#9a5b00' } }; // MARKER_USERMANAGEMENT_DASHBOARD_MODULE_COLOR_COLAP_VAT_V1 -- เพิ่มสี VAT และ COL-AP (Doc Collection / AP-DOC) แยกจากสีเทา Default
     return MAP[mod] || { bg: '#f0f3f7', color: '#667085' };
   }
 
@@ -3534,6 +3655,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState(null);
     const [err, setErr] = useState('');
+    const [showActions, setShowActions] = useState(false); // MARKER_USERMANAGEMENT_DAILY_DASHBOARD_REDESIGN_V1 -- แถว Action (เข้าเมนู/Login/Logout ฯลฯ) ซ่อนเป็นค่าเริ่มต้น
 
     const todayStr = useMemo(() => toLocalISODate(new Date()), []);
 
@@ -3609,6 +3731,13 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const canGoNextMonth = !(calYear > now.getFullYear() || (calYear === now.getFullYear() && calMonth >= now.getMonth()));
     const dailyRows = data?.transactions || [];
     const summaryRows = data?.days || [];
+    // MARKER_USERMANAGEMENT_MONTHLY_HR_DASHBOARD_V1 -- ตัวช่วยของหน้ารายสัปดาห์/รายเดือน (Heatmap ปฏิทิน, วันทำการ, วันที่งานสูงสุด)
+    const heatMode = granularity === 'monthly';
+    const dayCountMap = {}; summaryRows.forEach((d) => { dayCountMap[d.date] = Number(d.count) || 0; });
+    const heatBg = (n) => (n >= 60 ? '#17795a' : n >= 31 ? '#46bd93' : n >= 11 ? '#97dcbd' : n >= 1 ? '#d3f0e3' : '#eef2f5');
+    const heatFg = (n) => (n >= 60 ? '#ffffff' : n >= 1 ? '#0b3d2e' : '#3d4856');
+    const workingDaysInRange = (() => { let n = 0; const a0 = new Date(range.from + 'T00:00:00'), b0 = new Date(range.to + 'T00:00:00'); for (let d0 = new Date(a0); d0 <= b0; d0.setDate(d0.getDate() + 1)) { const w = d0.getDay(); if (w !== 0 && w !== 6) n++; } return n; })();
+    const peakDay = summaryRows.reduce((m, d) => ((!m || Number(d.count) > Number(m.count)) ? d : m), null);
 
     return (
       <div style={S.overlay} onClick={onClose}>
@@ -3662,8 +3791,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                         fontWeight: (day.isSelectedDay || day.isInSelectedWeek) ? 700 : 500,
                         fontStyle: day.isWeekend ? 'italic' : 'normal',
                         cursor: day.future ? 'default' : 'pointer',
-                        color: day.future ? '#c9d1da' : (!day.inMonth ? '#c2cbd5' : day.isSelectedDay ? '#ffffff' : day.isWeekend ? '#a3adb8' : '#16232f'),
-                        background: day.isSelectedDay ? avatarColor : (day.isInSelectedWeek ? '#eaf6f0' : 'transparent'),
+                        color: day.future ? '#c9d1da' : (!day.inMonth ? '#c2cbd5' : (heatMode && !day.isWeekend) ? heatFg(dayCountMap[day.dateStr] || 0) : day.isSelectedDay ? '#ffffff' : day.isWeekend ? '#a3adb8' : '#16232f'),
+                        background: (heatMode && day.inMonth && !day.future && !day.isWeekend) ? heatBg(dayCountMap[day.dateStr] || 0) : (day.isSelectedDay ? avatarColor : (day.isInSelectedWeek ? '#eaf6f0' : 'transparent')),
                         border: (day.isToday && !day.isSelectedDay) ? `1.5px solid ${avatarColor}` : '1.5px solid transparent',
                       }}>
                       {day.num}
@@ -3671,6 +3800,13 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                   ))}
                 </div>
               ))}
+              {heatMode && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: '#8a96a3', marginTop: '8px' }}>
+                  <span>น้อย</span>
+                  {['#eef2f5', '#d3f0e3', '#97dcbd', '#46bd93', '#17795a'].map((c) => <span key={c} style={{ width: '14px', height: '10px', borderRadius: '3px', background: c, border: c === '#eef2f5' ? '1px solid #dfe5eb' : 'none' }} />)}
+                  <span>มาก</span>
+                </div>
+              )}
               <div style={{ fontSize: '10px', color: '#8a96a3', marginTop: '8px' }}>ช่วง: {range.from} – {range.to}</div>
               {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_RELATEPERSON_V1 */}
               {relatedUsers.length > 0 && (
@@ -3690,11 +3826,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
 
             <div style={{ flexGrow: 1, padding: '18px 22px', minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_PIN_TOP_SCROLL_DETAIL_V1 -- เอา overflowY:'auto' ออกจาก Panel ใหญ่ ตรึงส่วนหัว (Title/Summary/Timeline) ไว้คงที่ Scroll ได้แค่โซน Detail ด้านล่างเท่านั้น */}
               <div style={{ flexShrink: 0 }}>
-                <div style={{ fontSize: '14px', fontWeight: 700, color: '#16232f', marginBottom: '2px' }}>
-                  {granularity === 'daily' ? selectedDate : `${range.from} – ${range.to}`}
+                <div style={{ fontSize: granularity === 'daily' ? '16px' : '14px', fontWeight: 700, color: '#16232f', marginBottom: '2px' }}>
+                  {granularity === 'daily' ? (() => { const dd = new Date(selectedDate + 'T00:00:00'); return `${['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'][dd.getDay()]} ${dd.getDate()} ${monthsTh[dd.getMonth()]} ${dd.getFullYear() + 543}`; })() : `${range.from} – ${range.to}`}
                 </div>
                 <div style={{ fontSize: '11.5px', color: '#8a96a3', marginBottom: '16px' }}>
-                  {granularity === 'daily' ? 'รายละเอียด Transaction ทีละรายการ พร้อม Gap เวลาระหว่างรายการ' : 'สรุปยอด Transaction รายวัน (ไม่แสดง Gap)'}
+                  {granularity === 'daily' ? `${selectedDate} · รายละเอียด Transaction ทีละรายการ พร้อมช่วงว่างระหว่างรายการ` : 'สรุปยอด Transaction รายวัน (ไม่แสดง Gap)'}
                 </div>
 
                 {loading && <div style={{ fontSize: '12px', color: '#8a96a3' }}>กำลังโหลด...</div>}
@@ -3702,66 +3838,186 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
 
                 {!loading && !err && data && (
                   <>
-                    <div style={{ display: 'grid', gridTemplateColumns: granularity === 'daily' ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', gap: '1px', background: '#e8e8e8', borderRadius: '10px', overflow: 'hidden', marginBottom: '18px', border: '0.5px solid #e8e8e8' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1px', background: '#e8e8e8', borderRadius: '10px', overflow: 'hidden', marginBottom: '18px', border: '0.5px solid #e8e8e8' }}>
                       {granularity === 'daily' ? (
                         <>
-                          <DashboardSummaryCell label="เริ่มงาน" value={fmtTime(data.summary?.start_time)} />
-                          <DashboardSummaryCell label="เลิกงาน" value={fmtTime(data.summary?.end_time)} />
+                          <DashboardSummaryCell label="เริ่มงาน" value={String(fmtTime(data.summary?.start_time)).slice(0, 5)} />
+                          <DashboardSummaryCell label="เลิกงาน" value={String(fmtTime(data.summary?.end_time)).slice(0, 5)} />
                           <DashboardSummaryCell label="จำนวน Transaction" value={data.summary?.count} />
-                          <DashboardSummaryCell label="Avg ต่อ Trans" value={data.summary?.avg_gap_minutes != null ? `${data.summary.avg_gap_minutes} นาที` : '—'} />
+                          <DashboardSummaryCell label="Gap เฉลี่ย (ระหว่างรายการ)" value={data.summary?.avg_gap_minutes != null ? `${data.summary.avg_gap_minutes} นาที` : '—'} />
                         </>
                       ) : (
                         <>
                           <DashboardSummaryCell label="จำนวน Transaction" value={data.summary?.total_count} />
-                          <DashboardSummaryCell label="วันที่ทำงาน" value={data.summary?.active_days} />
-                          <DashboardSummaryCell label="เฉลี่ย/วัน" value={data.summary?.avg_per_day} />
+                          <DashboardSummaryCell label="วันที่ทำงาน" value={`${data.summary?.active_days ?? 0} / ${workingDaysInRange} วันทำการ`} />
+                          <DashboardSummaryCell label="เฉลี่ย/วัน (เฉพาะวันที่มีงาน)" value={data.summary?.avg_per_day} />
+                          <DashboardSummaryCell label="วันที่งานสูงสุด" value={peakDay ? `${peakDay.count} · ${peakDay.date}` : '—'} />
                         </>
                       )}
                     </div>
 
-                    {granularity === 'daily' && (
-                      <div style={{ background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
-                        <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#16232f', marginBottom: '12px' }}>Timeline ทั้งวัน (00:00–24:00)</div>
-                        {(() => { /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_TIMELINE_TS_V1 -- 2 เลน: บน = Transaction (นับ) / ล่าง = Timestamp Action (แสดงอย่างเดียว) */
-                          const tsRowsAll = dailyRows.filter((x) => x.is_timestamp);
-                          const hasTs = tsRowsAll.length > 0;
-                          const cats = new Map(); tsRowsAll.forEach((x) => { const c = tsCategory(x); if (!cats.has(c.key)) cats.set(c.key, c); });
-                          const posOf = (ts) => { const dt = new Date(ts); const m = isNaN(dt.getTime()) ? 0 : dt.getHours() * 60 + dt.getMinutes(); return `calc(${(m / 1440 * 100).toFixed(2)}% - 5px)`; };
-                          return (
-                            <>
-                              <div style={{ position: 'relative', height: hasTs ? '54px' : '28px', background: '#f4f6f9', borderRadius: '8px' }}>
-                                {hasTs && <div style={{ position: 'absolute', left: 0, right: 0, top: '27px', borderTop: '1px dashed #d9dee5' }} />}
-                                {dailyRows.filter((x) => !x.is_timestamp).map((t, i) => {
-                                  const st = dashboardModuleStyle(t.module);
-                                  const tip = t.is_weekend_source ? `${fmtTime(t.ts)} (ทำวันเสาร์-อาทิตย์ นับรวมวันจันทร์) · ${t.invoice_no || ''}` : `${fmtTime(t.ts)} · ${t.invoice_no || ''}`; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
+                    {granularity !== 'daily' && summaryRows.length > 0 && (() => { /* MARKER_USERMANAGEMENT_MONTHLY_HR_DASHBOARD_V1 -- กราฟแท่ง Stacked ตาม Module + Donut สัดส่วน (คลิกแท่งเพื่อดูรายวัน) */
+                      const MOD_COLORS = { AP: '#1f8a5f', VAT: '#3b4f78', 'COL-AP': '#d9961a', IE: '#c2255c' };
+                      const modColor = (m) => MOD_COLORS[m] || '#8a94a3';
+                      const modOrder = ['AP', 'VAT', 'COL-AP', 'IE'];
+                      const totals = {};
+                      summaryRows.forEach((d) => Object.keys(d.modules || {}).forEach((m) => { totals[m] = (totals[m] || 0) + Number(d.modules[m]); }));
+                      const mods = Object.keys(totals).sort((x, y) => { const ix = modOrder.indexOf(x), iy = modOrder.indexOf(y); return ((ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy)) || x.localeCompare(y); });
+                      const grand = mods.reduce((sum, m) => sum + totals[m], 0) || 1;
+                      const series = [];
+                      { const a1 = new Date(range.from + 'T00:00:00'), b1 = new Date(range.to + 'T00:00:00');
+                        for (let d1 = new Date(a1); d1 <= b1; d1.setDate(d1.getDate() + 1)) { const iso = toLocalISODate(d1); series.push({ iso, n: d1.getDate(), wd: d1.getDay(), rec: summaryRows.find((x) => x.date === iso) }); } }
+                      const maxCount = Math.max(1, ...summaryRows.map((d) => Number(d.count) || 0));
+                      const mag = Math.pow(10, Math.floor(Math.log10(maxCount)));
+                      const niceMax = ([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((f) => f * mag >= maxCount) || 10) * mag;
+                      const PLOT = 150;
+                      const yy = (v) => (v / niceMax) * PLOT;
+                      const avg = Number(data.summary?.avg_per_day) || 0;
+                      const R = 50, C = 2 * Math.PI * R; let acc = 0;
+                      const segs = mods.map((m) => { const len = (totals[m] / grand) * C; const sg = { m, len, off: acc }; acc += len; return sg; });
+                      const colMax = series.length > 14 ? '26px' : '44px';
+                      return (
+                        <div style={{ display: 'flex', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                          <div style={{ flex: '1 1 520px', minWidth: 0, background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '12px 16px 10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                              <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f' }}>Transaction รายวัน <span style={{ fontWeight: 400, color: '#8a96a3', fontSize: '11px' }}>· คลิกแท่งเพื่อดูรายละเอียดรายวัน</span></div>
+                              <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#667085', alignItems: 'center', flexWrap: 'wrap' }}>
+                                {mods.map((m) => <span key={m} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}><span style={{ width: '10px', height: '10px', borderRadius: '2px', background: modColor(m) }} />{m}</span>)}
+                                {avg > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}><span style={{ width: '16px', borderTop: '2px dashed #c2410c' }} />เฉลี่ย {avg}</span>}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <div style={{ position: 'relative', width: '30px', height: `${PLOT}px`, flexShrink: 0 }}>
+                                {[0, 0.25, 0.5, 0.75, 1].map((f) => <div key={f} style={{ position: 'absolute', right: 0, bottom: `${f * PLOT}px`, transform: 'translateY(50%)', fontSize: '9.5px', color: '#8a96a3', fontVariantNumeric: 'tabular-nums' }}>{Math.round(f * niceMax)}</div>)}
+                              </div>
+                              <div style={{ position: 'relative', flexGrow: 1, minWidth: 0, height: `${PLOT}px` }}>
+                                {[0, 0.25, 0.5, 0.75, 1].map((f) => <div key={f} style={{ position: 'absolute', left: 0, right: 0, bottom: `${f * PLOT}px`, borderTop: '1px solid #edf0f4' }} />)}
+                                {avg > 0 && <div style={{ position: 'absolute', left: 0, right: 0, bottom: `${yy(avg)}px`, borderTop: '2px dashed #c2410c' }} />}
+                                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'flex-end', gap: '4px' }}>
+                                  {series.map((sr) => {
+                                    const cnt = sr.rec ? Number(sr.rec.count) || 0 : 0;
+                                    return (
+                                      <div key={sr.iso} onClick={() => { if (cnt > 0) { setSelectedDate(sr.iso); setGranularity('daily'); } }}
+                                        title={cnt > 0 ? `${sr.iso} · ${cnt} รายการ — คลิกดูรายวัน` : sr.iso}
+                                        style={{ flex: 1, minWidth: 0, maxWidth: colMax, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: `${PLOT}px`, cursor: cnt > 0 ? 'pointer' : 'default' }}>
+                                        {cnt > 0 && <div style={{ fontSize: '9.5px', fontWeight: 700, color: '#16232f', marginBottom: '2px', fontVariantNumeric: 'tabular-nums' }}>{cnt}</div>}
+                                        {mods.slice().reverse().map((m) => { const c = sr.rec ? Number(sr.rec.modules?.[m]) || 0 : 0; return c > 0 ? <div key={m} style={{ width: '100%', height: `${Math.max(yy(c), 2)}px`, background: modColor(m) }} /> : null; })}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <div style={{ width: '30px', flexShrink: 0 }} />
+                              <div style={{ flexGrow: 1, minWidth: 0, display: 'flex', gap: '4px' }}>
+                                {series.map((sr) => (
+                                  <div key={sr.iso} style={{ flex: 1, minWidth: 0, maxWidth: colMax, textAlign: 'center', fontSize: '9.5px', fontVariantNumeric: 'tabular-nums', color: sr.rec ? '#16232f' : '#a3adb8', fontWeight: sr.rec ? 700 : 400, fontStyle: (sr.wd === 0 || sr.wd === 6) ? 'italic' : 'normal' }} data-marker="MARKER_USERMANAGEMENT_WEEKLY_WEEKDAY_LABEL_V1">{granularity === 'weekly' ? `${['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'][sr.wd]} ${sr.n}` : sr.n}</div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ flex: '0 0 270px', boxSizing: 'border-box', background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '12px 16px' }}>
+                            <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f', marginBottom: '8px' }}>สัดส่วน Module</div>
+                            <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', height: '130px' }}>
+                              <svg viewBox="0 0 130 130" width="130" height="130" role="img" aria-label={mods.map((m) => `${m} ${((totals[m] / grand) * 100).toFixed(1)} เปอร์เซ็นต์`).join(' ')}>
+                                <circle cx="65" cy="65" r={R} fill="none" stroke="#edf0f4" strokeWidth="18" />
+                                {segs.map((sg) => <circle key={sg.m} cx="65" cy="65" r={R} fill="none" stroke={modColor(sg.m)} strokeWidth="18" strokeDasharray={`${sg.len} ${C - sg.len}`} strokeDashoffset={-sg.off} transform="rotate(-90 65 65)" />)}
+                              </svg>
+                              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{ fontSize: '20px', fontWeight: 700, color: '#1a3a5c', lineHeight: 1 }}>{grand}</div>
+                                <div style={{ fontSize: '10px', color: '#8a96a3' }}>Transaction</div>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', fontSize: '12px' }}>
+                              {mods.map((m) => (
+                                <div key={m} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: modColor(m) }} />
+                                  <span style={{ flexGrow: 1 }}>{m}</span>
+                                  <b style={{ fontVariantNumeric: 'tabular-nums' }}>{totals[m]}</b>
+                                  <span style={{ width: '44px', textAlign: 'right', color: '#667085', fontVariantNumeric: 'tabular-nums' }}>{((totals[m] / grand) * 100).toFixed(1)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {granularity === 'daily' && (() => { /* MARKER_USERMANAGEMENT_DAILY_DASHBOARD_REDESIGN_V1 -- แถบภาพรวมทั้งวัน: แถบเขียว = อยู่ในระบบ (Login→Logout) / จุด = Transaction / แรเงา = ช่วงนับ Gap 08:00-19:00 */
+                      const toMin = (ts) => { const dt = new Date(ts); return isNaN(dt.getTime()) ? null : dt.getHours() * 60 + dt.getMinutes() + dt.getSeconds() / 60; };
+                      const fmtMin = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
+                      const txs = dailyRows.filter((x) => !x.is_timestamp);
+                      const acts = dailyRows.filter((x) => x.is_timestamp);
+                      const mins = dailyRows.map((x) => toMin(x.ts)).filter((m) => m != null);
+                      if (mins.length === 0) return null;
+                      const lo = Math.min(8 * 60, Math.floor(Math.min(...mins) / 60) * 60);
+                      const hi = Math.min(24 * 60, Math.max(19 * 60, Math.ceil(Math.max(...mins) / 60) * 60));
+                      const span = Math.max(hi - lo, 60);
+                      const pct = (m) => ((m - lo) / span) * 100;
+                      const sessions = []; let open = null;
+                      acts.forEach((a) => {
+                        const m = toMin(a.ts); if (m == null) return;
+                        if (a.event === 'LOGIN') { if (open == null) open = m; }
+                        else if (a.event === 'LOGOUT' && open != null) { sessions.push([open, m]); open = null; }
+                      });
+                      if (open != null) sessions.push([open, Math.max(...mins)]);
+                      const ticks = []; for (let h = Math.ceil(lo / 60); h * 60 <= hi; h += 2) ticks.push(h * 60);
+                      const gapL = Math.max(pct(8 * 60), 0), gapR = Math.min(pct(19 * 60), 100);
+                      const actCount = acts.length;
+                      return (
+                        <>
+                          <div style={{ background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '14px 18px 12px', marginBottom: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                              <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f' }}>ภาพรวมทั้งวัน</div>
+                              <div style={{ display: 'flex', gap: '14px', fontSize: '11px', color: '#667085', alignItems: 'center' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}><span style={{ width: '18px', height: '8px', borderRadius: '4px', background: '#bfe6d6' }} />อยู่ในระบบ</span>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}><span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#1f8a5f' }} />Transaction</span>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}><span style={{ width: '18px', height: '8px', background: '#f1f4f7', border: '1px solid #dfe5eb' }} />ช่วงนับ Gap 08:00–19:00</span>
+                              </div>
+                            </div>
+                            <div style={{ position: 'relative', height: '44px', borderRadius: '8px', overflow: 'hidden', background: '#ffffff', border: '1px solid #edf0f4' }}>
+                              {gapR > gapL && <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${gapL}%`, width: `${gapR - gapL}%`, background: '#f1f4f7' }} />}
+                              {sessions.map((p, i) => (
+                                <div key={`ss${i}`} title={`อยู่ในระบบ ${fmtMin(p[0])} – ${fmtMin(p[1])}`} style={{ position: 'absolute', top: '14px', height: '16px', borderRadius: '8px', background: '#bfe6d6', left: `${pct(p[0])}%`, width: `${Math.max(pct(p[1]) - pct(p[0]), 0.5)}%` }} />
+                              ))}
+                              {txs.map((t, i) => {
+                                const m = toMin(t.ts); if (m == null) return null;
+                                const st = dashboardModuleStyle(t.module);
+                                return (
+                                  <div key={`td${i}`} title={`${fmtTime(t.ts)} · ${t.invoice_no || ''}`}
+                                    style={{ position: 'absolute', top: '15px', width: '14px', height: '14px', marginLeft: '-7px', borderRadius: '50%', background: st.color, border: t.is_weekend_source ? '2px dashed #6b7fd7' : '2px solid #ffffff', boxSizing: 'border-box', left: `${pct(m)}%` }} />
+                                );
+                              })}
+                            </div>
+                            <div style={{ position: 'relative', height: '18px', marginTop: '4px' }}>
+                              {ticks.map((m) => (
+                                <div key={m} style={{ position: 'absolute', top: 0, transform: 'translateX(-50%)', fontSize: '10px', color: '#8a96a3', left: `${pct(m)}%` }}>{fmtMin(m)}</div>
+                              ))}
+                            </div>
+                            {sessions.length > 0 && (
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px', fontSize: '11.5px', color: '#16232f' }}>
+                                {sessions.map((p, i) => {
+                                  const d = Math.round(p[1] - p[0]);
                                   return (
-                                    <div key={`t${i}`} title={tip}
-                                      style={{ position: 'absolute', top: '6px', left: posOf(t.ts), width: '10px', height: '10px', borderRadius: '50%', background: st.color,
-                                        border: t.is_weekend_source ? '2px dashed #6b7fd7' : '2px solid #ffffff', cursor: 'pointer' }} />
-                                  );
-                                })}
-                                {tsRowsAll.map((t, i) => {
-                                  const c = tsCategory(t);
-                                  return (
-                                    <div key={`s${i}`} title={`${fmtTime(t.ts)} · ${tsActionLabel(t)}`}
-                                      style={{ position: 'absolute', top: '35px', left: posOf(t.ts), width: '9px', height: '9px', borderRadius: '2px', background: c.color, border: '1.5px solid #ffffff', cursor: 'pointer' }} />
+                                    <span key={`sc${i}`} style={{ display: 'inline-flex', gap: '6px', alignItems: 'center', background: '#f1f9f5', border: '1px solid #cfeadf', borderRadius: '14px', padding: '2px 10px' }}>
+                                      <b>{fmtMin(p[0])} – {fmtMin(p[1])}</b><span style={{ color: '#667085' }}>{Math.floor(d / 60)} ชม. {d % 60} นาที</span>
+                                    </span>
                                   );
                                 })}
                               </div>
-                              {hasTs && (
-                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '8px', fontSize: '10px', color: '#667085' }}>
-                                  <span>● บน = Transaction (นับ) · ■ ล่าง = Action (Timestamp ไม่คำนวณ)</span>
-                                  {[...cats.values()].map((c) => (<span key={c.key}><span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px', background: c.color, marginRight: '4px' }} />{c.label}</span>))}
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '10px', color: '#a3adb8' }}>
-                          <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
-                        </div>
-                      </div>
-                    )}
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f' }}>รายการ Transaction ({txs.length})</div>
+                            <div style={{ flexGrow: 1 }} />
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '11.5px', color: '#667085', cursor: 'pointer' }}>
+                              <input type="checkbox" checked={showActions} onChange={(e) => setShowActions(e.target.checked)} />
+                              แสดง Action ในระบบ (เข้าเมนู / เข้า-ออกระบบ ฯลฯ){actCount ? ` · ${actCount}` : ''}
+                            </label>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </>
                 )}
               </div>
@@ -3773,66 +4029,71 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
               {!loading && !err && data && (
                 <div style={{ flexGrow: 1, overflowY: 'auto', minHeight: 0, background: '#ffffff', border: '0.5px solid #e8e8e8', borderRadius: '8px' }}>
                   {granularity === 'daily' ? (
-                    dailyRows.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '50px 20px', color: '#a3adb8' }}>
-                        <div style={{ fontSize: '30px', marginBottom: '10px' }}>📭</div>
-                        <div style={{ fontSize: '13px' }}>ไม่มี Transaction ในวันนี้</div>
-                      </div>
-                    ) : (
-                      <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_TABLE_DENSITY_V9 */}
-                        <thead>
-                          <tr>
-                            <th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เริ่ม</th><th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>เสร็จ</th><th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>ระยะเวลา</th><th style={{ ...S.th, width: '14%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Sub-item/Action</th><th style={{ ...S.th, width: '7%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Per Trans</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 */}<th style={{ ...S.th, width: '6%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>BU</th><th style={{ ...S.th, width: '13%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Invoice No.</th><th style={{ ...S.th, width: '8%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Module</th><th style={{ ...S.th, width: '20%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Batch/Draft</th><th style={{ ...S.th, width: '15%', padding: '16px 10px', fontSize: '10.5px', position: 'sticky', top: 0, zIndex: 1, background: '#1a3a5c' }}>Gap</th> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_FREEZE_HEADER_V2 -- Freeze หัว Column ตอน Scroll (รายวัน) + เพิ่ม Padding แนวตั้งให้หัวสูงเต็มขอบกล่อง */}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dailyRows.map((t, i) => {
+                    (() => { /* MARKER_USERMANAGEMENT_DAILY_DASHBOARD_REDESIGN_V1 -- ตารางรายวันแบบใหม่: 7 คอลัมน์, Action ซ่อนเป็นค่าเริ่มต้น, Action แสดงเวลาเดียว */
+                      const txRows = dailyRows.filter((x) => !x.is_timestamp);
+                      const visibleRows = showActions ? dailyRows : txRows;
+                      const hm = (ts) => String(fmtTime(ts) || '').slice(0, 5);
+                      const COLS = '150px minmax(0, 1fr) 70px 90px 80px 110px 110px';
+                      if (visibleRows.length === 0) {
+                        return (
+                          <div style={{ textAlign: 'center', padding: '50px 20px', color: '#a3adb8' }}>
+                            <div style={{ fontSize: '30px', marginBottom: '10px' }}>📭</div>
+                            <div style={{ fontSize: '13px' }}>ไม่มี Transaction ในวันนี้</div>
+                            {dailyRows.length > 0 && <div style={{ fontSize: '11.5px', marginTop: '6px' }}>มีแต่ Action ในระบบ ({dailyRows.length}) — ติ๊ก "แสดง Action ในระบบ" เพื่อดู</div>}
+                          </div>
+                        );
+                      }
+                      return (
+                        <div style={{ minWidth: '880px' }}>
+                          <div style={{ position: 'sticky', top: 0, zIndex: 1, display: 'grid', gridTemplateColumns: COLS, gap: '10px', alignItems: 'center', background: '#1a3a5c', color: '#ffffff', fontSize: '11.5px', fontWeight: 700, padding: '13px 16px' }}>
+                            <div>เวลา</div><div>Invoice No. / Batch</div><div>BU</div><div>Module</div>
+                            <div style={{ textAlign: 'right' }}>Sub-item</div><div style={{ textAlign: 'right' }}>ใช้เวลา</div><div style={{ textAlign: 'right' }}>ว่างก่อนหน้า</div>
+                          </div>
+                          {visibleRows.map((t, i) => {
+                            if (t.is_timestamp) {
+                              return (
+                                <div key={i} style={{ display: 'grid', gridTemplateColumns: COLS, gap: '10px', alignItems: 'center', padding: '6px 16px', borderTop: '1px solid #edf0f4', background: '#fafbfc', fontSize: '11.5px', color: '#667085' }}>
+                                  <div style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtTime(t.ts)}</div>
+                                  <div style={{ gridColumn: '2 / -1', fontStyle: 'italic' }} title={t.event === 'DRAFT_NOTE' ? tsActionLabel(t) : (t.event || '')}>{tsActionLabel(t)}</div>
+                                </div>
+                              );
+                            }
                             const st = dashboardModuleStyle(t.module);
                             const gap = t.gap_minutes != null ? Math.round(t.gap_minutes) : null;
-                            const cellSm = { ...S.td, padding: '6px 10px', fontSize: '11px' };
-                            const cellEllipsis = { ...cellSm, overflow: 'visible', textOverflow: 'clip', whiteSpace: 'normal', wordBreak: 'break-word' }; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_NO_TRUNCATE_COLUMNS_V1 -- เลิก Truncate ด้วย ... ให้ขึ้นเต็มข้อความ (Wrap แทน) */
-                            const rowBg = t.is_timestamp ? { background: '#fafbfc', color: '#667085' } : (t.is_weekend_source ? { background: '#eef0fb' } : {}); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_DISPLAY_V13
+                            const startHm = hm(t.start_ts), endHm = hm(t.end_ts);
+                            const dur = (() => {
+                              if (t.has_fill_start === false) return '-';
+                              if (!t.start_ts || !t.end_ts) return '-';
+                              const ms = new Date(t.end_ts) - new Date(t.start_ts);
+                              if (!isFinite(ms) || ms < 0) return '-';
+                              const totalSec = Math.round(ms / 1000), mm = Math.floor(totalSec / 60), ss = totalSec % 60;
+                              return mm > 0 ? `${mm} นาที ${ss} วิ` : `${ss} วิ`;
+                            })();
                             return (
-                              <tr key={i} style={rowBg}>
-                                <td style={cellSm}>
-                                  {fmtTime(t.start_ts)}
-                                  {t.is_weekend_source && (
-                                    <span title="ทำรายการวันเสาร์-อาทิตย์ นับรวมกับวันจันทร์"
-                                      style={{ marginLeft: '4px', fontSize: '10px', color: '#6b7fd7', cursor: 'help' }}>📅</span>
-                                  )}
-                                </td>
-                                <td style={cellSm}>{fmtTime(t.end_ts)}</td>
-                                <td style={cellSm}>{(() => { /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_DURATION_COLUMN_V17 -- ระยะเวลาจริง (เสร็จ - เริ่ม) */
-                                  if (t.has_fill_start === false) return '-'; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_HASFILLSTART_DISPLAY_V19 -- ไม่มีข้อมูล fill_started_at จริง ไม่ใช่ 0 วิ */
-                                  if (!t.start_ts || !t.end_ts) return '-';
-                                  const ms = new Date(t.end_ts) - new Date(t.start_ts);
-                                  if (!isFinite(ms) || ms < 0) return '-';
-                                  const totalSec = Math.round(ms / 1000);
-                                  const mm = Math.floor(totalSec / 60);
-                                  const ss = totalSec % 60;
-                                  return mm > 0 ? `${mm} นาที ${ss} วิ` : `${ss} วิ`;
-                                })()}</td>
-                                <td style={t.is_timestamp ? cellEllipsis : cellSm} title={t.is_timestamp ? (t.event === 'DRAFT_NOTE' ? tsActionLabel(t) : (t.event || '')) : ''}>{t.is_timestamp ? <span style={{ fontStyle: 'italic' }}>{tsActionLabel(t)}</span> : t.sub_items}</td> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 -- ย้ายมาไว้ถัดจากระยะเวลา */}
-                                <td style={cellSm}>{(() => { /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REORDER_PERTRANS_V18 -- Per Trans = ระยะเวลา(เสร็จ-เริ่ม) หาร Sub-item ตรงๆ ใช้ ms เดียวกับคอลัมน์ระยะเวลา */
-                                  if (t.is_timestamp) return '—'; /* Timestamp ไม่คำนวณ Per Trans */
-                                  if (t.has_fill_start === false) return '-'; /* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_HASFILLSTART_DISPLAY_V19 -- ไม่มีข้อมูล fill_started_at จริง ไม่ใช่ 0.0 นาที */
-                                  if (!t.start_ts || !t.end_ts || !t.sub_items) return '—';
-                                  const ms = new Date(t.end_ts) - new Date(t.start_ts);
-                                  if (!isFinite(ms) || ms < 0) return '—';
-                                  const perMin = ms / 1000 / 60 / t.sub_items;
-                                  return perMin.toFixed(1) + ' นาที';
-                                })()}</td>
-                                <td style={cellSm}>{t.bu || '-'}</td>
-                                <td style={cellEllipsis} title={t.invoice_no || ''}>{t.invoice_no || '-'}</td>
-                                <td style={cellSm}>{t.module ? <span style={{ fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '5px', background: st.bg, color: st.color }}>{t.module}</span> : '-'}</td>
-                                <td style={cellEllipsis} title={t.batch_id || 'Draft'}>{t.is_timestamp ? '-' : (t.batch_id || 'Draft')}</td>
-                                <td style={{ ...cellSm, color: gap != null && gap > 15 ? '#c0392b' : '#667085', fontWeight: 600 }}>{gap == null ? '—' : gap + ' นาที'}</td>
-                              </tr>
+                              <div key={i} style={{ display: 'grid', gridTemplateColumns: COLS, gap: '10px', alignItems: 'center', padding: '8px 16px', borderTop: '1px solid #edf0f4', fontSize: '12.5px', background: t.is_weekend_source ? '#eef0fb' : 'transparent' }}>
+                                <div style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                                  {startHm === endHm ? startHm : `${startHm} – ${endHm}`}
+                                  {t.is_weekend_source && <span title="ทำรายการวันเสาร์-อาทิตย์ นับรวมกับวันจันทร์" style={{ marginLeft: '4px', fontSize: '10px', color: '#6b7fd7', cursor: 'help' }}>📅</span>}
+                                </div>
+                                <div style={{ minWidth: 0 }}>
+                                  <div title={t.invoice_no || ''} style={{ wordBreak: 'break-word' }}>{t.invoice_no || '-'}</div>
+                                  <div style={{ fontSize: '10.5px', color: '#8a96a3', wordBreak: 'break-word' }}>{t.batch_id || 'Draft'}</div>
+                                </div>
+                                <div>{t.bu || '-'}</div>
+                                <div>{t.module ? <span style={{ fontSize: '10.5px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px', background: st.bg, color: st.color }}>{t.module}</span> : '-'}</div>
+                                <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{t.sub_items ?? '-'}</div>
+                                <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dur}</div>
+                                <div style={{ textAlign: 'right' }}>
+                                  {gap == null
+                                    ? <span style={{ color: '#a3adb8' }}>—</span>
+                                    : <span style={{ fontSize: '11.5px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px', fontVariantNumeric: 'tabular-nums', background: gap > 15 ? '#fdeaea' : 'transparent', color: gap > 15 ? '#a61b1b' : '#667085' }}>{gap} นาที</span>}
+                                </div>
+                              </div>
                             );
                           })}
-                        </tbody>
-                      </table>
-                    )
+                        </div>
+                      );
+                    })()
                   ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
@@ -3843,13 +4104,16 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                           <tr><td colSpan={3} style={{ ...S.td, color: '#aaa' }}>ไม่มี Transaction ในช่วงนี้</td></tr>
                         )}
                         {summaryRows.map((d, i) => (
-                          <tr key={i}>
+                          <tr key={i} onClick={() => { setSelectedDate(d.date); setGranularity('daily'); }} title="คลิกเพื่อดูรายละเอียดรายวัน" style={{ cursor: 'pointer' }}> {/* MARKER_USERMANAGEMENT_MONTHLY_HR_DASHBOARD_V1 -- คลิกแถว = ไปแท็บรายวันของวันนั้น */}
                             <td style={S.td}>{d.date}</td>
                             <td style={S.td}>
                               {Object.keys(d.modules || {}).map(m => {
                                 const st = dashboardModuleStyle(m);
                                 return <span key={m} style={{ fontSize: '10px', fontWeight: 600, padding: '2px 7px', borderRadius: '5px', background: st.bg, color: st.color, marginRight: '4px' }}>{m}: {d.modules[m]}</span>;
                               })}
+                              <div style={{ display: 'flex', height: '6px', borderRadius: '3px', background: '#edf0f4', overflow: 'hidden', marginTop: '6px', maxWidth: '420px' }}>
+                                {Object.keys(d.modules || {}).map(m => <div key={m} style={{ height: '6px', width: `${((Number(d.modules[m]) || 0) / (Number(peakDay?.count) || 1)) * 100}%`, background: ({ AP: '#1f8a5f', VAT: '#3b4f78', 'COL-AP': '#d9961a', IE: '#c2255c' })[m] || '#8a94a3' }} />)}
+                              </div>
                             </td>
                             <td style={{ ...S.td, textAlign: 'right', fontWeight: 700 }}>{d.count}</td>
                           </tr>

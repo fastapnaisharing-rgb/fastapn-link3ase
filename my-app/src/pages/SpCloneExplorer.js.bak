@@ -16,6 +16,8 @@ const tok = () => sessionStorage.getItem('fastapn_token') || '';
 const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NEED_V = 6;   // เวอร์ชัน Handler ขั้นต่ำสำหรับ mkdir / rename / move / ลบหลายรายการ
+// MARKER_SPC_HANDLER_USER_LEVEL_V1 -- ตัดสิน 'มี Handler' ระดับผู้ใช้: ใช้เครื่องที่ IP ตรงก่อน (machines) ถ้าไม่ตรง (เช่น เปิดผ่าน localhost/VPN/IP เปลี่ยน) ใช้ allMachines ที่ Backend ส่งมา ไม่ให้ล็อกหน้าทั้งที่เคยรายงานแล้ว
+const pickHandlerVer = (d) => { const a = Array.isArray(d.machines) && d.machines.length ? d.machines : (Array.isArray(d.allMachines) ? d.allMachines : []); return a.length ? Math.max(...a.map((m) => Number(m.version) || 0)) : null; };
 const enc = encodeURIComponent;
 const badName = (n) => !n || n === '.' || n === '..' || /[\\/:*?"<>|]/.test(n);
 
@@ -60,6 +62,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
   const [meta, setMeta] = useState(null);
   const [webBase, setWebBase] = useState('');
   const [loading, setLoading] = useState(true);
+  const [handlerChecked, setHandlerChecked] = useState(false); // MARKER_SPC_BLOCK_NO_HANDLER_V1 -- เช็กสถานะ Handler ของเครื่องนี้เสร็จแล้วหรือยัง
   const [handlerVer, setHandlerVer] = useState(null); // null=ไม่เคยรายงาน | เลขเวอร์ชันสูงสุดของเครื่องฉัน
   const [msg, setMsg] = useState('');
   const [q, setQ] = useState('');
@@ -100,8 +103,8 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
     try {
       const res = await fetch(`${API_ROOT}/api/file-storage/sp-handler/my-status`, { headers: authHeaders() });
       const d = await res.json();
-      const v = Array.isArray(d.machines) && d.machines.length ? Math.max(...d.machines.map((m) => Number(m.version) || 0)) : null;
-      setHandlerVer(v); return v;
+      const v = pickHandlerVer(d);
+      setHandlerVer(v); setHandlerChecked(true); return v;
     } catch (_) { setHandlerVer(null); return null; }
   }, []);
 
@@ -125,6 +128,26 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
       if (Date.now() - at > STALE_MS) { triggerList(''); await sleep(6000); load(); }
     })();
   }, [checkHandler, triggerList, load]);
+
+  // MARKER_SPC_AUTO_RECHECK_HANDLER_V1 -- ตรวจสถานะ Handler/สิทธิ์ซ้ำอัตโนมัติ ไม่ต้องกดเอง: ทุก 10 วิ ตอนถูกบล็อก, ทุก 60 วิ ตอนใช้งานอยู่, และทุกครั้งที่กลับมาที่แท็บ/หน้าต่าง | ถ้าเรียกไม่สำเร็จ (เน็ตหลุดชั่วคราว) ไม่ลดสิทธิ์ ไม่เด้งหน้าล็อก
+  useEffect(() => {
+    const blocked = handlerChecked && !handlerVer;
+    const tick = async () => {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`${API_ROOT}/api/file-storage/sp-handler/my-status`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const d = await res.json();
+        const v = pickHandlerVer(d);
+        setHandlerVer(v); setHandlerChecked(true);
+        if (v && !handlerVer) load();
+      } catch (_) { /* เงียบ — รอบหน้าลองใหม่ */ }
+    };
+    const id = setInterval(tick, blocked ? 10000 : 60000);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(id); window.removeEventListener('focus', tick); document.removeEventListener('visibilitychange', tick); };
+  }, [handlerChecked, handlerVer, load]);
 
   const refresh = async () => {
     setSyncing(true);
@@ -347,6 +370,17 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
   const todayTh = (() => { try { return new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch (_) { return ''; } })();
   const capSt = { fontSize: 10, letterSpacing: '.14em', color: '#6b778c', fontWeight: 700 };
 
+  // MARKER_SPC_BLOCK_NO_HANDLER_V1 -- เครื่องที่ไม่มี SharePoint Handler (ตามเครื่องนี้) เข้าใช้งานหน้านี้ไม่ได้ ต้องมี Permission + Handler คู่กัน
+  if (handlerChecked && !handlerVer) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, height: '100%', background: '#fff', fontFamily: '"Segoe UI", Tahoma, sans-serif', color: '#323130', padding: 24, textAlign: 'center' }}>
+        <div style={{ fontSize: 40 }}>🔒</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: '#8a4a00', marginTop: 8 }}>เครื่องนี้ยังไม่ได้ติดตั้ง SharePoint Handler</div>
+        <div style={{ fontSize: 13, color: '#605e5c', marginTop: 6, maxWidth: 520 }}>ต้องมี SharePoint Handler (fastapn-sp://) ในเครื่องนี้ก่อนจึงจะเข้าหน้านี้ได้ — ติดตั้งที่ Resource Center &gt; Setup - Tools แล้วกด "ตรวจสอบอีกครั้ง"</div>
+        <button type="button" onClick={async () => { launch(`fastapn-sp://update?v=${NEED_V}&api=${encodeURIComponent(API_ROOT)}&token=${encodeURIComponent(tok())}`); await sleep(6000); await checkHandler(); }} style={{ marginTop: 14, border: 'none', background: '#8a4a00', color: '#fff', borderRadius: 18, padding: '8px 20px', cursor: 'pointer', fontSize: 13 }}>ตรวจสอบอีกครั้ง</button>
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden', background: '#fff', fontFamily: '"Segoe UI", Tahoma, sans-serif', color: '#323130' }}
       onDragOver={(e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) { e.preventDefault(); setDrag(true); } }}

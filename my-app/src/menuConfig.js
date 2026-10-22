@@ -97,6 +97,9 @@ export const GL_FUNCTIONAL_MENU = {
     { label: 'Reconcile', icon: '🔗', items: [
       { id: 'gl-ap-recon', icon: '🧾', label: 'Account Payable Recon.', requiredPermissions: ['Manual', 'IE', 'I-Pro'] }, // MARKER_GL_ITEM_PERMISSIONS_V1
     ]},
+    { label: 'Account', icon: '📒', items: [ // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1
+      { id: 'gl-detail-of-account', icon: '🔎', label: 'Detail of Account', requiredPermissions: ['GL'] }, // เข้าได้เฉพาะ Permission GL เท่านั้น
+    ]},
   ],
 };
 
